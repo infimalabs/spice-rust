@@ -3,7 +3,7 @@
    four simultaneous standings, one ticker, then four independently operable
    agent columns. */
 .commandbar--mosaic {
-  min-height: 30px;
+  min-height: var(--canvas-header-control);
   gap: 7px;
   padding-block: 8px;
   padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
@@ -14,6 +14,9 @@
 .commandbar--mosaic .bar-meta { font-size: .6rem; }
 
 .shell {
+  /* The operator avatar and the Spice trigger are one circle size, and the
+     header band is that tall. */
+  --canvas-header-control: 35px;
   --canvas-shell-edge-inline: 10px;
   --canvas-shell-edge-start: calc(var(--canvas-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --canvas-shell-edge-end: calc(var(--canvas-shell-edge-inline) + env(safe-area-inset-right, 0px));
@@ -42,18 +45,18 @@ body:has(.shell--mosaic),
   display: grid;
   contain: layout;
   flex: 1 1 auto;
-  grid-template-columns: auto minmax(0, 1fr) 35px;
+  grid-template-columns: auto minmax(0, 1fr) var(--canvas-header-control);
   align-items: center;
   gap: 7px;
   min-width: 0;
-  height: 30px;
-  min-height: 30px;
-  max-height: 30px;
+  height: var(--canvas-header-control);
+  min-height: var(--canvas-header-control);
+  max-height: var(--canvas-header-control);
   padding: 0;
   border-radius: var(--canvas-radius-element);
 }
 .canvas-disclosure[data-transient-status="true"] {
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) 35px;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) var(--canvas-header-control);
 }
 .canvas-disclosure[data-expanded="true"] {
   z-index: 20;
@@ -69,12 +72,12 @@ body:has(.shell--mosaic),
 }
 
 /* The operator's face opens global Dash; it sits at the head of the bar beside
-   the aggregate Work count and is sized to the same band as the task pills. */
+   the aggregate Work count, the same circle as the Spice trigger. */
 .canvas-operator-link {
   grid-area: 1 / 1;
   display: inline-grid;
-  width: 26px;
-  height: 26px;
+  width: var(--canvas-header-control);
+  height: var(--canvas-header-control);
   min-height: 0;
   margin-inline: 2px 8px;
   padding: 0;
@@ -83,10 +86,10 @@ body:has(.shell--mosaic),
   background: none;
 }
 .canvas-operator-link .operator-avatar {
-  flex-basis: 26px;
-  width: 26px;
-  height: 26px;
-  font-size: .55rem;
+  flex-basis: var(--canvas-header-control);
+  width: var(--canvas-header-control);
+  height: var(--canvas-header-control);
+  font-size: .7rem;
 }
 .canvas-operator-link.selected .operator-avatar {
   border-color: var(--accent);
@@ -145,9 +148,9 @@ body:has(.shell--mosaic),
   --canvas-menu-edge: var(--accent-slot, var(--line));
   --canvas-menu-border: color-mix(in srgb, var(--canvas-menu-edge) 68%, var(--line));
   --canvas-menu-surface: var(--control-surface-soft);
-  position: relative; z-index: 2; display: inline-grid; place-items: center; width: 35px; height: 30px; padding: 0;
+  position: relative; z-index: 2; display: grid; place-items: center; width: var(--canvas-header-control); height: var(--canvas-header-control); padding: 0;
   border: 2px solid var(--canvas-menu-border);
-  border-radius: var(--canvas-radius-pill); background: var(--canvas-menu-surface); color: var(--ink);
+  border-radius: 50%; background: var(--canvas-menu-surface); color: var(--ink);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--canvas-menu-border) 28%, transparent);
   cursor: pointer; list-style: none;
 }
