@@ -24,6 +24,7 @@ mod allocation_guard;
 use allocation_guard::*;
 
 mod board_view;
+mod graph_view;
 mod origin;
 mod parked_worktree;
 mod read_scope;

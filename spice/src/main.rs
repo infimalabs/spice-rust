@@ -452,9 +452,12 @@ impl NativeInvocation<'_> {
                 form,
                 board_command::BoardView::text,
             ),
-            ["board", "graph"]
-            | ["board", "handout"]
-            | ["task", "list"]
+            ["board", "graph"] | ["board", "handout"] => deliver_with_reply_text(
+                &board_command::graph_view(leaf, contract),
+                form,
+                board_command::GraphView::text,
+            ),
+            ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]
             | ["task", "recover"]
