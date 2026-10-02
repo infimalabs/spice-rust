@@ -26,6 +26,9 @@ mod tests;
 
 const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "cargo-output"];
 
+/// Where progress and the completion report are written.
+pub(super) type Sink = Arc<Mutex<dyn Write + Send>>;
+
 /// Bytes one pump moves per read.
 const READ_BUFFER: usize = 64 * 1024;
 
@@ -160,7 +163,7 @@ pub(super) struct Settings {
     /// What ran, as the completion line names it.
     pub(super) identity: String,
     /// Where progress and the completion report are written.
-    pub(super) sink: Arc<Mutex<dyn Write + Send>>,
+    pub(super) sink: Sink,
     /// Interval between heartbeats.
     pub(super) heartbeat: Duration,
     /// Whether recognized output streams live, bounded.
@@ -649,7 +652,7 @@ fn sanitize(text: &str) -> String {
         .collect()
 }
 
-fn emit(sink: &Arc<Mutex<dyn Write + Send>>, text: &str) {
+fn emit(sink: &Sink, text: &str) {
     if let Ok(mut sink) = sink.lock() {
         let _ = writeln!(sink, "{text}").and_then(|()| sink.flush());
     }
