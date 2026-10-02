@@ -142,6 +142,13 @@ dead-lettered, or canceled changes only its lifecycle badge. Retirement does
 not replace the card with an attachment-free preview. Direction identity,
 attribution, task chips, return links, and age remain stable.
 
+Direction and settled-task collections preserve their admitted DOM order while
+the shared Mosaic packer places each rendered card in the shortest responsive
+column. The CSS grid remains the column-width and gutter contract; a
+`ResizeObserver` remeasures cards after text, detail, media, or viewport changes.
+Narrow team panes resolve to one readable column with the same configured
+gutters instead of inheriting a taller sibling's row height.
+
 ## Card endings and relative ages
 
 Invisible renderer portal hosts do not add trailing space. A card whose final

@@ -25,6 +25,7 @@ mod state;
 mod team_drag;
 mod team_menu;
 mod team_work;
+mod team_work_mosaic;
 mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;

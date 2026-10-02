@@ -1395,9 +1395,7 @@ a.relative-age {
   display: grid;
   gap: 8px;
 }
-/* The split layout keys on each card's own cell (.work-card-cell), never the
-   section holding the list; rows pack to the top so a taller sibling in the
-   same history row leaves space below the content instead of between it. */
+/* A compact task still splits its own content independently of list packing. */
 .team-task-workspace .work-card--compact {
   grid-template:
     "heading facts" auto
