@@ -14,8 +14,8 @@ pub(super) fn render(message: &wire::AgentMessage) -> Html {
     // A live vendor stream lands its prose before the record that proves the
     // turn ended, so this card may still be raised to FINAL by a later
     // revision. Holding the badge's footprint from the first paint keeps that
-    // flip a change of color alone: the footer keeps its columns, the agent
-    // identity keeps its place, and the card keeps its measured rows.
+    // flip a change of color alone: the controls island keeps its width, the
+    // prose keeps its wrap beside it, and the card keeps its measured rows.
     html! {
         <span class="message-badges message-badges--reserved" aria-hidden="true">
             <span class="message-badge message-badge--reserved">
