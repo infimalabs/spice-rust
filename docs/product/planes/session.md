@@ -121,11 +121,16 @@ provenance and recovery coordinates.
 ### Acknowledgment provenance links
 
 Every task or claim fact carries a causal origin, and an `ack:KEY` origin names
-the steering directive a lane acknowledged when it did the work. `task show`
-lists each distinct key on the record, the task's own origin first, as one
-`acknowledgment ack:KEY` line naming every fact that key caused, and marks
-each note written under a key with that key. Each key then resolves to its
-directive: identity, addressed lane, authoring actor, publication instant,
+the steering directive a lane acknowledged when it did the work. Operator
+steering a lane acknowledges while it holds a task, in any phase, joins that
+task's record through its `steer::acked` fact, unless another task cites the
+key as its origin: that ask became its own work. Peer messages and resident
+notices never join. `task show` lists each distinct key on the record, the
+task's own origin first, as one `acknowledgment ack:KEY` line naming every
+fact that carries it, and marks each note written under a key with that key.
+A claim answer resolves the same keys, so the next phase's holder and the
+reviewer receive the steering that shaped the work. Each key then resolves to
+its directive: identity, addressed lane, authoring actor, publication instant,
 verbatim text, and attachment names. An acknowledged or declined directive
 also renders the answering lane and instant plus a shell-executable
 `spice session context` command at the answering transcript record, naming the

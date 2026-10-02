@@ -192,15 +192,17 @@ pub struct TaskDetailClosure {
     pub claimed: Option<Actor>,
 }
 
-/// One task-history fact caused by an acknowledged steering directive.
+/// One acknowledged steering directive on a task's history: a task or claim
+/// fact whose `ack:` origin names it, or a `steer::acked` fact by which the
+/// task's holder acknowledged operator steering while holding the task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAcknowledgment {
-    /// Position of the task or claim fact whose origin names the key.
+    /// Position of the carrying fact.
     pub position: crate::Seq,
     /// Kind of that fact.
     pub kind: crate::FactKind,
-    /// Steering key the fact's `ack:` origin names.
+    /// Steering key the fact names.
     pub key: String,
 }
 

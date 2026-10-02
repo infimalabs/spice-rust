@@ -313,8 +313,8 @@ fn task_show_origin_context(
     Ok(Some(blocks.join("\n").into_boxed_str()))
 }
 
-/// Durable history shown with one task: its notes and every fact whose
-/// origin names an acknowledged steering key.
+/// Durable history shown with one task: its notes and every acknowledged
+/// steering key on its record.
 #[derive(Clone, Copy, Default)]
 pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],

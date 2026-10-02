@@ -348,7 +348,7 @@ pub(in crate::board_command) fn commit_claim(
         }
         return outcome;
     }
-    let origin_context = match task_steering_origin_output(bus, &selected.statement().provenance) {
+    let origin_context = match task_steering_origin_output(bus, &snapshot.facts, &selected) {
         Ok(context) => context,
         Err(outcome) => {
             if let Some(prepared) = prepared_git {

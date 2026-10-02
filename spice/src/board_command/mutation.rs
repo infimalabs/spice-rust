@@ -57,7 +57,7 @@ fn prepare_mutation_claim(
         return Ok(None);
     }
     let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected)?;
-    let origin_context = task_steering_origin_output(bus, &selected.statement().provenance)?;
+    let origin_context = task_steering_origin_output(bus, &snapshot.facts, selected)?;
     let answer = Box::new(prepared.answer(command, snapshot, selected, origin_context));
     Ok(Some(AtomicClaim { prepared, answer }))
 }
@@ -299,7 +299,7 @@ where
     F: FnOnce(&mut JournalWrite),
 {
     let origin_context = if added_claim.is_some() {
-        match task_steering_origin_output(bus, &post.statement().provenance) {
+        match task_steering_origin_output(bus, &snapshot.facts, &post) {
             Ok(context) => context,
             Err(outcome) => return outcome,
         }

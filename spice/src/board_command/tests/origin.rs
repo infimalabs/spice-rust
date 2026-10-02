@@ -4,6 +4,17 @@ fn seed_steering_origin(bus: &Bus, key: &str) {
 }
 
 fn seed_steering_directive(bus: &Bus, key: &str, directive: CanonicalUuid) {
+    send_directive(bus, Actor::Operator, key, directive, uuid(16_202));
+}
+
+/// Commit one live directive `author` addressed to `lane`.
+fn send_directive(
+    bus: &Bus,
+    author: Actor,
+    key: &str,
+    directive: CanonicalUuid,
+    lane: CanonicalUuid,
+) {
     let published: Instant = "2030-04-12T18:44:09.271Z"
         .parse()
         .expect("fixture publication instant");
@@ -11,11 +22,14 @@ fn seed_steering_directive(bus: &Bus, key: &str, directive: CanonicalUuid) {
         .parse()
         .expect("fixture expiry instant");
     let sent = body::SteerSent {
-        from: None,
+        from: match author {
+            Actor::Lane(teller) => Some(teller),
+            Actor::Operator | Actor::Spice => None,
+        },
         directive,
         fanout: None,
         key: key.to_owned(),
-        lane: uuid(16_202),
+        lane,
         text: "Preserve this directive\nverbatim across hydration.".to_owned(),
         control: None,
         attachments: vec![body::DirectiveAttachment {
@@ -28,17 +42,12 @@ fn seed_steering_directive(bus: &Bus, key: &str, directive: CanonicalUuid) {
     let origin: wire::Origin = format!("ack:{key}")
         .parse()
         .expect("fixture steering origin");
-    let mut write = JournalWrite::new(
-        Actor::Operator,
-        origin.clone(),
-        published,
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(author, origin.clone(), published, Producer::CommandDoor);
     let pending = write
         .fact(sent.clone(), FactCause::Root)
         .expect("steering fact builds");
     write.steering_head(pending, move |created| wire::SteeringHead {
-        from: None,
+        from: sent.from,
         directive: sent.directive,
         fanout: sent.fanout,
         key: sent.key,
@@ -347,6 +356,13 @@ fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared:
             CommitOutcome::Committed(_)
         ));
     }
+    acknowledge(bus, key, lane, Some(source));
+}
+
+/// Retire live directive `key` by `lane`'s acknowledgment at member 1 offset
+/// 40 of `source`.
+fn acknowledge(bus: &Bus, key: &str, lane: CanonicalUuid, source: Option<CanonicalUuid>) {
+    let epoch = uuid(16_204);
     let lookup = key.to_owned();
     let head = bus
         .read(move |read| read.steering_key(&lookup))
@@ -355,7 +371,7 @@ fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared:
     let mut write = JournalWrite::new(
         Actor::Lane(lane),
         head.body().origin.clone(),
-        at,
+        fixture_instant("acknowledgment fixture instant"),
         Producer::AckScanner,
     );
     let pending = write
@@ -366,7 +382,7 @@ fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared:
                 lane,
                 epoch,
                 locus: body::TranscriptLocus {
-                    source: Some(source),
+                    source,
                     member: 1,
                     offset: 40,
                     length: 7,
@@ -537,4 +553,158 @@ fn unresolved_steering_origin_is_explicit() {
         render_task_steering_origin("1kLGp2NZ", None).as_ref(),
         "origin_steering key 1kLGp2NZ\norigin_steering unavailable unresolved-key"
     );
+}
+
+/// Win `task` for `seat` under the named capture rule.
+fn capture(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Box<wire::intent::ClaimAnswer> {
+    let lane = Actor::Lane(seat.lane);
+    let before = board(bus, epoch, lane.clone());
+    let heads = at(&before, task);
+    let capture: Name = "capture".parse().expect("capture rule");
+    let CommandAnswer::Claim(claim) = assert_committed(issue(
+        bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility {
+                rule: capture.clone(),
+            },
+            residency(&before, seat),
+        ],
+        &ClaimWin {
+            rule: capture,
+            recovery: None,
+        },
+    )) else {
+        panic!("claim win must hydrate the claimed task");
+    };
+    claim
+}
+
+#[test]
+fn operator_steering_acknowledged_while_holding_a_task_stays_with_that_task() {
+    let (root, bus, epoch, seats) = fixture("task-steering-during-claims", 2);
+    let (holder, other) = (seats[0].lane, seats[1].lane);
+    let held = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "STEER-held",
+        "Hold steering",
+        None,
+    );
+    let held_born = held.born().expect("fixture identity");
+    send_directive(&bus, Actor::Operator, "1kLGp2N1", uuid(16_301), holder);
+    acknowledge(&bus, "1kLGp2N1", holder, None);
+    capture(&bus, epoch, &seats[0], &held);
+    let steer = |key: &str, author: Actor, to: CanonicalUuid, directive: u64| {
+        send_directive(&bus, author, key, uuid(directive), to);
+        acknowledge(&bus, key, to, None);
+    };
+    steer("1kLGp2N2", Actor::Operator, holder, 16_302);
+    steer("1kLGp2N3", Actor::Operator, holder, 16_303);
+    steer("1kLGp2N4", Actor::Lane(other), holder, 16_304);
+    steer("1kLGp2N5", Actor::Spice, holder, 16_305);
+    steer("1kLGp2N6", Actor::Operator, other, 16_306);
+    steer("1kLGp2N7", Actor::Operator, holder, 16_307);
+    // One ask became separate work.
+    let captured_born = stamp("STEER-captured");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: captured_born.clone(),
+        }],
+        &TaskAdd {
+            title: "Separate ask".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["the ask is its own work".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("ack:1kLGp2N3".parse().expect("steering origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Lane(holder),
+        CommandKind::ClaimFree,
+        claim_free_witnesses(&bus, epoch, &Actor::Lane(holder), &seats[0], &held),
+        &TaskRef { task: held.clone() },
+    ));
+    steer("1kLGp2N8", Actor::Operator, holder, 16_308);
+
+    let keys = |rows: &[wire::intent::TaskAcknowledgment]| {
+        rows.iter()
+            .map(|row| (row.kind, row.key.clone()))
+            .collect::<Vec<_>>()
+    };
+    let read = |task: &wire::TaskStamp| {
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) = issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::BoardRead,
+            Vec::new(),
+            &BoardRead::Tasks {
+                tasks: vec![task.clone()],
+                dependencies: false,
+                claims: false,
+                notes: true,
+            },
+        )
+        else {
+            panic!("task read answers a board");
+        };
+        answer
+            .acknowledgments
+            .get(task)
+            .map(|rows| keys(rows))
+            .unwrap_or_default()
+    };
+    let acked = wire::FactKind::SteerAcked;
+    assert_eq!(
+        read(&held_born),
+        [
+            (acked, "1kLGp2N2".to_owned()),
+            (acked, "1kLGp2N7".to_owned())
+        ],
+        "only operator steering the holder acknowledged while holding stays with the task"
+    );
+    assert_eq!(
+        read(&captured_born),
+        [(wire::FactKind::TaskAdded, "1kLGp2N3".to_owned())],
+        "a captured ask stays with the task it became"
+    );
+
+    // The next holder receives that steering with the claim.
+    let next = capture(&bus, epoch, &seats[1], &held);
+    let context = next
+        .origin_context
+        .as_deref()
+        .expect("steered task carries context");
+    let shown = context
+        .lines()
+        .filter_map(|line| line.strip_prefix("origin_steering key "))
+        .collect::<Vec<_>>();
+    assert_eq!(shown, ["1kLGp2N2", "1kLGp2N7"]);
+    assert!(context.contains("origin_steering_text:\nPreserve this directive\n"));
+    clean(&root, bus);
 }
