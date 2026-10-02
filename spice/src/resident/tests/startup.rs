@@ -418,6 +418,25 @@ fn startup_surface_captures_configured_hidden_project_policy_once() {
 }
 
 #[test]
+fn a_fresh_repository_startup_surface_stays_current_after_its_runtime_directory_appears() {
+    let root = fixture("fresh-runtime");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    assert!(!paths.runtime.exists(), "the repository has never started");
+
+    let Ok(startup) = prepare_startup(&repository, &paths) else {
+        panic!("a fresh repository prepares its startup surface");
+    };
+    assert!(paths.runtime.is_dir());
+    assert!(
+        require_current_surface(&repository, &startup.trust).is_ok(),
+        "creating the runtime directory does not move the captured surface"
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     let (root, paths) = resident_fixture("lane-add-vacant");
     let repository = Repository::discover(&root).expect("fixture repository resolves");

@@ -76,11 +76,21 @@ pub(super) fn load_startup_surface(
     load_startup_surface_with(repository, || {})
 }
 
-fn load_startup_surface_scoped(
+/// Create the runtime directory, then capture the startup surface from it.
+///
+/// The local configuration document lives beneath the runtime directory, and
+/// a capture records how far a missing document's path existed. A capture
+/// taken before the directory existed, such as the invocation's own, would
+/// name a generation that creating it then moves, so every guarded startup
+/// write would refuse `trust::surface-moved`.
+pub(super) fn prepare_startup(
     repository: &Repository,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> Result<StartupSurface, spice::config::LoadError> {
-    let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)?;
+    paths: &RuntimePaths,
+) -> Result<StartupSurface, Outcome<()>> {
+    fs::create_dir_all(&paths.runtime)
+        .map_err(|error| environment_fault("resident::runtime-unavailable", &error.to_string()))?;
+    let loaded = spice::config::capture_repository(repository, &[])
+        .map_err(|error| configuration_refusal(&error))?;
     Ok(startup_surface_from_loaded(&loaded))
 }
 
@@ -350,7 +360,6 @@ pub(crate) fn up(
     test_canvas_stage: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
@@ -383,7 +392,7 @@ pub(crate) fn up(
         leaf.get_flag("open"),
         progress,
         endpoint,
-        (child.map(|child| child.status), configuration),
+        child.map(|child| child.status),
     )
 }
 
@@ -504,7 +513,7 @@ pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
         false,
         &mut io::sink(),
         &mut io::sink(),
-        (None, None),
+        None,
     )
 }
 
@@ -515,12 +524,8 @@ fn up_from_with(
     open: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
-    invocation: (
-        Option<ChildStatus>,
-        Option<&spice::config::RepositoryCapture>,
-    ),
+    daemon: Option<ChildStatus>,
 ) -> Outcome<()> {
-    let (daemon, configuration) = invocation;
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => {
@@ -535,12 +540,9 @@ fn up_from_with(
         Ok(paths) => paths,
         Err(outcome) => return outcome,
     };
-    if let Err(error) = fs::create_dir_all(&paths.runtime) {
-        return environment_fault("resident::runtime-unavailable", &error.to_string());
-    }
-    let startup_surface = match load_startup_surface_scoped(&repository, configuration) {
+    let startup_surface = match prepare_startup(&repository, &paths) {
         Ok(surface) => surface,
-        Err(error) => return configuration_refusal(&error),
+        Err(outcome) => return outcome,
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());
