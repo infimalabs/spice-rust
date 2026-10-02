@@ -488,7 +488,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  background: color-mix(in srgb, var(--panel) 96%, var(--page));
+  background: color-mix(in srgb, var(--message-card-surface) 96%, var(--page));
 }
 .team-surface .message-task-inspector:focus { outline: none; }
 .team-surface .message-task-inspector *,
