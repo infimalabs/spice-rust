@@ -327,7 +327,8 @@ fn admit_delta(
     budget: wire::output::Budget,
     root: &Path,
 ) -> Result<bool, Outcome<WatchReport>> {
-    let mut rows = delta.rows.into_iter();
+    let WatchDelta { rows, cursor } = delta;
+    let mut rows = rows.into_iter();
     while let Some(row) = rows.next() {
         let batch = bounded_batch(row.outcome, budget, root, INTERACTIVE.maximum().bytes)
             .map_err(protocol_failure)?;
@@ -340,6 +341,7 @@ fn admit_delta(
             Err(error) => return Err(protocol_failure(error)),
         }
     }
+    watch.resume_at(cursor);
     Ok(true)
 }
 
