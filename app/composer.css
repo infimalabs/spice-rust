@@ -591,6 +591,7 @@
    card ending in any other block gives the signoff its own trailing line. */
 .markdown-body > p:has(> .message-signoff) { display: flow-root; }
 .markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
+.markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-card:has(
   > .message-quote-body > p.message-image-stack:last-child
 ) > .message-quote-signoff {

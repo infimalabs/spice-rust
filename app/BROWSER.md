@@ -62,6 +62,14 @@ dead-lettered, or canceled changes only its lifecycle badge. Retirement does
 not replace the card with an attachment-free preview. Direction identity,
 attribution, task chips, return links, and age remain stable.
 
+## Card relative ages
+
+A signed prose card keeps its agent attribution in the lane accent, but its
+linked top-level relative age is neutral. The age remains an underlined card
+permalink and advances on its own visible-unit deadlines. Authored Markdown
+links retain the ordinary accent, and quoted-source ages keep their separate
+quote presentation.
+
 ## Profile Canvas latency in Firefox
 
 Canvas exposes opt-in User Timing diagnostics without changing route parsing.
