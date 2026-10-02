@@ -32,6 +32,24 @@ const lightCanvas = await launchCanvasBrowser(chromium, {
 });
 ```
 
+## Browser branding and remaining work
+
+Canvas keeps the current `Spice Canvas` product name in every tab title and
+the Canvas pepper in every generated icon. The first loopback browser
+predecessor (`ca903af2c`) used the shorter static title `Spice` and no icon;
+the first Rust Canvas (`9904e38a8`) established `Spice Canvas`, also without
+an icon. The current surface deliberately retains the latter title instead of
+reviving the ambiguous predecessor name, and pairs the new badge with the
+pepper already used by Canvas chrome.
+
+Once the first board snapshot arrives, the title gives the exact number of
+remaining public tasks and the icon wears the same count. The tiny icon shows
+exact values through 99 and bounds larger labels at `99+`; the title remains
+exact. A zero badge is explicit. Loading has an ellipsis, and disconnection
+without a retained board has an exclamation mark. During reconnect, the last
+known count stays visible in amber and the title marks it stale; a current
+snapshot restores the green badge.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift
