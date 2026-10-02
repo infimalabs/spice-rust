@@ -23,6 +23,27 @@
   background: var(--control);
   color: var(--ink);
 }
+/* Draft image chooser, sized as a thumbnail chip by mosaic.css. Touch screens
+   only: a pointer user pastes or drops instead. The transparent input covers
+   the chip so the platform opens its chooser from a real tap. */
+.composer-shard-image-attach {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+@media (hover: none) and (pointer: coarse) {
+  .composer-shard-image-attach { display: inline-flex; }
+}
+.composer-shard-image-attach input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
 .composer-menu-icon {
   display: grid;
   width: 11px;

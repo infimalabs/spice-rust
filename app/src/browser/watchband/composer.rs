@@ -1064,15 +1064,35 @@ pub(super) fn render_quote_shards(
 /// the attachment itself instead of raising a wide native "Remove <name>"
 /// tooltip across the header. The strip is rendered even with no images so the
 /// heading keeps its fixed child order and its grid columns, which holds that
-/// final control still as the first image arrives.
+/// final control still as the first image arrives. On touch screens the strip
+/// leads with an image chooser: Firefox for Android grants keyboard image
+/// insertion only to contenteditable, never to a textarea, so paste and drop
+/// cannot be the only way in.
 pub(super) fn render_image_indicators(
     lane_key: &str,
     attachments: &[crate::composer_drafts::DraftImage],
     quote_identity: Option<&str>,
     drafts: &UseReducerHandle<ComposerDrafts>,
 ) -> Html {
+    let attach_key = lane_key.to_owned();
+    let attach_drafts = drafts.clone();
+    let attach_quote = quote_identity.map(str::to_owned);
+    let attach = Callback::from(move |event: Event| {
+        let Some(input) = event.target_dyn_into::<web_sys::HtmlInputElement>() else {
+            return;
+        };
+        if let Some(files) = input.files() {
+            add_image_files(&attach_drafts, &attach_key, attach_quote.as_deref(), &files);
+        }
+        // Clear the selection so choosing the same image again still adds it.
+        input.set_value("");
+    });
     html! {
         <span class="composer-shard-image-indicators">
+            <label class="composer-shard-image-attach" title="Attach image">
+                <input type="file" accept="image/*" multiple={true} aria-label="Attach image" onchange={attach} />
+                {"+"}
+            </label>
             {for attachments.iter().map(|image| {
                 let attachment = &image.media;
                 let id = image.id;
