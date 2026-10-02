@@ -195,7 +195,8 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
         digest: Digest::compute(Domain::CliExport, b"plan"),
     };
     let words = ["release", "publish", "--action", "publish"].map(str::to_owned);
-    let text = plan_text(&plan, &export, &words);
+    let preview = PlanPreview::new(&plan, export.clone(), &words);
+    let text = preview.text().expect("a publish preview has text");
 
     for field in [
         plan.key.to_string(),
@@ -233,4 +234,40 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
         "{} bytes",
         text.len()
     );
+
+    let json = serde_json::to_value(&preview).expect("preview encodes");
+    let encoded = json.to_string();
+    assert!(
+        encoded.len() < plan.notes_document.len() / 10,
+        "{} JSON bytes",
+        encoded.len()
+    );
+    assert!(json.get("notes_document").is_none());
+    assert_eq!(json["key"], plan.key.to_string());
+    assert_eq!(json["notes"], plan.notes.to_string());
+    assert_eq!(json["operations"][1], "push-tag");
+    assert_eq!(json["observations"]["unrecorded_local_commits"], 2);
+    assert_eq!(json["export"]["path"], export.path);
+    let excerpt = &json["notes_preview"];
+    assert_eq!(excerpt["lines"], LANDINGS);
+    assert_eq!(excerpt["bytes"], plan.notes_document.len());
+    assert_eq!(excerpt["withheld_lines"], LANDINGS - NOTE_LINES);
+    assert_eq!(excerpt["shown"].as_array().map(Vec::len), Some(NOTE_LINES));
+}
+
+#[test]
+fn a_publish_preview_clips_an_oversized_note_line_in_text_and_json() {
+    let plan = plan(format!("{}\n", "x".repeat(OVERSIZED)));
+    let export = Export {
+        path: "plan.json".to_owned(),
+        bytes: 1,
+        digest: Digest::compute(Domain::CliExport, b"plan"),
+    };
+    let preview = PlanPreview::new(&plan, export, &["release".to_owned()]);
+    let json = serde_json::to_value(&preview).expect("preview encodes");
+    let shown = &json["notes_preview"]["shown"][0];
+    assert_eq!(shown["text"].as_str().map(str::len), Some(NOTE_LINE_BYTES));
+    assert_eq!(shown["withheld_bytes"], OVERSIZED - NOTE_LINE_BYTES);
+    assert_eq!(json["notes_preview"]["withheld_lines"], 0);
+    assert!(preview.text().expect("text").len() < OVERSIZED / 10);
 }

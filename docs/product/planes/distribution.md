@@ -71,7 +71,9 @@ publish preview first retains the complete plan as
 then prints every authorizing field (identities, targets, each ordered
 operation, every observation), bounds only the curated note lines, names that
 file, and ends with the exact `--apply=KEY` command; that key remains the only
-accepted authority. `--json` carries the same identities and truncation facts.
+accepted authority. `--json` carries the same plan fields, with a bounded
+`notes_preview` (bytes, lines, clipped shown lines, withheld lines) in place of
+`notes_document`, plus the retained plan file.
 
 **Invariant —** One executor owns the ordered operation vocabulary. It records an
 operation's exact prior state before crossing the effect boundary and a typed
