@@ -43,6 +43,7 @@ mod schema;
 mod steering_index;
 mod steering_verification;
 mod task_creator_scope_migration;
+mod taste_index_migration;
 mod team_migration;
 mod thread;
 mod topology_revision_migration;
@@ -1414,6 +1415,7 @@ fn expected_tables() -> BTreeSet<String> {
         "finding_heads",
         "historical_command_receipts",
         "journal_schema",
+        "lane_seats",
         "lease_heads",
         "residency_head",
         "steering_heads",
@@ -1422,6 +1424,8 @@ fn expected_tables() -> BTreeSet<String> {
         "task_generations",
         "task_heads",
         "thread_index",
+        "taste_fires",
+        "taste_judgments",
         "transcript_source_heads",
         "trust_heads",
         "witness_heads",

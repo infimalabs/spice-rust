@@ -695,6 +695,52 @@ fn unavailable_mining_evidence_faults_without_filing_or_editing_policy() {
     resident.stop(&fixture);
 }
 
+#[test]
+fn taste_history_continuation_resumes_at_the_first_withheld_event() {
+    let fixture = Fixture::new();
+    seed_fires(&fixture);
+    let resident = Resident::start(&fixture);
+
+    let first = json_reply::<serde_json::Value>(
+        &fixture.invoke(&["--json", "taste", "--name", "zeta", "--limit", "1"]),
+    )
+    .body;
+    let first_row = first["history"]["rows"][0].clone();
+    let continuation = first["history"]["omission"]["continuation"]
+        .as_array()
+        .expect("partial taste history names a command")
+        .iter()
+        .map(|word| word.as_str().expect("continuation word").to_owned())
+        .collect::<Vec<_>>();
+    let cursor = continuation
+        .windows(2)
+        .find_map(|words| (words[0] == "--after").then_some(words[1].as_str()))
+        .expect("continuation carries a taste cursor");
+    assert_eq!(cursor.split('/').count(), 3, "{cursor}");
+
+    let mut arguments = vec!["--json".to_owned()];
+    arguments.extend(continuation);
+    let references = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    let second = json_reply::<serde_json::Value>(&fixture.invoke(&references)).body;
+    assert_ne!(second["history"]["rows"][0], first_row);
+    assert_eq!(second["history"]["omission"]["shown"], 1);
+    let second_row = second["history"]["rows"][0].clone();
+    let continuation = second["history"]["omission"]["continuation"]
+        .as_array()
+        .expect("second partial page names a command")
+        .iter()
+        .map(|word| word.as_str().expect("continuation word").to_owned());
+    let mut arguments = vec!["--json".to_owned()];
+    arguments.extend(continuation);
+    let references = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    let third = json_reply::<serde_json::Value>(&fixture.invoke(&references)).body;
+    assert_ne!(third["history"]["rows"][0], first_row);
+    assert_ne!(third["history"]["rows"][0], second_row);
+    assert!(third["history"]["omission"].is_null());
+
+    resident.stop(&fixture);
+}
+
 fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     assert_eq!(report["provenance"]["source"], "tracked");
     assert_eq!(report["provenance"]["present"], true);

@@ -21,6 +21,7 @@ mod steering_identity;
 mod steering_microseconds;
 mod task_allocation;
 mod task_creator_scope;
+mod taste_index;
 mod team;
 mod topology_revision;
 mod transcript_session_sources;
@@ -638,6 +639,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (29, MigrationStep::Rust(speech_playback::migrate)),
     (30, MigrationStep::Rust(transcript_session_sources::migrate)),
     (31, MigrationStep::Rust(rtk_hook_state::migrate)),
+    (32, MigrationStep::Rust(taste_index::migrate)),
 ];
 
 /// Schema 27 to 28: task generations and claim acknowledgements.
@@ -1017,6 +1019,28 @@ CREATE TABLE cursor_head (
     CHECK (wake IS NULL OR (seq IS NOT NULL AND wake <= seq))
 ) STRICT;
 
+CREATE TABLE taste_fires (
+    seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq),
+    taste TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+    UNIQUE(taste, ordinal)
+) STRICT;
+CREATE INDEX taste_fires_taste_seq ON taste_fires(taste, seq DESC);
+CREATE TABLE taste_judgments (
+    seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq),
+    taste TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+    confirmed INTEGER NOT NULL CHECK (confirmed >= 0),
+    cleared INTEGER NOT NULL CHECK (cleared >= 0),
+    UNIQUE(taste, ordinal)
+) STRICT;
+CREATE INDEX taste_judgments_taste_seq ON taste_judgments(taste, seq DESC);
+CREATE TABLE lane_seats (
+    lane TEXT PRIMARY KEY,
+    vendor TEXT NOT NULL,
+    seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
+) STRICT;
+
 CREATE TRIGGER cursor_head_monotone
 BEFORE UPDATE ON cursor_head
 WHEN (OLD.seq IS NOT NULL AND (NEW.seq IS NULL OR NEW.seq < OLD.seq))
@@ -1025,8 +1049,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 32, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 33, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 32;
+PRAGMA user_version = 33;
 "#;

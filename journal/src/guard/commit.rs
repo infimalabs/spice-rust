@@ -486,7 +486,7 @@ fn insert_facts(
     write: &JournalWrite,
     prepared: &[PreparedFact],
 ) -> Result<(), CommitError> {
-    for fact in prepared {
+    for (fact, proposed) in prepared.iter().zip(&write.facts) {
         transaction
             .execute(
                 "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, \
@@ -503,6 +503,7 @@ fn insert_facts(
                 ],
             )
             .map_err(sqlite_fault)?;
+        crate::taste_index::record(transaction, &proposed.fact, fact.seq).map_err(sqlite_fault)?;
         insert_thread_index(transaction, fact.seq, fact.cause, write.origin.as_str())?;
     }
     Ok(())

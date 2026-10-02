@@ -7,8 +7,7 @@ use serde::Serialize;
 use spice::config::LoadError;
 use spice::repository::Repository;
 use wire::body::{
-    LaneSeated, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudged,
-    TasteReminded,
+    TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudged, TasteReminded,
 };
 use wire::intent::{CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
@@ -158,14 +157,12 @@ struct TasteDefinition {
     scopes: gate::ScopeSelector,
 }
 
-/// Every tracked taste with its complete recent evidence, from one snapshot.
-///
-/// `spice taste` projects this onto bounded pages; curation proposals cite
-/// it whole.
+/// Tracked taste rows and only the evidence frontier this request can render.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TasteSnapshot {
     digest: Digest,
     provenance: TasteProvenance,
+    horizon: Seq,
     tastes: Vec<TasteRow>,
 }
 
@@ -188,7 +185,51 @@ struct TasteRow {
     fires: Vec<TasteFire>,
     vendors: Vec<VendorTally>,
     recurrence: Vec<Recurrence>,
+    confirmed: usize,
+    cleared: usize,
     judgments: Vec<TasteJudgment>,
+    history_population: usize,
+    #[serde(skip)]
+    history_start: Option<HistoryCursor>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HistoryCursor {
+    horizon: Seq,
+    position: Seq,
+    kind: HistoryKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryKind {
+    Fire,
+    Judgment,
+}
+
+impl HistoryCursor {
+    fn parse(value: &str) -> Option<Self> {
+        let mut fields = value.split('/');
+        let horizon = Seq::new(fields.next()?.parse().ok()?)?;
+        let position = Seq::new(fields.next()?.parse().ok()?)?;
+        let kind = match fields.next()? {
+            "fire" => HistoryKind::Fire,
+            "judgment" => HistoryKind::Judgment,
+            _ => return None,
+        };
+        fields.next().is_none().then_some(Self {
+            horizon,
+            position,
+            kind,
+        })
+    }
+
+    fn key(self) -> String {
+        let kind = match self.kind {
+            HistoryKind::Fire => "fire",
+            HistoryKind::Judgment => "judgment",
+        };
+        format!("{}/{}/{kind}", self.horizon, self.position)
+    }
 }
 
 /// One reminder this taste opened, with the standing of its stable directive.
@@ -207,7 +248,6 @@ struct TasteFire {
 }
 
 struct FireEvidence {
-    taste: String,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     compaction: u64,
@@ -303,7 +343,38 @@ pub(crate) fn report(
             );
         }
     };
-    match snapshot::<view::TasteView>(contract, configuration) {
+    let query = match name.as_ref() {
+        None => SnapshotQuery::Summary,
+        Some(name) => {
+            let after = if let Some(value) = page.after() {
+                let Some(cursor) = HistoryCursor::parse(value) else {
+                    return Outcome::Refusal(
+                        page.cursor_refusal("HORIZON/POSITION/fire or HORIZON/POSITION/judgment"),
+                    );
+                };
+                Some(cursor)
+            } else {
+                None
+            };
+            if page.retain() > journal::MAX_RETAINED_FACT_PAGE_ROWS {
+                return refusal(
+                    "taste::bound-exceeded",
+                    Some(format!(
+                        "--limit at most {}",
+                        journal::MAX_RETAINED_FACT_PAGE_ROWS - 1
+                    )),
+                    Some(page.limits().rows.to_string()),
+                    "lower --limit for a bounded taste history read",
+                );
+            }
+            SnapshotQuery::History {
+                name,
+                after,
+                unique_limit: page.retain(),
+            }
+        }
+    };
+    match snapshot::<view::TasteView>(contract, configuration, query) {
         Ok((_, reply)) => match view::project(reply.body, page, name.as_ref()) {
             Ok(body) => Outcome::Reply(Reply {
                 position: reply.position,
@@ -402,10 +473,11 @@ pub(crate) fn drop(
         Ok(origin) => origin,
         Err(outcome) => return retag(outcome),
     };
-    let (repository, reply) = match snapshot::<TaskAnswer>(contract, configuration) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
+    let (repository, reply) =
+        match snapshot::<TaskAnswer>(contract, configuration, SnapshotQuery::Curation(&name)) {
+            Ok(snapshot) => snapshot,
+            Err(outcome) => return outcome,
+        };
     let Some(row) = reply.body.tastes.iter().find(|row| row.name == name) else {
         return refusal(
             "taste::unknown",
@@ -513,9 +585,34 @@ fn render_scopes(scopes: &gate::ScopeSelector) -> String {
     format!("{{ {entries} }}")
 }
 
+const RECENT_JUDGMENTS: usize = 12;
+
+enum SnapshotQuery<'a> {
+    Summary,
+    History {
+        name: &'a Name,
+        after: Option<HistoryCursor>,
+        unique_limit: usize,
+    },
+    Curation(&'a Name),
+}
+
+enum SnapshotReadError {
+    Journal(journal::GuardError),
+    Evidence(EvidenceError),
+    CursorMissing,
+}
+
+impl From<journal::GuardError> for SnapshotReadError {
+    fn from(error: journal::GuardError) -> Self {
+        Self::Journal(error)
+    }
+}
+
 fn snapshot<B>(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    query: SnapshotQuery<'_>,
 ) -> Result<(Repository, Reply<TasteSnapshot>), Outcome<B>> {
     let repository = current_repository()?;
     let state = repository
@@ -531,15 +628,65 @@ fn snapshot<B>(
             error.to_string(),
         )
     })?;
-    let (residency, cursor, facts) = reader
-        .read(|read| Ok((read.residency_head()?, read.cursor()?, report_facts(read)?)))
-        .map_err(|error| {
-            fault(
+    let read = reader.read_with(|read| {
+        let residency = read.residency_head()?;
+        let cursor = read.cursor()?.ok_or(SnapshotReadError::CursorMissing)?;
+        let horizon = match query {
+            SnapshotQuery::History {
+                after: Some(after), ..
+            } => after.horizon,
+            SnapshotQuery::Summary
+            | SnapshotQuery::History { after: None, .. }
+            | SnapshotQuery::Curation(_) => cursor,
+        };
+        let tastes = match query {
+            SnapshotQuery::Summary => surface
+                .tastes
+                .iter()
+                .map(|taste| summary_row(read, taste, horizon))
+                .collect::<Result<Vec<_>, _>>()?,
+            SnapshotQuery::History {
+                name,
+                after,
+                unique_limit,
+            } => surface
+                .tastes
+                .iter()
+                .filter(|taste| taste.name == *name)
+                .map(|taste| history_row(read, taste, horizon, after, unique_limit))
+                .collect::<Result<Vec<_>, _>>()?,
+            SnapshotQuery::Curation(name) => surface
+                .tastes
+                .iter()
+                .filter(|taste| taste.name == *name)
+                .map(|taste| {
+                    history_row(read, taste, horizon, None, RECENT_FIRES + RECENT_JUDGMENTS)
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        Ok::<_, SnapshotReadError>((residency, cursor, horizon, tastes))
+    });
+    let (residency, cursor, horizon, tastes) = match read {
+        Ok(answer) => answer,
+        Err(journal::ReadError::Journal(error))
+        | Err(journal::ReadError::Answer(SnapshotReadError::Journal(error))) => {
+            return Err(fault(
                 FaultClass::Store,
                 "taste::journal-unreadable",
                 error.to_string(),
-            )
-        })?;
+            ));
+        }
+        Err(journal::ReadError::Answer(SnapshotReadError::Evidence(error))) => {
+            return Err(evidence_failure(error));
+        }
+        Err(journal::ReadError::Answer(SnapshotReadError::CursorMissing)) => {
+            return Err(fault(
+                FaultClass::Store,
+                "taste::cursor-missing",
+                "the authenticated resident has no durable journal position".to_owned(),
+            ));
+        }
+    };
     let Some(residency) = residency else {
         return Err(fault(
             FaultClass::Store,
@@ -555,26 +702,6 @@ fn snapshot<B>(
             "reconnect through the current resident discovery and retry",
         ));
     }
-    let Some(cursor) = cursor else {
-        return Err(fault(
-            FaultClass::Store,
-            "taste::cursor-missing",
-            "the authenticated resident has no durable journal position".to_owned(),
-        ));
-    };
-    let judgments = collect_judgments(&facts);
-    // One snapshot answers the whole view: steering standing, lane seating, and
-    // reminders are all read from these same facts, so no two parts of the row
-    // can describe different moments.
-    let ledger = steer::Ledger::from_facts(&facts).map_err(|error| {
-        fault(
-            FaultClass::Store,
-            "taste::steering-invalid",
-            error.to_string(),
-        )
-    })?;
-    let seating = lane_seating(&facts);
-    let fires = collect_fires(&facts, &ledger, &seating).map_err(evidence_failure)?;
     let current = Surface::load(&repository).map_err(|error| load_failure(&error))?;
     if current != surface {
         return Err(refusal(
@@ -584,30 +711,10 @@ fn snapshot<B>(
             "retry against the current tracked taste configuration",
         ));
     }
-    let tastes = surface
-        .tastes
-        .iter()
-        .map(|taste| {
-            let fires = fires.get(taste.name.as_str()).cloned().unwrap_or_default();
-            TasteRow {
-                name: taste.name.clone(),
-                words: taste.words.clone(),
-                message: taste.message.clone(),
-                enabled: taste.enabled,
-                scopes: taste.scopes.clone(),
-                vendors: tally(&fires),
-                recurrence: recurrence(&fires),
-                fires,
-                judgments: judgments
-                    .get(taste.name.as_str())
-                    .cloned()
-                    .unwrap_or_default(),
-            }
-        })
-        .collect();
     let report = TasteSnapshot {
         digest: surface.digest.clone(),
         provenance: surface.provenance(),
+        horizon,
         tastes,
     };
     Ok((
@@ -619,78 +726,188 @@ fn snapshot<B>(
     ))
 }
 
-/// The kinds the report reads: steering authority, every judgment
-/// spelling, and lane seating.
-fn report_kinds() -> Vec<wire::FactKind> {
-    let mut kinds = wire::FactKind::STEERING_AUTHORITY.to_vec();
-    kinds.extend([
-        wire::FactKind::TasteConfirmed,
-        wire::FactKind::TasteCleared,
-        wire::FactKind::LaneSeated,
-    ]);
-    kinds
-}
-
-/// Every report fact inside one guarded read, paged to its end, rather than
-/// the whole journal those facts sit in.
-fn report_facts(
+fn summary_row(
     read: &journal::JournalRead<'_>,
-) -> Result<Vec<wire::Envelope<wire::AnyFact>>, journal::GuardError> {
-    let kinds = report_kinds();
-    let mut facts = Vec::new();
-    let mut after = None;
-    loop {
-        let page =
-            read.selected_fact_page(&kinds, after, None, journal::FactReadBudget::RETAINED)?;
-        facts.extend(page.rows);
-        let Some(continuation) = page.continuation else {
-            return Ok(facts);
-        };
-        after = Some(continuation);
+    taste: &TasteDefinition,
+    horizon: Seq,
+) -> Result<TasteRow, SnapshotReadError> {
+    let evidence = read.taste_evidence_summary(taste.name.as_str(), horizon, RECENT_FIRES)?;
+    let fires = evidence
+        .fires
+        .iter()
+        .map(|envelope| indexed_fire(read, envelope))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(taste_row(
+        taste,
+        fires,
+        evidence.confirmed,
+        evidence.cleared,
+        Vec::new(),
+        0,
+        None,
+    ))
+}
+
+fn history_row(
+    read: &journal::JournalRead<'_>,
+    taste: &TasteDefinition,
+    horizon: Seq,
+    after: Option<HistoryCursor>,
+    unique_limit: usize,
+) -> Result<TasteRow, SnapshotReadError> {
+    let through = after.map_or(horizon, |cursor| cursor.position);
+    let evidence = read.taste_evidence_page(taste.name.as_str(), horizon, through, unique_limit)?;
+    let mut fires = Vec::new();
+    let mut judgments = Vec::new();
+    for row in evidence.rows {
+        if row.fire {
+            fires.push(indexed_fire(read, &row.envelope)?);
+        }
+        if row.judgment {
+            let (_, judgment) = indexed_judgment(&row.envelope).ok_or_else(|| {
+                SnapshotReadError::Journal(journal::GuardError::Invalid(format!(
+                    "taste judgment index at {} names {}",
+                    row.envelope.seq,
+                    row.envelope.fact.kind()
+                )))
+            })?;
+            judgments.push(judgment);
+        }
+    }
+    Ok(taste_row(
+        taste,
+        fires,
+        evidence.confirmed,
+        evidence.cleared,
+        judgments,
+        evidence.population,
+        after,
+    ))
+}
+
+fn taste_row(
+    taste: &TasteDefinition,
+    fires: Vec<TasteFire>,
+    confirmed: usize,
+    cleared: usize,
+    judgments: Vec<TasteJudgment>,
+    history_population: usize,
+    history_start: Option<HistoryCursor>,
+) -> TasteRow {
+    TasteRow {
+        name: taste.name.clone(),
+        words: taste.words.clone(),
+        message: taste.message.clone(),
+        enabled: taste.enabled,
+        scopes: taste.scopes.clone(),
+        vendors: tally(&fires),
+        recurrence: recurrence(&fires),
+        fires,
+        confirmed,
+        cleared,
+        judgments,
+        history_population,
+        history_start,
     }
 }
 
-fn collect_judgments(
-    facts: &[wire::Envelope<wire::AnyFact>],
-) -> BTreeMap<String, Vec<TasteJudgment>> {
-    let mut judgments = BTreeMap::<String, Vec<TasteJudgment>>::new();
-    for envelope in facts {
-        let (taste, judgment) = if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
-            (
-                body.taste,
-                historical_judgment(envelope, Verdict::Confirmed, body.locus),
-            )
-        } else if let Some(body) = envelope.fact.read::<TasteCleared>() {
-            (
-                body.taste,
-                historical_judgment(envelope, Verdict::Cleared, body.locus),
-            )
-        } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
-            (
-                body.taste,
-                TasteJudgment {
-                    position: envelope.seq,
-                    at: envelope.at,
-                    verdict: match body.decision {
-                        TasteDecision::Confirmed { .. } => Verdict::Confirmed,
-                        TasteDecision::Cleared => Verdict::Cleared,
-                    },
-                    locus: locus_text(&body.locus),
-                    content: Some(body.content),
-                    bag: Some(body.bag),
-                    trigger: Some(body.trigger),
-                    vendor: Some(body.vendor),
-                    source: Some(body.source),
-                    compaction: Some(body.compaction),
-                    attempts: body.attempts,
-                },
-            )
-        } else {
-            continue;
-        };
-        judgments.entry(taste).or_default().push(judgment);
+fn indexed_fire(
+    read: &journal::JournalRead<'_>,
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Result<TasteFire, SnapshotReadError> {
+    let evidence = fire_evidence(envelope).ok_or_else(|| {
+        SnapshotReadError::Journal(journal::GuardError::Invalid(format!(
+            "taste fire index at {} names {}",
+            envelope.seq,
+            envelope.fact.kind()
+        )))
+    })?;
+    let vendor = read
+        .taste_lane_vendor(evidence.lane)?
+        .ok_or(SnapshotReadError::Evidence(EvidenceError::LaneUnseated(
+            evidence.lane,
+        )))?;
+    let standing = read
+        .steering_head(evidence.directive)?
+        .ok_or(SnapshotReadError::Evidence(
+            EvidenceError::DirectiveMissing(evidence.directive),
+        ))?
+        .body()
+        .disposition;
+    Ok(TasteFire {
+        position: envelope.seq,
+        at: envelope.at,
+        lane: evidence.lane,
+        vendor,
+        occupant: evidence.occupant,
+        compaction: evidence.compaction,
+        content: evidence.content,
+        key: evidence.key,
+        standing,
+        locus: locus_text(&evidence.locus),
+    })
+}
+
+fn fire_evidence(envelope: &wire::Envelope<wire::AnyFact>) -> Option<FireEvidence> {
+    if let Some(body) = envelope.fact.read::<TasteReminded>() {
+        return Some(FireEvidence {
+            lane: body.lane,
+            occupant: body.occupant,
+            compaction: body.compaction,
+            content: body.content,
+            directive: body.directive,
+            key: body.key,
+            locus: body.locus,
+        });
     }
-    judgments
+    let body = envelope.fact.read::<TasteJudged>()?;
+    let TasteDecision::Confirmed { directive, key, .. } = body.decision else {
+        return None;
+    };
+    Some(FireEvidence {
+        lane: body.lane,
+        occupant: body.occupant,
+        compaction: body.compaction,
+        content: body.content,
+        directive,
+        key,
+        locus: body.locus,
+    })
+}
+
+fn indexed_judgment(envelope: &wire::Envelope<wire::AnyFact>) -> Option<(String, TasteJudgment)> {
+    if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
+        return Some((
+            body.taste,
+            historical_judgment(envelope, Verdict::Confirmed, body.locus),
+        ));
+    }
+    if let Some(body) = envelope.fact.read::<TasteCleared>() {
+        return Some((
+            body.taste,
+            historical_judgment(envelope, Verdict::Cleared, body.locus),
+        ));
+    }
+    let body = envelope.fact.read::<TasteJudged>()?;
+    Some((
+        body.taste,
+        TasteJudgment {
+            position: envelope.seq,
+            at: envelope.at,
+            verdict: match body.decision {
+                TasteDecision::Confirmed { .. } => Verdict::Confirmed,
+                TasteDecision::Cleared => Verdict::Cleared,
+            },
+            locus: locus_text(&body.locus),
+            content: Some(body.content),
+            bag: Some(body.bag),
+            trigger: Some(body.trigger),
+            vendor: Some(body.vendor),
+            source: Some(body.source),
+            compaction: Some(body.compaction),
+            attempts: body.attempts,
+        },
+    ))
 }
 
 fn historical_judgment(
@@ -711,93 +928,6 @@ fn historical_judgment(
         compaction: None,
         attempts: Vec::new(),
     }
-}
-
-/// Every reminder in the snapshot, grouped by taste and newest first.
-fn collect_fires(
-    facts: &[wire::Envelope<wire::AnyFact>],
-    ledger: &steer::Ledger,
-    seating: &BTreeMap<CanonicalUuid, Name>,
-) -> Result<BTreeMap<String, Vec<TasteFire>>, EvidenceError> {
-    let mut fires = BTreeMap::<String, Vec<TasteFire>>::new();
-    for envelope in facts {
-        let evidence = if let Some(body) = envelope.fact.read::<TasteReminded>() {
-            FireEvidence {
-                taste: body.taste,
-                lane: body.lane,
-                occupant: body.occupant,
-                compaction: body.compaction,
-                content: body.content,
-                directive: body.directive,
-                key: body.key,
-                locus: body.locus,
-            }
-        } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
-            let TasteDecision::Confirmed { directive, key, .. } = body.decision else {
-                continue;
-            };
-            FireEvidence {
-                taste: body.taste,
-                lane: body.lane,
-                occupant: body.occupant,
-                compaction: body.compaction,
-                content: body.content,
-                directive,
-                key,
-                locus: body.locus,
-            }
-        } else {
-            continue;
-        };
-        let vendor = seating
-            .get(&evidence.lane)
-            .ok_or(EvidenceError::LaneUnseated(evidence.lane))?
-            .clone();
-        // Escalation never replaces the reminder's identity, so this directive
-        // carries its current disposition directly. Reading it here counts one
-        // publication exactly once regardless of presentation stage.
-        let standing = ledger
-            .directive(evidence.directive)
-            .ok_or(EvidenceError::DirectiveMissing(evidence.directive))?
-            .disposition();
-        fires.entry(evidence.taste).or_default().push(TasteFire {
-            position: envelope.seq,
-            at: envelope.at,
-            lane: evidence.lane,
-            vendor,
-            occupant: evidence.occupant,
-            compaction: evidence.compaction,
-            content: evidence.content,
-            key: evidence.key,
-            standing,
-            locus: locus_text(&evidence.locus),
-        });
-    }
-    for rows in fires.values_mut() {
-        rows.sort_by_key(|row| std::cmp::Reverse(row.position));
-        rows.truncate(RECENT_FIRES);
-    }
-    Ok(fires)
-}
-
-/// The vendor each lane was seated with.
-///
-/// Attribution reads seating rather than the occupant a fire happened to name,
-/// because the durable lane laws make the seat the stable answer: a lane is
-/// seated exactly once, and a worktree transfer must retain the same vendor.
-/// Every renewal therefore attributes to the vendor the lane has always had,
-/// instead of splitting one vendor into a bucket per occupant generation. A
-/// lane the stream never seated has no vendor at all, and the report refuses
-/// rather than inventing a bucket that sums with a real one — a refusal the
-/// fire join raises, since absence is only knowable once a reminder names it.
-fn lane_seating(facts: &[wire::Envelope<wire::AnyFact>]) -> BTreeMap<CanonicalUuid, Name> {
-    let mut seating = BTreeMap::<CanonicalUuid, Name>::new();
-    for envelope in facts {
-        if let Some(body) = envelope.fact.read::<LaneSeated>() {
-            seating.insert(body.lane, body.vendor);
-        }
-    }
-    seating
 }
 
 /// Fires and answers per vendor, over the fires the row carries.
