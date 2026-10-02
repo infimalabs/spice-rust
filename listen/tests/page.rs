@@ -5,19 +5,20 @@ use std::time::Duration;
 
 use listen::{
     Dialect, EventKind, Observation, SurfaceEvent, TailBudget, TranscriptContinuation,
-    TranscriptFilter, TranscriptPage, TranscriptPageRequest, transcript_page,
+    TranscriptFilter, TranscriptPage, TranscriptPageRequest, TranscriptPageRow,
+    TranscriptPageStart, transcript_page,
 };
 use tape::Tape;
-use wire::output::{Limits, Request, Surface};
+use wire::output::{Exhausted, Limits, Request, Surface};
 
 const PAGE_SURFACE: Surface = Surface::new(
     Limits {
-        rows: 2,
+        rows: 3,
         bytes: 16 * 1024,
         text: 4,
     },
     Limits {
-        rows: 8,
+        rows: 9,
         bytes: 64 * 1024,
         text: 1024,
     },
@@ -59,7 +60,10 @@ fn request(before: Option<listen::TranscriptCursor>) -> TranscriptPageRequest {
         output: PAGE_SURFACE
             .budget(Request::default())
             .expect("fixture output budget is valid"),
-        before,
+        start: before.map_or(
+            TranscriptPageStart::Current { expected: None },
+            TranscriptPageStart::Before,
+        ),
         filter: TranscriptFilter::default(),
     }
 }
@@ -83,9 +87,13 @@ fn append(tape: &Tape, bytes: &[u8]) {
 }
 
 fn prose_rows(page: &TranscriptPage) -> Vec<(&str, usize)> {
-    page.records
+    page.rows
         .rows
         .iter()
+        .filter_map(|row| match row {
+            TranscriptPageRow::Record { record } => Some(record),
+            TranscriptPageRow::Status { .. } => None,
+        })
         .flat_map(|record| &record.observations)
         .filter_map(|visible| match &visible.observation {
             Observation::Event {
@@ -110,14 +118,16 @@ fn pages_are_newest_first_clip_text_and_resume_without_duplicates() {
         .expect("first page reads");
     assert_eq!(prose_rows(&first), vec![("four", 2), ("thir", 1)]);
     let continuation = match &first
-        .records
+        .rows
         .omission
         .as_ref()
         .expect("older decoded rows are accounted")
         .continuation
     {
         TranscriptContinuation::Cursor { cursor } => cursor.clone(),
-        TranscriptContinuation::Export { .. } => panic!("ordinary row must be resumable"),
+        TranscriptContinuation::Current { .. } | TranscriptContinuation::Export { .. } => {
+            panic!("ordinary row must be resumable")
+        }
     };
     assert_eq!(continuation.to_string().parse(), Ok(continuation.clone()));
 
@@ -129,7 +139,7 @@ fn pages_are_newest_first_clip_text_and_resume_without_duplicates() {
     )
     .expect("older page resumes");
     assert_eq!(prose_rows(&second), vec![("seco", 2), ("firs", 1)]);
-    assert!(second.records.omission.is_none());
+    assert!(second.rows.omission.is_none());
     assert!(second.history.is_none());
     let other_path = scratch.path().join("lane-b/omp");
     let other = Tape::open(&other_path).expect("second generation opens");
@@ -167,9 +177,18 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
         },
     )
     .expect("filtered page reads");
-    assert_eq!(filtered.records.rows.len(), 1);
-    assert!(filtered.records.rows.iter().all(|record| {
-        record.observations.iter().all(|visible| {
+    assert_eq!(
+        filtered
+            .rows
+            .rows
+            .iter()
+            .filter(|row| matches!(row, TranscriptPageRow::Record { .. }))
+            .count(),
+        1
+    );
+    assert!(filtered.rows.rows.iter().all(|row| match row {
+        TranscriptPageRow::Status { .. } => true,
+        TranscriptPageRow::Record { record } => record.observations.iter().all(|visible| {
             matches!(
                 visible.observation,
                 Observation::Event {
@@ -177,7 +196,7 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
                     ..
                 }
             )
-        })
+        }),
     }));
 
     let media = (0..8)
@@ -222,37 +241,35 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
             output: tiny
                 .budget(Request::default())
                 .expect("tiny output budget is valid"),
-            before: None,
+            start: TranscriptPageStart::Current { expected: None },
             filter: TranscriptFilter::only([EventKind::Tool]),
         },
     )
     .expect("oversized presentation is accounted");
-    assert!(oversized.records.rows.is_empty());
+    assert_eq!(oversized.rows.rows.len(), 1);
+    assert!(matches!(
+        &oversized.rows.rows[0],
+        TranscriptPageRow::Status { status }
+            if status.canaries.contains(&EventKind::Reasoning)
+    ));
     assert!(
         matches!(
             oversized
-                .records
+                .rows
                 .omission
                 .as_ref()
                 .map(|omission| &omission.continuation),
             Some(TranscriptContinuation::Export { spans }) if !spans.is_empty()
         ),
         "{:?}",
-        oversized.records.omission,
+        oversized.rows.omission,
     );
-    assert!(oversized.canaries.iter().any(|observation| matches!(
-        observation,
-        Observation::Canary {
-            expected: EventKind::Reasoning,
-            ..
-        }
-    )));
-    assert!(oversized.records.omission.as_ref().is_some_and(|omission| {
-        omission.population == 1 && omission.shown == 0 && omission.withheld == 1
+    assert!(oversized.rows.omission.as_ref().is_some_and(|omission| {
+        omission.population == 2 && omission.shown == 1 && omission.withheld == 1
     }));
 
     let tool = oversized
-        .records
+        .rows
         .omission
         .as_ref()
         .expect("oversized tool is omitted");
@@ -281,7 +298,7 @@ fn source_window_reports_exact_older_bytes_and_continues_before_it() {
         TranscriptPageRequest {
             scan: scan_budget(256),
             output,
-            before: None,
+            start: TranscriptPageStart::Current { expected: None },
             filter: TranscriptFilter::default(),
         },
     )
@@ -289,10 +306,13 @@ fn source_window_reports_exact_older_bytes_and_continues_before_it() {
     let history = first.history.expect("older source bytes are explicit");
     assert!(history.withheld_source_bytes > 0);
     let newest = first
-        .records
+        .rows
         .rows
         .iter()
-        .map(|record| record.end.clone())
+        .filter_map(|row| match row {
+            TranscriptPageRow::Record { record } => Some(record.end.clone()),
+            TranscriptPageRow::Status { .. } => None,
+        })
         .collect::<Vec<_>>();
 
     let older = transcript_page(
@@ -302,19 +322,160 @@ fn source_window_reports_exact_older_bytes_and_continues_before_it() {
         TranscriptPageRequest {
             scan: scan_budget(256),
             output,
-            before: Some(history.continuation),
+            start: TranscriptPageStart::Before(history.continuation),
             filter: TranscriptFilter::default(),
         },
     )
     .expect("older source window reads");
     assert!(
         older
-            .records
+            .rows
             .rows
             .iter()
+            .filter_map(|row| match row {
+                TranscriptPageRow::Record { record } => Some(record),
+                TranscriptPageRow::Status { .. } => None,
+            })
             .all(|record| !newest.contains(&record.end))
     );
 }
+#[test]
+fn status_consumes_the_same_row_and_byte_budget_as_records() {
+    let scratch = Scratch::new("status-budget");
+    let tape_path = scratch.path().join("lane-a/omp");
+    let _tape = Tape::open(&tape_path).expect("fixture tape opens");
+    let surface = Surface::new(
+        Limits {
+            rows: 0,
+            bytes: 16 * 1024,
+            text: 32,
+        },
+        Limits {
+            rows: 1,
+            bytes: 16 * 1024,
+            text: 32,
+        },
+    );
+    let hidden = transcript_page(
+        &tape_path,
+        "lane-a",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            scan: scan_budget(64 * 1024),
+            output: surface
+                .budget(Request::default())
+                .expect("zero-row count budget is valid"),
+            start: TranscriptPageStart::Current { expected: None },
+            filter: TranscriptFilter::default(),
+        },
+    )
+    .expect("count-only page reads");
+    let omission = hidden
+        .rows
+        .omission
+        .as_ref()
+        .expect("status is withheld explicitly");
+    assert_eq!(
+        (omission.population, omission.shown, omission.withheld),
+        (1, 0, 1)
+    );
+    let source = match &omission.continuation {
+        TranscriptContinuation::Current { source } => source.clone(),
+        TranscriptContinuation::Cursor { .. } | TranscriptContinuation::Export { .. } => {
+            panic!("current status resumes against its observed generation")
+        }
+    };
+    let byte_surface = Surface::new(
+        Limits {
+            rows: 1,
+            bytes: 1,
+            text: 32,
+        },
+        Limits {
+            rows: 1,
+            bytes: 16 * 1024,
+            text: 32,
+        },
+    );
+    let byte_hidden = transcript_page(
+        &tape_path,
+        "lane-a",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            scan: scan_budget(64 * 1024),
+            output: byte_surface
+                .budget(Request::default())
+                .expect("one-byte count budget is valid"),
+            start: TranscriptPageStart::Current {
+                expected: Some(source.clone()),
+            },
+            filter: TranscriptFilter::default(),
+        },
+    )
+    .expect("byte-limited page reads");
+    let byte_omission = byte_hidden
+        .rows
+        .omission
+        .expect("status is withheld by the shared byte budget");
+    assert_eq!(byte_omission.exhausted, Exhausted::Bytes);
+    assert_eq!(byte_omission.shown_bytes, 0);
+    assert!(byte_omission.next_bytes > 1);
+
+    let shown = transcript_page(
+        &tape_path,
+        "lane-a",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            scan: scan_budget(64 * 1024),
+            output: surface
+                .budget(Request {
+                    rows: Some(1),
+                    bytes: None,
+                    text: None,
+                })
+                .expect("one status row is valid"),
+            start: TranscriptPageStart::Current {
+                expected: Some(source.clone()),
+            },
+            filter: TranscriptFilter::default(),
+        },
+    )
+    .expect("status continuation reads");
+    assert!(matches!(
+        shown.rows.rows.as_slice(),
+        [TranscriptPageRow::Status { status }] if status.canaries.len() == EventKind::ALL.len()
+    ));
+    assert!(shown.rows.omission.is_none());
+}
+
+#[test]
+fn current_window_refuses_another_tape_generation() {
+    let scratch = Scratch::new("current-generation");
+    let first_path = scratch.path().join("lane-a/omp");
+    let first = Tape::open(&first_path).expect("first generation opens");
+    let source = first.source_id().expect("first generation has identity");
+    let replacement_path = scratch.path().join("lane-b/omp");
+    let _replacement = Tape::open(&replacement_path).expect("replacement generation opens");
+
+    let stale = transcript_page(
+        &replacement_path,
+        "lane-b",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            scan: scan_budget(64 * 1024),
+            output: PAGE_SURFACE
+                .budget(Request::default())
+                .expect("fixture output budget is valid"),
+            start: TranscriptPageStart::Current {
+                expected: Some(source),
+            },
+            filter: TranscriptFilter::default(),
+        },
+    )
+    .expect_err("current continuation refuses another generation");
+    assert!(stale.to_string().contains("source changed"));
+}
+
 #[test]
 fn hard_scan_allowance_refuses_a_single_noisy_record() {
     let scratch = Scratch::new("source-limit");
