@@ -7,7 +7,7 @@
 //! against. `-` is refused rather than read as standard output: that spelling
 //! would turn the explicit export back into unbounded terminal output.
 
-use std::io::Write as _;
+use std::io::{self, Cursor, Read};
 use std::path::Path;
 
 use wire::output::Export;
@@ -21,6 +21,24 @@ use wire::{Digest, Domain, Refusal, RefusalDiagnostic};
 /// any write, sync, or rename failure; the destination is unchanged unless
 /// only the final directory sync failed.
 pub fn export(path: &Path, bytes: &[u8]) -> Result<Export, Refusal> {
+    export_reader(
+        path,
+        Cursor::new(bytes),
+        u64::try_from(bytes.len()).expect("an in-memory length fits u64"),
+    )
+}
+
+/// Stream exactly `expected_bytes` to `path` atomically and return its receipt.
+///
+/// # Errors
+///
+/// Refuses the same destinations and publication failures as [`export`], and
+/// refuses a reader that ends early or continues past the expected length.
+pub fn export_reader(
+    path: &Path,
+    mut reader: impl Read,
+    expected_bytes: u64,
+) -> Result<Export, Refusal> {
     if path == Path::new("-") {
         return Err(refusal(
             "output::export-stdout",
@@ -35,8 +53,30 @@ pub fn export(path: &Path, bytes: &[u8]) -> Result<Export, Refusal> {
             &error.to_string(),
         )
     })?;
+    let mut receipt = None;
     destination
-        .publish(|staged| staged.write_all(bytes))
+        .publish(|staged| {
+            let (bytes, digest) = if expected_bytes == 0 {
+                let mut extra = [0_u8; 1];
+                if reader.read(&mut extra)? != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "export reader exceeds its expected 0-byte length",
+                    ));
+                }
+                (0, Digest::compute(Domain::CliExport, &[]))
+            } else {
+                Digest::copy_reader(Domain::CliExport, &mut reader, staged, expected_bytes)?
+            };
+            if bytes != expected_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("export reader ended at {bytes} bytes; expected {expected_bytes}"),
+                ));
+            }
+            receipt = Some((bytes, digest));
+            Ok(())
+        })
         .map_err(|error| {
             refusal(
                 "output::export-write",
@@ -44,10 +84,11 @@ pub fn export(path: &Path, bytes: &[u8]) -> Result<Export, Refusal> {
                 &error.to_string(),
             )
         })?;
+    let (bytes, digest) = receipt.expect("successful publication measured its input");
     Ok(Export {
         path: destination.path().display().to_string(),
-        bytes: u64::try_from(bytes.len()).expect("an in-memory length fits u64"),
-        digest: Digest::compute(Domain::CliExport, bytes),
+        bytes,
+        digest,
     })
 }
 
@@ -85,6 +126,32 @@ mod tests {
             export(Path::new("-"), document).is_err(),
             "a complete export never streams to standard output"
         );
+        std::fs::remove_dir_all(&root).expect("fixture directory removes");
+    }
+
+    #[test]
+    fn a_streaming_export_requires_the_exact_declared_length() {
+        let root = std::env::temp_dir().join(format!("spice-stream-export-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("fixture directory");
+        let path = root.join("payload.bin");
+        std::fs::write(&path, b"previous").expect("fixture file");
+
+        let payload = b"\0streamed payload\xff";
+        let receipt = export_reader(&path, Cursor::new(payload), payload.len() as u64)
+            .expect("exact stream publishes");
+        assert_eq!(std::fs::read(&receipt.path).expect("read export"), payload);
+
+        for expected in [payload.len() as u64 - 1, payload.len() as u64 + 1] {
+            assert!(
+                export_reader(&path, Cursor::new(payload), expected).is_err(),
+                "length mismatch refuses"
+            );
+            assert_eq!(
+                std::fs::read(&path).expect("read preserved export"),
+                payload,
+                "a refused stream leaves the destination unchanged"
+            );
+        }
         std::fs::remove_dir_all(&root).expect("fixture directory removes");
     }
 }

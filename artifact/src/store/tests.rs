@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,6 +174,40 @@ fn caller_owned_bytes_publish_without_a_source_file() {
         fixture.store.show(&task, "A1").expect("show bytes").1,
         b"\x89PNG\r\n\x1a\n"
     );
+}
+
+#[test]
+fn verified_text_reader_preserves_a_scalar_split_across_digest_buffers() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-streamed-text");
+    let mut text = "a".repeat(64 * 1024 - 1);
+    text.push_str("¢🦀tail");
+    fixture
+        .store
+        .add_bytes(AddBytesRequest {
+            task: &task,
+            bytes: text.as_bytes(),
+            name: "large.txt",
+            media_type: Some(MediaType::TEXT_PLAIN),
+            retention: Retention::Permanent,
+            created_at: instant("2030-01-01T00:00:00.000Z"),
+        })
+        .expect("publish large text");
+
+    let mut payload = fixture
+        .store
+        .open_payload(&task, "A1")
+        .expect("streaming validation accepts split scalar");
+    assert_eq!(
+        payload
+            .window((64 * 1024 - 2) as u64, 11)
+            .expect("bounded window"),
+        "a¢🦀tail".as_bytes()
+    );
+    payload.rewind().expect("rewind payload");
+    let mut copied = Vec::new();
+    payload.read_to_end(&mut copied).expect("stream payload");
+    assert_eq!(copied, text.as_bytes());
 }
 
 #[test]

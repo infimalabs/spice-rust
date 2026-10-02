@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use artifact::{
-    AddRequest, Artifact, ArtifactAnswer, ArtifactContent, ErrorClass, Retention, Store,
+    AddRequest, Artifact, ArtifactAnswer, ArtifactContent, ArtifactReader, ErrorClass, Retention,
+    Store,
 };
 use spice::cli::Contract;
 use spice::config::LoadError;
@@ -416,11 +417,14 @@ fn show_answer(
     artifact_id: &str,
     window: Window<'_>,
 ) -> Result<ArtifactAnswer, Failure> {
-    let (artifact, bytes) = store.show(born, artifact_id).map_err(artifact_failure)?;
+    let mut payload = store
+        .open_payload(born, artifact_id)
+        .map_err(artifact_failure)?;
+    let artifact = payload.artifact().clone();
     let (offset, length) = match window {
         Window::Inspect { offset, length } => (offset, length),
         Window::Extract(output) => {
-            let export = extract(Path::new(output), &artifact, &bytes)?;
+            let export = extract(Path::new(output), &artifact, &mut payload)?;
             return Ok(ArtifactAnswer::Extracted {
                 task,
                 artifact,
@@ -428,6 +432,7 @@ fn show_answer(
             });
         }
     };
+    let payload_bytes = usize::try_from(artifact.bytes).expect("artifact byte bound fits usize");
     let (content, end) = match (artifact.media_type.is_text(), offset, length) {
         (false, None, None) => (
             ArtifactContent::Binary {
@@ -438,34 +443,41 @@ fn show_answer(
             None,
         ),
         (true, ..) => {
-            let text = std::str::from_utf8(&bytes).expect("store proved text UTF-8");
-            let (start, end) =
-                text_window(text, offset.unwrap_or(0), length.unwrap_or(PREVIEW_BYTES));
+            let (start, text, end) = text_window(
+                &mut payload,
+                payload_bytes,
+                offset.unwrap_or(0),
+                length.unwrap_or(PREVIEW_BYTES),
+            )?;
             (
                 ArtifactContent::Text {
                     offset: wide(start),
-                    text: text[start..end].to_owned(),
-                    remaining: wide(bytes.len() - end),
+                    text,
+                    remaining: wide(payload_bytes - end),
                 },
                 Some(end),
             )
         }
         (false, ..) => {
-            let start = offset.unwrap_or(0).min(bytes.len());
-            let end = start
-                .saturating_add(length.unwrap_or(PREVIEW_BYTES))
-                .min(bytes.len());
+            let start = offset.unwrap_or(0).min(payload_bytes);
+            let bytes = payload
+                .window(
+                    wide(start),
+                    length.unwrap_or(PREVIEW_BYTES).min(payload_bytes - start),
+                )
+                .map_err(artifact_failure)?;
+            let end = start + bytes.len();
             (
                 ArtifactContent::Bytes {
                     offset: wide(start),
-                    hex: hex(&bytes[start..end]),
-                    remaining: wide(bytes.len() - end),
+                    hex: hex(&bytes),
+                    remaining: wide(payload_bytes - end),
                 },
                 Some(end),
             )
         }
     };
-    let next = end.filter(|end| *end < bytes.len()).map(|end| {
+    let next = end.filter(|end| *end < payload_bytes).map(|end| {
         let mut arguments = vec![
             "artifact".to_owned(),
             "show".to_owned(),
@@ -504,17 +516,50 @@ fn count(matches: &clap::ArgMatches, flag: &str) -> Result<Option<usize>, Failur
         .transpose()
 }
 
-/// The text window from `offset` of at most `length` bytes, on character
-/// boundaries: a start inside a character moves to its end, and a window too
-/// short for the next character widens to hold it, so paging always advances.
-fn text_window(text: &str, offset: usize, length: usize) -> (usize, usize) {
-    let start = text.ceil_char_boundary(offset.min(text.len()));
-    let end = text.floor_char_boundary(start.saturating_add(length));
-    if end == start && start < text.len() {
-        (start, text.ceil_char_boundary(start + 1))
-    } else {
-        (start, end)
+/// Read one bounded text window on character boundaries. A start inside a
+/// character moves to its end, and a window too short for the next character
+/// widens to hold it, so paging always advances.
+fn text_window(
+    payload: &mut ArtifactReader,
+    payload_bytes: usize,
+    offset: usize,
+    length: usize,
+) -> Result<(usize, String, usize), Failure> {
+    let requested = offset.min(payload_bytes);
+    let mut probe = [0_u8; 4];
+    let probed = payload
+        .read_window(wide(requested), &mut probe)
+        .map_err(artifact_failure)?;
+    let skipped = probe[..probed]
+        .iter()
+        .take_while(|byte| (**byte & 0b1100_0000) == 0b1000_0000)
+        .count();
+    let start = requested + skipped;
+    let mut bytes = payload
+        .window(
+            wide(start),
+            length.saturating_add(3).min(payload_bytes - start),
+        )
+        .map_err(artifact_failure)?;
+    let limit = length.min(bytes.len());
+    let mut kept = limit;
+    if kept < bytes.len() {
+        while kept > 0 && (bytes[kept] & 0b1100_0000) == 0b1000_0000 {
+            kept -= 1;
+        }
     }
+    if kept == 0 && !bytes.is_empty() {
+        kept = match bytes[0] {
+            0x00..=0x7f => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => unreachable!("store proved a UTF-8 character boundary"),
+        };
+    }
+    bytes.truncate(kept);
+    let text = String::from_utf8(bytes).expect("store proved text UTF-8");
+    Ok((start, text, start + kept))
 }
 
 fn wide(length: usize) -> u64 {
@@ -594,26 +639,53 @@ fn page(
     Ok((bounded.rows, bounded.omission))
 }
 
-/// Write the proved payload to `output` and verify the written file against
-/// the artifact's retained digest.
-fn extract(output: &Path, artifact: &Artifact, bytes: &[u8]) -> Result<Export, Failure> {
-    let export = spice::export::export(output, bytes).map_err(Failure::Refusal)?;
-    let written = std::fs::read(&export.path).map_err(|error| {
+/// Stream the proved payload to `output`, then verify the published file
+/// against the artifact's retained digest without retaining either copy.
+fn extract(
+    output: &Path,
+    artifact: &Artifact,
+    payload: &mut ArtifactReader,
+) -> Result<Export, Failure> {
+    payload.rewind().map_err(artifact_failure)?;
+    let export =
+        spice::export::export_reader(output, payload, artifact.bytes).map_err(Failure::Refusal)?;
+    let written = std::fs::File::open(&export.path).map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
             "artifact::extract-unreadable",
             format!("{}: {error}", export.path),
         )
     })?;
-    let observed = wire::Digest::compute(wire::Domain::TaskArtifactPayload, &written);
-    if observed != artifact.digest || export.bytes != artifact.bytes {
+    let observed = wire::Digest::compute_reader(
+        wire::Domain::TaskArtifactPayload,
+        written,
+        artifact.bytes.max(1),
+    )
+    .map_err(|error| {
+        Failure::fault(
+            if error.kind() == std::io::ErrorKind::InvalidData {
+                FaultClass::Store
+            } else {
+                FaultClass::Environment
+            },
+            if error.kind() == std::io::ErrorKind::InvalidData {
+                "artifact::extract-mismatch"
+            } else {
+                "artifact::extract-unreadable"
+            },
+            format!("{}: {error}", export.path),
+        )
+    })?;
+    if observed.0 != artifact.bytes
+        || observed.1 != artifact.digest
+        || export.bytes != artifact.bytes
+    {
         return Err(Failure::fault(
             FaultClass::Store,
             "artifact::extract-mismatch",
             format!(
-                "{} holds {} bytes with digest {observed}; artifact {} retains {} bytes with \
-                 digest {}",
-                export.path, export.bytes, artifact.id, artifact.bytes, artifact.digest
+                "{} holds {} bytes with digest {}; artifact {} retains {} bytes with digest {}",
+                export.path, observed.0, observed.1, artifact.id, artifact.bytes, artifact.digest
             ),
         ));
     }

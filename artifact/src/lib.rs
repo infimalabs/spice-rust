@@ -10,6 +10,6 @@ pub use model::{
     Retention, VocabularyError,
 };
 pub use store::{
-    AddBytesRequest, AddRequest, BackupGeneration, BackupMember, BackupSource, Error, ErrorClass,
-    Replacement, Store,
+    AddBytesRequest, AddRequest, ArtifactReader, BackupGeneration, BackupMember, BackupSource,
+    Error, ErrorClass, Replacement, Store,
 };
