@@ -145,7 +145,7 @@ fn pages_are_newest_first_clip_text_and_resume_without_duplicates() {
 }
 
 #[test]
-fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
+fn filters_run_before_presentation_admission() {
     let scratch = Scratch::new("filter-export");
     let tape_path = scratch.path().join("lane-a/omp");
     let tape = Tape::open(&tape_path).expect("fixture tape opens");
@@ -179,6 +179,15 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
             )
         })
     }));
+}
+
+#[test]
+fn oversized_record_export_continues_with_strictly_older_rows() {
+    let scratch = Scratch::new("export-resume");
+    let tape_path = scratch.path().join("lane-a/omp");
+    let tape = Tape::open(&tape_path).expect("fixture tape opens");
+    append(&tape, &prose("older first"));
+    append(&tape, &prose("older second"));
 
     let media = (0..8)
         .map(|_| {
@@ -228,18 +237,21 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
     )
     .expect("oversized presentation is accounted");
     assert!(oversized.records.rows.is_empty());
-    assert!(
-        matches!(
-            oversized
-                .records
-                .omission
-                .as_ref()
-                .map(|omission| &omission.continuation),
-            Some(TranscriptContinuation::Export { spans }) if !spans.is_empty()
-        ),
-        "{:?}",
-        oversized.records.omission,
-    );
+    let omission = oversized
+        .records
+        .omission
+        .as_ref()
+        .expect("oversized record has omission metadata");
+    let (spans, continuation) = match &omission.continuation {
+        TranscriptContinuation::Export {
+            spans,
+            continuation,
+        } => (spans, continuation.clone()),
+        TranscriptContinuation::Cursor { .. } => {
+            panic!("record above the surface maximum requires exact export")
+        }
+    };
+    assert_eq!(spans.len(), 1, "one source record is exported once");
     assert!(oversized.canaries.iter().any(|observation| matches!(
         observation,
         Observation::Canary {
@@ -249,6 +261,28 @@ fn filters_run_before_admission_and_oversized_rows_require_exact_export() {
     )));
     assert!(oversized.records.omission.as_ref().is_some_and(|omission| {
         omission.population == 1 && omission.shown == 0 && omission.withheld == 1
+    }));
+    let older = transcript_page(
+        &tape_path,
+        "lane-a",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            before: Some(continuation),
+            ..request(None)
+        },
+    )
+    .expect("exact export continuation reads strictly older rows");
+    assert_eq!(older.records.rows.len(), 2);
+    assert!(older.records.rows.iter().all(|record| {
+        record.observations.iter().all(|visible| {
+            !matches!(
+                visible.observation,
+                Observation::Event {
+                    event: SurfaceEvent::Tool { .. },
+                    ..
+                }
+            )
+        })
     }));
 
     let tool = oversized

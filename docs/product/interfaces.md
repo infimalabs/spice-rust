@@ -245,10 +245,12 @@ it. `listen::transcript_page` scans only a caller-bounded newest window of one
 tape, keeps every vendor record atomic, and pages older records with a cursor
 that carries the tape generation and complete-record boundary. Event filters
 run before presentation admission. Per-field UTF-8 clipping reports withheld
-text bytes; an oversized record names its exact source spans for export.
-History outside the decoded window reports the exact withheld source-byte
-count and its authenticated older cursor. A cursor from a replaced tape is
-refused rather than replayed against the new generation.
+text bytes. An oversized record names its exact source spans for export and an
+authenticated cursor immediately before that record, so the caller can export
+it and continue with strictly older records without replaying it. History
+outside the decoded window reports the exact withheld source-byte count and
+its authenticated older cursor. A cursor from a replaced tape is refused
+rather than replayed against the new generation.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,

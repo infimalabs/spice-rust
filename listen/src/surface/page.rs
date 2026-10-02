@@ -108,6 +108,11 @@ pub struct TranscriptPageRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptRecord {
+    /// Boundary immediately before this record.
+    ///
+    /// After exact export this continues with strictly older records rather
+    /// than offering the exported record to presentation admission again.
+    pub start: TranscriptCursor,
     /// Boundary that re-includes this record on the next older page.
     pub end: TranscriptCursor,
     /// Observations emitted from the record, kept atomically for pagination.
@@ -130,17 +135,23 @@ pub struct TranscriptObservation {
 pub enum TranscriptContinuation {
     /// Continue from an authenticated complete-record boundary.
     Cursor { cursor: TranscriptCursor },
-    /// The complete record exceeds the terminal maximum and needs exact export.
-    Export { spans: Vec<Span> },
+    /// Export the complete oversized record, then continue strictly before it.
+    Export {
+        spans: Vec<Span>,
+        continuation: TranscriptCursor,
+    },
 }
 
 impl fmt::Display for TranscriptContinuation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cursor { cursor } => write!(formatter, "cursor {cursor}"),
-            Self::Export { spans } => write!(
+            Self::Export {
+                spans,
+                continuation,
+            } => write!(
                 formatter,
-                "exact export for spans {}",
+                "exact export for spans {}; then continue older at cursor {continuation}",
                 spans
                     .iter()
                     .map(ToString::to_string)
@@ -257,6 +268,13 @@ pub fn transcript_page(
             .map(|observation| clipped(observation, request.output))
             .collect();
         let row = TranscriptRecord {
+            start: TranscriptCursor {
+                source: record.next.source.clone(),
+                before: Position {
+                    member: record.locus.member,
+                    offset: record.locus.offset,
+                },
+            },
             end: TranscriptCursor {
                 source: record.next.source.clone(),
                 before: record.next.next,
@@ -273,11 +291,8 @@ pub fn transcript_page(
             cursor: record.end.clone(),
         },
         Resume::Export(record) => TranscriptContinuation::Export {
-            spans: record
-                .observations
-                .iter()
-                .flat_map(|observation| observation_spans(&observation.observation))
-                .collect(),
+            spans: transcript_record_spans(record),
+            continuation: record.start.clone(),
         },
     });
     let history =
@@ -334,6 +349,15 @@ fn record_observations(
             residue: (&sourced.residue.kind).into(),
         }],
     }
+}
+
+fn transcript_record_spans(record: &TranscriptRecord) -> Vec<Span> {
+    record
+        .observations
+        .iter()
+        .map(|observation| observation_spans(&observation.observation))
+        .find(|spans| !spans.is_empty())
+        .unwrap_or_default()
 }
 
 fn clipped(mut observation: Observation, budget: Budget) -> TranscriptObservation {
