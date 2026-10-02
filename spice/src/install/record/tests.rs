@@ -232,13 +232,13 @@ fn app_history_stays_bounded_and_ordered_across_refreshes() {
 }
 
 #[test]
-fn version_16_asset_vocabulary_migrates_without_losing_history() {
+fn version_15_asset_vocabulary_migrates_without_losing_history() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     let oldest = fixture.install();
     let installed = fixture.refresh(b"installed");
     install::publish_test_historical_receipt(&repository, install::PREVIOUS_RECORD_VERSION)
-        .expect("version-16 receipt");
+        .expect("version-15 receipt");
     let current = fixture.stage(b"current");
     let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
     assert_eq!(
@@ -259,7 +259,7 @@ fn version_16_asset_vocabulary_migrates_without_losing_history() {
         Some(&fixture.binary()),
         &plan.digest().unwrap(),
     )
-    .expect("version-16 asset names migrate on refresh");
+    .expect("version-15 asset names migrate on refresh");
     install::inspect(&repository).expect("migrated receipt verifies");
     assert_eq!(
         fixture.installed_generations(),
