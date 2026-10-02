@@ -459,9 +459,9 @@ pub struct WorkProjection<'a> {
     offered: Vec<usize>,
     /// Every task index, newest birth stamp first.
     newest: Vec<usize>,
-    /// Current roster team identities. A team route settles unavailable when
-    /// its row leaves this set.
-    teams: BTreeSet<wire::CanonicalUuid>,
+    /// Current roster team identities, absent until the lane topology loads.
+    /// A team route settles unavailable only when a loaded roster lacks it.
+    teams: Option<BTreeSet<wire::CanonicalUuid>>,
 }
 
 impl<'a> WorkProjection<'a> {
@@ -489,11 +489,14 @@ impl<'a> WorkProjection<'a> {
         self.stems.iter().find(|stem| stem.identity == *identity)
     }
 
-    pub fn contains_scope(&self, scope: &WorkScope) -> bool {
+    /// Whether the projection holds `scope`; `None` while a team scope waits
+    /// for the lane roster that decides it.
+    #[must_use]
+    pub fn contains_scope(&self, scope: &WorkScope) -> Option<bool> {
         match scope {
-            WorkScope::AllOpen => true,
-            WorkScope::Stem(identity) => self.stem(identity).is_some(),
-            WorkScope::Team(team) => self.teams.contains(team),
+            WorkScope::AllOpen => Some(true),
+            WorkScope::Stem(identity) => Some(self.stem(identity).is_some()),
+            WorkScope::Team(team) => self.teams.as_ref().map(|teams| teams.contains(team)),
         }
     }
 
@@ -594,23 +597,24 @@ impl<'a> WorkProjection<'a> {
 
     #[must_use]
     pub fn from_board_and_lanes(board: &'a BoardView, lanes: Option<&LaneView>) -> Self {
+        let Some(lanes) = lanes else {
+            return Self::from_board_with_team_memberships(board, None, &BTreeMap::new());
+        };
         let mut teams = BTreeSet::new();
         let mut member_teams = BTreeMap::new();
-        if let Some(lanes) = lanes {
-            for team in lanes.lanes.iter().filter(|team| team.teamed()) {
-                teams.insert(team.lane);
-                for member in &team.members {
-                    member_teams.insert(member.lane, team.lane);
-                }
+        for team in lanes.lanes.iter().filter(|team| team.teamed()) {
+            teams.insert(team.lane);
+            for member in &team.members {
+                member_teams.insert(member.lane, team.lane);
             }
         }
-        Self::from_board_with_team_memberships(board, teams, member_teams)
+        Self::from_board_with_team_memberships(board, Some(teams), &member_teams)
     }
 
     fn from_board_with_team_memberships(
         board: &'a BoardView,
-        teams: BTreeSet<wire::CanonicalUuid>,
-        member_teams: BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+        teams: Option<BTreeSet<wire::CanonicalUuid>>,
+        member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
     ) -> Self {
         let by_born = board
             .tasks
@@ -686,7 +690,7 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, row)| {
                 let dependencies = work_dependencies(row, board, &by_born);
-                let task_teams = associated_teams(row, &teams, &member_teams);
+                let task_teams = associated_teams(row, teams.as_ref(), member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -721,11 +725,14 @@ impl<'a> WorkProjection<'a> {
 
 fn associated_teams(
     task: &BoardTask,
-    teams: &BTreeSet<wire::CanonicalUuid>,
+    teams: Option<&BTreeSet<wire::CanonicalUuid>>,
     member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
 ) -> Vec<wire::CanonicalUuid> {
     let mut associated = Vec::with_capacity(2);
-    if let Some(team) = task.creator_team.filter(|team| teams.contains(team)) {
+    if let Some(team) = task
+        .creator_team
+        .filter(|team| teams.is_some_and(|teams| teams.contains(team)))
+    {
         associated.push(team);
     }
     if let Some(team) = task
@@ -1172,8 +1179,8 @@ pub(crate) mod tests {
             hidden_scope.stem().map(ToString::to_string).as_deref(),
             Some(".alpha.*")
         );
-        assert!(projection.contains_scope(&public_scope));
-        assert!(projection.contains_scope(&hidden_scope));
+        assert_eq!(projection.contains_scope(&public_scope), Some(true));
+        assert_eq!(projection.contains_scope(&hidden_scope), Some(true));
         assert_eq!(projection.scope_counts(&public_scope).open(), 2);
         assert_eq!(projection.scope_counts(&hidden_scope).open(), 1);
         assert_eq!(
@@ -1190,7 +1197,7 @@ pub(crate) mod tests {
             visibility: WorkVisibility::Public,
             stem: "gone".to_owned(),
         });
-        assert!(!projection.contains_scope(&absent));
+        assert_eq!(projection.contains_scope(&absent), Some(false));
         assert_eq!(projection.scope_counts(&absent), projection.counts());
     }
 

@@ -328,7 +328,9 @@ pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'
         WorkScope::AllOpen => "all".to_owned(),
         WorkScope::Stem(identity) if work.stem(identity).is_some() => identity.to_string(),
         WorkScope::Stem(_) => "all".to_owned(),
-        WorkScope::Team(team) if work.contains_scope(render.work_scope) => format!("team:{team}"),
+        WorkScope::Team(team) if work.contains_scope(render.work_scope) != Some(false) => {
+            format!("team:{team}")
+        }
         WorkScope::Team(_) => "all".to_owned(),
     };
     // Every reconnect attempt passes back through Connecting, so the snapshot

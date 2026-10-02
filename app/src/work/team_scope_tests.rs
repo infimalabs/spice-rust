@@ -7,7 +7,7 @@ use super::tests::{board, claim, stamp, task};
 use super::{WorkProjection, WorkScope};
 
 #[test]
-fn team_scope_unions_creator_and_current_member_last_claim_without_duplicates() {
+fn team_scope_waits_for_the_roster_then_unions_creator_and_member_last_claim_once() {
     let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         .parse::<CanonicalUuid>()
         .expect("fixture team");
@@ -33,14 +33,21 @@ fn team_scope_unions_creator_and_current_member_last_claim_without_duplicates() 
     unrelated.creator_team = Some(other_team);
 
     let board = board(vec![created, claimed, both, unrelated]);
+    let pending = WorkProjection::from_board_and_lanes(&board, None);
+    let scope = WorkScope::Team(team);
+    assert_eq!(pending.contains_scope(&scope), None);
+    assert_eq!(pending.scope_counts(&scope).open(), 0);
+
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
-        BTreeSet::from([team]),
-        BTreeMap::from([(member, team)]),
+        Some(BTreeSet::from([team])),
+        &BTreeMap::from([(member, team)]),
     );
-    let scope = WorkScope::Team(team);
-    assert!(projection.contains_scope(&scope));
-    assert!(!projection.contains_scope(&WorkScope::Team(other_team)));
+    assert_eq!(projection.contains_scope(&scope), Some(true));
+    assert_eq!(
+        projection.contains_scope(&WorkScope::Team(other_team)),
+        Some(false)
+    );
     assert_eq!(projection.scope_counts(&scope).open(), 3);
     assert_eq!(
         projection

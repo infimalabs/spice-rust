@@ -346,7 +346,8 @@ task created by that current roster team or last claimed by one of the team's
 current member lanes, exactly once and across every open lifecycle. History
 uses the resident's same team filter and restarts at the newest page whenever
 the scope changes, so pages from different teams or All open work never mix.
-An unknown roster team is replaced by `#/work` with a notice naming it. Task
+A team the loaded roster lacks is replaced by `#/work` with a notice naming
+it; until the roster loads, a cold-loaded team link keeps its scope. Task
 detail retains the team scope; its project action still selects the task's
 project stem.
 
