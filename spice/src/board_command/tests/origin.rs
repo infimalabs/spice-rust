@@ -590,8 +590,109 @@ fn capture(
     claim
 }
 
+fn add_separate_steering_task(bus: &Bus, epoch: CanonicalUuid) -> (wire::TaskStamp, TaskHandle) {
+    let born = stamp("STEER-captured");
+    let task = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born.clone() }],
+        &TaskAdd {
+            title: "Separate ask".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["the ask is its own work".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("ack:1kLGp2N3".parse().expect("steering origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    (born, task)
+}
+
+fn complete_claimed_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) {
+    let lane = Actor::Lane(seat.lane);
+    let held = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
+            .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "claim steering fixture complete".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+}
+
+fn read_task(bus: &Bus, epoch: CanonicalUuid, task: &wire::TaskStamp) -> BoardAnswer {
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: vec![task.clone()],
+            dependencies: false,
+            claims: false,
+            notes: true,
+        },
+    )
+    else {
+        panic!("task read answers a board");
+    };
+    *answer
+}
+
+fn rendered_task(answer: &BoardAnswer, task: &TaskHandle, origin_context: Option<&str>) -> String {
+    let born = task.born().expect("fixture identity");
+    task_show_with_origin(
+        answer,
+        at(answer, task),
+        &[],
+        TaskShowHistory {
+            notes: &[],
+            acknowledgments: &answer.acknowledgments[&born],
+            closure: None,
+        },
+        origin_context,
+    )
+}
+
+fn assert_rendered_claim_steering(rendered: &str, holder: CanonicalUuid) {
+    let keys = rendered
+        .lines()
+        .filter_map(|line| line.strip_prefix("origin_steering key "))
+        .collect::<Vec<_>>();
+    assert_eq!(keys, ["1kLGp2N2", "1kLGp2N7"]);
+    assert_eq!(
+        rendered
+            .matches("origin_steering_text:\nPreserve this directive\n")
+            .count(),
+        2
+    );
+    assert_eq!(
+        rendered
+            .matches(&format!("origin_steering_answer acked lane={holder}"))
+            .count(),
+        2
+    );
+    assert!(!rendered.contains("1kLGp2N3"));
+}
+
 #[test]
-fn operator_steering_acknowledged_while_holding_a_task_stays_with_that_task() {
+fn task_show_and_review_context_include_only_uncaptured_claim_steering() {
     let (root, bus, epoch, seats) = fixture("task-steering-during-claims", 2);
     let (holder, other) = (seats[0].lane, seats[1].lane);
     let held = add(
@@ -600,7 +701,7 @@ fn operator_steering_acknowledged_while_holding_a_task_stays_with_that_task() {
         Actor::Operator,
         "STEER-held",
         "Hold steering",
-        None,
+        Some("todo,review"),
     );
     let held_born = held.born().expect("fixture identity");
     send_directive(&bus, Actor::Operator, "1kLGp2N1", uuid(16_301), holder);
@@ -616,95 +717,53 @@ fn operator_steering_acknowledged_while_holding_a_task_stays_with_that_task() {
     steer("1kLGp2N5", Actor::Spice, holder, 16_305);
     steer("1kLGp2N6", Actor::Operator, other, 16_306);
     steer("1kLGp2N7", Actor::Operator, holder, 16_307);
-    // One ask became separate work.
-    let captured_born = stamp("STEER-captured");
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: captured_born.clone(),
-        }],
-        &TaskAdd {
-            title: "Separate ask".to_owned(),
-            project: Some("board.test".to_owned()),
-            description: None,
-            acceptance: vec!["the ask is its own work".to_owned()],
-            requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("ack:1kLGp2N3".parse().expect("steering origin")),
-            flow: None,
-            depends: Vec::new(),
-            claim: false,
-        },
-    ));
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Lane(holder),
-        CommandKind::ClaimFree,
-        claim_free_witnesses(&bus, epoch, &Actor::Lane(holder), &seats[0], &held),
-        &TaskRef { task: held.clone() },
-    ));
+
+    // One ask became separate work, so it no longer joins the held task.
+    let (captured_born, captured) = add_separate_steering_task(&bus, epoch);
+    complete_claimed_task(&bus, epoch, &seats[0], &held);
     steer("1kLGp2N8", Actor::Operator, holder, 16_308);
 
-    let keys = |rows: &[wire::intent::TaskAcknowledgment]| {
-        rows.iter()
-            .map(|row| (row.kind, row.key.clone()))
-            .collect::<Vec<_>>()
-    };
-    let read = |task: &wire::TaskStamp| {
-        let Outcome::Reply(Reply {
-            body: CommandAnswer::Board(answer),
-            ..
-        }) = issue(
-            &bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::BoardRead,
-            Vec::new(),
-            &BoardRead::Tasks {
-                tasks: vec![task.clone()],
-                dependencies: false,
-                claims: false,
-                notes: true,
-            },
-        )
-        else {
-            panic!("task read answers a board");
-        };
-        answer
-            .acknowledgments
-            .get(task)
-            .map(|rows| keys(rows))
-            .unwrap_or_default()
-    };
-    let acked = wire::FactKind::SteerAcked;
-    assert_eq!(
-        read(&held_born),
-        [
-            (acked, "1kLGp2N2".to_owned()),
-            (acked, "1kLGp2N7".to_owned())
-        ],
-        "only operator steering the holder acknowledged while holding stays with the task"
-    );
-    assert_eq!(
-        read(&captured_born),
-        [(wire::FactKind::TaskAdded, "1kLGp2N3".to_owned())],
-        "a captured ask stays with the task it became"
-    );
-
-    // The next holder receives that steering with the claim.
-    let next = capture(&bus, epoch, &seats[1], &held);
-    let context = next
+    // The next phase's reviewer receives the steering that shaped the work.
+    let review = capture(&bus, epoch, &seats[1], &held);
+    let context = review
         .origin_context
         .as_deref()
-        .expect("steered task carries context");
-    let shown = context
-        .lines()
-        .filter_map(|line| line.strip_prefix("origin_steering key "))
-        .collect::<Vec<_>>();
-    assert_eq!(shown, ["1kLGp2N2", "1kLGp2N7"]);
-    assert!(context.contains("origin_steering_text:\nPreserve this directive\n"));
+        .expect("steered review carries context");
+    assert_rendered_claim_steering(context, holder);
+
+    let answer = read_task(&bus, epoch, &held_born);
+    let acknowledgments = &answer.acknowledgments[&held_born];
+    assert_eq!(
+        acknowledgments
+            .iter()
+            .map(|row| (row.kind, row.key.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (wire::FactKind::SteerAcked, "1kLGp2N2"),
+            (wire::FactKind::SteerAcked, "1kLGp2N7")
+        ],
+        "only uncaptured operator steering acknowledged by the holder joins the task"
+    );
+    let task_shown = rendered_task(&answer, &held, Some(context));
+    let (first, third) = (acknowledgments[0].position, acknowledgments[1].position);
+    assert!(task_shown.contains(&format!(
+        "acknowledgment ack:1kLGp2N2 steer::acked@{first}\n\
+         acknowledgment ack:1kLGp2N7 steer::acked@{third}\n"
+    )));
+    assert_rendered_claim_steering(&task_shown, holder);
+
+    let captured_answer = read_task(&bus, epoch, &captured_born);
+    let captured_acknowledgments = &captured_answer.acknowledgments[&captured_born];
+    assert_eq!(
+        captured_acknowledgments
+            .iter()
+            .map(|row| (row.kind, row.key.as_str()))
+            .collect::<Vec<_>>(),
+        [(wire::FactKind::TaskAdded, "1kLGp2N3")],
+        "the captured task retains its own provenance but no claim-linked steering"
+    );
+    let captured_shown = rendered_task(&captured_answer, &captured, None);
+    assert!(captured_shown.contains("acknowledgment ack:1kLGp2N3 task::added@"));
+    assert!(!captured_shown.contains("steer::acked"));
     clean(&root, bus);
 }
