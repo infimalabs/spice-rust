@@ -726,6 +726,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
+/* A lane's own heading also carries its provider emblem beside the menu. */
+.composer-shard--primary > .composer-shard-heading {
+  grid-template-columns: auto minmax(0, 1fr) fit-content(50%) 22px 22px;
+}
 .composer-shard-heading strong {
   overflow: hidden;
   color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink));

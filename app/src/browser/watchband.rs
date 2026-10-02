@@ -815,6 +815,7 @@ fn render_composer_body(
         >
             {render_composer_heading(
                 status,
+                render_composer_vendor_icon(standing, "composer"),
                 menu,
                 stream,
                 prose,
@@ -838,17 +839,17 @@ fn render_composer_body(
                 {onkeydown}
                 {onpaste}
             />
-            {render_composer_vendor_icon(standing, "composer")}
         </div>
     }
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the shard heading carries one agent's prose, drafts, menu, and drag callbacks"
+    reason = "the shard heading carries one agent's prose, drafts, emblem, menu, and drag callbacks"
 )]
 fn render_composer_heading(
     status: crate::runtime::LaneStatus,
+    emblem: Html,
     menu: Html,
     stream: ComposerStreamLink,
     prose: String,
@@ -882,6 +883,7 @@ fn render_composer_heading(
                 onlostpointercapture={drag_lost_capture}
             >{prose}</strong>
             {indicators}
+            {emblem}
             {menu}
         </header>
     }
