@@ -583,7 +583,7 @@ fn task_add_preserves_explicit_flow_and_default_routing() {
         "fixture:task-add-flow",
     ]));
     let explicit_show =
-        human_text_reply(&fixture.invoke(&["task", "show", explicit.task.as_str()]));
+        human_text_reply(&fixture.invoke(&["task", "show", explicit.task.as_str(), "--context"]));
     assert!(
         explicit_show.contains("\nflow todo,review\n"),
         "{explicit_show}"
@@ -637,7 +637,7 @@ fn task_add_preserves_explicit_flow_and_default_routing() {
         "fixture:task-add-flow",
     ]));
     let defaulted_show =
-        human_text_reply(&fixture.invoke(&["task", "show", defaulted.task.as_str()]));
+        human_text_reply(&fixture.invoke(&["task", "show", defaulted.task.as_str(), "--context"]));
     assert!(
         defaulted_show.contains("\nflow plan,todo,review\n"),
         "{defaulted_show}"
