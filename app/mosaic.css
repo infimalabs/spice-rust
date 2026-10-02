@@ -834,20 +834,24 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* Speech and lifetime share one control's upper region, values upright beneath
-   vertical ranges, above the full-width lifetime submit. Regions round their own
-   corners rather than the frame clipping, so focus and preview rings stay visible. */
+/* Ranges over the full-width submit; regions round their own corners so focus
+   and preview rings stay visible. The frame holds no words but the submit's: it
+   starts one label row down, and the values ride above it, speech flush left and
+   lifetime flush right, reading as one phrase ("quiet drain", "narrate steer"). */
 .team-composer .team-composer-controls {
   --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
   --team-control-inner-radius: calc(var(--canvas-radius-compact) - 1px);
-  display: grid; gap: 0; inline-size: 74px; block-size: var(--team-composer-block-size);
+  --team-control-label-row: 14px;
+  position: relative; display: grid; gap: 0; inline-size: 74px;
+  margin-block-start: var(--team-control-label-row);
+  block-size: calc(var(--team-composer-block-size) - var(--team-control-label-row));
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
   border: var(--canvas-control-edge); border-radius: var(--canvas-radius-compact);
   background: var(--control); box-shadow: var(--canvas-selection-shadow);
 }
 .team-slider {
   --control-state-accent: var(--accent);
-  display: grid; grid-template-rows: minmax(0, 1fr) auto; row-gap: 4px; justify-items: center;
+  display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center;
   min-height: 0; padding: 7px 2px 6px; overflow: hidden;
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
@@ -870,15 +874,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .team-slider input:disabled { cursor: not-allowed; }
 .team-slider span {
-  width: 100%;
-  overflow: hidden;
   color: var(--muted);
   font: 9px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-align: center;
-  text-overflow: clip;
   text-transform: lowercase;
   white-space: nowrap;
 }
+/* The frame is the label's containing block, so slider clipping never reaches it. */
+.team-composer .team-slider span { position: absolute; bottom: calc(100% + 3px); }
+.team-composer .team-speech span { inset-inline-start: 0; }
+.team-composer .team-lifetime span { inset-inline-end: 0; }
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--canvas-control-edge);
