@@ -32,23 +32,36 @@ pub(super) fn execute(
     {
         return Err(moved("during execution"));
     }
+    let encoded = report
+        .encode()
+        .map_err(|error| ProveFailure::fault("gate::prove-result-unencodable", error))?;
     if !report.admits() {
         return Err(ProveFailure::refusal(
             "gate::prove-action-regressed",
-            format!(
-                "action={} state={}\n{}",
-                report.gate_id(),
-                report.result().state().as_str(),
-                super::output::failure_evidence(captures, report.result().reason().as_bytes()),
-            ),
+            regression(&report, &encoded, captures),
         ));
     }
-    Ok(Digest::compute(
-        Domain::GateFocusedReport,
-        &report
-            .encode()
-            .map_err(|error| ProveFailure::fault("gate::prove-result-unencodable", error))?,
-    ))
+    Ok(Digest::compute(Domain::GateFocusedReport, &encoded))
+}
+
+/// A regressed action's reason, its complete typed report retained by digest,
+/// and the command that renders every finding.
+fn regression(
+    report: &gate::FocusedArmReport,
+    encoded: &[u8],
+    captures: &std::path::Path,
+) -> String {
+    let retained = match super::output::retain(captures, encoded) {
+        Ok(export) => format!("complete report: {} ({} bytes)", export.path, export.bytes),
+        Err(error) => format!("complete report was not retained: {error}"),
+    };
+    format!(
+        "action={} state={}\n{}\n{retained}\nfull-evidence: spice dev xtask -- gate --report {}",
+        report.gate_id(),
+        report.result().state().as_str(),
+        super::output::bounded(captures, report.result().reason()),
+        report.gate_id(),
+    )
 }
 
 pub(super) fn action_requirements(

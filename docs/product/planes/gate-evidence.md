@@ -172,7 +172,9 @@ retained as `.spice-rs/gate-output/DIGEST.log` under the Git common directory,
 named by the content digest of its bytes; the newest 64 captures are kept. A
 failed action's refusal carries a bounded tail of diagnostic lines (Cargo's
 machine records dropped), the count of withheld bytes, and that capture's path
-and size.
+and size. A regressed in-process policy action instead carries its bounded
+reason, its complete typed focused report retained the same way, and the
+`spice dev xtask -- gate --report ACTION` command that renders every finding.
 
 The text reply is decision-first: the action count for the candidate tree,
 how many this run proved, one row per proved action with its elapsed time, and
