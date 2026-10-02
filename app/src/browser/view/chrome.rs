@@ -163,12 +163,13 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
 
 /// The operator's face at the head of the bar, opening global Dash the way the
 /// aggregate count beside it opens global Work. It keeps its place and size
-/// while identity loads, so the pills after it never shift.
+/// while identity loads, so the pills after it never shift, and it looks the
+/// same on every route: being on Dash does not mark the face.
 fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
     let operator = runtime
         .and_then(CanvasRuntime::settings)
         .map(|settings| &settings.operator);
-    let selected = render.destination == CanvasDestination::Dash;
+    let on_dash = render.destination == CanvasDestination::Dash;
     let name = operator
         .and_then(|operator| operator.name.as_deref())
         .unwrap_or("Operator");
@@ -176,12 +177,11 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRu
     let navigate = render.navigate.clone();
     html! {
         <button
-            class={classes!("canvas-operator-link", selected.then_some("selected"))}
+            class="canvas-operator-link"
             type="button"
             title={label.clone()}
             aria-label={label}
-            aria-pressed={selected.to_string()}
-            aria-current={selected.then_some("page")}
+            aria-current={on_dash.then_some("page")}
             data-operator-state={if operator.is_some() { "ready" } else { "loading" }}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Dash))}
         >
