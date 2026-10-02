@@ -234,68 +234,6 @@ fn indexed_read_work_is_constant_as_retired_history_grows() {
 }
 
 #[test]
-fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-six.sqlite3");
-    let old = authority_file_fixture(&path);
-    drop_steering_index(&old.connection);
-    old.connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 6 WHERE singleton = 1;
-             PRAGMA user_version = 6;",
-        )
-        .expect("downgrade schema-six fixture");
-    drop(old);
-
-    let mut migrated = Journal::open(&path).expect("schema six migrates");
-    assert_eq!(
-        migrated.migration().map(|step| (step.from(), step.to())),
-        Some((6, SCHEMA_VERSION))
-    );
-    assert!(!migrated.steering_index_current().expect("lag reads"));
-    assert!(
-        migrated
-            .read(|read| {
-                read.pending_steering(None, FactPageStart::After(None))
-                    .map(drop)
-            })
-            .expect_err("interactive indexed read refuses lag")
-            .to_string()
-            .contains("disagrees with journal cursor")
-    );
-
-    let snapshot = migrated.fact_snapshot().expect("singular rebuild snapshot");
-    migrated
-        .rebuild_steering_index(snapshot.horizon(), &[], &[])
-        .expect("validated empty steering replay publishes");
-    assert!(
-        migrated
-            .steering_index_current()
-            .expect("rebuilt horizon reads")
-    );
-
-    let mut ordinary =
-        JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
-    ordinary
-        .fact(
-            TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "normal write after steering rebuild".to_owned(),
-            },
-            FactCause::Root,
-        )
-        .expect("ordinary fact builds");
-    migrated
-        .apply(ordinary)
-        .expect("later write needs no replay");
-    assert!(
-        migrated
-            .steering_index_current()
-            .expect("advanced horizon reads")
-    );
-}
-
-#[test]
 fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     let mut journal = Journal::in_memory().expect("steering journal");
     journal

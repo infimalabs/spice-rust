@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 use std::fs;
 
 use serde::{Deserialize, Serialize};
@@ -11,38 +11,11 @@ use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
     InstallStatus, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, ReceiptGeneration,
-    ReceiptSupport, Repository, RepositoryIdentity, RollbackArchive,
+    ReceiptSupport, Repository, RepositoryIdentity,
 };
-
-mod migration;
 
 #[cfg(test)]
 mod tests;
-
-pub(super) fn migrate_shell_plan(
-    plan: &InstallPlan,
-) -> Result<(InstallPlan, Vec<String>, Vec<String>), InstallError> {
-    let migrated = migration::refresh(plan)?;
-    Ok((migrated.plan, migrated.retirements, migrated.introductions))
-}
-
-pub(super) fn requires_shell_migration(plan: &InstallPlan) -> bool {
-    migration::required(plan)
-}
-
-pub(super) fn validate_migration_retirements(
-    plan: &InstallPlan,
-    retirements: &[super::Retirement],
-) -> Result<(), InstallError> {
-    migration::validate_retirements(plan, retirements)
-}
-
-pub(super) fn migration_introduction_image<'a>(
-    plan: &'a InstallPlan,
-    operation: &super::Operation,
-) -> Result<Option<&'a FileImage>, InstallError> {
-    migration::introduction_image(plan, operation)
-}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -72,7 +45,6 @@ struct InstallRecordHeader {
 pub(super) struct LoadedRecord {
     pub(super) record: InstallRecord,
     pub(super) generation: ReceiptGeneration,
-    pub(super) image: Option<FileImage>,
 }
 
 pub(super) enum RefreshRecord {
@@ -134,63 +106,8 @@ impl InstallRecord {
         })
     }
 
-    /// Strip the version-15 symbol operations, provenance, and published files.
-    #[cfg(debug_assertions)]
-    pub(super) fn remove_test_symbol_assets(
-        &mut self,
-        repository: &Repository,
-    ) -> Result<(), InstallError> {
-        if self.plan.symbols.take().is_none() {
-            return Ok(());
-        }
-        self.remove_test_operations(repository, &super::symbols::ASSETS, None)?;
-        let bundle = repository.common_dir().join(super::symbols::SYMBOLS_PATH);
-        fs::remove_dir_all(&bundle)
-            .map_err(|source| InstallError::io("remove future symbol test bundle", bundle, source))
-    }
-
-    /// Respell every installed app shell, on disk and in the record, as the
-    /// version-16 build published it before the App rename.
-    #[cfg(debug_assertions)]
-    fn respell_test_app_shells(&mut self, repository: &Repository) -> Result<(), InstallError> {
-        if self.plan.rollback_archive.is_some() {
-            return Err(InstallError::InvalidRecord(
-                "test receipt shell respelling does not rewrite rollback archives".to_owned(),
-            ));
-        }
-        for (operation, (_, destination)) in
-            self.plan.operations.iter_mut().zip(&mut self.destinations)
-        {
-            if super::app::operation_generation(operation.asset, &operation.path).is_none()
-                || operation.asset != super::Asset::AppHtml
-            {
-                continue;
-            }
-            let respell = |path: &str| {
-                path.strip_suffix(wire::manifest::APP_HTML)
-                    .map(|parent| format!("{parent}canvas-app.html"))
-            };
-            let (Some(path), Some(renamed)) =
-                (respell(&operation.path), respell(&operation.destination))
-            else {
-                return Err(InstallError::InvalidRecord(
-                    "test receipt shell has no current spelling".to_owned(),
-                ));
-            };
-            let from = repository.common_dir().join(&operation.destination);
-            let to = repository.common_dir().join(&renamed);
-            fs::rename(&from, &to)
-                .map_err(|source| InstallError::io("respell test app shell", from, source))?;
-            operation.path = path;
-            operation.destination.clone_from(&renamed);
-            *destination = renamed;
-        }
-        self.plan_digest = self.plan.digest()?;
-        Ok(())
-    }
-
     /// Remove `assets` from the plan, its bookkeeping, and the filesystem.
-    #[cfg(debug_assertions)]
+    #[cfg(test)]
     fn remove_test_operations(
         &mut self,
         repository: &Repository,
@@ -213,19 +130,6 @@ impl InstallRecord {
             })
             .collect::<Result<Vec<_>, _>>()?;
         indices.sort_unstable_by(|left, right| right.cmp(left));
-        if let Some(archive) = &self.plan.rollback_archive {
-            let inline = archive.is_inline();
-            let mut rollback = archive.decode(repository)?;
-            for index in &indices {
-                rollback.operations.remove(*index);
-            }
-            let rebuilt = super::RollbackArchive::new(&rollback)?;
-            self.plan.rollback_archive = Some(if inline {
-                rebuilt.to_inline(repository)?
-            } else {
-                rebuilt
-            });
-        }
         for index in indices {
             self.plan.operations.remove(index);
             self.reversals.remove(index);
@@ -245,37 +149,6 @@ impl InstallRecord {
         Ok(())
     }
 
-    /// Remove hook assets introduced after the version-7 receipt shape.
-    #[cfg(debug_assertions)]
-    pub(super) fn remove_test_newer_hook_assets(
-        &mut self,
-        repository: &Repository,
-    ) -> Result<(), InstallError> {
-        let mut assets = vec![
-            super::Asset::HookZsh,
-            super::Asset::HookBash,
-            super::Asset::HookWrapperSpice,
-        ];
-        assets.extend(super::app::ASSETS.into_iter().map(|(asset, _)| asset));
-        assets.push(super::Asset::AppCurrent);
-        let app = self.plan.app.take();
-        self.remove_test_operations(repository, &assets, app.as_ref())?;
-        let app_root = repository.common_dir().join(".spice-install/app");
-        fs::remove_dir_all(&app_root).map_err(|source| {
-            InstallError::io("remove future app test assets", app_root, source)
-        })?;
-        for relative in [
-            ".spice-install/hooks/shell",
-            ".spice-install/hooks/wrappers",
-        ] {
-            let path = repository.common_dir().join(relative);
-            fs::remove_dir(&path).map_err(|source| {
-                InstallError::io("remove future hook test directory", path, source)
-            })?;
-        }
-        Ok(())
-    }
-
     pub(super) fn validate(&self) -> Result<(), InstallError> {
         self.validate_with_content(self.status == InstallStatus::Uninstalled)
     }
@@ -291,9 +164,6 @@ impl InstallRecord {
     /// while interrupted directions remain owned by the build that started
     /// them.
     fn validate_loaded(&self) -> Result<(), InstallError> {
-        if self.version == super::PREVIOUS_RECORD_VERSION || migration::required(&self.plan) {
-            return migration::validate(self);
-        }
         let historical = self.status == InstallStatus::Uninstalled
             || (self.status == InstallStatus::Complete
                 && super::binary_operation(&self.plan).is_some());
@@ -322,11 +192,6 @@ impl InstallRecord {
         self.plan.repository = self.repository.clone();
         if let Some(activation) = &mut self.plan.hook_activation {
             activation.rebase_main_worktree(repository)?;
-        }
-        if let Some(archive) = &mut self.plan.rollback_archive {
-            let mut rollback = archive.decode(repository)?;
-            rollback.record = rebase_rollback_record(&rollback.record, repository)?;
-            *archive = super::RollbackArchive::new(&rollback)?;
         }
         self.plan_digest = self.plan.digest()?;
         Ok(())
@@ -416,33 +281,11 @@ impl InstallRecord {
                 "install record and plan versions do not match".to_owned(),
             ));
         }
-        let rollback_migratable = historical
-            && self.version == super::MIGRATABLE_RECORD_VERSION
-            && self.plan.version == super::MIGRATABLE_RECORD_VERSION;
-        let forward_migratable = historical
-            && self.version == super::FORWARD_MIGRATABLE_RECORD_VERSION
-            && self.plan.version == super::FORWARD_MIGRATABLE_RECORD_VERSION
-            && self.status == InstallStatus::Complete
-            && super::binary_operation(&self.plan).is_some();
-        let inline_migratable = historical
-            && self.version == super::INLINE_ROLLBACK_RECORD_VERSION
-            && self.plan.version == super::INLINE_ROLLBACK_RECORD_VERSION
-            && self.status == InstallStatus::Complete
-            && super::binary_operation(&self.plan).is_some();
-        let previous_migratable = historical
-            && self.version == super::PREVIOUS_RECORD_VERSION
-            && self.plan.version == super::PREVIOUS_RECORD_VERSION
-            && self.status == InstallStatus::Complete;
-        let supported = matches!(
-            super::receipt_support(self.version),
-            Some(ReceiptSupport::Current | ReceiptSupport::Direct)
-        );
-        if !supported
-            || (self.version != RECORD_VERSION
-                && !rollback_migratable
-                && !forward_migratable
-                && !inline_migratable
-                && !previous_migratable)
+        if self.version != RECORD_VERSION
+            || !matches!(
+                super::receipt_support(self.version),
+                Some(ReceiptSupport::Current)
+            )
         {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
@@ -468,9 +311,7 @@ impl InstallRecord {
                 "install record repository does not close over its plan".to_owned(),
             ));
         }
-        if self.version != super::PREVIOUS_RECORD_VERSION
-            && self.plan_digest != self.plan.digest()?
-        {
+        if self.plan_digest != self.plan.digest()? {
             return Err(InstallError::InvalidRecord(
                 "install record plan digest does not match its canonical plan".to_owned(),
             ));
@@ -501,51 +342,6 @@ impl InstallRecord {
             ));
         }
         Ok(())
-    }
-
-    /// Reconstruct only the exact witness-free v8 refresh shape emitted before
-    /// retirement archives became witness-bound. The original authored digest
-    /// remains the audit identity; the reconstructed plan must be previewed and
-    /// separately authorized before any durable receipt is replaced.
-    fn repair_missing_retirement_witnesses(
-        &mut self,
-        repository: &Repository,
-    ) -> Result<Digest, InstallError> {
-        let original_digest = self.plan_digest.clone();
-        if self.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
-            || self.plan.version != super::FORWARD_MIGRATABLE_RECORD_VERSION
-            || self.status != InstallStatus::Complete
-            || super::binary_operation(&self.plan).is_none()
-            || self.plan.rollback_archive.is_none()
-            || self.plan.retirements.is_empty()
-        {
-            return Err(retirement_witness_mismatch());
-        }
-        self.validate_plan_closure()?;
-        self.validate_progress_content()?;
-        if self.plan.retirements.iter().any(|retirement| {
-            retirement.previous.is_some()
-                || retirement.observed.is_some()
-                || retirement.superseded.is_some()
-                || retirement.rollback.is_some()
-        }) {
-            return Err(retirement_witness_mismatch());
-        }
-        let rollback = self
-            .plan
-            .rollback_state(repository)?
-            .ok_or_else(retirement_witness_mismatch)?;
-        if rollback.retirements.len() != self.plan.retirements.len() {
-            return Err(InstallError::InvalidRecord(
-                "migration rollback archive has the wrong image inventory length".to_owned(),
-            ));
-        }
-        for (retirement, image) in self.plan.retirements.iter_mut().zip(&rollback.retirements) {
-            retirement.rollback = image.as_ref().map(FileImage::generated);
-        }
-        self.plan_digest = self.plan.digest()?;
-        self.validate_loaded()?;
-        Ok(original_digest)
     }
 
     fn validate_progress_content(&self) -> Result<(), InstallError> {
@@ -692,59 +488,13 @@ pub(super) fn read_record_for_refresh(
     let Some(mut loaded) = decode_record(repository)? else {
         return Ok(None);
     };
-    match finish_loaded_record(repository, &mut loaded) {
-        Ok(Some(original_digest)) => Ok(Some(RefreshRecord::Repairable {
+    match finish_loaded_record(repository, &mut loaded)? {
+        Some(original_digest) => Ok(Some(RefreshRecord::Repairable {
             loaded,
             original_digest,
         })),
-        Ok(None) => Ok(Some(RefreshRecord::Current(loaded))),
-        Err(error) if is_retirement_witness_mismatch(&error) => {
-            let original_digest = loaded
-                .record
-                .repair_missing_retirement_witnesses(repository)?;
-            let _ = finish_loaded_record(repository, &mut loaded)?;
-            Ok(Some(RefreshRecord::Repairable {
-                loaded,
-                original_digest,
-            }))
-        }
-        Err(error) => Err(error),
+        None => Ok(Some(RefreshRecord::Current(loaded))),
     }
-}
-
-pub(super) fn stored_rollback_digest(
-    repository: &Repository,
-) -> Result<Option<Digest>, InstallError> {
-    let Some(loaded) = decode_record(repository)? else {
-        return Ok(None);
-    };
-    let record = loaded.record;
-    record.validate_loaded()?;
-    if record.repository.common_git == repository.common_dir() {
-        record.repository.validate(repository)?;
-        record.plan.validate_repository_binding(repository)?;
-    } else {
-        if !matches!(
-            record.status,
-            InstallStatus::Complete | InstallStatus::Uninstalled
-        ) {
-            return Err(InstallError::InvalidRecord(
-                "an interrupted install cannot be relocated".to_owned(),
-            ));
-        }
-        if record.repository.common_git.exists() {
-            return Err(InstallError::InvalidRecord(
-                "install record was copied while its owning repository still exists".to_owned(),
-            ));
-        }
-    }
-    record.plan.validate_rollback_storage(repository)?;
-    Ok(record
-        .plan
-        .rollback_archive
-        .as_ref()
-        .and_then(RollbackArchive::stored_digest)
-        .cloned())
 }
 
 fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
@@ -767,23 +517,14 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
             owner,
         });
     }
-    let record = if header.version == super::PREVIOUS_RECORD_VERSION {
-        migration::decode(&image.bytes)?
-    } else {
-        let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-        let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
-        if canonical != image.bytes {
-            return Err(InstallError::InvalidRecord(
-                "install record is not canonical".to_owned(),
-            ));
-        }
-        record
-    };
-    Ok(Some(LoadedRecord {
-        record,
-        generation,
-        image: Some(image),
-    }))
+    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+    let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
+    if canonical != image.bytes {
+        return Err(InstallError::InvalidRecord(
+            "install record is not canonical".to_owned(),
+        ));
+    }
+    Ok(Some(LoadedRecord { record, generation }))
 }
 
 fn finish_loaded_record(
@@ -797,60 +538,7 @@ fn finish_loaded_record(
     }
     let original_digest = record.repair_mount_device(repository)?;
     record.validate_loaded_for_repository(repository)?;
-    record.plan.validate_rollback_storage(repository)?;
-    if record.version != super::MIGRATABLE_RECORD_VERSION {
-        loaded.image = None;
-    }
     Ok(original_digest)
-}
-
-fn is_retirement_witness_mismatch(error: &InstallError) -> bool {
-    matches!(error, InstallError::InvalidRecord(detail)
-        if detail == super::RETIREMENT_WITNESS_MISMATCH)
-}
-
-fn retirement_witness_mismatch() -> InstallError {
-    InstallError::InvalidRecord(super::RETIREMENT_WITNESS_MISMATCH.to_owned())
-}
-
-pub(super) fn decode_rollback_record(
-    image: &FileImage,
-    repository: &RepositoryIdentity,
-) -> Result<InstallRecord, InstallError> {
-    if image.mode != RECORD_MODE || !image.validate() {
-        return Err(InstallError::InvalidRecord(
-            "migration rollback receipt has an invalid image".to_owned(),
-        ));
-    }
-    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    if record.version != super::MIGRATABLE_RECORD_VERSION
-        || record.plan.version != super::MIGRATABLE_RECORD_VERSION
-        || record.repository != *repository
-        || record.status != InstallStatus::Complete
-        || record.plan.rollback_archive.is_some()
-    {
-        return Err(InstallError::InvalidRecord(
-            "migration rollback receipt is not one complete version-7 installation".to_owned(),
-        ));
-    }
-    record.validate_with_content(true)?;
-    let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
-    if canonical != image.bytes {
-        return Err(InstallError::InvalidRecord(
-            "migration rollback receipt is not canonical".to_owned(),
-        ));
-    }
-    Ok(record)
-}
-
-pub(super) fn rebase_rollback_record(
-    image: &FileImage,
-    repository: &Repository,
-) -> Result<FileImage, InstallError> {
-    let mut record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    record.rebase_repository(repository)?;
-    let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
-    Ok(FileImage::new(RECORD_MODE, bytes))
 }
 
 pub(super) fn write_initial_record(
@@ -900,74 +588,4 @@ pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallErr
         .map_err(InstallError::State)?
         .runtime()
         .join(RECORD_NAME))
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn publish_test_historical_receipt(
-    repository: &Repository,
-    version: u16,
-) -> Result<(), InstallError> {
-    let mut record = read_record(repository)?
-        .ok_or_else(|| InstallError::InvalidRecord("test fixture receipt is absent".to_owned()))?
-        .record;
-    if record.status != InstallStatus::Complete {
-        return Err(InstallError::InvalidRecord(
-            "test fixture receipt is not complete".to_owned(),
-        ));
-    }
-    match version {
-        super::MIGRATABLE_RECORD_VERSION
-        | super::FORWARD_MIGRATABLE_RECORD_VERSION
-        | super::INLINE_ROLLBACK_RECORD_VERSION => {
-            record.remove_test_symbol_assets(repository)?;
-            record.remove_test_newer_hook_assets(repository)?;
-            if version == super::MIGRATABLE_RECORD_VERSION {
-                record.plan.retirements.clear();
-                record.plan.rollback_archive = None;
-                record.retired_parents.clear();
-                record.restored_retirements.clear();
-            } else {
-                let index = record
-                    .plan
-                    .retirements
-                    .iter()
-                    .position(|retirement| retirement.path == super::RETIRED_FOLD_STORE_PATH)
-                    .ok_or_else(|| {
-                        InstallError::InvalidRecord(
-                            "test receipt has no fold-store retirement".to_owned(),
-                        )
-                    })?;
-                record.plan.retirements.remove(index);
-                record.retired_parents.remove(index);
-                record.restored_retirements.remove(index);
-                if let Some(archive) = &record.plan.rollback_archive {
-                    record.plan.rollback_archive = Some(archive.to_inline(repository)?);
-                }
-            }
-        }
-        super::PREVIOUS_RECORD_VERSION => record.respell_test_app_shells(repository)?,
-        _ => {
-            return Err(InstallError::InvalidRecord(format!(
-                "test receipt schema {version} is not directly upgradable"
-            )));
-        }
-    }
-    record.version = version;
-    record.plan.version = version;
-    record.completed = record.plan.operation_count();
-    record.plan_digest = record.plan.digest()?;
-    if version == super::PREVIOUS_RECORD_VERSION {
-        migration::validate(&record)?;
-    } else {
-        record.validate_with_content(true)?;
-    }
-    record.plan.publish_staged_rollback(repository)?;
-    let bytes = if version == super::PREVIOUS_RECORD_VERSION {
-        migration::encode(&record)?
-    } else {
-        wire::encode(&record).map_err(InstallError::Encode)?
-    };
-    let path = record_path(repository)?;
-    fs::write(&path, bytes)
-        .map_err(|source| InstallError::io("publish historical test receipt", path, source))
 }

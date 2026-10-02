@@ -67,7 +67,6 @@ pub(super) fn apply_prepared_with_interruption(
         InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
         InstallStatus::Applying | InstallStatus::Uninstalled => {}
     }
-    let _rollback_lock = record.plan.lock_rollback(repository)?;
     let app = spice_binary
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?;
@@ -88,7 +87,6 @@ pub(super) fn apply_prepared_with_interruption(
         record.plan.validate_for_repository(repository)?;
     }
     require_receipt(repository, &record.plan, record_generation.as_ref())?;
-    record.plan.publish_staged_rollback(repository)?;
     let mut record_generation = match record_generation {
         Some(generation) => write_record(repository, &record, generation)?,
         None => write_initial_record(repository, &record)?,
@@ -278,9 +276,6 @@ fn materialize_operations(
         .operations
         .iter()
         .map(|operation| {
-            if let Some(image) = record::migration_introduction_image(&record.plan, operation)? {
-                return Ok(Some(image.clone()));
-            }
             // A retained immutable generation has no source bytes to publish.
             // Its exact installed image is still checked by admission and the
             // operation itself; do not copy every historical payload into RAM.
@@ -340,11 +335,7 @@ pub(super) fn prepare_over(
     refresh: RefreshRecord,
 ) -> Result<PreparedInstall, InstallError> {
     let repairable = refresh.is_repairable();
-    let LoadedRecord {
-        record,
-        generation,
-        image,
-    } = refresh.into_loaded();
+    let LoadedRecord { record, generation } = refresh.into_loaded();
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
         return fresh(build_plan(repository, spice_binary)?, Some(generation));
@@ -353,7 +344,7 @@ pub(super) fn prepare_over(
         && (repairable || refresh_required(repository, &record.plan, spice_binary)?)
     {
         return fresh(
-            refresh_plan(repository, spice_binary, image, &record)?,
+            refresh_plan(repository, spice_binary, &record)?,
             Some(generation),
         );
     }
@@ -380,41 +371,17 @@ fn fresh(
 fn refresh_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
-    prior_receipt: Option<FileImage>,
     record: &InstallRecord,
 ) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
     // remain receipt-strict.
     let binary_superseded = verify_refresh_progress(repository, record)?;
-    let rollback_record = (record.plan.version == MIGRATABLE_RECORD_VERSION).then(|| {
-        prior_receipt
-            .as_ref()
-            .expect("only a version-7 receipt retains its source image")
-    });
-    let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
-        .then_some(record.plan.rollback_archive.as_ref())
-        .flatten();
-    let migration = (record.plan.version == PREVIOUS_RECORD_VERSION
-        || record::requires_shell_migration(&record.plan))
-    .then(|| record::migrate_shell_plan(&record.plan))
-    .transpose()?;
-    let installed = migration.as_ref().map_or(&record.plan, |(plan, _, _)| plan);
-    let migration_retirements = migration
-        .as_ref()
-        .map_or(&[][..], |(_, retirements, _)| retirements.as_slice());
-    let migration_introductions = migration
-        .as_ref()
-        .map_or(&[][..], |(_, _, introductions)| introductions.as_slice());
     build_plan_over(
         repository,
         spice_binary,
-        Some(installed),
+        Some(&record.plan),
         binary_superseded.as_ref(),
-        rollback_record,
-        rollback_archive,
-        migration_retirements,
-        migration_introductions,
     )
 }
 
@@ -423,8 +390,7 @@ fn refresh_required(
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
 ) -> Result<bool, InstallError> {
-    Ok(record::requires_shell_migration(plan)
-        || current_build_differs(repository, plan, spice_binary)?
+    Ok(current_build_differs(repository, plan, spice_binary)?
         || hook_activation::topology_changed(repository, plan)?)
 }
 
@@ -506,8 +472,6 @@ pub(super) fn unapply_with_interruption(
         )));
     }
     let mut record_generation = loaded.generation;
-    let _rollback_lock = record.plan.lock_rollback(repository)?;
-    let rollback = record.plan.validated_rollback_state(repository)?;
     // Reversal is an executable direction, not historical inspection. Finish
     // it with the build that owns the live receipt; a newer build should derive
     // and apply its refresh instead of withdrawing the appliance.
@@ -515,11 +479,11 @@ pub(super) fn unapply_with_interruption(
     match record.status {
         InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
         InstallStatus::Uninstalled => {
-            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
+            verify_progress(repository, &record)?;
             return Ok(record.receipt());
         }
         InstallStatus::Complete => {
-            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
+            verify_progress(repository, &record)?;
             record.status = InstallStatus::Unapplying;
             record.completed = 0;
             record.restored.fill(None);
@@ -527,38 +491,25 @@ pub(super) fn unapply_with_interruption(
             record_generation = write_record(repository, &record, record_generation)?;
         }
         InstallStatus::Unapplying => {
-            verify_progress_with_rollback(repository, &record, rollback.as_ref())?;
+            verify_progress(repository, &record)?;
         }
     }
 
     record_generation = reverse_operations(
         repository,
         &mut record,
-        rollback.as_ref(),
         record_generation,
         interrupt_after_write,
     )?;
     record.status = InstallStatus::Uninstalled;
     let receipt = record.receipt();
-    if let Some(rollback) = &rollback {
-        publish_bound(
-            repository.common_dir(),
-            &record.plan.record.destination,
-            &record.plan.record.parent,
-            0,
-            &rollback.record,
-            Some(record_generation),
-        )?;
-    } else {
-        write_record(repository, &record, record_generation)?;
-    }
+    write_record(repository, &record, record_generation)?;
     Ok(receipt)
 }
 
 fn reverse_operations(
     repository: &Repository,
     record: &mut InstallRecord,
-    rollback: Option<&RollbackState>,
     mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
@@ -575,20 +526,14 @@ fn reverse_operations(
         if let Some(generation) = reverse_retirement(
             repository,
             record,
-            rollback,
             record_generation.clone(),
             interrupt_after_write,
         )? {
             record_generation = generation;
             continue;
         }
-        record_generation = reverse_file_operation(
-            repository,
-            record,
-            rollback,
-            record_generation,
-            interrupt_after_write,
-        )?;
+        record_generation =
+            reverse_file_operation(repository, record, record_generation, interrupt_after_write)?;
     }
     Ok(record_generation)
 }
@@ -596,7 +541,6 @@ fn reverse_operations(
 fn reverse_retirement(
     repository: &Repository,
     record: &mut InstallRecord,
-    rollback: Option<&RollbackState>,
     mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
 ) -> Result<Option<ReceiptGeneration>, InstallError> {
@@ -608,7 +552,7 @@ fn reverse_retirement(
     let index = record.plan.retirements.len() - 1 - completed;
     let retirement = &record.plan.retirements[index];
     retirement.validate_binding(repository)?;
-    let previous = retirement_previous(retirement, rollback, index);
+    let previous = retirement.previous.as_ref().map(|previous| &previous.image);
     let (current, parent) = observe_bound(
         repository.common_dir(),
         &retirement.destination,
@@ -662,7 +606,6 @@ fn reverse_activation(
 fn reverse_file_operation(
     repository: &Repository,
     record: &mut InstallRecord,
-    rollback: Option<&RollbackState>,
     record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
@@ -672,7 +615,7 @@ fn reverse_file_operation(
     let reverse = record.plan.operations.len() - 1 - file_completed;
     let operation = &record.plan.operations[reverse];
     operation.validate_binding(repository)?;
-    let previous = operation_previous(operation, rollback, reverse);
+    let previous = operation.previous.as_ref().map(|previous| &previous.image);
     let (current, parent) = observe_bound(
         operation.location.root(repository),
         &operation.destination,
@@ -736,23 +679,9 @@ pub(super) fn verify_progress(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<(), InstallError> {
-    let rollback = match record.status {
-        InstallStatus::Complete => None,
-        InstallStatus::Applying | InstallStatus::Unapplying | InstallStatus::Uninstalled => {
-            record.plan.validated_rollback_state(repository)?
-        }
-    };
-    verify_progress_with_rollback(repository, record, rollback.as_ref())
-}
-
-fn verify_progress_with_rollback(
-    repository: &Repository,
-    record: &InstallRecord,
-    rollback: Option<&RollbackState>,
-) -> Result<(), InstallError> {
     record.validate_loaded_for_repository(repository)?;
-    verify_file_progress(repository, record, rollback, reversed_file_count(record))?;
-    verify_retirement_progress(repository, record, rollback)?;
+    verify_file_progress(repository, record, reversed_file_count(record))?;
+    verify_retirement_progress(repository, record)?;
     verify_activation_progress(record)
 }
 
@@ -768,7 +697,6 @@ fn reversed_file_count(record: &InstallRecord) -> usize {
 fn verify_retirement_progress(
     repository: &Repository,
     record: &InstallRecord,
-    rollback: Option<&RollbackState>,
 ) -> Result<(), InstallError> {
     let applying_completed = record
         .completed
@@ -780,7 +708,7 @@ fn verify_retirement_progress(
         .saturating_sub(activation_offset)
         .min(record.plan.retirements.len());
     for (index, retirement) in record.plan.retirements.iter().enumerate() {
-        let previous = retirement_previous(retirement, rollback, index);
+        let previous = retirement.previous.as_ref().map(|previous| &previous.image);
         let (observed, parent) = observe_bound(
             repository.common_dir(),
             &retirement.destination,
@@ -822,7 +750,6 @@ fn verify_retirement_progress(
 fn verify_file_progress(
     repository: &Repository,
     record: &InstallRecord,
-    rollback: Option<&RollbackState>,
     file_completed: usize,
 ) -> Result<(), InstallError> {
     for (index, operation) in record.plan.operations.iter().enumerate() {
@@ -834,7 +761,7 @@ fn verify_file_progress(
         let valid = file_progress_valid(
             record,
             operation,
-            operation_previous(operation, rollback, index),
+            operation.previous.as_ref().map(|previous| &previous.image),
             index,
             observed.as_ref(),
             parent,
@@ -990,7 +917,7 @@ pub(super) fn verify_refresh_progress(
         }
         return Err(drift(operation, observed));
     }
-    verify_retirement_progress(repository, record, None)?;
+    verify_retirement_progress(repository, record)?;
     if let Some(activation) = &record.plan.hook_activation {
         hook_activation::verify_refreshable(activation)?;
     }
@@ -1030,28 +957,6 @@ fn restoration_image_matches(
         (None, None) => true,
         (Some(previous), Some(observed)) => observed.image == *previous,
         _ => false,
-    }
-}
-
-fn operation_previous<'a>(
-    operation: &'a Operation,
-    rollback: Option<&'a RollbackState>,
-    index: usize,
-) -> Option<&'a FileImage> {
-    match rollback {
-        Some(rollback) => rollback.operations[index].as_ref(),
-        None => operation.previous.as_ref().map(|previous| &previous.image),
-    }
-}
-
-fn retirement_previous<'a>(
-    retirement: &'a Retirement,
-    rollback: Option<&'a RollbackState>,
-    index: usize,
-) -> Option<&'a FileImage> {
-    match rollback {
-        Some(rollback) => rollback.retirements[index].as_ref(),
-        None => retirement.previous.as_ref().map(|previous| &previous.image),
     }
 }
 

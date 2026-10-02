@@ -39,19 +39,19 @@ impl InstallTempInspection {
         self.runtime_present
     }
 
-    /// Number of runtime and rollback-blob entries examined during bounded passes.
+    /// Number of runtime entries examined during the bounded pass.
     #[must_use]
     pub const fn examined_entries(&self) -> usize {
         self.examined_entries
     }
 
-    /// Lower bound on entries omitted after either entry cap was reached.
+    /// Lower bound on entries omitted after the entry cap was reached.
     #[must_use]
     pub const fn omitted_entries(&self) -> usize {
         self.omitted_entries
     }
 
-    /// Number of canonical candidates omitted after either action cap.
+    /// Number of canonical candidates omitted after the action cap.
     #[must_use]
     pub const fn omitted_candidates(&self) -> usize {
         self.omitted_candidates
@@ -87,8 +87,7 @@ pub fn inspect_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
     let now = SystemTime::now();
-    let mut report = scan(repository, false, now, process_state, |_, _| Ok(()))?;
-    scan_rollback_blobs(repository, now, false, &mut report)?;
+    let report = scan(repository, false, now, process_state, |_, _| Ok(()))?;
     Ok(report)
 }
 
@@ -97,56 +96,8 @@ pub fn reclaim_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
     let now = SystemTime::now();
-    let mut report = scan(repository, true, now, process_state, |_, _| Ok(()))?;
-    scan_rollback_blobs(repository, now, true, &mut report)?;
+    let report = scan(repository, true, now, process_state, |_, _| Ok(()))?;
     Ok(report)
-}
-
-fn scan_rollback_blobs(
-    repository: &Repository,
-    now: SystemTime,
-    reclaim: bool,
-    report: &mut InstallTempInspection,
-) -> Result<(), InstallError> {
-    let state = repository.admit_state()?;
-    match std::fs::symlink_metadata(state.install_rollback_blobs()) {
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => {
-            return Err(InstallError::io(
-                "inspect migration rollback directory",
-                state.install_rollback_blobs(),
-                source,
-            ));
-        }
-        Ok(_) => {}
-    }
-    let _lock = reclaim
-        .then(|| super::rollback::acquire_lock(repository))
-        .transpose()?;
-    let protected = super::record::stored_rollback_digest(repository)?;
-    let blobs = if reclaim {
-        super::rollback::reclaim_unreferenced(repository, protected.as_ref(), now)?
-    } else {
-        super::rollback::inspect_unreferenced(repository, protected.as_ref(), now)?
-    };
-    report.examined_entries = report
-        .examined_entries
-        .saturating_add(blobs.examined_entries);
-    report.omitted_entries = report.omitted_entries.saturating_add(blobs.omitted_entries);
-    report.omitted_candidates = report
-        .omitted_candidates
-        .saturating_add(blobs.omitted_candidates);
-    report.reclaimable_count = report
-        .reclaimable_count
-        .saturating_add(blobs.reclaimable_count);
-    report.reclaimable_bytes = report
-        .reclaimable_bytes
-        .checked_add(blobs.reclaimable_bytes)
-        .ok_or_else(|| {
-            InstallError::InvalidRecord("install maintenance byte total overflowed".to_owned())
-        })?;
-    report.unsafe_candidates.extend(blobs.unsafe_candidates);
-    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -6,26 +6,18 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
-mod claim_index;
 mod creation_context;
 mod fact_bounds;
 mod generation_index;
-mod identity_stamp;
 mod lane_predicates;
-mod release_notes;
 mod renewal_organization;
-mod residency_lineage;
 mod rtk_hook_state;
 mod speech_playback;
-mod steering_identity;
 mod steering_microseconds;
-mod task_allocation;
 mod task_creator_scope;
 mod taste_index;
 mod team;
-mod topology_revision;
 mod transcript_session_sources;
-mod vocabulary;
 
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
@@ -323,6 +315,19 @@ fn migratable_versions() -> String {
         format!("schema {}", versions.join(", "))
     }
 }
+fn retired_release(version: u32) -> Option<&'static str> {
+    match version {
+        1 => Some("122d2a842"),
+        2 | 3 => Some("IDENTIT-1kLGl2S5"),
+        4 => Some("b6acb226d"),
+        5 => Some("d0c14dcc4"),
+        6 => Some("SESSION-1kLLCyqw"),
+        7 | 8 => Some("MINING-1kLNTy1C"),
+        9 => Some("87636d7af"),
+        10 => Some("1kRNj6X7"),
+        _ => None,
+    }
+}
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, OpenError> {
     connection
@@ -514,13 +519,24 @@ impl fmt::Display for MigrationError {
                  read-only open never migrates; open this authority for writing once \
                  to step it forward"
             ),
-            Self::UnknownVersion { found } => write!(
-                formatter,
-                "journal schema {found} has no migration path to schema \
-                 {SCHEMA_VERSION}; this build steps forward from {}, so use the \
-                 release that owns schema {found} to reach one of those first",
-                migratable_versions()
-            ),
+            Self::UnknownVersion { found } => {
+                if let Some(release) = retired_release(*found) {
+                    write!(
+                        formatter,
+                        "journal schema {found} was last migrated by release {release}; \
+                         use that release to reach {} before opening it with this build",
+                        migratable_versions()
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "journal schema {found} has no migration path to schema \
+                         {SCHEMA_VERSION}; this build steps forward from {}, so use the \
+                         release that owns schema {found} to reach one of those first",
+                        migratable_versions()
+                    )
+                }
+            }
             Self::VersionDisagreement { row, pragma } => write!(
                 formatter,
                 "journal schema row names version {row}, but SQLite user_version names {pragma}"
@@ -597,27 +613,7 @@ enum IndexActivation {
     Maintenance,
 }
 
-fn migrate_schema_3(connection: &Connection) -> Result<(), OpenError> {
-    steering_identity::migrate(connection)?;
-    task_allocation::migrate(connection)
-}
-
-fn migrate_schema_5(connection: &Connection) -> Result<(), OpenError> {
-    identity_stamp::migrate(connection)?;
-    topology_revision::migrate(connection)
-}
-
 const MIGRATIONS: &[(u32, MigrationStep)] = &[
-    (1, MigrationStep::Sql(MIGRATE_1_TO_2_SQL)),
-    (2, MigrationStep::Rust(residency_lineage::migrate)),
-    (3, MigrationStep::Rust(migrate_schema_3)),
-    (4, MigrationStep::Rust(release_notes::migrate)),
-    (5, MigrationStep::Rust(migrate_schema_5)),
-    (6, MigrationStep::Sql(MIGRATE_6_TO_7_SQL)),
-    (7, MigrationStep::Rust(claim_index::migrate)),
-    (8, MigrationStep::Rust(vocabulary::migrate)),
-    (9, MigrationStep::Sql(MIGRATE_9_TO_10_SQL)),
-    (10, MigrationStep::Sql(MIGRATE_10_TO_11_SQL)),
     (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
     (12, MigrationStep::Rust(creation_context::migrate)),
     (13, MigrationStep::Rust(steering_microseconds::migrate)),
@@ -784,73 +780,6 @@ const MIGRATE_14_TO_15_SQL: &str = "SELECT 1;";
 /// schema step prevents older releases from decoding the expanded wire shape;
 /// current rulings refuse an unbound row rather than guessing its producer.
 const MIGRATE_11_TO_12_SQL: &str = "SELECT 1;";
-
-/// Schema 10 to 11: operator fanout identity in steering facts and heads.
-///
-/// The SQL tables do not change. Existing steering facts and heads omit the
-/// optional identity; every current operator send writes it. The explicit step
-/// makes the durable wire expansion visible to schema-10 releases before they
-/// try to decode current authority.
-const MIGRATE_10_TO_11_SQL: &str = "SELECT 1;";
-
-/// Schema 9 to 10: source-aware transcript loci in immutable fact envelopes.
-///
-/// The SQL tables do not change. Legacy envelopes omit the optional source and
-/// remain byte-canonical; new envelopes may name their tape generation. The
-/// explicit schema step makes that wire expansion visible to older releases,
-/// which refuse schema 10 before trying to decode a sourced fact.
-const MIGRATE_9_TO_10_SQL: &str = "SELECT 1;";
-
-/// Schema 6 to 7: bounded current steering authority and missed-evidence index.
-///
-/// Existing facts are deliberately not interpreted in this storage-only step.
-/// The resident's one canonical steering reducer rebuilds these empty tables
-/// once after open, validates the complete immutable stream, and advances the
-/// nullable index cursor atomically. A current schema with a lagging cursor is
-/// refused by every indexed steering read and write until that rebuild lands.
-const MIGRATE_6_TO_7_SQL: &str = r#"
-CREATE TABLE steering_heads (
-    directive TEXT PRIMARY KEY,
-    steer_key TEXT NOT NULL UNIQUE,
-    lane TEXT NOT NULL,
-    disposition TEXT NOT NULL,
-    created_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    minted_millis INTEGER,
-    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-CREATE INDEX steering_heads_lane_disposition_created
-    ON steering_heads(lane, disposition, created_seq);
-CREATE INDEX steering_heads_disposition_created
-    ON steering_heads(disposition, created_seq);
-CREATE INDEX steering_heads_minted_millis
-    ON steering_heads(minted_millis) WHERE minted_millis IS NOT NULL;
-CREATE TABLE steering_misses (
-    identity TEXT PRIMARY KEY,
-    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-CREATE TABLE steering_index (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    indexed_seq INTEGER REFERENCES fact_envelopes(seq)
-) STRICT;
-INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-"#;
-
-/// Schema 1 to 2: the table transcript accounting reads its heads from.
-///
-/// Schema 2 added exactly this one table to the baseline and nothing else --
-/// no column changed and no row moved -- so stepping forward is a create rather
-/// than a copy, and a schema-1 authority keeps every fact it already holds. A
-/// journal that has never accounted a transcript has no head rows to backfill,
-/// and one that has will re-derive them as it ingests.
-const MIGRATE_1_TO_2_SQL: &str = r#"
-CREATE TABLE transcript_source_heads (
-    stream TEXT PRIMARY KEY,
-    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-"#;
 
 const BASELINE_SQL: &str = r#"
 CREATE TABLE journal_schema (

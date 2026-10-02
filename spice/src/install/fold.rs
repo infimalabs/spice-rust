@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use super::{
-    Asset, GeneratedImage, InstallError, InstallPlan, Location, ObservedFile, RollbackArchive,
-    SymbolProvenance,
+    Asset, GeneratedImage, InstallError, InstallPlan, Location, ObservedFile, SymbolProvenance,
 };
 
 /// Kind of durable action represented by one ordered public stage.
@@ -103,8 +102,6 @@ pub struct InstallRetirementSummary {
     observed: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     superseded: Option<GeneratedImage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    rollback: Option<GeneratedImage>,
 }
 
 impl InstallRetirementSummary {
@@ -142,12 +139,6 @@ impl InstallRetirementSummary {
     #[must_use]
     pub const fn superseded(&self) -> Option<&GeneratedImage> {
         self.superseded.as_ref()
-    }
-
-    /// Mode and digest sealed into migration rollback evidence.
-    #[must_use]
-    pub const fn rollback(&self) -> Option<&GeneratedImage> {
-        self.rollback.as_ref()
     }
 }
 
@@ -194,35 +185,6 @@ impl HookActivationSummary {
     }
 }
 
-/// Digest-bound metadata for a private rollback archive.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RollbackArchiveSummary {
-    format: u16,
-    uncompressed_bytes: u64,
-    digest: Digest,
-}
-
-impl RollbackArchiveSummary {
-    /// Canonical archive format version.
-    #[must_use]
-    pub const fn format(&self) -> u16 {
-        self.format
-    }
-
-    /// Exact byte length of the uncompressed canonical archive body.
-    #[must_use]
-    pub const fn uncompressed_bytes(&self) -> u64 {
-        self.uncompressed_bytes
-    }
-
-    /// Install-artifact domain identity of the uncompressed archive body.
-    #[must_use]
-    pub const fn digest(&self) -> &Digest {
-        &self.digest
-    }
-}
-
 /// Byte-free public description of one canonical private install plan.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -231,8 +193,6 @@ pub struct InstallPlanSummary {
     operation_count: usize,
     operations: Vec<InstallOperationSummary>,
     retirements: Vec<InstallRetirementSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    rollback_archive: Option<RollbackArchiveSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hook_activation: Option<HookActivationSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -269,13 +229,8 @@ impl InstallPlanSummary {
                 previous: generated(retirement.previous.as_ref()),
                 observed: generated(retirement.observed.as_ref()),
                 superseded: retirement.superseded.clone(),
-                rollback: retirement.rollback.clone(),
             })
             .collect();
-        let rollback_archive = plan
-            .rollback_archive
-            .as_ref()
-            .map(RollbackArchiveSummary::from);
         let hook_activation =
             plan.hook_activation
                 .as_ref()
@@ -295,7 +250,6 @@ impl InstallPlanSummary {
             operation_count: plan.operation_count(),
             operations,
             retirements,
-            rollback_archive,
             hook_activation,
             symbols: plan.symbols.clone(),
         }
@@ -325,12 +279,6 @@ impl InstallPlanSummary {
         &self.retirements
     }
 
-    /// Metadata for the private rollback archive, when migration needs one.
-    #[must_use]
-    pub const fn rollback_archive(&self) -> Option<&RollbackArchiveSummary> {
-        self.rollback_archive.as_ref()
-    }
-
     /// Final repository-wide hook activation stage, when configured.
     #[must_use]
     pub const fn hook_activation(&self) -> Option<&HookActivationSummary> {
@@ -341,16 +289,6 @@ impl InstallPlanSummary {
     #[must_use]
     pub const fn symbols(&self) -> Option<&SymbolProvenance> {
         self.symbols.as_ref()
-    }
-}
-
-impl From<&RollbackArchive> for RollbackArchiveSummary {
-    fn from(archive: &RollbackArchive) -> Self {
-        Self {
-            format: archive.format(),
-            uncompressed_bytes: archive.uncompressed_bytes(),
-            digest: archive.digest().clone(),
-        }
     }
 }
 

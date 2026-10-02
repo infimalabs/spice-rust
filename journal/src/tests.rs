@@ -9,8 +9,8 @@ use wire::{
     Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
     Envelope, FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin,
     Outcome, Phase, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange,
-    TaskHandle, TaskHead, TaskStamp, TrustHead, TrustState, WireVersion, Witness, WitnessClass,
-    WitnessHead, WorkflowHead,
+    TaskHead, TaskStamp, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 
 use wire::body::TranscriptPosition;
@@ -23,19 +23,15 @@ use crate::{
     SCHEMA_VERSION, ViolationClass,
 };
 
-mod allocation_migration;
 mod boundary;
 mod claim_index;
 mod creation_context_migration;
 mod fact_bounds;
 mod generation;
 mod historical_receipts;
-mod identity_migration;
-mod lineage_migration;
 mod page_budget;
 mod predecessor;
 mod read;
-mod release_notes_migration;
 mod renewal;
 mod renewal_organization_migration;
 mod renewal_slot_migration;
@@ -46,9 +42,7 @@ mod task_creator_scope_migration;
 mod taste_index_migration;
 mod team_migration;
 mod thread;
-mod topology_revision_migration;
 mod transcript;
-mod vocabulary_migration;
 mod wal;
 
 use predecessor::*;
@@ -675,238 +669,6 @@ fn populate_authority(journal: Journal) -> Journal {
         )
         .expect("advance cursor fixture");
     journal
-}
-
-/// Turn the current task-identity carriers back into the exact schema-3 shape.
-///
-/// Older-schema tests start from the growing baseline so they inherit every
-/// unrelated table. Identity is the one non-additive transition, so those
-/// fixtures must also restore its old columns and bodies rather than lying
-/// about their version while retaining schema-4 content.
-pub(super) fn downgrade_task_identity_to_five(connection: &Connection) {
-    connection
-        .execute_batch("DROP TABLE IF EXISTS claim_index;")
-        .expect("remove schema-8 claim index before restoring older task heads");
-    downgrade_fact_identity_to_three(connection);
-    downgrade_head_identity_to_three(connection);
-}
-
-fn downgrade_fact_identity_to_three(connection: &Connection) {
-    for (seq, bytes) in current_fact_rows(connection) {
-        let (document, origin) = legacy_fact(seq, &bytes);
-        connection
-            .execute(
-                "UPDATE fact_envelopes SET origin = ?1, envelope = ?2 WHERE seq = ?3",
-                params![
-                    origin,
-                    serde_json::to_vec(&document).expect("encode legacy fact"),
-                    seq
-                ],
-            )
-            .expect("store legacy fact");
-        connection
-            .execute(
-                "UPDATE thread_index SET origin = ?1 WHERE seq = ?2",
-                params![origin, seq],
-            )
-            .expect("store legacy thread origin");
-    }
-}
-
-fn current_fact_rows(connection: &Connection) -> Vec<(i64, Vec<u8>)> {
-    let mut statement = connection
-        .prepare("SELECT seq, envelope FROM fact_envelopes ORDER BY seq")
-        .expect("read current fact carriers");
-    statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .expect("map current facts")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect current facts")
-}
-
-fn legacy_fact(seq: i64, bytes: &[u8]) -> (Value, String) {
-    let mut document: Value = serde_json::from_slice(bytes).expect("decode current fact");
-    let object = document.as_object_mut().expect("fact envelope object");
-    legacy_task_origin(object, "origin");
-    let origin = object["origin"]
-        .as_str()
-        .expect("fact origin string")
-        .to_owned();
-    let fact = object
-        .get_mut("fact")
-        .and_then(Value::as_object_mut)
-        .expect("fact body object");
-    legacy_task_stamp(fact, "task");
-    if fact.get("kind").and_then(Value::as_str) == Some("task::added") {
-        fact.remove("creation");
-        fact.insert(
-            "uuid".to_owned(),
-            Value::String(format!("018f82d4-6f59-7d06-92e3-{seq:012x}")),
-        );
-        legacy_handle_array(fact, "depends");
-    }
-    (document, origin)
-}
-
-fn downgrade_head_identity_to_three(connection: &Connection) {
-    let task_rows = current_head_rows(connection, "task_heads");
-    let workflow_rows = current_head_rows(connection, "workflow_heads");
-    let claim_rows = current_head_rows(connection, "claim_heads");
-    let lease_rows = current_head_rows(connection, "lease_heads");
-    restore_schema_three_head_tables(connection);
-    store_legacy_task_heads(connection, task_rows);
-    store_legacy_child_heads(
-        connection,
-        [
-            ("workflow_heads", workflow_rows),
-            ("claim_heads", claim_rows),
-            ("lease_heads", lease_rows),
-        ],
-    );
-}
-
-fn restore_schema_three_head_tables(connection: &Connection) {
-    connection
-        .execute_batch(
-            "DROP TABLE lease_heads;
-             DROP TABLE claim_heads;
-             DROP TABLE workflow_heads;
-             DROP TABLE task_heads;
-             CREATE TABLE task_heads (
-                 handle TEXT PRIMARY KEY,
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-                 body BLOB NOT NULL
-             ) STRICT;
-             CREATE TABLE workflow_heads (
-                 handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-                 body BLOB NOT NULL
-             ) STRICT;
-             CREATE TABLE claim_heads (
-                 handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-                 body BLOB NOT NULL
-             ) STRICT;
-             CREATE TABLE lease_heads (
-                 handle TEXT PRIMARY KEY REFERENCES task_heads(handle),
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-                 body BLOB NOT NULL
-             ) STRICT;",
-        )
-        .expect("restore schema-three task head tables");
-}
-
-fn store_legacy_task_heads(connection: &Connection, rows: Vec<HeadRow>) {
-    for (stamp, head_seq, bytes) in rows {
-        let stamp: TaskStamp = stamp.parse().expect("current head stamp");
-        let handle = legacy_handle(&stamp);
-        let mut document: Value = serde_json::from_slice(&bytes).expect("decode current task head");
-        let head = document.as_object_mut().expect("task head object");
-        head.remove("creation");
-        head.remove("born").expect("current task head stamp");
-        head.insert("handle".to_owned(), Value::String(handle.to_string()));
-        head.insert(
-            "uuid".to_owned(),
-            Value::String("018f82d4-6f59-7d06-92e3-bce913116301".to_owned()),
-        );
-        legacy_handle_array(head, "dependencies");
-        if let Some(origin) = head.get("provenance").and_then(Value::as_str)
-            && let Some(stamp) = origin.strip_prefix("task:")
-            && let Ok(stamp) = stamp.parse::<TaskStamp>()
-        {
-            head.insert(
-                "provenance".to_owned(),
-                Value::String(format!("task:{}", legacy_handle(&stamp))),
-            );
-        }
-        connection
-            .execute(
-                "INSERT INTO task_heads(handle, head_seq, body) VALUES (?1, ?2, ?3)",
-                params![
-                    handle.as_str(),
-                    head_seq,
-                    serde_json::to_vec(&document).expect("encode legacy task head")
-                ],
-            )
-            .expect("store legacy task head");
-    }
-}
-
-fn store_legacy_child_heads(connection: &Connection, tables: [(&str, Vec<HeadRow>); 3]) {
-    for (table, rows) in tables {
-        for (stamp, head_seq, bytes) in rows {
-            let stamp: TaskStamp = stamp.parse().expect("current child stamp");
-            connection
-                .execute(
-                    &format!("INSERT INTO {table}(handle, head_seq, body) VALUES (?1, ?2, ?3)"),
-                    params![legacy_handle(&stamp).as_str(), head_seq, bytes],
-                )
-                .expect("store legacy child head");
-        }
-    }
-}
-
-type HeadRow = (String, i64, Vec<u8>);
-
-fn current_head_rows(connection: &Connection, table: &str) -> Vec<HeadRow> {
-    let mut statement = connection
-        .prepare(&format!(
-            "SELECT stamp, head_seq, body FROM {table} ORDER BY stamp"
-        ))
-        .expect("read current head rows");
-    statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .expect("map current heads")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect current heads")
-}
-
-fn legacy_handle(stamp: &TaskStamp) -> TaskHandle {
-    TaskHandle::for_project("task.journal", stamp)
-}
-
-fn legacy_task_origin(object: &mut serde_json::Map<String, Value>, field: &str) {
-    let Some(stamp) = object
-        .get(field)
-        .and_then(Value::as_str)
-        .and_then(|origin| origin.strip_prefix("task:"))
-        .and_then(|stamp| stamp.parse::<TaskStamp>().ok())
-    else {
-        return;
-    };
-    object.insert(
-        field.to_owned(),
-        Value::String(format!("task:{}", legacy_handle(&stamp))),
-    );
-}
-
-fn legacy_task_stamp(object: &mut serde_json::Map<String, Value>, field: &str) {
-    let Some(stamp) = object
-        .get(field)
-        .and_then(Value::as_str)
-        .and_then(|stamp| stamp.parse::<TaskStamp>().ok())
-    else {
-        return;
-    };
-    object.insert(
-        field.to_owned(),
-        Value::String(legacy_handle(&stamp).to_string()),
-    );
-}
-
-fn legacy_handle_array(object: &mut serde_json::Map<String, Value>, field: &str) {
-    let values = object
-        .get_mut(field)
-        .and_then(Value::as_array_mut)
-        .expect("current identity list");
-    for value in values {
-        let stamp: TaskStamp = value
-            .as_str()
-            .expect("current stamp string")
-            .parse()
-            .expect("current stamp");
-        *value = Value::String(legacy_handle(&stamp).to_string());
-    }
 }
 
 fn insert_fact(journal: &Journal, envelope: Envelope<AnyFact>) {

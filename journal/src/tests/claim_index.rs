@@ -199,34 +199,6 @@ fn verification_names_claim_index_predicate_disagreement() {
     }));
 }
 
-#[test]
-fn schema_seven_claim_heads_backfill_the_index_once() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-seven.sqlite3");
-    let old = authority_file_fixture(&path);
-    downgrade_steering_index_to_millis(&old.connection);
-    old.connection
-        .execute_batch(
-            "DROP TABLE claim_index;
-             UPDATE journal_schema SET version = 7 WHERE singleton = 1;
-             PRAGMA user_version = 7;",
-        )
-        .expect("downgrade schema-seven fixture");
-    drop(old);
-
-    let migrated = Journal::open(&path).expect("schema seven migrates");
-    assert_eq!(
-        migrated.migration().map(|step| (step.from(), step.to())),
-        Some((7, SCHEMA_VERSION))
-    );
-    assert!(
-        migrated
-            .read(|read| read.active_claim_for_actor(&Actor::Spice))
-            .expect("backfilled actor lookup reads")
-            .is_some()
-    );
-}
-
 fn measured_claim_authority(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
     let (own, peers, lanes) = journal

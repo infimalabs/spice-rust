@@ -26,7 +26,6 @@ mod path;
 mod progress;
 mod record;
 mod retention;
-mod rollback;
 mod symbol_sample;
 mod symbol_verification;
 mod symbols;
@@ -38,8 +37,8 @@ pub use binding::{Generation, ParentObservation};
 pub use error::InstallError;
 use files::{
     cleanup_operation, matches_generated, materialize_generated, observe, observe_bound,
-    prepare_retirement, publish_bound, publish_operation, restore_operation, restore_retirement,
-    retire_path, withdraw_parent,
+    prepare_retirement, publish_operation, restore_operation, restore_retirement, retire_path,
+    withdraw_parent,
 };
 use path::validate_relative;
 pub use progress::PreparedInstall;
@@ -48,13 +47,11 @@ use progress::{
     verify_progress,
 };
 use record::{RefreshRecord, read_record, read_record_for_refresh};
-use rollback::{RollbackArchive, RollbackState, rollback_image_matches};
 use validation::{asset_contract, fixed_content_differs_from_current_build};
 
 pub use fold::{
     HookActivationSummary, InstallOperationSummary, InstallPlanSummary, InstallPreview,
     InstallReceipt, InstallRetirementSummary, InstallStageKind, InstallStatus,
-    RollbackArchiveSummary,
 };
 pub use hook_activation::{
     HookActivationPlan, HookConfigurationMutation, HookConfigurationScope, HookWorktreeObservation,
@@ -76,12 +73,6 @@ pub use symbols::SymbolProvenance;
 
 const PLAN_VERSION: u16 = 17;
 const RECORD_VERSION: u16 = 17;
-const RETIREMENT_WITNESS_MISMATCH: &str =
-    "migration rollback archive does not match its retirement witnesses";
-const MIGRATABLE_RECORD_VERSION: u16 = 7;
-const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
-const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 16;
 /// App generations a plan retains immediately before its current one.
 ///
 /// A page loaded from a generation keeps fetching that generation's lazily
@@ -95,7 +86,6 @@ pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_A
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiptSupport {
     Current,
-    Direct,
     Retired(&'static str),
 }
 
@@ -106,16 +96,16 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 17] = [
     (4, ReceiptSupport::Retired("INSTALL-1kKQTfBp")),
     (5, ReceiptSupport::Retired("INSTALL-1kLW2GVN")),
     (6, ReceiptSupport::Retired("HOOKS-1kMFzkkc")),
-    (MIGRATABLE_RECORD_VERSION, ReceiptSupport::Direct),
-    (FORWARD_MIGRATABLE_RECORD_VERSION, ReceiptSupport::Direct),
-    (INLINE_ROLLBACK_RECORD_VERSION, ReceiptSupport::Direct),
+    (7, ReceiptSupport::Retired("HOOKS-1kMG1N6W")),
+    (8, ReceiptSupport::Retired("INSTALL-1kMrw2r2")),
+    (9, ReceiptSupport::Retired("INSTALL-1kNBKpGm")),
     (10, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
     (11, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
     (12, ReceiptSupport::Retired("RETIREM-1kSR91Zl")),
     (13, ReceiptSupport::Retired("INSTALL-1kSWFBN0")),
     (14, ReceiptSupport::Retired("SYMBOLS-dSPkcQ47R")),
     (15, ReceiptSupport::Retired("BROWSER-dV0xw93ND")),
-    (PREVIOUS_RECORD_VERSION, ReceiptSupport::Direct),
+    (16, ReceiptSupport::Retired("INSTALL-dV1QSGJ71")),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
 
@@ -160,16 +150,6 @@ pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy
 #[doc(hidden)]
 pub const TEST_APP_STAGE_ARGUMENT: &str = "--spice-test-app-stage";
 
-/// Rewrites one complete debug fixture receipt into a directly upgradable schema.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn publish_test_historical_receipt(
-    repository: &Repository,
-    version: u16,
-) -> Result<(), InstallError> {
-    record::publish_test_historical_receipt(repository, version)
-}
-
 /// Side-effect-free canonical installation plan.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -185,8 +165,6 @@ pub struct InstallPlan {
     app_predecessors: Vec<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retirements: Vec<Retirement>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    rollback_archive: Option<RollbackArchive>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hook_activation: Option<HookActivationPlan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -223,12 +201,6 @@ impl InstallPlan {
     #[must_use]
     pub fn retirements(&self) -> &[Retirement] {
         &self.retirements
-    }
-
-    /// Whether reversal uses the compact, digest-bound version-7 snapshot.
-    #[must_use]
-    pub const fn has_rollback_archive(&self) -> bool {
-        self.rollback_archive.is_some()
     }
 
     /// Repository-wide Git hook activation appended after every file operation.
@@ -283,112 +255,6 @@ impl InstallPlan {
         content: GeneratedContentAuthority,
     ) -> Result<(), InstallError> {
         validation::validate_plan(self, content)
-    }
-
-    fn rollback_state(
-        &self,
-        repository: &Repository,
-    ) -> Result<Option<RollbackState>, InstallError> {
-        self.rollback_archive
-            .as_ref()
-            .map(|archive| archive.decode(repository))
-            .transpose()
-    }
-
-    fn validated_rollback_state(
-        &self,
-        repository: &Repository,
-    ) -> Result<Option<RollbackState>, InstallError> {
-        let rollback = self.rollback_state(repository)?;
-        if let Some(rollback) = &rollback {
-            self.validate_rollback_state(rollback)?;
-        }
-        Ok(rollback)
-    }
-
-    fn staged_rollback_state(&self) -> Result<Option<RollbackState>, InstallError> {
-        self.rollback_archive
-            .as_ref()
-            .map(RollbackArchive::staged_state)
-            .transpose()
-            .map(Option::flatten)
-    }
-
-    fn validate_rollback_storage(&self, repository: &Repository) -> Result<(), InstallError> {
-        self.rollback_archive
-            .as_ref()
-            .map_or(Ok(()), |archive| archive.validate_stored(repository))
-    }
-
-    fn publish_staged_rollback(&self, repository: &Repository) -> Result<(), InstallError> {
-        self.rollback_archive
-            .as_ref()
-            .map_or(Ok(()), |archive| archive.publish_staged(repository))
-    }
-
-    fn lock_rollback(
-        &self,
-        repository: &Repository,
-    ) -> Result<Option<rollback::RollbackLock>, InstallError> {
-        self.has_rollback_archive()
-            .then(|| rollback::acquire_lock(repository))
-            .transpose()
-    }
-
-    fn validate_rollback_state(&self, rollback: &RollbackState) -> Result<(), InstallError> {
-        let prior = record::decode_rollback_record(&rollback.record, &self.repository)?;
-        if rollback.operations.len() != self.operations.len()
-            || rollback.retirements.len() != self.retirements.len()
-        {
-            return Err(InstallError::InvalidRecord(
-                "migration rollback archive has the wrong image inventory length".to_owned(),
-            ));
-        }
-        let prior_operations = operation_index(Some(&prior.plan));
-        for (image, operation) in rollback.operations.iter().zip(&self.operations) {
-            let valid = prior_operations
-                .get(&operation_key(operation.asset, &operation.path))
-                .map_or_else(
-                    || image.as_ref().is_none_or(FileImage::validate),
-                    |prior| {
-                        image.as_ref().is_some_and(|image| {
-                            image.validate() && image.generated() == prior.generated
-                        })
-                    },
-                );
-            if !valid {
-                return Err(InstallError::InvalidRecord(
-                    "migration rollback archive does not reproduce the version-7 appliance"
-                        .to_owned(),
-                ));
-            }
-        }
-        if rollback
-            .retirements
-            .iter()
-            .zip(&self.retirements)
-            .any(|(image, retirement)| {
-                !rollback_image_matches(image.as_ref(), retirement.rollback_witness())
-            })
-        {
-            return Err(InstallError::InvalidRecord(
-                RETIREMENT_WITNESS_MISMATCH.to_owned(),
-            ));
-        }
-        if self
-            .operations
-            .iter()
-            .any(|operation| operation.previous.is_some())
-            || self
-                .retirements
-                .iter()
-                .any(|retirement| retirement.previous.is_some() || retirement.observed.is_some())
-        {
-            return Err(InstallError::InvalidRecord(
-                "compact migration plan duplicates expanded rollback images".to_owned(),
-            ));
-        }
-        Ok(())
     }
 
     fn validate_for_repository(&self, repository: &Repository) -> Result<(), InstallError> {
@@ -590,7 +456,7 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None, None, None, None, &[], &[])
+    build_plan_over(repository, spice_binary, None, None)
 }
 
 /// Derive the plan that installs this build over `installed`, or from nothing.
@@ -605,23 +471,15 @@ fn append_planned_operations(
     installed: Option<&InstallPlan>,
     (spice_binary, binary_superseded): (Option<&Path>, Option<&GeneratedImage>),
     (app, predecessors, symbols): (Option<&app::Source>, &[Digest], Option<&symbols::Source>),
-    archiving: bool,
-    migration_introductions: &[String],
-) -> Result<(Vec<Operation>, Vec<Option<FileImage>>), InstallError> {
+) -> Result<Vec<Operation>, InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
-    let mut observed_operations = Vec::new();
-    let installed_operations = operation_index_without(installed, migration_introductions);
+    let installed_operations = operation_index(installed);
 
     append_fixed_operations(
         repository,
         &installed_operations,
-        archiving,
-        (
-            &mut virtual_directories,
-            &mut operations,
-            &mut observed_operations,
-        ),
+        (&mut virtual_directories, &mut operations),
     )?;
 
     if let Some(app) = app {
@@ -630,12 +488,7 @@ fn append_planned_operations(
             installed,
             &installed_operations,
             (app, predecessors),
-            archiving,
-            (
-                &mut virtual_directories,
-                &mut operations,
-                &mut observed_operations,
-            ),
+            (&mut virtual_directories, &mut operations),
         )?;
     }
 
@@ -644,12 +497,7 @@ fn append_planned_operations(
         &installed_operations,
         spice_binary,
         binary_superseded,
-        archiving,
-        (
-            &mut virtual_directories,
-            &mut operations,
-            &mut observed_operations,
-        ),
+        (&mut virtual_directories, &mut operations),
     )?;
 
     if let Some(symbols) = symbols {
@@ -657,16 +505,11 @@ fn append_planned_operations(
             repository,
             &installed_operations,
             symbols,
-            archiving,
-            (
-                &mut virtual_directories,
-                &mut operations,
-                &mut observed_operations,
-            ),
+            (&mut virtual_directories, &mut operations),
         )?;
     }
 
-    Ok((operations, observed_operations))
+    Ok(operations)
 }
 
 fn build_plan_over(
@@ -674,10 +517,6 @@ fn build_plan_over(
     spice_binary: Option<&Path>,
     installed: Option<&InstallPlan>,
     binary_superseded: Option<&GeneratedImage>,
-    rollback_record: Option<&FileImage>,
-    rollback_archive: Option<&RollbackArchive>,
-    migration_retirements: &[String],
-    migration_introductions: &[String],
 ) -> Result<InstallPlan, InstallError> {
     let app = spice_binary
         .map(|binary| app::Source::resolve(repository, binary))
@@ -689,15 +528,11 @@ fn build_plan_over(
     let predecessors = app.as_ref().map_or_else(Vec::new, |app| {
         retention::predecessors(installed, app.generation())
     });
-    let compacting = rollback_record.is_some();
-    let archiving = compacting || rollback_archive.is_some();
-    let (operations, observed_operations) = append_planned_operations(
+    let operations = append_planned_operations(
         repository,
         installed,
         (spice_binary, binary_superseded),
         (app.as_ref(), &predecessors, symbols.as_ref()),
-        archiving,
-        migration_introductions,
     )?;
 
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
@@ -717,44 +552,18 @@ fn build_plan_over(
             .into_iter()
             .flatten(),
     )
-    .chain(migration_retirements.iter().map(String::as_str))
-    .map(|path| retirement(repository, installed, path, archiving))
+    .map(|path| retirement(repository, installed, path))
     .collect::<Result<Vec<_>, _>>()?;
-    let (mut retirements, mut rollback_retirements): (Vec<_>, Vec<_>) =
-        planned_retirements.into_iter().unzip();
+    let mut retirements = planned_retirements;
     if let Some(app) = &app {
         let retired =
             retention::retirements(repository, installed, app.generation(), &predecessors)?;
-        rollback_retirements.resize(rollback_retirements.len() + retired.len(), None);
         retirements.extend(retired);
     }
     let hook_activation = spice_binary
         .is_some()
-        .then(|| {
-            hook_activation::plan(
-                repository,
-                installed,
-                installed.is_some_and(|plan| plan.version == MIGRATABLE_RECORD_VERSION),
-            )
-        })
+        .then(|| hook_activation::plan(repository, installed, false))
         .transpose()?;
-    let rollback_archive = match rollback_record {
-        Some(record) => Some(RollbackArchive::new(&RollbackState {
-            record: record.clone(),
-            operations: observed_operations,
-            retirements: rollback_retirements,
-        })?),
-        None => current_rollback_archive(
-            rollback_archive,
-            repository,
-            installed,
-            &operations,
-            &observed_operations,
-            &retirements,
-            &rollback_retirements,
-            migration_introductions,
-        )?,
-    };
     let plan = InstallPlan {
         version: PLAN_VERSION,
         repository: RepositoryIdentity::capture(repository),
@@ -763,7 +572,6 @@ fn build_plan_over(
         app: app.as_ref().map(|app| app.generation().clone()),
         app_predecessors: predecessors,
         retirements,
-        rollback_archive,
         hook_activation,
         symbols: symbols.map(|symbols| symbols.provenance().clone()),
     };
@@ -776,102 +584,22 @@ fn is_discard_path(path: &str) -> bool {
     path == RETIRED_FOLD_STORE_PATH || symbols::DISCARD_PATHS.contains(&path)
 }
 
-fn current_rollback_archive(
-    archive: Option<&RollbackArchive>,
-    repository: &Repository,
-    installed: Option<&InstallPlan>,
-    operations: &[Operation],
-    observed_operations: &[Option<FileImage>],
-    retirements: &[Retirement],
-    observed_retirements: &[Option<FileImage>],
-    migration_introductions: &[String],
-) -> Result<Option<RollbackArchive>, InstallError> {
-    let Some(archive) = archive else {
-        return Ok(None);
-    };
-    let installed = installed.expect("a carried rollback archive belongs to an installed plan");
-    let operations_unchanged = installed
-        .operations
-        .iter()
-        .map(|operation| operation.asset)
-        .eq(operations.iter().map(|operation| operation.asset));
-    let retirements_unchanged = installed
-        .retirements
-        .iter()
-        .map(|retirement| (retirement.path.as_str(), retirement.discard))
-        .eq(retirements
-            .iter()
-            .map(|retirement| (retirement.path.as_str(), retirement.discard)));
-    if operations_unchanged && retirements_unchanged {
-        return archive.to_current().map(Some);
-    }
-
-    let mut rollback = archive.decode(repository)?;
-    let installed_operations = installed
-        .operations
-        .iter()
-        .enumerate()
-        .filter(|(_, operation)| !migration_introductions.contains(&operation.path))
-        .map(|(index, operation)| (operation_key(operation.asset, &operation.path), index))
-        .collect::<BTreeMap<_, _>>();
-    rollback.operations = operations
-        .iter()
-        .zip(observed_operations)
-        .map(|(operation, observed)| {
-            installed_operations
-                .get(&operation_key(operation.asset, &operation.path))
-                .map_or_else(
-                    || observed.clone(),
-                    |index| rollback.operations[*index].clone(),
-                )
-        })
-        .collect();
-    let previous_retirements = std::mem::take(&mut rollback.retirements);
-    let installed_retirements = installed
-        .retirements
-        .iter()
-        .enumerate()
-        .map(|(index, retirement)| (retirement.path.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
-    rollback.retirements = retirements
-        .iter()
-        .zip(observed_retirements)
-        .map(|(retirement, observed)| {
-            if retirement.discards_payload() {
-                return None;
-            }
-            installed_retirements
-                .get(retirement.path.as_str())
-                .map_or_else(
-                    || observed.clone(),
-                    |index| previous_retirements[*index].clone(),
-                )
-        })
-        .collect();
-    RollbackArchive::new(&rollback).map(Some)
-}
-
 fn retirement(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     path: &str,
-    archiving: bool,
-) -> Result<(Retirement, Option<FileImage>), InstallError> {
+) -> Result<Retirement, InstallError> {
     if is_discard_path(path) {
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        return Ok((
-            Retirement {
-                path: path.to_owned(),
-                destination: bound.destination,
-                parent: bound.parent,
-                previous: None,
-                observed: None,
-                superseded: observed.as_ref().map(ObservedFile::generated),
-                rollback: None,
-                discard: true,
-            },
-            None,
-        ));
+        return Ok(Retirement {
+            path: path.to_owned(),
+            destination: bound.destination,
+            parent: bound.parent,
+            previous: None,
+            observed: None,
+            superseded: observed.as_ref().map(ObservedFile::generated),
+            discard: true,
+        });
     }
     let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
     let installed = installed.and_then(|plan| {
@@ -883,31 +611,15 @@ fn retirement(
         || observed.clone(),
         |retirement| retirement.previous.clone(),
     );
-    let compact_new = archiving && installed.is_none();
-    let rollback_image = compact_new
-        .then(|| observed.as_ref().map(|observed| observed.image.clone()))
-        .flatten();
-    let superseded = compact_new
-        .then(|| observed.as_ref().map(ObservedFile::generated))
-        .flatten();
-    let rollback_witness = if compact_new {
-        superseded.clone()
-    } else {
-        installed.and_then(Retirement::rollback_witness).cloned()
-    };
-    Ok((
-        Retirement {
-            path: path.to_owned(),
-            destination: bound.destination,
-            parent: bound.parent,
-            previous: (!compact_new).then_some(previous).flatten(),
-            observed: (!compact_new).then_some(observed).flatten(),
-            superseded,
-            rollback: rollback_witness,
-            discard: false,
-        },
-        rollback_image,
-    ))
+    Ok(Retirement {
+        path: path.to_owned(),
+        destination: bound.destination,
+        parent: bound.parent,
+        previous,
+        observed,
+        superseded: None,
+        discard: false,
+    })
 }
 
 /// Reversal image and superseded build for one asset of `installed`.
@@ -921,22 +633,16 @@ fn reversal_context(
     path: &str,
     observed: Option<ObservedFile>,
     reconciled: Option<&GeneratedImage>,
-    compacting: bool,
 ) -> (Option<ObservedFile>, Option<GeneratedImage>) {
     match installed.get(&operation_key(asset, path)) {
         Some(superseded) => (
-            if compacting {
-                None
-            } else {
-                superseded.previous.clone()
-            },
+            superseded.previous.clone(),
             Some(
                 reconciled
                     .cloned()
                     .unwrap_or_else(|| superseded.generated.clone()),
             ),
         ),
-        None if compacting => (None, None),
         None => (observed, None),
     }
 }
@@ -944,17 +650,9 @@ fn reversal_context(
 type InstalledOperations<'a> = BTreeMap<(Asset, &'a str), &'a Operation>;
 
 fn operation_index(installed: Option<&InstallPlan>) -> InstalledOperations<'_> {
-    operation_index_without(installed, &[])
-}
-
-fn operation_index_without<'a>(
-    installed: Option<&'a InstallPlan>,
-    excluded: &[String],
-) -> InstalledOperations<'a> {
     installed
         .into_iter()
         .flat_map(|plan| &plan.operations)
-        .filter(|operation| !excluded.contains(&operation.path))
         .map(|operation| (operation_key(operation.asset, &operation.path), operation))
         .collect()
 }
@@ -1011,17 +709,12 @@ fn planned_app_assets(
     Ok(planned)
 }
 
-type AppPlanState<'a> = (
-    &'a mut BTreeSet<(Location, String)>,
-    &'a mut Vec<Operation>,
-    &'a mut Vec<Option<FileImage>>,
-);
+type AppPlanState<'a> = (&'a mut BTreeSet<(Location, String)>, &'a mut Vec<Operation>);
 
 fn append_fixed_operations(
     repository: &Repository,
     installed: &InstalledOperations<'_>,
-    archiving: bool,
-    (directories, operations, observed_operations): AppPlanState<'_>,
+    (directories, operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     for asset in [
         Asset::GitPreCommit,
@@ -1038,11 +731,7 @@ fn append_fixed_operations(
         let bytes = fixed_asset_bytes(asset, repository.common_dir())?
             .expect("the fixed asset inventory contains no variable asset");
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
-        if archiving {
-            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-        }
-        let (previous, superseded) =
-            reversal_context(installed, asset, &path, observed, None, archiving);
+        let (previous, superseded) = reversal_context(installed, asset, &path, observed, None);
         operations.push(operation(
             directories,
             asset,
@@ -1061,23 +750,13 @@ fn append_app_operations(
     installed: Option<&InstallPlan>,
     installed_operations: &InstalledOperations<'_>,
     (source, predecessors): (&app::Source, &[Digest]),
-    archiving: bool,
-    (directories, operations, observed_operations): AppPlanState<'_>,
+    (directories, operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     for planned in planned_app_assets(installed, source, predecessors)? {
         let (location, path, _) = asset_contract(planned.asset, Some(&planned.generation))?;
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
-        if archiving {
-            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-        }
-        let (previous, superseded) = reversal_context(
-            installed_operations,
-            planned.asset,
-            &path,
-            observed,
-            None,
-            archiving,
-        );
+        let (previous, superseded) =
+            reversal_context(installed_operations, planned.asset, &path, observed, None);
         operations.push(operation(
             directories,
             planned.asset,
@@ -1096,25 +775,15 @@ fn append_binary_operation(
     installed: &InstalledOperations<'_>,
     binary: Option<&Path>,
     reconciled: Option<&GeneratedImage>,
-    archiving: bool,
-    (directories, operations, observed_operations): AppPlanState<'_>,
+    (directories, operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     let Some(binary) = binary else {
         return Ok(());
     };
     let bytes = read_binary(binary)?;
     let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
-    if archiving {
-        observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-    }
-    let (previous, superseded) = reversal_context(
-        installed,
-        Asset::Binary,
-        BINARY_PATH,
-        observed,
-        reconciled,
-        archiving,
-    );
+    let (previous, superseded) =
+        reversal_context(installed, Asset::Binary, BINARY_PATH, observed, reconciled);
     operations.push(operation(
         directories,
         Asset::Binary,

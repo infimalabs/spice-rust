@@ -382,31 +382,27 @@ generation and image the plan was derived from, every published source byte and
 the source app generation, and every destination binding and installed
 image. Any change refuses before effect. Digest-only apply always derives again.
 
-**Invariant —** Installed app history is bounded. A plan publishes its
-current generation and an ordered inventory of at most two predecessors, oldest
-first. A refresh retains the installed current generation and the newest
-installed predecessors within that bound. Every other installed generation
-retires in the same transaction: each file is discarded only while it still
-holds the installed image, and each emptied generation directory is withdrawn.
-A schema-15 receipt orders no history, so its migration retains only its
-installed current generation.
+**Invariant —** Installed app history is bounded. A plan publishes its current
+generation and an ordered inventory of at most two predecessors, oldest first.
+A refresh retains the installed current generation and the newest installed
+predecessors within that bound. Every other installed generation retires in
+the same transaction: each file is discarded only while it still holds the
+installed image, and each emptied generation directory is withdrawn.
 
 **Invariant —** Preview never invokes maintenance. After apply admits the exact
 digest and bound observations, it may run one bounded pass that reclaims only
-recognized stale install-record publications and unreferenced rollback blobs.
-Explicit reversal admits the same pass through its `--unapply` direction. This
-Spice-owned pre-plan-effect maintenance is not a receipt-owned plan operation and
-never imports, repairs, or deletes foreign state.
+recognized stale install-record publications. Explicit reversal admits the same
+pass through its `--unapply` direction. This Spice-owned pre-plan-effect
+maintenance is not a receipt-owned plan operation and never imports, repairs,
+or deletes foreign state.
 
 **Invariant —** Before the first receipt-owned repository effect, apply
 atomically accepts one canonical `applying` receipt containing the exact plan,
-repository identity, and zero progress. It records exact install-owned reversible
-prior images directly or authenticates them through digest-bound rollback
-evidence. Immutable content-addressed rollback material may be staged earlier,
-but is inert and reclaimable until that receipt authenticates it. Every later
-progress or terminal receipt is a complete canonical generation compare-and-swap
-published from the exact prior generation. A stale or concurrent writer refuses
-and leaves the current receipt unchanged.
+repository identity, zero progress, and directly recorded install-owned
+reversible prior images. Every later progress or terminal receipt is a complete
+canonical generation compare-and-swap published from the exact prior
+generation. A stale or concurrent writer refuses and leaves the current receipt
+unchanged.
 
 **Invariant —** No receipt-owned plan change is made until the accepted receipt
 already describes its exact operation and prior image, and the operation's
@@ -419,13 +415,13 @@ ahead of its receipt, and resume still verifies the exact planned images.
 Transaction admission and terminal publication validate the complete
 inventory; each intervening operation validates its own path binding.
 
-**Invariant —** The receipt records directly, or authenticates through
-digest-bound rollback evidence, the exact install-owned reversible prior image:
-regular-file bytes, ordinary `0o777` mode bits, and absence; exact prior
-configuration values or absence; and whether the installation introduced a
-parent directory. Ownership, ACLs, extended attributes, and special mode bits are
-outside this contract. Recording only the new state makes absence unrecoverable,
-so an uninstall leaves an empty file where the operator originally had nothing.
+**Invariant —** The receipt directly records the exact install-owned reversible
+prior image: regular-file bytes, ordinary `0o777` mode bits, and absence; exact
+prior configuration values or absence; and whether the installation introduced
+a parent directory. Ownership, ACLs, extended attributes, and special mode bits
+are outside this contract. Recording only the new state makes absence
+unrecoverable, so an uninstall leaves an empty file where the operator
+originally had nothing.
 
 **Invariant —** Prior state is captured once, at first application. A repeat run
 must never re-derive it from state the installation itself produced, or a later
@@ -509,10 +505,8 @@ refuses and preserves the current receipt.
 
 ### The canonical receipt
 
-The canonical receipt is the sole installation-status and transaction
-authority, so its integrity is load-bearing. A digest-bound rollback blob is
-subordinate authenticated evidence, not a second status authority, and may be
-required to reverse an admitted migrated installation.
+The canonical receipt is the sole installation-status, transaction, and
+reversal authority, so its integrity is load-bearing.
 
 ```mermaid
 flowchart TD
@@ -534,8 +528,7 @@ flowchart TD
 
 **Invariant —** Every receipt generation is canonical. It is published
 atomically through a real non-symbolic file and only when the exact prior native
-generation and complete receipt image still match. A version-7 migration
-receipt may authenticate a separately stored digest-bound rollback blob.
+generation and complete receipt image still match.
 
 **Invariant —** An unreadable, truncated, noncanonical, linked, or internally
 inconsistent receipt **refuses**. Reading damaged provenance as "not installed"
@@ -545,26 +538,20 @@ strands real, still-active modifications with no owner and no path to removal.
 nonterminal receipt refuses when it names another Git-common owner, as does a
 terminal copy while its original owner still exists. A `complete` or
 `uninstalled` receipt may rebase only after the old owner no longer exists;
-repository, plan, activation, and rollback bindings all move together.
+repository, plan, and activation bindings all move together.
 
 **Invariant —** The canonical receipt remains after ordinary clean terminal
-directions. A `complete` receipt retains the plan and directly records, or
-authenticates through digest-bound rollback evidence, the original install-owned
-reversible prior images needed for reversal; an `uninstalled` receipt retains its
-terminal status and complete progress. Absence is never synthesized by deleting
-provenance.
+directions. A `complete` receipt retains the plan and directly records the
+original install-owned reversible prior images needed for reversal; an
+`uninstalled` receipt retains its terminal status and complete progress. Absence
+is never synthesized by deleting provenance.
 
-**Invariant —** Digest-bound rollback material is subordinate evidence
-authenticated by the canonical receipt. Its identity and exact relationship to
-that receipt are validated before it can drive reversal or migration.
+**Invariant —** Install support is bounded by receipt schema, not product
+semantic version. The current `dist/VERSION` value `0.0.0` emits schema 17 as
+the sole executable shape. Historical schemas 1–16 refuse before receipt-owned
+mutation and name the release change whose executable can unapply them:
 
-**Invariant —** Install support is bounded by receipt schema, not product semantic
-version. The current `dist/VERSION` value `0.0.0` emits schema 16 and directly
-migrates complete schemas 7, 8, 9, and 15; no intermediate package executes.
-Historical schemas 1–6 and 10–14 refuse before receipt-owned mutation and name
-the release change whose executable can unapply them:
-
-| Receipt schema | Current disposition | Retired owner, when unsupported |
+| Receipt schema | Current disposition | Retired owner |
 | --- | --- | --- |
 | 1 | Refuse | `SURFACE-1kJQkpFs` |
 | 2 | Refuse | `SURFACE-1kJRGpf2` |
@@ -572,22 +559,22 @@ the release change whose executable can unapply them:
 | 4 | Refuse | `INSTALL-1kKQTfBp` |
 | 5 | Refuse | `INSTALL-1kLW2GVN` |
 | 6 | Refuse | `HOOKS-1kMFzkkc` |
-| 7, 8, 9 | Direct migration to 16 | — |
+| 7 | Refuse | `HOOKS-1kMG1N6W` |
+| 8 | Refuse | `INSTALL-1kMrw2r2` |
+| 9 | Refuse | `INSTALL-1kNBKpGm` |
 | 10, 11 | Refuse | `WRAPPER-1kNYClbf` |
 | 12 | Refuse | `RETIREM-1kSR91Zl` |
 | 13 | Refuse | `INSTALL-1kSWFBN0` |
 | 14 | Refuse | `SYMBOLS-dSPkcQ47R` |
-| 15 | Direct migration to 16 | — |
-| 16 | Current | — |
+| 15 | Refuse | `BROWSER-dV0xw93ND` |
+| 16 | Refuse | `INSTALL-dV1QSGJ71` |
+| 17 | Current | — |
 
-Moving a directly migratable schema into the retired set requires adding its
-immutable owner in the same release landing. Release notes derive from that
-landing history, so support cannot disappear as an undocumented execution-arm
-deletion. Malformed, internally inconsistent, and future receipts remain store
-failures rather than being mistaken for retired state. An ordinary in-place
-refresh retains the original pre-first-install images rather than creating a
-receipt rollback snapshot. Only the admitted version-7 migration refresh
-authenticates a snapshot that restores the exact pre-migration assets and receipt
-during unapply; that is reversal of the whole migration.
+Retiring a schema requires adding its immutable owner in the same release
+landing. Release notes derive from that landing history, so support cannot
+disappear as an undocumented execution-arm deletion. Malformed, internally
+inconsistent, and future receipts remain store failures rather than being
+mistaken for retired state. An in-place refresh retains the original
+pre-first-install images directly in the current receipt.
 
 ---

@@ -226,9 +226,10 @@ concurrent publications cannot mix task status generations. The transaction
 ends before artifact payload I/O or store locking; these commands neither start
 a local Bus nor migrate the journal.
 
-The journal accepts one schema and an ordered one-way migration chain. Wire and
-browser compatibility have independent versions and resident epochs; runtime
-behavior never branches by release.
+The journal accepts the current schema and an ordered one-way migration chain
+from schema 11. Schemas 1–10 refuse and name the release that last migrated
+them. Wire and browser compatibility have independent versions and resident
+epochs; runtime behavior never branches by release.
 
 Authorities: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`journal/src/replay.rs`](../../journal/src/replay.rs),
@@ -376,10 +377,9 @@ Authorities: [`steer/src/directives.rs`](../../steer/src/directives.rs),
 
 ## Installation and command authority
 
-Install preview is read-only and apply is bound to its exact digest. Immutable
-content-addressed rollback material may be staged before receipt acceptance, but
-it has no installation authority until the canonical receipt authenticates it;
-no receipt-owned asset or hook effect precedes that acceptance. Assets publish
+Install preview is read-only and apply is bound to its exact digest. The
+canonical receipt directly records every reversible prior image, and no
+receipt-owned asset or hook effect precedes its acceptance. Assets publish
 before the common Git hook path switches. Install owns declared assets, receipt
 state, and hook selection, and observes every linked worktree's effective hook
 selection as an activation precondition. It never incidentally imports or
@@ -389,19 +389,14 @@ Reversal is strict. If a receipt-owned target no longer has the exact installed
 identity, unapply returns a typed drift refusal, preserves the changed target and
 current receipt, and publishes no terminal `uninstalled` status. After the
 operator restores or deliberately reconciles the named evidence, the same
-receipt resumes. An ordinary in-place refresh retains each operation's original
+receipt resumes. An in-place refresh retains each operation's original
 pre-first-install image and binds the installed image it supersedes; unapply
 therefore restores the filesystem first observed and publishes the current
-receipt terminal. Only migration from the admitted version-7 receipt
-authenticates a digest-bound rollback snapshot, which may reside in a separately
-stored blob. Reversing that migration restores the exact pre-migration assets
-and version-7 receipt as one prior state, rather than running the older shape
-through the current appliance.
+receipt terminal.
 
-The current `0.0.0` product line uses receipt schema 16. Historical install
-support is schema-bounded: complete schemas 7, 8, 9, and 15 migrate directly to
-16, while schemas 1–6 and 10–14 must be unapplied by their named retired owner
-before the current installer proceeds. Installed app history is bounded to
+The current `0.0.0` product line uses receipt schema 17 as its sole executable
+shape. Schemas 1–16 refuse before receipt-owned mutation and name the retired
+release whose executable can unapply them. Installed app history is bounded to
 the current generation and two ordered predecessors; older generations retire
 inside the refresh transaction.
 

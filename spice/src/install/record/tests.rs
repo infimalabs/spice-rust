@@ -239,94 +239,33 @@ fn app_history_stays_bounded_and_ordered_across_refreshes() {
 }
 
 #[test]
-fn version_16_receipt_refreshes_and_retires_its_pre_rename_generations() {
+fn retired_receipts_name_the_release_that_last_migrated_them() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
-    let oldest = fixture.install();
-    let installed = fixture.refresh(b"installed");
-    install::publish_test_historical_receipt(&repository, install::PREVIOUS_RECORD_VERSION)
-        .expect("version-16 receipt");
-    let shell = |generation: &Digest, file: &str| {
-        repository
-            .common_dir()
-            .join(".spice-install/app/generations")
-            .join(generation.as_str())
-            .join(file)
-    };
-    let current = fixture.stage(b"current");
-    let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
-    assert_eq!(
-        plan.digest().unwrap(),
-        install::plan(&repository, Some(&fixture.binary()))
-            .unwrap()
-            .digest()
-            .unwrap()
-    );
-    assert_eq!(plan.app_predecessors, [oldest.clone(), installed.clone()]);
-    assert!(
-        plan.operations
-            .iter()
-            .all(|operation| !operation.path.ends_with("/canvas-app.html"))
-    );
-    for retained in [&oldest, &installed] {
-        let retired = format!(".spice-install/app/generations/{retained}/canvas-app.html");
-        assert!(
-            plan.retirements
-                .iter()
-                .any(|retirement| retirement.path == retired)
-        );
-    }
-    let refuse_current_shell = |file: &str| {
-        let mut malformed = plan.clone();
-        let operation = malformed
-            .operations
-            .iter_mut()
-            .find(|operation| {
-                operation.asset == Asset::AppHtml
-                    && install::app::operation_generation(operation.asset, &operation.path).as_ref()
-                        == Some(&current)
-            })
-            .expect("current shell operation");
-        let (path_parent, _) = operation.path.rsplit_once('/').expect("generation path");
-        let (destination_parent, _) = operation
-            .destination
-            .rsplit_once('/')
-            .expect("generation destination");
-        operation.path = format!("{path_parent}/{file}");
-        operation.destination = format!("{destination_parent}/{file}");
-        assert!(matches!(
-            malformed.validate(),
-            Err(InstallError::InvalidRecord(_))
-        ));
-        if file == "canvas-app.html" {
-            assert!(migrate_shell_plan(&malformed).is_err());
-        }
-    };
-    refuse_current_shell("canvas-app.html");
-    refuse_current_shell("unknown.html");
-    install::apply(
-        &repository,
-        Some(&fixture.binary()),
-        &plan.digest().unwrap(),
-    )
-    .expect("version-16 asset names migrate on refresh");
-    install::inspect(&repository).expect("migrated receipt verifies");
-    assert_eq!(
-        fixture.installed_generations(),
-        sorted(&[&oldest, &installed, &current])
-    );
-    for retained in [&oldest, &installed, &current] {
-        assert!(!shell(retained, "canvas-app.html").exists());
-        assert!(shell(retained, "app.html").is_file());
-    }
+    fixture.install();
+    let current = fixture.receipt();
 
-    let newer = fixture.refresh(b"newer");
-    let newest = fixture.refresh(b"newest");
-    install::inspect(&repository).expect("receipt verifies once pre-rename generations retire");
-    assert_eq!(
-        fixture.installed_generations(),
-        sorted(&[&current, &newer, &newest])
-    );
+    for (version, expected_owner) in [
+        (7, "HOOKS-1kMG1N6W"),
+        (8, "INSTALL-1kMrw2r2"),
+        (9, "INSTALL-1kNBKpGm"),
+        (16, "INSTALL-dV1QSGJ71"),
+    ] {
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&current).expect("current receipt JSON");
+        document["version"] = version.into();
+        fs::write(
+            record_path(&repository).expect("receipt path"),
+            serde_json::to_vec(&document).expect("retired receipt JSON"),
+        )
+        .expect("publish retired receipt fixture");
+
+        let error = install::inspect(&repository).expect_err("retired receipt refuses");
+        match error {
+            InstallError::LegacyRecord { owner, .. } => assert_eq!(owner, expected_owner),
+            other => panic!("retired receipt {version} returned {other}"),
+        }
+    }
 }
 
 #[test]

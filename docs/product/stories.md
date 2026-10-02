@@ -181,13 +181,12 @@ built.* — Notes come from first-parent landings, with reverted work suppressed
 and repeated landings collapsed to one entry.
 
 *As the operator, I want uninstall never to overwrite evidence that moved.* —
-Every receipt-owned installation mutation records directly, or authenticates
-through digest-bound rollback evidence, its exact reversible prior image:
-regular-file bytes and ordinary `0o777` mode, prior absence or configuration
-value, and introduced-parent existence. Ownership, ACLs, extended attributes,
-and special mode bits are outside that image. Reversal restores only the exact
-installed identity; drift refuses with the changed target and current receipt
-preserved for repair and resumption.
+Every receipt-owned installation mutation directly records its exact reversible
+prior image: regular-file bytes and ordinary `0o777` mode, prior absence or
+configuration value, and introduced-parent existence. Ownership, ACLs, extended
+attributes, and special mode bits are outside that image. Reversal restores only
+the exact installed identity; drift refuses with the changed target and current
+receipt preserved for repair and resumption.
 
 ---
 
@@ -231,7 +230,7 @@ flowchart LR
 | Git advances mid-session | a replayed path performed a launch-time advance | agent-lane integration touches the lane's worktree at exactly three boundaries |
 | An agent resumes from its own summary of the ask | intent was reconstructed from transcript prose | directives come from the steering plane; the transcript never supplies the ask |
 | A briefing looks clean because nothing could be read | an unreadable window rendered as an empty one | a window that could not be read is loud |
-| An uninstall leaves an empty file where nothing had been | the record kept the new state and not the absence | the record or its authenticated rollback evidence retains whether the thing existed at all |
+| An uninstall leaves an empty file where nothing had been | the record kept the new state and not the absence | the record retains whether the thing existed at all |
 | Release notes credit a feature nobody can find | an add-and-revert pair was counted as one shipped change | pairs inside one window are suppressed on both sides |
 | A published version points at source no one can fetch | the immutable package ref was published before its source commit | the source ref reaches the tracked Git authority first |
 
