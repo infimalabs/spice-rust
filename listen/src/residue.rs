@@ -45,6 +45,8 @@ pub struct RecordContext {
     pub timestamp: Option<String>,
     /// Vendor turn identity attached to this record, when present.
     pub turn_id: Option<String>,
+    /// Identity and block position of an OMP message representation.
+    pub message: Option<MessageContext>,
     /// Lifecycle position represented by this record, when present.
     pub turn: Option<TurnMoment>,
     /// Model context window advertised on this record, when present.
@@ -59,6 +61,19 @@ pub struct RecordContext {
     pub prompt_outcome: Option<PromptOutcome>,
     /// Whether this record states that the whole session is now quiescent.
     pub session_settled: bool,
+}
+
+/// OMP's message identity, scoped by its creation timestamp and tape source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageContext {
+    /// RPC message identity shared by streamed and settled records.
+    pub id: String,
+    /// Message creation timestamp; partial text records omit it.
+    pub timestamp: Option<u64>,
+    /// Content block completed by a streamed text record.
+    pub content_index: Option<u32>,
+    /// Whether this record settles the message rather than streams it.
+    pub settled: bool,
 }
 
 /// A vendor dialog that holds the turn until it is answered.

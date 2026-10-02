@@ -37,6 +37,7 @@ struct MessageCardFingerprint<'a> {
     observed: Option<&'a wire::Instant>,
     text: &'a str,
     final_answer: bool,
+    prose_origin: Option<&'a wire::MessageProseOrigin>,
     provider_error: Option<&'a wire::AgentProviderError>,
     classifications: &'a [wire::MessageClassification],
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
@@ -64,6 +65,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         observed: message.observed.as_ref(),
         text: &message.text,
         final_answer: message.final_answer,
+        prose_origin: message.prose_origin.as_ref(),
         provider_error: message.provider_error.as_ref(),
         classifications: &message.classifications,
         automatic_speech: message.automatic_speech.as_ref(),
@@ -111,6 +113,7 @@ impl MessageCards {
             next.push(retained);
         }
         reconcile_boundaries(&mut next);
+        reconcile_prose(&mut next);
         next.sort_by_key(|message| message.chronology_key());
         trim_all_lanes(&mut next, limit);
         let changed = self.entries != next;
@@ -143,6 +146,11 @@ impl MessageCards {
             let key = MessageCardKey::from(message);
             if !seen.insert(key) {
                 return false;
+            }
+            if self.entries.iter().any(|existing| {
+                message.prose_superseded_by(existing) || existing.prose_superseded_by(message)
+            }) {
+                return true;
             }
             if let Some(existing) = self
                 .entries
@@ -198,6 +206,13 @@ impl MessageCards {
         let mut mutated = false;
         let mut touched = BTreeSet::new();
         for message in incoming {
+            if self
+                .entries
+                .iter()
+                .any(|existing| message.prose_superseded_by(existing))
+            {
+                continue;
+            }
             touched.insert(message.lane);
             let key = MessageCardKey::from(message);
             let existing = self
@@ -222,6 +237,7 @@ impl MessageCards {
             }
         }
         mutated |= reconcile_boundaries(&mut self.entries);
+        mutated |= reconcile_prose(&mut self.entries);
         if mutated {
             self.entries.sort_by_key(|message| message.chronology_key());
             if let Some(limit) = self.limit {
@@ -249,6 +265,19 @@ impl MessageCards {
 /// reconnect. The same rule applied here leaves one boundary either way.
 fn reconcile_boundaries(entries: &mut Vec<Rc<AgentMessage>>) -> bool {
     let superseded = wire::superseded_boundaries(entries);
+    if superseded.is_empty() {
+        return false;
+    }
+    for position in superseded.into_iter().rev() {
+        entries.remove(position);
+    }
+    true
+}
+
+/// Completed streamed prose wins over its settled representation in either
+/// arrival order, including a retained head merged with an older history page.
+fn reconcile_prose(entries: &mut Vec<Rc<AgentMessage>>) -> bool {
+    let superseded = wire::superseded_prose(entries);
     if superseded.is_empty() {
         return false;
     }
@@ -295,6 +324,7 @@ mod tests {
 
     fn message(offset: u64, activity: AgentActivityKind) -> AgentMessage {
         AgentMessage {
+            prose_origin: None,
             lane: "018f82d4-6f59-7d06-92e3-bce9131163e5"
                 .parse()
                 .expect("fixture lane"),
@@ -535,5 +565,32 @@ mod tests {
             1,
             "the boundary is carried beside the floor, not instead of it",
         );
+    }
+
+    #[test]
+    fn origin_metadata_refresh_allows_later_streamed_history_to_reconcile() {
+        let old = message(2, AgentActivityKind::Prose);
+        let mut settled = old.clone();
+        settled.prose_origin = Some(wire::MessageProseOrigin {
+            source: settled.lane,
+            message: "msg-7".to_owned(),
+            timestamp: 200,
+            block: 1,
+            streamed: false,
+            intent: false,
+            answers: vec!["1kQwPZtK".to_owned()],
+        });
+        let mut streamed = settled.clone();
+        streamed.locus.offset = 1;
+        streamed.prose_origin.as_mut().expect("origin").streamed = true;
+        let mut cards = MessageCards::default();
+        cards.snapshot(10, &[old]);
+        cards.merge([&settled]);
+        cards.merge([&streamed]);
+        assert_eq!(cards.entries(), &[Rc::new(streamed.clone())]);
+        let mut terminal = streamed;
+        terminal.final_answer = true;
+        cards.merge([&terminal, &settled]);
+        assert_eq!(cards.entries(), &[Rc::new(terminal)]);
     }
 }

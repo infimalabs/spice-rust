@@ -816,6 +816,7 @@ fn cover_stream_frames() {
 fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [AgentMessage; 3] {
     [
         AgentMessage {
+            prose_origin: None,
             lane: first_id,
             author: second_id,
             locus: MessageLocus {
@@ -864,6 +865,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             media: Vec::new(),
         },
         AgentMessage {
+            prose_origin: None,
             lane: second_id,
             author: first_id,
             locus: MessageLocus {
@@ -892,6 +894,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             media: Vec::new(),
         },
         AgentMessage {
+            prose_origin: None,
             lane: first_id,
             author: first_id,
             locus: MessageLocus {
@@ -980,6 +983,7 @@ fn stream_data_samples(
     trust: Packed<TrustView>,
 ) -> Vec<StreamFrame> {
     let history_message = wire::AgentMessage {
+        prose_origin: None,
         lane: second_id,
         author: first_id,
         locus: MessageLocus {

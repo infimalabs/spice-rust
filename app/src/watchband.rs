@@ -1106,6 +1106,7 @@ mod tests {
 
     fn message(lane: wire::CanonicalUuid, offset: u64, text: &str) -> wire::AgentMessage {
         wire::AgentMessage {
+            prose_origin: None,
             lane,
             author: id(90),
             locus: wire::MessageLocus {

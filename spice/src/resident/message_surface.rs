@@ -20,6 +20,7 @@ mod automatic_speech;
 mod backlog;
 mod pending;
 mod projection;
+mod prose_stream;
 mod session_compaction;
 mod sweep;
 mod tool_preview;
@@ -111,6 +112,8 @@ pub(in crate::resident) struct MessageState {
     pending: pending::PendingPresentations,
     pub(in crate::resident) narration: super::narration::Streaks,
     presented: BTreeMap<(CanonicalUuid, CanonicalUuid, Option<CanonicalUuid>), listen::Position>,
+    /// Current OMP message creation time, including silent message-start records.
+    messages: BTreeMap<CanonicalUuid, OpenMessage>,
     /// Transcript spans read and presented but not yet accounted.
     ///
     /// Held here because the accounting bound spans sweeps: the state that
@@ -150,6 +153,15 @@ pub(in crate::resident) fn canvas_diagnostic(
 struct ProseState {
     published: wire::AgentMessage,
     terminal: wire::AgentMessage,
+}
+
+#[derive(Debug)]
+struct OpenMessage {
+    author: CanonicalUuid,
+    source: Option<CanonicalUuid>,
+    id: String,
+    timestamp: u64,
+    answers: BTreeMap<u32, BTreeSet<steer::Key>>,
 }
 
 #[derive(Clone, Debug)]
@@ -463,6 +475,8 @@ struct AgentEvent<'a> {
     observed: Option<wire::Instant>,
     observations: &'a MessageObservations,
     unavailable_tool_terminals: &'a [String],
+    prose_origin: Option<wire::MessageProseOrigin>,
+    suppress_intent: bool,
 }
 
 struct ProjectedMessage {

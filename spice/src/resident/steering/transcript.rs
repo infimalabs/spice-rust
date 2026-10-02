@@ -42,13 +42,13 @@ impl NewestMessage {
             return;
         }
         match event {
-            listen::Event::Prose(prose) | listen::Event::ProseEvidence(prose)
+            listen::Event::Prose(prose) | listen::Event::StreamedProse(prose)
                 if prose.role == listen::ProseRole::Assistant =>
             {
                 self.text
                     .get_or_insert_with(|| (locus, quoted_line(&prose.text)));
             }
-            listen::Event::Prose(_) | listen::Event::ProseEvidence(_) => {
+            listen::Event::Prose(_) | listen::Event::StreamedProse(_) => {
                 self.bound = Some(locus);
             }
             listen::Event::Tool(tool) => match tool.moment {

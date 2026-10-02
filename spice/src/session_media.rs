@@ -27,7 +27,7 @@ pub(crate) fn resolve(
     })?;
     for event in events {
         match event {
-            listen::Event::Prose(prose) | listen::Event::ProseEvidence(prose) => {
+            listen::Event::Prose(prose) | listen::Event::StreamedProse(prose) => {
                 resolve_set(&root, &mut prose.media, &mut prose.external_media)?;
             }
             listen::Event::Tool(listen::Tool {
@@ -42,7 +42,7 @@ pub(crate) fn resolve(
 
 fn has_external_media(event: &listen::Event) -> bool {
     match event {
-        listen::Event::Prose(prose) | listen::Event::ProseEvidence(prose) => {
+        listen::Event::Prose(prose) | listen::Event::StreamedProse(prose) => {
             !prose.external_media.is_empty()
         }
         listen::Event::Tool(listen::Tool {

@@ -473,6 +473,7 @@ mod tests {
 
     fn message(lane: &str, author: &str) -> AgentMessage {
         AgentMessage {
+            prose_origin: None,
             lane: uuid(lane),
             author: uuid(author),
             locus: wire::stream::MessageLocus {

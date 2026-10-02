@@ -25,8 +25,8 @@ pub use event::{
 };
 pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{
-    Decoded, Dialog, LocusLengthError, PromptOutcome, PromptStatus, RecordContext, Residue,
-    ResidueKind, TurnMoment,
+    Decoded, Dialog, LocusLengthError, MessageContext, PromptOutcome, PromptStatus, RecordContext,
+    Residue, ResidueKind, TurnMoment,
 };
 pub use stream::{
     BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanError,
@@ -325,12 +325,46 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
     let prompt_outcome = (kind == "prompt_result")
         .then(|| omp::prompt_outcome(record))
         .transpose()?;
+    let message_context = optional_string(record, "messageId")?
+        .map(|id| {
+            let timestamp = message
+                .and_then(|message| message.get("timestamp"))
+                .map(|value| {
+                    value.as_u64().ok_or(ResidueKind::Malformed {
+                        field: "message.timestamp",
+                        expected: "unsigned millisecond timestamp",
+                    })
+                })
+                .transpose()?;
+            let content_index = record
+                .get("assistantMessageEvent")
+                .and_then(Value::as_object)
+                .and_then(|event| event.get("contentIndex"))
+                .map(|value| {
+                    value
+                        .as_u64()
+                        .and_then(|index| u32::try_from(index).ok())
+                        .ok_or(ResidueKind::Malformed {
+                            field: "assistantMessageEvent.contentIndex",
+                            expected: "unsigned 32-bit block index",
+                        })
+                })
+                .transpose()?;
+            Ok(MessageContext {
+                id: id.to_owned(),
+                timestamp,
+                content_index,
+                settled: matches!(kind, "message_end" | "message"),
+            })
+        })
+        .transpose()?;
     Ok(RecordContext {
         timestamp,
         turn_id: (kind == "prompt_result")
             .then(|| optional_string(record, "id").map(|id| id.map(str::to_owned)))
             .transpose()?
             .flatten(),
+        message: message_context,
         turn,
         model_context_window,
         dialog: omp::dialog(record),

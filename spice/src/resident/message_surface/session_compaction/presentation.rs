@@ -19,6 +19,8 @@ pub(super) fn publish(
             observed: None,
             observations: &state.observations,
             unavailable_tool_terminals: &record.unavailable_tool_terminals,
+            prose_origin: None,
+            suppress_intent: false,
         },
         &mut state.previews,
         None,

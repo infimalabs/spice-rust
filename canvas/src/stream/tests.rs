@@ -31,6 +31,7 @@ fn presenter() -> QuotePresenter {
 
 fn message(lane: u8, offset: u64) -> AgentMessage {
     AgentMessage {
+        prose_origin: None,
         lane: uuid(&format!("018f82d4-6f59-7d06-92e3-bce9131163{lane:02x}")),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         locus: wire::MessageLocus {

@@ -1328,3 +1328,89 @@ fn a_fresh_compaction_does_not_evict_an_agents_message_floor() {
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
+
+#[test]
+fn prose_reconciliation_keeps_original_blocks_and_scopes_reused_provider_ids() {
+    let prose = |offset, block, streamed, intent, answers: &[&str]| {
+        let mut card = message(0xe5, offset);
+        card.text = answers.join(" ");
+        card.prose_origin = Some(wire::MessageProseOrigin {
+            source: uuid("018f82d4-6f59-7d06-92e3-bce9131163c1"),
+            message: "msg-7".to_owned(),
+            timestamp: 200,
+            block,
+            streamed,
+            intent,
+            answers: answers.iter().map(|key| (*key).to_owned()).collect(),
+        });
+        card
+    };
+    let first = prose(1, 1, true, false, &["1kQwPZtK"]);
+    let second = prose(2, 2, true, false, &["1kQwPZtL"]);
+    let fallback = prose(3, 4, false, true, &["1kQwPZtK", "1kQwPZtL"]);
+    let settled = prose(4, 1, false, false, &["1kQwPZtK"]);
+    let mut later_message = prose(5, 1, false, false, &["1kQwPZtK"]);
+    later_message
+        .prose_origin
+        .as_mut()
+        .expect("origin")
+        .timestamp += 1;
+    let mut other_source = prose(6, 1, false, false, &["1kQwPZtK"]);
+    other_source.prose_origin.as_mut().expect("origin").source =
+        uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let other_block = prose(7, 3, false, false, &["1kQwPZtK"]);
+    let mut other_author = prose(8, 1, false, false, &["1kQwPZtK"]);
+    other_author.author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ee");
+    let mut other_lane = prose(9, 1, false, false, &["1kQwPZtK"]);
+    other_lane.lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e6");
+    let expected = vec![
+        first.clone(),
+        second.clone(),
+        later_message.clone(),
+        other_source.clone(),
+        other_block.clone(),
+        other_author.clone(),
+        other_lane.clone(),
+    ];
+    for streamed_first in [false, true] {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 20, presenter());
+        let publisher = source.message_publisher();
+        let cards = if streamed_first {
+            vec![
+                first.clone(),
+                second.clone(),
+                fallback.clone(),
+                settled.clone(),
+            ]
+        } else {
+            vec![
+                fallback.clone(),
+                settled.clone(),
+                first.clone(),
+                second.clone(),
+            ]
+        };
+        for card in cards.into_iter().chain([
+            later_message.clone(),
+            other_source.clone(),
+            other_block.clone(),
+            other_author.clone(),
+            other_lane.clone(),
+        ]) {
+            publisher.publish(card).expect("authored card publishes");
+        }
+        let (_, frames) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Messages], None),
+            )
+            .expect("reconnected snapshot begins");
+        let StreamFrame::Messages { generation, .. } = &frames[0] else {
+            panic!("expected retained messages")
+        };
+        assert_eq!(generation.messages, expected);
+        drop(source);
+        bus.shutdown().expect("bus stops");
+    }
+}
