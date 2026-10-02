@@ -94,6 +94,43 @@ fn every_retired_schema_refuses_and_names_its_last_migration_owner() {
         );
     }
 }
+#[test]
+fn retired_file_refuses_before_wal_or_any_storage_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retired.sqlite3");
+    drop(schema_file_fixture(
+        &path,
+        11,
+        "finalized",
+        None,
+        None,
+        None,
+    ));
+    let connection = Connection::open(&path).expect("retired fixture opens directly");
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("retired fixture mode reads");
+    assert_eq!(mode, "delete");
+    drop(connection);
+    let before_file = FileState::read(&path);
+    let before_entries = directory_entries(scratch.path());
+    let before_directory = directory_bytes(scratch.path());
+
+    let error = Journal::open(&path).expect_err("retired file refuses write open");
+
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownVersion { found: 11 })
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("schema 11 was last migrated by release 257200978")
+    );
+    assert_eq!(FileState::read(&path), before_file);
+    assert_eq!(directory_entries(scratch.path()), before_entries);
+    assert_eq!(directory_bytes(scratch.path()), before_directory);
+}
 
 #[test]
 fn prepared_and_forward_schema_states_are_refused_by_name() {

@@ -225,8 +225,10 @@ concurrent publications cannot mix task status generations. The transaction
 ends before artifact payload I/O or store locking; these commands neither start
 a local Bus nor migrate the journal.
 
-Journal schema 33 is the sole executable shape. Schemas 1–32 refuse before
-authority mutation and name the release that last migrated them:
+Journal schema 33 is the sole executable shape. `Journal::open` admits an
+existing authority as exact-current before changing its journal mode or any
+persistent setting. Schemas 1–32 refuse before authority mutation and name the
+release that last migrated them:
 
 | Journal schema | Retired owner |
 | --- | --- |

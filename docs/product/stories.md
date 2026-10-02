@@ -252,10 +252,9 @@ explicit optional-degradation or fail-closed branches are intentional parts of
 that contract, not alternate compatibility behavior.
 
 **No parallel user-facing shims, aliases, or legacy product paths.** One tested,
-visible, current path may admit named compatibility solely at explicit wire and
-migration boundaries. Each durable authority gives every admitted historical
-shape one unambiguous direct or sequential route into current; no historical
-runtime remains parallel.
+visible, current path admits each durable authority only at its exact current
+shape. A retired shape refuses before mutation and names its owning release; no
+historical runtime remains parallel.
 
 **Not an IDE.** Something the operator overhears and steers.
 

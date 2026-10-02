@@ -97,6 +97,21 @@ fn stored_state(connection: &Connection) -> Result<SchemaState, OpenError> {
         .ok_or(MigrationError::MissingSingleton)?;
     Ok(state)
 }
+/// Admit an existing authority before any persistent storage configuration.
+///
+/// A truly empty database may proceed to current-schema initialization. Every
+/// database that already declares authority must be exact-current before its
+/// journal mode or any other persistent setting can change.
+pub(crate) fn preflight(connection: &Connection) -> Result<(), OpenError> {
+    if !table_exists(connection, "journal_schema")? {
+        let object_count = authority_object_count(connection)?;
+        if object_count == 0 {
+            return Ok(());
+        }
+        return Err(MigrationError::UnversionedAuthority { object_count }.into());
+    }
+    admit_state(connection, stored_state(connection)?).map(|_| ())
+}
 
 /// Reads an existing schema identity without performing baseline or migration.
 pub(crate) fn inspect_version(connection: &Connection) -> Result<u32, OpenError> {

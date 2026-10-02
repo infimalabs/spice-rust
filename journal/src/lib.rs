@@ -1,11 +1,11 @@
 //! The sole SQLite authority store.
 
-/// The one journal schema this build reads and writes.
+/// The exact journal schema this build reads and writes.
 ///
-/// An authority written at an older version is stepped forward to this one on
-/// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
-/// does not. A newer version is always refused: this build cannot know what the
-/// release that wrote it added.
+/// Existing authority must already be schema 33. Retired schemas refuse before
+/// persistent storage configuration and name the release that last migrated
+/// them; newer schemas refuse because this build cannot know what their owning
+/// release added.
 pub const SCHEMA_VERSION: u32 = 33;
 
 /// How long a connection to the on-disk authority waits on a lock another
@@ -302,6 +302,7 @@ impl Journal {
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(OpenError::Sqlite)?;
+        migrate::preflight(&connection)?;
         admit_write_ahead_log(&connection)?;
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
@@ -373,7 +374,7 @@ impl JournalReader {
     /// # Errors
     ///
     /// Returns the SQLite open failure when the file is absent or unreadable,
-    /// or the existing schema-admission refusal when migration is unfinished
+    /// or the existing schema-admission refusal when authority is unfinalized
     /// or belongs to another release.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         let path = path.as_ref();

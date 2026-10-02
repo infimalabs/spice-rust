@@ -1,4 +1,4 @@
-//! Bounded steering authority, atomic publication, and schema-7 admission.
+//! Bounded steering authority, atomic publication, and indexed admission.
 
 use super::*;
 use crate::{

@@ -7,11 +7,20 @@ use super::*;
 fn a_file_authority_runs_in_write_ahead_log_mode_and_an_in_memory_one_does_not() {
     let scratch = Scratch::new();
     let path = scratch.path().join("authority.sqlite3");
-    let writer = authority_file_fixture(&path);
+    let writer = Journal::open(&path).expect("empty file baselines at the current schema");
+    assert_eq!(
+        writer.migration().map(|step| (step.from(), step.to())),
+        Some((0, SCHEMA_VERSION))
+    );
+    assert_eq!(
+        writer.schema_version().expect("schema reads"),
+        SCHEMA_VERSION
+    );
     assert_eq!(journal_mode(&writer.connection), "wal");
     drop(writer);
     // The mode persists in the file, so a later open finds it without setting it.
     let reopened = Journal::open(&path).expect("reopen the file authority");
+    assert_eq!(reopened.migration(), None);
     assert_eq!(journal_mode(&reopened.connection), "wal");
     let memory = Journal::in_memory().expect("open an in-memory authority");
     assert_eq!(journal_mode(&memory.connection), "memory");
