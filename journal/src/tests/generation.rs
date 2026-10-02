@@ -126,82 +126,6 @@ fn verification_names_an_index_that_disagrees_with_its_task() {
     }
 }
 
-#[test]
-fn a_schema_twenty_eight_advance_gains_one_baseline_row() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("generation-index-migration.sqlite3");
-    let mut journal = authority_file_fixture(&path);
-    let task = add_claimed_task(&mut journal, 1, Actor::Lane(uuid(HOLDER)));
-    note(&mut journal, &Actor::Operator, &task, 1);
-    let latest = note(&mut journal, &Actor::Operator, &task, 1);
-    journal
-        .connection
-        .execute_batch(
-            "DROP TABLE task_generations;
-             UPDATE journal_schema SET version = 28 WHERE singleton = 1;
-             PRAGMA user_version = 28;",
-        )
-        .expect("downgrade the fixture to schema 28");
-    let stored = rows(&journal.connection);
-    drop(journal);
-
-    let mut journal = Journal::open(&path).expect("schema 28 authority migrates");
-    assert_eq!(
-        rows(&journal.connection),
-        stored,
-        "no head or fact is rewritten"
-    );
-    assert_eq!(advances(&journal, &task, 0, 8), [(2, latest.last())]);
-    journal.verify().expect("a baseline run verifies");
-
-    let next = note(&mut journal, &Actor::Operator, &task, 1);
-    assert_eq!(
-        advances(&journal, &task, 0, 8),
-        [(2, latest.last()), (3, next.last())]
-    );
-    journal
-        .verify()
-        .expect("an advance past the baseline verifies");
-}
-
-#[test]
-fn a_schema_twenty_seven_authority_opens_at_generation_zero_unchanged() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("generation-migration.sqlite3");
-    let mut journal = authority_file_fixture(&path);
-    let task = add_claimed_task(&mut journal, 1, Actor::Lane(uuid(HOLDER)));
-    journal
-        .connection
-        .execute_batch(
-            "DROP TABLE task_generations;
-             DROP INDEX workflow_heads_revised_seq;
-             ALTER TABLE workflow_heads DROP COLUMN revised_seq;
-             UPDATE journal_schema SET version = 27 WHERE singleton = 1;
-             PRAGMA user_version = 27;",
-        )
-        .expect("downgrade the fixture to schema 27");
-    let stored = rows(&journal.connection);
-    drop(journal);
-
-    let mut journal = Journal::open(&path).expect("schema 27 authority migrates");
-    assert_eq!(
-        rows(&journal.connection),
-        stored,
-        "no head or fact is rewritten"
-    );
-    assert_eq!(
-        settled(&journal, &task),
-        (0, 0),
-        "no retained claim starts stale"
-    );
-    assert!(advances(&journal, &task, 0, 8).is_empty());
-    journal.verify().expect("migrated authority verifies");
-
-    let applied = note(&mut journal, &Actor::Operator, &task, 1);
-    assert_eq!(settled(&journal, &task), (1, 0));
-    assert_eq!(advances(&journal, &task, 0, 8), [(1, applied.last())]);
-}
-
 /// One task's recorded advances past `after`, at most `limit`.
 fn advances(journal: &Journal, task: &TaskStamp, after: u64, limit: usize) -> Vec<(u64, Seq)> {
     journal
@@ -290,20 +214,4 @@ fn heads(journal: &Journal, task: &TaskStamp) -> crate::guard::TaskHeads {
         .read(|read| read.task_heads_for(task))
         .expect("task heads read")
         .expect("task exists")
-}
-
-/// Every workflow and claim head row, and every fact, as stored.
-fn rows(connection: &Connection) -> Vec<(String, i64, Vec<u8>)> {
-    let mut statement = connection
-        .prepare(
-            "SELECT 'workflow:' || stamp, head_seq, body FROM workflow_heads UNION ALL \
-             SELECT 'claim:' || stamp, head_seq, body FROM claim_heads UNION ALL \
-             SELECT 'fact', seq, envelope FROM fact_envelopes ORDER BY 1, 2",
-        )
-        .expect("stored rows prepare");
-    statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .expect("stored rows read")
-        .collect::<Result<_, _>>()
-        .expect("stored rows decode")
 }

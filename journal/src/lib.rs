@@ -248,32 +248,6 @@ impl Journal {
         })?)
     }
 
-    /// Opens authority for the explicit offline journal maintenance operation.
-    ///
-    /// This is the sole unbounded schema certification and index activation
-    /// path. Its caller must hold the repository's offline journal lock before
-    /// opening.
-    pub fn open_for_reindex(path: impl AsRef<Path>) -> Result<Self, OpenError> {
-        let path = path.as_ref();
-        let mut connection = Connection::open(path).map_err(|source| OpenError::Open {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        connection
-            .busy_timeout(BUSY_TIMEOUT)
-            .map_err(OpenError::Sqlite)?;
-        admit_write_ahead_log(&connection)?;
-        connection
-            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
-            .map_err(OpenError::Sqlite)?;
-        let migration = migrate::baseline_for_reindex(&mut connection)?;
-        Ok(Self {
-            connection,
-            migration,
-            residency_cache: Default::default(),
-        })
-    }
-
     /// Opens an isolated in-memory authority database.
     pub fn in_memory() -> Result<Self, OpenError> {
         Self::from_connection(Connection::open_in_memory().map_err(OpenError::Sqlite)?)
@@ -284,18 +258,18 @@ impl Journal {
         migrate::finalized_version(&self.connection)
     }
 
-    /// Schema transition this open completed, absent when authority was current.
+    /// Current-schema initialization this open completed, absent when already initialized.
     #[must_use]
     pub const fn migration(&self) -> Option<Migration> {
         self.migration
     }
 
-    /// Inspects one existing authority database without creating or migrating it.
+    /// Inspects one existing authority database without creating or rewriting it.
     ///
     /// This is the daemonless read used by identity-reporting surfaces. The
     /// read-only SQLite handle makes absence and write attempts refusals at the
     /// storage boundary; unlike [`Self::open`], this path never baselines an
-    /// empty file and never enters a migration transaction.
+    /// empty file and never enters a schema-admission transaction.
     pub fn inspect_schema(path: impl AsRef<Path>) -> Result<u32, OpenError> {
         JournalReader::open(path)?.schema_version()
     }

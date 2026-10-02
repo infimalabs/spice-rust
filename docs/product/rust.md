@@ -82,17 +82,16 @@ Steering uses the same nine-character microsecond codec for current keys and
 identity-derived inbox seals. Parsing also admits retained eight-character
 alphanumeric keys; an eight-character vowel-free key contributes its decoded
 millisecond multiplied by 1,000 to the microsecond high-water, while an older
-base-62 key outside the current alphabet contributes no invented time. Schema
-14 migrates the rebuildable steering head/index representation once from
-`minted_millis` to `minted_micros` without rewriting immutable facts.
+base-62 key outside the current alphabet contributes no invented time. Current
+durable steering heads and indexes store `minted_micros`; schema 13 is retired
+and names release `d811711a3` for its one-time conversion.
 
 Authority: [`wire/src/witness.rs`](../../wire/src/witness.rs). Executable
 coverage lives in
 [`spice/src/board_command/tests/task_listing.rs`](../../spice/src/board_command/tests/task_listing.rs).
 Steering codec coverage lives in
-[`steer/src/ack/keys.rs`](../../steer/src/ack/keys.rs),
-[`steer/tests/scan.rs`](../../steer/tests/scan.rs), and
-[`journal/src/migrate/steering_microseconds.rs`](../../journal/src/migrate/steering_microseconds.rs).
+[`steer/src/ack/keys.rs`](../../steer/src/ack/keys.rs) and
+[`steer/tests/scan.rs`](../../steer/tests/scan.rs).
 
 ## Session boundary
 
@@ -226,10 +225,44 @@ concurrent publications cannot mix task status generations. The transaction
 ends before artifact payload I/O or store locking; these commands neither start
 a local Bus nor migrate the journal.
 
-The journal accepts the current schema and an ordered one-way migration chain
-from schema 11. Schemas 1–10 refuse and name the release that last migrated
-them. Wire and browser compatibility have independent versions and resident
-epochs; runtime behavior never branches by release.
+Journal schema 33 is the sole executable shape. Schemas 1–32 refuse before
+authority mutation and name the release that last migrated them:
+
+| Journal schema | Retired owner |
+| --- | --- |
+| 1 | `122d2a842` |
+| 2, 3 | `IDENTIT-1kLGl2S5` |
+| 4 | `b6acb226d` |
+| 5 | `d0c14dcc4` |
+| 6 | `SESSION-1kLLCyqw` |
+| 7, 8 | `MINING-1kLNTy1C` |
+| 9 | `87636d7af` |
+| 10 | `1kRNj6X7` |
+| 11 | `257200978` |
+| 12 | `6ad57c713` |
+| 13 | `d811711a3` |
+| 14 | `ENVIRON-dRyzKgHJw` |
+| 15 | `SCHEMAR-dRyzNKsdp` |
+| 16 | `b9a45a6ec` |
+| 17 | `37cc1297f` |
+| 18 | `ALLOCAT-dS8cvNplX` |
+| 19 | `BOUNDS-dSHsMK0kz` |
+| 20 | `eab8365a6` |
+| 21 | `d431530eb` |
+| 22 | `c64c48cac` |
+| 23 | `TASKS-dSPJyjNSH` |
+| 24 | `TASKS-dSPW61MXd` |
+| 25 | `fb96c12a7` |
+| 26 | `966d33bef` |
+| 27 | `916081f8a` |
+| 28 | `02715f9e1` |
+| 29 | `SPEECH-dTQBpHHJq` |
+| 30 | `a4abe071f` |
+| 31 | `55ad00080` |
+| 32 | `a15ed13f4` |
+
+Wire and browser compatibility have independent versions and resident epochs;
+runtime behavior never branches by release.
 
 Authorities: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`journal/src/replay.rs`](../../journal/src/replay.rs),

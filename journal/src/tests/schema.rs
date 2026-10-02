@@ -9,712 +9,90 @@
 use super::*;
 
 #[test]
-fn baseline_and_schema_twenty_two_converge_on_lane_predicates_once() {
-    let mut journal = Journal::in_memory().expect("empty journal migrates");
-    let migration = journal.migration().expect("empty journal migrated");
+fn current_schema_is_the_only_executable_journal_shape() {
+    let mut journal = Journal::in_memory().expect("empty journal creates the current schema");
+    let migration = journal
+        .migration()
+        .expect("empty journal records its baseline");
     assert_eq!((migration.from(), migration.to()), (0, SCHEMA_VERSION));
     assert_eq!(
         journal.schema_version().expect("schema version"),
         SCHEMA_VERSION
     );
-
     assert_eq!(
         crate::migrate::baseline(&mut journal.connection).expect("baseline is idempotent"),
         None
     );
-    assert_eq!(
-        journal.schema_version().expect("schema version"),
-        SCHEMA_VERSION
-    );
     assert_eq!(authority_tables(&journal), expected_tables());
-
     let verified = journal.verify().expect("empty baseline verifies");
-    assert_eq!(verified.facts, 0);
-    assert_eq!(verified.receipts, 0);
-    assert_eq!(verified.heads, 0);
-    assert_eq!(verified.threads, 0);
-
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-twenty-two.sqlite3");
-    let old = authority_file_fixture(&path);
-    downgrade_lane_predicates_to_twenty_two(&old.connection);
-    drop(old);
-
-    let migrated = Journal::open(&path).expect("schema twenty-two migrates");
     assert_eq!(
-        migrated.migration().map(|step| (step.from(), step.to())),
-        Some((22, SCHEMA_VERSION))
+        (
+            verified.facts,
+            verified.receipts,
+            verified.heads,
+            verified.threads
+        ),
+        (0, 0, 0, 0)
     );
-    let claim_lane: String = migrated
-        .connection
-        .query_row("SELECT lane FROM claim_index", [], |row| row.get(0))
-        .expect("backfilled claim lane reads");
-    let transcript_lane: String = migrated
-        .connection
-        .query_row("SELECT lane FROM transcript_source_heads", [], |row| {
-            row.get(0)
-        })
-        .expect("backfilled transcript lane reads");
-    assert_eq!(claim_lane, claim_head().lane.to_string());
-    assert_eq!(transcript_lane, transcript_source_head().lane.to_string());
-    migrated.verify().expect("backfilled predicates verify");
-}
-
-fn downgrade_lane_predicates_to_twenty_two(connection: &Connection) {
-    connection
-        .execute_batch(
-            "DROP INDEX claim_index_actor_disposition_stamp;
-             DROP INDEX claim_index_disposition_actor;
-             DROP INDEX claim_index_disposition_lane_stamp;
-             CREATE TABLE claim_index_v22 (
-                 stamp TEXT PRIMARY KEY REFERENCES claim_heads(stamp),
-                 actor TEXT NOT NULL,
-                 disposition TEXT NOT NULL CHECK (disposition IN ('active', 'freed', 'lapsed')),
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
-             ) STRICT;
-             INSERT INTO claim_index_v22(stamp, actor, disposition, head_seq)
-                 SELECT stamp, actor, disposition, head_seq FROM claim_index;
-             DROP TABLE claim_index;
-             ALTER TABLE claim_index_v22 RENAME TO claim_index;
-             CREATE INDEX claim_index_actor_disposition_stamp
-                 ON claim_index(actor, disposition, stamp);
-             CREATE INDEX claim_index_disposition_actor
-                 ON claim_index(disposition, actor);
-             DROP INDEX transcript_source_heads_lane_stream;
-             CREATE TABLE transcript_source_heads_v22 (
-                 stream TEXT PRIMARY KEY,
-                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-                 body BLOB NOT NULL
-             ) STRICT;
-             INSERT INTO transcript_source_heads_v22(stream, head_seq, body)
-                 SELECT stream, head_seq, body FROM transcript_source_heads;
-             DROP TABLE transcript_source_heads;
-             ALTER TABLE transcript_source_heads_v22 RENAME TO transcript_source_heads;
-             UPDATE journal_schema SET version = 22 WHERE singleton = 1;
-             PRAGMA user_version = 22;",
-        )
-        .expect("downgrade lane predicates to schema twenty-two");
 }
 
 #[test]
-fn schema_nineteen_adds_the_bounded_startup_indexes() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-nineteen.sqlite3");
-    let journal = authority_file_fixture(&path);
-    append_fact_copies(
-        &journal.connection,
-        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT
-            .checked_sub(fact_count(&journal.connection))
-            .expect("fixture starts below the startup row limit"),
-    );
-    assert_eq!(
-        fact_count(&journal.connection),
-        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT,
-        "the exact startup row boundary is exercised",
-    );
-    downgrade_to_schema_nineteen(&journal.connection);
-    drop(journal);
+fn every_retired_schema_refuses_and_names_its_last_migration_owner() {
+    let owners = [
+        (1, "122d2a842"),
+        (2, "IDENTIT-1kLGl2S5"),
+        (3, "IDENTIT-1kLGl2S5"),
+        (4, "b6acb226d"),
+        (5, "d0c14dcc4"),
+        (6, "SESSION-1kLLCyqw"),
+        (7, "MINING-1kLNTy1C"),
+        (8, "MINING-1kLNTy1C"),
+        (9, "87636d7af"),
+        (10, "1kRNj6X7"),
+        (11, "257200978"),
+        (12, "6ad57c713"),
+        (13, "d811711a3"),
+        (14, "ENVIRON-dRyzKgHJw"),
+        (15, "SCHEMAR-dRyzNKsdp"),
+        (16, "b9a45a6ec"),
+        (17, "37cc1297f"),
+        (18, "ALLOCAT-dS8cvNplX"),
+        (19, "BOUNDS-dSHsMK0kz"),
+        (20, "eab8365a6"),
+        (21, "d431530eb"),
+        (22, "c64c48cac"),
+        (23, "TASKS-dSPJyjNSH"),
+        (24, "TASKS-dSPW61MXd"),
+        (25, "fb96c12a7"),
+        (26, "966d33bef"),
+        (27, "916081f8a"),
+        (28, "02715f9e1"),
+        (29, "SPEECH-dTQBpHHJq"),
+        (30, "a4abe071f"),
+        (31, "55ad00080"),
+        (32, "a15ed13f4"),
+    ];
 
-    let journal = Journal::open(&path).expect("schema-nineteen authority migrates");
-    assert_eq!(
-        journal
-            .migration()
-            .map(|migration| (migration.from(), migration.to())),
-        Some((19, SCHEMA_VERSION))
-    );
-    for index in ["fact_envelopes_kind_seq", "fact_envelopes_origin_kind_seq"] {
-        let exists: bool = journal
-            .connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
-                [index],
-                |row| row.get(0),
-            )
-            .expect("read migrated index");
-        assert!(exists, "migration omitted {index}");
-    }
-}
-
-#[test]
-fn schema_nineteen_index_activation_obeys_the_exact_indexed_byte_limit() {
-    let scratch = Scratch::new();
-    let exact_path = scratch.path().join("schema-nineteen-exact-bytes.sqlite3");
-    let exact = authority_file_fixture(&exact_path);
-    set_indexed_fact_bytes(
-        &exact.connection,
-        crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT,
-    );
-    exact
-        .connection
-        .execute(
-            "UPDATE fact_envelopes SET envelope = X'00' WHERE seq = 1",
-            [],
-        )
-        .expect("malformed envelope proves the preflight does not decode it");
-    downgrade_to_schema_nineteen(&exact.connection);
-    drop(exact);
-
-    let migrated = Journal::open(&exact_path).expect("the exact indexed-byte boundary migrates");
-    assert_eq!(
-        migrated
-            .migration()
-            .map(|migration| (migration.from(), migration.to())),
-        Some((19, SCHEMA_VERSION)),
-    );
-    assert!(fact_indexes_exist(&migrated.connection));
-    drop(migrated);
-
-    let oversized_path = scratch
-        .path()
-        .join("schema-nineteen-oversized-index-bytes.sqlite3");
-    let oversized = authority_file_fixture(&oversized_path);
-    assert_eq!(
-        fact_count(&oversized.connection),
-        2,
-        "the byte refusal uses few rows"
-    );
-    set_indexed_fact_bytes(
-        &oversized.connection,
-        crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT.saturating_add(1),
-    );
-    downgrade_to_schema_nineteen(&oversized.connection);
-    drop(oversized);
-
-    let error = Journal::open(&oversized_path)
-        .expect_err("one indexed byte beyond the startup boundary must refuse");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::IndexActivationBytesRequired {
-            limit: crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT,
-            observed,
-        }) if observed == crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT + 1
-    ));
-    assert!(error.to_string().contains("`spice journal reindex`"));
-    assert_schema_nineteen_without_fact_indexes(&oversized_path);
-
-    let offline = Journal::open_for_reindex(&oversized_path)
-        .expect("offline activation accepts explicitly unbounded index work");
-    assert_eq!(
-        offline
-            .migration()
-            .map(|migration| (migration.from(), migration.to())),
-        Some((19, SCHEMA_VERSION)),
-    );
-    assert!(fact_indexes_exist(&offline.connection));
-    drop(offline);
-    let retried =
-        Journal::open_for_reindex(&oversized_path).expect("offline byte-boundary retry converges");
-    assert_eq!(retried.migration(), None);
-}
-
-#[test]
-fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-nineteen-large.sqlite3");
-    let journal = authority_file_fixture(&path);
-    append_fact_copies(
-        &journal.connection,
-        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT.saturating_add(1),
-    );
-    downgrade_to_schema_nineteen(&journal.connection);
-    drop(journal);
-
-    let error = Journal::open(&path).expect_err("large startup migration must refuse");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::IndexActivationRequired {
-            limit: crate::migrate::INDEX_ACTIVATION_FACT_LIMIT,
-            observed,
-        }) if observed == crate::migrate::INDEX_ACTIVATION_FACT_LIMIT + 1
-    ));
-    assert!(error.to_string().contains("`spice journal reindex`"));
-    assert_schema_nineteen_without_fact_indexes(&path);
-
-    let larger = Connection::open(&path).expect("large predecessor reopens for scale proof");
-    append_fact_copies(
-        &larger,
-        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT.saturating_add(1),
-    );
-    drop(larger);
-    let grown = Journal::open(&path).expect_err("larger startup migration must also refuse");
-    assert_eq!(grown.to_string(), error.to_string());
-    assert_schema_nineteen_without_fact_indexes(&path);
-
-    for prefix in [
-        "CREATE INDEX fact_envelopes_kind_seq ON fact_envelopes(kind, seq);",
-        "CREATE INDEX fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
-         CREATE INDEX fact_envelopes_origin_kind_seq ON fact_envelopes(origin, kind, seq);",
-    ] {
-        let mut connection =
-            Connection::open(&path).expect("predecessor opens for index interruption proof");
-        let transaction = connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
-            .expect("partial index activation transaction begins");
-        transaction
-            .execute_batch(prefix)
-            .expect("partial index activation advances");
-        drop(transaction);
-        drop(connection);
-        assert_schema_nineteen_without_fact_indexes(&path);
-    }
-
-    let mut connection =
-        Connection::open(&path).expect("predecessor opens for version interruption proof");
-    let transaction = connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
-        .expect("offline activation transaction begins");
-    crate::migrate::advance_for_reindex(&transaction).expect("offline activation advances");
-    assert_eq!(
-        version_records(&transaction),
-        (SCHEMA_VERSION, SCHEMA_VERSION)
-    );
-    assert!(fact_indexes_exist(&transaction));
-    drop(transaction);
-    drop(connection);
-    assert_schema_nineteen_without_fact_indexes(&path);
-
-    let migrated = Journal::open_for_reindex(&path).expect("offline activation commits");
-    assert_eq!(
-        migrated
-            .migration()
-            .map(|migration| (migration.from(), migration.to())),
-        Some((19, SCHEMA_VERSION))
-    );
-    assert!(fact_indexes_exist(&migrated.connection));
-    drop(migrated);
-
-    let retried = Journal::open_for_reindex(&path).expect("offline activation retry converges");
-    assert_eq!(retried.migration(), None);
-    assert!(fact_indexes_exist(&retried.connection));
-}
-
-fn assert_schema_nineteen_without_fact_indexes(path: &Path) {
-    let connection = Connection::open(path).expect("schema-nineteen authority opens directly");
-    assert_eq!(version_records(&connection), (19, 19));
-    assert!(!fact_indexes_exist(&connection));
-}
-
-fn downgrade_to_schema_nineteen(connection: &Connection) {
-    connection
-        .execute_batch(
-            "DROP INDEX fact_envelopes_kind_seq;
-             DROP INDEX fact_envelopes_origin_kind_seq;
-             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
-             PRAGMA user_version = 19;",
-        )
-        .expect("pre-index schema is restored");
-}
-
-fn fact_count(connection: &Connection) -> u64 {
-    let count: i64 = connection
-        .query_row("SELECT count(*) FROM fact_envelopes", [], |row| row.get(0))
-        .expect("fact count reads");
-    u64::try_from(count).expect("fact count is nonnegative")
-}
-
-fn indexed_fact_bytes(connection: &Connection) -> u64 {
-    let bytes: i64 = connection
-        .query_row(
-            "SELECT COALESCE(SUM(octet_length(origin) + 2 * octet_length(kind)), 0)
-             FROM fact_envelopes",
-            [],
-            |row| row.get(0),
-        )
-        .expect("indexed fact bytes read");
-    u64::try_from(bytes).expect("indexed fact bytes are nonnegative")
-}
-
-fn set_indexed_fact_bytes(connection: &Connection, target: u64) {
-    connection
-        .execute_batch(
-            "DROP TRIGGER IF EXISTS fact_envelopes_envelope_size_insert;
-             DROP TRIGGER IF EXISTS fact_envelopes_envelope_size_update;",
-        )
-        .expect("schema-nineteen fixture removes successor bounds");
-    let fixed: i64 = connection
-        .query_row(
-            "SELECT COALESCE(SUM(2 * octet_length(kind)), 0) FROM fact_envelopes",
-            [],
-            |row| row.get(0),
-        )
-        .expect("fixed indexed bytes read");
-    let origin_bytes = target
-        .checked_sub(u64::try_from(fixed).expect("fixed bytes are nonnegative"))
-        .expect("target exceeds fixed index bytes");
-    let first_origin_bytes = origin_bytes / 2;
-    let origin_sizes = [first_origin_bytes, origin_bytes - first_origin_bytes];
-    for (seq, origin_bytes) in [1_i64, 2].into_iter().zip(origin_sizes) {
-        let value_bytes = origin_bytes
-            .checked_sub("task:".len() as u64)
-            .expect("target fits two valid origins");
-        let origin = format!(
-            "task:{}",
-            "x".repeat(usize::try_from(value_bytes).expect("fixture origin fits memory"))
-        );
-        let envelope_bytes: Vec<u8> = connection
-            .query_row(
-                "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
-                [seq],
-                |row| row.get(0),
-            )
-            .expect("fixture envelope reads");
-        let mut envelope: Envelope<AnyFact> =
-            wire::decode(&envelope_bytes).expect("fixture envelope decodes");
-        envelope.origin = origin.parse().expect("large fixture origin remains valid");
-        connection
-            .execute(
-                "UPDATE fact_envelopes SET origin = ?1, envelope = ?2 WHERE seq = ?3",
-                params![
-                    origin,
-                    wire::encode(&envelope).expect("large envelope encodes"),
-                    seq,
-                ],
-            )
-            .expect("large indexed origin is stored");
-    }
-    assert_eq!(indexed_fact_bytes(connection), target);
-}
-
-fn append_fact_copies(connection: &Connection, count: u64) {
-    let first: i64 = connection
-        .query_row("SELECT max(seq) + 1 FROM fact_envelopes", [], |row| {
-            row.get(0)
-        })
-        .expect("synthetic fact range begins after authority");
-    let count = i64::try_from(count).expect("synthetic fact count fits SQLite");
-    let last = first.saturating_add(count.saturating_sub(1));
-    connection
-        .execute_batch(&format!(
-            "WITH RECURSIVE facts(seq) AS (
-                 SELECT {first} UNION ALL SELECT seq + 1 FROM facts WHERE seq < {last}
-             )
-             INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, kind, envelope)
-             SELECT facts.seq, source.wire_version, source.instant, source.actor,
-                    source.origin, NULL, source.kind, source.envelope
-             FROM facts CROSS JOIN fact_envelopes AS source WHERE source.seq = 1;"
-        ))
-        .expect("synthetic fact range is inserted in one statement");
-}
-
-fn fact_indexes_exist(connection: &Connection) -> bool {
-    ["fact_envelopes_kind_seq", "fact_envelopes_origin_kind_seq"]
-        .into_iter()
-        .all(|index| {
-            connection
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
-                    [index],
-                    |row| row.get(0),
-                )
-                .expect("fact index identity reads")
-        })
-}
-
-#[test]
-fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_tasks() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-fourteen.sqlite3");
-    let journal = authority_file_fixture(&path);
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 14 WHERE singleton = 1;
-             PRAGMA user_version = 14;",
-        )
-        .expect("downgrade the requirement-unaware fixture identity");
-    let fact_before: Vec<u8> = journal
-        .connection
-        .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("read retained task fact");
-    let head_before: Vec<u8> = journal
-        .connection
-        .query_row("SELECT body FROM task_heads", [], |row| row.get(0))
-        .expect("read retained task head");
-    let mut census_before = table_census(&journal.connection);
-    census_before.remove("journal_schema");
-    drop(journal);
-
-    let journal = Journal::open(&path).expect("schema-fourteen authority migrates");
-    let migration = journal.migration().expect("wire boundary advances");
-    assert_eq!((migration.from(), migration.to()), (14, SCHEMA_VERSION));
-    assert_eq!(
-        version_records(&journal.connection),
-        (SCHEMA_VERSION, SCHEMA_VERSION)
-    );
-    let fact_after: Vec<u8> = journal
-        .connection
-        .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("read migrated task fact");
-    let head_after: Vec<u8> = journal
-        .connection
-        .query_row("SELECT body FROM task_heads", [], |row| row.get(0))
-        .expect("read migrated task head");
-    assert_eq!(
-        fact_after, fact_before,
-        "immutable fact bytes stay retained"
-    );
-    assert_eq!(head_after, head_before, "legacy head bytes stay retained");
-
-    let snapshot = journal.fact_snapshot().expect("retained facts decode");
-    let added = snapshot
-        .facts()
-        .iter()
-        .find_map(|envelope| envelope.fact.read::<wire::body::TaskAdded>())
-        .expect("retained task-added fact");
-    assert!(added.requirements.is_empty());
-    let task = "1kKRRsDP".parse().expect("fixture task stamp");
-    let head = journal
-        .read(|read| read.task_head(&task))
-        .expect("retained task head reads")
-        .expect("retained task exists");
-    assert!(head.body().requirements.is_empty());
-
-    let mut census_after = table_census(&journal.connection);
-    census_after.remove("journal_schema");
-    assert_eq!(census_after, census_before, "only schema identity advances");
-    journal.verify().expect("migrated authority verifies");
-    drop(journal);
-
-    let reopened = Journal::open(&path).expect("current authority reopens");
-    assert_eq!(reopened.migration(), None, "schema step runs exactly once");
-}
-
-mod rollout;
-
-#[test]
-fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-eleven.sqlite3");
-    let journal = authority_file_fixture(&path);
-    downgrade_steering_index_to_millis(&journal.connection);
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 11 WHERE singleton = 1;
-             PRAGMA user_version = 11;",
-        )
-        .expect("downgrade worktree-unaware fixture identity");
-    let mut before = table_census(&journal.connection);
-    before.remove("journal_schema");
-    before.remove("steering_heads");
-    remove_creation_context_carriers(&mut before);
-    drop(journal);
-
-    let journal = Journal::open(&path).expect("schema-eleven authority migrates");
-    let migration = journal.migration().expect("trust wire step runs");
-    assert_eq!((migration.from(), migration.to()), (11, SCHEMA_VERSION));
-    let bytes: Vec<u8> = journal
-        .connection
-        .query_row("SELECT body FROM trust_heads LIMIT 1", [], |row| row.get(0))
-        .expect("legacy trust head reads");
-    let head: TrustHead = wire::decode(&bytes).expect("legacy trust head has current shape");
-    assert_eq!(head.worktree, None, "migration never guesses a producer");
-    let mut after = table_census(&journal.connection);
-    after.remove("journal_schema");
-    after.remove("steering_heads");
-    remove_creation_context_carriers(&mut after);
-    assert_eq!(
-        after, before,
-        "the migration chain rewrites no unrelated authority row"
-    );
-    assert_fixture_creation_context_migrated(&journal);
-    journal
-        .verify()
-        .expect("worktree-aware authority remains coherent");
-}
-
-/// Every row of every table, so a migration cannot quietly recreate one.
-///
-/// Reading the columns back as SQLite values rather than counting rows is the
-/// point: a step that dropped and rebuilt a table would keep the count and lose
-/// the contents, and a census of counts would call that survival.
-fn table_census(connection: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
-    let mut names = connection
-        .prepare(
-            "SELECT name FROM sqlite_schema WHERE type = 'table' \
-             AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .expect("query census tables");
-    let tables: Vec<String> = names
-        .query_map([], |row| row.get::<_, String>(0))
-        .expect("map census table rows")
-        .map(|row| row.expect("read census table name"))
-        .collect();
-    drop(names);
-
-    tables
-        .into_iter()
-        .map(|table| {
-            let mut statement = connection
-                .prepare(&format!("SELECT * FROM \"{table}\""))
-                .expect("select census rows");
-            let columns = statement.column_count();
-            let rows = statement
-                .query_map([], |row| {
-                    (0..columns).map(|column| row.get(column)).collect()
-                })
-                .expect("map census rows")
-                .map(|row| row.expect("read census row"))
-                .collect();
-            (table, rows)
-        })
-        .collect()
-}
-
-fn remove_creation_context_carriers(
-    census: &mut BTreeMap<String, Vec<Vec<rusqlite::types::Value>>>,
-) {
-    for table in ["fact_envelopes", "task_heads"] {
+    for (version, owner) in owners {
+        let error =
+            Journal::from_connection(schema_fixture(version, "finalized", None, None, None))
+                .expect_err("retired schema refuses write open");
+        assert!(matches!(
+            error,
+            OpenError::Migration(MigrationError::UnknownVersion { found }) if found == version
+        ));
+        let refusal = error.to_string();
         assert!(
-            census.remove(table).is_some(),
-            "authority census contains {table}"
+            refusal.contains(&format!(
+                "schema {version} was last migrated by release {owner}"
+            )),
+            "retired schema {version} did not name {owner}: {refusal}"
+        );
+        assert!(
+            refusal.contains(&format!("reach schema {SCHEMA_VERSION}")),
+            "retired schema {version} did not name the current cutoff: {refusal}"
         );
     }
-}
-
-fn assert_fixture_creation_context_migrated(journal: &Journal) {
-    let expected = wire::body::TaskCreationContext::unavailable(
-        wire::body::TaskCreationUnavailable::SpiceActor,
-    );
-    let snapshot = journal.fact_snapshot().expect("migrated facts read");
-    let added = snapshot
-        .facts()
-        .iter()
-        .find_map(|envelope| envelope.fact.read::<wire::body::TaskAdded>())
-        .expect("fixture task-added fact remains present");
-    assert_eq!(added.creation, expected, "creation fact context migrates");
-
-    let task = "1kKRRsDP".parse().expect("fixture task stamp");
-    let head = journal
-        .read(|read| read.task_head(&task))
-        .expect("migrated task head reads")
-        .expect("fixture task head remains present");
-    assert_eq!(
-        head.body().creation,
-        expected,
-        "creation head context migrates"
-    );
-}
-
-fn schema_eleven_authority(path: &Path) {
-    let journal = authority_file_fixture(path);
-    downgrade_steering_index_to_millis(&journal.connection);
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 11 WHERE singleton = 1;
-             PRAGMA user_version = 11;",
-        )
-        .expect("downgrade the fixture to schema 11");
-}
-
-/// A migration abandoned after both version records are written strands nothing.
-///
-/// `advance` writes the step and both version records onto a transaction it does
-/// not own, so the whole promise rests on the caller committing or not. This
-/// test becomes that caller and then fails, which is the one thing the suite
-/// never did: the existing coverage opens a journal and lets it commit, so every
-/// write in `advance` could be leaking out of the transaction and every test
-/// would still pass.
-///
-/// The failure is injected after `advance` returns rather than inside a step,
-/// and that placement is the point. A step that fails takes nothing with it
-/// because the version records never ran, so it cannot tell whether those
-/// records are inside the transaction. Failing here, with both records already
-/// written, is the only moment that can.
-///
-/// The assertions taken before the rollback keep the assertions after it from
-/// passing vacuously: an `advance` that wrote nothing would leave the authority
-/// at version 11 too.
-#[test]
-fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-eleven-abandoned.sqlite3");
-    schema_eleven_authority(&path);
-    let before = {
-        let reader = Connection::open(&path).expect("read the schema-11 fixture back");
-        assert_eq!(
-            version_records(&reader),
-            (11, 11),
-            "the fixture must start at schema 11 by both records"
-        );
-        table_census(&reader)
-    };
-
-    {
-        let mut connection = Connection::open(&path).expect("open the authority to migrate it");
-        let transaction = connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
-            .expect("take the exclusive transaction a write open takes");
-        let migration = crate::migrate::advance(&transaction)
-            .expect("the migration itself succeeds; this test fails the open around it")
-            .expect("a schema-11 authority has a step to take");
-
-        assert_eq!((migration.from(), migration.to()), (11, SCHEMA_VERSION));
-        assert_eq!(
-            version_records(&transaction),
-            (SCHEMA_VERSION, SCHEMA_VERSION),
-            "both records must read forward inside the transaction, or this test \
-             proves only that a migration which did nothing changed nothing"
-        );
-
-        // The open fails here: after the step, after both version records, and
-        // before anything commits. Dropping the transaction unclaimed is what a
-        // failed open does, and it must take all three writes with it.
-        transaction
-            .execute_batch("SELECT no_such_function();")
-            .expect_err("the injected failure must actually fail");
-    }
-
-    let after = Connection::open(&path).expect("read the authority back after the failed open");
-    assert_eq!(
-        version_records(&after),
-        (11, 11),
-        "a failed migration must leave the authority at the version it started \
-         from; a record that survived the rollback strands it between two"
-    );
-    assert_eq!(
-        table_census(&after),
-        before,
-        "every table must read back exactly as it did before the failed migration"
-    );
-}
-
-#[test]
-fn a_read_only_open_names_the_write_open_that_would_migrate() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-eleven-readonly.sqlite3");
-    schema_eleven_authority(&path);
-    let before = FileState::read(&path);
-
-    let error = JournalReader::open(&path).expect_err("a read-only open never migrates");
-
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::UnmigratedRead {
-            found: 11,
-            current: SCHEMA_VERSION
-        })
-    ));
-    assert!(
-        error
-            .to_string()
-            .contains("open this authority for writing"),
-        "a migratable version must name the open that migrates it, not another release: {error}"
-    );
-    assert_eq!(
-        FileState::read(&path),
-        before,
-        "the refusal must leave the authority at schema 11"
-    );
 }
 
 #[test]
@@ -806,29 +184,18 @@ fn malformed_schema_identity_is_refused_by_name() {
         error,
         OpenError::Migration(MigrationError::UnknownVersion { found: 0 })
     ));
-    // A version with no step is the only one this refusal still covers, and the
-    // remedy it names must be reachable: discarding the authority was never one,
-    // and it stopped being the honest answer entirely once steps existed.
     let unmigratable = error.to_string();
-    assert!(unmigratable.contains("schema 0 has no migration path"));
+    assert!(unmigratable.contains(&format!(
+        "schema 0 has no migration path to schema {SCHEMA_VERSION}"
+    )));
     assert!(
-        unmigratable.contains("this build steps forward from schema 11"),
-        "the refusal must name the versions that do have a path: {unmigratable}"
+        unmigratable.contains(&format!("reach schema {SCHEMA_VERSION} first")),
+        "the refusal must name the current cutoff: {unmigratable}"
     );
     assert!(
         !unmigratable.contains("empty authority"),
-        "an unmigratable version must not be answered by starting over: {unmigratable}"
+        "an unknown version must not be answered by starting over: {unmigratable}"
     );
-
-    let retired = schema_fixture(10, "finalized", None, None, None);
-    let error = Journal::from_connection(retired).expect_err("retired version refuses open");
-    assert!(matches!(
-        error,
-        OpenError::Migration(MigrationError::UnknownVersion { found: 10 })
-    ));
-    let retired = error.to_string();
-    assert!(retired.contains("schema 10 was last migrated by release 1kRNj6X7"));
-    assert!(retired.contains("reach schema 11"));
 
     let disagreement = schema_fixture(SCHEMA_VERSION, "finalized", None, None, None);
     disagreement
