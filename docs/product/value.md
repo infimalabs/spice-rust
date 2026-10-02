@@ -476,9 +476,10 @@ its oldest waiting direction in Work. With nothing due the list is absent.
 The lane controls follow: Wake only on a seatable vacant seat, Drain only on an
 occupied one, Remove only on a vacant seat holding no claim, plus renewal on any
 seat (a vacant one is marked for its next start) and the next-launch model,
-which reports the pinned model. Drain, Remove, and renewal confirm first; the
-command shows in flight until answered, and a refusal stays with its reason. A
-control the principal's authority does not admit is absent, not disabled.
+which reports the pinned model. Drain and Remove confirm first; renewal submits
+immediately. The command shows in flight until answered, and a refusal stays
+with its reason. A control the principal's authority does not admit is absent,
+not disabled.
 
 Task, Latest activity, and Waiting direction rows update in place: a task opens
 its detail, and activity and direction links enter the exact Chat message or
