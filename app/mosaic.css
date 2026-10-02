@@ -607,7 +607,7 @@
    the reference widths and the narrow-viewport ones both land without a second
    place to keep in step. */
 .team-composer {
-  --team-composer-block-size: 120px;
+  --team-composer-block-size: 148px;
   --team-composer-edge-gap: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -824,22 +824,25 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: color-mix(in srgb, var(--danger) 70%, var(--control));
   color: var(--page);
 }
-/* The team control stack is sized against the canonical control reference, which
-   fixes every item to one height and one width so the two sliders and the send
-   button read as a single column of equal pills. */
+/* Two sliders and the send button share one width and one height: a column of equal pills. */
 .team-composer-controls {
+  --team-control-gap: 6px;
   --team-control-item-height: 36px;
   --team-control-track-width: 96px;
   align-items: stretch;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--team-control-gap);
   min-width: 0;
+}
+.team-composer .team-composer-controls {
+  --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
 }
 .team-slider {
   --control-state-accent: var(--accent);
   display: grid;
   grid-template-rows: auto auto;
+  align-content: center;
   gap: 0;
   flex: 0 0 var(--team-control-item-height);
   height: var(--team-control-item-height);
@@ -917,11 +920,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* The reference narrows the same stack rather than letting it crowd the agent
    cards once the viewport can no longer afford the full-width pills. */
 @media (max-width: 720px) {
-  .team-composer { --team-composer-block-size: 114px; }
-  .team-composer-controls {
-    --team-control-item-height: 34px;
-    --team-control-track-width: 68px;
-  }
+  .team-composer { --team-composer-block-size: 140px; }
+  .team-composer-controls { --team-control-track-width: 68px; }
   .team-slider { padding: 3px 5px; }
   .team-send { padding: 5px 8px; }
 }

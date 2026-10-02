@@ -12,6 +12,7 @@ use super::*;
 use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing, SubmissionAuthority, SubmissionTarget};
 
+mod agent_menu;
 mod attention;
 mod command_preview;
 mod composer;
@@ -287,6 +288,8 @@ fn render_compose(
     team_controls: &UseReducerHandle<TeamControls>,
     can_configure: bool,
     controls: &view::AgentControls,
+    surface: &UseStateHandle<SurfaceData>,
+    select: &Callback<wire::TaskStamp>,
 ) -> Html {
     if team.members.is_empty() {
         return empty("No agents are assigned. Open Import agent to add one.");
@@ -309,41 +312,39 @@ fn render_compose(
                 .is_some()
         });
     let cards = activity_cards(runtime, team, quote_agents);
-    let dismiss_agent_menus = Callback::from(dismiss_other_agent_action_menus);
+    let member_command = member_controls::command_callback(sender, surface, team.lane);
     let history_targets = team
         .members
         .iter()
         .filter_map(|member| history_target(runtime, member.lane))
         .collect();
     html! {
-        <div class="team-compose" onclick={dismiss_agent_menus}>
+        <div class="team-compose" onclick={Callback::from(agent_menu::dismiss_others)}>
             <form class="team-composer" onsubmit={submit.clone()}>
                 <div class="team-agents">
                     {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                        let actions = agent_team_actions(
-                            team.lane,
-                            member.lane,
-                            can_arrange,
-                            can_configure,
-                            topology_revision,
-                            topology,
-                            sender,
-                        );
                         let header = primary_composer_header(runtime, team, member.lane, standing);
                         render_agent_composer(
-                            team.lane,
                             member,
                             standing,
                             epoch,
                             topology_revision,
                             topology,
-                            runtime
-                                .lanes()
-                                .and_then(|lanes| lanes.renewal(team.lane, member.lane)),
                             standing.pending,
                             authority,
                             can_arrange,
-                            actions,
+                            agent_menu::render(agent_menu::AgentMenu {
+                                runtime,
+                                member,
+                                standing,
+                                select,
+                                command: &member_command,
+                                can_arrange,
+                                can_configure,
+                                topology_revision,
+                                topology,
+                                sender,
+                            }),
                             sender,
                             composer_drag,
                             drafts,
@@ -668,30 +669,6 @@ fn primary_composer_header(
     )
 }
 
-fn renewal_callback(
-    topology_revision: u64,
-    team: CanonicalUuid,
-    lane: CanonicalUuid,
-    requested: bool,
-    sender: &SenderHandle,
-) -> Callback<MouseEvent> {
-    let sender = sender.clone();
-    Callback::from(move |event: MouseEvent| {
-        if admit_action(
-            &sender,
-            ClientAction::RenewLane {
-                topology_revision,
-                team,
-                lane,
-                requested,
-                member: None,
-            },
-        ) {
-            event.stop_propagation();
-        }
-    })
-}
-
 fn copy_dragover() -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         if let Some(transfer) = event.data_transfer() {
@@ -713,11 +690,6 @@ struct PrimaryComposerDragging {
 struct AgentTeamControl {
     disabled: bool,
     activate: Callback<MouseEvent>,
-}
-
-struct AgentTeamActions {
-    split: AgentTeamControl,
-    leave: AgentTeamControl,
 }
 
 fn agent_split_control(
@@ -755,7 +727,7 @@ fn agent_split_control(
                 teams,
             },
         ) {
-            close_agent_action_menu(&event);
+            agent_menu::close(&event);
         }
     });
     AgentTeamControl {
@@ -786,7 +758,7 @@ fn agent_leave_control(
                 },
             )
         {
-            close_agent_action_menu(&event);
+            agent_menu::close(&event);
         }
     });
     AgentTeamControl {
@@ -795,51 +767,20 @@ fn agent_leave_control(
     }
 }
 
-fn agent_team_actions(
-    source_team: CanonicalUuid,
-    lane: CanonicalUuid,
-    can_arrange: bool,
-    can_configure: bool,
-    topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    sender: &SenderHandle,
-) -> AgentTeamActions {
-    AgentTeamActions {
-        split: agent_split_control(
-            source_team,
-            lane,
-            can_arrange,
-            topology_revision,
-            topology,
-            sender,
-        ),
-        leave: agent_leave_control(
-            source_team,
-            lane,
-            can_configure,
-            topology_revision,
-            topology,
-            sender,
-        ),
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared team interaction handles"
 )]
 fn render_agent_composer(
-    team: CanonicalUuid,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     epoch: CanonicalUuid,
     topology_revision: u64,
     topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    renewal: Option<&wire::LaneRenewalRecord>,
     pending: usize,
     authority: SubmissionAuthority,
     can_arrange: bool,
-    actions: AgentTeamActions,
+    menu: Html,
     sender: &SenderHandle,
     composer_drag: &PrimaryComposerDragState,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -850,7 +791,6 @@ fn render_agent_composer(
     prose: String,
 ) -> Html {
     let lane_id = member.lane;
-    let AgentTeamActions { split, leave } = actions;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let target = authority.target(member.occupant, member.wakeable, epoch);
@@ -860,14 +800,6 @@ fn render_agent_composer(
         .iter()
         .any(|target| target.lane == lane_id);
     let broadcast_source_eligible = broadcast_target_eligible;
-    let renewal = watchband::agent_renewal_control(&standing.label, authority.send, renewal);
-    let renew = renewal_callback(
-        topology_revision,
-        team,
-        lane_id,
-        renewal.next_requested,
-        sender,
-    );
     let onkeydown = keyboard_submit(
         lane_id,
         target,
@@ -926,10 +858,7 @@ fn render_agent_composer(
                     pending,
                     drafts,
                     onkeydown.clone(),
-                    renewal,
-                    renew,
-                    split,
-                    leave,
+                    menu,
                     stream,
                     prose,
                     dragging,
@@ -964,10 +893,7 @@ fn render_composer_body(
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
     onkeydown: Callback<KeyboardEvent>,
-    renewal: watchband::AgentRenewalControl,
-    renew: Callback<MouseEvent>,
-    split: AgentTeamControl,
-    leave: AgentTeamControl,
+    menu: Html,
     stream: ComposerStreamLink,
     prose: String,
     dragging: PrimaryComposerDragging,
@@ -1002,13 +928,8 @@ fn render_composer_body(
             onpointercancel={drag_cancel}
         >
             {render_composer_heading(
-                lane,
-                standing,
                 status,
-                renewal,
-                renew,
-                split,
-                leave,
+                menu,
                 stream,
                 prose,
                 render_image_indicators(lane_key, &draft.attachments, None, drafts),
@@ -1041,16 +962,11 @@ fn render_composer_body(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the shard heading carries one agent's identity, prose, drafts, and drawer callbacks"
+    reason = "the shard heading carries one agent's prose, drafts, menu, and drag callbacks"
 )]
 fn render_composer_heading(
-    lane: CanonicalUuid,
-    standing: &Standing,
     status: crate::runtime::LaneStatus,
-    renewal: watchband::AgentRenewalControl,
-    renew: Callback<MouseEvent>,
-    split: AgentTeamControl,
-    leave: AgentTeamControl,
+    menu: Html,
     stream: ComposerStreamLink,
     prose: String,
     indicators: Html,
@@ -1058,18 +974,6 @@ fn render_composer_heading(
     drag_start: Callback<PointerEvent>,
     drag_lost_capture: Callback<PointerEvent>,
 ) -> Html {
-    let renew = Callback::from(move |event: MouseEvent| {
-        close_agent_action_menu(&event);
-        renew.emit(event);
-    });
-    let AgentTeamControl {
-        disabled: split_disabled,
-        activate: split,
-    } = split;
-    let AgentTeamControl {
-        disabled: leave_disabled,
-        activate: leave,
-    } = leave;
     let ComposerStreamLink {
         target,
         label,
@@ -1095,115 +999,8 @@ fn render_composer_heading(
                 onlostpointercapture={drag_lost_capture}
             >{prose}</strong>
             {indicators}
-            <details class="agent-action-menu" data-renewal-pending={renewal.pressed.to_string()}>
-                {render_agent_menu_summary(&standing.label, &renewal)}
-                <div
-                    class="agent-action-drawer"
-                    data-agent-drawer-target-id={lane.to_string()}
-                >
-                    <button
-                        class="agent-renew-request"
-                        type="button"
-                        disabled={renewal.disabled}
-                        aria-label={renewal.label.clone()}
-                        aria-pressed={renewal.pressed.to_string()}
-                        title={renewal.title.clone()}
-                        data-renewal-state={renewal.state}
-                        data-renewal-team={standing.team.to_string()}
-                        data-renewal-lane={lane.to_string()}
-                        data-renewal-requested={renewal.pressed.to_string()}
-                        data-renewal-next-requested={renewal.next_requested.to_string()}
-                        data-renewal-refusal={renewal.refusal.clone()}
-                        data-renewal-blocked={renewal.blocked}
-                        onclick={renew}
-                    >
-                        <strong>{renewal.heading}</strong>
-                        <span>{renewal.detail}</span>
-                        if let Some(blocked) = renewal.blocked {
-                            <span class="agent-renew-blocked">{blocked}</span>
-                        }
-                    </button>
-                    <button
-                        class="agent-team-split"
-                        type="button"
-                        disabled={split_disabled}
-                        aria-label={format!("Create new team for {}", standing.label)}
-                        title={format!("Move only {} to a new team", standing.label)}
-                        data-team-split-lane={lane.to_string()}
-                        onclick={split}
-                    >
-                        <strong>{"Create new team"}</strong>
-                        <span>{format!("Move only {} to a new team", standing.label)}</span>
-                    </button>
-                    <button
-                        class="agent-team-leave"
-                        type="button"
-                        disabled={leave_disabled}
-                        aria-label={format!("Leave all teams for {}", standing.label)}
-                        title={format!("Remove {} from all teams", standing.label)}
-                        data-team-leave-lane={lane.to_string()}
-                        onclick={leave}
-                    >
-                        <strong>{"Leave all teams"}</strong>
-                        <span>{format!("Remove {} from all teams", standing.label)}</span>
-                    </button>
-                </div>
-            </details>
+            {menu}
         </header>
-    }
-}
-
-/// The action menu's button. A standing renewal request marks it, so the
-/// request stays visible after the drawer that placed it closes.
-fn render_agent_menu_summary(agent: &str, renewal: &watchband::AgentRenewalControl) -> Html {
-    let label = if renewal.pressed {
-        format!("Actions for {agent} (renewal requested)")
-    } else {
-        format!("Actions for {agent}")
-    };
-    html! {
-        <summary aria-label={label} title={renewal.pressed.then_some(renewal.detail)}>
-            <span class="composer-menu-icon" aria-hidden="true">
-                <span></span><span></span><span></span>
-            </span>
-        </summary>
-    }
-}
-
-fn close_agent_action_menu(event: &MouseEvent) {
-    // Yew delegates listeners from the app root, so `current_target` cannot
-    // locate the details element. The actual click target remains inside it.
-    if let Some(menu) = event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".agent-action-menu").ok().flatten())
-    {
-        let _removed = menu.remove_attribute("open");
-    }
-}
-
-fn dismiss_other_agent_action_menus(event: MouseEvent) {
-    let keep = event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".agent-action-menu").ok().flatten());
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-        return;
-    };
-    let Ok(menus) = document.query_selector_all(".agent-action-menu[open]") else {
-        return;
-    };
-    for index in 0..menus.length() {
-        let Some(menu) = menus
-            .get(index)
-            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-        else {
-            continue;
-        };
-        if keep.as_ref() == Some(&menu) {
-            continue;
-        }
-        let _removed = menu.remove_attribute("open");
     }
 }
 

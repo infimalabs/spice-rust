@@ -1,6 +1,5 @@
 use super::*;
 
-const DASH_ACTIVITY_BUDGET: usize = 72;
 fn dash_return_id(slot: &str, lane: CanonicalUuid) -> String {
     format!("team-dash-{slot}-{lane}")
 }
@@ -80,56 +79,13 @@ fn render_dash_activity(
     team: CanonicalUuid,
     controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
-    let row = runtime
-        .newest_lane_activity(standing.lane)
-        .and_then(|activity| {
-            runtime.activity_message(activity).map(|message| {
-                let class = activity.class().to_owned();
-                let prefix = if class == "prose" {
-                    standing.label.clone()
-                } else {
-                    activity.title().to_owned()
-                };
-                let detail = if activity.detail().is_empty() && activity.title() == "tool" {
-                    prefix.clone()
-                } else {
-                    activity.detail().to_owned()
-                };
-                (
-                    agent_message_source_id(message),
-                    activity.display_millis(),
-                    class,
-                    prefix,
-                    detail,
-                )
-            })
-        });
-    let row = row.or_else(|| {
-        runtime
-            .latest_lane_prose(standing.lane)
-            .map(|(message, prose)| {
-                (
-                    agent_message_source_id(message),
-                    crate::runtime::agent_message_display_millis(message),
-                    "prose".to_owned(),
-                    standing.label.clone(),
-                    prose,
-                )
-            })
-    });
-    let Some((target, authored, class, visible_prefix, source)) = row else {
+    let Some(activity) = super::agent_menu::latest_activity(runtime, standing) else {
         return html! {
             <div class="team-dash-member-slot" data-dash-slot="activity" data-empty="true">
                 <span class="team-dash-slot-meta">{"Latest activity"}</span>
                 <span class="team-dash-slot-copy">{"No retained activity"}</span>
             </div>
         };
-    };
-    let (prefix, detail) = watchband::ticker_chunks(&visible_prefix, &source, DASH_ACTIVITY_BUDGET);
-    let separator = if class == "prose" || class == "tool" || detail.is_empty() {
-        ""
-    } else {
-        ":"
     };
     html! {
         <a
@@ -138,20 +94,20 @@ fn render_dash_activity(
             id={dash_return_id("activity", standing.lane)}
             data-dash-return=""
             data-dash-return-origin=""
-            data-activity-class={class}
-            href={crate::view::card_href(&target)}
+            data-activity-class={activity.class}
+            href={crate::view::card_href(&activity.target)}
             aria-label={format!("Open latest {} activity in Chat", standing.label)}
             onclick={dash_chat_click(team, controls)}
         >
             <span class="team-dash-slot-meta">
                 <span>{"Latest activity"}</span>
-                <Age {authored} class={classes!("team-dash-slot-age")} />
+                <Age authored={activity.authored} class={classes!("team-dash-slot-age")} />
             </span>
             <span class="team-dash-slot-copy">
-                <strong>{format!("{prefix}{separator}")}</strong>
-                if !detail.is_empty() {
+                <strong>{activity.prefix}</strong>
+                if !activity.detail.is_empty() {
                     {" "}
-                    {detail}
+                    {activity.detail}
                 }
             </span>
         </a>
@@ -163,20 +119,14 @@ fn render_dash_direction(
     team: CanonicalUuid,
     controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
-    if standing.pending == 0 {
+    let Some(preview) = super::agent_menu::waiting_direction(standing) else {
         return html! {
             <div class="team-dash-member-slot" data-dash-slot="direction" data-empty="true">
                 <span class="team-dash-slot-meta">{"Waiting direction"}</span>
                 <span class="team-dash-slot-copy">{"No pending direction"}</span>
             </div>
         };
-    }
-    let preview = standing
-        .headline
-        .as_deref()
-        .map(watchband::one_line)
-        .map(|headline| watchband::truncate(&headline, DASH_ACTIVITY_BUDGET))
-        .unwrap_or_else(|| "Preview unavailable".to_owned());
+    };
     let target = primary_textarea_id(&standing.lane.to_string());
     html! {
         <a
@@ -257,7 +207,7 @@ pub(super) fn render_agent_details(
                     {presence_age}
                 </summary>
                 <div class="team-dash-member-seat">
-                {super::member_controls::render(runtime, member, standing, member_command)}
+                {super::member_controls::render(runtime, member, standing, member_command, "dash")}
                 <dl>
                     <div>
                         <dt>{"Agent channel"}</dt>
