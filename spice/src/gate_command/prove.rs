@@ -427,7 +427,7 @@ struct PendingReceipt {
     capture: Option<Export>,
 }
 
-pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
+pub(crate) fn prove(matches: &clap::ArgMatches, live: bool) -> Outcome<ProveReport> {
     let request = Request {
         action: matches.get_one::<String>("ACTION").map(String::as_str),
         missing: matches.get_flag("missing"),
@@ -440,7 +440,7 @@ pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
             format!("{action:?} is not a registered gate action or Cargo shard"),
         );
     }
-    match run(request) {
+    match run(request, live) {
         Ok(mut report) => {
             report.text = summary(&report, request, matches.get_flag("verbose"));
             Outcome::Reply(Reply {
@@ -524,7 +524,7 @@ fn prove_command(request: Request<'_>, flag: &str) -> String {
     command
 }
 
-fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
+fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     let current = std::env::current_dir()
         .map_err(|error| ProveFailure::fault("gate::prove-working-directory-unavailable", error))?;
     let repository = Repository::discover(&current)
@@ -617,7 +617,7 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         pending,
         || validate_source(&repository, staged.anchor(), &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
-        &output::Progress::stderr("gate prove"),
+        &output::Progress::stderr("gate prove", live),
         &output::capture_directory(repository.common_dir()),
     )?;
     actions.extend(published);
