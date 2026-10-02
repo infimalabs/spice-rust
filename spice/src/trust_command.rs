@@ -11,6 +11,8 @@ use wire::{
 };
 
 use crate::cli::Contract;
+use crate::read_page::Page;
+use wire::output::Bounded;
 
 pub(crate) const SURFACE_NAME: &str = "configuration";
 
@@ -114,14 +116,24 @@ fn frame_document(framed: &mut Vec<u8>, source: ConfigSource, text: Option<&str>
     }
 }
 
-/// Bare `spice trust` answer.
+/// Bare `spice trust` answer: the current surface's standing and provenance,
+/// ruling counts, then a bounded page of rulings, the current digest and
+/// pending decisions first.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct TrustReport {
     surface: String,
     digest: Digest,
     standing: TrustState,
     provenance: Vec<PolicyProvenance>,
-    rulings: Vec<TrustRuling>,
+    counts: RulingCounts,
+    rulings: Bounded<TrustRuling>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+struct RulingCounts {
+    pended: usize,
+    granted: usize,
+    revoked: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -140,11 +152,66 @@ struct TrustRuling {
     current: bool,
 }
 
+impl std::fmt::Display for TrustReport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "trust {} {} {}",
+            self.surface,
+            self.digest,
+            state_label(self.standing)
+        )?;
+        for document in &self.provenance {
+            write!(
+                formatter,
+                "\n{} {} {}",
+                document.source.as_str(),
+                document.location,
+                document
+                    .digest
+                    .as_ref()
+                    .map_or_else(|| "absent".to_owned(), ToString::to_string)
+            )?;
+        }
+        write!(
+            formatter,
+            "\nrulings pended={} granted={} revoked={}",
+            self.counts.pended, self.counts.granted, self.counts.revoked
+        )?;
+        for ruling in &self.rulings.rows {
+            write!(
+                formatter,
+                "\n{} {}{}",
+                ruling.digest,
+                state_label(ruling.standing),
+                if ruling.current { " current" } else { "" }
+            )?;
+        }
+        match &self.rulings.omission {
+            Some(omission) => write!(formatter, "\n{omission}"),
+            None => Ok(()),
+        }
+    }
+}
+
+const fn state_label(state: TrustState) -> &'static str {
+    match state {
+        TrustState::Pended => "pended",
+        TrustState::Granted => "granted",
+        TrustState::Revoked => "revoked",
+    }
+}
+
 /// Authenticate through the current resident and render its durable trust heads.
 pub(crate) fn report(
+    matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<TrustReport> {
+    let page = match Page::from_matches(matches, &["trust"]) {
+        Ok(page) => page,
+        Err(refusal) => return Outcome::Refusal(refusal),
+    };
     let repository = match current_repository() {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
@@ -202,15 +269,40 @@ pub(crate) fn report(
             "retry against the current tracked and local policy documents",
         );
     }
-    let rulings = board
+    let mut counts = RulingCounts::default();
+    let mut rulings = board
         .trust
         .into_iter()
-        .map(|head| TrustRuling {
-            current: head.body.digest == *surface.digest(),
-            digest: head.body.digest,
-            standing: head.body.state,
+        .map(|head| {
+            *match head.body.state {
+                TrustState::Pended => &mut counts.pended,
+                TrustState::Granted => &mut counts.granted,
+                TrustState::Revoked => &mut counts.revoked,
+            } += 1;
+            TrustRuling {
+                current: head.body.digest == *surface.digest(),
+                digest: head.body.digest,
+                standing: head.body.state,
+            }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    // The current digest, then decisions awaiting the operator, then the
+    // standing grants and revocations; a digest breaks every tie.
+    rulings.sort_by(|left, right| {
+        right
+            .current
+            .cmp(&left.current)
+            .then(left.standing.cmp(&right.standing))
+            .then_with(|| left.digest.cmp(&right.digest))
+    });
+    let rulings = match page.listed(
+        rulings,
+        |ruling| ruling.digest.to_string(),
+        "DIGEST of a recorded ruling",
+    ) {
+        Ok(rulings) => rulings,
+        Err(refusal) => return Outcome::Refusal(refusal),
+    };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(board.cursor),
         body: TrustReport {
@@ -218,6 +310,7 @@ pub(crate) fn report(
             digest: surface.digest().clone(),
             standing,
             provenance: surface.provenance(),
+            counts,
             rulings,
         },
     })

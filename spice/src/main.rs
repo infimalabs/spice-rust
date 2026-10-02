@@ -51,6 +51,8 @@ mod lock_command;
 mod message_shape;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod read_page;
+#[cfg(not(target_arch = "wasm32"))]
 mod release_command;
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(not(target_arch = "wasm32"))]
@@ -400,7 +402,7 @@ impl NativeInvocation<'_> {
             ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
             ["dev", "report-page"] => deliver(&board_command::run(leaf, contract), form),
             ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, configuration), form),
-            ["consent"] => deliver(&consent_command::read(contract), form),
+            ["consent"] => deliver_display(&consent_command::read(leaf, contract), form),
             ["consent", "allow"] => deliver(
                 &consent_command::decide(leaf, contract, wire::Answer::Granted),
                 form,
@@ -426,10 +428,10 @@ impl NativeInvocation<'_> {
             ),
             ["backup"] => deliver(&journal_command::backup(leaf), form),
             ["restore"] => deliver(&restore_command::restore(leaf), form),
-            ["journal"] => deliver(&journal_command::report(contract), form),
+            ["journal"] => deliver_display(&journal_command::report(leaf, contract), form),
             ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
             ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
-            ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
+            ["thread"] => deliver_display(&journal_command::thread(leaf, contract), form),
             ["version"] => deliver(&version_outcome(), form),
             ["release", "notes"] => deliver_with_reply_text(
                 &release_command::notes(leaf),
@@ -520,16 +522,27 @@ impl NativeInvocation<'_> {
             | ["steer", "cancel"]
             | ["steer", "resend"]
             | ["steer", "recover"]
-            | ["tell"]
-            | ["inbox"] => deliver(
+            | ["tell"] => deliver(
                 &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
                 form,
             ),
-            ["trust"] => deliver(&trust_command::report(contract, configuration), form),
+            ["inbox"] => deliver_display(
+                &steering_command::inbox::run(
+                    leaf,
+                    contract,
+                    bootstrap_environment(steer::hook::LANE),
+                ),
+                form,
+            ),
+            ["trust"] => {
+                deliver_display(&trust_command::report(leaf, contract, configuration), form)
+            }
             ["trust", "pend"] => deliver(&trust_command::pend(contract, configuration), form),
             ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
             ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
-            ["taste"] => deliver(&taste_command::report(contract, configuration), form),
+            ["taste"] => {
+                deliver_display(&taste_command::report(leaf, contract, configuration), form)
+            }
             ["taste", "add"] => deliver(&taste_command::add(leaf, contract, configuration), form),
             ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract, configuration), form),
             ["taste", "mine"] => deliver(&taste_command::mine(contract, configuration), form),
@@ -1024,6 +1037,11 @@ fn deliver_with_reply_text<B: serde::Serialize>(
         outcome,
         render::render_with_reply_text(outcome, form, reply_text),
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_display<B: serde::Serialize + std::fmt::Display>(outcome: &Outcome<B>, form: Form) -> ! {
+    deliver_rendering(outcome, render::render_display(outcome, form))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

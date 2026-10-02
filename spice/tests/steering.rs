@@ -284,10 +284,23 @@ fn text_directive(output: &Output) -> wire::intent::DirectiveAnswer {
     wire::decode(&output.stdout).expect("text reply carries the directive body")
 }
 
+/// The pending detail rows of one lane's `spice --json inbox` page.
 #[track_caller]
-fn text_inbox(output: &Output) -> wire::intent::InboxAnswer {
-    assert!(output.status.success(), "inbox failed: {:?}", output.stderr);
-    wire::decode(&output.stdout).expect("text reply carries the inbox body")
+fn inbox(fixture: &Fixture, lane: &str) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let output = invoke(fixture, &["inbox", lane], true);
+    let Outcome::Reply(reply) = json_outcome::<serde_json::Value>(&output) else {
+        panic!("inbox failed: {:?}", output.stderr);
+    };
+    let rows = reply.body["pending"]["rows"]
+        .as_array()
+        .expect("inbox detail rows")
+        .clone();
+    (reply.body, rows)
+}
+
+fn holds(rows: &[serde_json::Value], directive: wire::CanonicalUuid) -> bool {
+    rows.iter()
+        .any(|row| row["directive"] == directive.to_string())
 }
 
 fn operator_socket(fixture: &Fixture) -> (WebSocket<TcpStream>, canvas::Discovery) {
@@ -586,23 +599,24 @@ fn publication_path(fixture: &Fixture, resident: &mut RunningResident, lanes: La
         .expect("current steering key");
     assert_eq!(current_key.as_str().len(), steer::Key::WIDTH);
     assert!(current_key.minted_micros().is_some());
-    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
-    assert_eq!(inbox.lanes.len(), 1);
+    let (inbox, pending) = inbox(fixture, &lane);
+    assert_eq!(inbox["lanes"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        inbox.lanes[0].occupant,
-        Some(current_occupant(fixture, lanes.target))
+        inbox["lanes"][0]["occupant"],
+        current_occupant(fixture, lanes.target).to_string()
     );
-    assert_eq!(inbox.lanes[0].pending[0].directive, sent.directive);
-    assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
-    assert_eq!(inbox.lanes[0].pending[0].text, direction);
+    assert_eq!(inbox["lanes"][0]["keys"], serde_json::json!([sent.key]));
+    assert_eq!(pending[0]["directive"], sent.directive.to_string());
+    assert_eq!(pending[0]["key"], sent.key);
+    assert_eq!(pending[0]["text"]["text"], direction);
     assert_eq!(
-        inbox.lanes[0].pending[0].authored,
-        directive_authored(fixture, sent.directive)
+        pending[0]["authored"],
+        directive_authored(fixture, sent.directive).to_string()
     );
-    assert!(inbox.lanes[0].pending[0].authored < inbox.lanes[0].pending[0].expires);
+    assert!(pending[0]["authored"].as_str() < pending[0]["expires"].as_str());
     assert_eq!(
-        inbox.lanes[0].pending[0].preview.as_deref(),
-        Some("bind the exact command family")
+        pending[0]["preview"]["text"],
+        "bind the exact command family"
     );
     let canceled = text_directive(&invoke(
         fixture,
@@ -625,12 +639,9 @@ fn cancellation_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
         false,
     ));
     assert_eq!(canceled.disposition, wire::Disposition::Canceled);
-    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
+    let (_, pending) = inbox(fixture, &lane);
     assert!(
-        inbox.lanes[0]
-            .pending
-            .iter()
-            .all(|pending| pending.directive != sent.directive),
+        !holds(&pending, sent.directive),
         "a canceled directive stayed pending"
     );
 }

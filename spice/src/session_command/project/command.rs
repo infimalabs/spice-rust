@@ -19,8 +19,8 @@ use wire::Refusal;
 use super::super::model::{
     CommandAudit, CommandRecord, CommandView, FoldBuffer, Report, Residue, SourceView, Vendor,
 };
-use super::super::page::{Page, Paged};
 use super::{flag, refusal};
+use crate::read_page::{Page, Paged};
 use crate::session_command::dataset::stream::{ForwardCursor, ForwardProgress, compressed};
 use crate::session_command::dataset::{
     DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, OPEN_TOOL_LIMIT,

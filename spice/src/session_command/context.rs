@@ -11,7 +11,7 @@ pub(super) fn build(
     path: &[&str],
     environment: &Environment,
 ) -> Result<Report, Refusal> {
-    let page = page::Page::from_matches(matches, path)?;
+    let page = crate::read_page::Page::from_matches(matches, path)?;
     let session = required(matches, "SESSION")?;
     let lane = parse::<wire::CanonicalUuid>(matches, "lane")?;
     let vendor = parse::<wire::Name>(matches, "vendor")?;
@@ -72,8 +72,8 @@ pub(super) fn build(
     let population = rows.len() - resumed;
     let rows = rows.into_iter().skip(resumed).collect();
     let page = match page.admit(rows, population)? {
-        page::Paged::Shown(page) => page,
-        page::Paged::Exported(export) => return Ok(Report::Exported { export }),
+        crate::read_page::Paged::Shown(page) => page,
+        crate::read_page::Paged::Exported(export) => return Ok(Report::Exported { export }),
     };
     Ok(Report::Context {
         identity: session,
@@ -92,7 +92,7 @@ pub(super) fn build(
 fn nearest_first(
     before: Vec<String>,
     after: Vec<String>,
-    page: &page::Page,
+    page: &crate::read_page::Page,
 ) -> Vec<(ContextRecord, String)> {
     let mut before = before.into_iter().rev();
     let mut after = after.into_iter();

@@ -210,9 +210,20 @@ fn linked_worktree_rulings_use_the_producer_across_resident_restart() {
         reply(&fixture.invoke(&fixture.linked, &["trust", "revoke", &digest]));
     assert_eq!(revoked.digest, pended.digest);
     assert_eq!(revoked.standing, wire::TrustState::Revoked);
-    let report: serde_json::Value = reply(&fixture.invoke(&fixture.linked, &["trust"]));
-    assert_eq!(report["digest"], digest);
-    assert_eq!(report["standing"], "revoked");
+    let report = fixture.invoke(&fixture.linked, &["--json", "trust"]);
+    assert!(
+        report.status.success(),
+        "command failed: {}",
+        spoken(&report)
+    );
+    let Ok(wire::Outcome::Reply(report)) =
+        wire::decode::<wire::Outcome<serde_json::Value>>(&report.stdout)
+    else {
+        panic!("JSON trust report did not reply: {}", spoken(&report));
+    };
+    assert_eq!(report.body["digest"], digest);
+    assert_eq!(report.body["standing"], "revoked");
+    assert_eq!(report.body["rulings"]["rows"][0]["current"], true);
     restarted.stop(&fixture);
 }
 

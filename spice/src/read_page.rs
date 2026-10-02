@@ -1,10 +1,10 @@
-//! One bounded page for every session history view.
+//! One bounded page for every paged CLI read.
 //!
-//! A history view lists records in relevance order, newest first, and admits
-//! them through the [`wire::output`] contract: `--limit`, `--max-bytes`, and
-//! `--max-text` raise detail only up to the [`HISTORY`] maxima, every record is
-//! charged its encoded length, and a page that withholds records names the
-//! exact command that continues at the first of them.
+//! A paged view lists records in relevance order and admits them through the
+//! [`wire::output`] contract: `--limit`, `--max-bytes`, and `--max-text` raise
+//! detail only up to the [`INTERACTIVE`] maxima, every record is charged its
+//! encoded length, and a page that withholds records names the exact command
+//! that continues at the first of them.
 //!
 //! The continuation repeats the caller's own words and adds `--after CURSOR`.
 //! A timestamped view's cursor is the first withheld record's instant, with
@@ -17,6 +17,9 @@
 //! with its digest receipt. Its byte budget is the repository ceiling rather
 //! than the interactive one, so a record too large for the terminal is still
 //! reachable; a record beyond the ceiling is refused, never streamed.
+//!
+//! Refusal reasons are scoped to the command family, the first word of the
+//! command path: `session::bound-exceeded`, `journal::cursor-invalid`.
 
 use std::path::PathBuf;
 
@@ -24,21 +27,18 @@ use clap::ArgMatches;
 use clap::parser::ValueSource;
 use serde::Serialize;
 use wire::output::{
-    self, Admission, Bounded, Budget, CEILING, ClippedText, Export, Limits, Request, Resume,
-    Surface,
+    self, Admission, Bounded, Budget, CEILING, ClippedText, Export, INTERACTIVE, Limits, Request,
+    Resume, Surface,
 };
 use wire::{Refusal, SpiceCommand};
-
-/// Defaults and maxima every session history view reads under.
-pub(crate) const HISTORY: Surface = output::INTERACTIVE;
 
 /// The same rows and text an export writes, charged against the repository
 /// ceiling instead of the interactive byte budget.
 const EXPORT: Surface = Surface::new(
     Limits {
-        rows: HISTORY.default_limits().rows,
+        rows: INTERACTIVE.default_limits().rows,
         bytes: CEILING.bytes,
-        text: HISTORY.default_limits().text,
+        text: INTERACTIVE.default_limits().text,
     },
     CEILING,
 );
@@ -49,6 +49,7 @@ const RESTATED: [&str; 4] = ["after", "max-bytes", "export", crate::cli::JSON];
 
 /// One parsed `--after`, `--limit`, `--max-bytes`, `--max-text`, `--export`.
 pub(crate) struct Page {
+    family: String,
     budget: Budget,
     after: Option<String>,
     bytes: Option<usize>,
@@ -72,22 +73,29 @@ struct Cursor {
 
 impl Page {
     pub(crate) fn from_matches(matches: &ArgMatches, path: &[&str]) -> Result<Self, Refusal> {
+        let family = path.first().copied().unwrap_or("read");
         let request = Request {
-            rows: count(matches, "limit")?,
-            bytes: count(matches, "max-bytes")?,
-            text: count(matches, "max-text")?,
+            rows: count(matches, family, "limit")?,
+            bytes: count(matches, family, "max-bytes")?,
+            text: count(matches, family, "max-text")?,
         };
         let export = one(matches, "export").map(PathBuf::from);
-        let surface = if export.is_some() { EXPORT } else { HISTORY };
+        let surface = if export.is_some() {
+            EXPORT
+        } else {
+            INTERACTIVE
+        };
         let budget = surface.budget(request).map_err(|error| {
             refusal(
-                "session::bound-exceeded",
+                family,
+                "bound-exceeded",
                 Some(error.to_string()),
-                "pass a session read bound within the surface maximum, or --export FILE for a \
-                 complete page",
+                "pass a read bound within the surface maximum, or --export FILE for a complete \
+                 page",
             )
         })?;
         Ok(Self {
+            family: family.to_owned(),
             budget,
             after: one(matches, "after").cloned(),
             bytes: request.bytes,
@@ -95,6 +103,17 @@ impl Page {
             export_name: format!("spice-{}.json", path.join("-")),
             words: continuation_words(matches, path),
         })
+    }
+
+    /// Refuse the caller's `--after` cursor: it names no record this view
+    /// can resume at.
+    pub(crate) fn cursor_refusal(&self, detail: &str) -> Refusal {
+        refusal(
+            &self.family,
+            "cursor-invalid",
+            self.after.clone(),
+            &format!("pass the --after cursor exactly as a continuation named it: {detail}"),
+        )
     }
 
     pub(crate) const fn limits(&self) -> Limits {
@@ -127,13 +146,7 @@ impl Page {
             .and_then(|ordinal| ordinal.parse::<usize>().ok())
             .filter(|ordinal| *ordinal > 0)
             .map(Some)
-            .ok_or_else(|| {
-                refusal(
-                    "session::cursor-invalid",
-                    Some(after.clone()),
-                    "pass the --after cursor exactly as a continuation named it",
-                )
-            })
+            .ok_or_else(|| self.cursor_refusal(&format!("{prefix}N")))
     }
 
     /// The newest instant a timestamped scan considers: the caller's `--end`
@@ -194,6 +207,54 @@ impl Page {
         self.admit(keyed, population.saturating_sub(skipped))
     }
 
+    /// Page a complete in-memory list already in relevance order, resuming
+    /// at the record whose key the caller's `--after` names; `cursor`
+    /// describes that key when it names no record.
+    ///
+    /// For views that declare no `--export`.
+    pub(crate) fn listed<T: Serialize>(
+        self,
+        rows: Vec<T>,
+        key: impl Fn(&T) -> String,
+        cursor: &str,
+    ) -> Result<Bounded<T>, Refusal> {
+        let start = match self.after() {
+            None => 0,
+            Some(after) => rows
+                .iter()
+                .position(|row| key(row) == after)
+                .ok_or_else(|| self.cursor_refusal(cursor))?,
+        };
+        let population = rows.len() - start;
+        let retain = self.retain();
+        let keyed = rows
+            .into_iter()
+            .skip(start)
+            .take(retain)
+            .map(|row| {
+                let key = key(&row);
+                (row, key)
+            })
+            .collect();
+        self.shown(keyed, population)
+    }
+
+    /// [`Page::admit`] for views that declare no `--export`.
+    pub(crate) fn shown<T: Serialize>(
+        self,
+        rows: Vec<(T, String)>,
+        population: usize,
+    ) -> Result<Bounded<T>, Refusal> {
+        assert!(
+            self.export.is_none(),
+            "only a view that declares --export can export"
+        );
+        match self.admit(rows, population)? {
+            Paged::Shown(bounded) => Ok(bounded),
+            Paged::Exported(_) => unreachable!("a page without --export is shown"),
+        }
+    }
+
     /// Page records already in relevance order and already past the
     /// caller's cursor, each with the key that resumes at it.
     pub(crate) fn admit<T: Serialize>(
@@ -205,13 +266,9 @@ impl Page {
         let mut admission = Admission::new(self.budget);
         let mut stop = None;
         for (row, key) in rows {
-            let admitted = admission.offer(row).map_err(|error| {
-                refusal(
-                    "session::record-unencodable",
-                    Some(error.to_string()),
-                    "report the transcript record that cannot be encoded",
-                )
-            })?;
+            let admitted = admission
+                .offer(row)
+                .map_err(|error| self.unencodable(&error))?;
             if !admitted && stop.is_none() {
                 stop = Some(key);
             }
@@ -220,9 +277,10 @@ impl Page {
         if unretained > 0 {
             if !admission.is_closed() {
                 return Err(refusal(
-                    "session::page-frontier-short",
+                    &self.family,
+                    "page-frontier-short",
                     Some(format!("population={population} retained={offered}")),
-                    "report this session read; its scan retained fewer records than one page",
+                    "report this read; its scan retained fewer records than one page",
                 ));
             }
             admission.withhold(unretained);
@@ -233,12 +291,13 @@ impl Page {
                 .expect("a closed admission refused one keyed record");
             self.continuation(resume, key)
         });
-        let Some(path) = self.export else {
+        let Some(path) = &self.export else {
             return Ok(Paged::Shown(bounded));
         };
         if bounded.rows.is_empty() && bounded.omission.is_some() {
             return Err(refusal(
-                "session::record-exceeds-ceiling",
+                &self.family,
+                "record-exceeds-ceiling",
                 bounded.omission.map(|omission| {
                     format!(
                         "next record {} bytes; ceiling {}",
@@ -249,13 +308,7 @@ impl Page {
                  repository ceiling",
             ));
         }
-        let document = wire::encode(&bounded).map_err(|error| {
-            refusal(
-                "session::record-unencodable",
-                Some(error.to_string()),
-                "report the transcript record that cannot be encoded",
-            )
-        })?;
+        let document = wire::encode(&bounded).map_err(|error| self.unencodable(&error))?;
         spice::export::export(&path, &document).map(Paged::Exported)
     }
 
@@ -276,21 +329,23 @@ impl Page {
             );
             words.extend(["--export".to_owned(), path]);
         }
-        SpiceCommand::try_from(words).expect("a session read path is one Spice command")
+        SpiceCommand::try_from(words).expect("a read path is one Spice command")
+    }
+
+    fn unencodable(&self, error: &serde_json::Error) -> Refusal {
+        refusal(
+            &self.family,
+            "record-unencodable",
+            Some(error.to_string()),
+            "report the record that cannot be encoded",
+        )
     }
 
     fn cursor(&self) -> Result<Option<Cursor>, Refusal> {
         let Some(after) = &self.after else {
             return Ok(None);
         };
-        let invalid = || {
-            refusal(
-                "session::cursor-invalid",
-                Some(after.clone()),
-                "pass the --after cursor exactly as a continuation named it: TIMESTAMP or \
-                 TIMESTAMP#N",
-            )
-        };
+        let invalid = || self.cursor_refusal("TIMESTAMP or TIMESTAMP#N");
         let (ts, skip) = after
             .split_once('#')
             .map_or(Ok((after.as_str(), 0)), |(ts, skip)| {
@@ -300,7 +355,7 @@ impl Page {
                     .map(|skip| (ts, skip))
                     .ok_or_else(invalid)
             })?;
-        let ts = super::project::normalize_bound(ts).map_err(|_| invalid())?;
+        let ts = crate::session_command::project::normalize_bound(ts).map_err(|_| invalid())?;
         Ok(Some(Cursor { ts, skip }))
     }
 }
@@ -350,12 +405,13 @@ fn continuation_words(matches: &ArgMatches, path: &[&str]) -> Vec<String> {
         .collect()
 }
 
-fn count(matches: &ArgMatches, name: &str) -> Result<Option<usize>, Refusal> {
+fn count(matches: &ArgMatches, family: &str, name: &str) -> Result<Option<usize>, Refusal> {
     one(matches, name)
         .map(|value| {
             value.parse::<usize>().map_err(|_| {
                 refusal(
-                    "session::bound-invalid",
+                    family,
+                    "bound-invalid",
                     Some(format!("--{name}={value}")),
                     "pass a nonnegative decimal integer bound",
                 )
@@ -368,12 +424,12 @@ fn one<'a>(matches: &'a ArgMatches, name: &str) -> Option<&'a String> {
     matches.try_get_one::<String>(name).ok().flatten()
 }
 
-fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+fn refusal(family: &str, reason: &str, observed: Option<String>, detail: &str) -> Refusal {
     Refusal::bare(
         wire::RefusalDiagnostic::new(
-            reason.to_owned(),
-            Some("session-query".to_owned()),
-            Some("one bounded session read".to_owned()),
+            format!("{family}::{reason}"),
+            Some(format!("{family}-query")),
+            Some(format!("one bounded {family} read")),
             observed,
         )
         .with_detail(detail),

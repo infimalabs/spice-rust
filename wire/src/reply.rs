@@ -6,10 +6,11 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::envelope::{Seq, WireVersion};
-use crate::fact::AnyFact;
+use crate::fact::{AnyFact, FactKind};
 use crate::ident::{CanonicalUuid, Digest};
 use crate::manifest::ReleaseTarget;
-use crate::{Envelope, Packed};
+use crate::output::{Bounded, ClippedText};
+use crate::{Actor, Envelope, Instant};
 
 /// An inclusive range of committed journal positions.
 ///
@@ -272,7 +273,69 @@ pub struct RestoreVerification {
     pub threads: u64,
 }
 
-/// One consistent read of finalized journal identity and extent.
+/// One fact as a bounded page shows it: identity, attribution, and its
+/// canonical JSON clipped to the page's text limit, so no single fact can
+/// exceed the page's byte budget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactRow {
+    /// Journal position.
+    pub seq: Seq,
+    /// Commit instant.
+    pub at: Instant,
+    /// Registered fact kind.
+    pub kind: FactKind,
+    /// Principal that caused the append.
+    pub actor: Actor,
+    /// Position of the immediately provoking fact; absent at a chain root.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub cause: Option<Seq>,
+    /// Canonical fact JSON, clipped.
+    pub fact: ClippedText,
+}
+
+impl FactRow {
+    /// The row for `envelope` with its fact text clipped to `max_text` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: a decoded fact always re-encodes.
+    #[must_use]
+    pub fn of(envelope: &Envelope<AnyFact>, max_text: usize) -> Self {
+        let fact = serde_json::to_string(&envelope.fact).expect("a decoded fact re-encodes");
+        Self {
+            seq: envelope.seq,
+            at: envelope.at,
+            kind: envelope.fact.kind(),
+            actor: envelope.actor.clone(),
+            cause: envelope.cause,
+            fact: crate::output::clip(&fact, max_text),
+        }
+    }
+}
+
+impl fmt::Display for FactRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} {} {} {}",
+            self.seq,
+            self.at,
+            self.kind.as_str(),
+            self.actor
+        )?;
+        if let Some(cause) = self.cause {
+            write!(formatter, " cause={cause}")?;
+        }
+        write!(formatter, " {}", self.fact)
+    }
+}
+
+/// One newest-first page of the finalized journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalReport {
@@ -287,8 +350,29 @@ pub struct JournalReport {
     pub cursor: Option<Seq>,
     /// Number of canonical fact envelopes in the snapshot.
     pub facts: u64,
-    /// Bounded canonical immutable envelopes in ascending sequence order.
-    pub entries: Packed<Envelope<AnyFact>>,
+    /// Newest facts at or before the requested cursor.
+    pub entries: Bounded<FactRow>,
+}
+
+impl fmt::Display for JournalReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "journal schema {}", self.schema)?;
+        if let Some(cursor) = self.cursor {
+            write!(formatter, " cursor {cursor}")?;
+        }
+        write!(formatter, " facts {}", self.facts)?;
+        fact_page(formatter, &self.entries)
+    }
+}
+
+fn fact_page(formatter: &mut fmt::Formatter<'_>, page: &Bounded<FactRow>) -> fmt::Result {
+    for row in &page.rows {
+        write!(formatter, "\n{row}")?;
+    }
+    match &page.omission {
+        Some(omission) => write!(formatter, "\n{omission}"),
+        None => Ok(()),
+    }
 }
 
 /// Counts proved by a complete read-only authority verification.
@@ -356,8 +440,15 @@ pub struct ThreadReport {
     pub reference: String,
     /// Root fact of the resolved thread.
     pub root: Seq,
-    /// Bounded canonical envelopes ordered from root through descendants.
-    pub entries: Packed<Envelope<AnyFact>>,
+    /// Facts from the root through its descendants, from the requested cursor.
+    pub entries: Bounded<FactRow>,
+}
+
+impl fmt::Display for ThreadReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "thread {} root {}", self.reference, self.root)?;
+        fact_page(formatter, &self.entries)
+    }
 }
 
 /// One task-level change derived from first-parent landing history.

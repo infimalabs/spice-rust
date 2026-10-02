@@ -5,13 +5,13 @@ use std::collections::BTreeSet;
 use wire::Refusal;
 
 use super::super::super::model::{CommitView, Residue, SourceView, TurnRecord};
-use super::super::super::page::clip;
 use super::super::super::source::ResolvedSource;
 use super::super::{
     FrontierDirection, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
     admit_sources, refusal, source_view_text_bytes,
 };
 use super::PhaseSource;
+use crate::read_page::clip;
 
 const MAX_COMMIT_IDENTITIES: usize = 4 * 1_024;
 

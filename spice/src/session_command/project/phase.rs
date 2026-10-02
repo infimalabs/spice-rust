@@ -11,8 +11,8 @@ use wire::Refusal;
 
 use super::super::dataset::Aggregate;
 use super::super::model::PhaseExample;
-use super::super::page::{self, Page};
 use super::{Filters, Report, ResolvedSource, TurnRecord, one, report};
+use crate::read_page::{self as page, Page};
 
 const DEFAULT_PHASE_EXAMPLES: usize = 2;
 const MAX_PHASE_EXAMPLES: usize = 16;

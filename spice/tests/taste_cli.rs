@@ -187,11 +187,10 @@ fn taste_reporting_and_review_plans_survive_restart() {
     let fixture = Fixture::new();
     let resident = Resident::start(&fixture);
 
-    let text = text_reply::<serde_json::Value>(&fixture.invoke(&["taste"]));
-    assert_report(&fixture, &text);
-    let json = json_reply::<serde_json::Value>(&fixture.invoke(&["taste", "--json"]));
+    let json = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste"]));
     assert!(matches!(json.position, ReplyPosition::Snapshot(_)));
-    assert_eq!(json.body, text);
+    assert_report(&fixture, &json.body);
+    let text = json.body;
 
     let before_ungrounded = fixture.cursor();
     let ungrounded = fixture.invoke(&[
@@ -252,7 +251,7 @@ fn taste_reporting_and_review_plans_survive_restart() {
     resident.stop(&fixture);
     let restarted = Resident::start(&fixture);
     assert_eq!(
-        text_reply::<serde_json::Value>(&fixture.invoke(&["taste"])),
+        json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste"])).body,
         text
     );
     let restarted_board = board(&fixture);
@@ -324,8 +323,8 @@ fn disabled_scoped_rows_remain_visible_and_drop_preserves_the_complete_row() {
     .expect("disabled scoped taste policy");
     let resident = Resident::start(&fixture);
 
-    let report = text_reply::<serde_json::Value>(&fixture.invoke(&["taste"]));
-    let row = report["tastes"]
+    let report = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste"])).body;
+    let row = report["tastes"]["rows"]
         .as_array()
         .expect("taste rows")
         .iter()
@@ -370,14 +369,38 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     let resident = Resident::start(&fixture);
 
     let before = fixture.cursor();
-    let report = text_reply::<serde_json::Value>(&fixture.invoke(&["taste"]));
+    let report = json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste"])).body;
     // Deriving the view appended nothing, so the report persists no counter.
     assert_eq!(fixture.cursor(), before);
 
-    let zeta = &report["tastes"][0];
+    // A taste with an unanswered reminder ranks ahead of the tracked order.
+    let rows = report["tastes"]["rows"].as_array().expect("taste rows");
+    assert_eq!(rows[0]["name"], "alpha");
+    assert_eq!(rows[0]["live"], 1);
+    assert_eq!(
+        rows[0]["vendors"],
+        serde_json::json!([{"vendor": "omp", "fires": 1, "acked": 0, "declined": 0}])
+    );
+    assert_eq!(rows[0]["recurrence"], 0);
+    assert_eq!(rows[0]["cleared"], 1);
+    let zeta = &rows[1];
     assert_eq!(zeta["name"], "zeta");
-    let fires = zeta["fires"].as_array().expect("zeta fires");
-    assert_eq!(fires.len(), 2, "{zeta}");
+    assert_eq!(zeta["fires"], 2);
+    assert_eq!(
+        zeta["vendors"],
+        serde_json::json!([{"vendor": "omp", "fires": 2, "acked": 1, "declined": 1}])
+    );
+    assert_eq!(zeta["recurrence"], 1);
+
+    let detail =
+        json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "--name", "zeta"]))
+            .body;
+    let history = detail["history"]["rows"].as_array().expect("zeta history");
+    let fires = history
+        .iter()
+        .filter(|event| event["event"] == "fire")
+        .collect::<Vec<_>>();
+    assert_eq!(fires.len(), 2, "{detail}");
     // Newest first. Escalation retained the first reminder's identity, so its
     // acknowledgment is the standing that publication carries directly.
     assert_eq!(fires[0]["key"], RENEWED_DIRECTIVE);
@@ -389,33 +412,13 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     assert!(fires.iter().all(|fire| fire["vendor"] == "omp"));
     // Two occupant generations, one seat: a renewal cannot split the vendor.
     assert_ne!(fires[0]["occupant"], fires[1]["occupant"]);
-    assert_eq!(
-        zeta["vendors"],
-        serde_json::json!([{"vendor": "omp", "fires": 2, "acked": 1, "declined": 1}])
-    );
-    assert_eq!(
-        zeta["recurrence"],
-        serde_json::json!([{
-            "content": fires[0]["content"],
-            "epochs": 2,
-            "latest": fires[0]["position"],
-        }])
-    );
     // The pre-reminder curation evidence is still readable beside the fires.
-    assert_eq!(zeta["judgments"][0]["verdict"], "confirmed");
-    assert_eq!(zeta["judgments"][0]["locus"], "tape:zeta");
-
-    let alpha = &report["tastes"][1];
-    assert_eq!(alpha["name"], "alpha");
-    assert_eq!(alpha["fires"].as_array().expect("alpha fires").len(), 1);
-    assert_eq!(alpha["fires"][0]["standing"], "live");
-    assert_eq!(
-        alpha["vendors"],
-        serde_json::json!([{"vendor": "omp", "fires": 1, "acked": 0, "declined": 0}])
-    );
-    assert_eq!(alpha["recurrence"], serde_json::json!([]));
-    assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
-    assert_eq!(alpha["judgments"][0]["locus"], "tape:alpha");
+    let judgment = history
+        .iter()
+        .find(|event| event["event"] == "judgment")
+        .expect("zeta judgment");
+    assert_eq!(judgment["verdict"], "confirmed");
+    assert_eq!(judgment["locus"], "tape:zeta");
 
     let dropped = json_reply::<TaskAnswer>(&fixture.invoke(&[
         "--json",
@@ -701,7 +704,7 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
     );
     assert_eq!(report["provenance"]["digest"], report["digest"]);
     assert_eq!(
-        report["tastes"]
+        report["tastes"]["rows"]
             .as_array()
             .expect("taste rows")
             .iter()
@@ -710,19 +713,23 @@ fn assert_report(fixture: &Fixture, report: &serde_json::Value) {
         ["zeta", "alpha"]
     );
     assert_eq!(
-        report["tastes"][0]["words"],
+        report["tastes"]["rows"][0]["words"],
         serde_json::json!(["wait", "sleep"])
     );
-    assert_eq!(report["tastes"][0]["judgments"][0]["verdict"], "confirmed");
-    assert_eq!(report["tastes"][0]["judgments"][0]["locus"], "tape:zeta");
-    assert_eq!(report["tastes"][1]["judgments"][0]["verdict"], "cleared");
-    assert_eq!(report["tastes"][1]["judgments"][0]["locus"], "tape:alpha");
+    assert_eq!(report["tastes"]["rows"][0]["confirmed"], 1);
+    assert_eq!(report["tastes"]["rows"][1]["cleared"], 1);
+
+    let detail =
+        json_reply::<serde_json::Value>(&fixture.invoke(&["--json", "taste", "--name", "zeta"]))
+            .body;
+    assert_eq!(detail["history"]["rows"][0]["verdict"], "confirmed");
+    assert_eq!(detail["history"]["rows"][0]["locus"], "tape:zeta");
     assert_eq!(
-        report["tastes"][0]["judgments"][0]["at"],
+        detail["history"]["rows"][0]["at"],
         "2030-04-12T18:44:09.271Z"
     );
     assert!(
-        report["tastes"]
+        report["tastes"]["rows"]
             .as_array()
             .expect("taste rows")
             .iter()

@@ -853,7 +853,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["inbox"],
-        "inbox [LANE]",
+        "inbox [LANE] [--limit N] [--max-bytes N] [--max-text N] [--after ID]",
         OperatorOrLane,
         Read,
         [],
@@ -871,7 +871,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "lane::recall"
     ),
-    operator!(["consent"], "consent", Read, [], Reply, "consent::read"),
+    operator!(
+        ["consent"],
+        "consent [--limit N] [--max-bytes N] [--max-text N] [--after ID]",
+        Read,
+        [],
+        Reply,
+        "consent::read"
+    ),
     operator!(
         ["consent", "allow"],
         "consent allow ID",
@@ -896,7 +903,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "consent::policy"
     ),
-    operator!(["taste"], "taste", Read, [], Reply, "taste::read"),
+    operator!(
+        ["taste"],
+        "taste [--name NAME] [--limit N] [--max-bytes N] [--max-text N] [--after CURSOR]",
+        Read,
+        [],
+        Reply,
+        "taste::read"
+    ),
     operator!(
         ["taste", "add"],
         "taste add TEXT [--origin ORIGIN]",
@@ -921,7 +935,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "taste::mine"
     ),
-    operator!(["trust"], "trust", Read, [], Reply, "spice::trust"),
+    operator!(
+        ["trust"],
+        "trust [--limit N] [--max-bytes N] [--after DIGEST]",
+        Read,
+        [],
+        Reply,
+        "spice::trust"
+    ),
     operator!(
         ["trust", "pend"],
         "trust pend",
@@ -966,7 +987,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Plan,
         "journal::restore"
     ),
-    operator!(["journal"], "journal", Read, [], Reply, "journal::read"),
+    operator!(
+        ["journal"],
+        "journal [--limit N] [--max-bytes N] [--max-text N] [--after SEQ]",
+        Read,
+        [],
+        Reply,
+        "journal::read"
+    ),
     row!(
         ["journal", "reindex"],
         "journal reindex",
@@ -987,7 +1015,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["thread"],
-        "thread REF",
+        "thread REF [--limit N] [--max-bytes N] [--max-text N] [--after SEQ]",
         OperatorOrLane,
         Read,
         [],

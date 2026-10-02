@@ -272,6 +272,26 @@ calling lane first, then occupied or claim-holding lanes, then remaining lanes;
 UUID order makes each group deterministic. A partial page names the first
 withheld lane in its exact `--after` continuation.
 
+`spice journal` pages facts newest first and `spice thread REF` pages one
+thread in journal order, both under `INTERACTIVE`; each fact is one row whose
+canonical text is cut to `--max-text`, so an oversized fact costs one bounded
+row. A partial page continues with `--after SEQ`, the first withheld position.
+`spice journal verify` and `spice consent policy` stay concise summaries.
+
+`spice trust` shows the current digest, its standing and provenance, and
+ruling counts first, then a page of recorded rulings: the current digest,
+then pended, granted, and revoked digests, continuing with `--after DIGEST`.
+`spice taste` shows the tracked digest and one summary row per taste, with
+unanswered reminders first; `spice taste --name NAME` pages that taste's
+fires and judgments newest first.
+
+`spice inbox` and `spice consent` are authority queues: neither may hide an
+item behind a page boundary. Each answer carries a compact index naming every
+pending key (per lane) or request identity, outside every limit, and a page
+of detail: directives most urgent stage first, then oldest; consent requests
+in queue order. Partial detail continues with `--after ID`. `spice recall`
+keeps its fixed window of the newest relevant events.
+
 Mutation replies are outside this contract: they stay complete and concise.
 
 `spice board` is a posture, not a dump: counts of the reader's visible and

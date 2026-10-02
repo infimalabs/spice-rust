@@ -3,8 +3,8 @@ use wire::Refusal;
 
 use super::super::dataset::aggregate::timeline::TimelineScan;
 use super::super::model::{CompactionRecord, Report, TimelineView, TurnRecord};
-use super::super::page::{self, Page};
 use super::{Filters, turn_timeline_text};
+use crate::read_page::{self as page, Page};
 
 /// One page of turns and compactions, newest first.
 pub(crate) fn report(

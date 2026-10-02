@@ -46,8 +46,8 @@ fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
     assert!(metrics.decoded_bytes > 0);
 }
 
-#[test]
-fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() {
+/// 300 added then 300 phased facts after the two authority facts.
+fn retained_history() -> Journal {
     let journal = authority_fixture();
     for position in 3..=302 {
         insert_fact(
@@ -84,7 +84,12 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
         .connection
         .execute("UPDATE cursor_head SET seq = 602 WHERE singleton = 1", [])
         .expect("advance retained-history fixture cursor");
+    journal
+}
 
+#[test]
+fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() {
+    let journal = retained_history();
     let row_budget =
         FactReadBudget::new(4, MAX_RETAINED_FACT_PAGE_BYTES).expect("small row budget is admitted");
     reset_indexed_read_metrics();
@@ -164,6 +169,29 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
     let recent_metrics = indexed_read_metrics();
     assert_eq!((recent_metrics.queries, recent_metrics.rows), (1, 5));
     assert!(recent_metrics.decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
+}
+
+#[test]
+fn recent_pages_of_every_kind_visit_each_fact_once_newest_first() {
+    let journal = retained_history();
+    // Every kind, newest first: pages over the whole history resume strictly
+    // before their continuation, so following them visits each seq once.
+    let mut before = None;
+    let mut visited = Vec::new();
+    loop {
+        reset_indexed_read_metrics();
+        let page = journal
+            .read(|read| read.recent_facts(before, FactReadBudget::RETAINED))
+            .expect("bounded newest-first page of every kind");
+        assert!(page.rows.len() <= MAX_RETAINED_FACT_PAGE_ROWS);
+        assert!(indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
+        visited.extend(page.rows.iter().map(|fact| fact.seq.get()));
+        match page.continuation {
+            Some(next) => before = Some(next),
+            None => break,
+        }
+    }
+    assert_eq!(visited, (1..=602).rev().collect::<Vec<_>>());
 }
 
 #[test]
