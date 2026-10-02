@@ -1,4 +1,4 @@
-//! The two writes that address Canvas teams rather than the seats in them.
+//! The two writes that address app teams rather than the seats in them.
 //!
 //! [`configure`] names one team and changes it: its task-allocation
 //! lifetime, and at most one member's home. [`arrange`] names no team in
@@ -372,7 +372,7 @@ fn first_free_derived_team(head: &wire::ResidencyHead, source: CanonicalUuid) ->
 
 /// Group the head's lanes into team standings in first-appearance order.
 ///
-/// First appearance is not an arbitrary choice: it is exactly how the Canvas
+/// First appearance is not an arbitrary choice: it is exactly how the app
 /// groups the lane answer into team surfaces, so the head's lane order *is* the
 /// durable team order. Rewriting that order below is what makes a drag durable
 /// without teaching the app a second ordering to disagree with.
@@ -555,7 +555,7 @@ fn admit_arrangement(
     Ok(())
 }
 
-/// Commit one complete Canvas team arrangement.
+/// Commit one complete app team arrangement.
 ///
 /// This is the durable end of both drag gestures. Reordering the teams and
 /// joining two of them differ only in the arrangement the operator sends, so

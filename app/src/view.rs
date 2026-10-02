@@ -1,4 +1,4 @@
-//! The derived task and team view axes and the Canvas destinations over them.
+//! The derived task and team view axes and the app destinations over them.
 //!
 //! Flow and topology are the complete analytical view vocabulary. A new plane
 //! lands on one of these two rather than becoming a third view, and a feature
@@ -17,7 +17,7 @@ use crate::runtime::DirectionRef;
 
 /// The complete view vocabulary.
 ///
-/// Each axis is a question one Canvas destination answers.
+/// Each axis is a question one app destination answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Axis {
     /// What work is moving?
@@ -51,10 +51,10 @@ impl Axis {
     }
 }
 
-/// User-facing Canvas destinations in their shared navigation order.
+/// User-facing app destinations in their shared navigation order.
 ///
 /// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary for global Canvas controls. Team controls select
+/// presentation boundary for global app controls. Team controls select
 /// their closed, scoped subset through `TeamMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppDestination {
@@ -78,7 +78,7 @@ impl TeamDestination {
     /// Every team-scoped destination, left to right.
     pub const ALL: [Self; 2] = [Self::Work, Self::Chat];
 
-    /// Corresponding destination in the global Canvas vocabulary.
+    /// Corresponding destination in the global app vocabulary.
     #[must_use]
     pub const fn app(self) -> AppDestination {
         match self {
@@ -155,7 +155,7 @@ impl AppDestination {
     }
 }
 
-/// Connection phase relevant to persistent Canvas chrome.
+/// Connection phase relevant to persistent app chrome.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectionStage {
@@ -165,7 +165,7 @@ pub(crate) enum ConnectionStage {
     Offline,
 }
 
-/// Notice shown beside the global Spice control while the Canvas cannot yet
+/// Notice shown beside the global Spice control while the app cannot yet
 /// present a current admitted lane snapshot.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl AppNotice {
 /// Select the one global notice that owns pre-lane and reconnect state.
 ///
 /// Connectivity wins over hydration because a retained runtime may remain on
-/// screen through an outage. Online Canvas yields the slot only after both its
+/// screen through an outage. The online app yields the slot only after both its
 /// runtime and its lane snapshot have been admitted.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
@@ -348,7 +348,7 @@ pub(crate) enum ChatTarget {
     Direction(DirectionTarget),
 }
 
-/// One admitted Canvas URL state: the complete addressable view.
+/// One admitted app URL state: the complete addressable view.
 ///
 /// Global destinations remain the complete navigation vocabulary. A Work
 /// scope, task detail, or the operator's Directions refine Work and a card
@@ -917,7 +917,7 @@ fn normalized_destination(fragment: &str) -> Option<AppDestination> {
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn card_href(target: &str) -> String {
     let route = AppRoute::card(target.to_owned())
-        .expect("a rendered Canvas card has a canonical route target");
+        .expect("a rendered app card has a canonical route target");
     format!("#{}", route.path())
 }
 

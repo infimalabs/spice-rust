@@ -31,7 +31,7 @@ pub(crate) fn open_app_with(
     }
 }
 
-/// Admit and launch Canvas through the fault-only discovery boundary.
+/// Admit and launch the app through the fault-only discovery boundary.
 pub(crate) fn open_app_result_with(
     discovery_path: &Path,
     before_current_check: impl FnOnce(),

@@ -282,7 +282,7 @@ impl Fixture {
             .expect("ignore verifier-owned fixture build outputs");
         fs::create_dir(repository.join("app")).expect("create verifier fixture app directory");
         fs::write(repository.join("app/index.html"), "<!doctype html>\n")
-            .expect("write verifier fixture Canvas entry point");
+            .expect("write verifier fixture app entry point");
         fs::write(repository.join("src/lib.rs"), "pub fn fixture() {}\n")
             .expect("write verifier fixture source");
         let repository_fixture = RepositoryFixture::initialize(&repository);

@@ -178,7 +178,7 @@ const RUST_TYPECHECK_TOOLS: &[ToolRequirement] = &[ToolRequirement {
     exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
     role: "native typecheck vendor",
 }];
-const CANVAS_TOOLS: &[ToolRequirement] = &[
+const APP_TOOLS: &[ToolRequirement] = &[
     ToolRequirement {
         name: "cargo",
         program: "cargo",
@@ -300,7 +300,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
             source: "rust-toolchain.toml",
             field: "toolchain.channel + toolchain.targets[wasm32-unknown-unknown]",
         },
-        tools: CANVAS_TOOLS,
+        tools: APP_TOOLS,
         analysis: &[
             "cargo clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings",
             "trunk build index.html --release --locked --filehash=false",

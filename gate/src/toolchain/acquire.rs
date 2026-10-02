@@ -771,7 +771,7 @@ fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<
     refusal_for(declaration.id, declaration.tools, tools)
 }
 
-/// Canvas may decide from exact Cargo metadata that Trunk is outside the
+/// The app may decide from exact Cargo metadata that Trunk is outside the
 /// selected closure. Every other analyzer requires all declared programs
 /// before it can establish applicability.
 fn analyzer_refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<Analysis> {
@@ -857,7 +857,7 @@ fn refusal_for(
 /// Every declared program of one arm, keyed by the name that requested it.
 ///
 /// Normally reached once [`refusal`] has ruled out every unusable program.
-/// Canvas may arrive with only exact Cargo so metadata can decide whether Trunk
+/// The app may arrive with only exact Cargo so metadata can decide whether Trunk
 /// belongs to the selected closure. Every retained path is the one its probe
 /// already ran, so an analysis cannot reach a second file under the same name.
 fn resolved_programs(

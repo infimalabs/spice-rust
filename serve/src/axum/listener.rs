@@ -1,4 +1,4 @@
-//! Listener acquisition and cancellation that interrupts accepted Canvas transports.
+//! Listener acquisition and cancellation that interrupts accepted app transports.
 
 use std::io::IoSlice;
 use std::net::SocketAddr;

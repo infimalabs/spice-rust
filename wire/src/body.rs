@@ -37,7 +37,7 @@ pub struct DocApplied {
     pub operations: u32,
 }
 
-/// The global Canvas settings changed.
+/// The global app settings changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsChanged {

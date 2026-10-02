@@ -357,7 +357,7 @@ impl AppBinding {
 pub(crate) fn up(
     leaf: &clap::ArgMatches,
     child: Option<ChildLaunch>,
-    test_canvas_stage: bool,
+    test_app_stage: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
 ) -> Outcome<()> {
@@ -380,7 +380,7 @@ pub(crate) fn up(
             return environment_fault("resident::executable-unavailable", &error.to_string());
         }
     };
-    let app = if test_canvas_stage {
+    let app = if test_app_stage {
         AppSelection::Staged
     } else {
         AppSelection::Installed(executable)

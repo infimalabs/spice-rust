@@ -1,4 +1,4 @@
-//! Demand-driven Canvas current reads and duplicate-request coalescing.
+//! Demand-driven app current reads and duplicate-request coalescing.
 
 use super::*;
 use crate::action_mailbox::CurrentRead;

@@ -265,7 +265,7 @@
   min-height: 22px;
   padding: 0 7px;
   border: 1px solid var(--control-line-soft);
-  border-radius: var(--canvas-radius-control, 4px);
+  border-radius: var(--app-radius-control, 4px);
   background: var(--control-surface-soft);
   color: var(--ink);
   font: inherit;
@@ -459,8 +459,8 @@
   opacity: 1;
   transform: translateX(0);
   transition:
-    opacity var(--canvas-motion-fast) var(--canvas-ease-standard),
-    transform var(--canvas-motion-settle) var(--canvas-ease-standard);
+    opacity var(--app-motion-fast) var(--app-ease-standard),
+    transform var(--app-motion-settle) var(--app-ease-standard);
 }
 .team-surface .mosaic-message-normal > :is(.message-flow, .message-body) { align-self: start; }
 .team-surface .message-flow { display: flow-root; min-width: 0; }
@@ -476,8 +476,8 @@
   pointer-events: none;
   transform: translateX(1.25rem);
   transition:
-    opacity var(--canvas-motion-fast) var(--canvas-ease-standard),
-    transform var(--canvas-motion-settle) var(--canvas-ease-standard);
+    opacity var(--app-motion-fast) var(--app-ease-standard),
+    transform var(--app-motion-settle) var(--app-ease-standard);
 }
 .team-surface .mosaic-message-card.final > .mosaic-message-task-layer {
   inset-block-start: 0;

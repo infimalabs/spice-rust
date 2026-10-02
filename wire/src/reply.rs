@@ -156,7 +156,7 @@ pub struct Reply<B> {
 /// Product, executable, protocol, authority, and app-generation identity.
 ///
 /// These values are one machine document rather than independently synchronized
-/// prose. The daemonless `version` leaf and Canvas bootstrap both use this
+/// prose. The daemonless `version` leaf and app bootstrap both use this
 /// shape, with the app field naming the generation served at their read
 /// boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

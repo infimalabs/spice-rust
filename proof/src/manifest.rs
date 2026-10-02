@@ -122,7 +122,7 @@ pub fn admit_manifest(
 /// Admit the complete proof manifest without selecting one invoking binary.
 ///
 /// Proof recognition runs in the resident rather than either target binary.
-/// It therefore validates both payloads, receipts, the current Canvas, and the
+/// It therefore validates both payloads, receipts, the current app, and the
 /// complete shared release closure, while the later target-native release
 /// command retains the executable-identity check performed by
 /// [`admit_manifest`].

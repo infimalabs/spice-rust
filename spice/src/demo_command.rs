@@ -27,7 +27,7 @@ const CONFIG_BYTES: &[u8] = b"[tasks]\nstems = [\"rim\"]\n";
 const DEMO_TASK: &str = "DEMO-1kKRRsDP";
 const DEMO_STAMP: &str = "1kKRRsDP";
 const DEMO_TITLE: &str = "Add machine-readable status output";
-const DEMO_PROJECT: &str = "rim.canvas.demo";
+const DEMO_PROJECT: &str = "rim.spice.demo";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";

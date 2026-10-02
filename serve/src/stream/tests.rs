@@ -376,7 +376,7 @@ async fn durable_broadcast_drives_later_updates_without_refresh() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn transcript_ingestion_advances_live_cursor_without_crossing_canvas() {
+async fn transcript_ingestion_advances_live_cursor_without_crossing_app() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let mut broadcasts = source.subscribe();
@@ -397,7 +397,7 @@ async fn transcript_ingestion_advances_live_cursor_without_crossing_canvas() {
         .expect("accounting receipt advances the cursor");
     assert!(
         delivery.frames().is_empty(),
-        "resident-only accounting does not cross the Canvas socket"
+        "resident-only accounting does not cross the app socket"
     );
     assert_eq!(subscription.cursor(), Some(before));
     subscription.admit(delivery);

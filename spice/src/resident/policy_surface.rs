@@ -589,7 +589,7 @@ fn admit_trust_worktree(
 
 fn trust_head_origin(bus: &Bus, head: &JournalHead<TrustHead>) -> SurfaceResult<wire::Origin> {
     let page = bus
-        .canvas_facts(
+        .app_facts(
             journal::FactPageStart::At(head.position()),
             head.position(),
             journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)

@@ -108,7 +108,7 @@ fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
     stop(&fixture, resident);
 }
 
-fn shared_canvas_fanout(
+fn shared_app_fanout(
     fixture: &Fixture,
     lanes: Lanes,
     correction: &str,
@@ -201,11 +201,11 @@ fn assert_fanout_authority(
 /// One operator fanout names every directive it sent, while each CLI send
 /// mints its own.
 #[test]
-fn a_canvas_fanout_is_shared_while_cli_sends_mint_their_own() {
+fn an_app_fanout_is_shared_while_cli_sends_mint_their_own() {
     const CORRECTION: &str = "Do not use grep for repository searches; use rg instead.";
 
     let (fixture, resident, lanes) = setup();
-    let (fanout, target, other) = shared_canvas_fanout(&fixture, lanes, CORRECTION);
+    let (fanout, target, other) = shared_app_fanout(&fixture, lanes, CORRECTION);
     let (cli_target, cli_other) = distinct_cli_fanouts(&fixture, lanes, CORRECTION);
     assert_fanout_authority(&fixture, fanout, &target, &other, &cli_target, &cli_other);
     stop(&fixture, resident);

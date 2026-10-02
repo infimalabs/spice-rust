@@ -1,4 +1,4 @@
-//! Canvas web analysis for the selected tree and its owned build roots.
+//! App web analysis for the selected tree and its owned build roots.
 
 use std::cell::Cell;
 use std::fs;

@@ -121,7 +121,7 @@ fn release_seal_refuses_an_untracked_non_manifest_stage_file() {
 }
 
 #[test]
-fn release_seal_refuses_a_moved_canvas_and_preserves_the_existing_pointer() {
+fn release_seal_refuses_a_moved_app_and_preserves_the_existing_pointer() {
     let fixture = Fixture::new();
     let pointer = fixture.root.join("dist/stage/release/manifest.json");
     fs::create_dir_all(pointer.parent().expect("pointer has a parent")).expect("release directory");

@@ -14,7 +14,7 @@
 //! the same one: a [`Principal`] comes from an admitted acceptance and from
 //! nowhere else, so a pane's authority class is the resident's answer rather
 //! than the app's assertion. [`view`] names the closed [`Axis`] vocabulary the
-//! Canvas destinations stand on.
+//! app destinations stand on.
 //!
 //! Those three all face inward, holding or presenting what the resident said.
 //! [`compose`] is the one floor facing the other way, turning text an operator

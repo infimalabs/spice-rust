@@ -1,4 +1,4 @@
-//! Canvas lifecycle, queue, and capability admission cases.
+//! App lifecycle, queue, and capability admission cases.
 
 use super::*;
 

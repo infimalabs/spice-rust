@@ -354,7 +354,7 @@ impl Runtime {
         not(test),
         expect(
             dead_code,
-            reason = "the dependent Canvas task owns sampler state projection"
+            reason = "the dependent app task owns sampler state projection"
         )
     )]
     pub(crate) fn current(&self) -> Arc<State> {
@@ -365,7 +365,7 @@ impl Runtime {
         not(test),
         expect(
             dead_code,
-            reason = "the dependent Canvas task owns live sampler subscriptions"
+            reason = "the dependent app task owns live sampler subscriptions"
         )
     )]
     pub(crate) fn subscribe(&self) -> watch::Receiver<Arc<State>> {

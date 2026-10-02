@@ -91,7 +91,7 @@ impl<'a> QuoteMessage<'a> {
 pub struct Resolver<'a> {
     store: ResidentStore<'a>,
 }
-/// Resident-owned reconstruction of the Canvas prose presented for one tape event.
+/// Resident-owned reconstruction of the app prose presented for one tape event.
 pub type AgentProsePresenter =
     fn(&BusReader, CanonicalUuid, CanonicalUuid, u32, &listen::Prose) -> Result<String, String>;
 
@@ -156,7 +156,7 @@ impl<'a> Resolver<'a> {
     }
 }
 
-/// Canvas presentation of every quote link in `text`, recursively.
+/// App presentation of every quote link in `text`, recursively.
 ///
 /// Each resolved node shows its source's referenced media as inline
 /// Markdown, exactly as a directive context does, while nested quote
@@ -196,7 +196,7 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
         .collect()
 }
 
-/// Bind the resident quote authority into Canvas serialization.
+/// Bind the resident quote authority into app serialization.
 #[must_use]
 pub fn presenter(
     tape: PathBuf,

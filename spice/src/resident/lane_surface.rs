@@ -331,7 +331,7 @@ pub(super) fn seat(
 ///
 /// The target row supplies the destination team. Moving the row itself keeps
 /// its lane, occupant, session, worktree, and composer identity unchanged. The
-/// residency head's vector is the durable order read back by Canvas.
+/// residency head's vector is the durable order read back by the app.
 pub(super) fn arrange(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -776,7 +776,7 @@ fn active_claim_for_lane(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option
 /// Admit one already-durable capture report from the current occupant.
 ///
 /// Stale reports can race a completed drain or renewal and are discarded by
-/// exact occupant identity. Session recognition, taste recognition, and Canvas
+/// exact occupant identity. Session recognition, taste recognition, and app
 /// message rendering consume this same admission decision.
 pub(super) fn capture_record(
     bus: &Bus,

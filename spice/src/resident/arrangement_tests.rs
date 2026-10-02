@@ -710,7 +710,7 @@ fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
     fixture.retire();
 }
 
-/// Team membership is not capped by the Canvas's six-slot accent palette.
+/// Team membership is not capped by the app's six-slot accent palette.
 ///
 /// Colour is presentation continuity rather than identity: every member keeps
 /// its lane, occupant, worktree, and independent send address when colours

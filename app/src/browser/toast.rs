@@ -2,7 +2,7 @@
 //! result, hold a pending one until its outcome replaces it, and fade a
 //! settled one after a fixed dwell.
 //!
-//! The Canvas mounts a shared root instance and hands its [`Toaster`] to
+//! The app mounts a shared root instance and hands its [`Toaster`] to
 //! components through context. A workflow that must retain independent
 //! pending state can mount its own raised instance. Manual popovers show above
 //! an open modal dialog; the lightbox instead renders its instance inside its
@@ -84,14 +84,14 @@ pub(super) fn use_raised_toast() -> (
 /// The root toast's handle.
 #[hook]
 pub(super) fn use_toaster() -> Toaster {
-    use_context::<Toaster>().expect("the Canvas root mounts the toast")
+    use_context::<Toaster>().expect("the app root mounts the toast")
 }
 
 /// The task lifecycle toast's independently owned handle.
 #[hook]
 pub(super) fn use_task_toaster() -> Toaster {
     use_context::<TaskToaster>()
-        .expect("the Canvas root mounts the task toast")
+        .expect("the app root mounts the task toast")
         .0
 }
 

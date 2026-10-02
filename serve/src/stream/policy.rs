@@ -1,8 +1,8 @@
-//! Authentication, packing, and typed failure policy for Canvas subscriptions.
+//! Authentication, packing, and typed failure policy for app subscriptions.
 
 use std::collections::BTreeSet;
 
-use bus::CanvasHeads;
+use bus::AppHeads;
 use wire::{
     Actor, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamFact, StreamFrame, TrustView,
     ViewSubject, WireVersion,
@@ -85,7 +85,7 @@ pub(super) fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), F
     Ok(())
 }
 
-pub(super) fn required_horizon(heads: &CanvasHeads) -> Result<Seq, Failure> {
+pub(super) fn required_horizon(heads: &AppHeads) -> Result<Seq, Failure> {
     heads.cursor().ok_or_else(|| {
         Failure::Fault(protocol_fault(
             "stream::cursor-missing",
@@ -94,7 +94,7 @@ pub(super) fn required_horizon(heads: &CanvasHeads) -> Result<Seq, Failure> {
     })
 }
 
-pub(super) fn trust_rows(heads: &CanvasHeads) -> Vec<TrustView> {
+pub(super) fn trust_rows(heads: &AppHeads) -> Vec<TrustView> {
     let mut rows = heads
         .trust()
         .iter()
@@ -116,7 +116,7 @@ pub(super) fn present_facts(packed: Packed<wire::Envelope<wire::AnyFact>>) -> Pa
         rows: packed
             .rows
             .into_iter()
-            .filter(canvas_visible_fact)
+            .filter(app_visible_fact)
             .map(StreamFact::from)
             .collect(),
         overflow: packed.overflow,
@@ -124,7 +124,7 @@ pub(super) fn present_facts(packed: Packed<wire::Envelope<wire::AnyFact>>) -> Pa
     }
 }
 
-/// Whether one authority fact belongs on the operator Canvas stream.
+/// Whether one authority fact belongs on the operator app stream.
 ///
 /// `journal::ingested` is a resident accounting receipt for a captured source
 /// byte range. The separately bounded message subject carries the transcript
@@ -132,7 +132,7 @@ pub(super) fn present_facts(packed: Packed<wire::Envelope<wire::AnyFact>>) -> Pa
 /// transcript into duplicate socket traffic and exposes internal accounting as
 /// chronology. The receipt remains in durable authority for replay and
 /// forensic reads.
-pub(super) fn canvas_visible_fact(fact: &wire::Envelope<wire::AnyFact>) -> bool {
+pub(super) fn app_visible_fact(fact: &wire::Envelope<wire::AnyFact>) -> bool {
     fact.fact.kind() != wire::FactKind::JournalIngested
 }
 

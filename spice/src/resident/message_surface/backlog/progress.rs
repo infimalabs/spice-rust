@@ -3,7 +3,7 @@
 //! A page anchor names what a reader last saw; a continuation names how far
 //! the source was physically read to prove everything older lies behind it.
 //! Continuations are facts about the frozen source rather than one consumer's
-//! cursor, so reading one never consumes it and a second Canvas paging the
+//! cursor, so reading one never consumes it and a second app paging the
 //! same lane cannot evict the first.
 
 use std::sync::Condvar;
@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
-/// Tape continuations one lane remembers, the Canvas anchor memory's bound.
+/// Tape continuations one lane remembers, the app anchor memory's bound.
 const CONTINUATIONS_PER_LANE: usize = 64;
 /// Preserved-session card bytes retained across every lane.
 const SESSION_CARD_BYTES: usize = 16 * 1024 * 1024;

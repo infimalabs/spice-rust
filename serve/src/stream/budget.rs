@@ -1,4 +1,4 @@
-//! Repository-bounded journal work derived from the admitted Canvas row setting.
+//! Repository-bounded journal work derived from the admitted app row setting.
 
 use super::{Failure, Fault, FaultClass, Source};
 

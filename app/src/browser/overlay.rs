@@ -1,4 +1,4 @@
-//! Shared ownership rules for Canvas overlays.
+//! Shared ownership rules for app overlays.
 //!
 //! Escape dispatch walks active dismissible surfaces from newest to oldest.
 //! Focus ownership follows the element that opened each registered layer, so

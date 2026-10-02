@@ -373,7 +373,7 @@ fn copy_layout_properties(element: &web_sys::HtmlElement, properties: &[(&str, &
 /// Copy admitted integer diagnostics into the one CSP-safe layout channel.
 ///
 /// Firefox does not compute the typed `attr()` arithmetic this lattice once
-/// used, and the Canvas CSP deliberately refuses serialized style attributes.
+/// used, and the app CSP deliberately refuses serialized style attributes.
 /// `CssStyleDeclaration` keeps the diagnostic attributes visible while every
 /// browser executes the same custom-property geometry.
 fn use_layout_properties(

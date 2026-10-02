@@ -36,7 +36,7 @@ use projection::{publish_agent_event, publish_agent_messages_in, publish_agent_r
 const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
 /// Reserved wire identity for record context that is not a decoded event.
 const TURN_BOUNDARY_EVENT: u32 = u32::MAX;
-/// Historical source bytes one Canvas history request may chain through per
+/// Historical source bytes one app history request may chain through per
 /// source, and the scan time it may spend doing so.
 ///
 /// The tape and preserved-session halves of a merged page each derive their
@@ -1088,7 +1088,7 @@ fn recognized_answers<'a>(
 }
 
 /// Whether a directive carries no flavor marker of its own, so its
-/// acknowledgement state is the only inline mark Canvas can show for it.
+/// acknowledgement state is the only inline mark the app can show for it.
 fn is_ordinary(directive: &PresentationDirective) -> bool {
     !directive.taste && !directive.review && !has_broadcast_marker(&directive.text)
 }

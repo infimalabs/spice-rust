@@ -35,15 +35,15 @@
   .commandbar { gap: 10px; padding: 8px 12px; }
   .commandbar--mosaic {
     gap: 7px;
-    padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
+    padding-inline: var(--app-shell-edge-start) var(--app-shell-edge-end);
   }
   .split { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
-  .shell { --canvas-shell-edge-inline: 8px; }
+  .shell { --app-shell-edge-inline: 8px; }
   .shell--mosaic {
-    --canvas-frame-edge-block-end: 8px;
+    --app-frame-edge-block-end: 8px;
   }
 }
 
@@ -122,7 +122,7 @@
   .work-detail-tabs,
   .work-map-content { padding-inline: 14px; }
   /* The lens rail may wrap here; a wrapped rail is a frame, not a capsule. */
-  .work-map-lenses { width: 100%; border-radius: var(--canvas-radius-frame); }
+  .work-map-lenses { width: 100%; border-radius: var(--app-radius-frame); }
   .work-map-controls { align-items: stretch; }
   .work-map-control-group { width: 100%; }
   .work-map-control-group button { flex: 1 1 0; }

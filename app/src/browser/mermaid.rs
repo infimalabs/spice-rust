@@ -271,7 +271,7 @@ fn use_render(subscription: RenderSubscription) {
 /// The original source remains text, including after parse/load/resource errors.
 #[function_component(MermaidImage)]
 pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
-    let context = use_context::<Context>().expect("Canvas diagram provider");
+    let context = use_context::<Context>().expect("app diagram provider");
     let host = use_node_ref();
     let display = use_state(Display::default);
     let retry = use_state(|| 0_u32);

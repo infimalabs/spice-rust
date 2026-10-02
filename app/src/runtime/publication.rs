@@ -1,4 +1,4 @@
-//! Constant-cost publication of the mutable Canvas runtime to Yew.
+//! Constant-cost publication of the mutable app runtime to Yew.
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -44,7 +44,7 @@ impl<T> Shared<T> {
 
 /// The runtime cell and the constant-cost handle published after a mutation.
 ///
-/// Canvas stores this in Yew's `use_state`, whose setter always rerenders; it
+/// The app stores this in Yew's `use_state`, whose setter always rerenders; it
 /// must not move to `use_state_eq`, because two publications intentionally
 /// point at the same allocation.
 #[derive(Clone, Default, PartialEq)]

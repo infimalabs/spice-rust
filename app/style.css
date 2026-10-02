@@ -18,12 +18,12 @@
   --danger-soft: #f9dfdc;
   --triage: #b3402a;
   --shadow: 0 1px 2px rgb(21 27 21 / 8%);
-  --canvas-radius-control: 5px; --canvas-radius-element: 6px; --canvas-radius-compact: 7px; --canvas-radius-inset: 8px;
-  --canvas-radius-surface: 9px; --canvas-radius-frame: 10px; --canvas-radius-overlay: 12px;
-  --canvas-radius-pill: 999px;
-  --canvas-edge: 1px solid var(--line); --canvas-edge-soft: 1px solid var(--line-soft); --canvas-control-edge: 1px solid var(--control-line-soft);
-  --canvas-selection-shadow: inset 0 0 0 1px var(--line-soft);
-  --canvas-motion-fast: 120ms; --canvas-motion-settle: 180ms; --canvas-ease-standard: ease-out;
+  --app-radius-control: 5px; --app-radius-element: 6px; --app-radius-compact: 7px; --app-radius-inset: 8px;
+  --app-radius-surface: 9px; --app-radius-frame: 10px; --app-radius-overlay: 12px;
+  --app-radius-pill: 999px;
+  --app-edge: 1px solid var(--line); --app-edge-soft: 1px solid var(--line-soft); --app-control-edge: 1px solid var(--control-line-soft);
+  --app-selection-shadow: inset 0 0 0 1px var(--line-soft);
+  --app-motion-fast: 120ms; --app-motion-settle: 180ms; --app-ease-standard: ease-out;
   /* A single image alone in a lane message card; task cards cap at the same size. */
   --mosaic-image-large-size: 15.75rem;
   /* Slot 0 is the product green itself, in both themes. */
@@ -80,21 +80,21 @@ body {
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 
 button, select, input, textarea {
-  border: var(--canvas-control-edge);
+  border: var(--app-control-edge);
   background: var(--control);
   color: var(--ink);
 }
 
-select, input, textarea { border-radius: var(--canvas-radius-control); }
+select, input, textarea { border-radius: var(--app-radius-control); }
 
-.app-control-rail { border: var(--canvas-control-edge); border-radius: var(--canvas-radius-pill); background: var(--control-surface-soft); }
+.app-control-rail { border: var(--app-control-edge); border-radius: var(--app-radius-pill); background: var(--control-surface-soft); }
 
 /* Bare buttons take control geometry, so a button that frames content reads
    as a card. Capsule geometry belongs to the compact-control role: a control
    class that owns its shape, or app-compact-control for a compact action
    with no class of its own. */
 button {
-  border-radius: var(--canvas-radius-control);
+  border-radius: var(--app-radius-control);
   min-height: 36px;
   padding: 0 12px;
   cursor: pointer;
@@ -102,7 +102,7 @@ button {
 }
 
 button:hover { border-color: var(--accent); }
-.app-compact-control { border-radius: var(--canvas-radius-pill); }
+.app-compact-control { border-radius: var(--app-radius-pill); }
 button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: .5; }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
@@ -142,8 +142,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: flex;
   gap: 3px;
   padding: 3px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
 }
 
@@ -184,8 +184,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-console {
   overflow: hidden;
   margin-bottom: 30px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-frame);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-frame);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -196,7 +196,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   justify-content: space-between;
   gap: 24px;
   padding: 20px 22px 16px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
   background: linear-gradient(110deg, var(--panel), var(--accent-soft));
 }
 
@@ -224,7 +224,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   flex: 0 0 auto;
   padding: 5px 9px;
   border: 1px solid var(--accent);
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   color: var(--accent);
   font-size: .74rem;
   font-weight: 700;
@@ -235,7 +235,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 8px;
   overflow-x: auto;
   padding: 10px 14px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
   background: var(--control-surface-soft);
 }
 
@@ -247,7 +247,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   min-height: 34px;
   padding: 0 10px;
   border-color: transparent;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: transparent;
   color: var(--muted);
   font-size: .76rem;
@@ -301,9 +301,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   max-width: 240px;
   min-height: 76px;
   padding: 8px 10px;
-  border: var(--canvas-edge);
+  border: var(--app-edge);
   border-top: 2px solid var(--accent-slot, var(--line));
-  border-radius: var(--canvas-radius-surface);
+  border-radius: var(--app-radius-surface);
   background: var(--panel);
   text-align: left;
 }
@@ -329,15 +329,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .tag.vendor {
   margin-left: auto;
   padding: 0 6px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-pill);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-pill);
   color: var(--muted);
   font-size: .62rem;
 }
 
 .ticker {
   padding: 7px 16px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
   background: var(--control-surface-soft);
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -374,8 +374,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 10px;
   overflow-y: auto;
   padding: 15px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-inset);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-inset);
   background: var(--page);
 }
 
@@ -398,8 +398,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .message {
   width: min(82%, 680px);
   padding: 11px 13px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-surface);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-surface);
   background: var(--panel);
 }
 .message.outgoing {
@@ -415,7 +415,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   right: 4px;
   bottom: 8px;
   width: 4px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: var(--accent-slot, var(--accent));
 }
 
@@ -441,7 +441,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   height: 24px;
   min-height: 0;
   padding: 0;
-  border: var(--canvas-edge);
+  border: var(--app-edge);
   border-radius: 50%;
   background: transparent;
   color: var(--muted);
@@ -463,7 +463,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: block;
   width: 100%;
   height: 8.75rem;
-  border-radius: var(--canvas-radius-element);
+  border-radius: var(--app-radius-element);
   background: var(--control-surface-soft);
   object-fit: contain;
 }
@@ -500,8 +500,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   grid-column: 1 / -1;
   min-width: 0;
   padding: 8px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
 }
 .seat-form {
@@ -550,7 +550,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   margin: 8px 0 0;
   padding: 8px 10px;
   border: 1px solid var(--danger);
-  border-radius: var(--canvas-radius-element);
+  border-radius: var(--app-radius-element);
   background: var(--danger-soft);
   color: var(--danger);
   font-size: .77rem;
@@ -580,7 +580,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .section {
   padding: 22px 0;
-  border-top: var(--canvas-edge-soft);
+  border-top: var(--app-edge-soft);
 }
 
 .section:first-of-type { border-top: 0; }
@@ -625,9 +625,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   min-width: 0;
   padding: 8px 34px 9px 10px;
   direction: ltr;
-  border: var(--canvas-control-edge);
+  border: var(--app-control-edge);
   border-left: 3px solid var(--accent-slot, var(--accent));
-  border-radius: var(--canvas-radius-element);
+  border-radius: var(--app-radius-element);
   background: var(--panel);
   box-shadow: var(--shadow);
   color: var(--muted);
@@ -659,8 +659,8 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   gap: 6px 12px;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-element);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-element);
   background: var(--control-surface-soft);
   color: var(--muted);
   font-size: .76rem;
@@ -681,19 +681,19 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-detail-group > .quota-empty {
   padding: 10px 12px;
   border: 1px dashed var(--control-line-soft);
-  border-radius: var(--canvas-radius-element);
+  border-radius: var(--app-radius-element);
   font-size: .74rem;
 }
 .quota-detail-group > .quota-account-empty {
   min-block-size: var(--quota-account-block);
   padding: 9px 12px 10px;
-  border-radius: var(--canvas-radius-surface);
+  border-radius: var(--app-radius-surface);
   font-size: .76rem;
 }
 .quota-simple-list li {
   padding: 10px 12px;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-element);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-element);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -706,8 +706,8 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-account {
   min-block-size: var(--quota-account-block);
   padding: 9px 12px 10px;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-surface);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-surface);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -765,8 +765,8 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 }
 .dash-overview-operator,
 .dash-overview-resident {
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-element);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-element);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -801,7 +801,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   height: 80px;
   place-items: center;
   overflow: hidden;
-  border: var(--canvas-control-edge);
+  border: var(--app-control-edge);
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
@@ -867,14 +867,14 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 
 .table-wrap {
   overflow-x: auto;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
   background: var(--panel);
 }
 
 table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th { color: var(--muted); font-size: .72rem; text-align: left; text-transform: uppercase; }
-th, td { padding: 11px 13px; border-bottom: var(--canvas-edge); vertical-align: top; }
+th, td { padding: 11px 13px; border-bottom: var(--app-edge); vertical-align: top; }
 tbody tr:last-child td { border-bottom: 0; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .title-cell { min-width: 240px; font-weight: 650; }
@@ -897,8 +897,8 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .empty {
   padding: 34px 18px;
-  border: var(--canvas-edge-soft);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-compact);
   color: var(--muted);
   background: var(--panel);
   text-align: center;
@@ -914,8 +914,8 @@ tbody tr:last-child td { border-bottom: 0; }
   display: grid;
   gap: 10px;
   padding: 16px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
   background: var(--panel);
 }
 
@@ -1016,7 +1016,7 @@ tbody tr:last-child td { border-bottom: 0; }
   gap: 6px;
   padding: 8px 10px;
   overflow-y: auto;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
   box-shadow: 0 8px 16px -12px rgb(0 0 0 / .6);
 }
@@ -1031,8 +1031,8 @@ tbody tr:last-child td { border-bottom: 0; }
   gap: 6px;
   padding: 8px 10px;
   overflow: hidden;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-inset);
+  border: var(--app-edge);
+  border-radius: var(--app-radius-inset);
   background: var(--control-surface-soft);
   color: var(--ink);
   text-align: center;
@@ -1054,7 +1054,7 @@ tbody tr:last-child td { border-bottom: 0; }
   padding: 8px 10px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent-slot) 58%, var(--line));
-  border-radius: var(--canvas-radius-inset);
+  border-radius: var(--app-radius-inset);
   background: var(--page);
   color: var(--ink);
   text-align: left;

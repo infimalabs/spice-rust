@@ -75,7 +75,7 @@ impl Source {
         self.assets().chain([Asset::AppCurrent]).any(|asset| {
             let path = operation_path(asset, Some(&self.generation))
                 .expect("the source generation is present")
-                .expect("the source inventory contains only Canvas operations");
+                .expect("the source inventory contains only app operations");
             let expected = self.image(asset);
             installed.get(path.as_str()).copied() != expected.as_ref()
         })
@@ -100,6 +100,7 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
 
 /// Common-directory root under which every installed app generation lives.
 pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
+
 
 pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
     let (generation, file) = split_generation_path(path)?;

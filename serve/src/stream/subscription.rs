@@ -1,16 +1,16 @@
-//! Admitted Canvas subscriptions and their bounded live deliveries.
+//! Admitted app subscriptions and their bounded live deliveries.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use bus::{CanvasHeads, JournalCommit};
+use bus::{AppHeads, JournalCommit};
 use wire::{
     Packed, Refusal, Seq, StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject,
     WireVersion,
 };
 
 use super::policy::{
-    canvas_visible_fact, pack_unique, present_facts, protocol_fault, refusal, required_horizon,
+    app_visible_fact, pack_unique, present_facts, protocol_fault, refusal, required_horizon,
     trust_rows,
 };
 use super::{Failure, Source};
@@ -40,8 +40,8 @@ pub struct Subscription {
     pub(super) subjects: BTreeSet<ViewSubject>,
     pub(super) cursor: Option<Seq>,
     pub(super) pending: BTreeMap<ViewSubject, Seq>,
-    pub(super) barrier: Option<CanvasHeads>,
-    pub(super) catch_up: Option<CanvasHeads>,
+    pub(super) barrier: Option<AppHeads>,
+    pub(super) catch_up: Option<AppHeads>,
     pub(super) rows: usize,
     pub(super) message_generation: Option<u64>,
     pub(super) quota_generation: Option<u64>,
@@ -195,7 +195,7 @@ impl Subscription {
                 packed
                     .rows
                     .into_iter()
-                    .filter(canvas_visible_fact)
+                    .filter(app_visible_fact)
                     .map(StreamFact::from)
                     .map(|fact| StreamFrame::Fact {
                         v: WireVersion::CURRENT,

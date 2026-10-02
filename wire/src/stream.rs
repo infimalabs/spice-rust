@@ -1,4 +1,4 @@
-//! Current authenticated canvas stream requests and resident frames.
+//! Current authenticated app stream requests and resident frames.
 //!
 //! This is one closed DTO family: a client subscribes, continues an explicitly
 //! named packed cursor, or asks for a causal thread; the resident returns
@@ -583,7 +583,7 @@ impl AgentActivityKind {
 
 /// Agent activity projected from one durable transcript record.
 ///
-/// This is a Canvas view over tape evidence, not an authoritative fact. Prose
+/// This is an app view over tape evidence, not an authoritative fact. Prose
 /// remains the default wire shape for compatibility; tool activity carries its
 /// explicit kind and uses `text` for the concise operator-facing preview.
 /// The lane says where the transcript belongs, the author is the exact
@@ -703,7 +703,7 @@ pub struct AgentMessage {
 }
 
 impl AgentMessage {
-    /// Millisecond used to display and order this message on Canvas surfaces.
+    /// Millisecond used to display and order this message on app surfaces.
     ///
     /// A durable Spice observation is preferred for timestamp-less vendor
     /// records. The synthetic authored instant remains the stable fallback and
@@ -720,7 +720,7 @@ impl AgentMessage {
     /// Whether `other` is the preserved record of the same compaction this
     /// card announces, making this card a duplicate representation.
     ///
-    /// One compaction reaches Canvas twice: the captured stream announces it
+    /// One compaction reaches the app twice: the captured stream announces it
     /// without a vendor timestamp, and the vendor's own session file preserves
     /// it with one. Every surface that merges cards applies this same rule, so
     /// arrival order, paging, reload, and restart all leave one boundary per
@@ -913,7 +913,7 @@ pub struct StreamCursor {
     pub seq: Seq,
 }
 
-/// Subjects the resident can publish on the authenticated canvas socket.
+/// Subjects the resident can publish on the authenticated app socket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ViewSubject {
@@ -1100,7 +1100,7 @@ pub struct TrustView {
     pub head: TrustHead,
 }
 
-/// One credential-free fact rendered for an authenticated canvas view.
+/// One credential-free fact rendered for an authenticated app view.
 ///
 /// Journal facts retain their complete durable identity internally. This
 /// fold carries the same version, position, instant, actor, origin,

@@ -146,7 +146,7 @@ fn render_limit(limit: &wire::QuotaLimit) -> Html {
     }
 }
 
-/// Used share drawn as SVG geometry: the canvas CSP refuses inline styles.
+/// Used share drawn as SVG geometry: the app CSP refuses inline styles.
 fn render_meter(used: Option<f64>) -> Html {
     let Some(used) = used else {
         return html! { <span class="quota-meter" aria-hidden="true"></span> };

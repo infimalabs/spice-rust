@@ -18,7 +18,7 @@ pub(super) struct Status {
 }
 
 /// History-state key naming where a reader left through a card link.
-const RETURN_STATE: &str = "canvasReturn";
+const RETURN_STATE: &str = "appReturn";
 
 /// Work links whose Chat destination records the Work card they leave: task
 /// message links and direction recipient badges.

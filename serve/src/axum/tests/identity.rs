@@ -1,4 +1,4 @@
-//! Shared product and app identity for Canvas server fixtures.
+//! Shared product and app identity for server fixtures.
 
 use super::*;
 

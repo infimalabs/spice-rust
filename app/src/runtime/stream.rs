@@ -1,4 +1,4 @@
-//! Stream frames projected into capability-scoped Canvas runtime state.
+//! Stream frames projected into capability-scoped app runtime state.
 
 use super::*;
 

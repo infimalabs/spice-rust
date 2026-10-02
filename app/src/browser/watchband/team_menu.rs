@@ -101,7 +101,7 @@ pub(super) fn render(
 /// A multi-agent team dissolves in one arrangement. A team of one leaves it
 /// the way its member's "Leave all teams" does, because an arrangement cannot
 /// name a fresh team whose source holds no other lane. `None` when this
-/// Canvas holds no authority for the needed command.
+/// app holds no authority for the needed command.
 fn close_team(
     team: &crate::runtime::LaneRow,
     context: &Context<'_>,

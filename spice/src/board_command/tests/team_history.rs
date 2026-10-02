@@ -1,4 +1,4 @@
-//! Terminal history scoped to one Canvas team.
+//! Terminal history scoped to one app team.
 
 use super::*;
 

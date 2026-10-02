@@ -7,7 +7,7 @@ use wire::CommandKind;
 const DEMAND_BURST_LIMIT: usize = 3;
 pub(super) const FAIR_CYCLE_LIMIT: usize = DEMAND_BURST_LIMIT + 1;
 
-/// Scheduling class selected at the authenticated Canvas boundary.
+/// Scheduling class selected at the authenticated app boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Class {
     Demand,

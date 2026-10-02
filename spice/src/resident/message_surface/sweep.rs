@@ -5,7 +5,7 @@
 //! it, so a burst of records during one journal commit loses most of its
 //! notices. The sweep the surviving notice triggers accounts every record on
 //! the tape regardless, and this module presents exactly that accounted set,
-//! so a lost notice costs nothing the Canvas would miss until a restart.
+//! so a lost notice costs nothing the app would miss until a restart.
 
 use std::borrow::Cow;
 
@@ -183,7 +183,7 @@ fn recognized<P>(
     }
 }
 
-/// Present one record, naming an unavailable Canvas instead of raising it.
+/// Present one record, naming an unavailable app instead of raising it.
 pub(super) fn present<P: AgentMessagePublisher>(
     surfaces: &CaptureSurfaces<'_, P>,
     record: &lane::capture::CaptureRecord,

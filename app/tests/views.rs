@@ -1,4 +1,4 @@
-//! That the axis and Canvas destination registries are complete and stable.
+//! That the axis and app destination registries are complete and stable.
 //!
 //! A registry cannot audit itself: a walk over `ALL` never visits a variant
 //! omitted from `ALL`. So each vocabulary is also gathered here by exhaustive
@@ -21,8 +21,8 @@ fn descend_axes() -> Vec<Axis> {
     .collect()
 }
 
-/// Every global Canvas destination, independent of its convenience registry.
-fn descend_canvas_destinations() -> Vec<AppDestination> {
+/// Every global app destination, independent of its convenience registry.
+fn descend_app_destinations() -> Vec<AppDestination> {
     std::iter::successors(
         Some(AppDestination::Dash),
         |destination| match destination {
@@ -46,7 +46,7 @@ fn every_global_destination_has_one_exact_hash_route() {
         (AppDestination::Work, "/work"),
         (AppDestination::Chat, "/chat"),
     ];
-    assert_eq!(descend_canvas_destinations(), AppDestination::ALL);
+    assert_eq!(descend_app_destinations(), AppDestination::ALL);
 
     let mut paths = BTreeSet::new();
     for (destination, path) in routes {
@@ -62,7 +62,7 @@ fn unrecognized_route_paths_are_refused() {
         assert_eq!(
             AppDestination::from_path(path),
             None,
-            "{path:?} unexpectedly named a Canvas destination"
+            "{path:?} unexpectedly named an app destination"
         );
     }
 }

@@ -19,7 +19,7 @@ const MAX_FINGERPRINT_ACTIONS: usize = super::admission::MAX_ADMISSION_ACTIONS;
 const MAX_FINGERPRINT_BYTES: usize = MAX_RECEIPT_BYTES;
 const MAX_FINGERPRINT_READ_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Inputs that can be validated without reconstructing Cargo or Canvas plans.
+/// Inputs that can be validated without reconstructing Cargo or app plans.
 #[derive(Clone, Debug)]
 pub struct ActionFingerprintAuthorityFields {
     pub candidate_tree: String,

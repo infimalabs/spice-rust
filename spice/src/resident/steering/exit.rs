@@ -14,7 +14,7 @@ use crate::resident::ingest_vendor;
 /// reads that transcript under the same recognition rules, journals the
 /// disposition with the transcript locus as evidence, and notifies the lane
 /// supervisor so its next authenticated inbox read follows the journal the
-/// Canvas card already reads. A key the transcript does not answer stays live
+/// app card already reads. A key the transcript does not answer stays live
 /// and still wakes a successor, and nothing here disturbs the exit that was
 /// already accounted: every failure is written down and leaves the key
 /// pending.

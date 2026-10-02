@@ -1,4 +1,4 @@
-//! Reference-equivalent automatic Speak classification for Canvas messages.
+//! Reference-equivalent automatic Speak classification for app messages.
 //!
 //! `spice-z` speaks a vendor-final answer or the bodies of positively parsed
 //! ACK packets. It keeps commentary, NAK-only prose, tool activity, history,

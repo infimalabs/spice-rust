@@ -1,4 +1,4 @@
-//! The operator's pending consent queue and the rulings Canvas sent on it.
+//! The operator's pending consent queue and the rulings the app sent on it.
 //!
 //! The queue is a current read, replaced whole whenever a `consent::` fact
 //! streams. A ruling stays recorded only until the queue stops listing its
@@ -13,7 +13,7 @@ use wire::{Answer, CanonicalUuid, CommandKind, Outcome, Response, Witness};
 use super::AppRuntime;
 use crate::socket::Admitted;
 
-/// One ruling Canvas sent on a request the queue still listed.
+/// One ruling the app sent on a request the queue still listed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConsentRuling {
     /// Sent and not yet answered.
@@ -36,7 +36,7 @@ impl AppRuntime {
         self.consent.get(&self.principal)
     }
 
-    /// The ruling Canvas sent on one request, if any is still relevant.
+    /// The ruling the app sent on one request, if any is still relevant.
     #[must_use]
     pub fn consent_ruling(&self, request: CanonicalUuid) -> Option<&ConsentRuling> {
         self.consent_rulings.get(&request)

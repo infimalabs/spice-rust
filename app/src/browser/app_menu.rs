@@ -1,4 +1,4 @@
-//! The Canvas menu disclosure: Escape, outside pointer, and outside focus
+//! The app menu disclosure: Escape, outside pointer, and outside focus
 //! close it while it is open, and choosing a destination in it ends it.
 
 use wasm_bindgen::JsCast as _;

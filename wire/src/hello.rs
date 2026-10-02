@@ -97,7 +97,7 @@ pub struct AppBootstrap {
     pub operator: OperatorIdentity,
 }
 
-/// Effective single-operator identity presented by Canvas.
+/// Effective single-operator identity presented by the app.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorIdentity {

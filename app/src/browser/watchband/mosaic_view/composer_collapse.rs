@@ -121,7 +121,7 @@ impl FrameScheduler {
         let frame = self
             .window
             .request_animation_frame(&self.callback)
-            .expect("Canvas window accepts a composer presentation frame");
+            .expect("app window accepts a composer presentation frame");
         self.pending.set(Some(frame));
     }
 

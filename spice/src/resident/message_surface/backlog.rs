@@ -1,4 +1,4 @@
-//! Startup replay of durable lane tapes into the one Canvas message feed.
+//! Startup replay of durable lane tapes into the one app message feed.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -82,7 +82,7 @@ fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
         tail_passes(source_bytes),
         TAIL_DURATION,
     )
-    .expect("Canvas tail allowances are positive")
+    .expect("app tail allowances are positive")
 }
 
 /// Source-authenticated per-lane continuation state for repeated backlog reads.
@@ -149,7 +149,7 @@ impl StartupWork {
     }
 }
 
-/// Seed each current lane's bounded Canvas backlog before discovery is published.
+/// Seed each current lane's bounded app backlog before discovery is published.
 ///
 /// Live capture and restart replay both cross [`publish_agent_event`]. A record
 /// captured during startup is replayed or queued live, then deduplicated.
@@ -248,7 +248,7 @@ fn restore_agent_messages_with(
     Ok(())
 }
 
-/// Read every admitted lane's newest durable card page before Canvas readiness.
+/// Read every admitted lane's newest durable card page before app readiness.
 ///
 /// The fixed startup tape tail bounds reconstruction work but can contain only
 /// hidden tool records. Durable history already owns the wider bounded walk

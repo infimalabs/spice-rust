@@ -349,10 +349,10 @@ fn render_version_footer(
     let served_app = identity.map(|identity| identity.version.app.to_string());
     let reload = Callback::from(move |_| {
         web_sys::window()
-            .expect("Canvas update action has a browser window")
+            .expect("app update action has a browser window")
             .location()
             .reload()
-            .expect("Canvas update action reloads the current document");
+            .expect("app update action reloads the current document");
     });
     let version = if let Some(update) = update {
         let product = product_version.as_deref().unwrap_or("loading");

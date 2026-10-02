@@ -84,7 +84,7 @@ pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
 pub struct Standing {
     /// Independently steerable member the row describes.
     pub lane: CanonicalUuid,
-    /// Canvas team whose lane contains the member.
+    /// App team whose lane contains the member.
     pub team: CanonicalUuid,
     /// Lane identity abbreviated to what a card has room for.
     pub name: String,
@@ -100,7 +100,7 @@ pub struct Standing {
     pub effort: Option<String>,
     /// Whether the current occupant was launched in fast mode.
     pub fast_mode: bool,
-    /// Current supervised occupant, which is the Canvas agent thread.
+    /// Current supervised occupant, which is the app agent thread.
     pub thread: Option<CanonicalUuid>,
     /// Exact resumable vendor session identity.
     pub session: Option<String>,
@@ -244,7 +244,7 @@ pub const TEAM_JOIN_GUTTER: f64 = 0.2;
 /// Largest team the interactive arrangement surface will form.
 ///
 /// Six positions have distinct accents. Existing authoritative topology may
-/// exceed this presentation bound, but Canvas never offers a drag or menu join
+/// exceed this presentation bound, but the app never offers a drag or menu join
 /// that would create another over-cap team.
 pub const TEAM_MEMBER_LIMIT: usize = ACCENTS;
 
@@ -279,7 +279,7 @@ impl TeamDrop {
 
 /// Every team and the agents it holds, in the order the surface drew them.
 ///
-/// This is the same grouping the canvas renders from, read back out as bare
+/// This is the same grouping the app renders from, read back out as bare
 /// identities: a drag has to answer with the arrangement it *saw*, so the
 /// order here is the one the operator was looking at rather than a fresh one.
 #[must_use]
@@ -363,7 +363,7 @@ pub fn transfer_member(
     Some(arranged)
 }
 
-/// The teams in one topology, in the order the canvas drew them.
+/// The teams in one topology, in the order the app drew them.
 ///
 /// These are the rows the fleet renders and an arrangement can target. A row
 /// holding one agent under its own identity is that agent's default seat, not
@@ -382,14 +382,14 @@ pub fn teams(
 ///
 /// The resident admits an arrangement only as a complete restatement of the
 /// lane table, so this returns every team and every agent rather than the
-/// delta: the operator dragged one team, but what the canvas knows and the
+/// delta: the operator dragged one team, but what the app knows and the
 /// resident must agree on is where all of them now stand.
 ///
 /// A swap exchanges exactly two complete team rows. A join appends the dragged
 /// team's agents *after* the target's, never before, then retires the emptied
 /// source identity. The target's first agent is its primary composer, so
 /// prepending would silently hand the composer to whichever team was dragged
-/// in. Canvas never creates an over-cap team, though it can faithfully restate
+/// in. The app never creates an over-cap team, though it can faithfully restate
 /// authoritative topology that was already larger.
 ///
 /// A stale, same-team, no-op, or over-cap drop returns `None`; no complete
@@ -1422,9 +1422,9 @@ mod tests {
     fn an_image_description_keeps_the_preview_line_with_paths_cut_to_base_names() {
         assert_eq!(
             tool_media_description(
-                "read: /tmp/spice-pi-badge-visual-k/canvas-vendor-emblem-light.png succeeded"
+                "read: /tmp/spice-pi-badge-visual-k/app-vendor-emblem-light.png succeeded"
             ),
-            "read: canvas-vendor-emblem-light.png succeeded"
+            "read: app-vendor-emblem-light.png succeeded"
         );
         assert_eq!(
             tool_media_description("file change: spice/src/a.rs, app/mosaic.css (add) succeeded"),

@@ -143,13 +143,13 @@ pub(super) fn use_controls(
 
 pub(super) fn provide(
     controls: Controls,
-    canvas: Html,
+    app: Html,
     drafts: UseReducerHandle<super::ComposerDrafts>,
 ) -> Html {
     html! {
         <ContextProvider<Context> context={controls.context}>
             <ContextProvider<DetailContext> context={controls.detail}>
-                <image_viewer::Provider {drafts}><mermaid::Provider>{canvas}</mermaid::Provider></image_viewer::Provider>
+                <image_viewer::Provider {drafts}><mermaid::Provider>{app}</mermaid::Provider></image_viewer::Provider>
             </ContextProvider<DetailContext>>
         </ContextProvider<Context>>
     }

@@ -1,6 +1,6 @@
-//! Packing helpers for direct Canvas authority reads.
+//! Packing helpers for direct app authority reads.
 //!
-//! Canvas axes are assembled by the live surface from their owning authorities
+//! App axes are assembled by the live surface from their owning authorities
 //! and are never stored as a second durable projection.
 
 /// Pack already-ranked rows without hiding overflow.

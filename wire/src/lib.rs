@@ -6,7 +6,7 @@
 //!
 //! The socket, journal, and browser do not carry three compatibility systems:
 //! the socket admits the current version only, the journal runs one forward
-//! migration at open, and the browser admits its independent Canvas clock from
+//! migration at open, and the browser admits its independent app clock from
 //! authenticated HTTP metadata before decoding the strict bootstrap body or
 //! opening the socket.
 //!

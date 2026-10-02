@@ -1,4 +1,4 @@
-//! Authenticated Canvas subscriptions over journal and transcript sources.
+//! Authenticated app subscriptions over journal and transcript sources.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bus::{BusReader, CanvasHeads};
+use bus::{AppHeads, BusReader};
 #[cfg(test)]
 use wire::AgentMessage;
 use wire::{
@@ -34,7 +34,7 @@ pub use subscription::{LiveDelivery, Subscription};
 
 /// Repository-owned expansion of fixed-label quote links.
 ///
-/// Canvas invokes this before every message crosses the wire. The resolver
+/// The app invokes this before every message crosses the wire. The resolver
 /// stays in the resident, where tape and journal authority live.
 #[derive(Clone)]
 pub struct QuotePresenter {
@@ -42,7 +42,7 @@ pub struct QuotePresenter {
 }
 
 impl QuotePresenter {
-    /// Bind one authoritative presentation function to the Canvas generation.
+    /// Bind one authoritative presentation function to the app generation.
     #[must_use]
     pub fn new(
         present: impl Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync + 'static,
@@ -334,7 +334,7 @@ impl Source {
         admit_subject(&accepted.actor, ViewSubject::Facts)?;
         let packed = self
             .bus
-            .canvas_thread(cursor.seq, self.fact_budget()?)
+            .app_thread(cursor.seq, self.fact_budget()?)
             .map_err(thread_fault)?
             .ok_or_else(|| {
                 Failure::Refusal(refusal(
@@ -397,7 +397,7 @@ impl Source {
         #[cfg(test)]
         self.reads.facts.fetch_add(1, Ordering::Relaxed);
         self.bus
-            .canvas_facts(start, horizon, self.fact_budget()?)
+            .app_facts(start, horizon, self.fact_budget()?)
             .map_err(|error| {
                 Failure::Fault(Fault {
                     class: FaultClass::Store,
@@ -407,10 +407,10 @@ impl Source {
             })
     }
 
-    fn heads(&self) -> Result<CanvasHeads, Failure> {
+    fn heads(&self) -> Result<AppHeads, Failure> {
         #[cfg(test)]
         self.reads.heads.fetch_add(1, Ordering::Relaxed);
-        self.bus.canvas_heads().map_err(|error| {
+        self.bus.app_heads().map_err(|error| {
             Failure::Fault(Fault {
                 class: FaultClass::Store,
                 reason: "stream::heads-failed".to_owned(),

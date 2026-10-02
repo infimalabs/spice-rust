@@ -11,7 +11,7 @@ pub(super) struct TaskSelection {
 
 /// Select identities before cloning or projecting their task heads.
 ///
-/// Complete command-line reads deliberately remain unbounded. Canvas open
+/// Complete command-line reads deliberately remain unbounded. App-open
 /// reads and terminal pages select only the rows their response can carry.
 pub(super) fn selected_tasks(
     observed: &bus::TaskSnapshot,
@@ -159,7 +159,7 @@ fn context_tasks(
     selected
 }
 
-/// The terminal tasks one Canvas team may call its own history: those it
+/// The terminal tasks one app team may call its own history: those it
 /// created, and those whose most recent winning claim was bound to a lane now
 /// in the team, whichever principal won it. A team the residency does not
 /// know keeps only what it created.

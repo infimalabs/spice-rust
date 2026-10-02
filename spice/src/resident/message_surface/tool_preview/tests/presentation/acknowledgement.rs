@@ -248,7 +248,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             published: published(1),
             lane: lane(),
             text: concat!(
-                "[REVIEW] CANVAS-1kKRRsDR\n\n",
+                "[REVIEW] APP-1kKRRsDR\n\n",
                 "> preserve the finding\n\n",
                 "Keep working the current task."
             )
@@ -260,7 +260,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             quote_target: quote_target(
                 "1kQnrzNZ",
                 concat!(
-                    "[REVIEW] CANVAS-1kKRRsDR\n\n",
+                    "[REVIEW] APP-1kKRRsDR\n\n",
                     "> preserve the finding\n\n",
                     "Keep working the current task."
                 ),
@@ -648,7 +648,7 @@ fn unknown_key_preserves_the_original_message_across_replay() {
 }
 
 #[test]
-fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
+fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
     let key = "dRyzkGX8b"
         .parse::<steer::Key>()
         .expect("current system key parses");
@@ -858,7 +858,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
     let mut directives = directives(&[
         ("1kQwPZtK", "Another lane's live direction."),
         ("1kQwPZtL", "Another lane's settled direction."),
-        ("1kQwPZtM", "[REVIEW] CANVAS-1kKRRsDR\n\nKeep working."),
+        ("1kQwPZtM", "[REVIEW] APP-1kKRRsDR\n\nKeep working."),
         ("1kQwPZtN", "Refused earlier on this lane."),
     ]);
     for (key, lane, disposition, review) in [
@@ -887,7 +887,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
         ),
         (
             "ACK 1kQwPZtM: again.",
-            "> [REVIEW] CANVAS-1kKRRsDR\n>\n> Keep working.\n\nAgain.",
+            "> [REVIEW] APP-1kKRRsDR\n>\n> Keep working.\n\nAgain.",
         ),
         (
             "ACK 1kQwPZtN: after all.",

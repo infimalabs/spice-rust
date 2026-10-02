@@ -1,7 +1,7 @@
 //! Lay out markdown tables for a narrow, scrollable message column.
 //!
 //! pulldown-cmark writes an aligned cell as `style="text-align: …"`, and the
-//! Canvas `style-src 'self'` policy refuses every inline style attribute, so
+//! app `style-src 'self'` policy refuses every inline style attribute, so
 //! the alignment is written here as `data-align` instead and the writer never
 //! sees one.
 //!

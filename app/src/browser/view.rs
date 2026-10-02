@@ -1,4 +1,4 @@
-//! Canvas surface rendering for the operator browser app.
+//! App surface rendering for the operator browser.
 
 use super::*;
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};

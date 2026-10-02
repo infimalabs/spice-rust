@@ -486,10 +486,10 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
     Ok(Some(loaded.record.receipt()))
 }
 
-/// Admit the receipt-owned Canvas publication for the selected Spice executable.
+/// Admit the receipt-owned app publication for the selected Spice executable.
 ///
 /// This is the production resident boundary: the current receipt, every
-/// installed destination, the executable bytes, and the Git-common Canvas
+/// installed destination, the executable bytes, and the Git-common app
 /// generation must all agree before an app source is returned. It never reads
 /// the managed worktree's development stage.
 pub fn installed_app_source(

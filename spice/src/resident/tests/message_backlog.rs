@@ -1,4 +1,4 @@
-//! Restart reconstruction of the bounded Canvas conversation backlog.
+//! Restart reconstruction of the bounded app conversation backlog.
 
 use super::*;
 
@@ -17,7 +17,7 @@ const DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type
 "#;
 
 #[test]
-fn canvas_steering_recovery_chunks_keys_at_the_bus_batch_ceiling() {
+fn app_steering_recovery_chunks_keys_at_the_bus_batch_ceiling() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let keys = (0..=bus::MAX_STEERING_PRESENTATION_KEYS)
@@ -29,7 +29,7 @@ fn canvas_steering_recovery_chunks_keys_at_the_bus_batch_ceiling() {
         .collect();
 
     let rows = message_surface::load_steering_presentations(&bus.reader(), &keys)
-        .expect("Canvas recovery pages an oversized key set");
+        .expect("app recovery pages an oversized key set");
 
     assert!(rows.is_empty());
     bus.shutdown().expect("message bus stops");
@@ -190,7 +190,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
 }
 
 #[test]
-fn each_resident_generation_restores_durable_prose_before_canvas_subscription() {
+fn each_resident_generation_restores_durable_prose_before_app_subscription() {
     let (root, paths) = resident_fixture("message-backlog");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
         .expect("backlog bus starts");
@@ -257,7 +257,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         };
         let (_, frames) = source
             .begin(&accepted, &request)
-            .expect("Canvas subscription begins");
+            .expect("app subscription begins");
         let wire::StreamFrame::Messages {
             limit, generation, ..
         } = &frames[0]
@@ -370,7 +370,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
         };
         let (_, frames) = source
             .begin(&accepted, &request)
-            .expect("Canvas subscription begins");
+            .expect("app subscription begins");
         let wire::StreamFrame::Messages {
             limit, generation, ..
         } = &frames[0]
@@ -543,7 +543,7 @@ fn message_snapshot(
                 after: None,
             },
         )
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } =
         frames.into_iter().next().expect("message frame exists")
     else {
@@ -611,7 +611,7 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
                 after: None,
             },
         )
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
@@ -803,7 +803,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     };
     let (_, frames) = source
         .begin(&accepted, &request)
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
@@ -880,7 +880,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
                 after: None,
             },
         )
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
@@ -1131,7 +1131,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
     };
     let (_, frames) = live
         .begin(&accepted, &request)
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
@@ -1232,7 +1232,7 @@ fn assert_mixed_acknowledgement_message(
     };
     let (_, frames) = source
         .begin(&accepted, &request)
-        .expect("Canvas subscription begins");
+        .expect("app subscription begins");
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };

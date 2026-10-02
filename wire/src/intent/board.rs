@@ -84,7 +84,7 @@ pub enum BoardRead {
             deserialize_with = "crate::optional::present"
         )]
         completed_before: Option<crate::Instant>,
-        /// Include only tasks the Canvas team created, or whose most recent
+        /// Include only tasks the app team created, or whose most recent
         /// winning claim was held by a lane now in that team. Absent reads
         /// every team's history.
         #[serde(

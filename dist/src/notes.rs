@@ -486,15 +486,15 @@ mod tests {
         let input = fixture(vec![
             landing(
                 "1111111111",
-                "canvas: Add palette UI-keep",
-                "canvas.ui",
+                "app: Add palette UI-keep",
+                "app.ui",
                 Some("keep"),
                 "",
             ),
             landing(
                 "2222222222",
-                "canvas: Fix palette UI-keep (review)",
-                "canvas.ui",
+                "app: Fix palette UI-keep (review)",
+                "app.ui",
                 Some("keep"),
                 "",
             ),
@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(notes.entries[0].references, ["1111111111", "2222222222"]);
         assert_eq!(notes.entries[1].project, "general");
         assert!(!notes.document.contains("seam"));
-        assert!(notes.document.contains("### Canvas UI"));
+        assert!(notes.document.contains("### App UI"));
         assert!(notes.document.contains("Fixed palette. (1111111, 2222222)"));
     }
 

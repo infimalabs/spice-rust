@@ -10,7 +10,7 @@ const THIRD: &[u8] = br#"{"timestamp":"2030-04-12T18:44:11.271Z","type":"message
 "#;
 
 /// A notice is a wake-up: the records whose own notices the kernel refused are
-/// on the tape, the sweep accounts them, and the Canvas sees all of them in
+/// on the tape, the sweep accounts them, and the app sees all of them in
 /// tape order rather than only the one record the surviving notice named.
 #[test]
 fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
