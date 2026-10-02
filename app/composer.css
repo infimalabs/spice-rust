@@ -400,11 +400,16 @@
   transform: rotate(.75deg);
   box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
 }
+/* The faces clip to the card's inner edge rather than its content box: the
+   layers reach through the block-end padding, so a final line settled into it
+   is never cut. */
 .team-surface .mosaic-message-layers {
   position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
+  margin-block-end: calc(-1 * var(--message-card-inset));
+  padding-block-end: var(--message-card-inset);
   overflow: clip;
 }
 /* The normal face fills the card's committed height. Its controls take the
@@ -424,6 +429,14 @@
     transform var(--canvas-motion-settle) var(--canvas-ease-standard);
 }
 .team-surface .mosaic-message-normal > .message-body { align-self: end; }
+/* A final line keeps descent and leading below its baseline, so a text ending
+   settles 3px into the block-end padding to read as near the bottom edge as the
+   side inset. Measurement and the card's committed size do not see the shift. */
+.team-surface .mosaic-message-normal > .message-body:has(
+  > :is(p:not(.message-image-stack), ul, ol, h1, h2, h3, h4, h5, h6):last-child,
+  > :is(p:not(.message-image-stack), ul, ol, h1, h2, h3, h4, h5, h6)
+    + .markdown-body-portals:last-child
+) { translate: 0 3px; }
 .team-surface .mosaic-message-task-layer {
   position: absolute;
   inset: 0;

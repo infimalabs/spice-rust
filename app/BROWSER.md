@@ -83,6 +83,13 @@ visible Markdown block precedes that host therefore keeps the same visual
 bottom inset as its sides, including when its producer and age share the final
 prose line.
 
+A final line of text (paragraph, list, heading, or signoff line) keeps its
+descent and leading below the baseline, so that ending settles 3px into the
+card's bottom padding to read as near the edge as the side inset. Image stacks,
+code, tables, and quotes do not move. The card's faces clip at its inner bottom
+edge rather than at the content box, so the settled line is never cut, and
+measurement and committed card sizes do not see the shift.
+
 A signed prose card keeps its agent attribution in the lane accent, but its
 linked top-level relative age is neutral. The age remains an underlined card
 permalink and advances on its own visible-unit deadlines. Authored Markdown
