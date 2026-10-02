@@ -456,7 +456,6 @@ fn render_agent_message_card(
         attribution,
         footer_label,
         is_boundary,
-        shown_text,
         rendered_html,
         unlinked_media,
         media_description,
@@ -470,6 +469,7 @@ fn render_agent_message_card(
         &props.quote_agents,
         &props.quote_sources,
         quote_tasks,
+        correspondent,
     );
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
@@ -537,8 +537,7 @@ fn render_agent_message_card(
                         aria-hidden={inspection_open.to_string()}
                         inert={inspection_open.then_some("true")}
                     >
-                        {render_normal_face(message, correspondent, NormalFace {
-                            shown_text: &shown_text,
+                        {render_normal_face(message, NormalFace {
                             rendered_html,
                             unlinked_media,
                             media_description: media_description.as_deref(),
@@ -557,7 +556,6 @@ fn render_agent_message_card(
 
 /// What a card's normal face shows besides its producing message.
 struct NormalFace<'a> {
-    shown_text: &'a str,
     rendered_html: Html,
     unlinked_media: Vec<&'a wire::Media>,
     media_description: Option<&'a str>,
@@ -568,11 +566,7 @@ struct NormalFace<'a> {
 
 /// The card's normal face. A lone tool image signs below its square the way
 /// prose signs its last line; opening the image is a click on the image itself.
-fn render_normal_face(
-    message: &wire::AgentMessage,
-    correspondent: &view::chrome::Correspondent,
-    face: NormalFace<'_>,
-) -> Html {
+fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Html {
     let media = render_agent_message_media(face.unlinked_media, face.media_description);
     // A lone tool image carries no badges or card actions, so it has no
     // controls to draw.
@@ -590,17 +584,8 @@ fn render_normal_face(
             </>
         };
     }
-    let signed = message.activity == wire::AgentActivityKind::Prose;
     html! {
         <div class="message-flow">
-            {render_message_controls(
-                message,
-                face.shown_text,
-                correspondent,
-                signed,
-                face.footer_label,
-                face.attribution,
-            )}
             {face.rendered_html}
             {media}
         </div>
@@ -638,8 +623,6 @@ struct AgentMessagePresentation<'a> {
     attribution: String,
     footer_label: String,
     is_boundary: bool,
-    /// The text the card shows; a tool card shows none.
-    shown_text: std::borrow::Cow<'a, str>,
     rendered_html: Html,
     unlinked_media: Vec<&'a wire::Media>,
     /// What a tool card says about its images in place of its preview line.
@@ -688,6 +671,7 @@ fn agent_message_presentation<'a>(
     quote_agents: &crate::composer_markdown::QuoteAgents,
     quote_sources: &crate::composer_markdown::QuoteSources,
     quote_tasks: Rc<crate::runtime::QuoteTasks>,
+    correspondent: &view::chrome::Correspondent,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
         message.author,
@@ -760,12 +744,21 @@ fn agent_message_presentation<'a>(
     let lone_tool_image = is_tool && image_only && unlinked_media.len() == 1;
     let signoff =
         is_prose.then(|| render_agent_message_signoff(message, &footer_label, &attribution));
+    let corner = (!lone_tool_image).then(|| {
+        render_message_controls(
+            message,
+            &shown_text,
+            correspondent,
+            is_prose,
+            &footer_label,
+            &attribution,
+        )
+    });
     AgentMessagePresentation {
         source_id: agent_message_source_id(message),
         attribution,
         footer_label,
         is_boundary,
-        shown_text,
         rendered_html: html! {
             <super::super::mermaid::MarkdownBody
                 html={AttrValue::from(rendered_markdown.html)}
@@ -773,6 +766,7 @@ fn agent_message_presentation<'a>(
                 final_answer={message.final_answer}
                 {quote_tasks}
                 {signoff}
+                {corner}
             />
         },
         unlinked_media,

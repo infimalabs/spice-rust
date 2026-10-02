@@ -634,22 +634,19 @@
 .markdown-table :is(th, td)[data-measure="token"] {
   min-width: 18ch; overflow-wrap: anywhere; white-space: normal;
 }
-.markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
-  display: flow-root;
-}
-/* In a card's flow a quote without images is no formatting context of its own:
-   it runs under the controls island at full width while the island shortens
-   the lines beside it, and a clearing tail contains its floated signoff. A
-   quote with images lays out as a flex row, itself a formatting context, so it
-   clears the island instead of narrowing beside it. */
-.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(.message-image)) {
+/* Quotes that do not own the controls keep the ordinary card-level float:
+   prose wraps beside it, while image rows clear it instead of narrowing. */
+.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):not(:has(.message-image)) {
   display: block;
 }
-.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(.message-image))::after {
+.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):not(:has(.message-image))::after {
   display: block; clear: both; content: "";
 }
-.team-surface .message-flow :is(blockquote, .message-quote-card):has(.message-image) {
+.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):has(.message-image) {
   clear: inline-end;
+}
+.markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
+  display: flow-root;
 }
 .markdown-body .message-quote-card {
   display: flow-root;
@@ -880,6 +877,21 @@
 .markdown-body .message-quote-card--unavailable {
   border-left-color: var(--warning);
   background: var(--warning-soft);
+}
+/* A leading quote owns the card controls: its full colored surface starts at
+   the card edge while only its contents wrap around the inline-end island. */
+.team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > blockquote:has(> .message-controls),
+.team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > .message-quote-card:has(> .message-controls) {
+  display: flow-root;
+  margin-block-start: 0;
+}
+.markdown-body > .message-quote-card:has(> .message-controls):has(.message-image)
+  > .message-quote-body {
+  display: flex; flex-wrap: wrap; align-items: flex-end; clear: inline-end;
+}
+.markdown-body > blockquote:has(> .message-controls):has(.message-image)
+  > p.message-image-stack {
+  display: flex; clear: inline-end; gap: 7px;
 }
 @container (max-width: 18rem) {
   .team-surface .message-task-inspector-content .work-detail-facts { grid-template-columns: 1fr; }
