@@ -232,13 +232,20 @@ fn app_history_stays_bounded_and_ordered_across_refreshes() {
 }
 
 #[test]
-fn version_15_asset_vocabulary_migrates_without_losing_history() {
+fn version_16_receipt_refreshes_and_retires_its_pre_rename_generations() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     let oldest = fixture.install();
     let installed = fixture.refresh(b"installed");
     install::publish_test_historical_receipt(&repository, install::PREVIOUS_RECORD_VERSION)
-        .expect("version-15 receipt");
+        .expect("version-16 receipt");
+    let shell = |generation: &Digest, file: &str| {
+        repository
+            .common_dir()
+            .join(".spice-install/app/generations")
+            .join(generation.as_str())
+            .join(file)
+    };
     let current = fixture.stage(b"current");
     let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
     assert_eq!(
@@ -259,11 +266,24 @@ fn version_15_asset_vocabulary_migrates_without_losing_history() {
         Some(&fixture.binary()),
         &plan.digest().unwrap(),
     )
-    .expect("version-15 asset names migrate on refresh");
+    .expect("version-16 asset names migrate on refresh");
     install::inspect(&repository).expect("migrated receipt verifies");
     assert_eq!(
         fixture.installed_generations(),
         sorted(&[&oldest, &installed, &current])
+    );
+    for retained in [&oldest, &installed] {
+        assert!(shell(retained, "canvas-app.html").is_file());
+        assert!(!shell(retained, "app.html").exists());
+    }
+    assert!(shell(&current, "app.html").is_file());
+
+    let newer = fixture.refresh(b"newer");
+    let newest = fixture.refresh(b"newest");
+    install::inspect(&repository).expect("receipt verifies once pre-rename generations retire");
+    assert_eq!(
+        fixture.installed_generations(),
+        sorted(&[&current, &newer, &newest])
     );
 }
 

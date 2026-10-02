@@ -330,7 +330,7 @@ fn validate_retired_generations(
     for retirement in retired {
         let (generation, file) =
             app::generation_file(&retirement.path).expect("the tail holds only generation files");
-        let asset = app::asset_file(file).expect("a generation file names an asset");
+        let asset = app::recorded_asset_file(file).expect("a generation file names an asset");
         let published = plan
             .app
             .iter()
@@ -438,8 +438,15 @@ pub(super) fn validate_operation(
     app: Option<&Digest>,
 ) -> Result<(), InstallError> {
     let generation = app::operation_generation(operation.asset, &operation.path);
-    let (location, path, expected_mode) =
+    let (location, mut path, expected_mode) =
         asset_contract(operation.asset, generation.as_ref().or(app))?;
+    // A generation published before the App rename keeps its recorded shell
+    // until it retires; a current build never publishes the retired name.
+    if app::retired_spelling(operation.asset, &operation.path)
+        && (content == GeneratedContentAuthority::HistoricalReceipt || generation.as_ref() != app)
+    {
+        path.clone_from(&operation.path);
+    }
     validate_operation_contract(operation, location, &path, expected_mode)?;
     validate_generated_content(operation, content, common_git)?;
     validate_introduced_parents(operation, introduced)

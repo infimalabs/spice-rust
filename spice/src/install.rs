@@ -616,7 +616,6 @@ fn append_planned_operations(
     append_fixed_operations(
         repository,
         &installed_operations,
-        app.map(app::Source::generation),
         archiving,
         (
             &mut virtual_directories,
@@ -645,7 +644,6 @@ fn append_planned_operations(
         &installed_operations,
         spice_binary,
         binary_superseded,
-        app.map(app::Source::generation),
         archiving,
         (
             &mut virtual_directories,
@@ -960,6 +958,9 @@ fn operation_key(asset: Asset, path: &str) -> (Asset, &str) {
 struct PlannedAppAsset {
     asset: Asset,
     generation: Digest,
+    /// Recorded path of a retained generation's file, or the current spelling
+    /// of the source generation's.
+    path: String,
     generated: GeneratedImage,
 }
 
@@ -976,6 +977,7 @@ fn planned_app_assets(
             predecessors.contains(&generation).then(|| PlannedAppAsset {
                 asset: operation.asset,
                 generation,
+                path: operation.path.clone(),
                 generated: operation.generated.clone(),
             })
         })
@@ -989,9 +991,11 @@ fn planned_app_assets(
         let generated = source
             .image(asset)
             .expect("the complete app source carries every asset");
+        let (_, path, _) = asset_contract(asset, Some(source.generation()))?;
         planned.push(PlannedAppAsset {
             asset,
             generation: source.generation().clone(),
+            path,
             generated,
         });
     }
@@ -1007,7 +1011,6 @@ type AppPlanState<'a> = (
 fn append_fixed_operations(
     repository: &Repository,
     installed: &InstalledOperations<'_>,
-    app: Option<&Digest>,
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
@@ -1022,7 +1025,7 @@ fn append_fixed_operations(
         Asset::HookWrapperSpice,
         Asset::Skill,
     ] {
-        let (_, path, mode) = asset_contract(asset, None)?;
+        let (location, path, mode) = asset_contract(asset, None)?;
         let bytes = fixed_asset_bytes(asset, repository.common_dir())?
             .expect("the fixed asset inventory contains no variable asset");
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
@@ -1034,7 +1037,7 @@ fn append_fixed_operations(
         operations.push(operation(
             directories,
             asset,
-            app,
+            (location, path),
             bound,
             previous,
             superseded,
@@ -1053,7 +1056,8 @@ fn append_app_operations(
     (directories, operations, observed_operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     for planned in planned_app_assets(installed, source, predecessors)? {
-        let (_, path, _) = asset_contract(planned.asset, Some(&planned.generation))?;
+        let (location, _, _) = asset_contract(planned.asset, Some(&planned.generation))?;
+        let path = planned.path;
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
         if archiving {
             observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
@@ -1069,7 +1073,7 @@ fn append_app_operations(
         operations.push(operation(
             directories,
             planned.asset,
-            Some(&planned.generation),
+            (location, path),
             bound,
             previous,
             superseded,
@@ -1084,7 +1088,6 @@ fn append_binary_operation(
     installed: &InstalledOperations<'_>,
     binary: Option<&Path>,
     reconciled: Option<&GeneratedImage>,
-    app: Option<&Digest>,
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
@@ -1107,7 +1110,7 @@ fn append_binary_operation(
     operations.push(operation(
         directories,
         Asset::Binary,
-        app,
+        (Location::CommonGit, BINARY_PATH.to_owned()),
         bound,
         previous,
         superseded,
@@ -1119,15 +1122,14 @@ fn append_binary_operation(
 fn operation(
     virtual_directories: &mut BTreeSet<(Location, String)>,
     asset: Asset,
-    app: Option<&Digest>,
+    (location, path): (Location, String),
     bound: BoundDestination,
     previous: Option<ObservedFile>,
     superseded: Option<GeneratedImage>,
     generated: GeneratedImage,
 ) -> Result<Operation, InstallError> {
-    // The asset fixes where it lands; `validate_operation_contract` refuses any
-    // operation whose location and path disagree with this same contract.
-    let (location, path, _) = asset_contract(asset, app)?;
+    // The caller resolves where the asset lands; `validate_operation_contract`
+    // refuses any operation whose location and path disagree with its contract.
     let mut introduced_parents = Vec::new();
     for parent in bound.introduced_parents {
         let key = (location, parent.clone());

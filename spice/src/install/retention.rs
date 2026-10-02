@@ -61,7 +61,8 @@ pub(super) fn retirements(
             bound = Some((generation, directory, parent));
         }
         let (_, directory, parent) = bound.as_ref().expect("bound above");
-        let file = app::file(operation.asset).expect("a generation operation names an app file");
+        let (_, file) = app::generation_file(&operation.path)
+            .expect("a generation operation names an app file");
         retirements.push(Retirement {
             path: operation.path.clone(),
             destination: format!("{directory}/{file}"),
