@@ -914,8 +914,8 @@ pub struct BoardAnswer {
     /// asked for them, each task's notes in ascending journal position.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub notes: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailNote>>,
-    /// Every task or claim fact on those named tasks whose origin is an
-    /// acknowledged steering key, each task's in ascending journal position.
+    /// Every acknowledged steering directive joined to each named task through
+    /// an `ack:` task/claim origin or the holder's operator `steer::acked` fact.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub acknowledgments: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskAcknowledgment>>,
     /// The operator's closure of each named task that was closed.
