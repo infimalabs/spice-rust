@@ -487,6 +487,24 @@ impl Run {
         Self::adjudicate_with_integrity(policy, root, ratchet, bounds, SnapshotIntegrity::native())
     }
 
+    pub(crate) fn adjudicate_with_progress(
+        policy: &Policy,
+        root: &Path,
+        ratchet: &Ratchet,
+        bounds: &Bounds,
+        progress: &mut dyn FnMut(Option<&str>, usize, usize),
+    ) -> Result<Self, RunError> {
+        Self::adjudicate_with_inputs(
+            policy,
+            root,
+            ratchet,
+            bounds,
+            SnapshotIntegrity::native(),
+            LongLineBaselines::none(),
+            Some(progress),
+        )
+    }
+
     fn adjudicate_with_integrity(
         policy: &Policy,
         root: &Path,
@@ -501,6 +519,7 @@ impl Run {
             bounds,
             snapshot_integrity,
             LongLineBaselines::none(),
+            None,
         )
     }
 
@@ -511,6 +530,7 @@ impl Run {
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
         long_line_baselines: LongLineBaselines<'_>,
+        mut progress: Option<&mut dyn FnMut(Option<&str>, usize, usize)>,
     ) -> Result<Self, RunError> {
         if snapshot_integrity == SnapshotIntegrity::Unsupported {
             return Err(RunError::SnapshotIntegrityUnsupported);
@@ -521,8 +541,12 @@ impl Run {
         let inventory = jurisdiction.inventory_digest();
         let snapshot = jurisdiction.snapshot().map_err(RunError::Walk)?;
         let tree = snapshot.tree();
-        let mut measurements = Vec::with_capacity(policy.metrics().len());
-        for metric in policy.metrics() {
+        let total = policy.metrics().len();
+        let mut measurements = Vec::with_capacity(total);
+        for (index, metric) in policy.metrics().iter().enumerate() {
+            if let Some(progress) = progress.as_deref_mut() {
+                progress(Some(metric.name()), index, total);
+            }
             let measurement = metric.measure(snapshot.jurisdiction(), bounds);
             if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
                 return Err(RunError::SnapshotChanged {
@@ -534,6 +558,9 @@ impl Run {
                 });
             }
             measurements.push(measurement.map_err(RunError::Measure)?);
+            if let Some(progress) = progress.as_deref_mut() {
+                progress(Some(metric.name()), index + 1, total);
+            }
         }
 
         let (head, long_lines) = match long_line_baselines {
@@ -755,6 +782,7 @@ impl Contract {
                 self.bounds(),
                 SnapshotIntegrity::native(),
                 LongLineBaselines::Captured(&baselines),
+                None,
             )?
         };
         #[cfg(target_arch = "wasm32")]
