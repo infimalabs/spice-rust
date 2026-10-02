@@ -1,0 +1,610 @@
+//! The `board` leaf: a compact posture by default, a bounded family page, and
+//! the complete board document only as an exact file export.
+//!
+//! In-process callers keep reading the whole board through `current_board`;
+//! this module only projects that one snapshot for a person or an agent. Every
+//! row is ranked by one standing law so the posture and a family page agree,
+//! and every partial page names the exact command that continues it.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::Serialize;
+use wire::output::{Admission, Bounded, ClippedText, Export, Limits, Request, Resume, Surface};
+use wire::{CanonicalUuid, SpiceCommand};
+
+use super::*;
+
+/// Board rows: ten by default, short titles, and maxima well under the
+/// repository ceiling.
+pub(crate) const BOARD: Surface = Surface::new(
+    Limits {
+        rows: 10,
+        bytes: 8_192,
+        text: 120,
+    },
+    Limits {
+        rows: 200,
+        bytes: 131_072,
+        text: 4_096,
+    },
+);
+
+/// The file a continuation names when one row alone exceeds the byte maximum.
+const EXPORT_FILE: &str = "board.json";
+
+/// One `board` invocation's answer.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum BoardView {
+    Posture(Box<Posture>),
+    Family(Box<FamilyPage>),
+    Export(ExportReceipt),
+}
+
+impl BoardView {
+    /// The text form of this answer.
+    pub(crate) fn text(&self) -> Option<&str> {
+        Some(match self {
+            Self::Posture(posture) => &posture.text,
+            Self::Family(page) => &page.text,
+            Self::Export(export) => &export.text,
+        })
+    }
+}
+
+/// Where a task stands for the reading actor; earlier standings rank first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Standing {
+    /// The reading actor's own active claim.
+    Claimed,
+    /// Another actor's active claim.
+    Active,
+    /// Open work the allocator could hand the reading actor.
+    Ready,
+    /// Unclaimed review-phase work.
+    Review,
+    /// A claim whose lease lapsed.
+    Stale,
+    /// Waiting on a dependency that has not completed.
+    Blocked,
+    /// Deferred until a scheduled time.
+    Waiting,
+    /// Open but not workable by the reading actor.
+    Pending,
+    /// No longer open.
+    Closed,
+}
+
+impl Standing {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Claimed => "claimed",
+            Self::Active => "active",
+            Self::Ready => "ready",
+            Self::Review => "review",
+            Self::Stale => "stale",
+            Self::Blocked => "blocked",
+            Self::Waiting => "waiting",
+            Self::Pending => "pending",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+/// One task as a board page shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct BoardRow {
+    pub(crate) handle: TaskHandle,
+    pub(crate) standing: Standing,
+    pub(crate) phase: String,
+    pub(crate) project: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) lane: Option<CanonicalUuid>,
+    pub(crate) title: ClippedText,
+}
+
+impl std::fmt::Display for BoardRow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}  {:<7}  {}  {}  {}",
+            self.handle,
+            self.standing.label(),
+            self.phase,
+            self.project,
+            self.title
+        )
+    }
+}
+
+/// Rows of each standing among the actor's routed open work.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct PostureCounts {
+    /// Tasks visible to the reader.
+    pub(crate) visible: usize,
+    /// Open tasks on the reader's route.
+    pub(crate) open: usize,
+    pub(crate) active: usize,
+    pub(crate) ready: usize,
+    pub(crate) review: usize,
+    pub(crate) stale: usize,
+    pub(crate) blocked: usize,
+    pub(crate) waiting: usize,
+    pub(crate) pending: usize,
+    /// Parked `.oops` rows across the visible board.
+    pub(crate) oops: usize,
+}
+
+/// Bare `board`: counts, the reader's own claim, and its most relevant work.
+#[derive(Debug, Serialize)]
+pub(crate) struct Posture {
+    pub(crate) principal: Actor,
+    pub(crate) counts: PostureCounts,
+    /// The reader's own claim, outside any row budget so it is never withheld.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) claim: Option<BoardRow>,
+    /// Ready, review, then blocked work on the reader's route, allocator order
+    /// first.
+    pub(crate) work: Bounded<BoardRow>,
+    #[serde(skip)]
+    text: String,
+}
+
+/// `board FAMILY`: one family's tasks, current and relevant first.
+#[derive(Debug, Serialize)]
+pub(crate) struct FamilyPage {
+    pub(crate) family: String,
+    pub(crate) tasks: Bounded<BoardRow>,
+    #[serde(skip)]
+    text: String,
+}
+
+/// An explicit `--output FILE` receipt.
+#[derive(Debug, Serialize)]
+pub(crate) struct ExportReceipt {
+    #[serde(flatten)]
+    pub(crate) export: Export,
+    #[serde(skip)]
+    text: String,
+}
+
+/// The parsed `board` flags.
+pub(crate) struct ViewRequest {
+    family: Option<String>,
+    budget: wire::output::Budget,
+    request: Request,
+    after: Option<TaskHandle>,
+    output: Option<String>,
+}
+
+/// Execute one `board` invocation.
+pub(crate) fn board_view(matches: &ArgMatches, contract: &Contract) -> Outcome<BoardView> {
+    let request = match ViewRequest::from_matches(matches) {
+        Ok(request) => request,
+        Err(outcome) => return retag(outcome),
+    };
+    let repository = match discover_repository() {
+        Ok(repository) => repository,
+        Err(outcome) => return retag(outcome),
+    };
+    // An export carries the read exactly as the resident answers it; a view
+    // projects the whole board so dependency standing sees every task.
+    let read = BoardRead::All {
+        family: request.output.as_ref().and(request.family.clone()),
+    };
+    let (position, board) = match crate::command_client::execute_typed(
+        &repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &read,
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => (position, board),
+        Outcome::Reply(_) => {
+            return retag(protocol_fault(
+                "board::answer-invalid",
+                "board read returned another answer shape",
+            ));
+        }
+        Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => return Outcome::Fault(fault),
+    };
+    match project_board(&board, &request) {
+        Ok(body) => Outcome::Reply(Reply { position, body }),
+        Err(outcome) => retag(outcome),
+    }
+}
+
+/// Project one board snapshot for one request.
+pub(in crate::board_command) fn project_board(
+    board: &BoardAnswer,
+    request: &ViewRequest,
+) -> Result<BoardView, Outcome<CommandAnswer>> {
+    if let Some(output) = &request.output {
+        return export(board, output).map(BoardView::Export);
+    }
+    let entries = actor_entries(board)?;
+    let standings = Standings::measure(board, &entries);
+    match &request.family {
+        Some(family) => family_page(board, &entries, &standings, family, request)
+            .map(|page| BoardView::Family(Box::new(page))),
+        None => posture(board, &entries, &standings, request)
+            .map(|posture| BoardView::Posture(Box::new(posture))),
+    }
+}
+
+impl ViewRequest {
+    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+        let number = |flag: &str| -> Result<Option<usize>, Outcome<CommandAnswer>> {
+            matches
+                .get_one::<String>(flag)
+                .map(|written| {
+                    written.parse::<usize>().map_err(|_| {
+                        refusal(
+                            "board::limit-invalid",
+                            Some(written.clone()),
+                            &format!("--{flag} takes a non-negative integer"),
+                        )
+                    })
+                })
+                .transpose()
+        };
+        let request = Request {
+            rows: number("limit")?,
+            bytes: number("max-bytes")?,
+            text: number("max-text")?,
+        };
+        let after = matches
+            .get_one::<String>("after")
+            .map(|written| {
+                written.parse::<TaskHandle>().map_err(|error| {
+                    refusal(
+                        "board::cursor-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        Self::new(
+            matches.get_one::<String>("FAMILY").cloned(),
+            request,
+            after,
+            matches.get_one::<String>("output").cloned(),
+        )
+    }
+
+    pub(in crate::board_command) fn new(
+        family: Option<String>,
+        request: Request,
+        after: Option<TaskHandle>,
+        output: Option<String>,
+    ) -> Result<Self, Outcome<CommandAnswer>> {
+        if let Some(family) = &family {
+            validate_family(family)?;
+        }
+        let budget = BOARD
+            .budget(request)
+            .map_err(|error| refusal("board::limit-invalid", None, &error.to_string()))?;
+        if output.is_some() && (after.is_some() || request != Request::default()) {
+            return Err(refusal(
+                "board::export-bounded",
+                None,
+                "--output writes the complete board; drop --limit, --max-bytes, --max-text, and \
+                 --after",
+            ));
+        }
+        Ok(Self {
+            family,
+            budget,
+            request,
+            after,
+            output,
+        })
+    }
+
+    /// The command that reads this request again from `cursor`, widened to
+    /// `bytes` when the next row alone needs it.
+    fn continuation(&self, resume: Resume<'_, BoardRow>) -> SpiceCommand {
+        let mut arguments = self.family.iter().cloned().collect::<Vec<_>>();
+        let (row, bytes) = match resume {
+            Resume::At(row) => (Some(row), self.request.bytes),
+            Resume::Widened { record, bytes } => (Some(record), Some(bytes)),
+            Resume::Export(_) => (None, None),
+        };
+        let Some(row) = row else {
+            arguments.extend(["--output".to_owned(), EXPORT_FILE.to_owned()]);
+            return SpiceCommand::new("board", arguments).expect("board is a command token");
+        };
+        let flags = [
+            ("--limit", self.request.rows),
+            ("--max-bytes", bytes),
+            ("--max-text", self.request.text),
+        ];
+        for (flag, value) in flags {
+            if let Some(value) = value {
+                arguments.extend([flag.to_owned(), value.to_string()]);
+            }
+        }
+        arguments.extend(["--after".to_owned(), row.handle.to_string()]);
+        SpiceCommand::new("board", arguments).expect("board is a command token")
+    }
+}
+
+/// Every visible task's standing for the reader, and the allocator's rank of
+/// the work it could hand the reader.
+pub(in crate::board_command) struct Standings {
+    standing: BTreeMap<TaskStamp, Standing>,
+    rank: BTreeMap<TaskStamp, usize>,
+}
+
+impl Standings {
+    fn measure(board: &BoardAnswer, entries: &[Entry]) -> Self {
+        let satisfied = board::satisfied_tasks(entries);
+        let environment = board.environment();
+        let standing = entries
+            .iter()
+            .map(|entry| {
+                let standing = standing(entries, entry, &board.principal, &environment, &satisfied);
+                (entry.born().clone(), standing)
+            })
+            .collect();
+        let subscription = allocation_subscription(&board.residency.body, &board.principal)
+            .unwrap_or(wire::TeamSubscription {
+                team: CanonicalUuid::new(uuid::Uuid::nil()),
+                policy: wire::intent::TeamLife::Drain,
+            });
+        let rank = board::offer_order(
+            entries,
+            &board.principal,
+            &subscription,
+            board.allocation_band,
+            board.recent_cell.as_ref(),
+            &environment,
+        )
+        .into_iter()
+        .enumerate()
+        .map(|(rank, selection)| (selection.entry().born().clone(), rank))
+        .collect();
+        Self { standing, rank }
+    }
+
+    fn of(&self, entry: &Entry) -> Standing {
+        self.standing[entry.born()]
+    }
+
+    /// Standing first; within it, the allocator's order, then the oldest open
+    /// task, while closed tasks show the newest first.
+    fn order(&self, left: &Entry, right: &Entry) -> std::cmp::Ordering {
+        let (standing, other) = (self.of(left), self.of(right));
+        let rank = |entry: &Entry| self.rank.get(entry.born()).copied().unwrap_or(usize::MAX);
+        standing
+            .cmp(&other)
+            .then_with(|| rank(left).cmp(&rank(right)))
+            .then_with(|| match standing {
+                Standing::Closed => right.born().cmp(left.born()),
+                _ => left.born().cmp(right.born()),
+            })
+    }
+}
+
+fn standing(
+    entries: &[Entry],
+    entry: &Entry,
+    principal: &Actor,
+    environment: &wire::Environment,
+    satisfied: &BTreeSet<TaskStamp>,
+) -> Standing {
+    let workflow = entry.workflow();
+    if workflow.status != "pending" || workflow.completion.is_some() {
+        return Standing::Closed;
+    }
+    match entry.claim().map(|claim| (claim.disposition, &claim.actor)) {
+        Some((ClaimDisposition::Active, actor)) if actor == principal => return Standing::Claimed,
+        Some((ClaimDisposition::Active, _)) => return Standing::Active,
+        Some((ClaimDisposition::Lapsed, _)) => return Standing::Stale,
+        _ => {}
+    }
+    if workflow.deferral.is_some() {
+        Standing::Waiting
+    } else if entry
+        .statement()
+        .dependencies
+        .iter()
+        .any(|dependency| !satisfied.contains(dependency))
+    {
+        Standing::Blocked
+    } else if workflow.phase.as_str() == "review" {
+        Standing::Review
+    } else if board::eligible_entry(entries, entry, principal, environment) {
+        Standing::Ready
+    } else {
+        Standing::Pending
+    }
+}
+
+fn row(
+    board: &BoardAnswer,
+    entry: &Entry,
+    standing: Standing,
+    budget: &wire::output::Budget,
+) -> BoardRow {
+    let title = board
+        .tasks
+        .iter()
+        .find(|task| &task.statement.body.born == entry.born())
+        .map_or("", |task| task.presentation_title.as_str());
+    BoardRow {
+        handle: entry.handle().clone(),
+        standing,
+        phase: entry.workflow().phase.as_str().to_owned(),
+        project: entry.project().as_str().to_owned(),
+        lane: entry
+            .claim()
+            .filter(|claim| claim.disposition == ClaimDisposition::Active)
+            .map(|claim| claim.lane),
+        title: budget.clip(title),
+    }
+}
+
+/// Offer `ordered` from the cursor on, refusing a cursor the order lacks.
+fn admit(
+    board: &BoardAnswer,
+    standings: &Standings,
+    ordered: &[&Entry],
+    request: &ViewRequest,
+) -> Result<Bounded<BoardRow>, Outcome<CommandAnswer>> {
+    let start = match &request.after {
+        None => 0,
+        Some(after) => ordered
+            .iter()
+            .position(|entry| entry.handle() == after)
+            .ok_or_else(|| {
+                refusal(
+                    "board::cursor-unknown",
+                    Some(after.to_string()),
+                    "the cursor task left this page's order; rerun without --after",
+                )
+            })?,
+    };
+    let mut admission = Admission::new(request.budget);
+    for (index, entry) in ordered[start..].iter().enumerate() {
+        if admission.is_closed() {
+            admission.withhold(ordered.len() - start - index);
+            break;
+        }
+        let row = row(board, entry, standings.of(entry), &request.budget);
+        admission
+            .offer(row)
+            .map_err(|error| protocol_fault("board::row-unencodable", &error.to_string()))?;
+    }
+    Ok(admission.finish(|resume| request.continuation(resume)))
+}
+
+fn posture(
+    board: &BoardAnswer,
+    entries: &[Entry],
+    standings: &Standings,
+    request: &ViewRequest,
+) -> Result<Posture, Outcome<CommandAnswer>> {
+    let rows = actor_rows(board, entries);
+    let mut counts = PostureCounts {
+        visible: entries.len(),
+        open: rows.len(),
+        oops: ParkedCounts::measure(entries, &rows).oops,
+        ..PostureCounts::default()
+    };
+    let mut claim = None;
+    let mut work = Vec::new();
+    for entry in &rows {
+        let standing = standings.of(entry);
+        match standing {
+            Standing::Claimed => claim = Some(row(board, entry, standing, &request.budget)),
+            Standing::Active => counts.active += 1,
+            Standing::Ready => counts.ready += 1,
+            Standing::Review => counts.review += 1,
+            Standing::Stale => counts.stale += 1,
+            Standing::Blocked => counts.blocked += 1,
+            Standing::Waiting => counts.waiting += 1,
+            Standing::Pending | Standing::Closed => counts.pending += 1,
+        }
+        if matches!(
+            standing,
+            Standing::Ready | Standing::Review | Standing::Blocked
+        ) {
+            work.push(*entry);
+        }
+    }
+    work.sort_by(|left, right| standings.order(left, right));
+    let work = admit(board, standings, &work, request)?;
+    let mut text = format!(
+        "board for {} at cursor {}: {} visible, {} open on this route\n\
+         active {} ready {} review {} blocked {} waiting {} stale {} pending {} oops {}\n\
+         claim ",
+        board.principal,
+        board.cursor,
+        counts.visible,
+        counts.open,
+        counts.active,
+        counts.ready,
+        counts.review,
+        counts.blocked,
+        counts.waiting,
+        counts.stale,
+        counts.pending,
+        counts.oops,
+    );
+    match &claim {
+        Some(claim) => text.push_str(&claim.to_string()),
+        None => text.push('-'),
+    }
+    push_rows(&mut text, &work);
+    Ok(Posture {
+        principal: board.principal.clone(),
+        counts,
+        claim,
+        work,
+        text,
+    })
+}
+
+fn family_page(
+    board: &BoardAnswer,
+    entries: &[Entry],
+    standings: &Standings,
+    family: &str,
+    request: &ViewRequest,
+) -> Result<FamilyPage, Outcome<CommandAnswer>> {
+    let mut members = entries
+        .iter()
+        .filter(|entry| in_family(entry.handle(), family))
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| standings.order(left, right));
+    let tasks = admit(board, standings, &members, request)?;
+    let mut text = format!("board {family}: {} tasks", members.len());
+    push_rows(&mut text, &tasks);
+    Ok(FamilyPage {
+        family: family.to_owned(),
+        tasks,
+        text,
+    })
+}
+
+fn push_rows(text: &mut String, page: &Bounded<BoardRow>) {
+    for row in &page.rows {
+        text.push('\n');
+        text.push_str(&row.to_string());
+    }
+    if let Some(omission) = &page.omission {
+        text.push('\n');
+        text.push_str(&omission.to_string());
+    }
+}
+
+fn export(board: &BoardAnswer, output: &str) -> Result<ExportReceipt, Outcome<CommandAnswer>> {
+    let bytes = wire::encode(board)
+        .map_err(|error| protocol_fault("board::answer-unencodable", &error.to_string()))?;
+    let export =
+        spice::export::export(std::path::Path::new(output), &bytes).map_err(Outcome::Refusal)?;
+    Ok(ExportReceipt {
+        text: export.to_string(),
+        export,
+    })
+}
+
+/// Carry a refusal or fault over to the view's answer type.
+fn retag(outcome: Outcome<CommandAnswer>) -> Outcome<BoardView> {
+    match outcome {
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Reply(_) => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "board::answer-invalid".to_owned(),
+            detail: "a board view step answered where it could only refuse".to_owned(),
+        }),
+    }
+}

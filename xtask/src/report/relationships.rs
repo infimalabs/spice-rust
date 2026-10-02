@@ -12,10 +12,13 @@ use super::reduce::Study;
 const CAMPAIGN_ROOT: &str = "dSBzcF2SZ";
 const MAX_NODES: usize = 16;
 
+/// The independent board capture: a `spice board --output FILE` export, or the
+/// reply envelope an earlier `spice board --json` printed.
 #[derive(Deserialize)]
-struct Oracle {
-    cursor: wire::Seq,
-    body: Board,
+#[serde(untagged)]
+enum Oracle {
+    Board(Board),
+    Reply { cursor: wire::Seq, body: Board },
 }
 #[derive(Deserialize)]
 struct Board {
@@ -114,12 +117,15 @@ pub(super) fn observe(study: &Study, directory: &Path, aliases: &Aliases) -> Res
 fn public_statements(study: &Study, directory: &Path) -> Result<BTreeMap<String, Body>> {
     let oracle: Oracle =
         serde_json::from_reader(File::open(directory.join("independent-board-oracle.json"))?)?;
-    if oracle.cursor != study.manifest.upper || oracle.body.cursor != study.manifest.upper {
+    let (cursor, board) = match oracle {
+        Oracle::Board(board) => (board.cursor, board),
+        Oracle::Reply { cursor, body } => (cursor, body),
+    };
+    if cursor != study.manifest.upper || board.cursor != study.manifest.upper {
         return Err("relationship oracle does not name the frozen horizon".into());
     }
     let mut public = BTreeMap::new();
-    for row in oracle
-        .body
+    for row in board
         .tasks
         .into_iter()
         .filter(|row| row.visibility.kind == "public")

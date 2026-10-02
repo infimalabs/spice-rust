@@ -447,8 +447,12 @@ impl NativeInvocation<'_> {
                 release_command::RunResult::Published(outcome) => deliver(&outcome, form),
             },
             ["release", "seal"] => deliver(&release_seal::run(contract), form),
-            ["board"]
-            | ["board", "graph"]
+            ["board"] => deliver_with_reply_text(
+                &board_command::board_view(leaf, contract),
+                form,
+                board_command::BoardView::text,
+            ),
+            ["board", "graph"]
             | ["board", "handout"]
             | ["task", "list"]
             | ["task", "status"]

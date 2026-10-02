@@ -36,7 +36,6 @@ fn dispatch_client(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     match contract.path {
-        ["board"] => client_board(repository, contract, matches),
         ["dev", "report-page"] => client_report(repository, contract, matches),
         ["board", "graph"] => client_graph(repository, contract, matches),
         ["board", "handout"] => client_handout(repository, contract, matches),
@@ -106,21 +105,10 @@ fn client_report(
     )
 }
 
-fn client_board(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::BoardRead,
-        Vec::new(),
-        &BoardRead::All {
-            family: matches.get_one::<String>("FAMILY").cloned(),
-        },
-    )
-}
+mod view;
+pub(crate) use view::{BoardView, board_view};
+#[cfg(test)]
+pub(in crate::board_command) use view::{Posture, Standing, ViewRequest, project_board};
 
 mod read;
 pub(super) use read::*;

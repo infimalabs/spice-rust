@@ -252,6 +252,17 @@ first, and applies the 20-row interactive default even with `--all` or
 
 Mutation replies are outside this contract: they stay complete and concise.
 
+`spice board` is a posture, not a dump: counts of the reader's visible and
+route-open rows by standing, the reader's own claim outside every budget, and
+the ready, review, and blocked rows on its allocation route, ordered by
+standing and then allocator offer order. `spice board FAMILY` pages that
+family's rows the same way, claimed and active first, then by standing and
+offer order, closed rows newest first. Both use the `BOARD` surface (10
+rows, 8 KiB, 120-byte titles; maxima 200 rows, 128 KiB, 4 KiB) and continue
+with `--after HANDLE`. The complete board document under the reader's
+visibility, or one family's rows of it, is only
+`spice board [FAMILY] --output FILE`, which takes no limits.
+
 Task artifacts are retained evidence, possibly large or binary. `task artifact
 list` pages citations newest first under `INTERACTIVE`, continuing with
 `--after ARTIFACT`. A bare `task artifact show` returns metadata and the first

@@ -66,10 +66,24 @@ pub(super) struct Study {
     pub lifecycle: Vec<StreamFact>,
 }
 
+/// The independent board capture: a `spice board --output FILE` export, or the
+/// reply envelope an earlier `spice board --json` printed.
 #[derive(Deserialize)]
-struct Oracle {
-    cursor: Seq,
-    body: OracleBody,
+#[serde(untagged)]
+enum Oracle {
+    Board(OracleBody),
+    Reply { cursor: Seq, body: OracleBody },
+}
+
+impl Oracle {
+    /// The captured board, when every cursor it names is `upper`.
+    fn at(self, upper: Seq) -> Option<OracleBody> {
+        let (cursor, body) = match self {
+            Self::Board(body) => (body.cursor, body),
+            Self::Reply { cursor, body } => (cursor, body),
+        };
+        (cursor == upper && body.cursor == upper).then_some(body)
+    }
 }
 
 #[derive(Deserialize)]
@@ -427,11 +441,10 @@ fn reconcile(
 ) -> Result<()> {
     let oracle: Oracle =
         serde_json::from_reader(File::open(directory.join("independent-board-oracle.json"))?)?;
-    if oracle.cursor != manifest.upper || oracle.body.cursor != manifest.upper {
+    let Some(oracle) = oracle.at(manifest.upper) else {
         return Err("independent oracle has a different barrier".into());
-    }
+    };
     let mut observed = oracle
-        .body
         .tasks
         .iter()
         .filter(|task| task.visibility.kind == "public" && task.workflow.body.status == "completed")
