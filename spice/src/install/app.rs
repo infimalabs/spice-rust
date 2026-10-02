@@ -75,7 +75,7 @@ impl Source {
         self.assets().chain([Asset::AppCurrent]).any(|asset| {
             let path = operation_path(asset, Some(&self.generation))
                 .expect("the source generation is present")
-                .expect("the source inventory contains only Canvas operations");
+                .expect("the source inventory contains only app operations");
             let expected = self.image(asset);
             installed.get(path.as_str()).copied() != expected.as_ref()
         })
@@ -101,9 +101,9 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
 /// Common-directory root under which every installed app generation lives.
 pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
 
-/// Shell file name of generations published before the browser Canvas was
-/// renamed App. An installed generation keeps the files its receipt recorded
-/// until retention withdraws it; no generation is published under this name.
+/// Shell file name of generations published before the current app shell name.
+/// An installed generation keeps the files its receipt recorded until retention
+/// withdraws it; no generation is published under this name.
 const RETIRED_SHELL: &str = "canvas-app.html";
 
 /// The asset an installed generation file holds, under its current or retired

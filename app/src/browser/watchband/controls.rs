@@ -56,7 +56,7 @@ impl From<wire::intent::TeamLife> for TeamLife {
     }
 }
 
-/// Browser-local speech posture for one Canvas team.
+/// Browser-local speech posture for one app team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TeamSpeech {
     Quiet,

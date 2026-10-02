@@ -407,7 +407,7 @@ impl AppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let canvas = render_app(
+        let app = render_app(
             AppRender {
                 connection: &self.connection,
                 surface: &self.surface,
@@ -446,7 +446,7 @@ impl AppState {
             },
             work.as_ref(),
         );
-        message_task_inspector::provide(self.task_inspector, canvas, self.composer_drafts)
+        message_task_inspector::provide(self.task_inspector, app, self.composer_drafts)
     }
 }
 

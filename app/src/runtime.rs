@@ -1,4 +1,4 @@
-//! Capability-scoped state used by the real Wasm canvas runtime.
+//! Capability-scoped state used by the real Wasm app runtime.
 //!
 //! Every mutation enters through an admitted acceptance, response, or stream
 //! frame. Stream facts contribute credential-free envelope metadata; accepted
@@ -49,7 +49,7 @@ pub use team_settled::{TeamSettledRequest, TeamSettledState};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
-/// Whether a topology mutation response leaves Canvas owing an authoritative read.
+/// Whether a topology mutation response leaves the app owing an authoritative read.
 ///
 /// Successful topology replies already carry the new table. A refusal or
 /// fault carries no replacement table, so the browser must re-pull rather
@@ -60,7 +60,7 @@ pub(crate) const fn topology_mutation_requires_refresh<T>(outcome: &Outcome<T>) 
     !matches!(outcome, Outcome::Reply(_))
 }
 
-/// Board snapshot fields used by the canvas, excluding residency capabilities.
+/// Board snapshot fields used by the app, excluding residency capabilities.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BoardView {
     /// Finalized journal schema observed with this task snapshot.
@@ -241,7 +241,7 @@ impl LaneActivity {
         self.lane
     }
 
-    /// Instant used only to place and age this activity on Canvas surfaces.
+    /// Instant used only to place and age this activity on app surfaces.
     ///
     /// A synthetic source instant remains an ordering identity rather than a
     /// vendor-authored claim. The retained [`wire::AgentMessage`] carries that
@@ -281,7 +281,7 @@ pub(crate) fn agent_message_display_millis(message: &wire::AgentMessage) -> i64 
 }
 /// Stable browser identity for one visible agent card.
 ///
-/// A compaction reaches Canvas first as a live announcement and later as the
+/// A compaction reaches the app first as a live announcement and later as the
 /// vendor's preserved record. Those representations have different source
 /// loci but one vendor boundary identity, so they must reconcile through one
 /// DOM and Mosaic key rather than remove and reinsert the divider.
@@ -459,7 +459,7 @@ impl TaskDetailState {
     }
 }
 
-/// All state rendered by one capability-scoped canvas.
+/// All state rendered by one capability-scoped app.
 ///
 /// Deliberately not `Debug`: even though scopes redact themselves, snapshots
 /// should never gain an accidental whole-runtime debug path.
@@ -474,7 +474,7 @@ pub struct AppRuntime {
     task_relations_revision: u64,
     direction_history: DirectionHistoryState,
     work_history: WorkHistoryState,
-    /// Settled-work pages per Canvas team whose Work pane was shown.
+    /// Settled-work pages per app team whose Work pane was shown.
     team_settled: BTreeMap<CanonicalUuid, TeamSettledState>,
     team_settled_revision: u64,
     member_controls: member_control::MemberControls,
@@ -604,7 +604,7 @@ impl AppRuntime {
         self.accepted.scope() == accepted.scope()
     }
 
-    /// Whether every current snapshot needed for one coherent Canvas is present.
+    /// Whether every current snapshot needed for one coherent app is present.
     #[must_use]
     pub fn is_hydrated(&self) -> bool {
         self.board().is_some()
@@ -1095,8 +1095,8 @@ fn refresh_task_relations(state: &mut TaskRelationsState, in_flight_answers: boo
 /// current cursor while a tile shows a directive two events old — worse than
 /// showing nothing, because the staleness is invisible.
 ///
-/// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`],
-/// [`CanvasRuntime::apply_inbox`] — one field per read it names — rather than
+/// This lives beside [`AppRuntime::apply_board`], [`AppRuntime::apply_lanes`],
+/// [`AppRuntime::apply_inbox`] — one field per read it names — rather than
 /// in the socket loop that acts on it, so it can be tested off `wasm32`.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Stale {
@@ -1131,7 +1131,7 @@ impl Stale {
             // sent. Widening only `lanes` here left a newly seated lane with
             // no inbox row in the browser, and the console reads its residency
             // witness out of that row -- so the first direction sent to a lane
-            // seated from the canvas was dropped before it reached the wire.
+            // seated from the app was dropped before it reached the wire.
             Some(("lane", _)) => {
                 self.lanes = true;
                 self.inbox = true;

@@ -249,7 +249,7 @@ fn milliseconds(duration: Duration) -> u64 {
 /// Build-script output remains in a stable gate-owned subdirectory. That keeps
 /// a machine-level `build.build-dir` containing a selected workspace-path hash
 /// from minting another cold directory for every nonce-named selected tree.
-/// Canvas uses its own target and build pair because its wasm/release artifacts
+/// The app uses its own target and build pair because its wasm/release artifacts
 /// do not overlap the native launcher and all-target check.
 struct RustWorkspace {
     source: PathBuf,

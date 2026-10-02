@@ -1,4 +1,4 @@
-//! The work one Canvas team holds, for the team Work panel.
+//! The work one app team holds, for the team Work panel.
 //!
 //! A pure function of one admitted board projection and the team's lane row:
 //! no clock and no DOM. Lease expiry never enters it, so a lease renewal

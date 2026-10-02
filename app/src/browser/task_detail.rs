@@ -26,7 +26,7 @@ pub(super) struct Request {
     pub leaving: bool,
 }
 
-/// `mounted` is whether the Canvas root can render the detail layer; only a
+/// `mounted` is whether the app root can render the detail layer; only a
 /// mounted layer owns Escape, animates its close, or returns focus. `close`
 /// ends the request; the sheet follows the request that results.
 #[hook]
@@ -221,12 +221,12 @@ fn complete_close_callback(
 fn use_present(pending: bool, presented: UseStateHandle<bool>) {
     use_effect_with(pending, move |pending| {
         let frame = pending.then(|| {
-            let window = web_sys::window().expect("Canvas presentation has a browser window");
+            let window = web_sys::window().expect("app presentation has a browser window");
             let show = presented.clone();
             let callback = Closure::once(move |_: f64| show.set(true));
             let frame = window
                 .request_animation_frame(callback.as_ref().unchecked_ref())
-                .expect("Canvas window accepts a presentation frame");
+                .expect("app window accepts a presentation frame");
             (window, frame, callback)
         });
         move || {

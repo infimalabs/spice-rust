@@ -10,7 +10,7 @@ use wire::{AgentMessage, Fault, FaultClass};
 
 use super::{Failure, QuotePresenter};
 
-/// Newest visible transcript cards retained per lane for a reconnecting Canvas.
+/// Newest visible transcript cards retained per lane for a reconnecting app.
 pub const MESSAGE_CAPACITY: usize = 256;
 
 /// Maximum visible cards returned across one coordinated history interval.
@@ -30,7 +30,7 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
     /// Read one bounded visible page before `before`.
     ///
     /// `None` means the provider does not own that lane or cursor. Errors name
-    /// source failures without weakening the Canvas request admission path.
+    /// source failures without weakening the app request admission path.
     fn history(
         &self,
         lane: wire::CanonicalUuid,
@@ -42,11 +42,11 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
 /// Page anchors each lane has recently issued, most recently used last.
 ///
 /// An anchor names a durable locus, so it stays valid across transcript
-/// generations: a Canvas deep in a lane's history keeps paging while newer
+/// generations: an app deep in a lane's history keeps paging while newer
 /// work publishes.
 type HistoryAnchorMap = HashMap<wire::CanonicalUuid, VecDeque<AgentMessage>>;
 
-/// Recently issued page anchors remembered per lane across every Canvas.
+/// Recently issued page anchors remembered per lane across every app.
 const HISTORY_ANCHORS_PER_LANE: usize = 64;
 
 struct HistoryRead {
@@ -751,7 +751,7 @@ impl MessageBatch {
         let heads = self
             .publisher
             .bus
-            .canvas_heads()
+            .app_heads()
             .map_err(|error| MessagePublishError::DurableHorizon(error.to_string()))?;
         let horizon = heads.cursor().ok_or_else(|| {
             MessagePublishError::DurableHorizon("journal has no cursor".to_owned())
@@ -1057,7 +1057,7 @@ fn trim_visible_lane(
     });
 }
 
-/// A capture-backed message could not enter the Canvas view.
+/// A capture-backed message could not enter the app view.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessagePublishError {
     /// Typed media failed the shared count, size, type, or byte admission law.

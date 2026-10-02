@@ -1,10 +1,10 @@
-//! Hash-history ownership for the addressable Canvas view.
+//! Hash-history ownership for the addressable app view.
 //!
 //! The URL is the sole durable selection: a global destination, a Work scope
 //! and its task detail, or a Chat card. Per-team modes, menus, arrangement,
 //! and a task detail opened over Dash or Chat stay browser-local, so they
 //! never reach history. Browser Back, Forward, and fragment links only
-//! rehydrate the route; every history entry Canvas creates is one push.
+//! rehydrate the route; every history entry the app creates is one push.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -116,10 +116,10 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<Navigation
             let rehydrate = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
                 location.set(location_route());
             });
-            let window = web_sys::window().expect("Canvas navigation requires a browser window");
+            let window = web_sys::window().expect("app navigation requires a browser window");
             window
                 .add_event_listener_with_callback("popstate", rehydrate.as_ref().unchecked_ref())
-                .expect("Canvas navigation requires popstate");
+                .expect("app navigation requires popstate");
             move || {
                 let _ = window.remove_event_listener_with_callback(
                     "popstate",
@@ -166,11 +166,11 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<Navigation
                     if owned.borrow().as_deref() == Some(current.as_str()) {
                         let history = web_sys::window()
                             .and_then(|window| window.history().ok())
-                            .expect("Canvas navigation requires browser history");
+                            .expect("app navigation requires browser history");
                         // The popstate this raises rehydrates the route.
                         history
                             .back()
-                            .expect("Canvas navigation requires history.back");
+                            .expect("app navigation requires history.back");
                         return;
                     }
                     write_location(&open.path(), Entry::Replace);
@@ -194,14 +194,14 @@ fn replace_owned(owned: &Rc<RefCell<Option<String>>>, current: &str, route: &App
 }
 
 fn location_route() -> NormalizedAppLocation {
-    let window = web_sys::window().expect("Canvas navigation requires a browser window");
+    let window = web_sys::window().expect("app navigation requires a browser window");
     let location = window.location();
     let search = location
         .search()
-        .expect("Canvas navigation requires the current query");
+        .expect("app navigation requires the current query");
     let hash = location
         .hash()
-        .expect("Canvas navigation requires the current fragment");
+        .expect("app navigation requires the current fragment");
     normalize_app_location(&search, &hash)
 }
 
@@ -217,26 +217,26 @@ enum Entry {
 }
 
 fn write_location(path: &str, entry: Entry) {
-    let window = web_sys::window().expect("Canvas navigation requires a browser window");
+    let window = web_sys::window().expect("app navigation requires a browser window");
     let pathname = window
         .location()
         .pathname()
-        .expect("Canvas navigation requires the current path");
+        .expect("app navigation requires the current path");
     let history = window
         .history()
-        .expect("Canvas navigation requires browser history");
+        .expect("app navigation requires browser history");
     let url = format!("{pathname}#{path}");
     match entry {
         Entry::Push => history
             .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))
-            .expect("Canvas navigation requires pushState"),
+            .expect("app navigation requires pushState"),
         Entry::Replace => {
             let state = history
                 .state()
-                .expect("Canvas navigation requires the current history state");
+                .expect("app navigation requires the current history state");
             history
                 .replace_state_with_url(&state, "", Some(&url))
-                .expect("Canvas navigation requires replaceState");
+                .expect("app navigation requires replaceState");
         }
     }
 }

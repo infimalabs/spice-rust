@@ -1,4 +1,4 @@
-//! The vendor choices a Canvas seat may select.
+//! The vendor choices an app seat may select.
 //!
 //! Every row is projected from the two authorities a launch already reads:
 //! the compiled extension registry that owns which vendors exist, and the

@@ -86,7 +86,7 @@ impl<'a> ThreadReader<'a> {
         budget: journal::FactReadBudget,
     ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
         self.bus
-            .canvas_thread(position, budget)
+            .app_thread(position, budget)
             .map_err(ThreadReadError::Bus)?
             .ok_or(ThreadReadError::Thread(ThreadError::UnknownPosition(
                 position,

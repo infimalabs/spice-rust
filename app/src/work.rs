@@ -1,4 +1,4 @@
-//! Pure task projection shared by every Canvas Work surface.
+//! Pure task projection shared by every app Work surface.
 //!
 //! The admitted board snapshot is the sole input. This module owns lifecycle
 //! precedence, stable stem identity, full-project grouping, relationship

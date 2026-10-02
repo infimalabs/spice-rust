@@ -857,7 +857,7 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     }
 }
 
-/// Every command shares the temporary Canvas answer bound.
+/// Every command shares the temporary app answer bound.
 #[test]
 fn the_answer_bound_registry_declares_the_current_resident_answer_bound() {
     for kind in CommandKind::ALL {
@@ -924,7 +924,7 @@ fn app_server_opens_the_exact_origin_and_never_crosses_the_capability() {
 
     assert_eq!(launched.as_deref(), Some(discovery.endpoint.as_str()));
     let Outcome::Reply(Reply { position, body }) = &outcome else {
-        panic!("current Canvas discovery must open: {outcome:?}");
+        panic!("current app discovery must open: {outcome:?}");
     };
     assert_eq!(*position, ReplyPosition::Direct {});
     assert_eq!(
@@ -936,13 +936,13 @@ fn app_server_opens_the_exact_origin_and_never_crosses_the_capability() {
     );
 
     let capability = discovery.capability.to_string();
-    let text = render::render(&outcome, Form::Text).expect("Canvas receipt renders as text");
+    let text = render::render(&outcome, Form::Text).expect("app receipt renders as text");
     let text_body: wire::AppOpen =
         wire::decode(text.document()).expect("text carries the typed body");
     assert_eq!(text_body, *body);
     assert!(!String::from_utf8_lossy(text.document()).contains(&capability));
 
-    let json = render::render(&outcome, Form::Json).expect("Canvas receipt renders as JSON");
+    let json = render::render(&outcome, Form::Json).expect("app receipt renders as JSON");
     let json_outcome: Outcome<wire::AppOpen> =
         wire::decode(json.document()).expect("JSON carries the typed outcome");
     assert_eq!(json_outcome, outcome);

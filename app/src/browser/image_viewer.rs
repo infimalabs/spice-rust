@@ -104,9 +104,9 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
     let viewing = use_reducer_eq(Viewing::default);
     use_effect_with(viewing.dispatcher(), |viewing| {
         let document = web_sys::window()
-            .expect("Canvas window")
+            .expect("app window")
             .document()
-            .expect("Canvas document");
+            .expect("app document");
         let viewing = viewing.clone();
         let opened = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             let Some(opener) = event
@@ -144,7 +144,7 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
         });
         document
             .add_event_listener_with_callback("click", opened.as_ref().unchecked_ref())
-            .expect("the Canvas document accepts image activation");
+            .expect("the app document accepts image activation");
         move || {
             let _ = document
                 .remove_event_listener_with_callback("click", opened.as_ref().unchecked_ref());

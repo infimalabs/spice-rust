@@ -1,4 +1,4 @@
-//! Canvas announcement and opening checks with resident fixture helpers.
+//! App announcement and opening checks with resident fixture helpers.
 //!
 //! The `pub(super)` helpers below are the deliberate seam shared with the
 //! resident lifecycle cases that remain in the parent test module.
@@ -229,7 +229,7 @@ fn published_discovery(
 /// A plain start must not seize the operator's browser, so the launcher stays
 /// untouched until `--open` asks for it.
 #[test]
-fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
+fn announcing_the_app_names_the_admitted_endpoint_without_dialling_it() {
     let (root, path, discovery, _publisher) = published_discovery("announce-endpoint", 48231);
     let mut dialled = None;
     let mut announced = Vec::new();
@@ -336,7 +336,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
 /// a shell can capture it, anything else written there is read as an address,
 /// and this is the one case that produces something else.
 #[test]
-fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
+fn announcing_the_app_refuses_a_generation_that_was_replaced() {
     let (root, path, discovery, _publisher) = published_discovery("announce-stale", 48233);
     let replacement = serve::Discovery {
         capability: test_uuid(3),
@@ -388,7 +388,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 /// Both arrive as *faults*: the announcement boundary accepts only a typed
 /// endpoint or fault, so no unreachable refusal arm can intercept this route.
 #[test]
-fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
+fn announcing_the_app_without_a_generation_names_no_endpoint() {
     let root = fixture("announce-missing");
     fs::create_dir_all(&root).expect("announcement fixture root");
     let path = root.join("serve");

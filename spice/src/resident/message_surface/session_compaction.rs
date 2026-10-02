@@ -32,7 +32,7 @@ use presentation::publish;
 /// Per-resident cursors over canonical session JSONL files.
 ///
 /// Projects the typed compaction events a lane's preserved session records
-/// into Canvas, folding adjacent tool evidence into each boundary.
+/// into the app, folding adjacent tool evidence into each boundary.
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
@@ -123,7 +123,7 @@ const HISTORY_PASS_BUDGET: u32 = 1;
 /// [`HISTORY_REQUEST_BYTES`] span so this half of a merged page reaches as
 /// far back per request as the tape half does.
 const HISTORY_WINDOW_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_BYTE_BUDGET as u64) as usize;
-/// Preserved compaction boundaries materialized before the Canvas opens.
+/// Preserved compaction boundaries materialized before the app opens.
 ///
 /// Boundaries are not messages and do not satisfy [`wire::MESSAGE_FLOOR`];
 /// this is how many of them the initial view can need, one between each of an
@@ -425,7 +425,7 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     advance_validation(cursor)
 }
 
-/// Seed a new resident from the bounded initial visible tail Canvas presents.
+/// Seed a new resident from the bounded initial visible tail the app presents.
 ///
 /// A forward replay from byte zero makes the hundredth boundary pay for the
 /// first ninety-nine prefixes again. Read one fixed newest-record page, retain

@@ -760,7 +760,7 @@ fn cover_command_frames() {
     );
 }
 
-/// Every client request and resident frame in the closed canvas stream family.
+/// Every client request and resident frame in the closed app stream family.
 ///
 /// Both enums carry serde narrowing: the request omits an absent reconnect
 /// cursor and a fault omits an unavailable correlation id. Sampling every arm,

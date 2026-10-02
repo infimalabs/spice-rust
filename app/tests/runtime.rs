@@ -1,4 +1,4 @@
-//! The real canvas runtime retains only admitted, capability-scoped state.
+//! The real app runtime retains only admitted, capability-scoped state.
 
 use app::watchband::{ticker_accessible_label, ticker_chunks};
 use app::{AppRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads};
@@ -1162,7 +1162,7 @@ fn browser_state_retains_hidden_rows_with_their_authored_prose() {
     assert!(!board.tasks[1].visibility.is_hidden());
     assert!(
         !board.environment_satisfies(&board.tasks[1]),
-        "the Canvas snapshot evaluates requirements against its observed schema",
+        "the app snapshot evaluates requirements against its observed schema",
     );
 }
 

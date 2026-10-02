@@ -1,4 +1,4 @@
-//! What one rendered Canvas card may hand the voice backend.
+//! What one rendered app card may hand the voice backend.
 //!
 //! The backend speaks whatever it is given, so deciding what is speakable
 //! belongs on this side of it. A card the operator can read is the only

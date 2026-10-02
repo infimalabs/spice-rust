@@ -236,7 +236,7 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
 #[test]
 fn authenticated_classification_markers_become_inline_pills() {
     let rendered = render_received_with_fixture_classifications(
-        "> [REVIEW] CANVAS-1kKRRsDR\n>\n\
+        "> [REVIEW] APP-1kKRRsDR\n>\n\
              > > missing current coverage\n>\n\
              > Keep working the current task.\n\n\
              [REVIEW] Ordinary prose remains unchanged.\n\n\
@@ -267,14 +267,10 @@ fn authenticated_classification_markers_become_inline_pills() {
             .contains("Nested guidance keeps its own accent.")
     );
     assert!(rendered.html.contains("Wait for completion."));
-    assert!(
-        rendered
-            .html
-            .contains("data-task-handle=\"CANVAS-1kKRRsDR\"")
-    );
+    assert!(rendered.html.contains("data-task-handle=\"APP-1kKRRsDR\""));
     assert!(rendered.html.contains("missing current coverage"));
     assert!(rendered.html.contains("Keep working the current task."));
-    assert!(!rendered.html.contains("[REVIEW] CANVAS-1kKRRsDR"));
+    assert!(!rendered.html.contains("[REVIEW] APP-1kKRRsDR"));
     assert!(
         rendered
             .html

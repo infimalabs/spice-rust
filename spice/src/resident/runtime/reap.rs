@@ -3,7 +3,7 @@
 //! A detached supervisor reports its agent ending with one unbound datagram,
 //! sent once and never confirmed. When that datagram is lost the durable row
 //! stays occupied: every wake for the lane is refused as already occupied,
-//! the Canvas keeps showing a running occupant, and only a resident restart
+//! the app keeps showing a running occupant, and only a resident restart
 //! would sweep the supervisor state and record the exit. This sweep reads
 //! that same state for every seated lane on each reconciliation, so the
 //! running resident accounts the ending itself and the wakes the lane was
@@ -201,7 +201,7 @@ pub(in crate::resident) fn sweep_seats(
 /// Every path that closes a seat, a supervisor exit or failure notice, the
 /// seat sweep for a lost ending, an operator stop, records the occupant in the
 /// seat ledger. The closing sweep runs here, after the turn, where the taste,
-/// steering, and Canvas surfaces all exist; a refused commit is deferred the
+/// steering, and app surfaces all exist; a refused commit is deferred the
 /// way exit accounting defers it.
 #[allow(
     clippy::too_many_arguments,

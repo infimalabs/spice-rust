@@ -600,14 +600,14 @@ pub enum LaneRenewalState {
     Requested {
         /// Current occupant being replaced.
         predecessor: RenewalIdentity,
-        /// Original member position inside the Canvas team.
+        /// Original member position inside the app team.
         team_slot: u64,
     },
     /// The predecessor reached its stopping boundary and succession owns the slot.
     HandoffPending {
         /// Stopped occupant whose context the successor receives.
         predecessor: RenewalIdentity,
-        /// Original member position inside the Canvas team.
+        /// Original member position inside the app team.
         team_slot: u64,
     },
     /// A fresh successor started and replaced the predecessor in the same slot.
@@ -616,14 +616,14 @@ pub enum LaneRenewalState {
         predecessor: RenewalIdentity,
         /// Fresh occupant now owning the lane.
         successor: RenewalIdentity,
-        /// Original member position inside the Canvas team.
+        /// Original member position inside the app team.
         team_slot: u64,
     },
     /// Successor launch refused after the predecessor reached handoff.
     LaunchRefused {
         /// Occupant whose handoff remains pending repair.
         predecessor: RenewalIdentity,
-        /// Original member position inside the Canvas team.
+        /// Original member position inside the app team.
         team_slot: u64,
         /// Exact actionable launch refusal.
         reason: String,
@@ -634,7 +634,7 @@ pub enum LaneRenewalState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneRenewalRecord {
-    /// Canvas team retaining the original team slot.
+    /// App team retaining the original team slot.
     pub team: CanonicalUuid,
     /// Independently steerable member undergoing succession.
     pub lane: CanonicalUuid,
@@ -650,7 +650,7 @@ pub struct LaneRenewalRecord {
 pub struct LaneResidency {
     /// Address of this independently steerable team member.
     pub lane: CanonicalUuid,
-    /// Canvas team whose lane contains this member.
+    /// App team whose lane contains this member.
     pub team: CanonicalUuid,
     /// Operator-configured agent display name, absent on pre-field seats.
     #[serde(
@@ -703,7 +703,7 @@ pub struct LaneResidency {
     pub disposition: String,
 }
 
-/// Durable task-allocation lifetime owned by one Canvas team.
+/// Durable task-allocation lifetime owned by one app team.
 ///
 /// This policy controls which tasks a team may draw. It is deliberately
 /// separate from [`LaneResidency::life`], which controls whether an individual
@@ -711,7 +711,7 @@ pub struct LaneResidency {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamSubscription {
-    /// Stable Canvas team identifying the subscribed team.
+    /// Stable app team identifying the subscribed team.
     pub team: CanonicalUuid,
     /// Authoritative task-selection policy for the entire team.
     pub policy: crate::intent::TeamLife,
@@ -744,7 +744,7 @@ impl TeamSubscription {
     }
 }
 
-/// Whether one Canvas team is a formation rather than a lone seat.
+/// Whether one app team is a formation rather than a lone seat.
 ///
 /// A fresh seat sits in a team carrying its own lane identity, so a team whose
 /// only member is that identity is merely a defined agent, not a team. This is
@@ -769,7 +769,7 @@ pub struct ResidencyHead {
     pub epoch: CanonicalUuid,
     /// Durable resident life.
     pub state: ResidentState,
-    /// Monotonic authority for Canvas team membership, order, and policy.
+    /// Monotonic authority for app team membership, order, and policy.
     ///
     /// Zero is the legacy and freshly seated baseline. Every transaction that
     /// changes topology advances this value exactly once, while lifecycle-only
@@ -777,7 +777,7 @@ pub struct ResidencyHead {
     pub topology_revision: u64,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
-    /// One durable task-allocation lifetime per Canvas team.
+    /// One durable task-allocation lifetime per app team.
     ///
     /// Absence is admitted only for journal heads written before this field
     /// existed; resident reads derive that legacy team's initial policy

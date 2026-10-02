@@ -1,4 +1,4 @@
-//! Authenticated Canvas socket session routing.
+//! Authenticated app socket session routing.
 
 use super::*;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};

@@ -145,12 +145,12 @@ pub struct ConsentRead {}
 #[serde(deny_unknown_fields)]
 pub struct ConsentPolicy {}
 
-/// Read the durable global Canvas settings.
+/// Read the durable global app settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsRead {}
 
-/// Replace the durable global Canvas settings.
+/// Replace the durable global app settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsSet {
@@ -172,7 +172,7 @@ pub struct GlobalSettingsSet {
     pub operator_email: Option<String>,
 }
 
-/// Authoritative global Canvas settings at one journal revision.
+/// Authoritative global app settings at one journal revision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsAnswer {
@@ -204,7 +204,7 @@ pub struct VendorCatalog {}
 /// One vendor a seat can select, with the launch values it defaults to.
 ///
 /// The resident derives every row from the extension registry it dispatches
-/// with and the vendor configuration it launches under, so a Canvas that
+/// with and the vendor configuration it launches under, so an app that
 /// offers these choices cannot offer a vendor the resident would refuse.
 /// Model spellings stay open: no vendor publishes a catalogue of them and
 /// each resolves its own, so the configured default is named here while any
@@ -265,7 +265,7 @@ pub struct LaneSeat {
     pub topology_revision: u64,
     /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
-    /// Canvas team whose lane receives the member.
+    /// App team whose lane receives the member.
     pub team: CanonicalUuid,
     /// Operator-configured agent display name, absent when unconfigured.
     #[serde(
@@ -305,7 +305,7 @@ pub struct LaneSeat {
     pub resume: Option<String>,
 }
 
-/// The closed task-allocation lifetime selected for a Canvas team.
+/// The closed task-allocation lifetime selected for an app team.
 ///
 /// This is task-allocation policy. It is deliberately distinct from
 /// [`LaneAction::Drain`], which tears down an occupant process.
@@ -324,7 +324,7 @@ impl TeamLife {
     /// Every lifetime a team or seat may name, in declaration order.
     pub const ALL: &'static [Self] = &[Self::Steer, Self::Drive, Self::Drain];
 
-    /// Stable wire spelling retained by the Canvas control.
+    /// Stable wire spelling retained by the app control.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -359,13 +359,13 @@ impl TeamLife {
     }
 }
 
-/// Change the task-allocation lifetime shared by one Canvas team.
+/// Change the task-allocation lifetime shared by one app team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamConfigure {
     /// Topology revision observed before this configuration was requested.
     pub topology_revision: u64,
-    /// Stable Canvas team identifying the group.
+    /// Stable app team identifying the group.
     pub team: CanonicalUuid,
     /// One seated member to move into this team, or absent to preserve membership.
     ///
@@ -387,17 +387,17 @@ pub struct TeamConfigure {
     pub life: Option<TeamLife>,
 }
 
-/// One Canvas team and the seated lanes it holds, in operator order.
+/// One app team and the seated lanes it holds, in operator order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamArrangement {
-    /// Stable Canvas team identifying the group.
+    /// Stable app team identifying the group.
     pub team: CanonicalUuid,
     /// Every lane this team holds after the arrangement commits.
     pub lanes: Vec<CanonicalUuid>,
 }
 
-/// Rearrange every Canvas team: their order, and which lanes each holds.
+/// Rearrange every app team: their order, and which lanes each holds.
 ///
 /// The operator drags one team lane to reorder or join teams, splits a whole
 /// team, or moves one member into a fresh team. Every gesture is the same
@@ -460,13 +460,13 @@ pub struct LaneState {
     pub worktree: Option<String>,
 }
 
-/// Request or clear agent succession for one exact Canvas team member.
+/// Request or clear agent succession for one exact app team member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneRenewal {
     /// Topology revision observed before this intent was requested.
     pub topology_revision: u64,
-    /// Canvas team whose member retains its original team slot.
+    /// App team whose member retains its original team slot.
     pub team: CanonicalUuid,
     /// Independently steerable member whose occupant is renewed.
     pub lane: CanonicalUuid,
@@ -795,7 +795,7 @@ pub struct ConsentPendingAnswer {
 impl ConsentPendingAnswer {
     /// The exact witnesses a terminal operator ruling on this request carries.
     ///
-    /// Every decider (the CLI, the Canvas, and the resident that re-derives
+    /// Every decider (the CLI, the app, and the resident that re-derives
     /// them to admit a ruling) builds them here, so the resident refuses a
     /// ruling whose queue position has moved.
     ///
@@ -995,7 +995,7 @@ impl LaneLiveness {
 pub struct LaneAnswerRow {
     /// Stable independently steerable member identity.
     pub lane: CanonicalUuid,
-    /// Canvas team whose lane contains this member.
+    /// App team whose lane contains this member.
     pub team: CanonicalUuid,
     /// Operator-configured agent display name, absent when unconfigured.
     #[serde(
@@ -1126,7 +1126,7 @@ pub struct LaneAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "LaneRenewalAnswerWire", into = "LaneRenewalAnswerWire")]
 pub struct LaneRenewalAnswer {
-    /// Canvas team whose member was addressed.
+    /// App team whose member was addressed.
     pub team: CanonicalUuid,
     /// Independently steerable member whose intent was set.
     pub lane: CanonicalUuid,

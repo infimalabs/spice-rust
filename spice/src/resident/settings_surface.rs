@@ -1,4 +1,4 @@
-//! Durable global Canvas settings and their command surface.
+//! Durable global app settings and their command surface.
 
 use bus::Bus;
 use gix::bstr::ByteSlice as _;

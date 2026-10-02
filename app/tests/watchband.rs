@@ -285,7 +285,7 @@ fn presence_prefers_a_claim_then_current_occupant_activity() {
         "idle begins at the resident's shared quiet boundary"
     );
 
-    standing.handle = Some("CANVAS-1kKRSfyV".to_owned());
+    standing.handle = Some("APP-1kKRSfyV".to_owned());
     standing.held_since = Some(at(-300_000));
     let claimed = member_presence(&runtime, &lane_member, &standing);
     assert_eq!(claimed.state, MemberPresenceState::Working);
@@ -344,7 +344,7 @@ fn presence_dates_successor_start_and_vacancy_from_durable_lane_facts() {
     successor.occupant = None;
     successor.liveness = wire::intent::LaneLiveness::Vacant;
     let mut stale_claim = standing_for(&successor);
-    stale_claim.handle = Some("CANVAS-1kKRSfyV".to_owned());
+    stale_claim.handle = Some("APP-1kKRSfyV".to_owned());
     stale_claim.held_since = Some(at(-300_000));
     let vacant = member_presence(&runtime, &successor, &stale_claim);
     assert_eq!(
@@ -467,7 +467,7 @@ fn the_newest_active_claim_on_a_lane_is_the_one_showing() {
 
 /// A standing states *when* the lease began and expires, not precomputed spans.
 ///
-/// The second half is the part that matters to a quiet canvas. One row, built
+/// The second half is the part that matters to a quiet app. One row, built
 /// once, is read against two clocks a minute apart and spells two different
 /// values: claim age increases while remaining lease time decreases. A lane the
 /// resident has stopped mentioning therefore remains truthful without another

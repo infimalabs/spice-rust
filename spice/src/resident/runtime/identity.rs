@@ -1,4 +1,4 @@
-//! Product and build identity captured before the Canvas surface binds.
+//! Product and build identity captured before the app surface binds.
 
 use super::*;
 

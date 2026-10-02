@@ -25,7 +25,7 @@ pub(super) enum Input<Supervisor, Control, Record> {
 
 /// Select between the three live sources that can remain continuously ready.
 ///
-/// Fixed priority strands admitted Canvas commands while lanes keep publishing.
+/// Fixed priority strands admitted app commands while lanes keep publishing.
 /// Rotating the lead bounds every ready source to two intervening turns.
 pub(super) async fn next<Supervisor, Control, Record>(
     lead: &mut Lead,

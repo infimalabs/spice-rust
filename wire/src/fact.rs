@@ -261,9 +261,9 @@ vocabulary! {
     LaneEffortRetuned = "lane::effort" by ResidentRecognition;
     /// A running occupant confirmed one live provider setting change.
     LaneRuntimeRetuned = "lane::runtime" by ResidentRecognition;
-    /// One Canvas team adopted a shared task-allocation lifetime.
+    /// One app team adopted a shared task-allocation lifetime.
     TeamConfigured = "team::configured" by ResidentRecognition;
-    /// The operator rearranged which lanes each Canvas team holds, and in
+    /// The operator rearranged which lanes each app team holds, and in
     /// what order the teams stand.
     TeamArranged = "team::arranged" by ResidentRecognition;
     /// A selected vendor record declared the exact resumable lane session.

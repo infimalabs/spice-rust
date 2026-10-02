@@ -136,9 +136,9 @@ mod runtime {
     /// Cursor, trust, and residency heads observed inside one immutable authority snapshot.
     ///
     /// Fact pages are read separately through bounded primary-key ranges at
-    /// this cursor, so opening Canvas never materializes the complete stream.
+    /// this cursor, so opening the app never materializes the complete stream.
     #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct CanvasHeads {
+    pub struct AppHeads {
         cursor: Option<journal::crossing::Seq>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
@@ -203,7 +203,7 @@ mod runtime {
         }
     }
 
-    impl CanvasHeads {
+    impl AppHeads {
         /// Last durable position visible to this head capture.
         #[must_use]
         pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
@@ -518,11 +518,11 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
-        /// Capture the Canvas cursor and trust heads at one queued barrier.
-        pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
+        /// Capture the app cursor and trust heads at one queued barrier.
+        pub fn app_heads(&self) -> Result<AppHeads, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::CanvasHeads { answer })
+                .send(Request::AppHeads { answer })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -530,7 +530,7 @@ mod runtime {
         }
 
         /// Read one bounded primary-key fact page through a captured horizon.
-        pub fn canvas_facts(
+        pub fn app_facts(
             &self,
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
@@ -538,7 +538,7 @@ mod runtime {
         ) -> Result<FactPage, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Read(JournalRead::CanvasFacts {
+                .send(Request::Read(JournalRead::AppFacts {
                     start,
                     horizon,
                     budget,
@@ -552,14 +552,14 @@ mod runtime {
         }
 
         /// Read one bounded causal page directly through the thread index.
-        pub fn canvas_thread(
+        pub fn app_thread(
             &self,
             position: journal::crossing::Seq,
             budget: journal::FactReadBudget,
         ) -> Result<Option<FactPage>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Read(JournalRead::CanvasThread {
+                .send(Request::Read(JournalRead::AppThread {
                     position,
                     budget,
                     answer,
@@ -736,28 +736,28 @@ mod runtime {
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
         }
 
-        /// Capture the canvas fact and trust planes at one authority barrier.
-        pub fn canvas_heads(&self) -> Result<CanvasHeads, BusReadError> {
-            self.reader().canvas_heads()
+        /// Capture the app fact and trust planes at one authority barrier.
+        pub fn app_heads(&self) -> Result<AppHeads, BusReadError> {
+            self.reader().app_heads()
         }
 
         /// Read one bounded primary-key fact page through a captured horizon.
-        pub fn canvas_facts(
+        pub fn app_facts(
             &self,
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
             budget: journal::FactReadBudget,
         ) -> Result<FactPage, BusReadError> {
-            self.reader().canvas_facts(start, horizon, budget)
+            self.reader().app_facts(start, horizon, budget)
         }
 
         /// Read one bounded causal page directly through the thread index.
-        pub fn canvas_thread(
+        pub fn app_thread(
             &self,
             position: journal::crossing::Seq,
             budget: journal::FactReadBudget,
         ) -> Result<Option<FactPage>, BusReadError> {
-            self.reader().canvas_thread(position, budget)
+            self.reader().app_thread(position, budget)
         }
 
         /// Read the current resident and lane head through the writer queue.
@@ -907,8 +907,8 @@ mod runtime {
             retired: usize,
             answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
         },
-        CanvasHeads {
-            answer: SyncSender<Result<CanvasHeads, BusReadError>>,
+        AppHeads {
+            answer: SyncSender<Result<AppHeads, BusReadError>>,
         },
         Shutdown {
             answer: SyncSender<()>,
@@ -934,13 +934,13 @@ mod runtime {
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<journal::SelectedFactPage, GuardError>>,
         },
-        CanvasFacts {
+        AppFacts {
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<FactPage, GuardError>>,
         },
-        CanvasThread {
+        AppThread {
             position: journal::crossing::Seq,
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<Option<FactPage>, GuardError>>,
@@ -1036,8 +1036,8 @@ mod runtime {
                         retired,
                     ));
                 }
-                Request::CanvasHeads { answer } => {
-                    let _ = answer.send(canvas_heads(&task_snapshot));
+                Request::AppHeads { answer } => {
+                    let _ = answer.send(app_heads(&task_snapshot));
                 }
                 Request::Shutdown { answer } => {
                     let _ = answer.send(());
@@ -1070,7 +1070,7 @@ mod runtime {
                         .read(move |read| read.recent_origin_facts(&origin, kind, before, budget)),
                 );
             }
-            JournalRead::CanvasFacts {
+            JournalRead::AppFacts {
                 start,
                 horizon,
                 budget,
@@ -1078,7 +1078,7 @@ mod runtime {
             } => {
                 let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
             }
-            JournalRead::CanvasThread {
+            JournalRead::AppThread {
                 position,
                 budget,
                 answer,
@@ -1150,10 +1150,7 @@ mod runtime {
     }
 
     fn request_needs_task_snapshot(request: &Request) -> bool {
-        matches!(
-            request,
-            Request::Steering { .. } | Request::CanvasHeads { .. }
-        )
+        matches!(request, Request::Steering { .. } | Request::AppHeads { .. })
     }
 
     fn steering_presentations(
@@ -1274,8 +1271,8 @@ mod runtime {
         })
     }
 
-    fn canvas_heads(state: &TaskSnapshotState) -> Result<CanvasHeads, BusReadError> {
-        current_task_snapshot(state).map(|snapshot| CanvasHeads {
+    fn app_heads(state: &TaskSnapshotState) -> Result<AppHeads, BusReadError> {
+        current_task_snapshot(state).map(|snapshot| AppHeads {
             cursor: snapshot.cursor,
             trust: snapshot.trust.clone(),
             residency: snapshot.residency.clone(),
@@ -1358,7 +1355,7 @@ mod runtime {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
-    BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
+    AppHeads, BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError,
     CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction,
     MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts,
     TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,

@@ -1,4 +1,4 @@
-//! Generation-resident read models for Canvas control requests.
+//! Generation-resident read models for app control requests.
 //!
 //! Complete journal replay belongs to this background publisher. A request
 //! observes one immutable generation only after a scalar authority barrier
@@ -157,7 +157,7 @@ impl CurrentReads {
         }
     }
 
-    /// Settle startup reconciliation before Canvas discovery becomes visible.
+    /// Settle startup reconciliation before app discovery becomes visible.
     pub(super) fn synchronize_before_publish(&self) -> Result<(), String> {
         self.current().map(drop)
     }
@@ -365,7 +365,7 @@ fn advance_current_generation(
         catch_up.authority = authority;
     }
     let packed = reader
-        .canvas_facts(
+        .app_facts(
             journal::FactPageStart::At(catch_up.next),
             catch_up.authority,
             state.budget,

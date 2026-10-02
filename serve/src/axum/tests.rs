@@ -91,7 +91,7 @@ fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit 
 }
 
 #[test]
-fn canvas_message_ingress_refuses_invalid_media_without_retaining_or_broadcasting_it() {
+fn app_message_ingress_refuses_invalid_media_without_retaining_or_broadcasting_it() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     let source = Source::new(

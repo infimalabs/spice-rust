@@ -99,7 +99,7 @@ pub(super) fn activity(
 /// Media a tool result shows as its own card.
 ///
 /// A lane reading an attachment the operator sent it gets back that same image,
-/// which the Canvas already shows with the directive the lane acknowledges.
+/// which the app already shows with the directive the lane acknowledges.
 /// Showing it again as a lone tool image would put the operator's own picture
 /// on the leading edge, directly above the acknowledgment that answered it.
 pub(super) fn result_media(

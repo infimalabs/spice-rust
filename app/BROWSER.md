@@ -58,7 +58,7 @@ decided here:
 
 Titles read `5 tasks - spice`, `1 task - spice`, `7 tasks (stale) - spice`,
 `Loading - spice`, and `Disconnected - spice`; the static page title is
-`spice`. These supersede `Spice` (`ca903af2c`) and `Spice Canvas` (`9904e38a8`).
+`spice`. These supersede earlier title spellings.
 
 Once the first board snapshot arrives, the title gives the exact number of
 remaining public tasks and the icon wears the same count. The pepper keeps the
@@ -134,7 +134,7 @@ watermark, and Dash agent tiles keep their full-size provider emblem.
 ## Message card control flow
 
 Card actions form a shrink-wrapped island at the content's top inline-end.
-When the first content block is a colored quote, Canvas portals that island
+When the first content block is a colored quote, the app portals that island
 into the quote before its content. The quote surface itself starts at the card
 edge and keeps the full content width; only its text wraps beside the controls,
 and image rows clear them from inside the same colored surface. Cards without a

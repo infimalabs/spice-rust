@@ -666,7 +666,7 @@ fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
         epoch,
         Actor::Operator,
         "MOSAIC-1kKQTw1V",
-        "Canvas lacks the mosaic lane interface",
+        "App lacks the mosaic lane interface",
         "board.alpha",
         Some("todo"),
         &["The watchband mosaic uses per-lane cards and stays stable"],

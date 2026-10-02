@@ -1,4 +1,4 @@
-//! Redacted provider quota state published to the authenticated operator Canvas.
+//! Redacted provider quota state published to the authenticated operator app.
 
 use std::sync::Arc;
 

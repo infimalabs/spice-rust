@@ -1020,7 +1020,7 @@ fn executable_digest(executable: &Path) -> Result<Digest, std::io::Error> {
 
 /// Authenticated identity of the resident that currently owns the runtime lock.
 ///
-/// Local Canvas needs no bearer token. A remotely authenticated surface keeps
+/// A local app needs no bearer token. A remotely authenticated surface keeps
 /// that operator secret out of discovery, so an installer that cannot prove
 /// identity here retains the launcher's refusal rather than guessing.
 fn running_resident_version(

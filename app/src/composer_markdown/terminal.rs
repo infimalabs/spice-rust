@@ -1,6 +1,6 @@
 //! Give terminal prose on an assistant card sentence punctuation.
 //!
-//! Canvas stacks cards newest-first, so whatever a trailing colon introduces
+//! The app stacks cards newest-first, so whatever a trailing colon introduces
 //! lands above it and the colon points at nothing. A terminal colon therefore
 //! becomes a period, and terminal prose without punctuation gains one. Only
 //! the final text of a card that ends in prose changes: a card ending in code,

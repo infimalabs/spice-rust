@@ -2,7 +2,7 @@
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
   background: color-mix(in srgb, var(--accent) 3%, var(--panel));
 }
 
@@ -112,12 +112,12 @@
 }
 .markdown-body pre {
   max-width: 100%; margin: .55em 0; padding: .65em .75em; overflow: auto;
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-control); background: var(--page);
+  border: var(--app-edge); border-radius: var(--app-radius-control); background: var(--page);
 }
 .markdown-body pre code { padding: 0; background: transparent; }
 .markdown-body table { width: 100%; border-collapse: collapse; }
 .markdown-body th,
-.markdown-body td { padding: .35em .45em; border: var(--canvas-edge); text-align: left; }
+.markdown-body td { padding: .35em .45em; border: var(--app-edge); text-align: left; }
 .markdown-body :is(th, td)[data-align="center"] { text-align: center; }
 .markdown-body :is(th, td)[data-align="right"] { text-align: right; }
 .markdown-body a { color: var(--accent); }
@@ -136,9 +136,9 @@
   break-inside: avoid;
   margin: 0 0 14px;
   padding: 15px;
-  border: var(--canvas-edge);
+  border: var(--app-edge);
   border-left: 4px solid var(--accent);
-  border-radius: var(--canvas-radius-surface);
+  border-radius: var(--app-radius-surface);
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
 }
@@ -208,14 +208,14 @@
   grid-area: 1 / 1; display: block; width: 100%; height: 100%;
   max-width: var(--message-image-size); max-height: var(--message-image-size);
   aspect-ratio: 1 / 1;
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
+  border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--control-surface-soft); object-fit: cover; object-position: center;
 }
 .message-image img[data-mosaic-image-state="pending"],
 .message-image img[data-mosaic-image-state="error"] { visibility: hidden; }
 .message-image-status {
   grid-area: 1 / 1; display: grid; width: 100%; height: 100%;
-  padding: 10px; place-items: center; border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
+  padding: 10px; place-items: center; border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--control-surface-soft); color: var(--muted);
   font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
@@ -305,7 +305,7 @@
 }
 .mermaid-slot:empty::before {
   content: "Rendering diagram"; box-sizing: border-box; place-items: center;
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
+  border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--control-surface-soft); color: var(--muted);
   font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -328,7 +328,7 @@
   position: absolute; top: 5px; right: 5px; z-index: 2;
   display: grid; place-items: center;
   width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0;
-  border: var(--canvas-edge); border-radius: 50%;
+  border: var(--app-edge); border-radius: 50%;
   background: var(--panel); color: var(--text);
   font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
@@ -340,7 +340,7 @@
 .mermaid-source-body {
   position: absolute; inset: 0; z-index: 1;
   overflow: auto; overscroll-behavior: contain;
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
+  border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--panel); padding: 44px 8px 8px;
 }
 .mermaid-render[data-source-visible="true"] > .message-image { visibility: hidden; }
@@ -364,13 +364,13 @@
    pill of the same treatment, with no card around the group. */
 .image-lightbox-actions { grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .image-lightbox-actions > button, .toast {
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-pill); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
+  border: var(--app-edge); border-radius: var(--app-radius-pill); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-lightbox-actions > button:not([aria-disabled="true"]):hover { border-color: var(--accent); }
 .image-annotation-controls { justify-self: stretch; justify-content: space-between; }
 .image-annotation-tools { display: flex; flex-wrap: wrap; gap: 6px; }
 .image-annotation-tools > button {
-  border: var(--canvas-edge); border-radius: var(--canvas-radius-pill);
+  border: var(--app-edge); border-radius: var(--app-radius-pill);
   background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-annotation-tools > button[aria-pressed="true"], .image-annotation-tools > .image-annotation-apply {
@@ -389,8 +389,8 @@
 .toast {
   position: fixed; inset: auto 16px 24px; z-index: 10; width: fit-content; height: auto; max-width: 36rem; margin: 0 auto; padding: 7px 14px;
   color: inherit; overflow: visible;
-  border-radius: var(--canvas-radius-overlay); font-size: .85rem; overflow-wrap: anywhere;
-  transition: opacity var(--canvas-motion-settle) var(--canvas-ease-standard), translate var(--canvas-motion-settle) var(--canvas-ease-standard), visibility var(--canvas-motion-settle) allow-discrete;
+  border-radius: var(--app-radius-overlay); font-size: .85rem; overflow-wrap: anywhere;
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard), translate var(--app-motion-settle) var(--app-ease-standard), visibility var(--app-motion-settle) allow-discrete;
 }
 .toast--task-feedback { inset-block: 24px auto; }
 .toast[data-shown="false"] { opacity: 0; translate: 0 8px; visibility: hidden; }
@@ -415,8 +415,8 @@
   min-height: 0;
   width: 100%;
   max-width: none;
-  padding: 0 0 var(--canvas-frame-edge-block-end);
-  padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
+  padding: 0 0 var(--app-frame-edge-block-end);
+  padding-inline: var(--app-shell-edge-start) var(--app-shell-edge-end);
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }
@@ -451,8 +451,8 @@
   max-width: 100%;
   container-type: inline-size;
   overflow: hidden;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-surface);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-surface);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -471,7 +471,7 @@
   gap: 8px;
   min-height: 44px;
   padding: 5px 10px;
-  border-bottom: var(--canvas-control-edge);
+  border-bottom: var(--app-control-edge);
   background: var(--panel);
 }
 
@@ -507,7 +507,7 @@
   min-height: 0;
   padding: 4px 8px;
   border: 0;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: transparent;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -519,13 +519,13 @@
 .team-mode.selected {
   background: var(--control);
   color: var(--ink);
-  box-shadow: var(--canvas-selection-shadow);
+  box-shadow: var(--app-selection-shadow);
 }
 .team-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-mode-badge { flex: none;
   min-width: 19px;
   padding: 0 5px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
   color: var(--page);
@@ -560,7 +560,7 @@
   color: var(--muted);
   font-size: 1rem;
 }
-.team-surface > .ticker { flex: 0 0 auto; min-height: 26px; padding-block: 6px; padding-inline: 6px 10px; border-bottom: var(--canvas-control-edge); background: var(--panel); font-size: .65rem; }
+.team-surface > .ticker { flex: 0 0 auto; min-height: 26px; padding-block: 6px; padding-inline: 6px 10px; border-bottom: var(--app-control-edge); background: var(--panel); font-size: .65rem; }
 .team-surface > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }
 .team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
@@ -619,7 +619,7 @@
    scrolls keep targets clear of whatever part of it is still exposed. */
 .team-composer {
   position: absolute; inset: 0 0 auto; z-index: 1;
-  border-bottom: var(--canvas-edge); background: var(--panel);
+  border-bottom: var(--app-edge); background: var(--panel);
   transform: translate3d(0, 0, 0); will-change: transform;
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
@@ -655,7 +655,7 @@
   align-self: stretch;
   overflow: hidden;
   border-color: var(--control-line-soft);
-  border-radius: var(--canvas-radius-inset);
+  border-radius: var(--app-radius-inset);
   background: var(--control);
   box-shadow: none;
 }
@@ -681,10 +681,10 @@
   max-height: var(--composer-shard-block-size);
   min-width: 0;
   overflow: hidden;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-compact);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-compact);
   background: var(--control);
-  box-shadow: var(--canvas-selection-shadow);
+  box-shadow: var(--app-selection-shadow);
 }
 .composer-shard:focus-within,
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
@@ -782,10 +782,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   padding: 0;
   overflow: hidden;
   position: relative;
-  border: var(--canvas-control-edge);
+  border: var(--app-control-edge);
   border-radius: 4px;
   background: color-mix(in srgb, var(--control) 84%, var(--page));
-  box-shadow: var(--canvas-selection-shadow);
+  box-shadow: var(--app-selection-shadow);
 }
 .composer-shard-image-indicator img {
   display: block;
@@ -840,14 +840,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    center seam, reading as one phrase ("quiet drain", "narrate steer"). */
 .team-composer .team-composer-controls {
   --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
-  --team-control-inner-radius: calc(var(--canvas-radius-compact) - 1px);
+  --team-control-inner-radius: calc(var(--app-radius-compact) - 1px);
   --team-control-label-row: 14px;
   position: relative; display: grid; gap: 0; inline-size: 74px;
   margin-block-start: var(--team-control-label-row);
   block-size: calc(var(--team-composer-block-size) - var(--team-control-label-row));
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
-  border: var(--canvas-control-edge); border-radius: var(--canvas-radius-compact);
-  background: var(--control); box-shadow: var(--canvas-selection-shadow);
+  border: var(--app-control-edge); border-radius: var(--app-radius-compact);
+  background: var(--control); box-shadow: var(--app-selection-shadow);
 }
 .team-slider {
   --control-state-accent: var(--accent);
@@ -855,7 +855,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   min-height: 0; padding: 7px 2px 3px; overflow: hidden;
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
-.team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: 0 var(--team-control-item-height); inset-inline-start: 50%; border-inline-start: var(--canvas-control-edge); content: ""; pointer-events: none; }
+.team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: 0 var(--team-control-item-height); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
 .team-composer .team-speech { border-start-start-radius: var(--team-control-inner-radius); }
 .team-composer .team-lifetime { border-start-end-radius: var(--team-control-inner-radius); }
 .team-slider input {
@@ -887,7 +887,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
-  border: 0; border-top: var(--canvas-control-edge);
+  border: 0; border-top: var(--app-control-edge);
   border-radius: 0 0 var(--team-control-inner-radius) var(--team-control-inner-radius);
 }
 .team-slider.armed,
@@ -907,7 +907,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   height: var(--team-control-item-height);
   min-height: var(--team-control-item-height);
   padding: 5px 16px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   border-color: color-mix(in srgb, var(--control-state-accent, var(--accent)) 72%, var(--line));
   background: var(--control-state-accent, var(--accent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 22%, transparent);
@@ -940,7 +940,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-activity-grid {
   position: relative; display: flex;
   flex: 1 1 auto; min-height: 0; flex-direction: column;
-  padding: 0; border-top: var(--canvas-edge);
+  padding: 0; border-top: var(--app-edge);
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
@@ -949,7 +949,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --mosaic-module: 1.25rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
-     deliberately refused by the Canvas CSP. */
+     deliberately refused by the app CSP. */
   position: relative; display: block; flex: 1 1 auto; min-height: 0; min-width: 0;
   height: calc(var(--mosaic-plane-rows) * var(--mosaic-module) - var(--mosaic-gap));
   max-height: none;
@@ -1020,7 +1020,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .lane-mosaic-plane[data-measurement-phase="base"] .mosaic-message-card {
   top: 0;
 }
-.lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity var(--canvas-motion-settle) var(--canvas-ease-standard); }
+.lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }
 /* A reader who asked their system for less motion keeps the settled card and
    never the fade. This governs the transition and nothing else: the same-frame
@@ -1039,9 +1039,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin: 0;
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
-  border: var(--canvas-edge-soft);
+  border: var(--app-edge-soft);
   border-right: 3px solid var(--accent-slot, var(--accent));
-  border-radius: var(--canvas-radius-frame);
+  border-radius: var(--app-radius-frame);
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
@@ -1144,7 +1144,7 @@ a.relative-age {
   align-items: center;
   gap: 4px;
   padding: 0 4px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: var(--message-badge-accent);
   color: var(--panel);
   font-size: 12px;
@@ -1154,7 +1154,7 @@ a.relative-age {
 }
 .team-surface .message-badge-count {
   padding: 0 5px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: var(--panel);
   color: var(--message-badge-accent);
   font-size: 9px;
@@ -1206,7 +1206,7 @@ a.relative-age {
   align-items: center;
   vertical-align: baseline;
   padding: 0 4px;
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--app-radius-pill);
   background: color-mix(
     in srgb,
     color-mix(in srgb, var(--message-inline-pill-accent) 80%, var(--ink)) 80%,
@@ -1327,7 +1327,7 @@ a.relative-age {
   gap: 16px;
   min-height: 58px;
   padding: 9px 2px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--app-edge);
 }
 .team-task-summary > div:first-child,
 .team-task-policy {
@@ -1347,7 +1347,7 @@ a.relative-age {
   justify-items: end;
   flex: 0 0 auto;
   padding-left: 14px;
-  border-left: var(--canvas-edge);
+  border-left: var(--app-edge);
 }
 .team-task-policy strong {
   color: var(--accent);
@@ -1449,8 +1449,8 @@ a.relative-age {
   min-height: 46px;
   margin: 0;
   padding: 14px 10px;
-  border-top: var(--canvas-edge);
-  border-bottom: var(--canvas-edge);
+  border-top: var(--app-edge);
+  border-bottom: var(--app-edge);
   color: var(--muted);
   font-size: .67rem;
 }

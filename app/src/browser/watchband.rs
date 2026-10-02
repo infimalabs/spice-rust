@@ -61,7 +61,7 @@ pub(super) struct BroadcastTarget {
 }
 
 /// The observer that toasts lane and team request progress and outcomes. It mounts
-/// once at the Canvas root so a request settles in the toast whichever
+/// once at the app root so a request settles in the toast whichever
 /// surface is showing.
 pub(super) fn render_feedback(runtime: Option<&AppRuntime>, controls: &TeamControls) -> Html {
     html! { <feedback::RequestFeedback notices={feedback::Notices::of(runtime, controls)} /> }

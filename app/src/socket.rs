@@ -2,7 +2,7 @@
 //!
 //! The app carries a browser/resident protocol clock independent of durable
 //! [`WireVersion`]. A page can survive an installed resident replacement, so
-//! discovery admits its Canvas clock before any command payload is allowed to
+//! discovery admits its app clock before any command payload is allowed to
 //! reach browser state. Nothing here decides authority; admission only decides
 //! whether bytes may cross that door.
 
@@ -276,7 +276,7 @@ impl Session {
         })
     }
 
-    /// Decode one multiplexed canvas stream frame and admit every generation
+    /// Decode one multiplexed app stream frame and admit every generation
     /// and wire marker it carries.
     ///
     /// The outer frame is not enough for fact pages: their envelopes carry the

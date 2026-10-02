@@ -11,7 +11,7 @@ use super::{Release, SourceBoundary, TranscriptLocus};
 pub struct LaneSeated {
     /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
-    /// Canvas team whose lane contains the member.
+    /// App team whose lane contains the member.
     pub team: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
@@ -104,10 +104,10 @@ pub struct LaneRuntimeRetuned {
     pub effort: Option<String>,
 }
 
-/// One Canvas team adopted a task-allocation lifetime.
+/// One app team adopted a task-allocation lifetime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamConfigured {
-    /// Stable Canvas team identifying the configured group.
+    /// Stable app team identifying the configured group.
     pub team: CanonicalUuid,
     /// Member moved into the configured team, absent for policy-only changes.
     #[serde(
@@ -142,10 +142,10 @@ pub struct TeamConfigured {
     pub sources: Vec<LaneSourceBoundary>,
 }
 
-/// One Canvas team and the lanes it holds after an arrangement.
+/// One app team and the lanes it holds after an arrangement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamStanding {
-    /// Stable Canvas team identifying the group.
+    /// Stable app team identifying the group.
     pub team: CanonicalUuid,
     /// Every lane this team holds, in the order the operator arranged them.
     pub lanes: Vec<CanonicalUuid>,
@@ -167,7 +167,7 @@ pub struct LaneSourceBoundary {
     pub source: SourceBoundary,
 }
 
-/// The operator rearranged the Canvas teams.
+/// The operator rearranged the app teams.
 ///
 /// Both sides are recorded because the gesture is not recoverable from the
 /// result alone: a reorder and a join leave different `from` standings behind,
@@ -657,7 +657,7 @@ pub struct LaneRenewed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "LaneRenewalChangedWire", into = "LaneRenewalChangedWire")]
 pub struct LaneRenewalChanged {
-    /// Canvas team whose member retains its original slot.
+    /// App team whose member retains its original slot.
     pub team: CanonicalUuid,
     /// Independently steerable member whose renewal state changed.
     pub lane: CanonicalUuid,

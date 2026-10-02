@@ -1,16 +1,16 @@
-//! Deadline-driven relative ages for the browser canvas.
+//! Deadline-driven relative ages for the browser app.
 //!
 //! Ages used to be arithmetic done during render: a component read
 //! `Date::now()`, subtracted an instant, and spelled the difference. That makes
 //! the age a property of *when the frame happened* rather than of the thing
 //! being aged, so a lane the resident has stopped talking about keeps showing
-//! the span it had when its last frame arrived. The canvas looked idle because
+//! the span it had when its last frame arrived. The app looked idle because
 //! it was idle.
 //!
 //! Each relative label schedules only the next instant at which its visible
 //! spelling can change. A seconds-old message wakes each second, while a lease
 //! countdown wakes at the decreasing boundary for its displayed unit. Keeping
-//! that timer in the leaf avoids reconciling the complete canvas VDOM for every
+//! that timer in the leaf avoids reconciling the complete app VDOM for every
 //! relative label. The callback writes only a changed text node; any later Yew
 //! render computes that same text from the current clock. Dropping the effect
 //! cancels the pending browser timer and prevents the callback from rearming.

@@ -1,4 +1,4 @@
-//! Pages of work one Canvas team recently settled, read on demand.
+//! Pages of work one app team recently settled, read on demand.
 //!
 //! Each team keeps its own pages apart from the open board and from the
 //! global Work archive, so neither can evict the other. An open-board refresh

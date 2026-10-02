@@ -42,7 +42,7 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
-    /// Read durable global Canvas settings.
+    /// Read durable global app settings.
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.
     GlobalSettingsSet,
@@ -136,9 +136,9 @@ pub enum CommandKind {
     LaneRetune,
     /// Change the effort spelling one seated lane launches with.
     LaneEffortRetune,
-    /// Change the shared task-allocation lifetime of one Canvas team.
+    /// Change the shared task-allocation lifetime of one app team.
     TeamConfigure,
-    /// Rearrange the order of every Canvas team and the lanes each holds.
+    /// Rearrange the order of every app team and the lanes each holds.
     TeamArrange,
     /// Build one bounded continuity account from the current resident barrier.
     LaneRecall,

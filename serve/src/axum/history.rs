@@ -2,7 +2,7 @@
 //!
 //! Every socket's history requests cross one surface. At most
 //! [`HISTORY_READS`] scans run at once and the rest wait their turn in arrival
-//! order, so a second Canvas queues behind the first rather than multiplying
+//! order, so a second app queues behind the first rather than multiplying
 //! the work in flight. At most [`HISTORY_DEMAND`] requests are admitted and
 //! unanswered at all; a client pages one cursor per lane at a time, so only a
 //! surface saturated far beyond any team's lanes refuses one.

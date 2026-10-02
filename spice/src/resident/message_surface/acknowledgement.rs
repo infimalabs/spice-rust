@@ -327,7 +327,7 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
 /// The quoted context text for one answered directive.
 ///
 /// An ordinary directive retired by a positive acknowledgement carries the
-/// canonical ACK marker so Canvas can badge it inline; while the journal still
+/// canonical ACK marker so the app can badge it inline; while the journal still
 /// holds its key pending it carries the pending marker instead, so a spoken
 /// acknowledgment never reads as credit before steer::acked lands. A declined
 /// directive carries the NAK marker, because a refusal is an answer the
@@ -361,9 +361,9 @@ fn acknowledged_context_text(
 /// first line, which is the head the marker has always taken.
 ///
 /// Quotation is either a `>` block quote or a line that is exactly one
-/// structural quote link, which Canvas replaces with a block quote card.
+/// structural quote link, which the app replaces with a block quote card.
 ///
-/// The marker shares that line when it reads as paragraph text, so the Canvas
+/// The marker shares that line when it reads as paragraph text, so the app
 /// pill sits inline with the words the operator wrote. A line that opens
 /// another block (list, heading, table, fence, rule, or indented code) keeps
 /// its structure beneath a marker paragraph of its own. Either way the marker

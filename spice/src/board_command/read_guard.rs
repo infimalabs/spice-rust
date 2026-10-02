@@ -824,7 +824,7 @@ pub(super) fn read_board(
 
 /// The order the allocator would offer this board's work to a draining lane.
 ///
-/// The Canvas asks no particular lane, so the reader is a neutral seat: every
+/// The app asks no particular lane, so the reader is a neutral seat: every
 /// active claim is a peer's, no subscription narrows the creator team, and no
 /// locality history moves the band. Each step is `task next`'s own choice.
 pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::TaskStamp> {

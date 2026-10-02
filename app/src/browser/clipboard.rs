@@ -1,10 +1,10 @@
-//! The Canvas's one route to the platform clipboard, for text and for images,
+//! The app's one route to the platform clipboard, for text and for images,
 //! and the one way a browser refusal becomes operator text.
 //!
 //! The async Clipboard API is reached reflectively: `web-sys` gates it behind
 //! an unstable-API flag that would have to be set for the whole build.
 //! Browsers expose it, and `ClipboardItem`, only to secure contexts, so a
-//! Canvas opened over plain http by a LAN address has neither, even though the
+//! app opened over plain http by a LAN address has neither, even though the
 //! same resident on `localhost` keeps both.
 
 use wasm_bindgen::JsCast as _;

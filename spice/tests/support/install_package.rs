@@ -254,7 +254,7 @@ impl PackageFixture {
         self.app
             .iter()
             .find_map(|(candidate, bytes)| (candidate == file).then_some(bytes.as_slice()))
-            .expect("package fixture carries every Canvas file")
+            .expect("package fixture carries every app file")
     }
 }
 

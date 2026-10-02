@@ -324,7 +324,7 @@ struct QuotaLevel<'a> {
 }
 
 impl QuotaLevel<'_> {
-    /// SVG geometry attributes, unlike inline style, survive Canvas's
+    /// SVG geometry attributes, unlike inline style, survive the app's
     /// `style-src 'self'` policy.
     fn render(&self) -> Html {
         let mut surface = 100.0;

@@ -1,4 +1,4 @@
-//! Same-generation reconnect coverage for a packed Canvas fact backlog.
+//! Same-generation reconnect coverage for a packed app fact backlog.
 
 use app::{AppRuntime, Session, StreamDirective};
 use wire::{CanonicalUuid, Seq, StreamFrame, ViewSubject};

@@ -1097,11 +1097,11 @@ mod declared_source_tests {
         let fixture = crate::test_repository::Fixture::repository("moved-package-successor");
         let base_root = fixture.join("base");
         let current_root = fixture.join("current");
-        let base = inventory(&base_root, package(&base_root, "canvas", "canvas"));
+        let base = inventory(&base_root, package(&base_root, "legacy", "legacy"));
         let mut current = inventory(&current_root, package(&current_root, "serve", "serve"));
         let changes = [
-            "canvas/Cargo.toml".to_owned(),
-            "canvas/src/lib.rs".to_owned(),
+            "legacy/Cargo.toml".to_owned(),
+            "legacy/src/lib.rs".to_owned(),
             "serve/Cargo.toml".to_owned(),
             "serve/src/lib.rs".to_owned(),
         ];
@@ -1114,7 +1114,7 @@ mod declared_source_tests {
         assert_eq!(
             current
                 .moved_package_roots
-                .get(&current_root.join("canvas")),
+                .get(&current_root.join("legacy")),
             Some(&current.packages[0].id),
         );
     }

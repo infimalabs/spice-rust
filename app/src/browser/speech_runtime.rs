@@ -1,4 +1,4 @@
-//! Canvas speech playback: the queue and controller one page drives, the
+//! App speech playback: the queue and controller one page drives, the
 //! controls agent panels speak and narrate through, and the page lifecycle
 //! hooks that stop or abandon playback.
 

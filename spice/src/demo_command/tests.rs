@@ -270,7 +270,7 @@ fn non_utf8_executable_refuses_before_the_demo_root_exists() {
 }
 
 #[test]
-fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
+fn native_app_stream_begins_live_and_reads_seeded_lane_task() {
     let scratch = Scratch::new("browser");
     let root = scratch.child("browser-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
@@ -332,7 +332,7 @@ fn gate_environment(name: &str) -> (Scratch, Environment) {
 /// of whether the launcher runs; swapping those arguments therefore makes the
 /// `--open` assertion fail promptly instead of leaving the plain case resident.
 #[test]
-fn parsed_demo_open_flag_reaches_the_canvas_gate() {
+fn parsed_demo_open_flag_reaches_the_app_gate() {
     let control = RunControl {
         signals: false,
         interrupt_after_launch: true,

@@ -445,7 +445,7 @@ fn direction_card<'a>(
 
 /// Jobs shown before the table scrolls. `.team-job-scroll` in work.css caps
 /// the table at this many rows plus half the next (`--team-job-visible`); keep
-/// the two equal. Canvas's `style-src 'self'` refuses an inline value.
+/// the two equal. The app's `style-src 'self'` refuses an inline value.
 const KEPT_JOBS_VISIBLE: usize = 5;
 
 /// Every command the team's members keep, oldest first, one keyed row each.

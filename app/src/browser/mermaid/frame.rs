@@ -1,5 +1,5 @@
 //! Only this boundary talks to the opaque renderer. SVG is decoded as an image;
-//! neither its elements nor its styles enter the Canvas document.
+//! neither its elements nor its styles enter the app document.
 
 use std::rc::Rc;
 

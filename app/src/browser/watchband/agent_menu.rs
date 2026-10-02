@@ -1,7 +1,7 @@
 //! One agent's lane menu: opening it swaps the lane's composer for a compact
 //! panel carrying every per-agent control and fact for that seat.
 //!
-//! Canvas menus replace the surface they belong to rather than float over
+//! App menus replace the surface they belong to rather than float over
 //! it, so the panel takes over the shard below its heading, scrolls within
 //! it, and leaves the menu button in place to close it again. Escape and a
 //! click elsewhere in the team also close it.

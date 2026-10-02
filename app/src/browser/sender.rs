@@ -1,4 +1,4 @@
-//! Admission of Canvas actions and composer submissions into the outbound
+//! Admission of app actions and composer submissions into the outbound
 //! mailbox, and the refusal each rejected admission reports.
 
 use std::cell::RefCell;

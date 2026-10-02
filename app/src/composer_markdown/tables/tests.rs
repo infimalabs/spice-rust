@@ -8,7 +8,7 @@ fn aligned_table_cells_carry_alignment_without_an_inline_style() {
 
     assert!(
         !rendered.html.contains("style="),
-        "Canvas style-src refuses inline styles: {}",
+        "app style-src refuses inline styles: {}",
         rendered.html
     );
     assert_eq!(

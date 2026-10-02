@@ -1,4 +1,4 @@
-//! Canvas publication and the resident's live surface loop.
+//! App publication and the resident's live surface loop.
 mod capabilities;
 mod input;
 
@@ -578,7 +578,7 @@ async fn drive_surface(
             // Every reconciliation sweep asks the supervisor door itself, so
             // selecting another ready source first cannot lose an ending.
             // Rotate the three inputs that can remain ready continuously.
-            // Record turns own both durable accounting and Canvas publication.
+            // Record turns own both durable accounting and app publication.
             input = input::next(
                 &mut input_lead,
                 supervisor_reports.recv(),
@@ -1267,7 +1267,7 @@ fn accept_commit(
 
 /// Follow every commit with the cards that spoke an acknowledgement ahead of
 /// the journal, so any committed retirement re-presents its card from the
-/// journal disposition. Canvas being unavailable is a
+/// journal disposition. The app being unavailable is a
 /// diagnostic, as it is for live publication, not a resident fault.
 fn settle_spoken_acknowledgements(
     bus: &Bus,

@@ -1,4 +1,4 @@
-//! The resident lane topology as Canvas folds it: teams, their members, and
+//! The resident lane topology as the app folds it: teams, their members, and
 //! the status a member tile reports.
 
 use std::collections::BTreeMap;
@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use wire::CanonicalUuid;
 use wire::intent::{LaneAnswer, LaneLiveness};
 
-/// Capability-free lane snapshot fields used by the canvas.
+/// Capability-free lane snapshot fields used by the app.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneView {
     /// Resident generation that owns these rows.
@@ -71,7 +71,7 @@ impl LaneView {
     }
 }
 
-/// One Canvas lane: a team and every independently steerable member in it.
+/// One app lane: a team and every independently steerable member in it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
     /// Stable team identity.
@@ -82,7 +82,7 @@ pub struct LaneRow {
     pub members: Vec<LaneMember>,
 }
 
-/// One independently steerable worktree and occupant inside a Canvas lane.
+/// One independently steerable worktree and occupant inside an app lane.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneMember {
     pub lane: CanonicalUuid,

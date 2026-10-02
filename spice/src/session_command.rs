@@ -24,7 +24,7 @@ use model::Report;
 ///
 /// The resident uses this same path law to recover structured events that the
 /// vendor's selected stdout stream does not carry. Keeping resolution here
-/// prevents Canvas from growing a second interpretation of vendor homes,
+/// prevents the app from growing a second interpretation of vendor homes,
 /// state indexes, or transcript search precedence.
 pub(crate) fn vendor_thread_transcript(
     thread: &str,

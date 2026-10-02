@@ -167,7 +167,7 @@ fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
         Form::Text
     };
     let mut arguments = std::env::args_os().collect::<Vec<_>>();
-    let test_canvas_stage = match extract_test_canvas_stage(&mut arguments) {
+    let test_app_stage = match extract_test_app_stage(&mut arguments) {
         Ok(selected) => selected,
         Err(fault) => deliver(&Outcome::<()>::Fault(fault), bootstrap_form),
     };
@@ -202,12 +202,12 @@ fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
             (mounts, matches)
         }
     };
-    (mounts, matches, test_canvas_stage)
+    (mounts, matches, test_app_stage)
 }
 
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
-    let (mounts, matches, test_canvas_stage) = bootstrap_invocation();
+    let (mounts, matches, test_app_stage) = bootstrap_invocation();
     #[cfg(target_arch = "wasm32")]
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
@@ -255,8 +255,8 @@ fn main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
-        resident_up(leaf, form, test_canvas_stage);
-    } else if test_canvas_stage {
+        resident_up(leaf, form, test_app_stage);
+    } else if test_app_stage {
         deliver_fault(
             Fault {
                 class: FaultClass::Environment,
@@ -276,7 +276,7 @@ fn main() {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
-fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
+fn extract_test_app_stage(arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
     let mut occurrences = 0;
     arguments.retain(|argument| {
         if argument == spice::install::TEST_APP_STAGE_ARGUMENT {
@@ -297,7 +297,7 @@ fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Faul
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
-const fn extract_test_canvas_stage(_arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
+const fn extract_test_app_stage(_arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
     Ok(false)
 }
 

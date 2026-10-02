@@ -36,7 +36,7 @@ pub(super) fn read_report(
             "a continuation must retain the first answer's pin",
         );
     }
-    let heads = match bus.canvas_heads() {
+    let heads = match bus.app_heads() {
         Ok(heads) => heads,
         Err(error) => return store_fault("report::authority-unreadable", &error.to_string()),
     };

@@ -210,7 +210,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     assert_eq!(
         wire::media::parse_markdown(&display),
         [Ok(media.clone())],
-        "Canvas display must recover the original image",
+        "app display must recover the original image",
     );
     bus.verify()
         .expect("published directive authority verifies");
