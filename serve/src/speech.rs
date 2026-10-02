@@ -140,14 +140,19 @@ impl SpeechConfig {
         self.words_per_minute
     }
 
-    /// Exact external argv with the one documented rate slot resolved.
+    /// Exact external argv with the documented `{words_per_minute}` and
+    /// `{voice}` slots resolved, so one machine-local renderer speaks each
+    /// worktree's own `say.voice`.
     #[must_use]
     pub fn resolved_command(&self) -> Option<Vec<String>> {
         let rate = self.words_per_minute.to_string();
         self.command().map(|command| {
             command
                 .iter()
-                .map(|word| word.replace("{words_per_minute}", &rate))
+                .map(|word| {
+                    word.replace("{words_per_minute}", &rate)
+                        .replace("{voice}", &self.voice)
+                })
                 .collect()
         })
     }
@@ -347,13 +352,22 @@ mod tests {
 
         let external: SpeechConfig = toml::from_str(concat!(
             "backend = 'external'\n",
-            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}']\n",
+            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}', '-v', '{voice}']\n",
+            "voice = 'en-us {words_per_minute}'\n",
             "content_type = 'audio/wav'\n",
         ))
         .expect("external backend is admitted");
         assert_eq!(
             external.resolved_command().expect("configured command"),
-            ["espeak-ng", "--stdout", "-s", "175"]
+            [
+                "espeak-ng",
+                "--stdout",
+                "-s",
+                "175",
+                "-v",
+                "en-us {words_per_minute}"
+            ],
+            "each slot resolves once from its own value"
         );
     }
 
