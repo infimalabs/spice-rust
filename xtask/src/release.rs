@@ -479,7 +479,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         }
         if read_lane_app_bundle(self.root)? != *app {
             return Err(BuildError::new(
-                "Canvas generation changed between embedding and native commands",
+                "app generation changed between embedding and native commands",
             ));
         }
         let native = self.run(CommandSpec::new(

@@ -251,7 +251,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                 {controls}
                 <div class="work-map-problem" role="alert">
                     <h3>{"Relationship map unavailable"}</h3>
-                    <p>{"This Canvas capability does not offer task::relations."}</p>
+                    <p>{"This capability does not offer task::relations."}</p>
                 </div>
             </div>
         };

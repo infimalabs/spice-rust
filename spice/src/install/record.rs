@@ -195,7 +195,7 @@ impl InstallRecord {
         self.remove_test_operations(repository, &assets, app.as_ref())?;
         let app_root = repository.common_dir().join(".spice-install/app");
         fs::remove_dir_all(&app_root).map_err(|source| {
-            InstallError::io("remove future Canvas test assets", app_root, source)
+            InstallError::io("remove future app test assets", app_root, source)
         })?;
         for relative in [
             ".spice-install/hooks/shell",

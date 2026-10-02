@@ -592,7 +592,7 @@ fn apply_lane_response(
                 settle: None,
             });
     } else if let Some(issue) = outcome_issue(
-        "Agent woke, but Canvas could not confirm fresh residency",
+        "Agent woke, but spice could not confirm fresh residency",
         &admitted.get().outcome,
     ) {
         for lane in &wake_lanes {

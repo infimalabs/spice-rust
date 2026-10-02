@@ -42,7 +42,7 @@ pub(super) fn capability_request(
         Err(_) => {
             return Err(protocol_fault(
                 "canvas::request-invalid",
-                "canvas endpoint cannot form the current socket request",
+                "app endpoint cannot form the current socket request",
             ));
         }
     };
@@ -55,7 +55,7 @@ pub(super) fn capability_request(
         Err(_) => {
             return Err(protocol_fault(
                 "canvas::origin-invalid",
-                "canvas endpoint cannot form the current socket origin",
+                "app endpoint cannot form the current socket origin",
             ));
         }
     };
@@ -151,13 +151,13 @@ pub(super) fn endpoint_authority(endpoint: &str) -> Result<&str, Fault> {
     let Some(authority) = endpoint.strip_prefix("http://") else {
         return Err(protocol_fault_value(
             "canvas::endpoint-invalid",
-            "canvas endpoint is not the current HTTP origin",
+            "app endpoint is not the current HTTP origin",
         ));
     };
     if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
         return Err(protocol_fault_value(
             "canvas::endpoint-invalid",
-            "canvas endpoint contains more than one socket authority",
+            "app endpoint contains more than one socket authority",
         ));
     }
     Ok(authority)
@@ -177,7 +177,7 @@ pub(super) fn dialable_endpoint(endpoint: &str) -> Result<(&str, SocketAddr), Fa
         Ok(address) => Ok((authority, address)),
         Err(_) => Err(protocol_fault_value(
             "canvas::endpoint-invalid",
-            "canvas discovery does not name one socket authority",
+            "resident discovery does not name one socket authority",
         )),
     }
 }

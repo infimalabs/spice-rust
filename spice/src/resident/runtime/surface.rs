@@ -167,7 +167,7 @@ async fn start_surface<'a>(
     let message_publisher = server.message_publisher().ok_or_else(|| {
         environment_fault(
             "canvas::message-surface-unavailable",
-            "the streaming canvas server has no transcript activity publisher",
+            "the streaming app server has no transcript activity publisher",
         )
     })?;
     let (shutdown, stopped) = oneshot::channel();
@@ -205,7 +205,7 @@ fn announce_started_surface(
     endpoint: &mut dyn io::Write,
     progress: &mut dyn io::Write,
 ) {
-    let _ = writeln!(progress, "canvas app source: {app_description}");
+    let _ = writeln!(progress, "app source: {app_description}");
     announce_canvas(
         &paths.canvas,
         token,
@@ -524,10 +524,10 @@ pub(in crate::resident) fn announce_canvas(
     let _ = match result {
         Ok(opened) => writeln!(
             announcement,
-            "canvas endpoint: {}",
+            "app endpoint: {}",
             canvas_opening(&opened.endpoint, auth_token)
         ),
-        Err(fault) => writeln!(diagnostic, "canvas unavailable: {}", fault.reason),
+        Err(fault) => writeln!(diagnostic, "app unavailable: {}", fault.reason),
     };
 }
 
@@ -1382,7 +1382,7 @@ pub(in crate::resident) async fn dispatch_control(
     request: Option<canvas::axum::ControlRequest>,
 ) -> CommandResult<ControlDispatch> {
     let request = request.ok_or_else(|| {
-        environment_fault("canvas::control-closed", "canvas control receiver closed")
+        environment_fault("canvas::control-closed", "app control receiver closed")
     })?;
     let replayed = command_surface.replay(seats, request.command());
     let is_replay = replayed.is_some();

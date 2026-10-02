@@ -389,7 +389,7 @@ pub(super) fn server_outcome(
     served: Result<Result<(), io::Error>, tokio::task::JoinError>,
 ) -> Outcome<()> {
     match served {
-        Ok(Ok(())) => environment_fault("canvas::stopped", "canvas server stopped early"),
+        Ok(Ok(())) => environment_fault("canvas::stopped", "app server stopped early"),
         Ok(Err(error)) => environment_fault("canvas::serve-failed", &error.to_string()),
         Err(error) => environment_fault("canvas::task-failed", &error.to_string()),
     }

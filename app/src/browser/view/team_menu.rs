@@ -366,7 +366,7 @@ fn render_version_footer(
         }
         update_rows.extend([
             format!("Loaded app generation: {}", update.loaded_generation),
-            format!("Available Canvas protocol: {}", update.version),
+            format!("Available app protocol: {}", update.version),
             format!("Served app generation: {}", update.generation),
         ]);
         let update_identity = update_rows.join("\n");
@@ -444,7 +444,7 @@ fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentat
         format!("Native binary: {}", identity.version.binary),
         format!("Wire schema: {}", identity.version.wire),
         format!("Journal schema: {}", identity.version.journal),
-        format!("Canvas protocol: {}", identity.version.canvas),
+        format!("App protocol: {}", identity.version.canvas),
         format!("Loaded app generation: {}", identity.loaded_app),
     ];
     if identity.loaded_app != identity.version.app {
@@ -468,7 +468,7 @@ fn render_theme_selector() -> Html {
         <div
             class="canvas-control-rail canvas-theme-selector"
             role="group"
-            aria-label="Canvas theme"
+            aria-label="Theme"
             data-selected-theme={selected.clone()}
         >
             <span class="canvas-theme-thumb" aria-hidden="true"></span>

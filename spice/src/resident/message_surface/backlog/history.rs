@@ -73,7 +73,7 @@ pub(super) fn history_tail(
 
 pub(super) fn history_tail_error(error: listen::ScanError) -> String {
     if matches!(error, listen::ScanError::SourceChanged { .. }) {
-        "the transcript source changed after Canvas bootstrap".to_owned()
+        "the transcript source changed after app bootstrap".to_owned()
     } else {
         error.to_string()
     }

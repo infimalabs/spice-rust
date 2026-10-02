@@ -64,7 +64,7 @@ included a second top-level effective-policy digest. Its receipts remain stored
 for audit but cannot match a current key, and readers perform no legacy fallback
 lookup.
 
-Cacheable Cargo and Canvas actions contain no branch, commit, merge-base, or
+Cacheable Cargo and app actions contain no branch, commit, merge-base, or
 mainline identity. A receipt first produced on a divergent branch that is never
 merged remains reusable by another branch or linked worktree when every action
 input is equal. Repository history is an input only for rows classified as
@@ -101,12 +101,12 @@ are excluded from compiler environments. Arbitrary build inputs and native
 compiler/tool paths remain retained.
 
 Only the proof-aware runner may publish `PassReceipt` objects and action-index
-entries. A shell transcript, Canvas text marker, arbitrary `cargo test` output,
+entries. A shell transcript, app text marker, arbitrary `cargo test` output,
 exit status copied from another process, or a hand-written receipt is not proof
 because it does not establish the immutable source, declaration, command,
 environment, tool, and result as one execution.
 
-Canvas compilation remains a native gate action. The process-backed browser
+App compilation remains a native gate action. The process-backed browser
 suite and its build/shard proof actions are removed; there is no browser action
 registry or legacy marker admission path. Disposable browser experiments can
 validate the actual UI, but cannot publish trusted commit receipts. Such an
@@ -304,7 +304,7 @@ without a declaration, because nothing it could have been compiled by remains.
 | `local-paths` | cacheable | reached paths and local-path policy |
 | `taste` | cacheable | reached text, taste policy and parser declaration |
 | `rust-typecheck` | cacheable | Cargo closure, manifest and lockfile, closed build-script/proc-macro file, environment, and generated-output derivations, Rust toolchain, exact command and environment |
-| `canvas-web-typecheck` | cacheable | Canvas TypeScript closure, package lock, Node tool identity, exact command and environment |
+| `canvas-web-typecheck` | cacheable | App TypeScript closure, package lock, Node tool identity, exact command and environment |
 | `javascript-unused` | cacheable | JavaScript dependency closure, parser and policy |
 | `csharp-unused-candidates` | cacheable | C# dependency closure, parser and policy |
 | `python-typecheck` | cacheable | Python dependency closure, interpreter and policy |

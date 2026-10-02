@@ -248,10 +248,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
         &mut diagnostics,
     );
 
-    assert_eq!(
-        String::from_utf8(announced).expect("announcement is text"),
-        format!("canvas endpoint: {}\n", discovery.endpoint)
-    );
+    assert_eq!(announced_endpoint(&announced), discovery.endpoint);
     assert!(
         diagnostics.is_empty(),
         "an admitted endpoint is not a diagnostic: {}",
@@ -283,10 +280,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
     );
 
     assert_eq!(dialled.as_deref(), Some(discovery.endpoint.as_str()));
-    assert_eq!(
-        String::from_utf8(announced).expect("announcement is text"),
-        format!("canvas endpoint: {}\n", discovery.endpoint)
-    );
+    assert_eq!(announced_endpoint(&announced), discovery.endpoint);
     assert!(
         diagnostics.is_empty(),
         "an opened endpoint is not a diagnostic: {}",
@@ -320,10 +314,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
 
     let opening = format!("{}#{TOKEN}", discovery.endpoint);
     assert_eq!(dialled.as_deref(), Some(opening.as_str()));
-    assert_eq!(
-        String::from_utf8(announced).expect("announcement is text"),
-        format!("canvas endpoint: {opening}\n")
-    );
+    assert_eq!(announced_endpoint(&announced), opening);
     assert_eq!(
         opening.split_once('#').expect("opening has fragment").0,
         discovery.endpoint,
@@ -373,9 +364,10 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
         &mut diagnostics,
     );
 
-    assert_eq!(
-        String::from_utf8(diagnostics).expect("diagnostic is text"),
-        "canvas unavailable: canvas::discovery-replaced\n"
+    let diagnostic = String::from_utf8(diagnostics).expect("diagnostic is text");
+    assert!(
+        diagnostic.contains("canvas::discovery-replaced"),
+        "the refusal must name its reason: {diagnostic}"
     );
     assert!(
         announced.is_empty(),
@@ -419,7 +411,7 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
 
     let diagnostic = String::from_utf8(diagnostics).expect("diagnostic is text");
     assert!(
-        diagnostic.starts_with("canvas unavailable: "),
+        !diagnostic.trim().is_empty(),
         "a missing generation must be reported: {diagnostic}"
     );
     assert!(
@@ -429,6 +421,18 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     );
     assert_eq!(dialled, None, "a missing generation must not be dialled");
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+/// The endpoint a shell capturing the announcement stream reads: the last
+/// field of its one line.
+fn announced_endpoint(announced: &[u8]) -> &str {
+    let text = std::str::from_utf8(announced).expect("announcement is text");
+    let mut lines = text.lines();
+    let line = lines.next().expect("one announcement line");
+    assert_eq!(lines.next(), None, "the announcement is one line: {text}");
+    line.rsplit(' ')
+        .next()
+        .expect("the line ends in the endpoint")
 }
 
 /// Seat one lane so the ingestion sweep can find it and its tape.

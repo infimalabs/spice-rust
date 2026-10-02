@@ -130,13 +130,13 @@ fn admit_canvas(observed: Option<CanvasVersion>) -> Result<(), Fault> {
         detail: observed.map_or_else(
             || {
                 format!(
-                    "bootstrap carried no canvas protocol; this build speaks {}",
+                    "bootstrap carried no app protocol; this build speaks {}",
                     CanvasVersion::CURRENT
                 )
             },
             |observed| {
                 format!(
-                    "bootstrap carried canvas protocol {observed}; this build speaks {}",
+                    "bootstrap carried app protocol {observed}; this build speaks {}",
                     CanvasVersion::CURRENT
                 )
             },

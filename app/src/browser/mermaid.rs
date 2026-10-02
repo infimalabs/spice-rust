@@ -34,7 +34,7 @@ impl Theme {
         match theme.as_deref() {
             Some("light") => Ok(Self::Light),
             Some("dark") => Ok(Self::Dark),
-            _ => Err("Canvas effective theme is unavailable".into()),
+            _ => Err("Effective theme is unavailable".into()),
         }
     }
 }
@@ -85,7 +85,7 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
         move |()| {
             let observation = ThemeObservation::new(theme.clone());
             if observation.is_err() {
-                theme.set(Err("Could not observe the Canvas theme".into()));
+                theme.set(Err("Could not observe the theme".into()));
             }
             move || drop(observation)
         }
@@ -125,7 +125,7 @@ impl ThemeObservation {
         let root = web_sys::window()
             .and_then(|window| window.document())
             .and_then(|document| document.document_element())
-            .ok_or("No Canvas root")?;
+            .ok_or("No document root")?;
         let callback = Closure::new(move |_: js_sys::Array, _: web_sys::MutationObserver| {
             theme.set(Theme::read());
         });

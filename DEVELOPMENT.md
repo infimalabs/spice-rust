@@ -36,7 +36,7 @@ internals.
 | --- | --- | --- |
 | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | Tracked compiler and dependency contract. | Repair and commit; never regenerate blindly. |
 | `spice-rust.toml`, `baseline.toml`, `gate/src/battery/manifest.toml` | Tracked configuration, ratchet, and gate inventory. | Change with the owning compiled registry/tests. |
-| `dist/stage-app/`, `dist/.stage-app-build-*` | Ignored atomic Canvas generations owned by `spice dev xtask -- app`. | Rebuild through that command; do not edit a generation. |
+| `dist/stage-app/`, `dist/.stage-app-build-*` | Ignored atomic app generations owned by `spice dev xtask -- app`. | Rebuild through that command; do not edit a generation. |
 | `dist/stage/{objects,targets}/` | Ignored content-addressed release staging owned by `spice dev xtask -- stage-target TARGET`. | Re-stage from tracked source and pins. |
 | `target/` and configured CargoBuild roots | Rebuildable compiler/test caches. | Use the bounded cleanup rules below. |
 | Proof/browser artifacts and old `node_modules/` directories | Ignored experiment output or local tooling, not source or a managed dependency generation. | Follow the artifact owner's cleanup rules. Disposable browser experiments supply their own tooling; this repository has no npm install contract. |
@@ -56,9 +56,9 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 | Package integration targets | Public seams and policy contracts. | `spice dev cargo -- test --locked -p PACKAGE --test TARGET`; package verification uses ordinary Cargo all-targets test selection. |
 | Doctests | Public API examples and compile-time documentation contracts. | `spice dev cargo -- test --locked -p PACKAGE --doc`. |
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
-| Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
-| Canvas pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
-| Canvas browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and remove the experiment. |
+| App-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
+| App pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
+| Browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and remove the experiment. |
 | Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
@@ -83,7 +83,7 @@ Use that boundary in this order:
 2. During edits, run `spice dev cargo -- check --locked -p PACKAGE` and
    an exact test. Add direct downstream packages for public-seam changes.
 3. At a checkpoint, run formatting and `spice dev xtask -- verify --package PACKAGE`.
-   Add the owning app, Canvas, proof, or staging command for its seam.
+   Add the owning app, proof, or staging command for its seam.
 4. Stage the change and run `spice gate prove`. Generate a named miss with
    `spice gate prove ACTION`, or every miss with `spice gate prove --missing`.
    Proof, bare `spice gate`, and `spice gate selection` show progress and a
@@ -100,13 +100,13 @@ Use that boundary in this order:
 Keep checks scoped while peers compile. The package verifier serializes its
 three one-job Cargo children; do not widen the slice.
 
-Canvas compilation remains part of staged gate selection when the source reach
+App compilation remains part of staged gate selection when the source reach
 requires it. Actual browser interaction evidence is disposable feedback, not a
 reusable browser-shard receipt.
 
 ## Subsystem guides
 
-- Canvas browser checks and Firefox latency profiling:
+- Browser checks and Firefox latency profiling:
   [`app/BROWSER.md`](app/BROWSER.md).
 - `spice dev report-page` and the `spice dev xtask -- report` study:
   [`xtask/REPORT.md`](xtask/REPORT.md).

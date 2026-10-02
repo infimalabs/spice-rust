@@ -636,7 +636,7 @@ fn add_canvas(
             total,
             entry,
             path,
-            &format!("staged Canvas asset {path}"),
+            &format!("staged app asset {path}"),
         )?;
     }
     Ok(())
@@ -833,7 +833,7 @@ fn package_bytes(
         .eq(first_canvas)
     {
         return Err(PackageFailure::Moved(
-            "release manifest targets disagree on Canvas inventory".to_owned(),
+            "release manifest targets disagree on app inventory".to_owned(),
         ));
     }
     let targets = manifest

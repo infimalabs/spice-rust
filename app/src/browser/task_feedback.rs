@@ -34,7 +34,7 @@ impl PendingFeedback {
             }
             Self::Closing { subject, .. } => format!("Closing {subject}…").into(),
             Self::Reconnecting { .. } => {
-                "Showing admitted detail while reconnecting. Updates and observations will resume when Canvas reconnects.".into()
+                "Showing admitted detail while reconnecting. Updates and observations will resume when spice reconnects.".into()
             }
             Self::DetailRefresh { .. } => {
                 "Refreshing task evidence without closing this detail.".into()

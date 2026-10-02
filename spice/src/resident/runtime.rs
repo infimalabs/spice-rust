@@ -635,7 +635,7 @@ fn installed_app_refusal(error: spice::install::InstallError) -> Outcome<()> {
             "canvas::installed-app-refused".to_owned(),
             Some("installed-canvas-generation".to_owned()),
             Some(
-                "one complete current receipt-owned Canvas generation matching this Spice binary"
+                "one complete current receipt-owned app generation matching this Spice binary"
                     .to_owned(),
             ),
             Some(observed.clone()),

@@ -180,7 +180,7 @@ impl AsyncWrite for ClosingStream {
 fn connection_closed() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::BrokenPipe,
-        "canvas connection closed with the resident",
+        "app connection closed with the resident",
     )
 }
 

@@ -24,9 +24,9 @@ use super::rust::{make_cache_writable, synchronize_source};
 use crate::held_root::{held_root_lock, hold, remove_held_root};
 
 /// How the canvas arm names itself in a refusal, and names its lock.
-const CANVAS_LABEL: &str = "canvas analysis workspace";
+const CANVAS_LABEL: &str = "app analysis workspace";
 const CANVAS_LOCK: &str = "canvas-analysis-workspace";
-pub(in crate::toolchain) const CANVAS_SOURCE_LABEL: &str = "canvas analysis source cache";
+pub(in crate::toolchain) const CANVAS_SOURCE_LABEL: &str = "app analysis source cache";
 pub(in crate::toolchain) const CANVAS_SOURCE_LOCK: &str = "canvas-analysis-source-cache";
 const CANVAS_SOURCE_DIRECTORY: &str = "target/xtask-app-source";
 
@@ -53,7 +53,7 @@ impl<'a> CanvasWorkspace<'a> {
     ) -> Result<Self, String> {
         let Some(name) = selected.file_name() else {
             return Err(format!(
-                "canvas selected tree {selected:?} has no name for an analysis workspace"
+                "app selected tree {selected:?} has no name for an analysis workspace"
             ));
         };
         let mut workspace_name = name.to_os_string();

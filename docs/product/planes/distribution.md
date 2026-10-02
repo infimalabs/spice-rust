@@ -134,7 +134,7 @@ preparation does not infer task ownership from the board.
 A release has exactly two target payloads, in canonical order: the native
 `aarch64-apple-darwin` Apple Silicon appliance and the static
 `x86_64-unknown-linux-musl` appliance. Each receipt-free payload binds its schema,
-target, source identity, complete Canvas generation, native executable, complete
+target, source identity, complete app generation, native executable, complete
 build pins, and ordered artifact inventory. The detached receipt separately binds
 the environment that actually ran proof: the Linux receipt's OCI identity must
 match the payload's proof-container pin, while the Darwin receipt binds the
@@ -379,10 +379,10 @@ receipt-owned operations; a moved digest refuses before mutation.
 development refresh, may carry that prepared plan into apply instead of deriving
 it again. Before any mutation it still proves the receipt is the exact native
 generation and image the plan was derived from, every published source byte and
-the source Canvas generation, and every destination binding and installed
+the source app generation, and every destination binding and installed
 image. Any change refuses before effect. Digest-only apply always derives again.
 
-**Invariant —** Installed Canvas history is bounded. A plan publishes its
+**Invariant —** Installed app history is bounded. A plan publishes its
 current generation and an ordered inventory of at most two predecessors, oldest
 first. A refresh retains the installed current generation and the newest
 installed predecessors within that bound. Every other installed generation

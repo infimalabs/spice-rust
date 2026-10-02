@@ -55,7 +55,7 @@ pub struct CanvasVersionParseError;
 impl std::fmt::Display for CanvasVersionParseError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(
-            "Canvas version must be a canonical unsigned decimal integer without padding",
+            "app protocol version must be a canonical unsigned decimal integer without padding",
         )
     }
 }

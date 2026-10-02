@@ -112,11 +112,11 @@ spice gate prove
 Inspection never runs missing work. Follow its exact remediation with
 `spice gate prove ACTION`, or generate all current misses with
 `spice gate prove --missing`, then use the normal `git commit` path. Only the
-proof runner publishes trusted receipts; ad hoc Cargo, Canvas, or shell output
+proof runner publishes trusted receipts; ad hoc Cargo, app, or shell output
 is useful feedback but is not reusable commit evidence. A trust refusal remains
 an operator boundary and is never bypassed by proof generation.
 
-Canvas keeps its Rust checks and production app compiler. Browser interactions
+The browser app keeps its Rust checks and production compiler. Browser interactions
 are verified with disposable actual-surface experiments, not a permanent
 process-backed suite or browser-shard proof actions. See
 [Gate evidence](docs/product/planes/gate-evidence.md) for the receipt and cache

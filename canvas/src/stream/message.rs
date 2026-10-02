@@ -1084,12 +1084,12 @@ impl fmt::Display for MessagePublishError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidMedia(error) => {
-                write!(formatter, "canvas message media is invalid: {error}")
+                write!(formatter, "message media is invalid: {error}")
             }
             Self::InvalidClassifications => {
-                formatter.write_str("canvas message classifications are invalid")
+                formatter.write_str("message classifications are invalid")
             }
-            Self::Unavailable => formatter.write_str("canvas message retention is unavailable"),
+            Self::Unavailable => formatter.write_str("message retention is unavailable"),
             Self::IdentityConflict => {
                 formatter.write_str("a transcript event identity named different message content")
             }

@@ -217,7 +217,7 @@ release pipeline. Before either command changes repository authority, the
 installed appliance verifies the package index, two-target manifest, payloads,
 proof receipts, artifact identities, modes, and current platform. It stages
 only the admitted package document, selected payload and executable, and shared
-Canvas files in one private production-shaped tree. The selected executable
+app files in one private production-shaped tree. The selected executable
 revalidates those staged bindings before deriving and applying the existing
 receipt-owned transaction with its embedded hooks and skill. Package acquisition
 never changes the `--unapply` path.
@@ -232,7 +232,7 @@ authority select the exact resident:
 ```
 
 The source-workspace refresh remains available to appliance developers.
-Publish the source-bound Canvas generation, then use one freshly built
+Publish the source-bound app generation, then use one freshly built
 executable for preview and apply:
 
 ```sh

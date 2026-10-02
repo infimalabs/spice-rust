@@ -945,7 +945,7 @@ async fn route_stream(
             Some(request.id()),
             wire::FaultClass::Environment,
             "stream::unavailable",
-            "this canvas socket has no resident Bus stream",
+            "this app socket has no resident Bus stream",
         );
         send_encoded(socket, &frame).await;
         return SessionFlow::Continue;

@@ -229,10 +229,7 @@ fn restore_agent_messages_with(
             }
             Ok(None) => {}
             Err(error) => {
-                let _ = writeln!(
-                    diagnostic,
-                    "canvas backlog unavailable for lane {lane}: {error}",
-                );
+                let _ = writeln!(diagnostic, "backlog unavailable for lane {lane}: {error}",);
             }
         }
     }
@@ -470,7 +467,7 @@ impl DurableHistory {
             };
             Some(self.fill_tape_messages(lane, source, before, limit, newest)?)
         } else if source.source.is_some() {
-            return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
+            return Err("the transcript source disappeared after app bootstrap".to_owned());
         } else {
             None
         };
@@ -950,17 +947,14 @@ fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Wri
         Ok(_) => {
             let _ = writeln!(
                 diagnostic,
-                "canvas backlog unavailable for lane {lane}: {} is not a tape directory",
+                "backlog unavailable for lane {lane}: {} is not a tape directory",
                 tape.display(),
             );
             false
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(error) => {
-            let _ = writeln!(
-                diagnostic,
-                "canvas backlog unavailable for lane {lane}: {error}",
-            );
+            let _ = writeln!(diagnostic, "backlog unavailable for lane {lane}: {error}",);
             false
         }
     }
@@ -977,10 +971,7 @@ fn forget_changed_source(
         reader.state.previews.clear_lane(lane);
         reader.state.prose.remove(&lane);
     }
-    let _ = writeln!(
-        diagnostic,
-        "canvas backlog unavailable for lane {lane}: {error}",
-    );
+    let _ = writeln!(diagnostic, "backlog unavailable for lane {lane}: {error}",);
 }
 
 fn publish_scan(
@@ -1035,7 +1026,7 @@ fn publish_scan(
                     published = false;
                     let _ = writeln!(
                         diagnostic,
-                        "canvas backlog unavailable for lane {lane}: {}: {}",
+                        "backlog unavailable for lane {lane}: {}: {}",
                         fault.reason, fault.detail,
                     );
                 }

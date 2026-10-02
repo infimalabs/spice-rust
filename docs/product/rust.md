@@ -72,7 +72,7 @@ mint may therefore sort before the task it collided with; journal sequence and
 durable queue origin, not stamp order, remain creation chronology authority.
 
 Retained eight-character base-52 Unix-millisecond stamps remain readable in
-facts, heads, handles, CLI operands, origins, indexes, and Canvas presentation.
+facts, heads, handles, CLI operands, origins, indexes, and app presentation.
 They are never minted by current creation. Mixed-width equality, hashing, and
 ordered collections remain deterministic, but ordinary string order across
 codec generations or collision-adjusted current stamps is not creation
@@ -150,7 +150,7 @@ Authorities: [`vendor/src/omp.rs`](../../vendor/src/omp.rs),
 [`lane/src/capture.rs`](../../lane/src/capture.rs), and
 [`sill/src/spawn/capture.rs`](../../sill/src/spawn/capture.rs).
 
-Canvas reads those records back under per-dialect allowances. A bounded
+The app reads those records back under per-dialect allowances. A bounded
 startup or history window pays for its own bytes plus one boundary
 allowance: the tape index, then the longest record its dialect can land, so
 a window that begins inside a record retreats over the whole of it. OMP is
@@ -265,9 +265,9 @@ Authorities: [`spice/src/extension.rs`](../../spice/src/extension.rs),
 [`spice/src/cli.rs`](../../spice/src/cli.rs), and
 [`spice/src/cli/mounts.rs`](../../spice/src/cli/mounts.rs).
 
-## Canvas and transport
+## App and transport
 
-Rust/WASM owns Canvas; JS assets only render. `wire` owns DTOs. Epoch-bound,
+Rust/WASM owns the app; JS assets only render. `wire` owns DTOs. Epoch-bound,
 authenticated sockets carry bounded pages/retention and correlate requests.
 Paced retries and liveness probes recover half-open links; app generations are
 immutable. The Spice icon replaces the connection pip: gray when unhealthy,
@@ -295,7 +295,7 @@ tarball integrity, original members, renamed-file checksums, licenses and source
 revisions. Reproduce recorded filenames and original `dist/` path/basename
 import aliases. Builds use checked-in bytes; no runtime CDN/package requests.
 
-Pulldown-cmark owns `$...$` and `$$...$$` math. Canvas maps model-common
+Pulldown-cmark owns `$...$` and `$$...$$` math. The app maps model-common
 `\(...\)` and `\[...\]` delimiters onto that parser only when its first pass
 exposes both delimiters as prose; escaped text and inline or fenced code remain
 literal. KaTeX produces native MathML with system fonts. The renderer wraps it
@@ -304,7 +304,7 @@ markup in its DOM. Invalid TeX retains its authored source.
 
 [`mermaid.rs`](../../app/src/browser/mermaid.rs) owns a lazy, measurable,
 offscreen `allow-scripts` sandbox pinned to the **loaded page's** generation and
-effective Canvas theme. Protocol v3 checks window, origin, generation, render
+effective spice theme. Protocol v3 checks window, origin, generation, render
 kind, channel, request ID, revision and theme. Strict child security locks host
 configuration, never invokes click bindings, normalizes SVG namespaces and
 clears temporary nodes. The parent admits ≤8 MiB UTF-8 SVG as a base64 image,
@@ -483,7 +483,7 @@ through the current appliance.
 The current `0.0.0` product line uses receipt schema 16. Historical install
 support is schema-bounded: complete schemas 7, 8, 9, and 15 migrate directly to
 16, while schemas 1–6 and 10–14 must be unapplied by their named retired owner
-before the current installer proceeds. Installed Canvas history is bounded to
+before the current installer proceeds. Installed app history is bounded to
 the current generation and two ordered predecessors; older generations retire
 inside the refresh transaction.
 
@@ -524,7 +524,7 @@ exact manifest against the current clean commit and tree. The
 publication preview requires the manifest source to name the already-versioned
 release commit, then binds that manifest, package, notes, targets, and operations
 with the identical source and release commit.
-Runtime version surfaces (`spice --version`, `spice version`, and the Canvas
+Runtime version surfaces (`spice --version`, `spice version`, and the app
 menu footer) report the tracked version, with an installed pre-release extended
 by its source commit stamp. The version never carries the executable digest:
 the report's native-binary field names the running executable by its complete

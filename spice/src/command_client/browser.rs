@@ -87,5 +87,5 @@ pub(super) fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> 
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(super) fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
-    Err("canvas browser launch is unsupported on this build target".to_owned())
+    Err("browser launch is unsupported on this build target".to_owned())
 }

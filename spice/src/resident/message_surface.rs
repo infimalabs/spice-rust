@@ -140,7 +140,7 @@ pub(in crate::resident) fn canvas_diagnostic(
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
                 diagnostic,
-                "canvas message unavailable: {}: {}",
+                "message unavailable: {}: {}",
                 fault.reason, fault.detail
             );
             Ok(())

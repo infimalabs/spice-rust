@@ -261,8 +261,7 @@ fn main() {
             Fault {
                 class: FaultClass::Environment,
                 reason: "canvas::test-app-selection-invalid".to_owned(),
-                detail: "the debug-only Canvas stage argument is valid only for `spice up`"
-                    .to_owned(),
+                detail: "the debug-only app stage argument is valid only for `spice up`".to_owned(),
             },
             form,
         );
@@ -291,7 +290,7 @@ fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Faul
         return Err(Fault {
             class: FaultClass::Environment,
             reason: "canvas::test-app-selection-invalid".to_owned(),
-            detail: "the debug-only Canvas stage argument may appear only once".to_owned(),
+            detail: "the debug-only app stage argument may appear only once".to_owned(),
         });
     }
     Ok(occurrences == 1)

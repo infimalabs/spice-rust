@@ -191,7 +191,7 @@ const CANVAS_TOOLS: &[ToolRequirement] = &[
         program: "trunk",
         version_argv: &["--version"],
         exact_version: "trunk 0.21.14",
-        role: "canvas asset graph validator",
+        role: "app asset graph validator",
     },
 ];
 const PYRIGHT_TOOLS: &[ToolRequirement] = &[ToolRequirement {

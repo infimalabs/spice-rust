@@ -75,7 +75,7 @@ fn canvas_analysis(
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
     let metadata_environment =
-        match tool_environment_with("canvas reach", &[cargo], tools.compiler_environment) {
+        match tool_environment_with("app reach", &[cargo], tools.compiler_environment) {
             Ok(environment) => environment,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
@@ -125,7 +125,7 @@ fn canvas_analysis(
             capture: CompileCapture::Prefix,
         },
         CompileInvocation {
-            name: "trunk canvas build",
+            name: "trunk app build",
             program: trunk,
             arguments: TRUNK_BUILD_ARGUMENTS,
             cwd: app.as_path(),
@@ -147,7 +147,7 @@ fn canvas_analysis(
     Analysis::terminal(
         ArmOutcome::Passed,
         format!(
-            "{} completed both declared canvas analyses",
+            "{} completed both declared app analyses",
             declaration.id.as_str()
         ),
     )
@@ -167,7 +167,7 @@ fn canvas_environment(
     outputs: &CanvasOutputs,
     inherited: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<Environment, String> {
-    let path = tool_search_path("canvas", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
+    let path = tool_search_path("app", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
     let mut entries = inherited
         .iter()
         .cloned()
@@ -191,8 +191,7 @@ fn canvas_environment(
         outputs.trunk_dist.as_os_str().to_owned(),
     );
     entries.insert("NO_COLOR".into(), "true".into());
-    Environment::new(entries)
-        .map_err(|error| format!("canvas tool environment was refused: {error}"))
+    Environment::new(entries).map_err(|error| format!("app tool environment was refused: {error}"))
 }
 
 /// Writable output roots for tools examining one immutable selected tree.
@@ -229,7 +228,7 @@ impl CanvasOutputs {
             .and_then(|()| fs::create_dir(&trunk_dist))
         {
             return Err(format!(
-                "canvas analysis output directories for {} could not be created: {error}",
+                "app analysis output directories for {} could not be created: {error}",
                 selected.display()
             ));
         }

@@ -55,7 +55,7 @@ pub(super) fn perform(
 ) -> Result<RefreshReport, RefreshError> {
     let repository = Repository::discover(Path::new("."))?;
     refuse_seated_lane(&repository, request.lane.as_deref())?;
-    writeln!(output, "building canvas app")?;
+    writeln!(output, "building app")?;
     crate::app(environment, output)?;
     let stamp = source_stamp(repository.worktree_root())?;
     writeln!(output, "source stamp {stamp}")?;

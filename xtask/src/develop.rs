@@ -159,7 +159,7 @@ impl fmt::Display for RefreshError {
             ),
             Self::Build => write!(formatter, "cargo build failed"),
             Self::SourceStamp(detail) => write!(formatter, "source stamp refused: {detail}"),
-            Self::App(error) => write!(formatter, "canvas app build failed: {error}"),
+            Self::App(error) => write!(formatter, "app build failed: {error}"),
             Self::BuildOutputSilent => {
                 write!(formatter, "cargo build named no spice executable")
             }

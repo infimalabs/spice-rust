@@ -70,7 +70,7 @@ fn issue(
             runtime.settle_member_command(
                 &request,
                 Some(format!(
-                    "{}: Canvas could not queue the command.",
+                    "{}: spice could not queue the command.",
                     request.command.failure()
                 )),
             );

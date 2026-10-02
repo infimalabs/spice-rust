@@ -44,7 +44,7 @@ export function systemColorScheme(platform = process.platform) {
 }
 
 /**
- * Launch one disposable Playwright browser session for Canvas verification.
+ * Launch one disposable Playwright browser session for app verification.
  *
  * The default color scheme follows the host system. Pass an explicit
  * `contextOptions.colorScheme` only when intentionally verifying one theme.

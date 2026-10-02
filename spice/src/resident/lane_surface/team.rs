@@ -189,7 +189,7 @@ fn previous_subscription(
         let Some(row) = head.lanes.iter().find(|row| row.lane == member) else {
             return Err(lane_refusal(
                 "team::member-missing",
-                Some("one current Canvas member".to_owned()),
+                Some("one current team member".to_owned()),
                 Some(member.to_string()),
                 "read lane state and retry with a current member identity",
             ));
@@ -198,7 +198,7 @@ fn previous_subscription(
     } else {
         return Err(lane_refusal(
             "team::missing",
-            Some("one current Canvas team".to_owned()),
+            Some("one current team".to_owned()),
             Some(request.team.to_string()),
             "read lane state and retry with a current team identity",
         ));
@@ -221,7 +221,7 @@ fn move_member(
     let Some(member_index) = head.lanes.iter().position(|row| row.lane == member) else {
         return Err(lane_refusal(
             "team::member-missing",
-            Some("one current Canvas member".to_owned()),
+            Some("one current team member".to_owned()),
             Some(member.to_string()),
             "read lane state and retry with a current member identity",
         ));

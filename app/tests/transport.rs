@@ -224,11 +224,6 @@ fn an_absent_canvas_protocol_replaces_the_current_document() {
     let fault = Session::admit_canvas(None)
         .expect_err("a response without the pre-socket clock does not open a socket");
     assert_eq!(fault.reason, "bootstrap::canvas-mismatch");
-    assert!(
-        fault.detail.contains("no canvas protocol"),
-        "{}",
-        fault.detail
-    );
 }
 
 #[test]

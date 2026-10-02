@@ -506,18 +506,18 @@ pub fn installed_canvas_source(
     verify_binary_context(&record.plan, Some(executable))?;
     verify_progress(repository, &record)?;
     let expected = record.plan.app.as_ref().ok_or_else(|| {
-        InstallError::InvalidRecord("installed appliance owns no Canvas generation".to_owned())
+        InstallError::InvalidRecord("installed appliance owns no app generation".to_owned())
     })?;
     let source =
         canvas::AppSource::resolve_installed(repository.common_dir()).map_err(|error| {
-            InstallError::InvalidRecord(format!("installed Canvas publication: {error}"))
+            InstallError::InvalidRecord(format!("installed app publication: {error}"))
         })?;
     let observed = source.current_generation().map_err(|error| {
-        InstallError::InvalidRecord(format!("installed Canvas publication: {error}"))
+        InstallError::InvalidRecord(format!("installed app publication: {error}"))
     })?;
     if observed.identity() != expected {
         return Err(InstallError::InvalidRecord(format!(
-            "installed Canvas pointer names {}, receipt names {expected}",
+            "installed app pointer names {}, receipt names {expected}",
             observed.identity()
         )));
     }

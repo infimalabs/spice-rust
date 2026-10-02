@@ -22,7 +22,7 @@ other command. `REQUEST` is a JSON file of at most 16 KiB:
   anything else refuses with `report::kind-outside-scope`.
 - Rows are limited to tasks in public projects. Claim and lease facts are
   admitted by the task they concern, so a hidden task's leases stay hidden.
-- Rows use the Canvas stream's credential-free fact form: `lane::seated`
+- Rows use the app stream's credential-free fact form: `lane::seated`
   carries the seat's public fields but never the lane's socket capability.
   Version 1 answered with full journal envelopes and is refused.
 - The first answer carries a `pin`: journal schema, the resident executable's

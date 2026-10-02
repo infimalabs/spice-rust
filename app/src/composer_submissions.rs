@@ -270,7 +270,7 @@ fn draft_bytes(draft: &ComposerDraft) -> usize {
 fn admit_payload(payload: &SubmissionPayload) -> Result<(), String> {
     if payload.attachments.len() > wire::media::MAX_MEDIA_ITEMS {
         return Err(format!(
-            "Canvas submissions admit at most {} attachments.",
+            "Submissions admit at most {} attachments.",
             wire::media::MAX_MEDIA_ITEMS
         ));
     }
@@ -282,7 +282,7 @@ fn admit_payload(payload: &SubmissionPayload) -> Result<(), String> {
         || payload.retained_bytes() > MESSAGE_PAYLOAD_BYTES
     {
         return Err(format!(
-            "Canvas submission payload exceeds the {MESSAGE_PAYLOAD_BYTES}-byte limit."
+            "Submission payload exceeds the {MESSAGE_PAYLOAD_BYTES}-byte limit."
         ));
     }
     Ok(())
@@ -408,7 +408,7 @@ impl SubmissionQueue {
     pub(crate) fn enqueue_all(&mut self, submissions: Vec<Submission>) -> Result<(), String> {
         if submissions.len() > SUBMISSION_LIMIT.saturating_sub(self.identities.len()) {
             return Err(format!(
-                "Canvas already retains {} submissions; wait for delivery before retrying.",
+                "{} submissions are already retained; wait for delivery before retrying.",
                 self.identities.len()
             ));
         }
@@ -427,7 +427,7 @@ impl SubmissionQueue {
                 + *lane_counts.entry(submission.lane).or_default();
             if lane_count >= LANE_SUBMISSION_LIMIT {
                 return Err(format!(
-                    "Canvas already retains {LANE_SUBMISSION_LIMIT} submissions for lane {}; wait for delivery before retrying.",
+                    "{LANE_SUBMISSION_LIMIT} submissions are already retained for lane {}; wait for delivery before retrying.",
                     submission.lane
                 ));
             }
@@ -455,7 +455,7 @@ impl SubmissionQueue {
         }
         if additional_bytes > RETAINED_BYTES_LIMIT.saturating_sub(self.retained_bytes) {
             return Err(format!(
-                "Canvas submission retention exceeds the {RETAINED_BYTES_LIMIT}-byte limit; wait for delivery before retrying."
+                "Submission retention exceeds the {RETAINED_BYTES_LIMIT}-byte limit; wait for delivery before retrying."
             ));
         }
         for submission in submissions {

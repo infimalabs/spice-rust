@@ -104,7 +104,7 @@ async fn run_connection(
             () = deadline => {
                 abort.abort();
                 Err(format!(
-                    "canvas connection handshake timed out after \
+                    "connection handshake timed out after \
                      {CONNECTION_HANDSHAKE_TIMEOUT_MILLIS} ms"
                 ))
             }
@@ -192,7 +192,7 @@ async fn pump_session(
                 }
             },
             wake = action_wake => {
-                wake.ok_or_else(|| "canvas command channel closed".to_owned())?;
+                wake.ok_or_else(|| "command channel closed".to_owned())?;
                 if hydrating {
                     continue;
                 }
@@ -207,7 +207,7 @@ async fn pump_session(
             () = silence => {
                 if probed {
                     return Err(format!(
-                        "canvas socket stayed open without answering a liveness probe within \
+                        "socket stayed open without answering a liveness probe within \
                          {LIVENESS_PROBE_MILLIS} ms"
                     ));
                 }
@@ -230,7 +230,7 @@ fn finish_hydration(
 ) -> Result<(), String> {
     let complete = data.read().as_ref().is_some_and(CanvasRuntime::is_hydrated);
     if !complete {
-        return Err("replacement Canvas scope settled without every current snapshot".to_owned());
+        return Err("replacement scope settled without every current snapshot".to_owned());
     }
     handles.surface.set(data.publication());
     handles.connection.set(Connection::Online {
@@ -593,15 +593,15 @@ async fn open_socket(
         .map(|value| {
             value
                 .parse::<wire::CanvasVersion>()
-                .map_err(|error| format!("bootstrap Canvas version header was invalid: {error}"))
+                .map_err(|error| format!("bootstrap app protocol header was invalid: {error}"))
         })
         .transpose()?;
     let generation = response
         .headers()
         .get(wire::hello::CANVAS_GENERATION_HEADER)
-        .ok_or_else(|| "bootstrap carried no Canvas app generation".to_owned())?
+        .ok_or_else(|| "bootstrap carried no app generation".to_owned())?
         .parse::<wire::Digest>()
-        .map_err(|error| format!("bootstrap Canvas app generation was invalid: {error}"))?;
+        .map_err(|error| format!("bootstrap app generation was invalid: {error}"))?;
     let loaded_generation = loaded_canvas_generation()?;
     canvas_update.set(canvas.and_then(|version| {
         (!version.is_current() || generation != loaded_generation).then(|| CanvasUpdate {
@@ -612,7 +612,7 @@ async fn open_socket(
     }));
     if let Err(fault) = Session::admit_canvas(canvas) {
         return Err(format!(
-            "{}: {}; explicit Canvas update required",
+            "{}: {}; explicit app update required",
             fault.reason, fault.detail
         ));
     }
@@ -655,7 +655,7 @@ fn admit_bootstrap_identity(
     loaded_app: wire::Digest,
 ) -> Result<CanvasIdentity, String> {
     if discovery.version.canvas != canvas {
-        return Err("bootstrap body Canvas version disagreed with its header".to_owned());
+        return Err("bootstrap body app protocol disagreed with its header".to_owned());
     }
     if &discovery.version.app != generation {
         return Err("bootstrap body app generation disagreed with its header".to_owned());
@@ -700,9 +700,9 @@ pub(super) fn loaded_canvas_generation() -> Result<wire::Digest, String> {
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id("app"))
         .and_then(|root| root.get_attribute("data-canvas-generation"))
-        .ok_or_else(|| "loaded Canvas app carried no generation identity".to_owned())?
+        .ok_or_else(|| "loaded app carried no generation identity".to_owned())?
         .parse()
-        .map_err(|error| format!("loaded Canvas app generation was invalid: {error}"))
+        .map_err(|error| format!("loaded app generation was invalid: {error}"))
 }
 
 /// Admit the acceptance frame and publish the runtime that frame names.
@@ -1362,7 +1362,7 @@ async fn send_subscription(
         let data = data.read();
         let runtime = data
             .as_ref()
-            .ok_or_else(|| "canvas runtime is absent".to_owned())?;
+            .ok_or_else(|| "app runtime is absent".to_owned())?;
         (runtime.subjects(), runtime.resume())
     };
     send_stream_request(

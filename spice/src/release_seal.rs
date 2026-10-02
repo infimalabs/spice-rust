@@ -37,7 +37,7 @@ impl proof::ManifestPublisher for CurrentPublisher<'_> {
                 current_bindings(self.worktree).map_err(proof::ManifestPublishError::Guard)?;
             if observed != self.expected {
                 return Err(proof::ManifestPublishError::Guard(format!(
-                    "source or Canvas moved before the manifest pointer: expected {:?}, observed \
+                    "source or app moved before the manifest pointer: expected {:?}, observed \
                      {:?}",
                     self.expected, observed
                 )));
@@ -166,7 +166,7 @@ fn require_current_payload(
         return Err(refused(
             "release::seal-app-mismatch",
             &format!(
-                "payload Canvas {} differs from current Canvas {}",
+                "payload app {} differs from current app {}",
                 payload.app, bindings.app
             ),
         ));

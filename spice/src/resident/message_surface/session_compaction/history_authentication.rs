@@ -168,7 +168,7 @@ impl HistoryAuthentication {
         if self.stamp.extension(observed, length).is_some() {
             Ok(observed)
         } else {
-            Err(self.refuse("after Canvas bootstrap"))
+            Err(self.refuse("after app bootstrap"))
         }
     }
 

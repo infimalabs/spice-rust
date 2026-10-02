@@ -265,7 +265,7 @@ impl Connection {
 
     fn label(&self) -> String {
         match self {
-            Self::Starting => "Loading embedded canvas".to_owned(),
+            Self::Starting => "Loading spice".to_owned(),
             Self::Connecting => "Opening current resident".to_owned(),
             Self::Online { epoch } => format!("Connected to resident {epoch}"),
             Self::Offline(reason) => format!("Reconnecting / {reason}"),
