@@ -1021,7 +1021,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 @media (prefers-reduced-motion: reduce) {
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
+/* --message-card-surface is the card's own fill; everything painted opaque
+   inside the card takes it, so a tinted card has no off-tint band. */
 .team-surface .mosaic-message-card {
+  --message-card-surface: var(--panel);
   container-type: inline-size;
   gap: 0;
   margin: 0;
@@ -1029,7 +1032,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: var(--canvas-edge-soft);
   border-right: 3px solid var(--accent-slot, var(--accent));
   border-radius: var(--canvas-radius-frame);
-  background: var(--panel);
+  background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
   line-height: 1.25;
@@ -1058,7 +1061,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   order: -1; display: grid; align-self: start; align-items: center;
   grid-template-columns: 3ch minmax(0, 1fr);
   gap: 8px; min-height: 32px; min-width: 0; width: 100%;
-  margin-bottom: .5rem; background: var(--panel);
+  margin-bottom: .5rem; background: var(--message-card-surface);
   color: var(--muted); font-size: 12px;
 }
 .team-surface .message-footer-left,
