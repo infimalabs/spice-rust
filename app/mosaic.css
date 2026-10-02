@@ -38,6 +38,9 @@
 }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
+/* The hidden portal host is renderer plumbing, not visible content. It must not
+   steal the terminal margin reset from the element immediately before it. */
+.markdown-body > :has(+ .markdown-body-portals:last-child) { margin-bottom: 0; }
 .markdown-body p { margin: 0 0 .7em; line-height: 1.45; white-space: pre-wrap; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
