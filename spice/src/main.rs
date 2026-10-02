@@ -470,6 +470,7 @@ impl NativeInvocation<'_> {
             | ["lane", "drain"]
             | ["lane", "wake"]
             | ["lane", "model"]
+            | ["lane", "effort"]
             | ["lane", "remove"]
             | ["lane", "import"]
             | ["recall"] => deliver(&lane_command::run(leaf, contract, configuration), form),
