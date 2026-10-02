@@ -56,13 +56,13 @@ pub use workspace_tests::{
 /// These strings are deliberately not executable commands or scheduler arms;
 /// they explain which retired repository-wide surfaces a package check omits.
 const RETIRED_REPOSITORY_ACTIONS: [&str; 12] = [
-    "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)",
+    "cargo build --locked -p spice --bin spice (freshness reference and app resident)",
     "repository completion publication boundary",
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>",
     "cargo clippy --locked --workspace --all-targets -- -D warnings",
     "cargo canvas-wasm-typecheck",
     "cargo check --locked --workspace --target wasm32-unknown-unknown",
-    "spice dev xtask -- app (canvas compiler evidence)",
+    "spice dev xtask -- app (app compiler evidence)",
     "deterministic sharded cargo test --locked --workspace --all-targets",
     "cargo doc --locked --workspace --lib --bins --no-deps",
     "cargo test --locked --workspace --doc",
