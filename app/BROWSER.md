@@ -58,12 +58,14 @@ surface's `Spice` (`ca903af2c`), that is superseded by `Spice Canvas`, which
 the first Rust Canvas (`9904e38a8`) established.
 
 Once the first board snapshot arrives, the title gives the exact number of
-remaining public tasks and the icon wears the same count. The tiny icon shows
-exact values through 99 and bounds larger labels at `99+`; the title remains
-exact. A zero badge is explicit. Loading has an ellipsis, and disconnection
-without a retained board has an exclamation mark. During reconnect, the last
-known count stays visible in amber and the title marks it stale; a current
-snapshot restores the green badge.
+remaining public tasks and the icon wears the same count. The pepper keeps the
+icon's upper-left corner, and the badge fills the lower right with digits large
+enough to read at the 16px tab size. The badge shows exact values through 99
+and bounds larger labels at `99+`; the title remains exact. Title and icon are
+rewritten only when this state changes. A zero badge is explicit. Loading has
+an ellipsis, and disconnection without a retained board has an exclamation
+mark. During reconnect, the last known count stays visible in amber and the
+title marks it stale; a current snapshot restores the green badge.
 
 ## Arrange whole teams
 
