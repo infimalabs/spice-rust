@@ -315,7 +315,9 @@ pub(super) fn team_quote_sources(
         }
         for context in &message.directive_contexts {
             let source = match &context.quote_target {
-                wire::QuoteTarget::Steering { key, .. } => {
+                wire::QuoteTarget::Steering { key, .. }
+                    if context.actor == wire::Actor::Operator =>
+                {
                     let direction = runtime
                         .inbox()
                         .and_then(|inbox| {
@@ -329,7 +331,7 @@ pub(super) fn team_quote_sources(
                             || crate::runtime::DirectionRef::Key(key.clone()),
                             crate::runtime::DirectionRef::Identity,
                         );
-                    Some(crate::view::direction_quote_source(&direction))
+                    crate::view::direction_quote_source(&context.actor, &direction)
                 }
                 _ => None,
             };
