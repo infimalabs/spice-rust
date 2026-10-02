@@ -834,28 +834,30 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* Ranges over the full-width submit; regions round their own corners so focus
-   and preview rings stay visible. The frame holds no words but the submit's: it
-   starts one label row down, and the values ride above it, leaning on the
-   center seam, reading as one phrase ("quiet drain", "narrate steer"). */
+/* Ranges, their shared label row, and the full-width submit remain inside one
+   fixed frame. The value words align to the frame edges and read as one phrase
+   ("quiet drain", "narrate steer") beneath the ranges. */
 .team-composer .team-composer-controls {
   --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
   --team-control-inner-radius: calc(var(--canvas-radius-compact) - 1px);
   --team-control-label-row: 14px;
-  position: relative; display: grid; gap: 0; inline-size: 74px;
-  margin-block-start: var(--team-control-label-row);
-  block-size: calc(var(--team-composer-block-size) - var(--team-control-label-row));
+  display: grid; gap: 0; inline-size: 74px;
+  block-size: var(--team-composer-block-size);
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
   border: var(--canvas-control-edge); border-radius: var(--canvas-radius-compact);
   background: var(--control); box-shadow: var(--canvas-selection-shadow);
 }
 .team-slider {
   --control-state-accent: var(--accent);
-  display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center;
-  min-height: 0; padding: 7px 2px 6px; overflow: hidden;
+  display: grid; grid-template-rows: minmax(0, 1fr) var(--team-control-label-row); justify-items: center;
+  min-height: 0; padding: 7px 2px 3px; overflow: visible;
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
-.team-slider + .team-slider { border-left: var(--canvas-control-edge); }
+.team-slider + .team-slider { position: relative; }
+.team-slider + .team-slider::before {
+  position: absolute; inset-block: 0 var(--team-control-label-row); inset-inline-start: 0;
+  border-inline-start: var(--canvas-control-edge); content: ""; pointer-events: none;
+}
 .team-composer .team-speech { border-start-start-radius: var(--team-control-inner-radius); }
 .team-composer .team-lifetime { border-start-end-radius: var(--team-control-inner-radius); }
 .team-slider input {
@@ -879,12 +881,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   text-transform: lowercase;
   white-space: nowrap;
 }
-/* The frame is the label's containing block, so slider clipping never reaches it.
-   Speech ends and lifetime starts 3px from the divider (its 1px sits right of
-   50%); "narrate" overhangs the frame's left edge, short of the draft. */
-.team-composer .team-slider span { position: absolute; bottom: calc(100% + 3px); }
-.team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
-.team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
+.team-composer .team-speech span { position: relative; z-index: 1; justify-self: start; }
+.team-composer .team-lifetime span { justify-self: end; }
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--canvas-control-edge);

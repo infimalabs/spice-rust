@@ -88,20 +88,19 @@ the lift without sending.
 
 ## Team composer controls
 
-The speech and allocation sliders share a fixed frame above the team send
-button, and the frame carries no words but the button's. Its top edge sits one
-label row below the composer block's, and the two current values ride above
-it, leaning on the center divider: speech ends and allocation starts 3px from
-it, so they read as one phrase such as "quiet drain" or "narrate steer". The label row
-comes out of the ranges' region; the composer block, the frame width and the
-send row keep their size.
+The speech and allocation sliders share one fixed frame with the team send
+button. Its upper region holds the two ranges and one horizontal label row
+beneath them; speech aligns with the left edge and allocation with the right,
+so the values read as one phrase such as "quiet drain" or "narrate steer".
+That row comes out of the ranges' region. The 74px frame remains 148px tall
+(140px at narrow widths), and its send row and neighboring draft keep their
+size.
 
-The values sit outside the frame rather than riding the thumbs. A seven-letter
+The values use the dedicated row rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
 in either engine, and an overlay tracking the thumb would cover the track and
-its focus ring. Above the frame nothing clips the phrase: "narrate", the longest
-speech value at the label's 9px, overhangs the frame's left edge by a few
-pixels and stays clear of the draft.
+its focus ring. Across the frame the longest pair, "narrate drain", fits at the
+label's 9px without clipping.
 
 Both sliders take one stop per arrow press on every engine: Up and Right
 raise, Down and Left lower. A native vertical range in WebKit and Firefox
