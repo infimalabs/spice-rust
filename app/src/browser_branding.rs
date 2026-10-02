@@ -1,11 +1,13 @@
 //! Product-branded browser title and favicon state.
 //!
-//! The icon keeps Canvas's pepper product mark in its upper-left corner and
+//! The icon keeps the spice pepper mark in its upper-left corner and
 //! gives the changing state one large lower-right badge, so a count stays
 //! readable at the 16px tab size. Counts are exact through 99; larger values
 //! use `99+` in the tiny icon while the title retains the exact total.
 
-const PRODUCT_TITLE: &str = "Spice Canvas";
+/// The predecessor's brand: short, lowercase, and last, so the tab's few visible
+/// characters carry the changing state first.
+const BRAND: &str = "spice";
 const MAX_EXACT_BADGE_COUNT: usize = 99;
 /// Badge rectangle width in icon units; every label must fit inside it.
 const BADGE_WIDTH: usize = 49;
@@ -77,13 +79,9 @@ impl BrowserBranding {
     #[must_use]
     pub(crate) fn for_state(state: CountState) -> Self {
         let (title, badge, tone) = match state {
-            CountState::Loading => (
-                format!("{PRODUCT_TITLE} — Loading"),
-                "…".to_owned(),
-                Tone::Loading,
-            ),
+            CountState::Loading => (format!("Loading - {BRAND}"), "…".to_owned(), Tone::Loading),
             CountState::Disconnected => (
-                format!("{PRODUCT_TITLE} — Disconnected"),
+                format!("Disconnected - {BRAND}"),
                 "!".to_owned(),
                 Tone::Disconnected,
             ),
@@ -132,7 +130,7 @@ impl BrowserBranding {
 fn remaining_title(count: usize, stale: bool) -> String {
     let noun = if count == 1 { "task" } else { "tasks" };
     let suffix = if stale { " (stale)" } else { "" };
-    format!("{PRODUCT_TITLE} — {count} {noun} remaining{suffix}")
+    format!("{count} {noun}{suffix} - {BRAND}")
 }
 
 fn badge_count(count: usize) -> String {
@@ -225,18 +223,12 @@ mod tests {
     #[test]
     fn titles_keep_product_branding_and_exact_count_state() {
         for (state, expected) in [
-            (CountState::Loading, "Spice Canvas — Loading"),
-            (CountState::Disconnected, "Spice Canvas — Disconnected"),
-            (CountState::Current(0), "Spice Canvas — 0 tasks remaining"),
-            (CountState::Current(1), "Spice Canvas — 1 task remaining"),
-            (
-                CountState::Current(LARGE_TITLE_COUNT),
-                "Spice Canvas — 1234 tasks remaining",
-            ),
-            (
-                CountState::Stale(KNOWN_COUNT),
-                "Spice Canvas — 7 tasks remaining (stale)",
-            ),
+            (CountState::Loading, "Loading - spice"),
+            (CountState::Disconnected, "Disconnected - spice"),
+            (CountState::Current(0), "0 tasks - spice"),
+            (CountState::Current(1), "1 task - spice"),
+            (CountState::Current(LARGE_TITLE_COUNT), "1234 tasks - spice"),
+            (CountState::Stale(KNOWN_COUNT), "7 tasks (stale) - spice"),
         ] {
             assert_eq!(BrowserBranding::for_state(state).title(), expected);
         }
