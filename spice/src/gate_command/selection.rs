@@ -97,8 +97,7 @@ pub(crate) fn selection(live: bool) -> Outcome<CurrentSourceSelectionReport> {
             || spice::change_gate::run_current_source(&mut log),
         )
     };
-    let capture = log.capture().to_vec();
-    drop(log);
+    let capture = log.into_capture();
     let rerun = if supervised {
         "`git commit`"
     } else {
