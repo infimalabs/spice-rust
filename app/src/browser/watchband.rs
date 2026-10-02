@@ -17,14 +17,12 @@ mod attention;
 mod command_preview;
 mod composer;
 mod controls;
-mod dash;
 mod feedback;
 mod fleet;
 mod member_controls;
 mod mosaic_view;
 mod state;
 mod team_drag;
-mod team_flow;
 mod team_menu;
 mod team_work;
 mod vendor_icon;
@@ -48,9 +46,8 @@ use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
-use team_flow::{PageRequest as TeamFlowPageRequest, TeamFlow};
 use team_work::render_tasks;
-pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
+pub(super) use vendor_icon::render_composer_vendor_icon;
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
@@ -62,11 +59,11 @@ pub(super) struct BroadcastTarget {
     epoch: CanonicalUuid,
 }
 
-/// The observer that toasts Dash request progress and outcomes. It mounts
+/// The observer that toasts lane and team request progress and outcomes. It mounts
 /// once at the Canvas root so a request settles in the toast whichever
 /// surface is showing.
 pub(super) fn render_feedback(runtime: Option<&CanvasRuntime>, controls: &TeamControls) -> Html {
-    html! { <feedback::DashFeedback notices={feedback::Notices::of(runtime, controls)} /> }
+    html! { <feedback::RequestFeedback notices={feedback::Notices::of(runtime, controls)} /> }
 }
 
 /// Render every live team as one packed surface.
@@ -96,7 +93,7 @@ pub(super) fn render_team(
         team_settled,
         ..
     } = render;
-    let timeline_surface = (*surface).clone();
+    let surface_state = (*surface).clone();
     let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
         return Html::default();
@@ -146,7 +143,6 @@ pub(super) fn render_team(
             })
             .collect::<crate::composer_markdown::QuoteAgents>(),
     );
-    let timeline_request = task_timeline_request(timeline_surface.clone(), (*sender).clone());
     let teams = lanes
         .lanes
         .iter()
@@ -165,8 +161,7 @@ pub(super) fn render_team(
         can_configure,
         topology,
         quote_agents,
-        surface: timeline_surface,
-        timeline_request,
+        surface: surface_state,
         sender,
         drafts,
         submissions,
@@ -179,46 +174,6 @@ pub(super) fn render_team(
         return render_empty_fleet(team_fleet, &render);
     }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
-}
-fn task_timeline_request(
-    surface: UseStateHandle<SurfaceData>,
-    sender: SenderHandle,
-) -> Callback<TeamFlowPageRequest> {
-    Callback::from(move |page| {
-        let request = {
-            let mut data = surface.write();
-            let Some(runtime) = data.as_mut() else {
-                return;
-            };
-            if !runtime.offers(CommandKind::TaskTimeline) {
-                return;
-            }
-            match page {
-                TeamFlowPageRequest::Head(key) => runtime.reserve_task_timeline_head(key),
-                TeamFlowPageRequest::Older(key) => runtime.reserve_task_timeline_older(key),
-            }
-        };
-        let Some(request) = request else {
-            return;
-        };
-        surface.set(surface.publication());
-        if !admit_action(
-            &sender,
-            ClientAction::TaskTimeline {
-                request: request.clone(),
-            },
-        ) {
-            let mut data = surface.write();
-            if let Some(runtime) = data.as_mut() {
-                runtime.refuse_task_timeline_request(
-                    &request,
-                    "Timeline request could not be queued.".to_owned(),
-                );
-            }
-            drop(data);
-            surface.set(surface.publication());
-        }
-    })
 }
 
 /// Teams whose Work pane is on screen: the fleet is shown and the team is in
@@ -290,6 +245,7 @@ fn render_compose(
     controls: &view::AgentControls,
     surface: &UseStateHandle<SurfaceData>,
     select: &Callback<wire::TaskStamp>,
+    attention: &attention::TeamAttention,
 ) -> Html {
     if team.members.is_empty() {
         return empty("No agents are assigned. Open Import agent to add one.");
@@ -344,6 +300,7 @@ fn render_compose(
                                 topology_revision,
                                 topology,
                                 sender,
+                                attention: attention.lane(member.lane),
                             }),
                             sender,
                             composer_drag,
@@ -538,77 +495,6 @@ struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
     targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
-}
-
-struct DashRender<'a, 'w> {
-    select: &'a Callback<wire::TaskStamp>,
-    request: &'a Callback<TeamFlowPageRequest>,
-    controls: &'a UseReducerHandle<TeamControls>,
-    work: Option<&'a crate::work::WorkProjection<'w>>,
-    sender: &'a SenderHandle,
-}
-
-fn render_details(
-    surface: &UseStateHandle<SurfaceData>,
-    runtime: &CanvasRuntime,
-    team: &crate::runtime::LaneRow,
-    standings: &[Standing],
-    render: DashRender<'_, '_>,
-) -> Html {
-    debug_assert_eq!(
-        team.members.len(),
-        standings.len(),
-        "one standing belongs to every team member"
-    );
-    let flow_heading = format!("team-dash-flow-{}", team.lane);
-    let show_chat = {
-        let controls = render.controls.clone();
-        let team = team.lane;
-        Callback::from(move |event: MouseEvent| {
-            if super::card_target::remember_team_return(&event, team) {
-                controls.dispatch(TeamControlAction::ShowChat { team });
-            }
-        })
-    };
-    let member_command = member_controls::command_callback(render.sender, surface, team.lane);
-    let attention_items = attention::team_items(runtime, standings, render.work);
-    let attention_view = attention::item_view(&attention::AttentionControls {
-        runtime,
-        sender: render.sender,
-        select: render.select,
-    });
-    html! {
-        <main class="team-dash-frame" aria-label="Team Dash">
-            <section class="team-dash-roster" aria-label="Team roster">
-                {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    dash::render_agent_details(
-                        runtime,
-                        member,
-                        standing,
-                        team.lane,
-                        render.select,
-                        render.controls,
-                        &member_command,
-                    )
-                })}
-            </section>
-            <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
-                <header>
-                    <h3 id={flow_heading}>{"Flow"}</h3>
-                    <attention::AttentionBand items={attention_items} view={attention_view} />
-                </header>
-                <TeamFlow
-                    team={team.clone()}
-                    standings={standings.to_vec()}
-                    surface={(*surface).clone()}
-                    revision={runtime.task_timeline_revision()}
-                    select={render.select.clone()}
-                    show_chat={show_chat}
-                    request={render.request.clone()}
-                />
-            </section>
-        </main>
-    }
 }
 
 /// One lease instant as a ticking age, or `vacant` for a lane holding no claim.

@@ -458,7 +458,7 @@ impl TeamControls {
             .collect::<BTreeSet<_>>();
         self.teams.retain(|team, _| live_teams.contains(team));
 
-        // A seat submitted from the empty Dash view must keep that view when
+        // A seat submitted from the empty Work view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first team
         // inherits the empty selection exactly once, and every sibling keeps

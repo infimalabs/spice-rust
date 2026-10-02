@@ -102,6 +102,64 @@
   color: var(--accent-slot, var(--ink));
 }
 .agent-menu-presence { color: var(--muted); }
+/* What the agent needs from the operator leads the menu, one row per item. */
+.agent-menu-attention {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-menu-attention-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 4px 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 38%, var(--control-line-soft));
+  border-left: 2px solid var(--accent-slot, var(--accent));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+}
+:is(button, a).agent-menu-attention-chip { cursor: pointer; }
+:is(button, a).agent-menu-attention-chip:hover {
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, var(--panel));
+}
+.agent-menu-attention-chip:focus-visible,
+.agent-menu-attention-rule:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.agent-menu-attention-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-menu-attention-copy strong { font-weight: 700; }
+.agent-menu-attention-age { flex: none; color: var(--muted); white-space: nowrap; }
+.agent-menu-attention-rule {
+  flex: none;
+  min-height: 0;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--control-line-soft);
+  border-radius: 2px;
+  background: var(--panel);
+  color: var(--ink);
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+.agent-menu-attention-rule[data-answer="granted"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--control-line-soft)); }
+.agent-menu-attention-rule[data-answer="denied"] { color: var(--danger); }
+.agent-menu-attention-rule:disabled { opacity: .5; cursor: progress; }
 .agent-menu-rows {
   display: grid;
   gap: 1px;

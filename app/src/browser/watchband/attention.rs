@@ -1,8 +1,7 @@
-//! The Dash attention band: what this team needs from the operator now.
+//! What one agent needs from the operator now, listed in its lane menu.
 //!
-//! The band lives in the flow header, whose height is fixed, so items enter
-//! and leave without moving the flow below it. With nothing due it renders no
-//! items and the header shows only the flow heading.
+//! A team's items are computed once and each lane menu lists only its own
+//! member's. With nothing due the list renders nothing.
 
 use gloo_timers::callback::Timeout;
 
@@ -12,16 +11,16 @@ use crate::runtime::ConsentRuling;
 use crate::watchband::{AttentionItem, AttentionSubject, TaskAttention, attention_at};
 
 #[derive(Properties, PartialEq)]
-pub(super) struct AttentionBandProps {
+struct AttentionBandProps {
     /// Every candidate item, including ones not yet due.
-    pub(super) items: Rc<Vec<AttentionItem>>,
+    items: Rc<Vec<AttentionItem>>,
     /// Render one due item with its control.
-    pub(super) view: Callback<AttentionItem, Html>,
+    view: Callback<AttentionItem, Html>,
 }
 
 /// The due items, re-rendered when the next time-dependent item falls due.
 #[function_component(AttentionBand)]
-pub(super) fn attention_band(props: &AttentionBandProps) -> Html {
+fn attention_band(props: &AttentionBandProps) -> Html {
     let tick = use_state(|| 0_u64);
     let now = now_millis();
     let (due, next) = attention_at(&props.items, now);
@@ -43,58 +42,76 @@ pub(super) fn attention_band(props: &AttentionBandProps) -> Html {
         return Html::default();
     }
     html! {
-        <ul class="team-dash-attention" aria-label="Needs you">
+        <ul class="agent-menu-attention" aria-label="Needs you">
             {for due.into_iter().map(|item| props.view.emit(item.clone()))}
         </ul>
     }
 }
 
-/// What one team's band needs to render its items' controls.
-pub(super) struct AttentionControls<'a> {
-    pub(super) runtime: &'a CanvasRuntime,
-    pub(super) sender: &'a SenderHandle,
-    pub(super) select: &'a Callback<wire::TaskStamp>,
+/// One team's attention items and the renderer owning their controls.
+pub(super) struct TeamAttention {
+    items: Vec<AttentionItem>,
+    view: Callback<AttentionItem, Html>,
 }
 
-/// This team's candidate items, dropping consent requests already ruled.
-pub(super) fn team_items(
-    runtime: &CanvasRuntime,
-    standings: &[Standing],
-    work: Option<&crate::work::WorkProjection<'_>>,
-) -> Rc<Vec<AttentionItem>> {
-    let mut items =
-        watchband::team_attention(standings, work, runtime.inbox(), runtime.consent_queue());
-    items.retain(|item| match &item.subject {
-        AttentionSubject::Consent(pending) => !matches!(
-            runtime.consent_ruling(pending.request),
-            Some(ConsentRuling::Ruled(_))
-        ),
-        _ => true,
-    });
-    Rc::new(items)
+impl TeamAttention {
+    /// Every member's candidate items, dropping consent requests already ruled.
+    pub(super) fn new(
+        runtime: &CanvasRuntime,
+        standings: &[Standing],
+        work: Option<&crate::work::WorkProjection<'_>>,
+        sender: &SenderHandle,
+        select: &Callback<wire::TaskStamp>,
+    ) -> Self {
+        let mut items =
+            watchband::team_attention(standings, work, runtime.inbox(), runtime.consent_queue());
+        items.retain(|item| match &item.subject {
+            AttentionSubject::Consent(pending) => !matches!(
+                runtime.consent_ruling(pending.request),
+                Some(ConsentRuling::Ruled(_))
+            ),
+            _ => true,
+        });
+        Self {
+            items,
+            view: item_view(runtime, sender, select),
+        }
+    }
+
+    /// The list one member's lane menu shows.
+    pub(super) fn lane(&self, lane: CanonicalUuid) -> Html {
+        let items = self
+            .items
+            .iter()
+            .filter(|item| item.lane == lane)
+            .cloned()
+            .collect::<Vec<_>>();
+        html! { <AttentionBand items={Rc::new(items)} view={self.view.clone()} /> }
+    }
 }
 
 /// One item renderer that owns every handle its controls need.
-pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionItem, Html> {
-    let decide = controls.runtime.offers(CommandKind::ConsentDecide);
-    let rulings = controls
-        .runtime
+fn item_view(
+    runtime: &CanvasRuntime,
+    sender: &SenderHandle,
+    select: &Callback<wire::TaskStamp>,
+) -> Callback<AttentionItem, Html> {
+    let decide = runtime.offers(CommandKind::ConsentDecide);
+    let rulings = runtime
         .consent_queue()
         .into_iter()
         .flat_map(|queue| &queue.pending)
         .filter_map(|pending| {
-            controls
-                .runtime
+            runtime
                 .consent_ruling(pending.request)
                 .map(|ruling| (pending.request, ruling.clone()))
         })
         .collect::<BTreeMap<_, _>>();
-    let sender = controls.sender.clone();
-    let select = controls.select.clone();
+    let sender = sender.clone();
+    let select = select.clone();
     Callback::from(move |item: AttentionItem| {
         let body = match &item.subject {
             AttentionSubject::Consent(pending) => render_consent(
-                &item,
                 pending,
                 decide.then_some(&sender),
                 rulings.get(&pending.request),
@@ -104,12 +121,12 @@ pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionI
                 handle,
                 title,
                 reason,
-            } => render_task(&item, task, handle, title, *reason, &select),
+            } => render_task(task, handle, title, *reason, &select),
             AttentionSubject::Lease {
                 task,
                 handle,
                 expires_at,
-            } => render_lease(&item, task.as_ref(), handle, *expires_at, &select),
+            } => render_lease(task.as_ref(), handle, *expires_at, &select),
             AttentionSubject::Direction {
                 directive,
                 pending,
@@ -120,10 +137,9 @@ pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionI
         html! {
             <li
                 key={item.key()}
-                class="team-dash-attention-item"
+                class="agent-menu-attention-item"
                 data-attention={attention_kind(&item.subject)}
                 data-agent-lane={item.lane.to_string()}
-                data-accent={item.accent.to_string()}
             >{body}</li>
         }
     })
@@ -139,7 +155,6 @@ const fn attention_kind(subject: &AttentionSubject) -> &'static str {
 }
 
 fn render_consent(
-    item: &AttentionItem,
     pending: &wire::intent::ConsentPendingAnswer,
     sender: Option<&SenderHandle>,
     ruling: Option<&ConsentRuling>,
@@ -159,7 +174,7 @@ fn render_consent(
         html! {
             <button
                 type="button"
-                class="team-dash-attention-rule"
+                class="agent-menu-attention-rule"
                 data-answer={label.to_lowercase()}
                 disabled={sending}
                 {onclick}
@@ -168,14 +183,10 @@ fn render_consent(
     };
     html! {
         <span
-            class="team-dash-attention-chip"
-            title={format!(
-                "{} asks for {} under rule {}",
-                item.label, pending.operation, pending.rule.as_str()
-            )}
+            class="agent-menu-attention-chip"
+            title={format!("Asks for {} under rule {}", pending.operation, pending.rule.as_str())}
         >
-            <span class="team-dash-flow-member">{item.label.clone()}</span>
-            <span class="team-dash-attention-copy">
+            <span class="agent-menu-attention-copy">
                 <strong>{"Consent"}</strong>
                 {" · "}
                 {pending.operation.clone()}
@@ -189,7 +200,6 @@ fn render_consent(
 }
 
 fn render_task(
-    item: &AttentionItem,
     task: &wire::TaskStamp,
     handle: &str,
     title: &str,
@@ -200,14 +210,13 @@ fn render_task(
     html! {
         <button
             type="button"
-            class="team-dash-attention-chip"
+            class="agent-menu-attention-chip"
             data-task-attention={reason.key()}
             aria-label={format!("Open task {handle}: {title}")}
             title={format!("{label}: {handle} · {title}")}
             onclick={open_task(task, select)}
         >
-            <span class="team-dash-flow-member">{item.label.clone()}</span>
-            <span class="team-dash-attention-copy">
+            <span class="agent-menu-attention-copy">
                 <strong>{label}</strong>
                 {" · "}
                 {handle.to_owned()}
@@ -217,7 +226,6 @@ fn render_task(
 }
 
 fn render_lease(
-    item: &AttentionItem,
     task: Option<&wire::TaskStamp>,
     handle: &str,
     expiry: i64,
@@ -225,15 +233,14 @@ fn render_lease(
 ) -> Html {
     let copy = html! {
         <>
-            <span class="team-dash-flow-member">{item.label.clone()}</span>
-            <span class="team-dash-attention-copy">
+            <span class="agent-menu-attention-copy">
                 <strong>{"Lease"}</strong>
                 {" · "}
                 {handle.to_owned()}
             </span>
             <Countdown
                 {expiry}
-                class={classes!("team-dash-flow-age")}
+                class={classes!("agent-menu-attention-age")}
                 title={format!("Lease expiry for {handle}")}
             />
         </>
@@ -242,18 +249,23 @@ fn render_lease(
         Some(task) => html! {
             <button
                 type="button"
-                class="team-dash-attention-chip"
+                class="agent-menu-attention-chip"
                 aria-label={format!("Open task {handle}, whose lease is expiring")}
                 onclick={open_task(task, select)}
             >{copy}</button>
         },
-        None => html! { <span class="team-dash-attention-chip">{copy}</span> },
+        None => html! { <span class="agent-menu-attention-chip">{copy}</span> },
     }
 }
 
+/// Open the task's detail, closing the menu it was chosen from.
 fn open_task(task: &wire::TaskStamp, select: &Callback<wire::TaskStamp>) -> Callback<MouseEvent> {
     let task = task.clone();
-    select.reform(move |_| task.clone())
+    let select = select.clone();
+    Callback::from(move |event: MouseEvent| {
+        agent_menu::close(&event);
+        select.emit(task.clone());
+    })
 }
 
 fn render_direction(
@@ -275,18 +287,18 @@ fn render_direction(
     };
     html! {
         <a
-            class="team-dash-attention-chip"
+            class="agent-menu-attention-chip"
             href={format!("#{}", route.path())}
             aria-label={format!("Open {}'s oldest waiting direction in Work", item.label)}
             title={preview.to_owned()}
+            onclick={Callback::from(|event: MouseEvent| agent_menu::close(&event))}
         >
-            <span class="team-dash-flow-member">{item.label.clone()}</span>
-            <span class="team-dash-attention-copy">
+            <span class="agent-menu-attention-copy">
                 <strong>{"Direction"}</strong>
                 {" · "}
                 {waiting}
             </span>
-            <Age authored={oldest} class={classes!("team-dash-flow-age")} />
+            <Age authored={oldest} class={classes!("agent-menu-attention-age")} />
         </a>
     }
 }

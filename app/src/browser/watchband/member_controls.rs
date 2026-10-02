@@ -1,4 +1,4 @@
-//! One seat's lane controls, drawn in its lane menu and its Dash card.
+//! One seat's lane controls, drawn in its lane menu.
 //!
 //! Every control is drawn only when the resident offers its command to this
 //! session and the seat's current state admits it, so a missing control means
@@ -140,9 +140,6 @@ fn confirmed(
 #[derive(Properties, PartialEq)]
 struct ModelFormProps {
     lane: CanonicalUuid,
-    /// Which surface draws the form, keeping its input id unique when the
-    /// lane menu and the Dash card are both mounted.
-    surface: &'static str,
     /// The seat's authoritative model spelling; absent follows the vendor.
     model: Option<String>,
     placeholder: String,
@@ -164,7 +161,7 @@ fn model_form(props: &ModelFormProps) -> Html {
         });
     }
     let lane = props.lane;
-    let id = format!("member-model-{}-{lane}", props.surface);
+    let id = format!("member-model-{lane}");
     let oninput = {
         let draft = draft.clone();
         Callback::from(move |event: InputEvent| {
@@ -219,7 +216,6 @@ fn render_retune(
     member: &crate::runtime::LaneMember,
     busy: bool,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
-    surface: &'static str,
 ) -> Html {
     let placeholder = runtime
         .vendor_catalog()
@@ -237,7 +233,6 @@ fn render_retune(
         <ModelForm
             key={member.lane.to_string()}
             lane={member.lane}
-            {surface}
             model={member.seat_model.clone()}
             {placeholder}
             {busy}
@@ -357,7 +352,6 @@ pub(super) fn render(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
-    surface: &'static str,
 ) -> Html {
     let offered = Offered::of(runtime);
     if !(offered.lifecycle || offered.renew || offered.retune) {
@@ -382,7 +376,7 @@ pub(super) fn render(
                 }
             </div>
             if offered.retune {
-                {render_retune(runtime, member, busy, command, surface)}
+                {render_retune(runtime, member, busy, command)}
             }
         </section>
     }

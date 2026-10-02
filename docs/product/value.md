@@ -234,8 +234,9 @@ instruction.
 
 ### The Canvas view rail
 
-Dash, Work, and Chat are the sole global and team panel names, routed as
-`#/dash`, `#/work`, and `#/chat`; history, reload, and copied URLs restore the
+Dash, Work, and Chat are the sole global panel names, routed as `#/dash`,
+`#/work`, and `#/chat`, and a team surface offers only Work and Chat, opening on
+Chat; history, reload, and copied URLs restore the
 addressed view. Work may add a scope, `/public/{stem}` or `/hidden/{stem}`, then
 `/task/{stamp}`, or name Directions as `/directions`, `/directions/team/{team}`,
 or `/direction/{directive, fanout, or key}`; Chat may add `/card/{target}` or
@@ -259,7 +260,7 @@ open work, an unknown task closes, and a card outside retained Chat history
 opens Chat; a transient failure keeps the route and its Retry. The team
 activity surface is a retained Chat card at `team-stream-{team}` while that
 team remains current and teamed; an unknown or independent lane is unavailable.
-Pane modes, team menus, Work arrangement, and a task opened over Dash or Chat
+Pane modes, team menus, Work arrangement, and a task opened over a team surface
 are browser-local; team, speech, and narration state keeps its format. Following
 a quote link is a history step, and Back returns the linking card where the
 reader left it. A fresh card link brings its card into view and focus once
@@ -383,7 +384,7 @@ filters and reads the page that starts at its card, with a Newer directions
 edge above it, then marks and focuses that card. A team route selects that
 team's chip. An unknown or malformed direction or team leaves the route for
 `#/work/directions` and names it. Each team's Directions header links to its
-team route, Dash direction attention opens its oldest waiting direction, and a
+team route, lane-menu direction attention opens its oldest waiting direction, and a
 quote with no team-local direction links to its global route by key.
 
 Each is the team Work ledger's direction card: the resident's first unquoted
@@ -446,51 +447,39 @@ the Directions ledger below it by nothing.
 
 ### The team console
 
-Chat tiles one console per live team: identity and liveness, the Dash/Work/Chat
+Chat tiles one console per live team: identity and liveness, the Work/Chat
 rail, member standing, and the lane-attributed stream. Each member lane stays
 the concrete address of one worktree; a team is never a broadcast identity.
 Seat and import share one panel, even for an empty fleet. Moving a member to a
 new team preserves its siblings and allocation policy; leaving all teams moves
 only that member to its lane identity, keeping its seat.
 
-### The team Dash
+### The lane menu
 
-Dash keeps one fixed-geometry box per member in canonical order, in a roster
-that always lays out its horizontal scrollbar, so a member arriving past the
-width never moves the Flow below. Each box shows accent, name, provider glyph,
-and one presence row — working, working on its claim, idle, starting, or
-vacant — plus that state's age. A provider glyph carries a
-small flame only while the occupant is a recorded Fast mode launch; an
-unrecognized provider shows the omp π identity. A per-member seat-details
-disclosure, scrolling inside its box, holds channel, occupant, worktree,
-residency, and session identifiers and the lane controls: Wake only on a
-seatable vacant seat, Drain only on an occupied one, Remove only on a vacant
-seat holding no claim, plus renewal on any seat (a vacant one is marked for its
-next start) and the next-launch model, which reports the pinned model. Drain,
-Remove, and renewal confirm first; the command shows in
-flight until answered, and a refusal stays with its reason. A control the
-principal's authority does not admit is absent, not disabled.
+Each Chat lane's menu swaps that lane's composer for its seat panel, scrolling
+inside the lane; it is the only home of per-agent controls and details.
 
-Fixed Task, Latest activity, and Waiting direction rows update text in place.
-A task opens its detail over Dash without a history entry, and closing returns
-focus to the row. Activity and direction links enter the exact Chat message or
-composer; Back restores that team's Dash, Flow scroll, and launching row.
-
-The Flow frame merges task transitions, lifecycle boundaries, and delivered
-directions newest first. Task entries open the detail; the others link to their
-Chat cards and return to the Flow row. Older events page in at the bottom
-without moving the row being read, new ones arrive at the top preserving scroll,
-and the feed rehydrates after reload.
-
-The Flow header carries the attention band: what needs the operator now. First,
-consent requests queued by a member, allowed or denied in place under operator
-authority against the witnesses of their queue. Then member-held tasks only a
-human can move — a claim iced on unmet requirements, unclaimed work blocked on
-them, finished work in review; sibling dependencies are not shown. Last, leases
+It leads with what that agent needs from the operator now. First, consent
+requests the member queued, allowed or denied in place under operator authority
+against the witnesses of their queue. Then member-held tasks only a human can
+move — a claim iced on unmet requirements, unclaimed work blocked on them,
+finished work in review; sibling dependencies are not shown. Last, a lease
 within two minutes of expiry and direction waiting over five minutes. A ruling
-lands and its request leaves; tasks open the detail layer, and direction jumps
-to the member's composer. With nothing due the band is absent, and sharing the
-fixed-height header, it never moves the Flow.
+lands and its request leaves; tasks open the detail layer, and direction opens
+its oldest waiting direction in Work. With nothing due the list is absent.
+
+The lane controls follow: Wake only on a seatable vacant seat, Drain only on an
+occupied one, Remove only on a vacant seat holding no claim, plus renewal on any
+seat (a vacant one is marked for its next start) and the next-launch model,
+which reports the pinned model. Drain, Remove, and renewal confirm first; the
+command shows in flight until answered, and a refusal stays with its reason. A
+control the principal's authority does not admit is absent, not disabled.
+
+Task, Latest activity, and Waiting direction rows update in place: a task opens
+its detail, and activity and direction links enter the exact Chat message or
+composer. Presence and its age, and the copyable channel, occupant, session, and
+worktree identifiers, complete the panel beside Create new team and Leave all
+teams.
 
 ### The team Work direction mosaic
 
@@ -578,8 +567,8 @@ to use without pretending to have settled.
 Each live team's rail keeps its selected mode per team, and selection replaces
 the pane without transition. A rail tab centres its label alone and hangs its
 count badge after it, as the canvas navigation does, so a badge appearing,
-vanishing, or gaining a digit never moves a label. Info and Work never mount
-the message plane. In Chat, member columns own horizontal overflow and the
+vanishing, or gaining a digit never moves a label. Work never mounts the
+message plane. In Chat, member columns own horizontal overflow and the
 browser keeps native ownership of every vertical gesture. The composer
 overlays the plane, whose content starts below a composer-height spacer, and
 moves exactly as far as the

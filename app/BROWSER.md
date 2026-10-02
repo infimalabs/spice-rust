@@ -52,12 +52,15 @@ the lift without sending.
 
 Each Chat lane's menu button swaps that lane's composer for its seat panel
 instead of opening a floating menu. The panel carries everything one agent
-offers: the same Wake, Drain, Remove, Renew, and next-launch-model commands
-and refusals as the team Dash, the presence and lease age, the current task,
-latest activity, and waiting direction, copyable agent channel, occupant,
-session, and worktree, and Create new team and Leave all teams. Wide lanes lay
-those groups side by side; narrow lanes stack them and scroll within the lane.
-The button, Escape, or a click elsewhere in the team restores the composer.
+offers. It leads with what the agent needs from the operator now: consent
+requests to Allow or Deny in place, held tasks iced, blocked, or in review,
+a lease within two minutes of expiry, and direction waiting over five
+minutes. Then come the Wake, Drain, Remove, Renew, and next-launch-model
+commands and refusals, the presence and lease age, the current task, latest
+activity, and waiting direction, copyable agent channel, occupant, session,
+and worktree, and Create new team and Leave all teams. Wide lanes lay those
+groups side by side; narrow lanes stack them and scroll within the lane. The
+button, Escape, or a click elsewhere in the team restores the composer.
 
 ## Rich team directions
 

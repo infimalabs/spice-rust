@@ -102,9 +102,6 @@ pub(crate) enum PendingKind {
     TaskRelations {
         key: runtime::TaskRelationsKey,
     },
-    TaskTimeline {
-        request: runtime::TaskTimelineRequest,
-    },
     DirectionHistory {
         request: runtime::DirectionHistoryRequest,
     },
@@ -158,7 +155,7 @@ pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     BoardView, CanvasRuntime, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, Stale,
     StreamApplication, StreamDirective, StreamTerminal, TaskDetailState, TaskRelationsKey,
-    TaskRelationsState, TaskTimelineKey, TaskTimelineState, stale_reads,
+    TaskRelationsState, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

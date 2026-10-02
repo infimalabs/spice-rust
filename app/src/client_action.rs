@@ -13,9 +13,6 @@ pub(crate) enum ClientAction {
     TaskRelations {
         key: crate::TaskRelationsKey,
     },
-    TaskTimeline {
-        request: crate::runtime::TaskTimelineRequest,
-    },
     DirectionHistory {
         request: crate::runtime::DirectionHistoryRequest,
     },

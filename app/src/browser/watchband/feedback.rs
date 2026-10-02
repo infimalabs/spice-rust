@@ -1,8 +1,9 @@
-//! Progress and outcomes of Dash requests, reported through the root toast.
+//! Progress and outcomes of lane and team requests, reported through the root
+//! toast.
 //!
 //! Member commands, team policy sends, and consent rulings report here rather
-//! than inside the card or control that issued them, so nothing in the Dash
-//! resizes while a request is in flight. Each notice names the member or team
+//! than inside the card or control that issued them, so no lane menu or team
+//! surface resizes while a request is in flight. Each notice names the member or team
 //! it concerns, the toast's live region announces it, and a request's outcome
 //! replaces its progress. A request that disappears while still in flight
 //! reports how it ended, so no progress message outlives its request.
@@ -215,14 +216,14 @@ impl Reported {
 }
 
 #[derive(Properties, PartialEq)]
-pub(super) struct DashFeedbackProps {
+pub(super) struct RequestFeedbackProps {
     pub(super) notices: Notices,
 }
 
-/// Toast each change to a Dash request's notice. The first render only
+/// Toast each change to a request's notice. The first render only
 /// records what is already there, so remounting never replays old outcomes.
-#[function_component(DashFeedback)]
-pub(super) fn dash_feedback(props: &DashFeedbackProps) -> Html {
+#[function_component(RequestFeedback)]
+pub(super) fn request_feedback(props: &RequestFeedbackProps) -> Html {
     let toaster = crate::browser::toast::use_toaster();
     let reported = use_mut_ref(|| None::<Reported>);
     use_effect_with(props.notices.clone(), move |notices| {
