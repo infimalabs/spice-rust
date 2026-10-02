@@ -1,9 +1,9 @@
 //! Pure task projection shared by every app Work surface.
 //!
-//! The admitted board snapshot is the sole input. This module owns lifecycle
-//! precedence, stable stem identity, full-project grouping, relationship
-//! summaries, counts, the board arrangements over the resident's offer
-//! order, and owner naming so chrome and Work views cannot drift.
+//! The admitted board snapshot and current lane topology are the sole inputs.
+//! This module owns lifecycle precedence, stable Work scope identity,
+//! full-project grouping, relationship summaries, counts, board arrangements
+//! over the resident's offer order, and owner naming so consumers cannot drift.
 
 mod relationship;
 pub use relationship::{
@@ -14,16 +14,18 @@ pub use relationship::{
 };
 mod team;
 pub use team::team_held_work;
+#[cfg(test)]
+mod team_scope_tests;
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, ProjectVisibility};
 use wire::{Actor, TaskStamp};
 
-use crate::runtime::{BoardView, LaneMember};
+use crate::runtime::{BoardView, LaneMember, LaneView};
 use crate::watchband;
 
 /// One mutually exclusive task lifecycle in the Work surface.
@@ -76,6 +78,9 @@ pub enum WorkScope {
     AllOpen,
     /// Open tasks under one exact public or hidden stem.
     Stem(WorkStemIdentity),
+    /// Open tasks created by one current team or last claimed by one of its
+    /// current member lanes.
+    Team(wire::CanonicalUuid),
 }
 
 impl WorkStemIdentity {
@@ -112,8 +117,16 @@ impl WorkScope {
     #[must_use]
     pub const fn stem(&self) -> Option<&WorkStemIdentity> {
         match self {
-            Self::AllOpen => None,
             Self::Stem(identity) => Some(identity),
+            Self::AllOpen | Self::Team(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn team(&self) -> Option<wire::CanonicalUuid> {
+        match self {
+            Self::Team(team) => Some(*team),
+            Self::AllOpen | Self::Stem(_) => None,
         }
     }
 }
@@ -283,6 +296,9 @@ pub struct WorkTask<'a> {
     offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
     dependents: Vec<WorkDependent>,
+    /// Current roster teams that associate this task by immutable creator or
+    /// latest winning claim lane.
+    teams: Vec<wire::CanonicalUuid>,
 }
 
 impl<'a> WorkTask<'a> {
@@ -365,6 +381,11 @@ impl<'a> WorkTask<'a> {
             WorkClustering::Phase => WorkClusterKey::Phase(self.row.workflow.body.phase.as_str()),
         }
     }
+
+    #[must_use]
+    pub fn belongs_to_team(&self, team: wire::CanonicalUuid) -> bool {
+        self.teams.contains(&team)
+    }
 }
 
 /// One full dotted project in the stem-ordered project grouping.
@@ -438,6 +459,9 @@ pub struct WorkProjection<'a> {
     offered: Vec<usize>,
     /// Every task index, newest birth stamp first.
     newest: Vec<usize>,
+    /// Current roster team identities. A team route settles unavailable when
+    /// its row leaves this set.
+    teams: BTreeSet<wire::CanonicalUuid>,
 }
 
 impl<'a> WorkProjection<'a> {
@@ -465,11 +489,12 @@ impl<'a> WorkProjection<'a> {
         self.stems.iter().find(|stem| stem.identity == *identity)
     }
 
-    #[must_use]
     pub fn contains_scope(&self, scope: &WorkScope) -> bool {
-        scope
-            .stem()
-            .is_none_or(|identity| self.stem(identity).is_some())
+        match scope {
+            WorkScope::AllOpen => true,
+            WorkScope::Stem(identity) => self.stem(identity).is_some(),
+            WorkScope::Team(team) => self.teams.contains(team),
+        }
     }
 
     /// Exact visibility-qualified stem scope containing one admitted project.
@@ -484,18 +509,31 @@ impl<'a> WorkProjection<'a> {
 
     #[must_use]
     pub fn scope_counts(&self, scope: &WorkScope) -> WorkCounts {
-        scope
-            .stem()
-            .and_then(|identity| self.stem(identity))
-            .map_or(self.counts, WorkStem::counts)
+        match scope {
+            WorkScope::AllOpen => self.counts,
+            WorkScope::Stem(identity) => self.stem(identity).map_or(self.counts, WorkStem::counts),
+            WorkScope::Team(team) => {
+                let mut counts = WorkCounts::default();
+                for task in &self.tasks {
+                    if task.belongs_to_team(*team) {
+                        counts.record(task.availability);
+                    }
+                }
+                counts
+            }
+        }
     }
 
-    /// Whether one task's project belongs to the selected scope.
+    /// Whether one task belongs to the selected Work scope.
     #[must_use]
     pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
-        scope.stem().is_none_or(|identity| {
-            self.stems[self.projects[task.project].stem].identity == *identity
-        })
+        match scope {
+            WorkScope::AllOpen => true,
+            WorkScope::Stem(identity) => {
+                self.stems[self.projects[task.project].stem].identity == *identity
+            }
+            WorkScope::Team(team) => task.belongs_to_team(*team),
+        }
     }
 
     /// The scope to open `task` under: `scope` itself when it already shows
@@ -550,8 +588,30 @@ impl<'a> WorkProjection<'a> {
         clusters
     }
 
-    #[must_use]
     pub fn from_board(board: &'a BoardView) -> Self {
+        Self::from_board_and_lanes(board, None)
+    }
+
+    #[must_use]
+    pub fn from_board_and_lanes(board: &'a BoardView, lanes: Option<&LaneView>) -> Self {
+        let mut teams = BTreeSet::new();
+        let mut member_teams = BTreeMap::new();
+        if let Some(lanes) = lanes {
+            for team in lanes.lanes.iter().filter(|team| team.teamed()) {
+                teams.insert(team.lane);
+                for member in &team.members {
+                    member_teams.insert(member.lane, team.lane);
+                }
+            }
+        }
+        Self::from_board_with_team_memberships(board, teams, member_teams)
+    }
+
+    fn from_board_with_team_memberships(
+        board: &'a BoardView,
+        teams: BTreeSet<wire::CanonicalUuid>,
+        member_teams: BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+    ) -> Self {
         let by_born = board
             .tasks
             .iter()
@@ -625,22 +685,8 @@ impl<'a> WorkProjection<'a> {
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let dependencies = row
-                    .statement
-                    .body
-                    .dependencies
-                    .iter()
-                    .map(|born| {
-                        let task = by_born.get(born).copied();
-                        WorkDependency {
-                            born,
-                            task,
-                            satisfied: task.is_some_and(|dependency| {
-                                board.tasks[dependency].workflow.body.completion.is_some()
-                            }),
-                        }
-                    })
-                    .collect();
+                let dependencies = work_dependencies(row, board, &by_born);
+                let task_teams = associated_teams(row, &teams, &member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -654,6 +700,7 @@ impl<'a> WorkProjection<'a> {
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
+                    teams: task_teams,
                 }
             })
             .collect();
@@ -666,9 +713,53 @@ impl<'a> WorkProjection<'a> {
             projects,
             stems,
             offered,
+            teams,
             newest,
         }
     }
+}
+
+fn associated_teams(
+    task: &BoardTask,
+    teams: &BTreeSet<wire::CanonicalUuid>,
+    member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+) -> Vec<wire::CanonicalUuid> {
+    let mut associated = Vec::with_capacity(2);
+    if let Some(team) = task.creator_team.filter(|team| teams.contains(team)) {
+        associated.push(team);
+    }
+    if let Some(team) = task
+        .claim
+        .as_ref()
+        .and_then(|claim| member_teams.get(&claim.body.lane))
+        .copied()
+        && !associated.contains(&team)
+    {
+        associated.push(team);
+    }
+    associated
+}
+
+fn work_dependencies<'a>(
+    task: &'a BoardTask,
+    board: &BoardView,
+    by_born: &BTreeMap<&TaskStamp, usize>,
+) -> Vec<WorkDependency<'a>> {
+    task.statement
+        .body
+        .dependencies
+        .iter()
+        .map(|born| {
+            let task = by_born.get(born).copied();
+            WorkDependency {
+                born,
+                task,
+                satisfied: task.is_some_and(|dependency| {
+                    board.tasks[dependency].workflow.body.completion.is_some()
+                }),
+            }
+        })
+        .collect()
 }
 
 /// Each task's position in the resident's offer order, by task index. A stamp

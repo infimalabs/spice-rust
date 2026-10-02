@@ -71,15 +71,33 @@ fn queue(
 }
 
 #[hook]
-pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<SurfaceData>) -> Controls {
+pub(super) fn use_controls(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+    team: Option<wire::CanonicalUuid>,
+) -> Controls {
     let open = use_state(|| false);
     let query = use_state(String::new);
     let cutoff = use_state(String::new);
     let validation = use_state(|| None);
-    let revision = surface
-        .read()
-        .as_ref()
-        .map_or(0, |runtime| runtime.work_history().revision());
+    let (revision, selected_team) = surface.read().as_ref().map_or((0, None), |runtime| {
+        let history = runtime.work_history();
+        (history.revision(), history.team())
+    });
+    {
+        let surface = surface.clone();
+        use_effect_with((team, selected_team), move |(team, selected)| {
+            if team != selected {
+                let mut data = surface.write();
+                if let Some(runtime) = data.as_mut()
+                    && runtime.select_work_history_team(*team)
+                {
+                    drop(data);
+                    surface.set(surface.publication());
+                }
+            }
+        });
+    }
     {
         let sender = sender.clone();
         let surface = surface.clone();

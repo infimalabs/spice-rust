@@ -500,7 +500,11 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         route.directions().flatten().cloned(),
         properties.navigate.clone(),
     );
-    let work_history = work_history::use_controls(sender.clone(), surface.clone());
+    let work_history = work_history::use_controls(
+        sender.clone(),
+        surface.clone(),
+        route.work_scope().and_then(WorkScope::team),
+    );
     let team_settled = team_settled::use_controls(
         sender.clone(),
         surface.clone(),
@@ -652,9 +656,10 @@ fn work_detail_mounted(surface: &SurfaceData) -> bool {
 }
 
 fn project_work(runtime: Option<&AppRuntime>) -> Option<WorkProjection<'_>> {
+    let runtime = runtime?;
     runtime
-        .and_then(AppRuntime::board)
-        .map(WorkProjection::from_board)
+        .board()
+        .map(|board| WorkProjection::from_board_and_lanes(board, runtime.lanes()))
 }
 
 fn teamed_lane_count(surface: &SurfaceData) -> usize {

@@ -341,6 +341,15 @@ entry, so Directions below never moves ([a changing region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 Status is textual as well as colored, and narrow layouts keep labeled rows.
 
+The canonical team scope is `#/work/team/{team}`. Its open board admits each
+task created by that current roster team or last claimed by one of the team's
+current member lanes, exactly once and across every open lifecycle. History
+uses the resident's same team filter and restarts at the newest page whenever
+the scope changes, so pages from different teams or All open work never mix.
+An unknown roster team is replaced by `#/work` with a notice naming it. Task
+detail retains the team scope; its project action still selects the task's
+project stem.
+
 Tasks created from a retained transcript expose one creator-context link on
 their card, Chat quick view, and detail. Its visible label is the live relative
 age of the task's creation; its accessible name says it opens the creator

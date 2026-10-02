@@ -15,9 +15,9 @@ use wire::TaskStamp;
 use yew::prelude::*;
 
 use super::SurfaceData;
+use crate::AppDestination;
 use crate::view::{AppRoute, NormalizedAppLocation, RouteStep, normalize_app_location};
 use crate::work::{WorkProjection, WorkScope};
-use crate::{AppDestination, AppRuntime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
@@ -70,9 +70,11 @@ pub(super) fn intent_callback(
                 let scope = surface
                     .read()
                     .as_ref()
-                    .and_then(AppRuntime::board)
-                    .map_or(WorkScope::AllOpen, |board| {
-                        WorkProjection::from_board(board).scope_showing(&task, scope)
+                    .map_or(WorkScope::AllOpen, |runtime| {
+                        runtime.board().map_or(WorkScope::AllOpen, |board| {
+                            WorkProjection::from_board_and_lanes(board, runtime.lanes())
+                                .scope_showing(&task, scope)
+                        })
                     });
                 route.open_task(task, scope)
             }
