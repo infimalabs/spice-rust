@@ -606,11 +606,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.team_controls.clone(),
         chat_visible,
     );
-    card_target::use_direction_target(
-        state.route.direction_target().cloned(),
-        state.team_controls.clone(),
-        chat_visible,
-    );
     card_target::use_global_direction_target(
         global_direction_card(&state.route, &state.surface),
         state.team_controls.clone(),

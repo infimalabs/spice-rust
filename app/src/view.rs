@@ -314,47 +314,13 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
-/// One team-local direction named by a durable app route.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DirectionTarget {
-    team: wire::CanonicalUuid,
-    direction: wire::CanonicalUuid,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-impl DirectionTarget {
-    #[must_use]
-    pub(crate) const fn new(team: wire::CanonicalUuid, direction: wire::CanonicalUuid) -> Self {
-        Self { team, direction }
-    }
-
-    #[must_use]
-    pub(crate) const fn team(&self) -> wire::CanonicalUuid {
-        self.team
-    }
-
-    #[must_use]
-    pub(crate) fn element_id(&self) -> String {
-        format!("team-work-direction-{}-{}", self.team, self.direction)
-    }
-}
-
-/// What a Chat route focuses: one retained card or one team direction.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ChatTarget {
-    Card(String),
-    Direction(DirectionTarget),
-}
-
 /// One admitted app URL state: the complete addressable view.
 ///
 /// Global destinations remain the complete navigation vocabulary. A Work
 /// scope, task detail, or the operator's Directions refine Work and a card
-/// or direction refines Chat, so a route can never select an impossible
-/// global view. Dash has no subordinate selection; per-team modes, menus,
-/// and arrangement stay browser-local.
+/// refines Chat, so a route can never select an impossible global view.
+/// Dash has no subordinate selection; per-team modes, menus, and
+/// arrangement stay browser-local.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AppRoute {
@@ -369,7 +335,7 @@ pub(crate) enum AppRoute {
         focus: Option<DirectionsFocus>,
     },
     Chat {
-        target: Option<ChatTarget>,
+        card: Option<String>,
     },
 }
 
@@ -416,21 +382,12 @@ impl AppRoute {
                 scope: WorkScope::AllOpen,
                 task: None,
             },
-            AppDestination::Chat => Self::Chat { target: None },
+            AppDestination::Chat => Self::Chat { card: None },
         }
     }
 
     pub(crate) fn card(target: String) -> Option<Self> {
-        valid_card_target(&target).then_some(Self::Chat {
-            target: Some(ChatTarget::Card(target)),
-        })
-    }
-
-    #[must_use]
-    pub(crate) const fn direction(target: DirectionTarget) -> Self {
-        Self::Chat {
-            target: Some(ChatTarget::Direction(target)),
-        }
+        valid_card_target(&target).then_some(Self::Chat { card: Some(target) })
     }
 
     /// Parse one exact canonical path; any other spelling is not a route.
@@ -439,20 +396,9 @@ impl AppRoute {
         let mut segments = path.strip_prefix('/')?.split('/');
         match segments.next()? {
             "dash" => segments.next().is_none().then_some(Self::Dash),
-            "chat" => match (
-                segments.next(),
-                segments.next(),
-                segments.next(),
-                segments.next(),
-            ) {
-                (None, ..) => Some(Self::Chat { target: None }),
-                (Some(CARD_SEGMENT), Some(target), None, _) => Self::card(target.to_owned()),
-                (Some(DIRECTION_SEGMENT), Some(team), Some(direction), None) => {
-                    Some(Self::direction(DirectionTarget::new(
-                        team.parse().ok()?,
-                        direction.parse().ok()?,
-                    )))
-                }
+            "chat" => match (segments.next(), segments.next(), segments.next()) {
+                (None, ..) => Some(Self::Chat { card: None }),
+                (Some(CARD_SEGMENT), Some(target), None) => Self::card(target.to_owned()),
                 _ => None,
             },
             "work" => {
@@ -508,20 +454,8 @@ impl AppRoute {
     #[must_use]
     pub(crate) fn card_target(&self) -> Option<&str> {
         match self {
-            Self::Chat {
-                target: Some(ChatTarget::Card(card)),
-            } => Some(card),
-            Self::Dash | Self::Work { .. } | Self::Directions { .. } | Self::Chat { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn direction_target(&self) -> Option<&DirectionTarget> {
-        match self {
-            Self::Chat {
-                target: Some(ChatTarget::Direction(target)),
-            } => Some(target),
-            Self::Dash | Self::Work { .. } | Self::Directions { .. } | Self::Chat { .. } => None,
+            Self::Chat { card } => card.as_deref(),
+            Self::Dash | Self::Work { .. } | Self::Directions { .. } => None,
         }
     }
 
@@ -556,16 +490,8 @@ impl AppRoute {
     pub(crate) fn path(&self) -> String {
         match self {
             Self::Dash => AppDestination::Dash.path().to_owned(),
-            Self::Chat { target: None } => AppDestination::Chat.path().to_owned(),
-            Self::Chat {
-                target: Some(ChatTarget::Card(card)),
-            } => format!("/chat/{CARD_SEGMENT}/{card}"),
-            Self::Chat {
-                target: Some(ChatTarget::Direction(target)),
-            } => format!(
-                "/chat/{}",
-                direction_quote_source(target.team, target.direction)
-            ),
+            Self::Chat { card: None } => AppDestination::Chat.path().to_owned(),
+            Self::Chat { card: Some(card) } => format!("/chat/{CARD_SEGMENT}/{card}"),
             Self::Directions { focus: None } => format!("/work/{DIRECTIONS_SEGMENT}"),
             Self::Directions {
                 focus: Some(DirectionsFocus::Team(team)),
@@ -685,9 +611,7 @@ impl AppRoute {
                 },
                 format!("Task {task} is unavailable; closed its detail."),
             )),
-            Self::Chat {
-                target: Some(ChatTarget::Card(card)),
-            } if evidence.card == Some(false) => Some((
+            Self::Chat { card: Some(card) } if evidence.card == Some(false) => Some((
                 Self::destination(AppDestination::Chat),
                 format!("Linked card {card} is unavailable in retained Chat history; opened Chat."),
             )),
@@ -921,18 +845,11 @@ pub(crate) fn card_href(target: &str) -> String {
     format!("#{}", route.path())
 }
 
-/// Link one quote source: a team direction source is itself the Chat route
-/// suffix `direction/{team}/{direction}`, a global direction source is the
-/// Work route suffix `work/direction/{key}`, and every other source names a
-/// card.
+/// Link one quote source: a direction source is the Work route suffix
+/// `work/direction/{reference}`, and every other source names a card.
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn quote_source_href(source: &str) -> String {
-    if source
-        .strip_prefix(DIRECTION_SEGMENT)
-        .is_some_and(|rest| rest.starts_with('/'))
-    {
-        format!("#/chat/{source}")
-    } else if source.starts_with(GLOBAL_DIRECTION_SOURCE) {
+    if source.starts_with(DIRECTION_SOURCE) {
         format!("#/{source}")
     } else {
         card_href(source)
@@ -940,21 +857,14 @@ pub(crate) fn quote_source_href(source: &str) -> String {
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-const GLOBAL_DIRECTION_SOURCE: &str = "work/direction/";
+const DIRECTION_SOURCE: &str = "work/direction/";
 
+/// The source of a directive quote: its global Work direction, named by
+/// directive or fanout identity when resolved, otherwise by acknowledgment
+/// key.
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-pub(crate) fn direction_quote_source(
-    team: wire::CanonicalUuid,
-    direction: wire::CanonicalUuid,
-) -> String {
-    format!("{DIRECTION_SEGMENT}/{team}/{direction}")
-}
-
-/// The source of a directive quote with no team-local route: its global
-/// Work direction, named by acknowledgment key.
-#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-pub(crate) fn global_direction_quote_source(key: &str) -> String {
-    format!("{GLOBAL_DIRECTION_SOURCE}{key}")
+pub(crate) fn direction_quote_source(direction: &crate::runtime::DirectionRef) -> String {
+    format!("{DIRECTION_SOURCE}{direction}")
 }
 
 /// The global Work Directions card of one fanout.

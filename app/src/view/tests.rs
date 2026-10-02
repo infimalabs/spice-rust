@@ -1,7 +1,8 @@
 use super::{
     AppDestination, AppNotice, AppRoute, ConnectionStage, CreatorContextTarget, DirectionRef,
-    DirectionTarget, DirectionsFocus, RouteEvidence, RouteStep, app_notice, normalize_app_location,
-    opening_auth_token, quote_source_href, team_stream_card_target, team_stream_card_team,
+    DirectionsFocus, RouteEvidence, RouteStep, app_notice, direction_quote_source,
+    normalize_app_location, opening_auth_token, quote_source_href, team_stream_card_target,
+    team_stream_card_team,
 };
 use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
 
@@ -40,17 +41,10 @@ fn canonical_routes_round_trip_exactly() {
             "/work/public/a%20b%2F%C3%A9.-_~",
             work(stem(WorkVisibility::Public, "a b/é.-_~"), None),
         ),
-        ("/chat", AppRoute::Chat { target: None }),
+        ("/chat", AppRoute::Chat { card: None }),
         (
             "/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
             AppRoute::card(CARD.to_owned()).expect("fixture card"),
-        ),
-        (
-            concat!(
-                "/chat/direction/01234567-89ab-cdef-0123-456789abcdef/",
-                "fedcba98-7654-3210-fedc-ba9876543210",
-            ),
-            AppRoute::direction(direction_fixture()),
         ),
         ("/work/directions", AppRoute::Directions { focus: None }),
         (
@@ -134,10 +128,6 @@ fn directions_routes_refine_all_open_work_and_refuse_to_the_section() {
         direction.show_work(WorkScope::AllOpen),
         Some(RouteStep::Push(work(WorkScope::AllOpen, None)))
     );
-    assert_eq!(
-        quote_source_href(&super::global_direction_quote_source("dTvP0GpW6")),
-        format!("#{}", direction.path())
-    );
 }
 
 #[test]
@@ -163,40 +153,22 @@ fn malformed_direction_segments_open_directions_and_name_the_segment() {
     }
 }
 
-fn direction_fixture() -> DirectionTarget {
-    DirectionTarget::new(
-        "01234567-89ab-cdef-0123-456789abcdef"
-            .parse()
-            .expect("fixture team"),
-        "fedcba98-7654-3210-fedc-ba9876543210"
-            .parse()
-            .expect("fixture direction"),
-    )
-}
-
 #[test]
-fn direction_routes_refine_chat_and_name_the_exact_team_card() {
-    let target = direction_fixture();
-    let route = AppRoute::direction(target.clone());
-    assert_eq!(route.app_destination(), AppDestination::Chat);
-    assert_eq!(route.direction_target(), Some(&target));
-    assert_eq!(route.card_target(), None);
-    assert_eq!(
-        target.element_id(),
-        concat!(
-            "team-work-direction-01234567-89ab-cdef-0123-456789abcdef-",
-            "fedcba98-7654-3210-fedc-ba9876543210",
-        )
-    );
-    assert_eq!(
-        quote_source_href(&super::direction_quote_source(
-            target.team(),
-            "fedcba98-7654-3210-fedc-ba9876543210"
-                .parse()
-                .expect("fixture direction"),
-        )),
-        format!("#{}", route.path()),
-    );
+fn direction_quote_sources_link_the_canonical_global_direction_route() {
+    let identity = uuid("fedcba98-7654-3210-fedc-ba9876543210");
+    for direction in [
+        DirectionRef::Identity(identity),
+        DirectionRef::Key("dTvP0GpW6".to_owned()),
+    ] {
+        let href = quote_source_href(&direction_quote_source(&direction));
+        let location = normalize_app_location("", &href);
+        assert_eq!(
+            location.route(),
+            &directions(DirectionsFocus::Direction(direction)),
+            "{href}"
+        );
+        assert!(!location.needs_replace(), "{href}");
+    }
     assert_eq!(quote_source_href(CARD), format!("#/chat/card/{CARD}"));
 }
 
@@ -335,7 +307,7 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
         ("", "#/work/public/a%2f"),
     ] {
         let location = normalize_app_location(search, hash);
-        assert_eq!(location.route(), &AppRoute::Chat { target: None });
+        assert_eq!(location.route(), &AppRoute::Chat { card: None });
         assert!(location.needs_replace());
         let notice = location.notice().expect("invalid input is named");
         assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
@@ -347,7 +319,7 @@ fn history_steps_push_openings_and_replace_changes_inside_one_view() {
     let canvas = stem(WorkVisibility::Public, "canvas");
     let all = work(WorkScope::AllOpen, None);
     let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
-    let chat = AppRoute::Chat { target: None };
+    let chat = AppRoute::Chat { card: None };
 
     assert_eq!(chat.show(AppDestination::Chat), None);
     assert_eq!(
@@ -437,7 +409,7 @@ fn settled_missing_segments_rewrite_to_their_containing_view() {
     let (next, notice) = card
         .unavailable(settled(None, None, Some(false)))
         .expect("missing card refuses");
-    assert_eq!(next, AppRoute::Chat { target: None });
+    assert_eq!(next, AppRoute::Chat { card: None });
     assert!(notice.contains(CARD), "{notice}");
 }
 

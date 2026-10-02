@@ -432,7 +432,7 @@ fn direction_card<'a>(
         .collect();
     Card {
         identity: row.identity,
-        id: crate::view::DirectionTarget::new(team, row.identity).element_id(),
+        id: format!("team-work-direction-{team}-{}", row.identity),
         body: &row.body,
         complete: row.body_complete,
         attachments: &row.attachments,
