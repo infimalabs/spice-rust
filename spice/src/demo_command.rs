@@ -335,7 +335,7 @@ fn finish_seed_prepared_root(
     environment(root.to_path_buf(), transcript, state, executable, automatic)
 }
 
-/// Copy the binary's current immutable app generation into the demo lane.
+/// Copy the invoking worktree's current immutable app generation into the demo lane.
 fn seed_lane_app(root: &Path, source: &serve::AppSource) -> DemoResult<()> {
     let generation = source
         .current_generation()
