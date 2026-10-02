@@ -1119,7 +1119,11 @@ pub(in crate::resident) fn retune(
 ) -> io::Result<LiveRetuneResult> {
     #[cfg(unix)]
     {
-        let request = format!("spice-retune-{}", super::super::new_uuid());
+        let request = format!(
+            "{}{}",
+            listen::OMP_RETUNE_REQUEST_ID_PREFIX,
+            super::super::new_uuid()
+        );
         let mut identity = blake3::Hasher::new();
         identity.update(paths.common.as_os_str().as_encoded_bytes());
         identity.update(request.as_bytes());

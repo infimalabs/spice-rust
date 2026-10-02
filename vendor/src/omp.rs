@@ -1,10 +1,11 @@
 //! oh-my-pi's current RPC launch contract.
 //!
 //! omp is driven over `--mode rpc`: one JSON command per line on stdin, one
-//! JSON frame per line on stdout. The argument vector fixes the model,
-//! thinking level, OpenAI service tier, and system prompt; the per-run overlay
-//! fixes Anthropic's service tier. The supervisor opens the conversation with
-//! request bytes once stdin exists and interjects steering the same way.
+//! JSON frame per line on stdout. The argument vector fixes the model, OpenAI
+//! service tier, and system prompt; the per-run overlay fixes Anthropic's
+//! service tier. The supervisor opens the conversation with request bytes once
+//! stdin exists, stating the reasoning effort there through the same command a
+//! live retune sends, and interjects steering the same way.
 
 pub mod frame;
 
@@ -70,6 +71,9 @@ pub const FOLLOW_UP_MODE_REQUEST_ID: &str = "spice-follow-up-mode";
 
 /// Request identity of the interrupt disposition the lane states at open.
 pub const INTERRUPT_MODE_REQUEST_ID: &str = "spice-interrupt-mode";
+
+/// Request identity of the reasoning effort the lane states at open.
+pub const EFFORT_REQUEST_ID: &str = "spice-effort";
 
 /// How omp drains the steering queue at a boundary: every message the lane
 /// has interjected, in order.
@@ -265,8 +269,6 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from("yolo"),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
-        OsString::from("--thinking"),
-        OsString::from(launch.effort.as_str()),
         // This CLI override is OpenAI-specific. Anthropic's independent tier
         // rides the per-run overlay so both families follow the lane's explicit
         // disposition instead of omp's persistent settings.
@@ -486,7 +488,8 @@ fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
 }
 
 /// The request lines that open a launch: the wire, the event filter, the queue
-/// dispositions, the lane's shell, a state query, then the first turn.
+/// dispositions, the reasoning effort, the lane's shell, a state query, then
+/// the first turn.
 ///
 /// omp writes its `ready` frame before reading stdin, so every request may be
 /// queued before the child has answered anything. The version is negotiated
@@ -496,10 +499,12 @@ fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
 /// event and trims each `message_update` to its delta. The three queue dispositions
 /// follow: omp leaves them to whatever the machine's own settings say, so a
 /// lane that depends on how steering drains states them rather than
-/// inheriting them. The lane's shell is registered next so the first turn's
-/// schema carries it; the state reply declares the session; the prompt starts
-/// the turn by naming the skill the system prompt already carries, so the
-/// agent re-grounds in it.
+/// inheriting them. The effort is stated next through `set_thinking_level`,
+/// the command a live retune sends, so launch and retune share one path; it
+/// also replaces the level a resumed session restores from its own file. The
+/// lane's shell is registered next so the first turn's schema carries it; the
+/// state reply declares the session; the prompt starts the turn by naming the
+/// skill the system prompt already carries, so the agent re-grounds in it.
 ///
 /// A refused command answers `success: false`, which the lane reads as a
 /// vendor failure and reaps; a refused negotiation therefore ends the launch
@@ -532,6 +537,10 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
     ] {
         bytes.extend(request_line(&ModeRequest { id, kind, mode }));
     }
+    bytes.extend(set_thinking_level_request(
+        EFFORT_REQUEST_ID,
+        launch.effort.as_str(),
+    ));
     bytes.extend(host_tools_request());
     bytes.extend(request_line(&Request {
         id: STATE_REQUEST_ID.to_owned(),

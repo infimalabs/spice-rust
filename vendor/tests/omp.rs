@@ -86,8 +86,6 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "yolo",
         "--model",
         "claude-opus-5",
-        "--thinking",
-        "xhigh",
         "--service-tier",
         "none",
         "--tools",
@@ -145,6 +143,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                 "type": "set_interrupt_mode",
                 "mode": "immediate",
             }),
+            serde_json::json!({"id": "spice-effort", "type": "set_thinking_level", "level": "xhigh"}),
             serde_json::from_slice::<serde_json::Value>(
                 omp::host_tools_request()
                     .strip_suffix(b"\n")
