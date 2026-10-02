@@ -476,7 +476,9 @@ impl NativeInvocation<'_> {
             | ["lane", "effort"]
             | ["lane", "remove"]
             | ["lane", "import"]
-            | ["recall"] => deliver(&lane_command::run(leaf, contract, configuration), form),
+            | ["recall"] => {
+                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
+            }
             ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
             ["release", "publish"] => match release_command::run(leaf, contract) {
                 release_command::RunResult::Plan(outcome) => {
