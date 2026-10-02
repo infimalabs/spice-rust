@@ -49,9 +49,16 @@ pub(super) struct Progress {
 }
 
 impl Progress {
-    /// Progress on standard error with the production heartbeat.
-    pub(super) fn stderr(command: &'static str) -> Self {
-        Self::new(command, Arc::new(Mutex::new(io::stderr())), HEARTBEAT)
+    /// Progress on standard error with the production heartbeat, or nowhere
+    /// when the invocation is not `live`: under `--json` standard error
+    /// carries exactly one document, so progress would corrupt it.
+    pub(super) fn stderr(command: &'static str, live: bool) -> Self {
+        let sink: Arc<Mutex<dyn Write + Send>> = if live {
+            Arc::new(Mutex::new(io::stderr()))
+        } else {
+            Arc::new(Mutex::new(io::sink()))
+        };
+        Self::new(command, sink, HEARTBEAT)
     }
 
     pub(super) fn new(
@@ -79,8 +86,18 @@ impl Progress {
     /// The heartbeat thread ends before this returns, so no heartbeat follows
     /// the caller's completion line.
     pub(super) fn during<T>(&self, step: &str, work: impl FnOnce() -> T) -> (T, Duration) {
+        self.watching(|| step.to_owned(), work)
+    }
+
+    /// Run `work` while a heartbeat names whatever `phase` reads at each beat.
+    pub(super) fn watching<T>(
+        &self,
+        phase: impl Fn() -> String + Sync,
+        work: impl FnOnce() -> T,
+    ) -> (T, Duration) {
         let started = Instant::now();
         let (stop, stopped) = mpsc::channel::<()>();
+        let phase = &phase;
         let value = std::thread::scope(|scope| {
             scope.spawn(move || {
                 while matches!(
@@ -88,7 +105,8 @@ impl Progress {
                     Err(RecvTimeoutError::Timeout)
                 ) {
                     self.line(format_args!(
-                        "{step} running {}",
+                        "{} running {}",
+                        phase(),
                         Elapsed(started.elapsed())
                     ));
                 }
@@ -98,6 +116,277 @@ impl Progress {
             value
         });
         (value, started.elapsed())
+    }
+
+    /// Whether a run of `elapsed` outlasted one heartbeat interval.
+    pub(super) fn beat_during(&self, elapsed: Duration) -> bool {
+        elapsed >= self.interval
+    }
+}
+
+/// The phase a heartbeat names; the work updates it as it moves.
+#[derive(Clone)]
+pub(super) struct Phase(Arc<Mutex<String>>);
+
+impl Phase {
+    pub(super) fn new(initial: &str) -> Self {
+        Self(Arc::new(Mutex::new(initial.to_owned())))
+    }
+
+    pub(super) fn set(&self, phase: String) {
+        if let Ok(mut current) = self.0.lock() {
+            *current = phase;
+        }
+    }
+
+    pub(super) fn get(&self) -> String {
+        self.0
+            .lock()
+            .map_or_else(|_| "unavailable".to_owned(), |current| current.clone())
+    }
+}
+
+/// What one recognized protocol line means to a person.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Event {
+    /// The phase a heartbeat names from here on.
+    pub(super) phase: Option<String>,
+    /// A progress line worth printing now.
+    pub(super) line: Option<String>,
+}
+
+/// Who reads the recognized lines of a [`PhaseLog`].
+pub(super) enum Audience<'a> {
+    /// A person: recognized lines become bounded progress lines.
+    Person(&'a Progress),
+    /// A supervising gate that parses the protocol: recognized lines pass
+    /// through verbatim, best effort.
+    Supervisor(Box<dyn Write + Send + 'a>),
+}
+
+/// A progress writer for gate work that speaks a line protocol.
+///
+/// Every byte lands in the complete capture. Only lines `translate`
+/// recognizes reach the audience, and each moves the heartbeat's phase, so
+/// subprocess chatter is retained without ever streaming.
+pub(super) struct PhaseLog<'a> {
+    audience: Audience<'a>,
+    phase: Phase,
+    translate: fn(&str) -> Option<Event>,
+    capture: Vec<u8>,
+    line_start: usize,
+}
+
+impl<'a> PhaseLog<'a> {
+    pub(super) fn new(
+        audience: Audience<'a>,
+        phase: Phase,
+        translate: fn(&str) -> Option<Event>,
+    ) -> Self {
+        Self {
+            audience,
+            phase,
+            translate,
+            capture: Vec::new(),
+            line_start: 0,
+        }
+    }
+
+    /// Every byte the work wrote.
+    pub(super) fn capture(&self) -> &[u8] {
+        &self.capture
+    }
+
+    fn recognize(&mut self, end: usize) {
+        let line = String::from_utf8_lossy(&self.capture[self.line_start..end]);
+        let line = line.trim_end_matches(['\n', '\r']);
+        let Some(event) = (self.translate)(line) else {
+            return;
+        };
+        match &mut self.audience {
+            Audience::Person(progress) => {
+                if let Some(text) = &event.line {
+                    progress.line(format_args!("{text}"));
+                }
+            }
+            Audience::Supervisor(sink) => {
+                let _ = writeln!(sink, "{line}").and_then(|()| sink.flush());
+            }
+        }
+        if let Some(phase) = event.phase {
+            self.phase.set(phase);
+        }
+    }
+}
+
+impl Write for PhaseLog<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let offset = self.capture.len();
+        self.capture.extend_from_slice(bytes);
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == b'\n' {
+                let end = offset + index + 1;
+                self.recognize(end);
+                self.line_start = end;
+            }
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Longest phase label a heartbeat carries.
+const PHASE_CHARS: usize = 96;
+
+/// The change gate's progress protocol, read for a person.
+///
+/// Phase and shard boundaries print; arm and test-shard starts only move the
+/// heartbeat's phase; budgets, schedules, and subprocess output stay in the
+/// capture.
+pub(super) fn change_gate_event(line: &str) -> Option<Event> {
+    if let Some(rest) = line.strip_prefix("[change-gate-phase] stage=") {
+        let stage = rest.split_whitespace().next()?;
+        if let Some(stage) = stage.strip_suffix("-terminal") {
+            return Some(Event {
+                phase: None,
+                line: Some(finished(stage, rest)),
+            });
+        }
+        let changes =
+            field(rest, "changes").map_or_else(String::new, |n| format!(" ({n} changes)"));
+        return Some(Event {
+            phase: Some(stage.to_owned()),
+            line: Some(format!("{stage} started{changes}")),
+        });
+    }
+    if let Some(rest) = line.strip_prefix("[change-gate-policy] gate=") {
+        let gate = rest.split_whitespace().next()?;
+        return Some(if field(rest, "stage") == Some("terminal") {
+            Event {
+                phase: None,
+                line: Some(finished(&format!("arm {gate}"), rest)),
+            }
+        } else {
+            Event {
+                phase: Some(format!("arm {gate}")),
+                line: None,
+            }
+        });
+    }
+    if let Some(rest) = line.strip_prefix("[change-gate-budget-warning] ") {
+        let reason = field(rest, "reason").unwrap_or("unspecified");
+        return Some(Event {
+            phase: None,
+            line: Some(format!("budget warning: {reason}")),
+        });
+    }
+    let rest = line.strip_prefix("[rust-test] ")?;
+    if let Some(rest) = rest.strip_prefix("coordinator ") {
+        return Some(Event {
+            phase: None,
+            line: Some(finished("tests", rest)),
+        });
+    }
+    let stage = field(rest, "stage")?;
+    let subject = field(rest, "shard").map_or_else(
+        || format!("tests {stage}"),
+        |shard| {
+            let package = field(rest, "package").unwrap_or_default().trim_matches('"');
+            format!("tests shard {shard} {package}")
+        },
+    );
+    let subject = clip(&subject, PHASE_CHARS);
+    Some(match stage {
+        "start" => Event {
+            line: Some(format!("{subject} started")),
+            phase: Some(subject),
+        },
+        "terminal" => Event {
+            phase: None,
+            line: Some(finished(&subject, rest)),
+        },
+        _ if stage.ends_with("-terminal") => {
+            let disposition = field(rest, "disposition").unwrap_or_default();
+            Event {
+                phase: None,
+                line: (!matches!(disposition, "success" | "reused"))
+                    .then(|| finished(&subject, rest)),
+            }
+        }
+        _ => Event {
+            phase: Some(subject),
+            line: None,
+        },
+    })
+}
+
+/// `SUBJECT DISPOSITION in ELAPSED` from a terminal protocol line.
+fn finished(subject: &str, rest: &str) -> String {
+    let disposition = field(rest, "disposition").unwrap_or("finished");
+    match field(rest, "elapsed_ms").and_then(|ms| ms.parse::<u64>().ok()) {
+        Some(ms) => format!(
+            "{subject} {disposition} in {}",
+            Elapsed(Duration::from_millis(ms))
+        ),
+        None => format!("{subject} {disposition}"),
+    }
+}
+
+/// The value of one `name=value` word.
+fn field<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
+    rest.split_whitespace()
+        .find_map(|word| word.strip_prefix(name)?.strip_prefix('='))
+}
+
+/// `text` cut to at most `chars` characters, marked when cut.
+pub(super) fn clip(text: &str, chars: usize) -> String {
+    match text.char_indices().nth(chars) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
+}
+
+/// One diagnostic as a person reads it: whole when it is small, otherwise
+/// its bounded tail with the complete text retained by digest.
+pub(super) fn bounded(directory: &Path, text: &str) -> String {
+    let tail = DiagnosticTail::of(text.as_bytes(), TAIL_LINES, TAIL_BYTES);
+    if tail.withheld_bytes == 0 && tail.shown_lines == tail.lines {
+        return text.to_owned();
+    }
+    failure_evidence(directory, text.as_bytes())
+}
+
+/// The one-word decision a completion line names.
+pub(super) const fn verdict<B>(outcome: &wire::Outcome<B>) -> &'static str {
+    match outcome {
+        wire::Outcome::Reply(_) => "admitted",
+        wire::Outcome::Refusal(_) => "refused",
+        wire::Outcome::Fault(_) => "faulted",
+    }
+}
+
+/// Where the current repository retains complete gate output; a temporary
+/// directory when no repository is discoverable here.
+pub(super) fn current_captures() -> PathBuf {
+    std::env::current_dir()
+        .ok()
+        .and_then(|current| spice::repository::Repository::discover(&current).ok())
+        .map_or_else(
+            || std::env::temp_dir().join("spice-gate-output"),
+            |repository| capture_directory(repository.common_dir()),
+        )
+}
+
+/// A battery family as progress and summaries name it.
+pub(super) const fn family_name(family: gate::ArmFamily) -> &'static str {
+    match family {
+        gate::ArmFamily::Core => "core",
+        gate::ArmFamily::Toolchain => "toolchain",
+        gate::ArmFamily::Metrics => "metrics",
+        gate::ArmFamily::Hygiene => "hygiene",
     }
 }
 
@@ -417,6 +706,156 @@ mod tests {
             !Path::new(&first.path).exists(),
             "the oldest capture is pruned"
         );
+        fs::remove_dir_all(&directory).expect("fixture directory removes");
+    }
+
+    /// A noisy successful run as the change gate writes it: protocol lines
+    /// interleaved with compiler chatter, split across arbitrary writes.
+    const NOISY_RUN: &str = concat!(
+        "[change-gate-phase] stage=selection changes=2\n",
+        "   Compiling spice v0.1.0\n",
+        "{\"reason\":\"compiler-artifact\",\"n\":1}\n",
+        "[change-gate-budget] cpus=12 ordinary_lanes=4\n",
+        "[change-gate-budget-warning] reason=advisory-lane-share-exceeded host_capacity=12\n",
+        "[change-gate-policy] gate=repo-docs disposition=executed\n",
+        "warning: unused variable `x`\n",
+        "[change-gate-policy] gate=repo-docs stage=terminal elapsed_ms=1200 disposition=success\n",
+        "[rust-test] stage=metadata-terminal elapsed_ms=40 disposition=success\n",
+        "[rust-test] stage=start shard=1/2 package=\"spice\" \n",
+        "test a ... ok\n",
+        "[rust-test] stage=progress shard=1/2 package=\"spice\" targets=[\"lib\"] \n",
+        "[rust-test] stage=terminal shard=1/2 package=\"spice\" targets=[\"lib\"] elapsed_ms=2500 disposition=success\n",
+        "[rust-test] coordinator disposition=success elapsed_ms=3000 peak_concurrency=2 \n",
+    );
+
+    fn write_in_pieces(log: &mut PhaseLog<'_>, text: &str) {
+        for piece in text.as_bytes().chunks(7) {
+            log.write_all(piece).expect("phase log accepts every byte");
+        }
+    }
+
+    #[test]
+    fn a_person_sees_only_phase_boundaries_while_the_capture_keeps_every_byte() {
+        let shared = Shared::default();
+        let progress = Progress::new(
+            "gate selection",
+            Arc::new(Mutex::new(shared.clone())),
+            HEARTBEAT,
+        );
+        let phase = Phase::new("capture");
+        let mut log = PhaseLog::new(
+            Audience::Person(&progress),
+            phase.clone(),
+            change_gate_event,
+        );
+        write_in_pieces(&mut log, NOISY_RUN);
+
+        assert_eq!(log.capture(), NOISY_RUN.as_bytes());
+        assert_eq!(
+            shared.text(),
+            concat!(
+                "[gate selection] selection started (2 changes)\n",
+                "[gate selection] budget warning: advisory-lane-share-exceeded\n",
+                "[gate selection] arm repo-docs success in 1.2s\n",
+                "[gate selection] tests shard 1/2 spice started\n",
+                "[gate selection] tests shard 1/2 spice success in 2.5s\n",
+                "[gate selection] tests success in 3.0s\n",
+            ),
+            "chatter, budgets, and successful sub-stages stay in the capture"
+        );
+        assert_eq!(phase.get(), "tests shard 1/2 spice");
+    }
+
+    #[test]
+    fn a_supervisor_receives_every_protocol_line_verbatim_and_no_chatter() {
+        let shared = Shared::default();
+        let mut log = PhaseLog::new(
+            Audience::Supervisor(Box::new(shared.clone())),
+            Phase::new("capture"),
+            change_gate_event,
+        );
+        write_in_pieces(&mut log, NOISY_RUN);
+
+        let protocol = NOISY_RUN
+            .lines()
+            .filter(|line| {
+                [
+                    "[change-gate-phase] ",
+                    "[change-gate-policy] ",
+                    "[change-gate-budget-warning] ",
+                    "[rust-test] ",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            })
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        assert_eq!(shared.text(), protocol);
+        assert_eq!(log.capture(), NOISY_RUN.as_bytes());
+    }
+
+    #[test]
+    fn a_heartbeat_names_the_phase_the_work_has_reached() {
+        let shared = Shared::default();
+        let progress = Progress::new(
+            "gate selection",
+            Arc::new(Mutex::new(shared.clone())),
+            Duration::from_millis(1),
+        );
+        let phase = Phase::new("capture");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let wait_for = |needle: &str| {
+            while !shared.text().contains(needle) {
+                assert!(Instant::now() < deadline, "no heartbeat named {needle}");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        let ((), elapsed) = progress.watching(
+            || phase.get(),
+            || {
+                wait_for("capture running ");
+                phase.set("arm rust-typecheck".to_owned());
+                wait_for("arm rust-typecheck running ");
+            },
+        );
+        assert!(progress.beat_during(elapsed));
+        let ended = shared.text();
+        assert!(
+            ended.lines().all(|line| {
+                line.starts_with("[gate selection] capture running ")
+                    || line.starts_with("[gate selection] arm rust-typecheck running ")
+            }),
+            "{ended}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(shared.text(), ended, "no heartbeat follows completion");
+    }
+
+    #[test]
+    fn an_oversized_detail_shows_a_bounded_tail_and_retains_every_byte() {
+        let directory = fixture_directory();
+        let short = "selected gate regressed\nrepo-docs: refused";
+        assert_eq!(bounded(&directory, short), short);
+        assert!(
+            !directory.exists(),
+            "a detail within bounds retains nothing"
+        );
+
+        let oversized = (0..20_000)
+            .map(|index| format!("stdout line {index}\n"))
+            .collect::<String>();
+        let shown = bounded(&directory, &oversized);
+        assert!(shown.len() < TAIL_BYTES + 512, "{shown}");
+        assert!(shown.contains("stdout line 19999\n"), "{shown}");
+        assert!(!shown.contains("stdout line 0\n"), "{shown}");
+        assert!(shown.contains("of 20000 diagnostic lines"), "{shown}");
+        let path = shown
+            .lines()
+            .last()
+            .and_then(|line| line.strip_prefix("complete output: "))
+            .and_then(|line| line.split(" (").next())
+            .expect("a bounded detail names the complete capture");
+        assert_eq!(fs::read_to_string(path).expect("capture reads"), oversized);
         fs::remove_dir_all(&directory).expect("fixture directory removes");
     }
 }

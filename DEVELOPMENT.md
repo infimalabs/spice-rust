@@ -86,9 +86,10 @@ Use that boundary in this order:
    Add the owning app, Canvas, proof, or staging command for its seam.
 4. Stage the change and run `spice gate prove`. Generate a named miss with
    `spice gate prove ACTION`, or every miss with `spice gate prove --missing`.
-   Proof shows progress and a decision summary (`--verbose` for receipts); a
-   failure shows a bounded tail and its full-output path. Other transcripts
-   are feedback, not receipts. Stop at trust refusal for the operator.
+   Proof, bare `spice gate`, and `spice gate selection` show progress and a
+   decision summary (`--verbose` where accepted); a failure shows a bounded tail
+   and its full-output path. Other transcripts are feedback, not receipts.
+   Stop at trust refusal for the operator.
 5. Confirm no owned process remains, inspect the diff, and use the installed
    hooks. File unexpected failures outside the selected slice as separate work;
    do not widen the current run. Commit, hand off, or land according to the

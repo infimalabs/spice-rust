@@ -29,6 +29,7 @@ mod parent;
 mod profile;
 mod terminal;
 
+use super::output::family_name;
 use dispatch::{dispatch, dispatch_captured};
 use parent::ParentCancellation;
 use terminal::classify;
@@ -338,9 +339,10 @@ impl Drop for WorkerFiles {
 pub(super) fn run(
     profile_output: Option<PathBuf>,
     configuration: Option<&spice::config::RepositoryCapture>,
+    live: bool,
 ) -> Outcome<Report> {
     let mut profile = profile::Profile::new(profile_output);
-    let outcome = run_profiled(&mut profile, configuration);
+    let outcome = run_profiled(&mut profile, configuration, live);
     profile.publish();
     outcome
 }
@@ -352,6 +354,7 @@ pub(super) fn run(
 fn run_profiled(
     profile: &mut profile::Profile,
     configuration: Option<&spice::config::RepositoryCapture>,
+    live: bool,
 ) -> Outcome<Report> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
@@ -408,7 +411,7 @@ fn run_profiled(
     if let Err(failure) = finish_appliance_generation_audit(&mut audit, profile) {
         return worker_failure(failure);
     }
-    run_with(|files| supervise(files, &generation, &claim))
+    run_with(|files| supervise(files, &generation, &claim, live))
 }
 
 fn run_admission_inline(
@@ -582,6 +585,7 @@ fn supervise(
     files: &WorkerFiles,
     generation: &ApplianceGenerationFence,
     claim: &ClaimCapture,
+    live: bool,
 ) -> Outcome<Report> {
     let parent = match ParentCancellation::capture() {
         Ok(parent) => parent,
@@ -618,16 +622,26 @@ fn supervise(
         Ok(running) => running,
         Err(error) => return fault("gate::pre-commit-worker-unavailable", error),
     };
-    let waited = match running.wait() {
-        Ok(waited) => waited,
-        Err(error) => {
-            return worker_lost(
-                &files.progress,
-                format!("worker wait or reap failed: {error}"),
-            );
-        }
+    // A passing hook prints no reply and no completion line. A run that
+    // outlasts one heartbeat interval names its phase while it runs, because
+    // its outcome is not yet known; a long refusal or fault also names its end.
+    let progress = super::output::Progress::stderr("gate pre-commit", live);
+    let (waited, elapsed) = progress.watching(|| last_phase(&files.progress), || running.wait());
+    let outcome = match waited {
+        Ok(waited) => classify(files, &waited),
+        Err(error) => worker_lost(
+            &files.progress,
+            format!("worker wait or reap failed: {error}"),
+        ),
     };
-    classify(files, &waited)
+    if progress.beat_during(elapsed) && !matches!(outcome, Outcome::Reply(_)) {
+        progress.line(format_args!(
+            "{} after {}",
+            super::output::verdict(&outcome),
+            super::output::Elapsed(elapsed)
+        ));
+    }
+    outcome
 }
 
 fn worker_run(
@@ -866,7 +880,10 @@ fn worker_failure(failure: WorkerFailure) -> Outcome<Report> {
     failure_outcome(failure)
 }
 
-fn failure_outcome<T>(failure: WorkerFailure) -> Outcome<T> {
+/// A worker failure as the hook reports it; detail beyond the diagnostic
+/// tail bound is retained whole by digest rather than echoed.
+fn failure_outcome<T>(mut failure: WorkerFailure) -> Outcome<T> {
+    failure.detail = super::output::bounded(&super::output::current_captures(), &failure.detail);
     if failure.fault {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -991,15 +1008,6 @@ fn captured(output: Option<&sill::CapturedOutput>) -> String {
         || "<none>".to_owned(),
         |output| String::from_utf8_lossy(output.bytes()).trim().to_owned(),
     )
-}
-
-const fn family_name(family: ArmFamily) -> &'static str {
-    match family {
-        ArmFamily::Core => "core",
-        ArmFamily::Toolchain => "toolchain",
-        ArmFamily::Metrics => "metrics",
-        ArmFamily::Hygiene => "hygiene",
-    }
 }
 
 #[derive(Clone, Copy)]

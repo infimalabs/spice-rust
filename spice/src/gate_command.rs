@@ -4,37 +4,45 @@
 //! tracked floors, source bytes, and the root handed to every bounded process
 //! all come from one captured Git source rather than from a moving checkout.
 
-use std::env;
-use std::io;
 use std::path::Path;
 
-use gate::{BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector};
-use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
+use gate::{CampReport, KillReport, ReportMutationMovement, Selector};
+use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::repository::Repository;
 
+mod battery;
 mod commit_message;
 mod output;
 mod pre_commit;
 mod prove;
 mod reference_transaction;
+mod selection;
 mod verify_claim;
 
+pub(crate) use battery::BatteryRun;
 pub(crate) use prove::{ProveReport, prove};
 
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
-) -> Outcome<BatteryReport> {
-    let selector = matches
-        .get_one::<String>("at")
-        .map_or_else(Selector::staged, |revision| {
-            Selector::revision(revision.clone())
-        });
+    live: bool,
+) -> Outcome<BatteryRun> {
+    let at = matches.get_one::<String>("at");
+    let selector = at.map_or_else(Selector::staged, |revision| {
+        Selector::revision(revision.clone())
+    });
+    let invocation = battery::Invocation {
+        at: at.map(String::as_str),
+        verbose: matches.get_flag("verbose"),
+        live,
+    };
     let admission = verify_claim::admit_current_worktree(configuration);
-    match verify_claim::launch_after_admission(admission, || spice::gate::run(selector)) {
-        Ok(Ok(report)) => direct(report),
+    match verify_claim::launch_after_admission(admission, || {
+        battery::run(selector, &invocation, &output::current_captures())
+    }) {
+        Ok(Ok(run)) => direct(run),
         Ok(Err(error)) => battery_failure(error),
         Err(failure) => failure.outcome(),
     }
@@ -44,130 +52,18 @@ pub(crate) fn run(
 pub(crate) fn pre_commit(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
+    live: bool,
 ) -> Outcome<pre_commit::Report> {
     pre_commit::run(
         matches
             .get_one::<String>("profile-output")
             .map(std::path::PathBuf::from),
         configuration,
+        live,
     )
 }
 
-/// Run the current source repository's strict ordinary change selection.
-///
-/// This leaf is the policy-free destination for source-development delegates:
-/// Cargo may build this product command, but no xtask command or hook owns a
-/// second selection implementation.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "kebab-case", tag = "evidence")]
-pub(crate) enum CurrentSourceSelectionReport {
-    /// Full validated evidence for a direct operator invocation.
-    Focused {
-        report: Box<spice::change_gate::ChangeGateReport>,
-    },
-    /// Compact success identity for the bounded configured-command supervisor.
-    ///
-    /// The source gate has already constructed and validated the full report;
-    /// its supervisor consumes only the process disposition and exact source.
-    Supervised { source: Digest },
-}
-
-pub(crate) fn selection() -> Outcome<CurrentSourceSelectionReport> {
-    let supervised = configured_selection_progress();
-    let _containment = if supervised {
-        match gate::measure::inherit_process_group() {
-            Ok(containment) => Some(containment),
-            Err(detail) => {
-                return Outcome::Fault(Fault {
-                    class: FaultClass::Environment,
-                    reason: "gate::selection-containment-unavailable".to_owned(),
-                    detail: detail.to_owned(),
-                });
-            }
-        }
-    } else {
-        None
-    };
-    let mut progress = SelectionProgress::new(supervised);
-    match spice::change_gate::run_current_source(&mut progress) {
-        Ok(report) if report.admits() && supervised => {
-            direct(CurrentSourceSelectionReport::Supervised {
-                source: report.selection().source().clone(),
-            })
-        }
-        Ok(report) if report.admits() => direct(CurrentSourceSelectionReport::Focused {
-            report: Box::new(report),
-        }),
-        Ok(report) => {
-            let terminal = format!("{}selected gate regressed", report.refusal_fold(),);
-            Outcome::Refusal(Refusal::evidence(
-                "gate::selection-regressed",
-                progress.failure_detail(&terminal),
-                "repair the selected change before committing it",
-            ))
-        }
-        Err(error) if error.is_fault() => Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: error.reason().to_owned(),
-            detail: progress.failure_detail(error.detail()),
-        }),
-        Err(error) => Outcome::Refusal(Refusal::evidence(
-            error.reason(),
-            progress.failure_detail(error.detail()),
-            "repair the named selection input, then rerun the source gate",
-        )),
-    }
-}
-
-struct SelectionProgress {
-    buffered: Vec<u8>,
-    live: Option<io::Stderr>,
-}
-
-impl SelectionProgress {
-    fn new(live: bool) -> Self {
-        Self {
-            buffered: Vec::new(),
-            live: live.then(io::stderr),
-        }
-    }
-
-    fn failure_detail(&self, terminal: &str) -> String {
-        if self.live.is_some() {
-            return terminal.to_owned();
-        }
-        selection_detail(&self.buffered, terminal)
-    }
-}
-
-impl io::Write for SelectionProgress {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if let Some(live) = &mut self.live {
-            live.write_all(bytes)?;
-        }
-        self.buffered.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.live.as_mut().map_or(Ok(()), io::Write::flush)
-    }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the configured source-gate leaf detects authority injected by its supervising worker"
-)]
-fn configured_selection_progress() -> bool {
-    env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
-}
-
-fn selection_detail(progress: &[u8], detail: &str) -> String {
-    if progress.is_empty() {
-        return detail.to_owned();
-    }
-    format!("{}{detail}", String::from_utf8_lossy(progress))
-}
+pub(crate) use selection::{CurrentSourceSelectionReport, selection};
 
 pub(crate) use commit_message::Run as CommitMessageRun;
 

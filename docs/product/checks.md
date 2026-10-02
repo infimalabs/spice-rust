@@ -75,10 +75,12 @@ positions may still run, and active work is joined. Unstarted later arms receive
 no synthesized evidence; the command returns the first canonical
 `ChangeGateError` and no complete report.
 
-**Invariant —** A clean installed hook emits no terminal diagnostic. A direct
-selection command returns the complete typed report and may expose bounded
-progress. Silence and evidence are properties of different surfaces, never two
-interpretations of the same output.
+**Invariant —** A clean installed hook emits no reply, summary, or completion
+line; one that finishes within a heartbeat interval emits nothing. A longer run
+names only its current phase on stderr every interval while its outcome is still
+unknown. A direct selection command returns the complete typed report and may
+expose bounded progress. Silence and evidence are properties of different
+surfaces, never two interpretations of the same output.
 
 ### Terminal evidence is never conflated
 

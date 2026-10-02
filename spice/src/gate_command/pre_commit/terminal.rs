@@ -89,7 +89,13 @@ fn refusal_evidence(report: &Report, artifact: &Path) -> Result<String, Fault> {
         .configured()
         .filter(|configured| !configured.admits())
     {
-        evidence.push_str(&configured.refusal_evidence());
+        let findings = configured.refusal_evidence();
+        let findings =
+            super::super::output::bounded(&super::super::output::current_captures(), &findings);
+        evidence.push_str(&findings);
+        if !findings.ends_with('\n') {
+            evidence.push('\n');
+        }
     }
     let bytes = report.encode().map_err(|error| Fault {
         class: FaultClass::Protocol,

@@ -324,12 +324,19 @@ struct NativeInvocation<'a>(
 impl NativeInvocation<'_> {
     fn dispatch_gate(&self, contract: &cli::Contract) {
         let &Self(leaf, form, configuration) = self;
+        // Under `--json` standard error carries one document; gate progress
+        // speaks only to text invocations.
+        let live = form == Form::Text;
         match contract.path {
             ["doctor"] => deliver(&doctor_outcome(configuration), form),
             ["demo"] => deliver(&demo_command::run(leaf), form),
-            ["gate"] => deliver(&gate_command::run(leaf, configuration), form),
+            ["gate"] => deliver_with_reply_text(
+                &gate_command::run(leaf, configuration, live),
+                form,
+                gate_command::BatteryRun::text,
+            ),
             ["gate", "prove"] => deliver_with_reply_text(
-                &gate_command::prove(leaf),
+                &gate_command::prove(leaf, live),
                 form,
                 gate_command::ProveReport::text,
             ),
@@ -339,9 +346,20 @@ impl NativeInvocation<'_> {
             }
             ["gate", "kill"] => deliver(&gate_command::kill(), form),
             ["gate", "pre-commit"] => {
-                deliver_commit_gate(&gate_command::pre_commit(leaf, configuration), form)
+                deliver_commit_gate(&gate_command::pre_commit(leaf, configuration, live), form)
             }
-            ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
+            ["gate", "selection"] => {
+                let outcome = gate_command::selection(live);
+                if gate_command::CurrentSourceSelectionReport::speaks(&outcome) {
+                    deliver_with_reply_text(
+                        &outcome,
+                        form,
+                        gate_command::CurrentSourceSelectionReport::text,
+                    )
+                } else {
+                    deliver_commit_gate(&outcome, form)
+                }
+            }
             ["install"] => match install_command::run(leaf) {
                 install_command::Answer::Plan(outcome) => deliver(&outcome, form),
                 install_command::Answer::Receipt(outcome) => deliver(&outcome, form),

@@ -180,6 +180,19 @@ the exact next command. `--verbose` adds rows for already-proven actions with
 their action keys, receipts, and capture paths. `--json` carries the typed
 report unchanged; none of these text projections enter it.
 
+Bare `spice gate`, `spice gate selection`, and `spice gate pre-commit` share
+that policy. Bare gate names each family as it starts, beats with the arm under
+analysis, and replies with arm counts, one row per refusing arm (every arm
+under `--verbose`), the retained complete report, and the next command. Direct
+selection prints phase, arm, and test-shard boundaries and replies with the
+policy arms, test-target count, retained output, and `git commit`. Under the
+pre-commit worker selection forwards only the protocol lines its supervisor
+parses; subprocess chatter stays in the capture. Pre-commit beats with the
+worker's last phase only after one heartbeat interval and prints no success
+reply or completion line. Every refusal or fault detail beyond the tail bound
+is replaced by its tail, withheld counts, and the retained capture path.
+Progress never accompanies `--json`, whose stderr carries one document.
+
 A failed progress write or flush does not stop later actions, lose their
 reports, or prevent receipt publication. Execution, lease, source-validation,
 cleanup, and final result failures remain authoritative and keep their
