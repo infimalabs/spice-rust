@@ -400,6 +400,25 @@ impl Digest {
             .map(|(length, digest)| (length, Self(digest.to_hex().as_str().to_owned())))
     }
 
+    /// Hash every byte `produce` writes while forwarding it to `writer`.
+    ///
+    /// The result equals [`Digest::compute`] over the same bytes, without the
+    /// producer ever holding them all at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first failure `produce` or `writer` reports.
+    pub fn write_through<W: io::Write>(
+        domain: Domain,
+        writer: W,
+        produce: impl FnOnce(&mut dyn io::Write) -> io::Result<()>,
+    ) -> io::Result<(W, u64, Self)> {
+        let mut hashing = digest::HashingWriter::new(domain, writer);
+        produce(&mut hashing)?;
+        let (writer, length, digest) = hashing.finish();
+        Ok((writer, length, Self(digest.to_hex().as_str().to_owned())))
+    }
+
     /// The digest as written.
     #[must_use]
     pub fn as_str(&self) -> &str {

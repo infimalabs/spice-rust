@@ -18,6 +18,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
 use flate2::read::GzDecoder;
 
@@ -168,6 +169,97 @@ impl Tape {
         }
         self.read_sealed_bounded(locus.member, max_bytes)
             .and_then(|plaintext| slice(locus, &plaintext))
+    }
+
+    /// Stream an observed range through `buffer` without holding it.
+    ///
+    /// `visit` receives consecutive chunks of at most `buffer.len()` bytes
+    /// covering exactly the range. Active plaintext is read in place. A sealed
+    /// member, including one that sealed after observation, is decompressed
+    /// forward with the bytes before the range discarded as they decode, so
+    /// memory stays independent of the member's size.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a mismatched or out-of-range locus, returns an I/O failure when
+    /// the storage cannot be read or ends short of the range, and returns the
+    /// first failure `visit` reports.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `buffer` is empty, which could never make progress.
+    pub fn stream_extent<E: From<Error>>(
+        &self,
+        locus: Locus,
+        extent: Extent,
+        buffer: &mut [u8],
+        mut visit: impl FnMut(&[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        assert!(!buffer.is_empty(), "a streamed read needs buffer space");
+        if locus.member != extent.member {
+            return Err(unknown(locus).into());
+        }
+        validate(locus, extent.length)?;
+        let (operation, path, mut reader) = self.open_range(locus, extent)?;
+        let mut remaining = locus.length;
+        while remaining != 0 {
+            let want = buffer
+                .len()
+                .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            let read = match reader.read(&mut buffer[..want]) {
+                Ok(0) => {
+                    let short = io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("range ended {remaining} bytes short"),
+                    );
+                    return Err(Error::io(operation, path, short).into());
+                }
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(Error::io(operation, path, error).into()),
+            };
+            visit(&buffer[..read])?;
+            remaining -= read as u64;
+        }
+        Ok(())
+    }
+
+    /// Open a reader positioned at the first byte of an observed range.
+    fn open_range(
+        &self,
+        locus: Locus,
+        extent: Extent,
+    ) -> Result<(Operation, PathBuf, Box<dyn Read>), Error> {
+        if !extent.sealed {
+            let path = self.plain_path(locus.member);
+            match File::open(&path) {
+                Ok(mut file) => {
+                    let length = file
+                        .metadata()
+                        .map_err(|error| Error::io(Operation::ReadPlaintext, &path, error))?
+                        .len();
+                    validate(locus, length)?;
+                    file.seek(SeekFrom::Start(locus.offset))
+                        .map_err(|error| Error::io(Operation::ReadPlaintext, &path, error))?;
+                    return Ok((Operation::ReadPlaintext, path, Box::new(file)));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::io(Operation::ReadPlaintext, path, error)),
+            }
+        }
+        let path = self.sealed_path(locus.member);
+        let file =
+            File::open(&path).map_err(|error| Error::io(Operation::ReadSealed, &path, error))?;
+        let mut decoder = GzDecoder::new(file);
+        let skipped = io::copy(&mut (&mut decoder).take(locus.offset), &mut io::sink())
+            .map_err(|error| Error::io(Operation::ReadSealed, &path, error))?;
+        if skipped != locus.offset {
+            return Err(Error::Refused(Refusal::OutOfRange {
+                locus,
+                length: skipped,
+            }));
+        }
+        Ok((Operation::ReadSealed, path, Box::new(decoder)))
     }
 
     /// Read a range from the member still accepting appends.

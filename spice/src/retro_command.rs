@@ -21,10 +21,12 @@ use std::time::Duration;
 
 use clap::ArgMatches;
 use listen::{
-    Dialect, EventKind, Observation, RetroSelector, RetroSession, ScanError, SourceId,
-    SurfaceError, TailBudget, TranscriptContinuation, TranscriptCursor, TranscriptFilter,
-    TranscriptObservation, TranscriptPageRequest, TranscriptPageRow, TranscriptPageStart,
+    Dialect, EventKind, Mode, Observation, RetroSelector, RetroSession, ScanError, SourceId,
+    StreamOutcome, SurfaceError, TailBudget, TranscriptContinuation, TranscriptCursor,
+    TranscriptFilter, TranscriptObservation, TranscriptPageRequest, TranscriptPageRow,
+    TranscriptPageStart,
 };
+use spice::export::ExportFailure;
 use wire::output::{Admission, Bounded, Budget, Exhausted, INTERACTIVE, Omission, Request};
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, SpiceCommand};
 
@@ -76,6 +78,12 @@ fn scan_budget() -> TailBudget {
 enum Stop {
     Refusal(Refusal),
     Fault(Fault),
+}
+
+impl From<SurfaceError> for Stop {
+    fn from(error: SurfaceError) -> Self {
+        Self::Fault(crate::surface_fault(error))
+    }
 }
 
 /// One parsed `spice retro` invocation.
@@ -266,21 +274,45 @@ impl Retro {
         }))
     }
 
+    /// The document is `wire::encode` of the whole selected outcome, written
+    /// one observation at a time: the encoding of the same outcome with no
+    /// observations supplies the frame around them.
     fn export(
         &self,
         root: &Path,
         dialects: &[(&'static str, Dialect)],
         path: &Path,
     ) -> Result<RetroView, Stop> {
-        let mut outcome = listen::retro(root, self.selector.clone(), dialects)
-            .map_err(|error| Stop::Fault(crate::surface_fault(error)))?;
-        outcome
-            .observations
-            .retain(|observation| self.selected(observation));
-        let document = wire::encode(&outcome).map_err(unencodable)?;
-        spice::export::export(path, &document)
-            .map(RetroView::Exported)
-            .map_err(Stop::Refusal)
+        let frame = wire::encode(&StreamOutcome {
+            mode: Mode::Retro,
+            root: root.to_path_buf(),
+            observations: Vec::new(),
+        })
+        .map_err(unencodable)?;
+        let open = frame
+            .strip_suffix(b"]}")
+            .expect("an outcome's encoding ends with its observation list");
+        // A failed write is reported by the export as its own refusal.
+        let wrote = |error| unencodable(serde_json::Error::io(error));
+        spice::export::export_with(path, |writer| {
+            writer.write_all(open).map_err(wrote)?;
+            let mut first = true;
+            listen::retro_each(root, self.selector.clone(), dialects, |observation| {
+                if !self.selected(&observation) {
+                    return Ok(());
+                }
+                if !std::mem::take(&mut first) {
+                    writer.write_all(b",").map_err(wrote)?;
+                }
+                serde_json::to_writer(&mut *writer, &observation).map_err(unencodable)
+            })?;
+            writer.write_all(b"]}").map_err(wrote)
+        })
+        .map(RetroView::Exported)
+        .map_err(|failure| match failure {
+            ExportFailure::Refused(refusal) => Stop::Refusal(refusal),
+            ExportFailure::Produce(stop) => stop,
+        })
     }
 
     /// Absence and ambiguity are what the selector resolved, so a kind filter

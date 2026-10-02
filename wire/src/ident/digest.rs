@@ -95,6 +95,40 @@ fn consume_reader(
     }
 }
 
+/// Forwards writes to `inner` and hashes exactly the bytes it accepted.
+pub(super) struct HashingWriter<W> {
+    inner: W,
+    hasher: Hasher,
+    length: u64,
+}
+
+impl<W: Write> HashingWriter<W> {
+    pub(super) fn new(domain: Domain, inner: W) -> Self {
+        Self {
+            inner,
+            hasher: framed_hasher(domain),
+            length: 0,
+        }
+    }
+
+    pub(super) fn finish(self) -> (W, u64, Hash) {
+        (self.inner, self.length, self.hasher.finalize())
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.hasher.update(&bytes[..written]);
+        self.length += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn framed_hasher(domain: Domain) -> Hasher {
     let mut hasher = Hasher::new();
     hasher.update(domain.tag().as_bytes());
