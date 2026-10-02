@@ -561,8 +561,16 @@ list is a pre-publication state rather than a missing voice. A system request
 waits for `voiceschanged` under its own bound and then speaks once with the
 configured voice; a published list that omits that voice refuses while naming
 the voices the browser does offer, and no other voice is ever substituted.
-While system synthesis plays, spice names the voice the browser reported and
-a failed utterance carries the browser's own error code.
+System synthesis runs on the viewing device, so a remote phone offers its own
+voices, not the resident's; the refusal says so and names the external backend
+as the remedy. While system synthesis plays, spice names the voice the browser
+reported and a failed utterance carries the browser's own error code.
+
+**Invariant —** External rendering writes the text to the machine-local
+`say.command` argv on stdin and plays its stdout. The argv's
+`{words_per_minute}` and `{voice}` slots resolve from the originating
+worktree's contract, so one renderer on the resident keeps per-agent voices on
+every device.
 
 **Invariant —** The clip is played back under the media type the backend
 declared, never a guessed one.

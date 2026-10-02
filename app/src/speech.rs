@@ -237,8 +237,11 @@ impl Drop for Controller {
 ///
 /// The operator configured one exact voice and gets that voice or silence:
 /// naming the published alternatives is what makes a mismatch diagnosable
-/// without a substitution nobody asked for. The list is bounded because a
-/// browser can offer hundreds of voices and this sentence is shown whole.
+/// without a substitution nobody asked for. System synthesis runs on the
+/// viewing device, so a phone offers its own voices rather than the
+/// resident's; the refusal says so and names the backend that renders on
+/// the resident instead. The list is bounded because a browser can offer
+/// hundreds of voices and this sentence is shown whole.
 fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> String {
     let mut names: Vec<String> = offered
         .iter()
@@ -253,7 +256,9 @@ fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> Stri
         names.push(format!("and {elided} more"));
     }
     format!(
-        "system voice {voice_name:?} is unavailable; this browser offers {}",
+        "system voice {voice_name:?} is not on this device; system speech uses the viewing \
+         device's own voices, and this browser offers {}. To hear the resident's voices on \
+         every device, set say.backend = \"external\" with a say.command renderer",
         names.join(", "),
     )
 }
