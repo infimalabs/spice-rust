@@ -136,105 +136,23 @@ dead-lettered directive, a legacy locus without a tape generation, or a tape
 with no prior declaration renders its specific unavailability reason instead
 of guessing a session.
 
-### The window
+### The briefing
 
-```mermaid
-flowchart TD
-  subgraph SELECT["select the window"]
-    direction LR
-    T["transcript"] --> W["split at compaction<br/>boundaries"]
-    W --> B["briefing: newest 3<br/>compaction boundaries"]
-    W --> S["sweep: caller --count<br/>normalized to at least 1"]
-  end
-  subgraph RENDER["shape the readout"]
-    direction LR
-    R["preserve ordered<br/>turn and dialogue rows"] --> O["render the selected<br/>window"]
-  end
-  B --> R
-  S --> R
-```
+A briefing answers one question: what binds this lane now. It carries pending
+asks, this lane's claim and held-work posture, current repository and
+environment posture, typed unknowns, and the minimal live working set: the
+newest turn's counts and clipped prompt, the latest final answer, the newest
+compaction instant, and the exact `session sweep` and `session turns` commands
+that read everything else. It never replays completed turns or their tool
+traffic, however few compactions precede them.
 
-**Invariant —** A briefing asks for the three most recent compaction boundaries
-and reports that fixed request beside the number actually selected. A sweep has
-a different contract: a syntactically valid nonpositive `--count` normalizes to
-one, and any larger process-representable count is accepted. Rust imposes and
-reports no upper clamp.
+**Invariant —** Pending asks are their own bounded page (16 rows, 16 KiB,
+1 KiB of text per ask); when asks are withheld the page names
+`spice inbox LANE` as its continuation. An unread steering ledger omits `asks`
+and reports a typed unknown, so a failed read never looks like an empty inbox.
 
-**Invariant —** The briefing declares which rule set its window, where the
-window starts, and how many boundaries were requested versus selected. A reader
-who cannot tell what was examined cannot tell what the absence of a fact means.
-
-**Invariant —** Recency is measured against the newest activity actually
-observed in the material, not against wall-clock now. A transcript examined a
-day later has the same shape it had when it was written.
-
-**Invariant —** An explicit `--start` supplies the horizon start and takes
-precedence over the count-derived start, even when it reaches farther back.
-`--end` filters the boundary set before the newest requested count is selected.
-The remaining content filters apply within those temporal bounds.
-
-**Invariant —** Windows **tile contiguously** through the selected horizon, so
-matching activity inside that horizon falls in a window. An exchange straddling
-a boundary belongs to both adjacent windows; a session that never compacted
-still yields exactly one window respecting explicit bounds, labelled with why
-it has no compaction anchor.
-
-**Invariant —** Only a compaction that actually severed context is a boundary.
-
-**Invariant —** Material read only to establish what preceded a window's start
-is excluded from that window's contents. A window holds the same records however
-much surrounding material the reader had to consult to place it.
-
-**Invariant —** An uncompressed seekable transcript discovers boundaries
-**backward from the end** and stops as soon as it has enough, so its discovery
-cost scales with the window asked for. A gzip transcript cannot reverse-seek;
-its admitted path scans forward and retains only the newest requested markers.
-
-**Invariant —** Selected turns retain canonical time/source order, and dialogue
-inside each turn retains the decoder-admitted transcript order and text. The
-session report adds no occurrence fold after the decoder has canonicalized
-display and final-answer echoes.
-
-**Invariant —** Unknowns are **loud**. A window the engine could not read must
-not look like a window with nothing in it.
-
-### The budget
-
-A briefing is read by something with a context limit, so Rust offers estimated
-line and byte thresholds for pruning transcript turns.
-
-```mermaid
-flowchart LR
-  S["selected transcript turns"] --> E["estimate: one line per turn<br/>+ authored-message lines<br/>+ authored-text bytes"]
-  E --> C{"estimate exceeds<br/>max-lines or max-bytes?"}
-  C -- "yes, more than one turn" --> P["remove the oldest whole turn"]
-  P --> E
-  C -- "no, or one turn remains" --> O["emit report + before/after<br/>pruning metadata"]
-```
-
-**Invariant —** Pruning preserves authority sections and report metadata and
-removes only the oldest whole transcript turns while more than one remains.
-
-**Invariant —** `--max-lines` and `--max-bytes` are transcript-turn pruning
-thresholds, not hard serialized-output limits. The estimate counts one line per
-turn, one per authored message, and authored-message bytes; it does not charge
-sources, authorities, report metadata, serialization overhead, or the optional
-explanation. At least one selected turn is retained even when that turn alone
-exceeds the estimate. The report always carries the requested thresholds and
-turn counts before and after pruning; `--explain-pruning` adds the explanation.
-
-**Invariant —** Only `authorities.asks` and `authorities.unknowns` omit when
-empty. The Recall envelope — sources, window, held work, pruning, residues, and
-their nested arrays — remains serialized even when its contents are empty or
-zero.
-
-**Rust profile —** `authorities.priority.order` includes the declarative label
-`ambient-posture`, but the report performs no posture observation and
-emits no posture section. The label alone is not evidence that a probe ran.
-
-**Invariant —** An unavailable authority value remains absent, distinct from
-numeric zero. Its typed unknown names the authority, probe, and error detail;
-Rust does not invent a clean measurement for an unavailable read.
+**Invariant —** `residues` in a briefing is a count. The residue detail is
+carried by the history views, which share the same fold.
 
 **Invariant —** A briefing or sweep accepts only a positive finite whole-action
 deadline shared by source discovery and report construction. Recoverable
@@ -242,6 +160,74 @@ authority-read, configuration, journal, and board errors become typed visible
 unknowns and construction continues. If any work hangs past the deadline, the
 action refuses with `session::deadline-exceeded`, names the action, requested or
 resolved inputs, and budget, and returns no partial report.
+
+**Invariant —** An unavailable authority value remains absent, distinct from
+numeric zero. Its typed unknown names the authority, probe, and error detail;
+Rust does not invent a clean measurement for an unavailable read.
+
+### History pages
+
+`sweep`, `turns`, `messages`, `phases`, `timeline`, `slices`, `commands`,
+`context`, `compactions`, `commits`, and `summary` each return one bounded page
+through the shared output admission.
+
+```mermaid
+flowchart LR
+  S["scan: newest records at or<br/>before the cursor"] --> A{"next record fits<br/>rows and bytes left?"}
+  A -- yes --> K["admit, charged its<br/>encoded length"] --> A
+  A -- no --> O["close the page; name the<br/>exact continuation"]
+```
+
+**Invariant —** Every page defaults to 20 rows, 8 KiB of encoded records, and
+240 bytes per text field; `--limit`, `--max-bytes`, and `--max-text` raise those
+up to 500 rows, 128 KiB, and 4 KiB, and a larger request refuses with
+`session::bound-exceeded`. Each record is charged its full encoded length, so
+no single record bypasses the aggregate byte limit.
+
+**Invariant —** Records list newest first: compaction windows for `sweep`,
+turns, messages, commands, compactions, commits, timeline events, and slices by
+their newest instant. `phases` lists in phase order; `context` lists nearest to
+the task-creation boundary first.
+
+**Invariant —** A page that withholds records carries an omission with the
+withheld count and the exact command that resumes at the first withheld record:
+the caller's words plus `--after CURSOR`. A timestamped cursor is that record's
+instant, with `#N` when N records sharing it were already shown, so records
+arriving later never shift a page boundary. `phases` resumes at `phase-N` and
+`context` at `before-N` or `after-N`.
+
+**Invariant —** A record too large for the remaining bytes but within the
+maximum closes the page, and its continuation raises `--max-bytes` to what that
+record alone needs. A record beyond the interactive maximum continues only with
+`--export FILE`, which writes the complete page under the repository ceiling
+with a digest receipt; a record beyond that ceiling refuses with
+`session::record-exceeds-ceiling`.
+
+**Invariant —** A sweep row summarizes one compaction window (activity counts
+and its latest final answer, never its dialogue) and names the `session turns`
+command bounded to exactly that window's turns.
+
+**Invariant —** Recency is measured against the newest activity actually
+observed in the material, not against wall-clock now. A transcript examined a
+day later has the same shape it had when it was written.
+
+**Invariant —** Windows **tile contiguously** through the scanned horizon. A
+session that never compacted still yields exactly one window, labelled by its
+missing compaction anchor.
+
+**Invariant —** Only a compaction that actually severed context is a boundary.
+
+**Invariant —** An uncompressed seekable transcript discovers boundaries
+**backward from the end** and stops as soon as it has enough, so its discovery
+cost scales with the page asked for. A gzip transcript cannot reverse-seek;
+its admitted path scans forward and retains only the newest needed markers.
+
+**Invariant —** Dialogue inside each turn retains the decoder-admitted
+transcript order; displayed text collapses whitespace runs and is clipped with
+its withheld byte count stated.
+
+**Invariant —** Unknowns are **loud**. A window the engine could not read must
+not look like a window with nothing in it.
 
 ### The unit of the record
 

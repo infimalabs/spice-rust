@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
+fn one_message_shape_fold_drives_session_reports_and_turn_dialogue() {
     let scratch = Scratch::new("message-shapes");
     let transcript = scratch.path().join("message-shapes.jsonl");
     write_jsonl(&transcript, &message_shape_rows());
@@ -11,23 +11,26 @@ fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
 
     assert_message_shape_message_rows(&file);
     assert_message_shape_summary(&file);
-    assert_message_shape_recall_dialogue(&file);
+    assert_message_shape_turn_dialogue(&file);
     assert_image_message_rows(&scratch);
     scratch.remove();
 }
 
-/// Every turn's dialogue in window order: an omp prompt opens a turn of its
-/// own, so a run of prompts spans several.
-fn window_dialogue(recall: &Value) -> Vec<Value> {
-    recall["window"]["turns"]
-        .as_array()
-        .expect("window turns are typed")
-        .iter()
+/// Every turn's dialogue in transcript order from one newest-first turns
+/// page: an omp prompt opens a turn of its own, so a run of prompts spans
+/// several.
+fn turn_dialogue(file: &str) -> Vec<Value> {
+    let page = reply_forms(&strings(&["session", "turns", file]), &[], "turns");
+    let rows = page["rows"].as_array().expect("turn rows are typed");
+    rows.iter()
+        .rev()
         .flat_map(|turn| {
             turn["dialogue"]
                 .as_array()
                 .expect("turn dialogue is typed")
-                .clone()
+                .iter()
+                .map(|line| json!({"side": line["side"], "text": line["text"]["text"]}))
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -37,13 +40,8 @@ fn assert_image_message_rows(scratch: &Scratch) {
     write_jsonl(&transcript, &image_message_rows());
     let file = transcript.to_string_lossy().into_owned();
 
-    let recall = reply_forms(
-        &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
-        &[],
-        "recall",
-    );
     assert_eq!(
-        window_dialogue(&recall),
+        turn_dialogue(&file),
         [
             json!({"side": "user", "text": "Inspect this bootstrap capture."}),
             json!({"side": "assistant", "text": "The bootstrap capture is visible."}),
@@ -161,24 +159,19 @@ fn message_shape_rows() -> Vec<Value> {
 
 fn assert_message_shape_message_rows(file: &str) {
     let messages = reply_forms(
-        &strings(&[
-            "session",
-            "messages",
-            file,
-            "--side",
-            "user",
-            "--oldest-first",
-        ]),
+        &strings(&["session", "messages", file, "--side", "user"]),
         &[],
         "messages",
     );
+    let mut shapes = messages["rows"]
+        .as_array()
+        .expect("message rows")
+        .iter()
+        .map(|row| row["shape"].as_str().expect("message shape"))
+        .collect::<Vec<_>>();
+    shapes.reverse();
     assert_eq!(
-        messages["rows"]
-            .as_array()
-            .expect("message rows")
-            .iter()
-            .map(|row| row["shape"].as_str().expect("message shape"))
-            .collect::<Vec<_>>(),
+        shapes,
         [
             "authored-ask",
             "scaffolding",
@@ -195,23 +188,22 @@ fn assert_message_shape_message_rows(file: &str) {
 }
 
 fn assert_message_shape_summary(file: &str) {
-    let summary = reply_forms(
-        &strings(&["session", "summary", file, "--recent", "8"]),
-        &[],
-        "summary",
-    );
+    let summary = reply_forms(&strings(&["session", "summary", file]), &[], "summary");
+    let mut prompts = summary["recent"]["rows"]
+        .as_array()
+        .expect("recent rows")
+        .iter()
+        .filter(|row| row["side"] == "user")
+        .map(|row| row["text"]["text"].as_str().expect("prompt text"))
+        .collect::<Vec<_>>();
+    prompts.reverse();
     assert_eq!(
-        summary["recent_prompts"]
-            .as_array()
-            .expect("recent prompts")
-            .iter()
-            .map(|row| row["text"].as_str().expect("prompt text"))
-            .collect::<Vec<_>>(),
+        prompts,
         [
             "Please preserve the authored ask.",
             "[Please keep this bracketed ask.]",
             "The malformed tool call was discussed before retrying with valid syntax.",
-            "Lead prose.\nTail prose.",
+            "Lead prose. Tail prose.",
             "Malformed <future-envelope>tool output",
             "Same text at a distinct source position.",
             "Same text at a distinct source position.",
@@ -219,14 +211,9 @@ fn assert_message_shape_summary(file: &str) {
     );
 }
 
-fn assert_message_shape_recall_dialogue(file: &str) {
-    let recall = reply_forms(
-        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
-        &[],
-        "recall",
-    );
+fn assert_message_shape_turn_dialogue(file: &str) {
     assert_eq!(
-        window_dialogue(&recall),
+        turn_dialogue(file),
         [
             json!({"side": "user", "text": "Please preserve the authored ask."}),
             json!({"side": "user", "text": "[Please keep this bracketed ask.]"}),

@@ -15,7 +15,10 @@ use super::{PhaseSource, merge_compactions};
 
 pub(crate) struct TimelineScan {
     pub(crate) sources: Vec<SourceView>,
+    /// Newest matching rows, oldest first.
     pub(crate) rows: Vec<TimelineView>,
+    /// Every matching turn and compaction, retained or not.
+    pub(crate) population: usize,
     pub(crate) residues: Vec<Residue>,
 }
 
@@ -54,13 +57,15 @@ impl TimelineScan {
         if any_turn {
             filters.validate_turn_identity_available(any_turn_identity)?;
         }
+        let mut population = turns.offered();
         let mut source_views = Vec::with_capacity(streams.len());
         let mut compaction_sources = Vec::with_capacity(streams.len());
         for stream in streams {
-            let (source, compactions) = stream.into_window(&mut work)?;
+            let (source, compactions, matched) = stream.into_window(&mut work)?;
             work.admit_retained_text(source_view_text_bytes(&source), &source.path)?;
             source_views.push(source);
             compaction_sources.push(VecDeque::from(compactions));
+            population = population.saturating_add(matched);
         }
         let compactions = merge_compactions(compaction_sources, limit, FrontierDirection::Newest)?;
         let mut turns = VecDeque::from(turns.into_rows());
@@ -75,6 +80,7 @@ impl TimelineScan {
         Ok(Self {
             sources: source_views,
             rows: rows.into_rows(),
+            population,
             residues: residues.finish(&mut work, "timeline residue summary")?,
         })
     }

@@ -94,7 +94,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     write_gzip(&gzip_path, &omp_bytes);
     let gzip = gzip_path.to_string_lossy().into_owned();
     let deduped = reply_forms(
-        &strings(&["session", "summary", &gzip, &gzip, "--recent", "2"]),
+        &strings(&["session", "summary", &gzip, &gzip, "--limit", "2"]),
         &[],
         "summary",
     );

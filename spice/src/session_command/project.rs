@@ -2,16 +2,21 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use clap::ArgMatches;
-use wire::Refusal;
+use wire::output::{Admission, Bounded, Limits, Request, Surface};
+use wire::{Refusal, SpiceCommand};
 
+use super::authority::RecallAuthorities;
 use super::dataset::{
-    CommitScan, MessageDataset, MessageQuery, WindowOptions, WindowScan, WindowTurn, frontier_limit,
+    self, Aggregate, CommitScan, CompactionScan, MessageQuery, Recent, WindowOptions, WindowScan,
+    WindowTurn,
 };
 use super::model::{
-    ActivityView, CompactionRecord, CompactionView, DialogueLine, MessageRecord, MessageView,
-    PhaseExample, PruningView, RecallAuthorities, RecallWindow, Report, SliceView, TurnRecord,
+    ActivityView, CompactionRecord, CompactionView, DialogueLine, LiveTurnView, LiveView,
+    MessageRecord, MessageView, OutstandingAskView, Report, SliceView, SweepWindow, TurnRecord,
     TurnView,
 };
+use super::page::{self, Page, Paged};
+use super::source::ResolvedSource;
 
 // Two report families are split out by `mod` rather than left inline, following
 // the decision recorded at `board_command.rs`: a child module already reads its
@@ -22,81 +27,32 @@ mod command;
 mod phase;
 mod timeline;
 
-pub(crate) use command::{commands, options as command_options};
-pub(crate) use phase::{PhaseOptions, options as phase_options, phase_example, turn_family};
+pub(crate) use command::commands;
+pub(crate) use phase::{PhaseOptions, phase_example, phases, turn_family};
 pub(crate) use timeline::{
-    compaction_view as timeline_compaction_view, options as timeline_options, report as timeline,
+    compaction_view as timeline_compaction_view, report as timeline,
     turn_view as timeline_turn_view,
 };
 
-const DEFAULT_RECALL_MAX_LINES: usize = 120;
-const DEFAULT_RECALL_MAX_BYTES: usize = 20_000;
-const DEFAULT_HORIZON_COMPACTIONS: usize = 3;
-const DEFAULT_SUMMARY_RECENT: usize = 8;
-const DEFAULT_TIMELINE_TEXT: usize = 180;
-const DEFAULT_TURNS_LIMIT: usize = 20;
-const DEFAULT_COMPACTIONS_LIMIT: usize = 25;
-const DEFAULT_SLICES_LIMIT: usize = 25;
-const DEFAULT_SLICE_TEXT: usize = 180;
-const DEFAULT_PHASE_EXAMPLES: usize = 2;
-const DEFAULT_PHASE_TEXT: usize = 180;
-const DEFAULT_MESSAGES_LIMIT: usize = 80;
-const DEFAULT_MESSAGE_TEXT: usize = 180;
-const DEFAULT_COMMITS_LIMIT: usize = 25;
-const DEFAULT_COMMANDS_LIMIT: usize = 80;
-const DEFAULT_COMMAND_TEXT: usize = 220;
-const MAX_AGGREGATE_RECENT: usize = 256;
-const MAX_WINDOW_COUNT: usize = 256;
-const MAX_WINDOW_LINES: usize = 4_096;
-const MAX_WINDOW_BYTES: usize = 1_048_576;
-const MAX_WINDOW_TEXT: usize = 16_384;
+/// Pending asks a briefing carries, each cut to a readable preview. Every
+/// pending ask is shown whole by `spice inbox LANE`.
+const ASKS: Surface = Surface::new(ASK_LIMITS, ASK_LIMITS);
+const ASK_LIMITS: Limits = Limits {
+    rows: 16,
+    bytes: 16_384,
+    text: 1_024,
+};
+/// Bytes of the live prompt and latest final answer a briefing carries.
+const LIVE_TEXT: usize = 480;
+/// Compactions a sweep retains after its horizon; the page itself is bounded
+/// by its row and byte limits.
+const SWEEP_COMPACTIONS: usize = 4 * 1_024;
 const MAX_SLICE_ORDINAL: usize = 4 * 1_024;
 
-struct WindowPlan<'a> {
-    horizon_start: Option<&'a str>,
-    selected: Vec<&'a CompactionRecord>,
-    intervals: Vec<WindowInterval<'a>>,
-}
-
-struct WindowInterval<'a> {
+struct SweepInterval<'a> {
     start: Option<&'a str>,
     end: Option<&'a str>,
-    anchors: Vec<&'a CompactionRecord>,
-}
-
-pub(crate) struct MessageOptions {
-    pub(crate) query: MessageQuery,
-    max_text: usize,
-    oldest_first: bool,
-}
-
-pub(crate) struct SliceOptions {
-    pub(crate) limit: usize,
-    max_text: usize,
-    full: bool,
-    selected: BTreeSet<String>,
-}
-
-pub(crate) struct TurnOptions {
-    pub(crate) filters: Filters,
-    pub(crate) limit: usize,
-    pub(crate) full: bool,
-}
-
-impl SliceOptions {
-    pub(crate) fn scan(&self) -> (usize, bool) {
-        if self.selected.is_empty() {
-            return (self.limit.saturating_add(1).max(1), false);
-        }
-        let count = self
-            .selected
-            .iter()
-            .filter_map(|id| id.strip_prefix("compaction-")?.parse::<usize>().ok())
-            .max()
-            .unwrap_or(1)
-            .max(1);
-        (count, true)
-    }
+    anchor: Option<&'a CompactionRecord>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,6 +84,11 @@ impl Filters {
             turn_ids: values(matches, "turn-id").into_iter().collect(),
             tools: values(matches, "tool").into_iter().collect(),
         })
+    }
+
+    /// The same filters ending at `end`.
+    fn ending(self, end: Option<String>) -> Self {
+        Self { end, ..self }
     }
 
     pub(crate) fn start_bound(&self) -> Option<&str> {
@@ -165,7 +126,10 @@ impl Filters {
         })
     }
 
-    fn compaction_matches(&self, row: &CompactionRecord) -> bool {
+    pub(crate) fn timeline_compaction_matches(&self, row: &CompactionRecord) -> bool {
+        if !self.turn_ids.is_empty() || !self.tools.is_empty() {
+            return false;
+        }
         if self.start.as_ref().is_some_and(|start| row.ts < *start)
             || self.end.as_ref().is_some_and(|end| row.ts > *end)
         {
@@ -183,10 +147,6 @@ impl Filters {
         })
     }
 
-    pub(crate) fn timeline_compaction_matches(&self, row: &CompactionRecord) -> bool {
-        self.turn_ids.is_empty() && self.tools.is_empty() && self.compaction_matches(row)
-    }
-
     pub(crate) fn validate_turn_identity_available(&self, available: bool) -> Result<(), Refusal> {
         if self.turn_ids.is_empty() || available {
             return Ok(());
@@ -199,387 +159,394 @@ impl Filters {
     }
 }
 
-pub(crate) fn horizon_count(matches: &ArgMatches, action: &str) -> Result<usize, Refusal> {
-    if action == "sweep" {
-        number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)
-    } else {
-        Ok(DEFAULT_HORIZON_COMPACTIONS)
-    }
-}
-
-pub(crate) fn window_options(matches: &ArgMatches, action: &str) -> Result<WindowOptions, Refusal> {
-    let compactions = horizon_count(matches, action)?;
-    if action == "briefing" {
-        Ok(WindowOptions::Briefing {
-            max_lines: number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?,
-            max_bytes: number(matches, "max-bytes", DEFAULT_RECALL_MAX_BYTES)?,
-            explain: flag(matches, "explain-pruning"),
-            compactions,
-        })
-    } else {
-        Ok(WindowOptions::Sweep { compactions })
-    }
-}
-
-pub(crate) fn validate_window_options(matches: &ArgMatches, action: &str) -> Result<(), Refusal> {
-    let bounded = |name: &str, value: usize, maximum: usize| {
-        if value <= maximum {
-            Ok(())
-        } else {
-            Err(refusal(
-                "session::bound-exceeded",
-                Some(format!("--{name}={value} maximum={maximum}")),
-                "pass a session window bound within the repository ceiling",
-            ))
-        }
-    };
-    match action {
-        "briefing" => {
-            bounded(
-                "max-lines",
-                number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?,
-                MAX_WINDOW_LINES,
-            )?;
-            bounded(
-                "max-bytes",
-                number(matches, "max-bytes", DEFAULT_RECALL_MAX_BYTES)?,
-                MAX_WINDOW_BYTES,
-            )
-        }
-        "sweep" => bounded("count", horizon_count(matches, action)?, MAX_WINDOW_COUNT),
-        "slices" => {
-            bounded(
-                "limit",
-                number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT)?,
-                MAX_WINDOW_COUNT,
-            )?;
-            bounded(
-                "max-text",
-                number(matches, "max-text", DEFAULT_SLICE_TEXT)?,
-                MAX_WINDOW_TEXT,
-            )
-        }
-        _ => Ok(()),
-    }
-}
-
+/// The briefing: what binds this lane now, then the least transcript that
+/// lets it resume. History stays behind the bounded views it names.
 pub(crate) fn recall(
-    dataset: &WindowScan,
-    filters: &Filters,
+    sources: &[ResolvedSource],
+    files: &[String],
     authorities: RecallAuthorities,
 ) -> Result<Report, Refusal> {
-    let (max_lines, max_bytes, explain) = dataset
-        .options
-        .briefing()
-        .expect("briefing projection carries briefing options");
-    let plan = window_plan(&dataset.compactions, filters, dataset.options.compactions());
-    let turns = plan_turns(&dataset.turns, plan.horizon_start, None);
-    let window = recall_window(
-        1,
-        &turns,
-        plan.selected
+    let horizon = dataset::recent_compaction_horizon(sources, 1, None)?;
+    let data = WindowScan::scan(
+        sources,
+        horizon.start.as_deref(),
+        None,
+        &Filters::default(),
+        WindowOptions::Live,
+    )?;
+    let live = LiveView {
+        turn: data.turns.last().map(|turn| LiveTurnView {
+            start: turn.view.start.clone(),
+            end: turn.view.end.clone(),
+            completed: turn.view.completed,
+            commands: turn.view.commands,
+            patches: turn.view.patches,
+            errors: turn.view.errors,
+            prompt: turn
+                .prompt
+                .as_deref()
+                .map(|prompt| page::clip(prompt, LIVE_TEXT)),
+        }),
+        latest_final: data
+            .turns
             .iter()
-            .copied()
-            .filter(|row| filters.compaction_matches(row))
+            .rev()
+            .find_map(|turn| turn.latest_final.as_deref())
+            .map(|text| page::clip(text, LIVE_TEXT)),
+        compacted: horizon.start,
+        history: ["sweep", "turns"]
+            .into_iter()
+            .map(|view| session_command(view, files, []))
             .collect(),
-    );
+    };
+    let lane = authorities.held_work.lane.clone();
+    let asks = authorities
+        .asks
+        .map(|pending| {
+            let mut asks = Admission::new(
+                ASKS.budget(Request::default())
+                    .expect("the briefing ask surface admits its own defaults"),
+            );
+            for ask in pending {
+                asks.offer(OutstandingAskView {
+                    directive: ask.directive,
+                    key: ask.key,
+                    stage: ask.stage,
+                    text: page::clip(&ask.text, ASK_LIMITS.text),
+                    attachments: ask.attachments,
+                    authored: ask.authored,
+                    expires: ask.expires,
+                })
+                .map_err(unencodable)?;
+            }
+            Ok(asks
+                .finish(|_| SpiceCommand::new("inbox", lane).expect("inbox is one Spice command")))
+        })
+        .transpose()?;
     Ok(Report::Recall {
-        sources: dataset.sources.clone(),
-        horizon_basis: if plan.selected.is_empty() {
-            "full-history-no-compactions"
-        } else {
-            "compaction-count"
-        }
-        .to_owned(),
-        requested_compactions: dataset.options.compactions(),
-        selected_compactions: plan.selected.len(),
-        authorities: Box::new(authorities),
-        window,
-        pruning: PruningView {
-            max_lines,
-            max_bytes,
-            turns_before: dataset.turns_before,
-            turns_after: turns.len(),
-            explanation: explain.then(|| {
-                format!(
-                    "oldest turns were removed whole until the projected report fit \
-                     {max_lines} lines and {max_bytes} bytes"
-                )
-            }),
+        asks,
+        held_work: authorities.held_work,
+        posture: authorities.posture,
+        unknowns: authorities.unknowns,
+        live,
+        sources: data.sources,
+        residues: data.residues.len(),
+    })
+}
+
+/// One row per compaction window, newest first, each summarizing its turns
+/// and naming the bounded read of them.
+pub(crate) fn sweep(
+    sources: &[ResolvedSource],
+    files: &[String],
+    page: Page,
+) -> Result<Report, Refusal> {
+    let through = page.end(None)?;
+    let count = page.frontier()?;
+    let horizon = dataset::counted_compaction_horizon(sources, count, through.as_deref())?;
+    let total = horizon
+        .total
+        .expect("a counted compaction horizon counts every compaction");
+    let data = WindowScan::scan(
+        sources,
+        horizon.start.as_deref(),
+        None,
+        &Filters::default(),
+        WindowOptions::Sweep {
+            compactions: SWEEP_COMPACTIONS,
         },
-        residues: dataset.residues.clone(),
-    })
+    )?;
+    let rows = sweep_intervals(&data.compactions, through.as_deref(), count)
+        .iter()
+        .rev()
+        .filter_map(|interval| sweep_window(interval, &data.turns, files, &page))
+        .collect::<Vec<_>>();
+    let population = if total == 0 { rows.len() } else { total };
+    let paged = page.newest(rows, population, |row| &row.start)?;
+    Ok(report(paged, |page| Report::Sweep {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn sweep(dataset: &WindowScan, filters: &Filters) -> Result<Report, Refusal> {
-    let plan = window_plan(&dataset.compactions, filters, dataset.options.compactions());
-    let mut windows = Vec::new();
-    for (index, interval) in plan.intervals.iter().enumerate() {
-        let turns = plan_turns(&dataset.turns, interval.start, interval.end);
-        windows.push(recall_window(index + 1, &turns, interval.anchors.clone()));
-    }
-    Ok(Report::Sweep {
-        sources: dataset.sources.clone(),
-        windows,
-        residues: dataset.residues.clone(),
-    })
-}
-
-fn window_plan<'a>(
+fn sweep_intervals<'a>(
     compactions: &'a [CompactionRecord],
-    filters: &'a Filters,
+    through: Option<&str>,
     count: usize,
-) -> WindowPlan<'a> {
-    let mut selected = compactions
-        .iter()
-        .filter(|row| filters.end.as_ref().is_none_or(|end| row.ts <= *end))
-        .collect::<Vec<_>>();
-    let first = selected.len().saturating_sub(count);
-    selected.drain(..first);
-    let horizon_start = filters
-        .start
-        .as_deref()
-        .or_else(|| selected.first().map(|compaction| compaction.ts.as_str()));
-    let mut intervals = Vec::new();
-    let boundaries = selected
-        .iter()
-        .copied()
-        .filter(|compaction| horizon_start.is_none_or(|start| compaction.ts.as_str() > start))
-        .collect::<Vec<_>>();
-    for index in 0..=boundaries.len() {
-        let start = index
-            .checked_sub(1)
-            .and_then(|prior| boundaries.get(prior))
-            .map(|compaction| compaction.ts.as_str())
-            .or(horizon_start);
-        let end = boundaries
-            .get(index)
-            .map(|compaction| compaction.ts.as_str());
-        let anchors = selected
-            .iter()
-            .copied()
-            .filter(|compaction| Some(compaction.ts.as_str()) == start)
-            .collect();
-        intervals.push(WindowInterval {
-            start,
-            end,
-            anchors,
-        });
+) -> Vec<SweepInterval<'a>> {
+    if compactions.is_empty() {
+        return vec![SweepInterval {
+            start: None,
+            end: None,
+            anchor: None,
+        }];
     }
-    WindowPlan {
-        horizon_start,
-        selected,
-        intervals,
-    }
-}
-
-fn plan_turns<'a>(
-    turns: &'a [WindowTurn],
-    start: Option<&str>,
-    end: Option<&str>,
-) -> Vec<&'a WindowTurn> {
-    turns
+    let split = compactions.partition_point(|row| through.is_none_or(|end| row.ts.as_str() <= end));
+    let closing = compactions.get(split).map(|row| row.ts.as_str());
+    let selected = &compactions[split.saturating_sub(count)..split];
+    selected
         .iter()
-        .filter(|turn| turn_overlaps_interval(turn, start, end))
+        .enumerate()
+        .map(|(index, row)| SweepInterval {
+            start: Some(row.ts.as_str()),
+            end: selected
+                .get(index + 1)
+                .map(|next| next.ts.as_str())
+                .or(closing),
+            anchor: Some(row),
+        })
         .collect()
 }
 
-fn turn_overlaps_interval(turn: &WindowTurn, start: Option<&str>, end: Option<&str>) -> bool {
-    start.is_none_or(|start| turn.end.as_str() >= start)
-        && end.is_none_or(|end| turn.view.start.as_str() < end)
-}
-
-pub(crate) fn summary_recent(matches: &ArgMatches) -> Result<usize, Refusal> {
-    let recent = number(matches, "recent", DEFAULT_SUMMARY_RECENT)?;
-    if recent > MAX_AGGREGATE_RECENT {
-        return Err(refusal(
-            "session::bound-exceeded",
-            Some(format!("--recent={recent} maximum={MAX_AGGREGATE_RECENT}")),
-            "pass a recent-message bound within the repository ceiling",
-        ));
-    }
-    Ok(recent)
-}
-
-pub(crate) fn tokens_by_file(matches: &ArgMatches) -> bool {
-    flag(matches, "by-file")
-}
-
-pub(crate) fn turn_options(matches: &ArgMatches) -> Result<TurnOptions, Refusal> {
-    Ok(TurnOptions {
-        filters: Filters::from_matches(matches)?,
-        limit: number(matches, "limit", DEFAULT_TURNS_LIMIT)?,
-        full: one(matches, "view").is_some_and(|view| view == "full"),
+fn sweep_window(
+    interval: &SweepInterval<'_>,
+    turns: &[WindowTurn],
+    files: &[String],
+    page: &Page,
+) -> Option<SweepWindow> {
+    let turns = turns
+        .iter()
+        .filter(|turn| {
+            interval
+                .start
+                .is_none_or(|start| turn.end.as_str() >= start)
+                && interval
+                    .end
+                    .is_none_or(|end| turn.view.start.as_str() < end)
+        })
+        .collect::<Vec<_>>();
+    let start = interval
+        .start
+        .map(str::to_owned)
+        .or_else(|| turns.first().map(|turn| turn.view.start.clone()))?;
+    // `turns --end` admits turns starting at or before it, so the window's
+    // last turn start bounds exactly the turns this window counted.
+    let last = turns
+        .last()
+        .map_or(start.as_str(), |turn| turn.view.start.as_str());
+    let detail = vec![
+        "--start".to_owned(),
+        start.clone(),
+        "--end".to_owned(),
+        last.to_owned(),
+    ];
+    Some(SweepWindow {
+        compaction: interval.anchor.map(|row| compaction_view(row, page)),
+        end: turns.last().map(|turn| turn.end.clone()),
+        turns: turns.len(),
+        open: turns.iter().any(|turn| !turn.view.completed),
+        activity: ActivityView {
+            commands: turns.iter().map(|turn| turn.view.commands).sum(),
+            patches: turns.iter().map(|turn| turn.view.patches).sum(),
+            errors: turns.iter().map(|turn| turn.view.errors).sum(),
+            web_searches: turns.iter().map(|turn| turn.view.web_searches).sum(),
+        },
+        latest_final: turns
+            .iter()
+            .rev()
+            .find_map(|turn| turn.latest_final.as_deref())
+            .map(|text| page.clip(text)),
+        detail: session_command("turns", files, detail),
+        start,
     })
 }
 
-pub(crate) fn turns(dataset: WindowScan) -> Report {
-    Report::Turns {
-        sources: dataset.sources,
-        rows: dataset.turns.into_iter().map(|turn| turn.view).collect(),
-        residues: dataset.residues,
-    }
+/// One page of turns, newest first.
+pub(crate) fn turns(
+    sources: &[ResolvedSource],
+    matches: &ArgMatches,
+    page: Page,
+) -> Result<Report, Refusal> {
+    let filters = Filters::from_matches(matches)?;
+    let end = page.end(filters.end_bound())?;
+    let filters = filters.ending(end.clone());
+    let data = WindowScan::scan(
+        sources,
+        None,
+        end.as_deref(),
+        &filters,
+        WindowOptions::Turns {
+            limit: page.frontier()?,
+            full: one(matches, "view").is_some_and(|view| view == "full"),
+            max_text: page.limits().text,
+        },
+    )?;
+    let rows = data.turns.into_iter().rev().map(|turn| turn.view).collect();
+    let paged = page.newest(rows, data.population, |row| &row.start)?;
+    Ok(report(paged, |page| Report::Turns {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn compaction_limit(matches: &ArgMatches) -> Result<usize, Refusal> {
-    number(matches, "limit", DEFAULT_COMPACTIONS_LIMIT)
+/// One page of compactions, newest first.
+pub(crate) fn compactions(sources: &[ResolvedSource], page: Page) -> Result<Report, Refusal> {
+    let end = page.end(None)?;
+    let limit = page.frontier()?;
+    let horizon = dataset::counted_compaction_horizon(sources, limit, end.as_deref())?;
+    let population = horizon
+        .total
+        .expect("a counted compaction horizon counts every compaction");
+    let data = CompactionScan::scan(sources, horizon, end.as_deref(), limit)?;
+    let rows = data
+        .compactions
+        .iter()
+        .rev()
+        .map(|row| compaction_view(row, &page))
+        .collect();
+    let paged = page.newest(rows, population, |row| &row.ts)?;
+    Ok(report(paged, |page| Report::Compactions {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn compactions(dataset: super::dataset::CompactionScan) -> Report {
-    Report::Compactions {
-        sources: dataset.sources,
-        rows: dataset.compactions.iter().map(compaction_view).collect(),
-        residues: dataset.residues,
-    }
-}
-
-pub(crate) fn slice_options(matches: &ArgMatches) -> Result<SliceOptions, Refusal> {
+/// One page of compaction slices, newest first.
+pub(crate) fn slices(
+    sources: &[ResolvedSource],
+    matches: &ArgMatches,
+    page: Page,
+) -> Result<Report, Refusal> {
     let selected = values(matches, "slice-id")
         .into_iter()
         .collect::<BTreeSet<_>>();
-    if selected
-        .iter()
-        .filter_map(|id| id.strip_prefix("compaction-")?.parse::<usize>().ok())
-        .any(|ordinal| ordinal > MAX_SLICE_ORDINAL)
-    {
+    let newest_selected = selected.iter().filter_map(|id| slice_ordinal(id)).max();
+    if newest_selected.is_some_and(|ordinal| ordinal > MAX_SLICE_ORDINAL) {
         return Err(refusal(
             "session::bound-exceeded",
             Some(format!("slice ordinal maximum={MAX_SLICE_ORDINAL}")),
             "select a compaction slice within the repository ceiling",
         ));
     }
-    Ok(SliceOptions {
-        limit: number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT)?,
-        max_text: number(matches, "max-text", DEFAULT_SLICE_TEXT)?,
-        full: one(matches, "view").is_some_and(|view| view == "full"),
-        selected,
-    })
-}
-
-pub(crate) fn slices(dataset: WindowScan, options: SliceOptions, ordinal_base: usize) -> Report {
-    let mut rows = build_slices(&dataset, options.full, options.max_text, ordinal_base);
+    let end = page.end(None)?;
+    let (start, count, oldest, total) = if selected.is_empty() {
+        let count = page.frontier()?;
+        let horizon = dataset::counted_compaction_horizon(sources, count, end.as_deref())?;
+        let total = horizon
+            .total
+            .expect("a counted compaction horizon counts every compaction");
+        (horizon.start, count, false, total)
+    } else {
+        (None, newest_selected.unwrap_or(1), true, 0)
+    };
+    let data = WindowScan::scan(
+        sources,
+        start.as_deref(),
+        end.as_deref(),
+        &Filters::default().ending(end.clone()),
+        WindowOptions::Slices {
+            compactions: count,
+            oldest,
+        },
+    )?;
+    let ordinal_base = total.saturating_sub(data.compactions.len());
+    let full = one(matches, "view").is_some_and(|view| view == "full");
+    let mut rows = build_slices(&data, full, &page, ordinal_base);
     rows.reverse();
-    if !options.selected.is_empty() {
-        rows.retain(|row| options.selected.contains(&row.id));
-    }
-    rows.truncate(options.limit);
-    Report::Slices {
-        sources: dataset.sources,
-        rows,
-        residues: dataset.residues,
-    }
+    rows.retain(|row| selected.is_empty() || selected.contains(&row.id));
+    let population = if oldest || total == 0 {
+        rows.len()
+    } else {
+        total
+    };
+    let paged = page.newest(rows, population, |row| &row.end)?;
+    Ok(report(paged, |page| Report::Slices {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn message_options(matches: &ArgMatches) -> Result<MessageOptions, Refusal> {
+fn slice_ordinal(id: &str) -> Option<usize> {
+    id.strip_prefix("compaction-")?.parse().ok()
+}
+
+/// One page of messages, newest first.
+pub(crate) fn messages(
+    sources: &[ResolvedSource],
+    matches: &ArgMatches,
+    page: Page,
+) -> Result<Report, Refusal> {
     let filters = Filters::from_matches(matches)?;
-    let sides = values(matches, "side").into_iter().collect::<BTreeSet<_>>();
-    let phases = values(matches, "phase-kind")
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let flavors = values(matches, "flavor")
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let limit = number(matches, "limit", DEFAULT_MESSAGES_LIMIT)?;
-    let max_text = number(matches, "max-text", DEFAULT_MESSAGE_TEXT)?;
-    if max_text > MAX_WINDOW_TEXT {
-        return Err(refusal(
-            "session::bound-exceeded",
-            Some(format!("--max-text={max_text} maximum={MAX_WINDOW_TEXT}")),
-            "pass a message text bound within the repository ceiling",
-        ));
-    }
-    let oldest_first = flag(matches, "oldest-first");
+    let end = page.end(filters.end_bound())?;
     let query = MessageQuery::new(
         filters.start,
-        filters.end,
+        end,
         filters.contains,
         filters.turn_ids,
-        sides,
-        phases,
-        flavors,
-        limit,
-        oldest_first,
+        values(matches, "side").into_iter().collect(),
+        values(matches, "phase-kind").into_iter().collect(),
+        values(matches, "flavor").into_iter().collect(),
+        page.frontier()?,
     )?;
-    Ok(MessageOptions {
-        query,
-        max_text,
-        oldest_first,
-    })
-}
-
-pub(crate) fn messages(dataset: MessageDataset, options: MessageOptions) -> Report {
-    let mut rows = dataset
+    let data = dataset::messages(sources, &query)?;
+    let rows = data
         .rows
         .iter()
-        .map(|row| {
-            let mut view = message_view(row);
-            view.text = clip(&view.text, options.max_text);
-            view
-        })
-        .collect::<Vec<_>>();
-    if !options.oldest_first {
-        rows.reverse();
-    }
-    Report::Messages {
-        sources: dataset.sources,
-        rows,
-        residues: dataset.residues,
-    }
+        .rev()
+        .map(|row| message_view(row, &row.text, &page))
+        .collect();
+    let paged = page.newest(rows, data.population, |row| &row.ts)?;
+    Ok(report(paged, |page| Report::Messages {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn commit_limit(matches: &ArgMatches) -> Result<usize, Refusal> {
-    let limit = number(matches, "limit", DEFAULT_COMMITS_LIMIT)?;
-    frontier_limit(limit).map(std::num::NonZeroUsize::get)
+/// One page of first-mentioned commits, newest first.
+pub(crate) fn commits(sources: &[ResolvedSource], page: Page) -> Result<Report, Refusal> {
+    let end = page.end(None)?;
+    let data = CommitScan::scan(
+        sources,
+        end.as_deref(),
+        page.frontier()?,
+        page.limits().text,
+    )?;
+    let rows = data.rows.into_iter().rev().collect();
+    let paged = page.newest(rows, data.population, |row| &row.ts)?;
+    Ok(report(paged, |page| Report::Commits {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
-pub(crate) fn commits(dataset: CommitScan) -> Report {
-    Report::Commits {
-        sources: dataset.sources,
-        rows: dataset.rows,
-        residues: dataset.residues,
-    }
+/// Whole-transcript counts and one page of recent prompts and final answers.
+pub(crate) fn summary(sources: &[ResolvedSource], page: Page) -> Result<Report, Refusal> {
+    let recent = Recent::new(page.frontier()?, page.end(None)?);
+    Aggregate::scan(sources, recent)?.summary(page)
 }
 
-fn recall_window(
-    index: usize,
-    turns: &[&WindowTurn],
-    compactions: Vec<&CompactionRecord>,
-) -> RecallWindow {
-    RecallWindow {
-        index,
-        start: turns
-            .first()
-            .map(|turn| turn.view.start.clone())
-            .or_else(|| compactions.first().map(|row| row.ts.clone())),
-        end: turns
-            .last()
-            .map(|turn| turn.end.clone())
-            .or_else(|| compactions.last().map(|row| row.ts.clone())),
-        turns: turns.iter().map(|turn| turn.view.clone()).collect(),
-        compactions: compactions.into_iter().map(compaction_view).collect(),
-        latest_final: turns
-            .iter()
-            .rev()
-            .find_map(|turn| turn.latest_final.clone()),
-        activity: activity(turns.to_vec()),
+/// A shown page as its report, or the receipt of an exported one.
+fn report<T>(paged: Paged<T>, build: impl FnOnce(Bounded<T>) -> Report) -> Report {
+    match paged {
+        Paged::Shown(page) => build(page),
+        Paged::Exported(export) => Report::Exported { export },
     }
 }
 
-fn activity(turns: Vec<&WindowTurn>) -> ActivityView {
-    ActivityView {
-        commands: turns.iter().map(|turn| turn.view.commands).sum(),
-        patches: turns.iter().map(|turn| turn.view.patches).sum(),
-        errors: turns.iter().map(|turn| turn.view.errors).sum(),
-        web_searches: turns.iter().map(|turn| turn.view.web_searches).sum(),
-    }
+/// `spice session VIEW FILES... ARGS...`.
+fn session_command(
+    view: &str,
+    files: &[String],
+    arguments: impl IntoIterator<Item = String>,
+) -> SpiceCommand {
+    SpiceCommand::new(
+        "session",
+        std::iter::once(view.to_owned())
+            .chain(files.iter().cloned())
+            .chain(arguments),
+    )
+    .expect("a session view is one Spice command")
 }
 
-pub(crate) fn turn_view(
-    turn: &TurnRecord,
-    full: bool,
-    max_text: usize,
-    authored_only: bool,
-) -> TurnView {
+/// One turn; with `dialogue`, its messages (authored text only when the flag
+/// is set) cut to the text bound.
+pub(crate) fn turn_view(turn: &TurnRecord, dialogue: Option<(bool, usize)>) -> TurnView {
     TurnView {
         source: turn.source.clone(),
         vendor: turn.vendor,
@@ -593,29 +560,28 @@ pub(crate) fn turn_view(
         web_searches: turn.web_search_count,
         compactions: turn.compaction_count,
         touched_paths: turn.touched_files.iter().cloned().collect(),
-        dialogue: turn
-            .messages
-            .iter()
-            .filter_map(|message| {
-                let text = if authored_only {
-                    message.authored.as_deref()?
-                } else {
-                    &message.text
-                };
-                Some(DialogueLine {
-                    side: message.side.clone(),
-                    text: if full {
-                        text.to_owned()
-                    } else {
-                        clip(text, max_text)
-                    },
-                })
+        dialogue: dialogue
+            .map(|(authored_only, max_text)| {
+                turn.messages
+                    .iter()
+                    .filter_map(|message| {
+                        let text = if authored_only {
+                            message.authored.as_deref()?
+                        } else {
+                            &message.text
+                        };
+                        Some(DialogueLine {
+                            side: message.side.clone(),
+                            text: page::clip(text, max_text),
+                        })
+                    })
+                    .collect()
             })
-            .collect(),
+            .unwrap_or_default(),
     }
 }
 
-fn message_view(row: &MessageRecord) -> MessageView {
+fn message_view(row: &MessageRecord, text: &str, page: &Page) -> MessageView {
     MessageView {
         source: row.source.clone(),
         ts: row.ts.clone(),
@@ -626,27 +592,28 @@ fn message_view(row: &MessageRecord) -> MessageView {
         flavor: row.primary_flavor.clone(),
         tags: row.flavor_tags.clone(),
         cues: row.matched_cues.clone(),
-        text: row.text.clone(),
+        text: page.clip(text),
     }
 }
 
-pub(crate) fn authored_message_view(row: &MessageRecord) -> MessageView {
-    let mut view = message_view(row);
-    view.text = row
-        .authored
-        .clone()
-        .expect("authored message views are selected by authored presence");
-    view
+pub(crate) fn authored_message_view(row: &MessageRecord, page: &Page) -> MessageView {
+    message_view(
+        row,
+        row.authored
+            .as_deref()
+            .expect("authored message views are selected by authored presence"),
+        page,
+    )
 }
 
-fn compaction_view(row: &CompactionRecord) -> CompactionView {
+fn compaction_view(row: &CompactionRecord, page: &Page) -> CompactionView {
     CompactionView {
         source: row.source.clone(),
         ts: row.ts.clone(),
-        assistant_before: clip(&row.assistant_before, DEFAULT_TIMELINE_TEXT),
-        summary_after: clip(&row.summary_after, DEFAULT_TIMELINE_TEXT),
-        intent: clip(&row.intent, DEFAULT_TIMELINE_TEXT),
-        user_after: clip(&row.user_after, DEFAULT_TIMELINE_TEXT),
+        assistant_before: page.clip(&row.assistant_before),
+        summary_after: page.clip(&row.summary_after),
+        intent: page.clip(&row.intent),
+        user_after: page.clip(&row.user_after),
     }
 }
 
@@ -674,7 +641,7 @@ fn turn_timeline_text(turn: &TurnRecord) -> String {
 fn build_slices(
     dataset: &WindowScan,
     full: bool,
-    max_text: usize,
+    page: &Page,
     ordinal_base: usize,
 ) -> Vec<SliceView> {
     if dataset.compactions.is_empty() {
@@ -688,16 +655,18 @@ fn build_slices(
         let start = first.view.start.clone();
         let end = last.end.clone();
         return vec![slice_view(
-            format!("{}-{}", compact_timestamp(&start), compact_timestamp(&end)),
-            first.view.source.clone(),
-            start,
-            end,
-            "full_history_no_compactions",
-            "full_history",
+            SliceSpan {
+                id: format!("{}-{}", compact_timestamp(&start), compact_timestamp(&end)),
+                source: first.view.source.clone(),
+                start,
+                end,
+                basis: "full_history_no_compactions",
+                anchor: "full_history",
+            },
             &dataset.turns.iter().collect::<Vec<_>>(),
             None,
             full,
-            max_text,
+            page,
         )];
     }
     let mut rows = Vec::new();
@@ -725,33 +694,38 @@ fn build_slices(
             })
             .collect::<Vec<_>>();
         rows.push(slice_view(
-            format!("compaction-{}", ordinal_base + index + 1),
-            compaction.source.clone(),
-            start,
-            compaction.ts.clone(),
-            "compaction_interval",
-            "compaction",
+            SliceSpan {
+                id: format!("compaction-{}", ordinal_base + index + 1),
+                source: compaction.source.clone(),
+                start,
+                end: compaction.ts.clone(),
+                basis: "compaction_interval",
+                anchor: "compaction",
+            },
             &turns,
             Some(compaction),
             full,
-            max_text,
+            page,
         ));
     }
     rows
 }
 
-#[allow(clippy::too_many_arguments)]
-fn slice_view(
+struct SliceSpan {
     id: String,
     source: String,
     start: String,
     end: String,
-    basis: &str,
-    anchor: &str,
+    basis: &'static str,
+    anchor: &'static str,
+}
+
+fn slice_view(
+    span: SliceSpan,
     turns: &[&WindowTurn],
     compaction: Option<&CompactionRecord>,
     full: bool,
-    max_text: usize,
+    page: &Page,
 ) -> SliceView {
     let mut messages = Vec::new();
     if full && let Some(compaction) = compaction {
@@ -764,18 +738,18 @@ fn slice_view(
             if !text.is_empty() {
                 messages.push(DialogueLine {
                     side: side.to_owned(),
-                    text: clip(text, max_text),
+                    text: page.clip(text),
                 });
             }
         }
     }
     SliceView {
-        id,
-        source,
-        start,
-        end,
-        basis: basis.to_owned(),
-        anchor: anchor.to_owned(),
+        id: span.id,
+        source: span.source,
+        start: span.start,
+        end: span.end,
+        basis: span.basis.to_owned(),
+        anchor: span.anchor.to_owned(),
         status: if turns.iter().any(|turn| !turn.view.completed) {
             "open"
         } else {
@@ -822,13 +796,17 @@ pub(crate) fn turn_end(turn: &TurnRecord) -> String {
         .unwrap_or_else(|| turn.last_activity_ts.clone())
 }
 
+pub(crate) fn tokens_by_file(matches: &ArgMatches) -> bool {
+    flag(matches, "by-file")
+}
+
 fn optional_bound(matches: &ArgMatches, name: &str) -> Result<Option<String>, Refusal> {
     one(matches, name)
         .map(|value| normalize_bound(value))
         .transpose()
 }
 
-fn normalize_bound(value: &str) -> Result<String, Refusal> {
+pub(crate) fn normalize_bound(value: &str) -> Result<String, Refusal> {
     value
         .parse::<jiff::Timestamp>()
         .ok()
@@ -858,37 +836,6 @@ pub(crate) fn values(matches: &ArgMatches, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn number(matches: &ArgMatches, name: &str, default: usize) -> Result<usize, Refusal> {
-    signed_number(matches, name, default).map(|value| value.max(1))
-}
-
-fn number_allow_zero(matches: &ArgMatches, name: &str, default: usize) -> Result<usize, Refusal> {
-    signed_number(matches, name, default)
-}
-
-fn signed_number(matches: &ArgMatches, name: &str, default: usize) -> Result<usize, Refusal> {
-    one(matches, name).map_or(Ok(default), |value| {
-        value
-            .parse::<i128>()
-            .map_err(|_| {
-                refusal(
-                    "session::bound-invalid",
-                    Some(format!("--{name}={value}")),
-                    "pass a decimal integer bound representable by this process",
-                )
-            })
-            .and_then(|value| {
-                usize::try_from(value.max(0)).map_err(|_| {
-                    refusal(
-                        "session::bound-invalid",
-                        Some(format!("--{name}={value}")),
-                        "pass a smaller decimal integer bound",
-                    )
-                })
-            })
-    })
-}
-
 fn one<'a>(matches: &'a ArgMatches, name: &str) -> Option<&'a String> {
     matches.try_get_one::<String>(name).ok().flatten()
 }
@@ -902,17 +849,12 @@ fn flag(matches: &ArgMatches, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn clip(value: &str, max_chars: usize) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.chars().count() <= max_chars {
-        return normalized;
-    }
-    let mut clipped = normalized
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    clipped.push('…');
-    clipped
+fn unencodable(error: serde_json::Error) -> Refusal {
+    refusal(
+        "session::record-unencodable",
+        Some(error.to_string()),
+        "report the transcript record that cannot be encoded",
+    )
 }
 
 fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {

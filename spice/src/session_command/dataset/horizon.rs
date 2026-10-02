@@ -207,13 +207,15 @@ impl CompactionTracker {
         Ok(())
     }
 
+    /// Retained compactions, and every compaction the tracker matched.
     pub(super) fn finish(
         mut self,
         work: &mut SessionWork,
         at: &str,
-    ) -> Result<Vec<CompactionRecord>, Refusal> {
+    ) -> Result<(Vec<CompactionRecord>, usize), Refusal> {
         self.finish_pending(work, at)?;
-        Ok(self.rows.into_rows())
+        let population = self.rows.offered();
+        Ok((self.rows.into_rows(), population))
     }
 }
 
@@ -243,11 +245,13 @@ pub(crate) fn recent_compaction_horizon(
     compaction_horizon(sources, count, end, false)
 }
 
-pub(crate) fn slice_compaction_horizon(
+/// The recent horizon, and every compaction at or before `end` counted.
+pub(crate) fn counted_compaction_horizon(
     sources: &[ResolvedSource],
     count: usize,
+    end: Option<&str>,
 ) -> Result<CompactionHorizon, Refusal> {
-    compaction_horizon(sources, count, None, true)
+    compaction_horizon(sources, count, end, true)
 }
 
 fn compaction_horizon(
@@ -307,54 +311,6 @@ fn compaction_horizon(
         total,
         sources: source_horizons,
     })
-}
-
-pub(crate) fn recent_turn_start(
-    source: &ResolvedSource,
-    count: usize,
-    work: &mut SessionWork,
-) -> Result<Option<String>, Refusal> {
-    debug_assert!(count > 0);
-    let source_name = source.path.display().to_string();
-    work.begin_pass(&source_name)?;
-    let mut cursor = ReverseCursor::new(&source.path)?;
-    let mut observed = 0_usize;
-    loop {
-        let ReverseWindow {
-            bytes,
-            records,
-            progress,
-        } = cursor.advance(work)?;
-        let mut oldest_start = None;
-        for record in records.into_iter().rev() {
-            let at = format!("{source_name}:byte {}", record.offset);
-            work.admit_record(&at)?;
-            let row = decode_reverse_row(
-                source,
-                &bytes[record.start..record.end],
-                record.offset,
-                source.thread.is_some() && record.terminal,
-                work,
-                &at,
-            )?;
-            if let Some(DecodedRow::Typed(row)) = row
-                && row.context.turn == Some(listen::TurnMoment::Started)
-            {
-                observed = observed.saturating_add(1);
-                oldest_start = Some(record_timestamp(&row).to_owned());
-            }
-        }
-        if observed >= count {
-            return Ok(oldest_start);
-        }
-        match progress {
-            ReverseProgress::More(next) => debug_assert!(cursor.is_at(next)),
-            ReverseProgress::Eof(end) => {
-                debug_assert!(cursor.is_at(end));
-                return Ok(None);
-            }
-        }
-    }
 }
 
 fn read_recent_compaction_markers(
@@ -983,6 +939,7 @@ mod tests {
             WindowOptions::Turns {
                 limit: 8,
                 full: true,
+                max_text: 240,
             },
         )
         .expect("bounded window folds canonical records");

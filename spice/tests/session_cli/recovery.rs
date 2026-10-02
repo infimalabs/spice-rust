@@ -3,6 +3,19 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::fs;
 
+/// One page of turns over `file`, the history view that carries residues.
+fn turns(file: &str) -> Value {
+    reply_forms(&strings(&["session", "turns", file]), &[], "turns")
+}
+
+/// Authored dialogue lines as a turns page renders them.
+fn dialogue(lines: &[(&str, &str)]) -> Value {
+    lines
+        .iter()
+        .map(|(side, text)| json!({"side": side, "text": {"text": text}}))
+        .collect()
+}
+
 fn damaged_fixture(scratch: &Scratch) -> String {
     let damaged_path = scratch.path().join("damaged.jsonl");
     let mut before = serde_json::to_vec(&omp_header(THREAD, "2026-01-03T00:00:00.000Z"))
@@ -40,7 +53,7 @@ fn assert_damaged_recovery(damaged: &str) {
     assert_eq!(first["turns"], 1);
     assert_eq!(first["completed"], 1);
     assert_eq!(
-        first["recent_finals"][0]["text"],
+        first["recent"]["rows"][0]["text"]["text"],
         "history after unsupported evidence remains available"
     );
     assert_eq!(first["residues"].as_array().map(Vec::len), Some(2));
@@ -96,7 +109,7 @@ fn assert_invalid_query_arguments(damaged: &str) {
         "session::timestamp-invalid",
     );
     refusal(
-        &strings(&["session", "summary", damaged, "--recent", "many"]),
+        &strings(&["session", "summary", damaged, "--limit", "many"]),
         &[],
         "session::bound-invalid",
     );
@@ -170,7 +183,7 @@ fn assert_unavailable_turn_identity(scratch: &Scratch) {
 }
 
 #[test]
-fn briefing_retains_an_end_only_tool_outcome_as_unattributed_residue() {
+fn turns_retain_an_end_only_tool_outcome_as_unattributed_residue() {
     let scratch = Scratch::new("end-only-tool");
     let transcript = scratch.path().join("omp-session.jsonl");
     write_jsonl(
@@ -191,26 +204,25 @@ fn briefing_retains_an_end_only_tool_outcome_as_unattributed_residue() {
             ),
         ],
     );
+    let file = transcript.to_string_lossy().into_owned();
 
-    let recall = reply_forms(
-        &strings(&["session", "briefing", &transcript.to_string_lossy()]),
-        &[],
-        "recall",
-    );
-    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
+    let page = turns(&file);
+    assert_eq!(page["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"][1]["text"],
+        page["rows"][0]["dialogue"][1]["text"]["text"],
         "Independent dialogue preserved."
     );
-    assert_eq!(recall["residues"].as_array().map(Vec::len), Some(1));
-    assert_eq!(recall["residues"][0]["kind"], "tool-invocation-missing");
-    assert_eq!(recall["residues"][0]["line"], 3);
+    assert_eq!(page["residues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(page["residues"][0]["kind"], "tool-invocation-missing");
+    assert_eq!(page["residues"][0]["line"], 3);
     assert!(
-        recall["residues"][0]["detail"]
+        page["residues"][0]["detail"]
             .as_str()
             .is_some_and(|detail| detail.contains("call_id=exec-end-only"))
     );
-    assert!(recall["residues"][0]["recovery"].is_string());
+    assert!(page["residues"][0]["recovery"].is_string());
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(recall["residues"], 1, "the briefing counts the residue");
     scratch.remove();
 }
 
@@ -238,8 +250,10 @@ fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
         "recall",
     );
     assert_eq!(recall["sources"][0]["thread"], THREAD);
+    assert_eq!(recall["residues"], 1, "the briefing counts the live tail");
+    let page = reply_forms(&strings(&["session", "turns"]), &environment, "turns");
     assert!(
-        recall["residues"].as_array().is_some_and(|residues| {
+        page["residues"].as_array().is_some_and(|residues| {
             residues.iter().any(|residue| {
                 residue["kind"] == "live-tail-truncated"
                     && residue["detail"]
@@ -247,7 +261,7 @@ fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
                         .is_some_and(|detail| detail.contains("final live transcript row"))
             })
         }),
-        "live tail truncation is retained as residue: {recall}"
+        "live tail truncation is retained as residue: {page}"
     );
 
     let summary = reply_forms(
@@ -321,7 +335,7 @@ fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery(
 /// omp names its tools in lower case and keys their arguments as `command`
 /// and `path`, which is how a session file's shell calls and file edits count.
 #[test]
-fn briefing_counts_omp_shell_calls_and_file_edits() {
+fn turns_count_omp_shell_calls_and_file_edits() {
     let scratch = Scratch::new("omp-tools");
     let transcript = scratch
         .path()
@@ -364,14 +378,14 @@ fn briefing_counts_omp_shell_calls_and_file_edits() {
     );
     let file = transcript.to_string_lossy().into_owned();
 
-    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
-    let turn = &recall["window"]["turns"][0];
+    let page = turns(&file);
+    let turn = &page["rows"][0];
     assert_eq!(turn["vendor"], "omp");
     assert_eq!(turn["completed"], true, "{turn}");
     assert_eq!(turn["commands"], 1, "{turn}");
     assert_eq!(turn["patches"], 1, "{turn}");
     assert_eq!(turn["touched_paths"], json!(["spice/src/session.rs"]));
-    assert_eq!(recall["residues"], json!([]));
+    assert_eq!(page["residues"], json!([]));
 
     let commands = reply_forms(
         &strings(&["session", "commands", &file, "--limit", "5"]),
@@ -379,7 +393,7 @@ fn briefing_counts_omp_shell_calls_and_file_edits() {
         "commands",
     );
     let row = &commands["rows"][0];
-    assert_eq!(row["command"], "cargo test -p spice", "{row}");
+    assert_eq!(row["command"]["text"], "cargo test -p spice", "{row}");
     assert_eq!(row["status"], "completed", "{row}");
     assert_eq!(row["exit_code"], 0, "{row}");
 
@@ -387,7 +401,7 @@ fn briefing_counts_omp_shell_calls_and_file_edits() {
 }
 
 #[test]
-fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
+fn turns_complete_an_omp_command_with_surplus_screenshot_media() {
     let scratch = Scratch::new("omp-surplus-media");
     let transcript = scratch
         .path()
@@ -425,13 +439,13 @@ fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
     );
     let file = transcript.to_string_lossy().into_owned();
 
-    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
-    assert_eq!(recall["residues"], json!([]));
+    let page = turns(&file);
+    assert_eq!(page["residues"], json!([]));
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "inspect every screenshot"},
-            {"side": "assistant", "text": "all captures inspected"},
+        page["rows"][0]["dialogue"],
+        dialogue(&[
+            ("user", "inspect every screenshot"),
+            ("assistant", "all captures inspected"),
         ])
     );
     let commands = reply_forms(
@@ -439,7 +453,7 @@ fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
         &[],
         "commands",
     );
-    assert_eq!(commands["rows"][0]["command"], "capture --all");
+    assert_eq!(commands["rows"][0]["command"]["text"], "capture --all");
     assert_eq!(commands["rows"][0]["status"], "completed");
     assert_eq!(commands["rows"][0]["exit_code"], 0);
 
@@ -447,7 +461,7 @@ fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
 }
 
 #[test]
-fn briefing_collapses_repeated_residues_without_losing_the_window() {
+fn turns_collapse_repeated_residues_without_losing_dialogue() {
     let scratch = Scratch::new("briefing-residue-groups");
     let transcript = scratch
         .path()
@@ -492,10 +506,10 @@ fn briefing_collapses_repeated_residues_without_losing_the_window() {
     write_jsonl(&transcript, &records);
     let file = transcript.to_string_lossy().into_owned();
 
-    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
-    let residues = recall["residues"]
+    let page = turns(&file);
+    let residues = page["residues"]
         .as_array()
-        .expect("briefing residues are an array");
+        .expect("turn residues are an array");
     assert_eq!(residues.len(), 1, "{residues:?}");
     let residue = &residues[0];
     assert_eq!(
@@ -520,10 +534,10 @@ fn briefing_collapses_repeated_residues_without_losing_the_window() {
         )
     );
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "retain the current ask"},
-            {"side": "assistant", "text": "window remains intact"},
+        page["rows"][0]["dialogue"],
+        dialogue(&[
+            ("user", "retain the current ask"),
+            ("assistant", "window remains intact"),
         ])
     );
 
@@ -567,7 +581,7 @@ fn external_image_records(data: &str) -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn briefing_resolves_omp_external_image_blobs_from_the_session_state_root() {
+fn turns_resolve_omp_external_image_blobs_from_the_session_state_root() {
     let scratch = Scratch::new("briefing-external-media");
     let sessions = scratch.path().join("sessions/team");
     let blobs = scratch.path().join("blobs");
@@ -582,13 +596,13 @@ fn briefing_resolves_omp_external_image_blobs_from_the_session_state_root() {
     );
 
     let file = transcript.to_string_lossy().into_owned();
-    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
-    assert_eq!(recall["residues"], json!([]));
+    let page = turns(&file);
+    assert_eq!(page["residues"], json!([]));
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "Inspect the captured image."},
-            {"side": "assistant", "text": "The image is intact."},
+        page["rows"][0]["dialogue"],
+        dialogue(&[
+            ("user", "Inspect the captured image."),
+            ("assistant", "The image is intact."),
         ])
     );
 
@@ -596,7 +610,7 @@ fn briefing_resolves_omp_external_image_blobs_from_the_session_state_root() {
 }
 
 #[test]
-fn briefing_distinguishes_missing_and_mismatched_omp_external_image_blobs() {
+fn turns_distinguish_missing_and_mismatched_omp_external_image_blobs() {
     let scratch = Scratch::new("briefing-invalid-external-media");
     let sessions = scratch.path().join("sessions/team");
     let blobs = scratch.path().join("blobs");
@@ -610,25 +624,25 @@ fn briefing_distinguishes_missing_and_mismatched_omp_external_image_blobs() {
     );
     let file = transcript.to_string_lossy().into_owned();
 
-    let missing = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    let missing = turns(&file);
     assert_eq!(missing["residues"][0]["kind"], "media-blob-missing");
     assert_eq!(
-        missing["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "Inspect the captured image."},
-            {"side": "assistant", "text": "The image is intact."},
+        missing["rows"][0]["dialogue"],
+        dialogue(&[
+            ("user", "Inspect the captured image."),
+            ("assistant", "The image is intact."),
         ])
     );
 
     fs::write(blobs.join(&digest), b"not the referenced image").expect("bad OMP blob writes");
-    let mismatched = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    let mismatched = turns(&file);
     assert_eq!(
         mismatched["residues"][0]["kind"],
         "media-blob-digest-mismatch"
     );
     assert_eq!(
-        mismatched["window"]["turns"][0]["dialogue"],
-        missing["window"]["turns"][0]["dialogue"],
+        mismatched["rows"][0]["dialogue"],
+        missing["rows"][0]["dialogue"],
     );
 
     scratch.remove();

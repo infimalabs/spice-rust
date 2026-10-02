@@ -7,8 +7,8 @@
 //! Completion is a recorded outcome, not the presence of a numeric exit code.
 //! An explicit tool result may complete a command while leaving that code
 //! unknown; numeric failure filters never infer a code from that absence.
-//! Select the newest qualifying invocation timestamps before clipping or
-//! reversing presentation, even when their results arrive in a different order.
+//! Select the newest qualifying invocation timestamps before clipping,
+//! even when their results arrive in a different order.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
@@ -19,15 +19,14 @@ use wire::Refusal;
 use super::super::model::{
     CommandAudit, CommandRecord, CommandView, FoldBuffer, Report, Residue, SourceView, Vendor,
 };
-use super::{
-    DEFAULT_COMMAND_TEXT, DEFAULT_COMMANDS_LIMIT, MAX_WINDOW_TEXT, clip, flag, number, refusal,
-};
+use super::super::page::{Page, Paged};
+use super::{flag, refusal};
 use crate::session_command::dataset::stream::{ForwardCursor, ForwardProgress, compressed};
 use crate::session_command::dataset::{
     DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, OPEN_TOOL_LIMIT,
     OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget, admit_sources,
-    finish_fold, frontier_limit, recent_compaction_horizon, recent_turn_start, reduce_record,
-    source_view_text_bytes, text_bytes,
+    finish_fold, frontier_limit, recent_compaction_horizon, reduce_record, source_view_text_bytes,
+    text_bytes,
 };
 use crate::session_command::source::ResolvedSource;
 
@@ -40,35 +39,19 @@ pub(crate) struct CommandQuery {
     pipelines: bool,
     noncanonical_pipelines: bool,
     summary: bool,
+    end: Option<String>,
     limit: NonZeroUsize,
 }
 
 struct CommandDataset {
     sources: Vec<SourceView>,
     rows: Vec<CommandRecord>,
+    population: usize,
     audit: Option<CommandAudit>,
     residues: Vec<Residue>,
 }
 
 impl CommandQuery {
-    fn new(
-        since_compaction: bool,
-        failed: bool,
-        pipelines: bool,
-        noncanonical_pipelines: bool,
-        summary: bool,
-        limit: usize,
-    ) -> Result<Self, Refusal> {
-        Ok(Self {
-            since_compaction,
-            failed,
-            pipelines,
-            noncanonical_pipelines,
-            summary,
-            limit: frontier_limit(limit)?,
-        })
-    }
-
     fn completed(row: &CommandRecord) -> bool {
         row.status == "completed"
     }
@@ -76,6 +59,7 @@ impl CommandQuery {
     fn matches(&self, row: &CommandRecord, latest_compaction: Option<&str>) -> bool {
         (!self.since_compaction
             || latest_compaction.is_none_or(|timestamp| row.ts.as_str() > timestamp))
+            && self.end.as_ref().is_none_or(|end| row.ts <= *end)
             && (!self.failed || row.exit_code.is_some_and(|code| code != 0))
             && (!self.pipelines || has_pipeline(&row.command))
             && (!self.noncanonical_pipelines || noncanonical_pipeline(&row.command))
@@ -95,44 +79,40 @@ impl CommandQuery {
     }
 }
 
-pub(crate) struct CommandOptions {
-    query: CommandQuery,
-    max_text: usize,
-    newest_first: bool,
-}
-
-pub(crate) fn options(matches: &ArgMatches) -> Result<CommandOptions, Refusal> {
-    let limit = number(matches, "limit", DEFAULT_COMMANDS_LIMIT)?;
-    let max_text = number(matches, "max-text", DEFAULT_COMMAND_TEXT)?;
-    if max_text > MAX_WINDOW_TEXT {
-        return Err(refusal(
-            "session::bound-exceeded",
-            Some(format!("--max-text={max_text} maximum={MAX_WINDOW_TEXT}")),
-            "pass a command text bound within the repository ceiling",
-        ));
-    }
-    let newest_first = flag(matches, "newest-first");
-    let query = CommandQuery::new(
-        flag(matches, "since-compaction"),
-        flag(matches, "failed"),
-        flag(matches, "pipelines"),
-        flag(matches, "noncanonical-pipelines"),
-        flag(matches, "summary"),
-        limit,
-    )?;
-    Ok(CommandOptions {
-        query,
-        max_text,
-        newest_first,
-    })
-}
-
+/// One page of completed commands, newest first, with the optional audit
+/// over every matching command.
 pub(crate) fn commands(
     sources: &[ResolvedSource],
-    options: CommandOptions,
+    matches: &ArgMatches,
+    page: Page,
 ) -> Result<Report, Refusal> {
-    let dataset = scan_commands(sources, &options.query)?;
-    Ok(project_commands(dataset, options))
+    let query = CommandQuery {
+        since_compaction: flag(matches, "since-compaction"),
+        failed: flag(matches, "failed"),
+        pipelines: flag(matches, "pipelines"),
+        noncanonical_pipelines: flag(matches, "noncanonical-pipelines"),
+        summary: flag(matches, "summary"),
+        end: page.end(None)?,
+        limit: frontier_limit(page.frontier()?)?,
+    };
+    let dataset = scan_commands(sources, &query)?;
+    let rows = dataset
+        .rows
+        .iter()
+        .rev()
+        .map(|row| command_view(row, &page))
+        .collect();
+    Ok(
+        match page.newest(rows, dataset.population, |row| &row.ts)? {
+            Paged::Shown(page) => Report::Commands {
+                sources: dataset.sources,
+                page,
+                audit: dataset.audit,
+                residues: dataset.residues,
+            },
+            Paged::Exported(export) => Report::Exported { export },
+        },
+    )
 }
 
 fn scan_commands(
@@ -146,18 +126,26 @@ fn scan_commands(
         None
     };
     let mut selected = Vec::with_capacity(sources.len().saturating_mul(query.limit.get()));
+    let mut population = 0_usize;
     let mut source_views = Vec::with_capacity(sources.len());
     let mut residues = ResidueLedger::new();
     let mut work = SessionWork::new(SessionWorkBudget::report());
     let mut audit = query.summary.then(|| CommandAuditFold::new(query));
     for source in sources {
-        let scan = scan_source_plan(
+        let start = if query.summary {
+            None
+        } else {
+            latest_compaction.as_deref()
+        };
+        let scan = scan_command_source(
             source,
+            start,
             latest_compaction.as_deref(),
             query,
             &mut audit,
             &mut work,
         )?;
+        population = population.saturating_add(scan.population);
         selected.extend(scan.rows);
         for residue in scan.residues {
             residues.push(residue, &mut work, "command source residue")?;
@@ -171,37 +159,12 @@ fn scan_commands(
     Ok(CommandDataset {
         sources: source_views,
         rows: selected,
+        population,
         audit: audit
             .map(|audit| audit.finish(&mut work, "command audit"))
             .transpose()?,
         residues: residues.finish(&mut work, "command residue summary")?,
     })
-}
-
-fn scan_source_plan(
-    source: &ResolvedSource,
-    latest_compaction: Option<&str>,
-    query: &CommandQuery,
-    audit: &mut Option<CommandAuditFold>,
-    work: &mut SessionWork,
-) -> Result<CommandSourceScan, Refusal> {
-    if query.summary || latest_compaction.is_some() || compressed(&source.path) {
-        let start = if query.summary {
-            None
-        } else {
-            latest_compaction
-        };
-        return scan_command_source(source, start, latest_compaction, query, audit, work);
-    }
-    let mut turn_count = query.limit.get();
-    loop {
-        let start = recent_turn_start(source, turn_count, work)?;
-        let scan = scan_command_source(source, start.as_deref(), None, query, audit, work)?;
-        if scan.rows.len() == query.limit.get() || start.is_none() {
-            return Ok(scan);
-        }
-        turn_count = turn_count.saturating_add(query.limit.get());
-    }
 }
 
 fn source_view(
@@ -222,23 +185,6 @@ fn source_view(
     };
     work.admit_retained_text(source_view_text_bytes(&view), &view.path)?;
     Ok(view)
-}
-
-fn project_commands(dataset: CommandDataset, options: CommandOptions) -> Report {
-    let mut rows = dataset
-        .rows
-        .iter()
-        .map(|row| command_view(row, options.max_text))
-        .collect::<Vec<_>>();
-    if options.newest_first {
-        rows.reverse();
-    }
-    Report::Commands {
-        sources: dataset.sources,
-        rows,
-        audit: dataset.audit,
-        residues: dataset.residues,
-    }
 }
 
 struct CommandAuditFold {
@@ -360,6 +306,7 @@ impl CommandAuditFold {
 
 struct CommandSourceScan {
     rows: Vec<CommandRecord>,
+    population: usize,
     residues: Vec<Residue>,
     vendor: Vendor,
 }
@@ -438,6 +385,7 @@ impl CommandSourceFold {
             &source.path.display().to_string(),
         )?;
         Ok(CommandSourceScan {
+            population: self.frontier.offered(),
             rows: if audit {
                 Vec::new()
             } else {
@@ -542,13 +490,13 @@ fn drain_command_turns(
     Ok(())
 }
 
-fn command_view(row: &CommandRecord, max_text: usize) -> CommandView {
+fn command_view(row: &CommandRecord, page: &Page) -> CommandView {
     CommandView {
         source: row.source.clone(),
         ts: row.ts.clone(),
         turn_id: row.turn_id.clone(),
         cwd: row.cwd.clone(),
-        command: clip(&row.command, max_text),
+        command: page.clip(&row.command),
         exit_code: row.exit_code,
         status: row.status.clone(),
         wrapper: starts_with_wrapper(&row.command),

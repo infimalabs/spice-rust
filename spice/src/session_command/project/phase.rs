@@ -9,44 +9,70 @@
 use clap::ArgMatches;
 use wire::Refusal;
 
-use super::{
-    DEFAULT_PHASE_EXAMPLES, DEFAULT_PHASE_TEXT, PhaseExample, TurnRecord, clip, number,
-    number_allow_zero, one,
-};
-const MAX_PHASE_ROWS: usize = 256;
+use super::super::dataset::Aggregate;
+use super::super::model::PhaseExample;
+use super::super::page::{self, Page};
+use super::{Filters, Report, ResolvedSource, TurnRecord, one, report};
+
+const DEFAULT_PHASE_EXAMPLES: usize = 2;
 const MAX_PHASE_EXAMPLES: usize = 16;
-const MAX_PHASE_TEXT: usize = 16 * 1_024;
+/// Cursor prefix naming a phase by its ordinal from the first.
+const PHASE_KEY: &str = "phase-";
 
 #[derive(Clone, Copy)]
 pub(crate) struct PhaseOptions {
     pub(crate) rows: usize,
     pub(crate) examples: usize,
     pub(crate) max_text: usize,
+    /// The newest phase ordinal a resumed page considers.
+    pub(crate) through: Option<usize>,
 }
 
-pub(crate) fn options(matches: &ArgMatches) -> Result<PhaseOptions, Refusal> {
-    let options = PhaseOptions {
-        rows: one(matches, "limit")
-            .map(|_| number(matches, "limit", 1))
-            .transpose()?
-            .unwrap_or(MAX_PHASE_ROWS),
-        examples: number_allow_zero(matches, "examples", DEFAULT_PHASE_EXAMPLES)?,
-        max_text: number(matches, "max-text", DEFAULT_PHASE_TEXT)?,
-    };
-    for (name, value, maximum) in [
-        ("limit", options.rows, MAX_PHASE_ROWS),
-        ("examples", options.examples, MAX_PHASE_EXAMPLES),
-        ("max-text", options.max_text, MAX_PHASE_TEXT),
-    ] {
-        if value > maximum {
-            return Err(super::refusal(
-                "session::bound-exceeded",
-                Some(format!("--{name}={value} maximum={maximum}")),
-                "pass a phase report bound within the repository ceiling",
-            ));
-        }
+/// One page of phases, newest first, keyed by ordinal.
+pub(crate) fn phases(
+    sources: &[ResolvedSource],
+    matches: &ArgMatches,
+    page: Page,
+) -> Result<Report, Refusal> {
+    let examples = one(matches, "examples").map_or(Ok(DEFAULT_PHASE_EXAMPLES), |value| {
+        value.parse::<usize>().map_err(|_| {
+            super::refusal(
+                "session::bound-invalid",
+                Some(format!("--examples={value}")),
+                "pass a nonnegative decimal integer bound",
+            )
+        })
+    })?;
+    if examples > MAX_PHASE_EXAMPLES {
+        return Err(super::refusal(
+            "session::bound-exceeded",
+            Some(format!(
+                "--examples={examples} maximum={MAX_PHASE_EXAMPLES}"
+            )),
+            "pass a phase example bound within the repository ceiling",
+        ));
     }
-    Ok(options)
+    let options = PhaseOptions {
+        rows: page.retain(),
+        examples,
+        max_text: page.limits().text,
+        through: page.after_ordinal(PHASE_KEY)?,
+    };
+    let data = Aggregate::scan_phases(sources, options, Filters::from_matches(matches)?)?;
+    let rows = data
+        .rows
+        .into_iter()
+        .map(|row| {
+            let key = format!("{PHASE_KEY}{}", row.index);
+            (row, key)
+        })
+        .collect();
+    let paged = page.admit(rows, data.population)?;
+    Ok(report(paged, |page| Report::Phases {
+        sources: data.sources,
+        page,
+        residues: data.residues,
+    }))
 }
 
 pub(crate) fn turn_family(turn: &TurnRecord) -> String {
@@ -73,13 +99,13 @@ pub(crate) fn phase_example(turn: &TurnRecord, max_text: usize) -> PhaseExample 
             .iter()
             .find(|message| message.side == "user" && message.authored.is_some())
             .and_then(|message| message.authored.as_deref())
-            .map(|message| clip(message, max_text)),
+            .map(|message| page::clip(message, max_text)),
         final_answer: turn
             .messages
             .iter()
             .rev()
             .find(|message| message.phase == "final_answer" && message.authored.is_some())
             .and_then(|message| message.authored.as_deref())
-            .map(|message| clip(message, max_text)),
+            .map(|message| page::clip(message, max_text)),
     }
 }

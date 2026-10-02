@@ -11,7 +11,10 @@ use wire::{
     ResidencyHead, ResidentState, SteeringHead, TaskStamp, WorkflowHead, body,
 };
 
-use super::{Scratch, THREAD, omp_rows, reply_forms_in, strings, write_jsonl};
+use super::{
+    Scratch, THREAD, omp_call, omp_compaction, omp_header, omp_result, omp_rows, omp_text,
+    omp_user, reply_forms_in, strings, write_jsonl,
+};
 
 const SESSION_PROJECT: &str = "spice.session";
 
@@ -743,14 +746,14 @@ fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_rea
 
     for recall in [&ambient, &explicit] {
         assert_eq!(recall["sources"][0]["thread"], live);
-        assert_eq!(recall["authorities"]["held_work"]["thread"], live);
-        assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+        assert_eq!(recall["held_work"]["thread"], live);
+        assert_eq!(recall["asks"]["rows"][0]["key"], "1kAsk001");
         assert_eq!(
-            recall["authorities"]["held_work"]["own_claim"]["title"],
+            recall["held_work"]["own_claim"]["title"],
             "Compose Rust briefings"
         );
         assert!(
-            recall["authorities"].get("unknowns").is_none(),
+            recall.get("unknowns").is_none(),
             "matching live and evidence identities are fully known"
         );
     }
@@ -783,10 +786,10 @@ fn preferred_vendor_without_identity_leaves_authority_unknown() {
     );
 
     assert_eq!(recall["sources"][0]["thread"], selected);
-    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
-    assert!(recall["authorities"].get("asks").is_none());
+    assert_eq!(recall["held_work"]["thread"], Value::Null);
+    assert!(recall.get("asks").is_none());
     assert!(
-        recall["authorities"]["unknowns"]
+        recall["unknowns"]
             .as_array()
             .expect("missing preferred identity is explicit")
             .iter()
@@ -828,18 +831,16 @@ fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_acto
 
     assert_eq!(recall["sources"][0]["thread"], foreign);
     assert!(
-        recall["window"]["turns"]
-            .as_array()
-            .is_some_and(|turns| !turns.is_empty()),
-        "foreign transcript evidence remains in the bounded window"
+        recall["live"]["turn"].is_object(),
+        "foreign transcript evidence remains in the live working set"
     );
-    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
-    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(recall["held_work"]["thread"], live);
+    assert_eq!(recall["asks"]["rows"][0]["key"], "1kAsk001");
     assert_eq!(
-        recall["authorities"]["held_work"]["own_claim"]["title"],
+        recall["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
-    let mismatch = recall["authorities"]["unknowns"]
+    let mismatch = recall["unknowns"]
         .as_array()
         .expect("foreign evidence mismatch is explicit")
         .iter()
@@ -886,9 +887,9 @@ fn ambiguous_multi_thread_evidence_does_not_make_current_authority_ambiguous() {
     );
 
     assert_eq!(recall["sources"].as_array().map(Vec::len), Some(2));
-    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
-    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
-    let unknowns = recall["authorities"]["unknowns"]
+    assert_eq!(recall["held_work"]["thread"], live);
+    assert_eq!(recall["asks"]["rows"][0]["key"], "1kAsk001");
+    let unknowns = recall["unknowns"]
         .as_array()
         .expect("multi-thread evidence ambiguity is explicit");
     assert!(
@@ -931,16 +932,13 @@ fn malformed_live_identity_stays_unknown_instead_of_using_selected_transcript_id
     );
 
     assert_eq!(recall["sources"][0]["thread"], selected);
-    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
-    assert_eq!(
-        recall["authorities"]["held_work"]["peer_claims"],
-        Value::Null
-    );
-    assert!(recall["authorities"].get("asks").is_none());
+    assert_eq!(recall["held_work"]["thread"], Value::Null);
+    assert_eq!(recall["held_work"]["lane"], Value::Null);
+    assert_eq!(recall["held_work"]["own_claim"], Value::Null);
+    assert_eq!(recall["held_work"]["peer_claims"], Value::Null);
+    assert!(recall.get("asks").is_none());
     assert!(
-        recall["authorities"]["unknowns"]
+        recall["unknowns"]
             .as_array()
             .expect("malformed live identity is explicit")
             .iter()
@@ -976,20 +974,15 @@ fn absent_live_identity_keeps_current_authority_unknown_during_historical_recove
 
     assert_eq!(recall["sources"][0]["thread"], selected);
     assert!(
-        recall["window"]["turns"]
-            .as_array()
-            .is_some_and(|turns| !turns.is_empty()),
-        "historical transcript evidence remains in the bounded window"
+        recall["live"]["turn"].is_object(),
+        "historical transcript evidence remains in the live working set"
     );
-    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
-    assert_eq!(
-        recall["authorities"]["held_work"]["peer_claims"],
-        Value::Null
-    );
-    assert!(recall["authorities"].get("asks").is_none());
-    let unknowns = recall["authorities"]["unknowns"]
+    assert_eq!(recall["held_work"]["thread"], Value::Null);
+    assert_eq!(recall["held_work"]["lane"], Value::Null);
+    assert_eq!(recall["held_work"]["own_claim"], Value::Null);
+    assert_eq!(recall["held_work"]["peer_claims"], Value::Null);
+    assert!(recall.get("asks").is_none());
+    let unknowns = recall["unknowns"]
         .as_array()
         .expect("missing live identity is explicit");
     assert!(unknowns.iter().any(|row| {
@@ -1025,14 +1018,12 @@ fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
         "recall",
     );
 
-    assert_eq!(recall["authorities"]["fold"]["mode"], "bounded-read-only");
-    assert_eq!(recall["authorities"]["fold"]["writes"], json!([]));
     assert!(
-        recall["authorities"].get("asks").is_none(),
-        "empty outstanding asks are omitted"
+        recall.get("asks").is_none(),
+        "unread steering is not rendered as an empty known inbox"
     );
     assert!(
-        recall["authorities"]["unknowns"]
+        recall["unknowns"]
             .as_array()
             .expect("unknowns are explicit")
             .iter()
@@ -1065,12 +1056,6 @@ fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
             "session",
             "briefing",
             &transcript.to_string_lossy(),
-            "--start",
-            "2026-01-01T00:00:00Z",
-            "--max-lines",
-            "80",
-            "--max-bytes",
-            "8000",
             "--deadline-seconds",
             "5",
         ]),
@@ -1078,79 +1063,111 @@ fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
         "recall",
     );
 
-    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
-    assert_eq!(
-        recall["authorities"]["asks"][0]["text"],
-        "Address this exact steering ask"
-    );
-    assert_eq!(
-        recall["authorities"]["asks"][0]["attachments"][0]["name"],
-        "operator-capture.png",
-    );
+    let ask = &recall["asks"]["rows"][0];
+    assert_eq!(ask["key"], "1kAsk001");
+    assert_eq!(ask["text"]["text"], "Address this exact steering ask");
+    assert_eq!(ask["attachments"][0]["name"], "operator-capture.png");
     let expected_media =
         wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
             .expect("fixture media admits");
     let expected_reference = wire::AgentMediaReference::from_media(uuid(0xaf), 0, &expected_media)
         .expect("fixture reference derives");
     assert_eq!(
-        recall["authorities"]["asks"][0]["attachments"][0],
+        ask["attachments"][0],
         serde_json::to_value(expected_reference).expect("fixture reference encodes"),
     );
     assert_eq!(
-        recall["authorities"]["held_work"]["own_claim"]["title"],
+        recall["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
-    assert_eq!(recall["authorities"]["held_work"]["peer_claims"], 1);
-    assert_eq!(
-        recall["authorities"]["priority"]["order"],
-        json!([
-            "outstanding-asks",
-            "held-work",
-            "transcript-deliveries",
-            "transcript-working-set",
-            "ambient-posture"
-        ])
-    );
-    assert_eq!(
-        recall["window"]["turns"][0]["touched_paths"],
-        json!(["spice/src/session.rs"])
-    );
+    assert_eq!(recall["held_work"]["peer_claims"], 1);
 
-    let pruned = reply_forms_in(
+    scratch.remove();
+}
+
+/// Six compaction windows of tool traffic precede the live turn. The briefing
+/// carries the one pending ask and the live turn, never the old traffic.
+#[test]
+fn a_long_briefing_keeps_the_pending_ask_and_drops_old_tool_traffic() {
+    let scratch = Scratch::new("authority-long-briefing");
+    fake_repository(scratch.path());
+    let thread = uuid(0xaa).to_string();
+    seed_recall_authority(&authority_path(scratch.path()), &thread);
+    let mut rows = vec![omp_header(THREAD, "2026-03-01T00:00:00.000Z")];
+    for window in 0..6_u32 {
+        let at = |second: u32| format!("2026-03-01T00:{window:02}:{second:02}Z");
+        if window > 0 {
+            rows.push(omp_compaction(
+                &at(0),
+                &format!("c{window}"),
+                "Earlier work summarized.",
+                &format!("u{window}"),
+            ));
+        }
+        rows.push(omp_user(&at(1), &format!("u{window}"), "old request"));
+        for call in 0..20_u32 {
+            let id = format!("call-{window}-{call}");
+            rows.push(omp_call(
+                &at(2 + call * 2),
+                &format!("a{window}-{call}"),
+                &id,
+                "bash",
+                json!({"command": format!("old-tool-traffic {window}-{call}")}),
+            ));
+            rows.push(omp_result(
+                &at(3 + call * 2),
+                &format!("r{window}-{call}"),
+                &id,
+                "bash",
+                Some(0),
+            ));
+        }
+    }
+    rows.push(omp_user(
+        "2026-03-01T00:06:00Z",
+        "live",
+        "Current direction.",
+    ));
+    rows.push(omp_text(
+        "2026-03-01T00:06:01Z",
+        "final",
+        "Live work answered.",
+        "stop",
+    ));
+    let transcript = scratch.path().join("long.jsonl");
+    write_jsonl(&transcript, &rows);
+
+    let recall = reply_forms_in(
         Some(scratch.path()),
         &strings(&[
             "session",
             "briefing",
             &transcript.to_string_lossy(),
-            "--start",
-            "2026-01-01T00:00:00Z",
-            "--max-lines",
-            "1",
-            "--max-bytes",
-            "1",
             "--deadline-seconds",
             "5",
         ]),
-        &environment,
+        &[(SESSION_ENVIRONMENT, thread)],
         "recall",
     );
-    assert!(
-        pruned["pruning"]["turns_before"].as_u64() > pruned["pruning"]["turns_after"].as_u64(),
-        "end pruning removed transcript turns"
-    );
-    assert_eq!(pruned["authorities"]["asks"][0]["key"], "1kAsk001");
+
+    assert_eq!(recall["asks"]["rows"][0]["key"], "1kAsk001");
     assert_eq!(
-        pruned["authorities"]["asks"][0]["attachments"][0]["name"], "operator-capture.png",
-        "end pruning preserves typed outstanding-ask media",
-    );
-    assert_eq!(
-        pruned["authorities"]["held_work"]["own_claim"]["title"],
+        recall["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
     assert_eq!(
-        pruned["authorities"]["priority"]["end_pruning_preserves"],
-        json!(["outstanding-asks", "held-work"])
+        recall["live"]["turn"]["prompt"]["text"],
+        "Current direction."
     );
+    assert_eq!(
+        recall["live"]["latest_final"]["text"],
+        "Live work answered."
+    );
+    assert_eq!(recall["live"]["compacted"], "2026-03-01T00:05:00.000Z");
+    let body = recall.to_string();
+    for old in ["old-tool-traffic", "old request", "Earlier work summarized"] {
+        assert!(!body.contains(old), "the briefing replays {old:?}: {body}");
+    }
 
     scratch.remove();
 }
@@ -1185,7 +1202,7 @@ fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_
         "recall",
     );
     assert_eq!(
-        creator["authorities"]["held_work"]["own_claim"]["title"],
+        creator["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
     assert_eq!(
@@ -1207,7 +1224,7 @@ fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_
         "recall",
     );
     assert_eq!(
-        claim["authorities"]["held_work"]["own_claim"]["title"],
+        claim["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
     assert_eq!(
@@ -1263,14 +1280,14 @@ fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
         "recall",
     );
 
-    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
+    assert_eq!(recall["asks"]["rows"][0]["key"], "1kAsk001");
     assert_eq!(
-        recall["authorities"]["held_work"]["own_claim"]["title"],
+        recall["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
-    assert_eq!(recall["authorities"]["held_work"]["peer_claims"], 1);
+    assert_eq!(recall["held_work"]["peer_claims"], 1);
     assert!(
-        recall["authorities"].get("unknowns").is_none(),
+        recall.get("unknowns").is_none(),
         "corruption outside every selected keyspace is not decoded"
     );
 
@@ -1309,16 +1326,16 @@ fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
     );
 
     assert!(
-        recall["authorities"].get("asks").is_none(),
+        recall.get("asks").is_none(),
         "failed selected steering is not rendered as an empty known inbox"
     );
     assert_eq!(
-        recall["authorities"]["held_work"]["own_claim"]["title"],
+        recall["held_work"]["own_claim"]["title"],
         "Compose Rust briefings"
     );
-    assert_eq!(recall["authorities"]["held_work"]["peer_claims"], 1);
+    assert_eq!(recall["held_work"]["peer_claims"], 1);
     assert_eq!(
-        recall["authorities"]["unknowns"]
+        recall["unknowns"]
             .as_array()
             .expect("failed probe is explicit")
             .iter()

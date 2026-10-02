@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use wire::Refusal;
 
 use super::super::super::model::{CommitView, Residue, SourceView, TurnRecord};
-use super::super::super::project::clip;
+use super::super::super::page::clip;
 use super::super::super::source::ResolvedSource;
 use super::super::{
     FrontierDirection, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
@@ -17,12 +17,21 @@ const MAX_COMMIT_IDENTITIES: usize = 4 * 1_024;
 
 pub(crate) struct CommitScan {
     pub(crate) sources: Vec<SourceView>,
+    /// Newest first-mentioned commits, oldest first.
     pub(crate) rows: Vec<CommitView>,
+    /// Every first mention at or before the scan end, retained or not.
+    pub(crate) population: usize,
     pub(crate) residues: Vec<Residue>,
 }
 
 impl CommitScan {
-    pub(crate) fn scan(sources: &[ResolvedSource], limit: usize) -> Result<Self, Refusal> {
+    /// First mentions of each commit in turns starting at or before `end`.
+    pub(crate) fn scan(
+        sources: &[ResolvedSource],
+        end: Option<&str>,
+        limit: usize,
+        max_text: usize,
+    ) -> Result<Self, Refusal> {
         admit_sources(sources)?;
         let mut work = SessionWork::new(SessionWorkBudget::report());
         let mut residues = ResidueLedger::new();
@@ -52,7 +61,10 @@ impl CommitScan {
                 .ready
                 .pop_front()
                 .expect("selected commit frontier is nonempty");
-            visit_commit_views(&turn, |row| {
+            if end.is_some_and(|end| turn.start_ts.as_str() > end) {
+                break;
+            }
+            visit_commit_views(&turn, max_text, |row| {
                 if seen.contains(&row.sha) {
                     return Ok(());
                 }
@@ -77,6 +89,7 @@ impl CommitScan {
         }
         Ok(Self {
             sources: source_views,
+            population: rows.offered(),
             rows: rows.into_rows(),
             residues: residues.finish(&mut work, "commit residue summary")?,
         })
@@ -85,15 +98,17 @@ impl CommitScan {
 
 fn visit_commit_views(
     turn: &TurnRecord,
+    max_text: usize,
     mut visit: impl FnMut(CommitView) -> Result<(), Refusal>,
 ) -> Result<(), Refusal> {
-    let user = turn
-        .messages
-        .iter()
-        .find(|message| message.side == "user" && message.authored.is_some())
-        .and_then(|message| message.authored.as_deref())
-        .map(|message| clip(message, 120))
-        .unwrap_or_default();
+    let user = clip(
+        turn.messages
+            .iter()
+            .find(|message| message.side == "user" && message.authored.is_some())
+            .and_then(|message| message.authored.as_deref())
+            .unwrap_or_default(),
+        max_text,
+    );
     let final_message = turn
         .messages
         .iter()
@@ -121,7 +136,7 @@ fn visit_commit_views(
                     ts: turn.start_ts.clone(),
                     turn_id: turn.turn_id.clone(),
                     sha,
-                    line: clip(line, 160),
+                    line: clip(line, max_text),
                     user: user.clone(),
                 })?;
             }

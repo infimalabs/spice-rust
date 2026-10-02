@@ -381,36 +381,16 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
 
-fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
+fn assert_recall_and_commands(file: &str) {
     let recall = reply_forms(
-        &strings(&[
-            "session",
-            "briefing",
-            file,
-            "--start",
-            start,
-            "--end",
-            end,
-            "--contains",
-            "preserve evidence",
-            "--tool",
-            "write",
-            "--max-lines",
-            "40",
-            "--max-bytes",
-            "4000",
-            "--explain-pruning",
-            "--deadline-seconds",
-            "5",
-        ]),
+        &strings(&["session", "briefing", file, "--deadline-seconds", "5"]),
         &[],
         "recall",
     );
-    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
-    assert!(recall["pruning"]["explanation"].is_string());
-    assert_eq!(
-        recall["window"]["turns"][0]["touched_paths"],
-        json!(["spice/src/session.rs"])
+    assert!(recall["live"]["turn"]["start"].is_string());
+    assert!(
+        recall.get("window").is_none(),
+        "a briefing replays no turn window"
     );
 
     let commands = reply_forms(
@@ -420,7 +400,6 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
             file,
             "--limit",
             "5",
-            "--newest-first",
             "--since-compaction",
             "--failed",
             "--pipelines",
@@ -446,7 +425,7 @@ fn assert_compactions_and_messages(file: &str, start: &str, end: &str) {
     );
     assert_eq!(compactions["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        compactions["rows"][0]["intent"],
+        compactions["rows"][0]["intent"]["text"],
         "- preserve session forensics"
     );
 
@@ -473,7 +452,6 @@ fn assert_compactions_and_messages(file: &str, start: &str, end: &str) {
             "constraint_like",
             "--limit",
             "4",
-            "--oldest-first",
             "--max-text",
             "100",
         ]),
@@ -531,12 +509,13 @@ fn assert_phases_slices_and_summary(file: &str, start: &str, end: &str) {
     assert_eq!(slices["rows"][0]["crossing_files"], json!(["session.rs"]));
 
     let summary = reply_forms(
-        &strings(&["session", "summary", file, "--recent", "1"]),
+        &strings(&["session", "summary", file, "--limit", "1"]),
         &[],
         "summary",
     );
     assert_eq!(summary["turns"], 3);
-    assert_eq!(summary["recent_prompts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(summary["recent"]["rows"].as_array().map(Vec::len), Some(1));
+    assert!(summary["recent"]["omission"]["continuation"].is_array());
 }
 
 fn assert_sweep_and_timeline(file: &str, start: &str, end: &str) {
@@ -545,15 +524,7 @@ fn assert_sweep_and_timeline(file: &str, start: &str, end: &str) {
             "session",
             "sweep",
             file,
-            "--start",
-            start,
-            "--end",
-            end,
-            "--contains",
-            "preserve evidence",
-            "--tool",
-            "write",
-            "--count",
+            "--limit",
             "2",
             "--deadline-seconds",
             "5",
@@ -562,7 +533,7 @@ fn assert_sweep_and_timeline(file: &str, start: &str, end: &str) {
         "sweep",
     );
     assert!(
-        !sweep["windows"]
+        !sweep["rows"]
             .as_array()
             .expect("windows are typed")
             .is_empty()
@@ -631,11 +602,11 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
         &[],
         "commands",
     );
-    assert_eq!(all_commands["rows"][0]["pipeline"], "noncanonical");
-    assert_eq!(all_commands["rows"][0]["exit_code"], 1);
-    assert_eq!(all_commands["rows"][0]["status"], "completed");
-    assert_eq!(all_commands["rows"][1]["pipeline"], "canonical");
-    assert_eq!(all_commands["rows"][1]["exit_code"], 0);
+    assert_eq!(all_commands["rows"][0]["pipeline"], "canonical");
+    assert_eq!(all_commands["rows"][0]["exit_code"], 0);
+    assert_eq!(all_commands["rows"][1]["pipeline"], "noncanonical");
+    assert_eq!(all_commands["rows"][1]["exit_code"], 1);
+    assert_eq!(all_commands["rows"][1]["status"], "completed");
 }
 
 #[test]
@@ -646,7 +617,7 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     let file = transcript.to_string_lossy().into_owned();
     let start = "2026-01-01T00:00:00Z";
     let end = "2026-01-01T00:00:18Z";
-    assert_recall_and_commands(&file, start, end);
+    assert_recall_and_commands(&file);
     assert_compactions_and_messages(&file, start, end);
     assert_phases_slices_and_summary(&file, start, end);
     assert_sweep_and_timeline(&file, start, end);
@@ -690,7 +661,7 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
 }
 
 fn assert_final_rows(file: &str) {
-    let oldest = reply_forms(
+    let newest = reply_forms(
         &strings(&[
             "session",
             "messages",
@@ -699,26 +670,25 @@ fn assert_final_rows(file: &str) {
             "assistant",
             "--phase-kind",
             "final_answer",
-            "--oldest-first",
         ]),
         &[],
         "messages",
     );
-    assert_eq!(oldest["rows"].as_array().map(Vec::len), Some(2));
+    assert_eq!(newest["rows"].as_array().map(Vec::len), Some(2));
     assert_eq!(
-        oldest["rows"][0]["text"],
-        "Committed abcdef1 after verification."
+        newest["rows"][0]["text"]["text"],
+        "Commit 1234abc completes the port."
     );
     assert_eq!(
-        oldest["rows"][1]["text"],
-        "Commit 1234abc completes the port."
+        newest["rows"][1]["text"]["text"],
+        "Committed abcdef1 after verification."
     );
     assert_eq!(
         reply_forms(
             &strings(&["session", "messages", file, "--limit", "1"]),
             &[],
             "messages"
-        )["rows"][0]["text"],
+        )["rows"][0]["text"]["text"],
         "Interrupt this turn cleanly."
     );
 
@@ -729,7 +699,7 @@ fn assert_final_rows(file: &str) {
     );
     let turns = turns["rows"].as_array().expect("turns are typed");
     assert_eq!(turns.len(), 3);
-    assert_eq!(turns[2]["completed"], true, "an aborted turn still ends");
+    assert_eq!(turns[0]["completed"], true, "an aborted turn still ends");
 }
 
 #[test]

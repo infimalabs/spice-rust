@@ -7,25 +7,41 @@ pub(super) fn assert_commit_rows(commits: &Value, file: &str, peer: &str) {
     let source = source.to_string_lossy();
     let peer_source = fs::canonicalize(peer).expect("peer commit fixture path is canonical");
     let peer_source = peer_source.to_string_lossy();
-    assert_eq!(commits["rows"][0]["sha"], "abcdef1");
-    assert_eq!(
-        commits["rows"][0]["user"],
-        "Please implement parity; it must preserve evidence."
+    let rows = commits["rows"].as_array().expect("commit rows are typed");
+    assert_eq!(rows.len(), 3);
+    let row = |sha: &str| {
+        rows.iter()
+            .find(|row| row["sha"] == sha)
+            .unwrap_or_else(|| panic!("commit {sha} is listed"))
+    };
+    for (sha, user, source) in [
+        (
+            "abcdef1",
+            "Please implement parity; it must preserve evidence.",
+            source.as_ref(),
+        ),
+        (
+            "1234abc",
+            "Finish the second window without losing identity.",
+            source.as_ref(),
+        ),
+        (
+            "fedcba9",
+            "Finish the peer reconstruction.",
+            peer_source.as_ref(),
+        ),
+    ] {
+        assert_eq!(row(sha)["user"]["text"], user);
+        assert_eq!(row(sha)["source"], source);
+    }
+    let stamps = rows
+        .iter()
+        .map(|row| row["ts"].as_str().expect("commit rows are timestamped"))
+        .collect::<Vec<_>>();
+    assert!(
+        stamps.windows(2).all(|pair| pair[0] >= pair[1]),
+        "commits list newest first"
     );
-    assert_eq!(commits["rows"][0]["source"], source.as_ref());
-    assert_eq!(commits["rows"][1]["sha"], "1234abc");
-    assert_eq!(
-        commits["rows"][1]["user"],
-        "Finish the second window without losing identity."
-    );
-    assert_eq!(commits["rows"][1]["source"], source.as_ref());
-    assert_eq!(commits["rows"][2]["sha"], "fedcba9");
-    assert_eq!(
-        commits["rows"][2]["user"],
-        "Finish the peer reconstruction."
-    );
-    assert_eq!(commits["rows"][2]["source"], peer_source.as_ref());
-    assert_eq!(commits["rows"].as_array().map(Vec::len), Some(3));
 }
 
 pub(super) fn assert_filtered_timeline(file: &str, peer: &str) {
@@ -50,7 +66,7 @@ pub(super) fn assert_filtered_timeline(file: &str, peer: &str) {
     assert_eq!(timeline["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(timeline["rows"][0]["kind"], "compaction");
     assert_eq!(
-        timeline["rows"][0]["text"],
+        timeline["rows"][0]["text"]["text"],
         "assistant_before=Committed abcdef1 after verification. summary_after=1. Primary Request and Intent - preserve session forensics 2. Work Completed - first turn intent=- preserve session forensics user_after=Finish the second window without losing identity."
     );
     assert!(

@@ -3,8 +3,6 @@ use std::io::Write as _;
 
 use super::*;
 
-const REPORT_TEXT_LIMIT: usize = 180;
-
 const REHYDRATION: &str = concat!(
     "1. Primary Request and Intent\n",
     "Preserve the continuation context.\n",
@@ -46,8 +44,7 @@ fn assert_no_boundary(transcript: &Path) {
         &[],
         "recall",
     );
-    assert_eq!(briefing["horizon_basis"], "full-history-no-compactions");
-    assert_eq!(briefing["selected_compactions"], 0);
+    assert_eq!(briefing["live"]["compacted"], Value::Null);
 
     let compactions = reply_forms(
         &strings(&["session", "compactions", &file]),
@@ -61,7 +58,7 @@ fn assert_no_boundary(transcript: &Path) {
             "session",
             "sweep",
             &file,
-            "--count",
+            "--limit",
             "3",
             "--deadline-seconds",
             "5",
@@ -69,8 +66,8 @@ fn assert_no_boundary(transcript: &Path) {
         &[],
         "sweep",
     );
-    assert_eq!(sweep["windows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(sweep["windows"][0]["compactions"], json!([]));
+    assert_eq!(sweep["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(sweep["rows"][0]["compaction"], Value::Null);
 }
 
 fn assert_one_boundary(transcript: &Path) {
@@ -82,13 +79,16 @@ fn assert_one_boundary(transcript: &Path) {
     );
     assert_eq!(compactions["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(compactions["rows"][0]["ts"], MARKER_TS);
-    assert_eq!(compactions["rows"][0]["assistant_before"], ASSISTANT_BEFORE);
+    assert_eq!(
+        compactions["rows"][0]["assistant_before"]["text"],
+        ASSISTANT_BEFORE
+    );
     assert_summary(&compactions["rows"][0]["summary_after"], REHYDRATION);
     assert_eq!(
-        compactions["rows"][0]["intent"],
+        compactions["rows"][0]["intent"]["text"],
         "Preserve the continuation context."
     );
-    assert_eq!(compactions["rows"][0]["user_after"], USER_AFTER);
+    assert_eq!(compactions["rows"][0]["user_after"]["text"], USER_AFTER);
     assert_eq!(compactions["residues"], json!([]));
 
     let briefing = reply_forms(
@@ -96,27 +96,14 @@ fn assert_one_boundary(transcript: &Path) {
         &[],
         "recall",
     );
-    assert_eq!(
-        briefing["horizon_basis"], "compaction-count",
-        "reverse horizon basis"
-    );
-    assert_eq!(briefing["selected_compactions"], 1, "reverse horizon count");
-    assert_eq!(
-        briefing["window"]["compactions"].as_array().map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(briefing["window"]["compactions"][0]["ts"], MARKER_TS);
-    assert_summary(
-        &briefing["window"]["compactions"][0]["summary_after"],
-        REHYDRATION,
-    );
+    assert_eq!(briefing["live"]["compacted"], MARKER_TS);
 
     let sweep = reply_forms(
         &strings(&[
             "session",
             "sweep",
             &file,
-            "--count",
+            "--limit",
             "3",
             "--deadline-seconds",
             "5",
@@ -124,12 +111,8 @@ fn assert_one_boundary(transcript: &Path) {
         &[],
         "sweep",
     );
-    assert_eq!(sweep["windows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(
-        sweep["windows"][0]["compactions"].as_array().map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(sweep["windows"][0]["compactions"][0]["ts"], MARKER_TS);
+    assert_eq!(sweep["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(sweep["rows"][0]["compaction"]["ts"], MARKER_TS);
 
     let tokens = reply_forms(
         &strings(&["session", "tokens", &file, "--by-file"]),
@@ -143,17 +126,18 @@ fn assert_one_boundary(transcript: &Path) {
     );
 }
 
+/// A clipped field keeps a prefix of the whitespace-collapsed text and
+/// accounts for every byte it cut.
 fn assert_summary(actual: &Value, expected: &str) {
-    let actual = actual.as_str().expect("compaction summary is text");
+    let kept = actual["text"].as_str().expect("compaction summary is text");
+    let withheld = actual["withheld_bytes"].as_u64().unwrap_or(0);
     let normalized = expected.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.len() <= REPORT_TEXT_LIMIT {
-        assert_eq!(actual, normalized);
-    } else {
-        assert!(
-            normalized.starts_with(actual.trim_end_matches('…')) && actual.ends_with('…'),
-            "the report carries the bounded prefix of the recovered continuation summary",
-        );
-    }
+    assert!(normalized.starts_with(kept), "{kept:?}");
+    assert_eq!(
+        kept.len() as u64 + withheld,
+        normalized.len() as u64,
+        "kept and withheld bytes cover the recovered summary"
+    );
 }
 
 fn append_rows(path: &Path, rows: &[Value]) {

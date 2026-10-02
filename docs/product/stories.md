@@ -145,10 +145,10 @@ leaves a visible unknown, and an absent fact renders as unknown rather than
 zero. Discovery and rendering share one deadline; exceeding it refuses without
 passing off a partial briefing as complete.
 
-*As the agent, I want briefing pruning to preserve authority.* — Outstanding
-asks, held work, and report metadata are never budget-pruned. The line and byte
-thresholds estimate transcript-turn material, remove the oldest whole turns
-first, and retain at least one turn even when that turn exceeds the estimate.
+*As the agent, I want a briefing that fits my context.* — A briefing carries
+pending asks, held work, posture, and the newest turn, never replayed history.
+Every history read is one bounded page whose omission names the exact command
+that continues it.
 
 *As the agent, I want the state line to mean something.* — It speaks when its
 state key changes to a visible fact, including when a claim lease crosses a

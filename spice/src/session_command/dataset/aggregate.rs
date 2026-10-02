@@ -8,6 +8,7 @@ use super::super::model::{
     ActivityView, CompactionRecord, FoldBuffer, MessageRecord, PhaseExample, PhaseView, Report,
     Residue, SourceView, ThreadView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
 };
+use super::super::page::{Page, Paged};
 use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
 };
@@ -21,8 +22,10 @@ use super::{
 };
 
 mod commit;
+mod recent;
 pub(crate) mod timeline;
 pub(crate) use commit::CommitScan;
+pub(crate) use recent::Recent;
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;
@@ -52,18 +55,19 @@ impl MessageQuery {
 
 pub(super) struct MessageSourceScan {
     pub(super) rows: Vec<MessageRecord>,
+    pub(super) offered: usize,
     pub(super) residues: Vec<Residue>,
     pub(super) vendor: Vendor,
 }
 
+/// Turns of the live transcript a briefing retains: the newest, and the one
+/// before it so an open turn still has the latest final answer beside it.
+const LIVE_TURNS: usize = 2;
+
 #[derive(Clone, Copy)]
 pub(crate) enum WindowOptions {
-    Briefing {
-        max_lines: usize,
-        max_bytes: usize,
-        explain: bool,
-        compactions: usize,
-    },
+    /// The newest turns after the latest compaction, without dialogue.
+    Live,
     Sweep {
         compactions: usize,
     },
@@ -74,28 +78,15 @@ pub(crate) enum WindowOptions {
     Turns {
         limit: usize,
         full: bool,
+        max_text: usize,
     },
 }
 
 impl WindowOptions {
     pub(crate) const fn compactions(self) -> usize {
         match self {
-            Self::Briefing { compactions, .. }
-            | Self::Sweep { compactions }
-            | Self::Slices { compactions, .. } => compactions,
-            Self::Turns { .. } => 1,
-        }
-    }
-
-    pub(crate) const fn briefing(self) -> Option<(usize, usize, bool)> {
-        match self {
-            Self::Briefing {
-                max_lines,
-                max_bytes,
-                explain,
-                ..
-            } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } | Self::Slices { .. } | Self::Turns { .. } => None,
+            Self::Sweep { compactions } | Self::Slices { compactions, .. } => compactions,
+            Self::Live | Self::Turns { .. } => 1,
         }
     }
 
@@ -115,9 +106,8 @@ impl WindowOptions {
 pub(crate) struct WindowTurn {
     pub(crate) view: TurnView,
     pub(crate) end: String,
+    pub(crate) prompt: Option<String>,
     pub(crate) latest_final: Option<String>,
-    lines: usize,
-    bytes: usize,
 }
 
 impl WindowTurn {
@@ -127,28 +117,25 @@ impl WindowTurn {
                 .then(|| message.authored.clone())
                 .flatten()
         });
-        let lines = 1 + turn
+        let prompt = turn
             .messages
             .iter()
-            .filter(|message| message.authored.is_some())
-            .count();
-        let bytes = turn
-            .messages
-            .iter()
-            .filter_map(|message| message.authored.as_ref())
-            .map(String::len)
-            .sum();
+            .find(|message| message.side == "user")
+            .and_then(|message| message.authored.clone());
         let end = turn_end(&turn);
         let view = match options {
-            WindowOptions::Turns { full, .. } => turn_view(&turn, full, 180, false),
-            _ => turn_view(&turn, false, 180, true),
+            WindowOptions::Turns { full, max_text, .. } => {
+                turn_view(&turn, Some((!full, max_text)))
+            }
+            WindowOptions::Live | WindowOptions::Sweep { .. } | WindowOptions::Slices { .. } => {
+                turn_view(&turn, None)
+            }
         };
         Self {
             view,
             end,
+            prompt,
             latest_final,
-            lines,
-            bytes,
         }
     }
 }
@@ -158,8 +145,8 @@ pub(crate) struct WindowScan {
     pub(crate) turns: Vec<WindowTurn>,
     pub(crate) compactions: Vec<CompactionRecord>,
     pub(crate) residues: Vec<Residue>,
-    pub(crate) turns_before: usize,
-    pub(crate) options: WindowOptions,
+    /// Every turn the scan matched, retained or not.
+    pub(crate) population: usize,
 }
 
 impl WindowScan {
@@ -217,7 +204,7 @@ impl WindowScan {
         let mut sources = Vec::with_capacity(streams.len());
         let mut compaction_sources = Vec::with_capacity(streams.len());
         for stream in streams {
-            let (source, compactions) = stream.into_window(&mut work)?;
+            let (source, compactions, _) = stream.into_window(&mut work)?;
             work.admit_retained_text(source_view_text_bytes(&source), &source.path)?;
             sources.push(source);
             compaction_sources.push(VecDeque::from(compactions));
@@ -229,11 +216,10 @@ impl WindowScan {
         )?;
         Ok(Self {
             sources,
+            population: turns.population,
             turns: turns.rows.into(),
             compactions,
             residues: residues.finish(&mut work, "window residue summary")?,
-            turns_before: turns.before,
-            options,
         })
     }
 }
@@ -241,9 +227,7 @@ impl WindowScan {
 struct WindowTurnFrontier {
     options: WindowOptions,
     rows: VecDeque<WindowTurn>,
-    lines: usize,
-    bytes: usize,
-    before: usize,
+    population: usize,
 }
 
 impl WindowTurnFrontier {
@@ -251,47 +235,29 @@ impl WindowTurnFrontier {
         Self {
             options,
             rows: VecDeque::new(),
-            lines: 0,
-            bytes: 0,
-            before: 0,
+            population: 0,
         }
     }
 
     fn push(&mut self, turn: WindowTurn) -> Result<(), Refusal> {
-        if matches!(
-            self.options,
-            WindowOptions::Sweep { .. } | WindowOptions::Slices { .. }
-        ) && self.rows.len() == WINDOW_TURN_LIMIT
-        {
-            return Err(refusal(
-                "session::window-turn-limit",
-                Some(format!("maximum={WINDOW_TURN_LIMIT}")),
-                "narrow the requested compaction windows or transcript filters",
-            ));
-        }
-        self.before = self.before.saturating_add(1);
-        self.lines = self.lines.saturating_add(turn.lines);
-        self.bytes = self.bytes.saturating_add(turn.bytes);
-        self.rows.push_back(turn);
-        if let WindowOptions::Turns { limit, .. } = self.options
-            && self.rows.len() > limit
-        {
-            let removed = self
-                .rows
-                .pop_front()
-                .expect("full turn frontier has an oldest");
-            self.lines -= removed.lines;
-            self.bytes -= removed.bytes;
-        }
-        if let Some((max_lines, max_bytes, _)) = self.options.briefing() {
-            while self.rows.len() > 1 && (self.lines > max_lines || self.bytes > max_bytes) {
-                let removed = self
-                    .rows
-                    .pop_front()
-                    .expect("multiple turns have an oldest");
-                self.lines -= removed.lines;
-                self.bytes -= removed.bytes;
+        let retained = match self.options {
+            WindowOptions::Live => LIVE_TURNS,
+            WindowOptions::Turns { limit, .. } => limit,
+            WindowOptions::Sweep { .. } | WindowOptions::Slices { .. } => {
+                if self.rows.len() == WINDOW_TURN_LIMIT {
+                    return Err(refusal(
+                        "session::window-turn-limit",
+                        Some(format!("maximum={WINDOW_TURN_LIMIT}")),
+                        "narrow the requested compaction windows",
+                    ));
+                }
+                WINDOW_TURN_LIMIT
             }
+        };
+        self.population = self.population.saturating_add(1);
+        self.rows.push_back(turn);
+        if self.rows.len() > retained {
+            self.rows.pop_front();
         }
         Ok(())
     }
@@ -422,10 +388,9 @@ pub(super) fn scan_message_source(
     source: &ResolvedSource,
     start: Option<&str>,
     query: &MessageQuery,
-    direction: FrontierDirection,
     work: &mut SessionWork,
 ) -> Result<MessageSourceScan, Refusal> {
-    let mut frontier = ResultFrontier::new(query.limit.get(), direction)?;
+    let mut frontier = ResultFrontier::new(query.limit.get(), FrontierDirection::Newest)?;
     let mut cursor = ForwardCursor::new(source, start, work)?;
     let mut scratch = FoldBuffer::default();
     let mut markers = Vec::new();
@@ -481,9 +446,6 @@ pub(super) fn scan_message_source(
                 &source.path.display().to_string(),
                 |_| Ok(()),
             )?;
-            if query.oldest_first && frontier.is_full() {
-                break;
-            }
         }
         if matches!(window.progress, ForwardProgress::Eof(_)) {
             let state = std::mem::take(&mut state);
@@ -497,6 +459,7 @@ pub(super) fn scan_message_source(
         }
     }
     Ok(MessageSourceScan {
+        offered: frontier.offered(),
         rows: frontier.into_rows(),
         residues: residues.finish(work, "message source residue summary")?,
         vendor: cursor.vendor(),
@@ -509,8 +472,7 @@ pub(crate) struct Aggregate {
     completed: usize,
     compactions: usize,
     activity: ActivityView,
-    prompts: Vec<MessageRecord>,
-    finals: Vec<MessageRecord>,
+    recent: Recent,
     tokens: BTreeMap<String, TokenAggregate>,
     start: Option<String>,
     end: Option<String>,
@@ -518,6 +480,14 @@ pub(crate) struct Aggregate {
     phase: Option<PhaseState>,
     any_turn_identity: bool,
     residues: Vec<super::super::model::Residue>,
+}
+
+/// Every phase a scan numbered at or before its cursor, newest retained first.
+pub(crate) struct PhaseScan {
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) rows: Vec<PhaseView>,
+    pub(crate) population: usize,
+    pub(crate) residues: Vec<Residue>,
 }
 
 #[derive(Clone, Default)]
@@ -534,7 +504,7 @@ struct TokenAggregate {
 }
 
 impl Aggregate {
-    pub(crate) fn scan(sources: &[ResolvedSource], recent: usize) -> Result<Self, Refusal> {
+    pub(crate) fn scan(sources: &[ResolvedSource], recent: Recent) -> Result<Self, Refusal> {
         admit_sources(sources)?;
         let mut aggregate = Self {
             sources: Vec::with_capacity(sources.len()),
@@ -547,8 +517,7 @@ impl Aggregate {
                 errors: 0,
                 web_searches: 0,
             },
-            prompts: Vec::with_capacity(recent),
-            finals: Vec::with_capacity(recent),
+            recent,
             tokens: BTreeMap::new(),
             start: None,
             end: None,
@@ -560,17 +529,18 @@ impl Aggregate {
         let mut residues = ResidueLedger::new();
         let mut work = SessionWork::new(SessionWorkBudget::report());
         for source in sources {
-            aggregate.scan_source(source, recent, &mut residues, &mut work)?;
+            aggregate.scan_source(source, &mut residues, &mut work)?;
         }
         aggregate.residues = residues.finish(&mut work, "aggregate residue summary")?;
         Ok(aggregate)
     }
 
+    /// Every phase at or before the cursor, newest retained first.
     pub(crate) fn scan_phases(
         sources: &[ResolvedSource],
         options: PhaseOptions,
         filters: Filters,
-    ) -> Result<Report, Refusal> {
+    ) -> Result<PhaseScan, Refusal> {
         let mut aggregate = Self::scan_with_phase(sources, options, filters)?;
         let phase = aggregate
             .phase
@@ -579,9 +549,11 @@ impl Aggregate {
         phase
             .filters
             .validate_turn_identity_available(aggregate.any_turn_identity)?;
-        Ok(Report::Phases {
+        let (rows, population) = phase.finish()?;
+        Ok(PhaseScan {
             sources: aggregate.sources,
-            rows: phase.finish()?,
+            rows,
+            population,
             residues: aggregate.residues,
         })
     }
@@ -603,13 +575,12 @@ impl Aggregate {
                 errors: 0,
                 web_searches: 0,
             },
-            prompts: Vec::new(),
-            finals: Vec::new(),
+            recent: Recent::NONE,
             tokens: BTreeMap::new(),
             start: None,
             end: None,
             latest: None,
-            phase: Some(PhaseState::new(options, filters)),
+            phase: Some(PhaseState::new(options, filters)?),
             any_turn_identity: false,
             residues: Vec::new(),
         };
@@ -661,7 +632,6 @@ impl Aggregate {
     fn scan_source(
         &mut self,
         source: &ResolvedSource,
-        recent: usize,
         residues: &mut ResidueLedger,
         work: &mut SessionWork,
     ) -> Result<(), Refusal> {
@@ -697,7 +667,7 @@ impl Aggregate {
                         turn.compaction_count = turn.compaction_count.saturating_add(added as u64);
                     }
                     markers.clear();
-                    self.drain_scratch(&mut scratch, &mut tokens, &mut fold, recent, false, at)?;
+                    self.drain_scratch(&mut scratch, &mut tokens, &mut fold, false, at)?;
                 }
                 DecodedRow::Residue(residue) => residues.push(residue, work, at)?,
                 DecodedRow::Ignored => {}
@@ -706,14 +676,7 @@ impl Aggregate {
         })?;
         finish_fold(&mut scratch, fold, work, &source_name)?;
         let mut finished = FoldState::default();
-        self.drain_scratch(
-            &mut scratch,
-            &mut tokens,
-            &mut finished,
-            recent,
-            true,
-            &source_name,
-        )?;
+        self.drain_scratch(&mut scratch, &mut tokens, &mut finished, true, &source_name)?;
         let source_view = SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -734,7 +697,6 @@ impl Aggregate {
         scratch: &mut super::super::model::FoldBuffer,
         tokens: &mut Vec<TokenRecord>,
         fold: &mut FoldState,
-        recent: usize,
         finish: bool,
         at: &str,
     ) -> Result<(), Refusal> {
@@ -745,13 +707,11 @@ impl Aggregate {
                 .add(&token);
         }
         for message in scratch.messages.drain(..) {
-            if message.side == "user" && message.authored.is_some() {
-                retain_recent(&mut self.prompts, message, recent);
-            } else if message.side == "assistant"
-                && message.phase == "final_answer"
-                && message.authored.is_some()
-            {
-                retain_recent(&mut self.finals, message, recent);
+            let recent = message.authored.is_some()
+                && (message.side == "user"
+                    || (message.side == "assistant" && message.phase == "final_answer"));
+            if recent {
+                self.recent.offer(message);
             }
         }
         drain_fold_turns(scratch, fold, finish, at, |turn| self.add_turn(turn))
@@ -788,17 +748,30 @@ impl Aggregate {
         Ok(())
     }
 
-    pub(crate) fn summary(self) -> Report {
-        Report::Summary {
-            sources: self.sources,
-            turns: self.turns,
-            completed: self.completed,
-            compactions: self.compactions,
-            activity: self.activity,
-            recent_prompts: self.prompts.iter().map(authored_message_view).collect(),
-            recent_finals: self.finals.iter().map(authored_message_view).collect(),
-            residues: self.residues,
-        }
+    /// Whole-transcript counts, and one page of the newest authored prompts
+    /// and final answers.
+    pub(crate) fn summary(self, page: Page) -> Result<Report, Refusal> {
+        let rows = self
+            .recent
+            .rows
+            .iter()
+            .rev()
+            .map(|row| authored_message_view(row, &page))
+            .collect();
+        Ok(
+            match page.newest(rows, self.recent.offered, |row| &row.ts)? {
+                Paged::Shown(recent) => Report::Summary {
+                    sources: self.sources,
+                    turns: self.turns,
+                    completed: self.completed,
+                    compactions: self.compactions,
+                    activity: self.activity,
+                    recent,
+                    residues: self.residues,
+                },
+                Paged::Exported(export) => Report::Exported { export },
+            },
+        )
     }
 
     pub(crate) fn tokens(self, by_file: bool) -> Report {
@@ -848,7 +821,7 @@ impl Aggregate {
             latest_turn: self
                 .latest
                 .as_ref()
-                .map(|turn| turn_view(turn, false, 180, false)),
+                .map(|turn| turn_view(turn, Some((false, 180)))),
         };
         Report::Thread {
             source,
@@ -1065,16 +1038,18 @@ impl<'a> PhaseSource<'a> {
         source_view(self.source, self.cursor.vendor())
     }
 
+    /// The source view, its retained compactions, and every compaction the
+    /// window matched.
     fn into_window(
         mut self,
         work: &mut SessionWork,
-    ) -> Result<(SourceView, Vec<CompactionRecord>), Refusal> {
-        let compactions = self
+    ) -> Result<(SourceView, Vec<CompactionRecord>, usize), Refusal> {
+        let (compactions, population) = self
             .compactions
             .take()
             .expect("window source retains compaction state")
             .finish(work, &self.source.path.display().to_string())?;
-        Ok((self.source_view(), compactions))
+        Ok((self.source_view(), compactions, population))
     }
 }
 
@@ -1129,18 +1104,20 @@ struct PhaseState {
     filters: Filters,
     current: Option<PhaseAccumulator>,
     candidate: Vec<PhaseTurn>,
-    rows: Vec<PhaseView>,
+    finished: usize,
+    rows: ResultFrontier<PhaseView>,
 }
 
 impl PhaseState {
-    fn new(options: PhaseOptions, filters: Filters) -> Self {
-        Self {
+    fn new(options: PhaseOptions, filters: Filters) -> Result<Self, Refusal> {
+        Ok(Self {
             options,
             filters,
             current: None,
             candidate: Vec::with_capacity(2),
-            rows: Vec::with_capacity(options.rows),
-        }
+            finished: 0,
+            rows: ResultFrontier::new(options.rows, FrontierDirection::Newest)?,
+        })
     }
 
     fn push(&mut self, turn: &TurnRecord) -> Result<(), Refusal> {
@@ -1238,20 +1215,30 @@ impl PhaseState {
         Ok(())
     }
 
+    /// Number every phase from the first; retain the newest at or before the
+    /// caller's cursor.
     fn finish_current(&mut self) {
-        if self.rows.len() < self.options.rows
-            && let Some(current) = self.current.take()
+        let Some(current) = self.current.take() else {
+            return;
+        };
+        self.finished += 1;
+        if self
+            .options
+            .through
+            .is_none_or(|through| self.finished <= through)
         {
-            self.rows.push(current.view(self.rows.len() + 1));
-        } else {
-            self.current = None;
+            self.rows.push(current.view(self.finished));
         }
     }
 
-    fn finish(mut self) -> Result<Vec<PhaseView>, Refusal> {
+    /// Retained phases newest first, and every phase at or before the cursor.
+    fn finish(mut self) -> Result<(Vec<PhaseView>, usize), Refusal> {
         self.merge_candidate()?;
         self.finish_current();
-        Ok(self.rows)
+        let population = self.rows.offered();
+        let mut rows = self.rows.into_rows();
+        rows.reverse();
+        Ok((rows, population))
     }
 }
 
@@ -1392,19 +1379,6 @@ fn has_idle_gap(previous: &str, current: &str) -> bool {
         return false;
     };
     current.as_second() - previous.as_second() >= PHASE_GAP_SECONDS
-}
-
-fn retain_recent(rows: &mut Vec<MessageRecord>, row: MessageRecord, limit: usize) {
-    if limit == 0 {
-        return;
-    }
-    rows.push(row);
-    rows.sort_by(|left, right| {
-        (&left.ts, &left.source, &left.side).cmp(&(&right.ts, &right.source, &right.side))
-    });
-    if rows.len() > limit {
-        rows.remove(0);
-    }
 }
 
 pub(crate) fn admit_sources(sources: &[ResolvedSource]) -> Result<(), Refusal> {

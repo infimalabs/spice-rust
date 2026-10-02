@@ -7,18 +7,45 @@ use journal::{JournalRead, JournalReader};
 use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
-use super::model::{
-    AuthorityFoldView, AuthorityUnknown, DecisionPriorityView, HeldClaimView, HeldWorkView,
-    OutstandingAskView, RecallAuthorities,
-};
+use super::model::{AuthorityUnknown, HeldClaimView, HeldWorkView, LanePostureView, PostureView};
 use super::{Environment, source};
+
+/// What currently binds this lane, read once from the journal.
+pub(crate) struct RecallAuthorities {
+    /// Pending asks, or `None` when the steering ledger could not be read.
+    pub(crate) asks: Option<Vec<PendingAsk>>,
+    pub(crate) held_work: HeldWorkView,
+    pub(crate) posture: Option<PostureView>,
+    pub(crate) unknowns: Vec<AuthorityUnknown>,
+}
+
+/// One steering directive still awaiting this lane's acknowledgment.
+pub(crate) struct PendingAsk {
+    pub(crate) directive: String,
+    pub(crate) key: String,
+    pub(crate) stage: String,
+    pub(crate) text: String,
+    pub(crate) attachments: Vec<wire::AgentMediaReference>,
+    pub(crate) authored: String,
+    pub(crate) expires: String,
+}
 
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> RecallAuthorities {
-    let mut recall = empty_recall_authorities();
+    let mut recall = RecallAuthorities {
+        asks: None,
+        held_work: HeldWorkView {
+            thread: None,
+            lane: None,
+            own_claim: None,
+            peer_claims: None,
+        },
+        posture: None,
+        unknowns: Vec::new(),
+    };
 
     let thread = live_thread(environment, &mut recall);
     recall.held_work.thread.clone_from(&thread);
@@ -33,42 +60,6 @@ pub(crate) fn observe(
         );
     }
     recall
-}
-
-fn empty_recall_authorities() -> RecallAuthorities {
-    RecallAuthorities {
-        fold: AuthorityFoldView {
-            mode: "bounded-read-only".to_owned(),
-            probes: vec![
-                "live-vendor-thread".to_owned(),
-                "selected-transcript-threads".to_owned(),
-                "repository-state".to_owned(),
-                "configuration".to_owned(),
-                "journal-residency-head".to_owned(),
-                "journal-steering-index".to_owned(),
-                "journal-claim-index".to_owned(),
-            ],
-            writes: Vec::new(),
-        },
-        priority: DecisionPriorityView {
-            order: vec![
-                "outstanding-asks".to_owned(),
-                "held-work".to_owned(),
-                "transcript-deliveries".to_owned(),
-                "transcript-working-set".to_owned(),
-                "ambient-posture".to_owned(),
-            ],
-            end_pruning_preserves: vec!["outstanding-asks".to_owned(), "held-work".to_owned()],
-        },
-        asks: Vec::new(),
-        held_work: HeldWorkView {
-            thread: None,
-            lane: None,
-            own_claim: None,
-            peer_claims: None,
-        },
-        unknowns: Vec::new(),
-    }
 }
 
 struct ObservedAuthorities {
@@ -100,6 +91,21 @@ fn observe_current_authorities(
             return;
         }
     };
+    recall.posture = Some(PostureView {
+        cwd: current.display().to_string(),
+        worktree: repository.worktree_root().display().to_string(),
+        head: std::fs::read_to_string(repository.git_dir().join("HEAD"))
+            .ok()
+            .map(|head| {
+                let head = head.trim();
+                head.strip_prefix("ref: ")
+                    .map_or(head, |name| {
+                        name.strip_prefix("refs/heads/").unwrap_or(name)
+                    })
+                    .to_owned()
+            }),
+        lane: None,
+    });
     let state = match repository.admit_state() {
         Ok(state) => state,
         Err(error) => {
@@ -265,28 +271,31 @@ fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: Observ
         return;
     };
     recall.held_work.lane = Some(lane.lane.to_string());
+    if let Some(posture) = &mut recall.posture {
+        posture.lane = Some(LanePostureView {
+            worktree: lane.worktree.clone(),
+            disposition: lane.disposition.clone(),
+            life: lane.life.clone(),
+            vendor: lane.vendor.to_string(),
+            model: lane.model.clone(),
+        });
+    }
 
     if let Some(ledger) = observed.ledger {
         match ledger {
             Ok(ledger) => {
-                recall.asks = ledger
-                    .pending(lane.lane)
-                    .into_iter()
-                    .map(|directive| {
-                        let text = wire::media::without_media_payloads(
-                            directive.text(),
-                            directive.attachments(),
-                        );
-                        OutstandingAskView {
-                            lane: lane.lane.to_string(),
+                recall.asks = Some(
+                    ledger
+                        .pending(lane.lane)
+                        .into_iter()
+                        .map(|directive| PendingAsk {
                             directive: directive.directive().to_string(),
                             key: directive.key().to_string(),
                             stage: format!("{:?}", directive.stage()).to_ascii_lowercase(),
-                            preview: text
-                                .lines()
-                                .find(|line| !line.trim().is_empty())
-                                .map(|line| line.trim().to_owned()),
-                            text,
+                            text: wire::media::without_media_payloads(
+                                directive.text(),
+                                directive.attachments(),
+                            ),
                             attachments: directive.media_references().expect(
                                 "the admitted steering ledger derives bounded media references",
                             ),
@@ -294,9 +303,9 @@ fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: Observ
                                 .published()
                                 .map_or_else(String::new, |at| at.to_string()),
                             expires: directive.expires().to_string(),
-                        }
-                    })
-                    .collect();
+                        })
+                        .collect(),
+                );
             }
             Err(error) => unknown(recall, "steering", "pending-thread-lane", &error),
         }

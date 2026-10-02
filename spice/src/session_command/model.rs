@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Serialize, Serializer};
+use wire::SpiceCommand;
+use wire::output::{Bounded, ClippedText, Export};
 
 use crate::message_shape::MessageShape;
 
@@ -91,7 +93,7 @@ pub(crate) struct MessageView {
     pub(crate) flavor: String,
     pub(crate) tags: Vec<String>,
     pub(crate) cues: Vec<String>,
-    pub(crate) text: String,
+    pub(crate) text: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +119,7 @@ pub(crate) struct TurnRecord {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DialogueLine {
     pub(crate) side: String,
-    pub(crate) text: String,
+    pub(crate) text: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -153,10 +155,10 @@ pub(crate) struct CompactionRecord {
 pub(crate) struct CompactionView {
     pub(crate) source: String,
     pub(crate) ts: String,
-    pub(crate) assistant_before: String,
-    pub(crate) summary_after: String,
-    pub(crate) intent: String,
-    pub(crate) user_after: String,
+    pub(crate) assistant_before: ClippedText,
+    pub(crate) summary_after: ClippedText,
+    pub(crate) intent: ClippedText,
+    pub(crate) user_after: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,7 +207,7 @@ pub(crate) struct CommandView {
     pub(crate) ts: String,
     pub(crate) turn_id: Option<String>,
     pub(crate) cwd: Option<String>,
-    pub(crate) command: String,
+    pub(crate) command: ClippedText,
     pub(crate) exit_code: Option<i32>,
     pub(crate) status: String,
     pub(crate) wrapper: bool,
@@ -234,8 +236,8 @@ pub(crate) struct CommitView {
     pub(crate) ts: String,
     pub(crate) turn_id: Option<String>,
     pub(crate) sha: String,
-    pub(crate) line: String,
-    pub(crate) user: String,
+    pub(crate) line: ClippedText,
+    pub(crate) user: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -245,7 +247,7 @@ pub(crate) struct TimelineView {
     pub(crate) ts: String,
     pub(crate) kind: String,
     pub(crate) turn_id: Option<String>,
-    pub(crate) text: String,
+    pub(crate) text: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -272,8 +274,8 @@ pub(crate) struct PhaseExample {
     pub(crate) turn_id: Option<String>,
     pub(crate) archetype: String,
     pub(crate) path: Option<String>,
-    pub(crate) user: Option<String>,
-    pub(crate) final_answer: Option<String>,
+    pub(crate) user: Option<ClippedText>,
+    pub(crate) final_answer: Option<ClippedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -303,56 +305,43 @@ pub(crate) struct ActivityView {
     pub(crate) web_searches: u64,
 }
 
+/// One compaction window of a sweep: what happened in it, never its dialogue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RecallWindow {
-    pub(crate) index: usize,
-    pub(crate) start: Option<String>,
+pub(crate) struct SweepWindow {
+    /// The anchoring compaction, or the first turn of an uncompacted session.
+    pub(crate) start: String,
+    /// The window's latest turn activity.
     pub(crate) end: Option<String>,
-    pub(crate) turns: Vec<TurnView>,
-    pub(crate) compactions: Vec<CompactionView>,
-    pub(crate) latest_final: Option<String>,
+    pub(crate) compaction: Option<CompactionView>,
+    pub(crate) turns: usize,
+    pub(crate) open: bool,
     pub(crate) activity: ActivityView,
+    pub(crate) latest_final: Option<ClippedText>,
+    /// The window's turns, read as their own bounded page.
+    pub(crate) detail: SpiceCommand,
 }
 
+/// One retained tape record beside a task-creation boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PruningView {
-    pub(crate) max_lines: usize,
-    pub(crate) max_bytes: usize,
-    pub(crate) turns_before: usize,
-    pub(crate) turns_after: usize,
-    pub(crate) explanation: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthorityFoldView {
-    pub(crate) mode: String,
-    pub(crate) probes: Vec<String>,
-    pub(crate) writes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct DecisionPriorityView {
-    pub(crate) order: Vec<String>,
-    pub(crate) end_pruning_preserves: Vec<String>,
+pub(crate) struct ContextRecord {
+    pub(crate) side: &'static str,
+    pub(crate) distance: usize,
+    pub(crate) text: ClippedText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OutstandingAskView {
-    pub(crate) lane: String,
     pub(crate) directive: String,
     pub(crate) key: String,
     pub(crate) stage: String,
-    pub(crate) text: String,
+    pub(crate) text: ClippedText,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) attachments: Vec<wire::AgentMediaReference>,
     pub(crate) authored: String,
     pub(crate) expires: String,
-    pub(crate) preview: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -383,16 +372,50 @@ pub(crate) struct AuthorityUnknown {
     pub(crate) detail: String,
 }
 
+/// Where the reading process stands: its directory, worktree, and checkout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RecallAuthorities {
-    pub(crate) fold: AuthorityFoldView,
-    pub(crate) priority: DecisionPriorityView,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) asks: Vec<OutstandingAskView>,
-    pub(crate) held_work: HeldWorkView,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) unknowns: Vec<AuthorityUnknown>,
+pub(crate) struct PostureView {
+    pub(crate) cwd: String,
+    pub(crate) worktree: String,
+    /// The checkout's `HEAD`: a symbolic ref, or a commit when detached.
+    pub(crate) head: Option<String>,
+    pub(crate) lane: Option<LanePostureView>,
+}
+
+/// The resident's seat for this lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LanePostureView {
+    pub(crate) worktree: String,
+    pub(crate) disposition: String,
+    pub(crate) life: String,
+    pub(crate) vendor: String,
+    pub(crate) model: Option<String>,
+}
+
+/// The newest turn of the live transcript: enough to resume, not to replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LiveTurnView {
+    pub(crate) start: String,
+    pub(crate) end: Option<String>,
+    pub(crate) completed: bool,
+    pub(crate) commands: u64,
+    pub(crate) patches: u64,
+    pub(crate) errors: u64,
+    pub(crate) prompt: Option<ClippedText>,
+}
+
+/// The minimal transcript working set a briefing carries, and the bounded
+/// history reads that hold everything else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LiveView {
+    pub(crate) turn: Option<LiveTurnView>,
+    pub(crate) latest_final: Option<ClippedText>,
+    pub(crate) compacted: Option<String>,
+    pub(crate) history: Vec<SpiceCommand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -424,22 +447,26 @@ pub(crate) enum Report {
         source: String,
         member: u64,
         offset: u64,
-        before: Vec<String>,
-        after: Vec<String>,
+        #[serde(flatten)]
+        page: Bounded<ContextRecord>,
     },
+    /// The briefing: current authority first, then the live working set.
     Recall {
+        /// Absent when the steering ledger could not be read; see `unknowns`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        asks: Option<Bounded<OutstandingAskView>>,
+        held_work: HeldWorkView,
+        posture: Option<PostureView>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        unknowns: Vec<AuthorityUnknown>,
+        live: LiveView,
         sources: Vec<SourceView>,
-        horizon_basis: String,
-        requested_compactions: usize,
-        selected_compactions: usize,
-        authorities: Box<RecallAuthorities>,
-        window: RecallWindow,
-        pruning: PruningView,
-        residues: Vec<Residue>,
+        residues: usize,
     },
     Sweep {
         sources: Vec<SourceView>,
-        windows: Vec<RecallWindow>,
+        #[serde(flatten)]
+        page: Bounded<SweepWindow>,
         residues: Vec<Residue>,
     },
     Summary {
@@ -448,8 +475,7 @@ pub(crate) enum Report {
         completed: usize,
         compactions: usize,
         activity: ActivityView,
-        recent_prompts: Vec<MessageView>,
-        recent_finals: Vec<MessageView>,
+        recent: Bounded<MessageView>,
         residues: Vec<Residue>,
     },
     Tokens {
@@ -459,42 +485,50 @@ pub(crate) enum Report {
     },
     Timeline {
         sources: Vec<SourceView>,
-        rows: Vec<TimelineView>,
+        #[serde(flatten)]
+        page: Bounded<TimelineView>,
         residues: Vec<Residue>,
     },
     Turns {
         sources: Vec<SourceView>,
-        rows: Vec<TurnView>,
+        #[serde(flatten)]
+        page: Bounded<TurnView>,
         residues: Vec<Residue>,
     },
     Compactions {
         sources: Vec<SourceView>,
-        rows: Vec<CompactionView>,
+        #[serde(flatten)]
+        page: Bounded<CompactionView>,
         residues: Vec<Residue>,
     },
     Slices {
         sources: Vec<SourceView>,
-        rows: Vec<SliceView>,
+        #[serde(flatten)]
+        page: Bounded<SliceView>,
         residues: Vec<Residue>,
     },
     Phases {
         sources: Vec<SourceView>,
-        rows: Vec<PhaseView>,
+        #[serde(flatten)]
+        page: Bounded<PhaseView>,
         residues: Vec<Residue>,
     },
     Messages {
         sources: Vec<SourceView>,
-        rows: Vec<MessageView>,
+        #[serde(flatten)]
+        page: Bounded<MessageView>,
         residues: Vec<Residue>,
     },
     Commits {
         sources: Vec<SourceView>,
-        rows: Vec<CommitView>,
+        #[serde(flatten)]
+        page: Bounded<CommitView>,
         residues: Vec<Residue>,
     },
     Commands {
         sources: Vec<SourceView>,
-        rows: Vec<CommandView>,
+        #[serde(flatten)]
+        page: Bounded<CommandView>,
         audit: Option<CommandAudit>,
         residues: Vec<Residue>,
     },
@@ -504,6 +538,8 @@ pub(crate) enum Report {
         thread: ThreadView,
         residues: Vec<Residue>,
     },
+    /// A page written whole to the file its `--export` named.
+    Exported { export: Export },
 }
 
 #[derive(Debug, Default)]

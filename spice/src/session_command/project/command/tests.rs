@@ -24,7 +24,18 @@ impl Transcript {
         Self(path)
     }
 
-    fn report(&self, limit: usize, newest_first: bool, failed: bool, summary: bool) -> Report {
+    /// One newest-first page of `session commands` over this transcript.
+    fn report(&self, limit: usize, failed: bool, summary: bool) -> Report {
+        let path = self.0.to_string_lossy().into_owned();
+        let limit = limit.to_string();
+        let mut argv = vec!["spice", "session", "commands", &path, "--limit", &limit];
+        argv.extend(failed.then_some("--failed"));
+        argv.extend(summary.then_some("--summary"));
+        let matches = crate::cli::command()
+            .try_get_matches_from(argv)
+            .expect("commands syntax parses");
+        let leaf = crate::cli::selected_matches(&matches);
+        let page = Page::from_matches(leaf, &["session", "commands"]).expect("bounded page");
         commands(
             &[ResolvedSource {
                 path: self.0.clone(),
@@ -32,14 +43,17 @@ impl Transcript {
                 dialect: Some(listen::Dialect::Omp),
                 thread: None,
             }],
-            CommandOptions {
-                query: CommandQuery::new(false, failed, false, false, summary, limit)
-                    .expect("bounded query"),
-                max_text: 100,
-                newest_first,
-            },
+            leaf,
+            page,
         )
         .expect("native command report")
+    }
+
+    fn commands(&self, limit: usize, failed: bool) -> Vec<String> {
+        let Report::Commands { page, .. } = self.report(limit, failed, false) else {
+            panic!("command report");
+        };
+        page.rows.into_iter().map(|row| row.command.text).collect()
     }
 }
 
@@ -106,32 +120,28 @@ fn explicit_completion_without_exit_code_is_not_missing_history() {
         result(10, "running", "Command still running", Some(false)),
         call(11, "pending", "pending"),
     ]);
-    let Report::Commands { rows, .. } = transcript.report(5, true, false, false) else {
+    let Report::Commands { page, .. } = transcript.report(5, false, false) else {
         panic!("command report");
     };
     assert_eq!(
-        rows.iter()
-            .map(|row| row.command.as_str())
+        page.rows
+            .iter()
+            .map(|row| row.command.text.as_str())
             .collect::<Vec<_>>(),
         ["failure", "success", "old"]
     );
     assert_eq!(
-        rows.iter().map(|row| row.exit_code).collect::<Vec<_>>(),
+        page.rows
+            .iter()
+            .map(|row| row.exit_code)
+            .collect::<Vec<_>>(),
         [None, None, Some(7)]
     );
-    assert!(rows.iter().all(|row| row.status == "completed"));
-    let Report::Commands { rows, .. } = transcript.report(1, true, true, false) else {
-        panic!("filtered command report");
-    };
-    assert_eq!(
-        rows.iter()
-            .map(|row| row.command.as_str())
-            .collect::<Vec<_>>(),
-        ["old"]
-    );
+    assert!(page.rows.iter().all(|row| row.status == "completed"));
+    assert_eq!(transcript.commands(1, true), ["old"]);
     let Report::Commands {
         audit: Some(audit), ..
-    } = transcript.report(1, false, false, true)
+    } = transcript.report(1, false, true)
     else {
         panic!("command audit");
     };
@@ -146,22 +156,6 @@ fn newest_invocation_survives_an_older_invocation_finishing_last() {
         result(3, "new", "Process exited with code 0", Some(false)),
         result(4, "old", "Process exited with code 0", Some(false)),
     ]);
-    let Report::Commands { rows, .. } = transcript.report(1, true, false, false) else {
-        panic!("bounded command report");
-    };
-    assert_eq!(
-        rows.iter()
-            .map(|row| row.command.as_str())
-            .collect::<Vec<_>>(),
-        ["new"]
-    );
-    let Report::Commands { rows, .. } = transcript.report(2, false, false, false) else {
-        panic!("chronological command report");
-    };
-    assert_eq!(
-        rows.iter()
-            .map(|row| row.command.as_str())
-            .collect::<Vec<_>>(),
-        ["old", "new"]
-    );
+    assert_eq!(transcript.commands(1, false), ["new"]);
+    assert_eq!(transcript.commands(2, false), ["new", "old"]);
 }
