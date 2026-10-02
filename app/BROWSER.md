@@ -132,6 +132,18 @@ and pasted images retain the entire composer. Provider identity remains
 available through the emblem's accessible label. Quote shards carry no
 watermark, and Dash agent tiles keep their full-size provider emblem.
 
+## Annotation dismissal
+
+The image annotation editor compares its current marks with the shape set it
+opened. Clicking unused canvas space only clears selection; it never dismisses
+the editor. Cancel, Escape, and the outer dialog backdrop close immediately
+while that shape set is unchanged. Once a mark is drawn, moved, resized,
+nudged, or deleted, those exits require confirmation before discarding the
+session; undoing back to the opening shape set removes the confirmation.
+Declining keeps the complete edit history, while Apply commits without a
+discard prompt. Dirty annotation work also participates in the browser's
+existing page-unload warning.
+
 ## Message card control flow
 
 Card actions form a shrink-wrapped island at the content's top inline-end.

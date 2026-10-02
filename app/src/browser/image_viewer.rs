@@ -197,11 +197,64 @@ struct ViewerProps {
     drafts: UseReducerHandle<ComposerDrafts>,
 }
 
+const DISCARD_ANNOTATIONS: &str = "Discard annotation changes?";
+
+fn allow_annotation_discard(dirty: bool) -> bool {
+    !dirty
+        || web_sys::window()
+            .and_then(|window| window.confirm_with_message(DISCARD_ANNOTATIONS).ok())
+            .unwrap_or(false)
+}
+
+#[hook]
+fn use_annotation_apply(
+    target: Option<DraftTarget>,
+    drafts: UseReducerHandle<ComposerDrafts>,
+    editing: UseStateHandle<bool>,
+    dirty: UseStateHandle<bool>,
+    status: UseStateHandle<AttrValue>,
+) -> Callback<editor::Applied> {
+    let latest = use_mut_ref(|| drafts.clone());
+    *latest.borrow_mut() = drafts;
+    use_callback(
+        (target, latest, editing, dirty, status),
+        |applied: editor::Applied, (target, latest, editing, dirty, status)| {
+            let Some(target) = target else {
+                return;
+            };
+            let drafts = latest.borrow();
+            if !drafts
+                .image(&target.lane, target.quote.as_deref(), target.id)
+                .is_some_and(|image| image.revision == applied.revision)
+            {
+                status
+                    .set("This draft image changed or was removed. Reopen it to annotate.".into());
+                dirty.set(false);
+                editing.set(false);
+                return;
+            }
+            drafts.dispatch(ComposerAction::ApplyImage {
+                lane: target.lane.clone(),
+                quote: target.quote.clone(),
+                id: target.id,
+                revision: applied.revision,
+                media: applied.media,
+                shapes: applied.shapes,
+            });
+            dirty.set(false);
+            editing.set(false);
+        },
+    )
+}
+
 #[function_component(Viewer)]
 fn viewer(props: &ViewerProps) -> Html {
     let host = use_node_ref();
     let image_status = use_state_eq(|| AttrValue::from("Loading image"));
     let editing = use_state_eq(|| false);
+    let dirty = use_state_eq(|| false);
+    let latest_dirty = use_mut_ref(|| false);
+    *latest_dirty.borrow_mut() = *dirty;
     let image = props
         .selection
         .draft
@@ -224,41 +277,26 @@ fn viewer(props: &ViewerProps) -> Html {
             )
         },
     );
-    let latest = use_mut_ref(|| props.drafts.clone());
-    *latest.borrow_mut() = props.drafts.clone();
-    let edit = use_callback(editing.clone(), |(), editing| editing.set(true));
-    let cancel = use_callback(editing.clone(), |(), editing| editing.set(false));
-    let apply = use_callback(
-        (
-            props.selection.draft.clone(),
-            latest,
-            editing.clone(),
-            image_status.clone(),
-        ),
-        |applied: editor::Applied, (target, latest, editing, status)| {
-            let Some(target) = target else {
-                return;
-            };
-            let drafts = latest.borrow();
-            if !drafts
-                .image(&target.lane, target.quote.as_deref(), target.id)
-                .is_some_and(|image| image.revision == applied.revision)
-            {
-                status
-                    .set("This draft image changed or was removed. Reopen it to annotate.".into());
+    let ondirty = use_callback(dirty.clone(), |value: bool, dirty| dirty.set(value));
+    let edit = use_callback((editing.clone(), dirty.clone()), |(), (editing, dirty)| {
+        dirty.set(false);
+        editing.set(true);
+    });
+    let cancel = use_callback(
+        (editing.clone(), dirty.clone(), latest_dirty.clone()),
+        |(), (editing, dirty, latest_dirty)| {
+            if allow_annotation_discard(*latest_dirty.borrow()) {
+                dirty.set(false);
                 editing.set(false);
-                return;
             }
-            drafts.dispatch(ComposerAction::ApplyImage {
-                lane: target.lane.clone(),
-                quote: target.quote.clone(),
-                id: target.id,
-                revision: applied.revision,
-                media: applied.media,
-                shapes: applied.shapes,
-            });
-            editing.set(false);
         },
+    );
+    let apply = use_annotation_apply(
+        props.selection.draft.clone(),
+        props.drafts.clone(),
+        editing.clone(),
+        dirty.clone(),
+        image_status.clone(),
     );
     let loaded = use_callback(image_status.clone(), |_: Event, status| {
         status.set(AttrValue::default())
@@ -266,14 +304,21 @@ fn viewer(props: &ViewerProps) -> Html {
     let failed = use_callback(image_status.clone(), |_: Event, status| {
         status.set("Image unavailable".into())
     });
-    let close = use_callback(host.clone(), |(), host| {
-        if let Some(dialog) = host.cast::<web_sys::HtmlDialogElement>() {
+    let close = use_callback((host.clone(), latest_dirty), |(), (host, latest_dirty)| {
+        if allow_annotation_discard(*latest_dirty.borrow())
+            && let Some(dialog) = host.cast::<web_sys::HtmlDialogElement>()
+        {
             dialog.close();
         }
     });
     use_effect_with(
-        (host.clone(), props.selection.clone(), props.viewing.clone()),
-        |(host, selection, viewing)| {
+        (
+            host.clone(),
+            props.selection.clone(),
+            props.viewing.clone(),
+            close.clone(),
+        ),
+        |(host, selection, viewing, close)| {
             let dialog = host
                 .cast::<web_sys::HtmlDialogElement>()
                 .expect("the mounted viewer owns its dialog");
@@ -283,6 +328,7 @@ fn viewer(props: &ViewerProps) -> Html {
                 dialog,
                 selection.opener.clone(),
                 Callback::from(move |()| viewing.dispatch(Change::Close(generation))),
+                close.clone(),
             );
             move || drop(presentation)
         },
@@ -300,7 +346,7 @@ fn viewer(props: &ViewerProps) -> Html {
     html! {
         <dialog ref={host} class="image-lightbox" aria-label="Full-size image">
             if *editing && let Some(image) = image {
-                <editor::Editor {image} onapply={apply} oncancel={cancel} onclose={close} />
+                <editor::Editor {image} onapply={apply} oncancel={cancel} {ondirty} />
             } else {
                 <actions::Actions source={(*source).clone()} name={props.selection.name.clone()} onclose={close} image_status={(*image_status).clone()} onedit={image.is_some().then_some(edit)} />
                 <img class="image-lightbox-image" src={(*source).clone()} alt={props.selection.alt.clone()} onload={loaded} onerror={failed} />
@@ -309,13 +355,15 @@ fn viewer(props: &ViewerProps) -> Html {
     }
 }
 
-/// One modal showing and the listeners that end it. Native cancel, backdrop,
-/// Close, and an opener that lapses all close the dialog, whose single `close`
-/// event returns focus and clears the selection; dropping the presentation
-/// detaches every listener first, so teardown closes silently.
+/// One modal showing and the listeners that request or finish dismissal.
+/// Native cancel and backdrop requests pass through the current edit guard;
+/// an opener that lapses must close immediately. The single `close` event
+/// returns focus and clears the selection. Dropping the presentation detaches
+/// every listener first, so teardown closes silently.
 struct Presentation {
     dialog: web_sys::HtmlDialogElement,
     closed: Closure<dyn FnMut(web_sys::Event)>,
+    cancelled: Closure<dyn FnMut(web_sys::Event)>,
     backdrop: Closure<dyn FnMut(web_sys::Event)>,
     _focus_layer: overlay::FocusLayer,
     _ownership: Ownership,
@@ -370,23 +418,33 @@ impl Presentation {
         dialog: web_sys::HtmlDialogElement,
         opener: web_sys::Element,
         dismissed: Callback<()>,
+        requested: Callback<()>,
     ) -> Self {
         let returned = opener.clone();
         let closed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
             return_focus(&returned);
             dismissed.emit(());
         });
+        let cancel_request = requested.clone();
+        let cancelled = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            event.prevent_default();
+            cancel_request.emit(());
+        });
         let backdrop = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-            if let Some(dialog) = event
+            if event
                 .target()
                 .and_then(|target| target.dyn_into::<web_sys::HtmlDialogElement>().ok())
+                .is_some()
             {
-                dialog.close();
+                requested.emit(());
             }
         });
         dialog
             .add_event_listener_with_callback("close", closed.as_ref().unchecked_ref())
             .expect("dialog close listener");
+        dialog
+            .add_event_listener_with_callback("cancel", cancelled.as_ref().unchecked_ref())
+            .expect("dialog cancel listener");
         dialog
             .add_event_listener_with_callback("click", backdrop.as_ref().unchecked_ref())
             .expect("dialog backdrop listener");
@@ -410,6 +468,7 @@ impl Presentation {
         Self {
             dialog,
             closed,
+            cancelled,
             backdrop,
             _focus_layer: focus_layer,
             _ownership: ownership,
@@ -422,6 +481,9 @@ impl Drop for Presentation {
         let _ = self
             .dialog
             .remove_event_listener_with_callback("close", self.closed.as_ref().unchecked_ref());
+        let _ = self
+            .dialog
+            .remove_event_listener_with_callback("cancel", self.cancelled.as_ref().unchecked_ref());
         let _ = self
             .dialog
             .remove_event_listener_with_callback("click", self.backdrop.as_ref().unchecked_ref());

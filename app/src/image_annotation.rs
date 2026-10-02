@@ -106,6 +106,10 @@ impl Editor {
         }
     }
 
+    pub(crate) fn differs_from(&self, baseline: &[Shape]) -> bool {
+        self.shapes != baseline
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -169,15 +173,20 @@ mod tests {
             start: Point { x: 60, y: 20 },
             end: Point { x: 80, y: 50 },
         };
-        let mut editor = Editor::new(vec![rectangle]);
+        let baseline = vec![rectangle];
+        let mut editor = Editor::new(baseline.clone());
+        assert!(!editor.differs_from(&baseline));
         let before = editor.shapes.clone();
         editor.shapes.push(arrow);
         editor.commit(before);
         assert!(editor.can_undo());
+        assert!(editor.differs_from(&baseline));
         editor.undo();
         assert_eq!(editor.shapes, [rectangle]);
+        assert!(!editor.differs_from(&baseline));
         editor.redo();
         assert_eq!(editor.shapes, [rectangle, arrow]);
+        assert!(editor.differs_from(&baseline));
         editor.selected = Some(0);
         editor.delete();
         assert_eq!(editor.shapes, [arrow]);

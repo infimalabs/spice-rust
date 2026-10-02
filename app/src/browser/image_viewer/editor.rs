@@ -43,7 +43,7 @@ pub(super) struct EditorProps {
     pub image: DraftImage,
     pub onapply: Callback<Applied>,
     pub oncancel: Callback<()>,
-    pub onclose: Callback<()>,
+    pub ondirty: Callback<bool>,
 }
 
 /// The editing session every handler shares. Its cells live as long as the
@@ -253,8 +253,8 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         },
     );
     let backdrop = use_callback(
-        (svg.clone(), session.clone(), props.onclose.clone()),
-        |event: MouseEvent, (svg, session, close)| pointer::backdrop(&event, svg, session, close),
+        (svg.clone(), session.clone()),
+        |event: MouseEvent, (svg, session)| pointer::backdrop(&event, svg, session),
     );
     let actions = view::Actions {
         undo: use_history_command(session.clone(), History::undo),
@@ -289,6 +289,12 @@ pub(super) fn editor(props: &EditorProps) -> Html {
     };
     let ready = dimensions.0 > 0 && dimensions.1 > 0;
     let history = session.history.borrow();
+    let dirty = history.differs_from(base.shapes.as_ref());
+    super::super::use_unsafe_intent_guard(dirty);
+    {
+        let ondirty = props.ondirty.clone();
+        use_effect_with(dirty, move |dirty| ondirty.emit(*dirty));
+    }
     html! {
         <>
             {view::toolbar(&tool, *busy, ready, &history, actions)}
