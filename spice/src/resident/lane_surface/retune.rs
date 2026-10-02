@@ -253,20 +253,21 @@ fn change(
         Err(outcome) => return typed_outcome(outcome),
     };
     let first = seq(seated.first());
-    let mut last = seq(seated.last());
+    let last = seq(seated.last());
     let mut answer = answer;
     // The seat is durable before the occupant is touched, so no later refusal
     // can leave a running change that the journal never heard about.
+    // The reply position remains this receipt's seat transaction; a confirmed
+    // runtime fact can follow unrelated commits and is not part of that range.
     if let Some((request, occupant)) = live {
         let applied = matches!(
             super::super::supervisor::command::retune(paths, selection.lane(), occupant, request),
             Ok(super::super::supervisor::command::LiveRetuneResult::Applied)
         );
         if applied
-            && let Some((position, recorded)) =
+            && let Some(recorded) =
                 record_runtime(bus, paths, epoch, seats, command, selection, occupant)
         {
-            last = position;
             answer = recorded;
         }
     }
@@ -290,7 +291,7 @@ fn record_runtime(
     command: &wire::AdmittedCommand,
     selection: Selection<'_>,
     occupant: CanonicalUuid,
-) -> Option<(wire::Seq, wire::intent::LaneAnswer)> {
+) -> Option<wire::intent::LaneAnswer> {
     for _ in 0..RUNTIME_RECORD_ATTEMPTS {
         let observed = current_residency(bus, epoch).ok()?;
         let mut next = observed.body().clone();
@@ -321,8 +322,8 @@ fn record_runtime(
             )
             .ok()?;
         write.residency_head(fact, move |_| next);
-        if let Ok(committed) = commit(bus, write) {
-            return Some((seq(committed.last()), answer));
+        if commit(bus, write).is_ok() {
+            return Some(answer);
         }
     }
     None
