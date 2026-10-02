@@ -84,10 +84,10 @@ printf '%s\0' {recorded} > observed-environment
     }
 
     /// Launch `invocation` exactly as `run_inner` does after store preparation.
-    fn run(
+    fn run<R>(
         &self,
         invocation: &Invocation,
-        relay: impl FnOnce(&Child) -> io::Result<Option<SignalRelay>>,
+        relay: impl FnOnce(&Child) -> io::Result<R>,
     ) -> (ExitStatus, String) {
         let report = Arc::new(Mutex::new(Vec::new()));
         let mut command = native_command(
@@ -234,8 +234,9 @@ fn dev_xtask_runs_the_locked_task_binary_with_its_arguments_verbatim() {
 /// A shell deadline terminates the wrapper; the relay must carry that signal
 /// to Cargo's whole process group, and the wrapper reports Cargo's own exit.
 ///
-/// The signal is raised at this test process only once the relay is installed
-/// and the child has armed its traps, so the relay's handler receives it.
+/// The signal reaches this relay's forwarding loop through a channel once the
+/// child has armed its traps. Raising it at the test process instead would
+/// also reach every other relay live in this binary and signal their children.
 #[test]
 fn a_terminated_wrapper_relays_the_signal_to_the_whole_cargo_process_group() {
     let toolchain = Toolchain::new();
@@ -249,16 +250,19 @@ fn a_terminated_wrapper_relays_the_signal_to_the_whole_cargo_process_group() {
     let ready = toolchain.work().join("ready");
 
     let (status, report) = toolchain.run(&invocation, |child| {
-        let guard = relay(child)?;
+        let group = i32::try_from(child.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .expect("the fixture child has a process group");
+        let (deliver, delivered) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             if eventually(&ready) {
-                let _ = rustix::process::kill_process(
-                    rustix::process::getpid(),
-                    rustix::process::Signal::TERM,
-                );
+                let _ = deliver.send(signal_hook::consts::SIGTERM);
+            } else {
+                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
             }
         });
-        Ok(guard)
+        Ok(std::thread::spawn(move || forward(group, delivered)))
     });
 
     assert_eq!(status.code(), Some(143), "{report}");

@@ -50,21 +50,27 @@ impl SignalRelay {
         let handle = signals.handle();
         let worker = std::thread::Builder::new()
             .name("spice-cargo-signals".to_owned())
-            .spawn(move || {
-                for signal in signals.forever() {
-                    let signal = match signal {
-                        SIGHUP => rustix::process::Signal::HUP,
-                        SIGINT => rustix::process::Signal::INT,
-                        SIGTERM => rustix::process::Signal::TERM,
-                        _ => continue,
-                    };
-                    let _ = rustix::process::kill_process_group(group, signal);
-                }
-            })?;
+            .spawn(move || forward(group, signals.forever()))?;
         Ok(Self {
             handle,
             worker: Some(worker),
         })
+    }
+}
+
+/// Forward every relayed signal to Cargo's whole process group.
+#[cfg(unix)]
+fn forward(group: rustix::process::Pid, signals: impl IntoIterator<Item = std::ffi::c_int>) {
+    use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+
+    for signal in signals {
+        let signal = match signal {
+            SIGHUP => rustix::process::Signal::HUP,
+            SIGINT => rustix::process::Signal::INT,
+            SIGTERM => rustix::process::Signal::TERM,
+            _ => continue,
+        };
+        let _ = rustix::process::kill_process_group(group, signal);
     }
 }
 
