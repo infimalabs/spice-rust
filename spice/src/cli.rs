@@ -423,6 +423,15 @@ are always counted, with the exact command that continues after them. Complete
 documents and evidence are exported to a named file with their digest, never
 streamed. Mutation replies are complete and concise.";
 
+/// Finite watch defaults and explicit follow bounds.
+const WATCH_HELP: &str = "\
+Bare watch emits one bounded current transcript snapshot and exits. --follow
+requires --deadline-seconds SECONDS (positive, at most 300), coalesces filesystem
+wakes to at most ten per second, and stops at the deadline, 3000 wakes, or the
+aggregate row/byte limit. Every successful result ends with a watch.v1 resume
+cursor; --after CURSOR resumes without repeating an admitted record. Source
+replacement and history skipped outside the bounded tail are explicit observations.";
+
 /// How `task artifact list` pages its citations.
 const ARTIFACT_LIST_HELP: &str = "\
 Lists the task's artifacts newest first: 20 by default, at most 500 (--limit),
@@ -446,6 +455,7 @@ digest without echoing contents. It is never truncated; '-' is refused.";
 /// Usage notes for a leaf whose bounds its syntax line cannot carry.
 fn leaf_help(path: &[&str]) -> Option<&'static str> {
     match path {
+        ["watch"] => Some(WATCH_HELP),
         ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
         ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
         _ => None,
