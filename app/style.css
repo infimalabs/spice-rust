@@ -650,7 +650,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .dash-overview-agent > p { margin: 0; }
 .dash-overview-agent-task { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dash-overview-agent-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .8; }
-.dash-overview-agent .composer-vendor-icon { width: 18px; height: 18px; }
+.dash-overview-agent .composer-vendor-icon { position: absolute; right: 8px; bottom: 8px; width: 18px; height: 18px; }
 .dash-overview-quota-section .section-heading { align-items: baseline; }
 .quota-capacity { margin: 0; color: var(--muted); font-size: .78rem; }
 .quota-capacity strong { color: var(--ink); font-size: .9rem; }

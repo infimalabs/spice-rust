@@ -88,7 +88,6 @@
   color: var(--ink);
   font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.composer-shard--primary:has(.agent-menu[open]) .composer-vendor-icon { display: none; }
 .agent-menu-head {
   display: flex;
   flex-wrap: wrap;
@@ -269,16 +268,11 @@
 }
 
 .composer-vendor-icon {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 1;
   width: 22px;
   height: 22px;
   cursor: help;
   color: color-mix(in srgb, var(--ink) 86%, var(--control));
   opacity: .74;
-  pointer-events: auto;
 }
 .composer-vendor-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
 .composer-vendor-badge--fast {
@@ -308,10 +302,6 @@
   line-height: 1.35;
 }
 .team-surface .mosaic-composer textarea:focus-visible { outline: none; }
-.team-surface .composer-shard--primary textarea {
-  padding-right: 36px;
-  padding-bottom: 32px;
-}
 .composer-shard-prose[data-composer-drag-handle="true"] {
   cursor: grab;
   touch-action: none;
