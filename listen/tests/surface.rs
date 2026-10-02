@@ -7,12 +7,13 @@ use std::time::{Duration, SystemTime};
 use listen::{
     Dialect, EventKind, Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError,
     SurfaceEvent, SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult,
-    TailBudget, Watch, retro,
+    TailBudget, Watch, WatchDeltaRow, retro,
 };
 use tape::Tape;
 
 const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}],"stopReason":"stop"}}"#;
 const REASONING: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"inspect"}],"stopReason":"stop"}}"#;
+const READY: &[u8] = br#"{"type":"ready"}"#;
 const DIALECTS: &[(&str, Dialect)] = &[("omp", Dialect::Omp), ("fixture", Dialect::Omp)];
 fn watch_budget() -> TailBudget {
     TailBudget::new(
@@ -32,8 +33,8 @@ fn poll_watch(watch: &mut Watch) -> Result<StreamOutcome, SurfaceError> {
     for row in delta.rows {
         root = row.outcome.root;
         observations.extend(row.outcome.observations);
-        watch.resume_at(row.cursor);
     }
+    watch.resume_at(delta.cursor);
     Ok(StreamOutcome {
         mode: Mode::Watch,
         root,
@@ -126,6 +127,16 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Entry> {
     let mut entries = BTreeMap::new();
     walk(root, root, &mut entries);
     entries
+}
+
+fn row_event_kinds<'a>(rows: impl IntoIterator<Item = &'a WatchDeltaRow>) -> Vec<EventKind> {
+    rows.into_iter()
+        .flat_map(|row| &row.outcome.observations)
+        .filter_map(|observation| match observation {
+            Observation::Event { event, .. } => Some(event.kind()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn event_count(observations: &[Observation]) -> usize {
@@ -244,6 +255,126 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         ),
         1
     );
+
+    scratch.remove();
+}
+
+#[test]
+fn watch_reports_unchanged_status_once_per_run_and_again_after_it_changes() {
+    let scratch = Scratch::new("watch-status");
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
+    let absent = |outcome: &StreamOutcome, path: &Path| {
+        matches!(
+            outcome.observations.as_slice(),
+            [Observation::Absent { selector }] if Path::new(selector) == path
+        )
+    };
+
+    let root = poll_watch(&mut watch).expect("empty root reconciles");
+    assert!(absent(&root, scratch.path()));
+    assert!(
+        poll_watch(&mut watch)
+            .expect("empty root repeats")
+            .is_empty()
+    );
+
+    let (tape_path, tape) = session(scratch.path(), "lane-a", "omp");
+    let empty = poll_watch(&mut watch).expect("empty tape reconciles");
+    assert!(absent(&empty, &tape_path));
+    assert!(
+        poll_watch(&mut watch)
+            .expect("empty tape repeats")
+            .is_empty()
+    );
+
+    let complete = record(REASONING);
+    let split = complete.len() / 2;
+    tape.tee(&complete[..split])
+        .expect("partial record prefix is durable");
+    let pending = poll_watch(&mut watch).expect("partial record is visible");
+    let [Observation::Pending { spans: first, .. }] = pending.observations.as_slice() else {
+        panic!("one pending status row: {pending:?}");
+    };
+    assert!(poll_watch(&mut watch).expect("pending repeats").is_empty());
+
+    let encoded = wire::encode(watch.cursor()).expect("cursor encodes");
+    let mut resumed = Watch::resume(
+        scratch.path(),
+        DIALECTS.iter().copied(),
+        wire::decode(&encoded).expect("cursor decodes"),
+    );
+    assert_eq!(
+        poll_watch(&mut resumed).expect("resumed run reconciles"),
+        pending
+    );
+    assert!(
+        poll_watch(&mut resumed)
+            .expect("resumed repeats")
+            .is_empty()
+    );
+
+    tape.tee(&complete[split..=split])
+        .expect("pending prefix grows");
+    let grown = poll_watch(&mut watch).expect("grown prefix is visible");
+    assert!(matches!(
+        grown.observations.as_slice(),
+        [Observation::Pending { spans, .. }] if spans != first
+    ));
+
+    drop(tape);
+    fs::remove_dir_all(scratch.path().join("lane-a")).expect("session is removed");
+    let vanished = poll_watch(&mut watch).expect("vanished session reconciles");
+    assert!(matches!(
+        vanished.observations.as_slice(),
+        [Observation::Missing { .. }, Observation::Absent { selector }]
+            if Path::new(selector) == scratch.path()
+    ));
+    let (_, _tape) = session(scratch.path(), "lane-a", "omp");
+    let recreated = poll_watch(&mut watch).expect("recreated session reconciles");
+    assert!(absent(&recreated, &tape_path));
+
+    scratch.remove();
+}
+
+#[test]
+fn a_record_that_surfaces_nothing_advances_the_cursor_without_a_row() {
+    let scratch = Scratch::new("watch-silent");
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE)).expect("first record is durable");
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
+    assert_eq!(
+        event_count(&poll_watch(&mut watch).expect("first record").observations),
+        1
+    );
+
+    tape.tee(&record(READY)).expect("silent record is durable");
+    let silent = watch
+        .poll_bounded(watch_budget())
+        .expect("silent record reconciles");
+    assert!(silent.rows.is_empty());
+    assert_ne!(&silent.cursor, watch.cursor());
+    watch.resume_at(silent.cursor);
+
+    for bytes in [REASONING, READY, PROSE] {
+        tape.tee(&record(bytes)).expect("record is durable");
+    }
+    let delta = watch
+        .poll_bounded(watch_budget())
+        .expect("mixed records reconcile");
+    assert_eq!(delta.rows.len(), 2);
+    assert_eq!(
+        row_event_kinds(&delta.rows),
+        vec![EventKind::Reasoning, EventKind::Prose]
+    );
+    for (index, row) in delta.rows.iter().enumerate() {
+        let replay = Watch::resume(scratch.path(), DIALECTS.iter().copied(), row.cursor.clone())
+            .poll_bounded(watch_budget())
+            .expect("resume from an emitted cursor reconciles");
+        assert_eq!(
+            row_event_kinds(&replay.rows),
+            row_event_kinds(&delta.rows[index + 1..])
+        );
+    }
 
     scratch.remove();
 }

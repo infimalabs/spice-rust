@@ -16,6 +16,10 @@ use crate::{Checkpoint, EventKind, Position, Scan, TailBudget, scan_tail};
 #[serde(deny_unknown_fields)]
 pub struct WatchCursor {
     sources: Vec<WatchSourceCursor>,
+    /// Status this run last reported per root or tape selector. Never
+    /// serialized, so a resumed run reports current status once.
+    #[serde(skip)]
+    reported: BTreeMap<PathBuf, Observation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -27,39 +31,70 @@ struct WatchSourceCursor {
 }
 
 impl WatchCursor {
-    fn maps(
-        &self,
-    ) -> (
-        BTreeMap<PathBuf, Checkpoint>,
-        BTreeMap<PathBuf, BTreeSet<EventKind>>,
-    ) {
-        let checkpoints = self
-            .sources
-            .iter()
-            .map(|source| (source.tape.clone(), source.checkpoint.clone()))
-            .collect();
-        let seen = self
-            .sources
-            .iter()
-            .map(|source| (source.tape.clone(), source.seen.clone()))
-            .collect();
-        (checkpoints, seen)
+    fn progress(&self) -> Progress {
+        Progress {
+            checkpoints: self
+                .sources
+                .iter()
+                .map(|source| (source.tape.clone(), source.checkpoint.clone()))
+                .collect(),
+            seen: self
+                .sources
+                .iter()
+                .map(|source| (source.tape.clone(), source.seen.clone()))
+                .collect(),
+            reported: self.reported.clone(),
+        }
     }
+}
 
-    fn from_maps(
-        checkpoints: &BTreeMap<PathBuf, Checkpoint>,
-        seen: &BTreeMap<PathBuf, BTreeSet<EventKind>>,
-    ) -> Self {
-        Self {
-            sources: checkpoints
+/// Mutable resume state while one reconciliation builds its rows.
+struct Progress {
+    checkpoints: BTreeMap<PathBuf, Checkpoint>,
+    seen: BTreeMap<PathBuf, BTreeSet<EventKind>>,
+    reported: BTreeMap<PathBuf, Observation>,
+}
+
+impl Progress {
+    fn cursor(&self) -> WatchCursor {
+        WatchCursor {
+            sources: self
+                .checkpoints
                 .iter()
                 .map(|(tape, checkpoint)| WatchSourceCursor {
                     tape: tape.clone(),
                     checkpoint: checkpoint.clone(),
-                    seen: seen.get(tape).cloned().unwrap_or_default(),
+                    seen: self.seen.get(tape).cloned().unwrap_or_default(),
                 })
                 .collect(),
+            reported: self.reported.clone(),
         }
+    }
+
+    /// Forget a tape that vanished or was replaced.
+    fn forget(&mut self, tape: &Path) {
+        self.seen.remove(tape);
+        self.reported.remove(tape);
+    }
+
+    /// Report `status` for `selector` unless this run already reported it
+    /// unchanged; `None` clears the selector so a recurrence reports again.
+    fn report_status(
+        &mut self,
+        rows: &mut Vec<WatchDeltaRow>,
+        root: &Path,
+        selector: &Path,
+        status: Option<Observation>,
+    ) {
+        let Some(status) = status else {
+            self.reported.remove(selector);
+            return;
+        };
+        if self.reported.get(selector) == Some(&status) {
+            return;
+        }
+        self.reported.insert(selector.to_path_buf(), status.clone());
+        push(rows, root, vec![status], self);
     }
 }
 
@@ -77,6 +112,9 @@ pub struct WatchDeltaRow {
 pub struct WatchDelta {
     /// Rows in deterministic tape order and chronological record order.
     pub rows: Vec<WatchDeltaRow>,
+    /// Resume state after every row, including records that surfaced nothing
+    /// and status already reported; adopt it only once every row is admitted.
+    pub cursor: WatchCursor,
 }
 /// One aggregate-budgeted watch row with exact text clipping evidence.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -175,7 +213,10 @@ impl Watch {
     /// Every returned row carries the cursor immediately after it. The caller
     /// advances with [`Watch::resume_at`] only after admitting that row to its
     /// aggregate output budget, so an omitted row is replayed exactly once on
-    /// reconnect.
+    /// reconnect, and adopts [`WatchDelta::cursor`] once every row is admitted.
+    /// Records that surface no observations advance the cursor silently, and a
+    /// root or tape status (absent, pending spans) is reported once per run
+    /// until it changes.
     ///
     /// # Errors
     ///
@@ -183,21 +224,22 @@ impl Watch {
     /// cannot complete.
     pub fn poll_bounded(&self, budget: TailBudget) -> Result<WatchDelta, SurfaceError> {
         let sessions = discover(&self.root, &self.dialects)?;
-        let (mut checkpoints, mut seen) = self.cursor.maps();
+        let mut progress = self.cursor.progress();
         let mut rows = Vec::new();
         let current = sessions
             .iter()
             .map(|session| session.tape.clone())
             .collect::<BTreeSet<_>>();
 
-        let vanished = checkpoints
+        let vanished = progress
+            .checkpoints
             .keys()
             .filter(|tape| !current.contains(*tape))
             .cloned()
             .collect::<Vec<_>>();
         for tape in vanished {
-            checkpoints.remove(&tape);
-            seen.remove(&tape);
+            progress.checkpoints.remove(&tape);
+            progress.forget(&tape);
             push(
                 &mut rows,
                 &self.root,
@@ -205,34 +247,23 @@ impl Watch {
                     selector: tape.display().to_string(),
                     detail: "previously observed transcript source is absent".to_owned(),
                 }],
-                &checkpoints,
-                &seen,
+                &progress,
             );
         }
 
-        if sessions.is_empty() && checkpoints.is_empty() {
-            push(
-                &mut rows,
-                &self.root,
-                vec![Observation::Absent {
-                    selector: self.root.display().to_string(),
-                }],
-                &checkpoints,
-                &seen,
-            );
-        }
+        let root_status =
+            (sessions.is_empty() && progress.checkpoints.is_empty()).then(|| Observation::Absent {
+                selector: self.root.display().to_string(),
+            });
+        progress.report_status(&mut rows, &self.root, &self.root, root_status);
 
         for session in sessions {
-            reconcile_session(
-                &self.root,
-                &session,
-                budget,
-                &mut checkpoints,
-                &mut seen,
-                &mut rows,
-            )?;
+            reconcile_session(&self.root, &session, budget, &mut progress, &mut rows)?;
         }
-        Ok(WatchDelta { rows })
+        Ok(WatchDelta {
+            rows,
+            cursor: progress.cursor(),
+        })
     }
 }
 
@@ -240,8 +271,7 @@ fn reconcile_session(
     root: &Path,
     session: &RetroSession,
     budget: TailBudget,
-    checkpoints: &mut BTreeMap<PathBuf, Checkpoint>,
-    seen: &mut BTreeMap<PathBuf, BTreeSet<EventKind>>,
+    progress: &mut Progress,
     rows: &mut Vec<WatchDeltaRow>,
 ) -> Result<(), SurfaceError> {
     let tail = scan_tail(&session.tape, session.decoder(), budget).map_err(|source| {
@@ -250,7 +280,7 @@ fn reconcile_session(
             source,
         }
     })?;
-    let mut next = starting_checkpoint(root, session, &tail, checkpoints, seen, rows);
+    let mut next = starting_checkpoint(root, session, &tail, progress, rows);
 
     if next.source == tail.scan.checkpoint.source && next.next > tail.scan.checkpoint.next {
         let source = if next.next.member == tail.scan.checkpoint.next.member {
@@ -287,39 +317,32 @@ fn reconcile_session(
             extents_empty: false,
         };
         let surfaced = surface_scan(session, &scan, false);
-        let observed = seen.entry(session.tape.clone()).or_default();
+        let observed = progress.seen.entry(session.tape.clone()).or_default();
         observed.extend(surfaced.event_kinds);
         next = record.next;
-        checkpoints.insert(session.tape.clone(), next.clone());
-        push(rows, root, surfaced.observations, checkpoints, seen);
+        progress
+            .checkpoints
+            .insert(session.tape.clone(), next.clone());
+        if !surfaced.observations.is_empty() {
+            push(rows, root, surfaced.observations, progress);
+        }
     }
 
-    if !tail.scan.pending.is_empty() {
-        push(
-            rows,
-            root,
-            vec![Observation::Pending {
-                lane: session.lane.clone(),
-                dialect: session.dialect,
-                tape: session.tape.clone(),
-                spans: tail.scan.pending,
-            }],
-            checkpoints,
-            seen,
-        );
-    } else if tail.scan.extents_empty {
-        push(
-            rows,
-            root,
-            vec![Observation::Absent {
-                selector: session.tape.display().to_string(),
-            }],
-            checkpoints,
-            seen,
-        );
-    }
+    let status = if !tail.scan.pending.is_empty() {
+        Some(Observation::Pending {
+            lane: session.lane.clone(),
+            dialect: session.dialect,
+            tape: session.tape.clone(),
+            spans: tail.scan.pending,
+        })
+    } else {
+        tail.scan.extents_empty.then(|| Observation::Absent {
+            selector: session.tape.display().to_string(),
+        })
+    };
+    progress.report_status(rows, root, &session.tape, status);
 
-    let observed = seen.entry(session.tape.clone()).or_default();
+    let observed = progress.seen.entry(session.tape.clone()).or_default();
     let canaries = EventKind::ALL
         .into_iter()
         .filter(|kind| !observed.contains(kind))
@@ -332,7 +355,7 @@ fn reconcile_session(
         .collect::<Vec<_>>();
     if accounted && !canaries.is_empty() {
         observed.extend(EventKind::ALL);
-        push(rows, root, canaries, checkpoints, seen);
+        push(rows, root, canaries, progress);
     }
     Ok(())
 }
@@ -341,15 +364,16 @@ fn starting_checkpoint(
     root: &Path,
     session: &RetroSession,
     tail: &crate::TailScan,
-    checkpoints: &mut BTreeMap<PathBuf, Checkpoint>,
-    seen: &mut BTreeMap<PathBuf, BTreeSet<EventKind>>,
+    progress: &mut Progress,
     rows: &mut Vec<WatchDeltaRow>,
 ) -> Checkpoint {
-    let previous = checkpoints.get(&session.tape).cloned();
+    let previous = progress.checkpoints.get(&session.tape).cloned();
     match previous {
         Some(previous) if previous.source != tail.start.source => {
-            seen.remove(&session.tape);
-            checkpoints.insert(session.tape.clone(), tail.start.clone());
+            progress.forget(&session.tape);
+            progress
+                .checkpoints
+                .insert(session.tape.clone(), tail.start.clone());
             push(
                 rows,
                 root,
@@ -360,13 +384,14 @@ fn starting_checkpoint(
                         previous.source, tail.start.source
                     ),
                 }],
-                checkpoints,
-                seen,
+                progress,
             );
             tail.start.clone()
         }
         Some(previous) if previous.next < tail.start.next => {
-            checkpoints.insert(session.tape.clone(), tail.start.clone());
+            progress
+                .checkpoints
+                .insert(session.tape.clone(), tail.start.clone());
             push(
                 rows,
                 root,
@@ -377,14 +402,15 @@ fn starting_checkpoint(
                         tail.withheld_source_bytes, tail.start.next.member, tail.start.next.offset
                     ),
                 }],
-                checkpoints,
-                seen,
+                progress,
             );
             tail.start.clone()
         }
         Some(previous) => previous,
         None => {
-            checkpoints.insert(session.tape.clone(), tail.start.clone());
+            progress
+                .checkpoints
+                .insert(session.tape.clone(), tail.start.clone());
             if tail.withheld_source_bytes > 0 {
                 push(
                     rows,
@@ -396,8 +422,7 @@ fn starting_checkpoint(
                             tail.withheld_source_bytes
                         ),
                     }],
-                    checkpoints,
-                    seen,
+                    progress,
                 );
             }
             tail.start.clone()
@@ -409,8 +434,7 @@ fn push(
     rows: &mut Vec<WatchDeltaRow>,
     root: &Path,
     observations: Vec<Observation>,
-    checkpoints: &BTreeMap<PathBuf, Checkpoint>,
-    seen: &BTreeMap<PathBuf, BTreeSet<EventKind>>,
+    progress: &Progress,
 ) {
     rows.push(WatchDeltaRow {
         outcome: StreamOutcome {
@@ -418,7 +442,7 @@ fn push(
             root: root.to_path_buf(),
             observations,
         },
-        cursor: WatchCursor::from_maps(checkpoints, seen),
+        cursor: progress.cursor(),
     });
 }
 

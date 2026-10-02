@@ -282,8 +282,13 @@ complete-record boundary, and emitted decoder canaries. `--after CURSOR`
 therefore resumes without replaying admitted records. Replacement, disappeared
 sources, history skipped outside the bounded tail, and records skipped above
 the repository byte maximum are explicit `missing` observations rather than
-silent loss. If output admission closes, the cursor remains immediately before
-the first omitted row and the reply carries the exact continuation command.
+silent loss. A row carries observations: a record that decodes to nothing
+advances the cursor without one. An `absent` root or tape, or `pending` bytes
+at a tape's end, is reported once per run and again only when it changes
+(different pending spans, a source appears or disappears). The cursor does not
+carry that memory, so a resumed run reports current status once. If output
+admission closes, the cursor remains immediately before the first omitted row
+and the reply carries the exact continuation command.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,
