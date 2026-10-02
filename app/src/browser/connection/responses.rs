@@ -631,7 +631,7 @@ fn apply_member_response(
             member,
         } => {
             let issue = apply_lane_renewal_response(session, team, lane, requested, bytes)?;
-            // A member reservation reports its settlement through Dash
+            // A member reservation reports its settlement through request
             // feedback; any other renewal has only this toast.
             match (member, issue) {
                 (Some(member), issue) => runtime.settle_member_command(&member, issue),
