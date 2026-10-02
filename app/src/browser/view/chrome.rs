@@ -257,10 +257,10 @@ fn render_canvas_menu(
     let menu_open = render.menu_open.clone();
     let update = (**render.canvas_update).as_ref();
     let trigger_label = match (update, fast_mode) {
-        (Some(_), true) => "Open Spice Canvas menu - update available; fast mode on",
-        (Some(_), false) => "Open Spice Canvas menu - update available",
-        (None, true) => "Open Spice Canvas menu - fast mode on",
-        (None, false) => "Open Spice Canvas menu",
+        (Some(_), true) => "Open spice menu - update available; fast mode on",
+        (Some(_), false) => "Open spice menu - update available",
+        (None, true) => "Open spice menu - fast mode on",
+        (None, false) => "Open spice menu",
     };
     let quota = quota_level(runtime);
     let edge_accent = match (fast_mode, update.is_some()) {
