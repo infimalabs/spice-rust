@@ -1002,9 +1002,6 @@ pub(super) fn render_quote_shards(
                             onkeydown={target_submit.clone()}
                             {onpaste}
                         />
-                        if let Some(issue) = &quote.issue {
-                            <p class="composer-issue" role="status">{issue.clone()}</p>
-                        }
                     </article>
                 }
             })}
@@ -1152,9 +1149,7 @@ fn add_image_files(
             continue;
         }
         if file.size() > MAX_ATTACHMENT_BYTES {
-            drafts.dispatch(ComposerAction::SetIssue {
-                lane: lane_key.to_owned(),
-                quote: quote_identity.map(str::to_owned),
+            drafts.dispatch(ComposerAction::Report {
                 issue: "Image is over 8 MB.".to_owned(),
             });
             continue;
@@ -1175,9 +1170,7 @@ fn read_image(
     file: File,
 ) {
     let Ok(reader) = FileReader::new() else {
-        drafts.dispatch(ComposerAction::SetIssue {
-            lane: lane_key,
-            quote: quote_identity,
+        drafts.dispatch(ComposerAction::Report {
             issue: "Image reader is unavailable.".to_owned(),
         });
         return;
@@ -1206,9 +1199,7 @@ fn read_image(
                 quote: quote_identity.clone(),
                 attachment,
             }),
-            Err(error) => drafts.dispatch(ComposerAction::SetIssue {
-                lane: lane_key.clone(),
-                quote: quote_identity.clone(),
+            Err(error) => drafts.dispatch(ComposerAction::Report {
                 issue: format!("Image was refused: {error}."),
             }),
         }

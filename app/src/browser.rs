@@ -200,6 +200,8 @@ struct SurfaceHandles {
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
     notes: NoteComposers,
+    /// Refusals the resident reports for actions no control is waiting on.
+    refusals: toast::Toaster,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -452,6 +454,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let team_controls = use_reducer(TeamControls::restore);
     let team_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
+    watchband::use_composer_issue_toast(&composer_drafts);
     let submission_status = use_state(SubmissionStatus::default);
     let submissions = SubmissionHandle {
         queue: use_mut_ref(SubmissionQueue::default),
@@ -561,6 +564,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
             composer_drafts: state.composer_drafts.clone(),
             submissions: state.submissions.clone(),
             notes: state.work_detail.notes.clone(),
+            refusals: state.sender.refusals.clone(),
         },
     );
     task_feedback::use_feedback(state);

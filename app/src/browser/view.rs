@@ -329,7 +329,10 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
         .stem()
         .filter(|identity| work.stem(identity).is_some());
     let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
-    let stale = matches!(&**render.connection, Connection::Offline(_));
+    // Every reconnect attempt passes back through Connecting, so the snapshot
+    // stays stale until the connection is live again; the notice then toasts
+    // once per outage rather than once per attempt.
+    let stale = !matches!(&**render.connection, Connection::Online { .. });
     let selected = (**render.selected_task).as_ref();
     let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
     let creator_context = Callback::from(|event: MouseEvent| {

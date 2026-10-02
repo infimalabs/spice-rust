@@ -106,11 +106,11 @@ pub(super) fn render(
                 <span class="section-count">{format!("{open} tasks")}</span>
                 {render_arrangement(arrangement_state)}
             </header>
-            if stale {
-                <p class="work-board-state" role="status">
-                    {"Showing the last admitted board snapshot while reconnecting."}
-                </p>
-            }
+            <crate::browser::toast::Notice
+                message={stale.then_some(AttrValue::from(
+                    "Showing the last admitted board snapshot while reconnecting.",
+                ))}
+            />
             <div class="work-lanes">
                 {for board_lanes.into_iter().map(|(availability, clusters)| {
                     render_lane(availability, &clusters, &cards)
