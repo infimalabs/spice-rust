@@ -15,8 +15,7 @@ mod authority;
 mod context;
 mod dataset;
 mod model;
-mod page;
-mod project;
+pub(crate) mod project;
 mod source;
 
 use model::Report;
@@ -360,14 +359,14 @@ fn build(
     }
 
     if HISTORY.contains(&action) {
-        page::Page::from_matches(matches, path)?;
+        crate::read_page::Page::from_matches(matches, path)?;
     }
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
     build_resolved(matches, path, action, sources, environment, configuration)
 }
 
-/// Session leaves that page their records through [`page::Page`].
+/// Session leaves that page their records through [`crate::read_page::Page`].
 const HISTORY: [&str; 10] = [
     "sweep",
     "turns",
@@ -401,7 +400,7 @@ fn build_resolved(
         }
         _ => {}
     }
-    let page = || page::Page::from_matches(matches, path);
+    let page = || crate::read_page::Page::from_matches(matches, path);
     match action {
         "sweep" => project::sweep(&sources, &project::values(matches, "FILES"), page()?),
         "turns" => project::turns(&sources, matches, page()?),

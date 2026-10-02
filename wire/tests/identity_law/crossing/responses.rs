@@ -151,23 +151,32 @@ fn cover_journal_reply_frames() {
                 schema: 1,
                 cursor: None,
                 facts: 0,
-                entries: Packed {
+                entries: wire::output::Bounded {
                     rows: Vec::new(),
-                    overflow: None,
-                    horizon: seq(1),
+                    omission: None,
                 },
             },
             JournalReport {
                 schema: 1,
                 cursor: Some(seq(19)),
                 facts: 19,
-                entries: Packed {
+                entries: wire::output::Bounded {
                     rows: Vec::new(),
-                    overflow: Some(Overflow {
-                        omitted: 19,
-                        continuation: seq(1),
+                    omission: Some(wire::output::Omission {
+                        population: 19,
+                        shown: 0,
+                        withheld: 19,
+                        shown_bytes: 0,
+                        exhausted: wire::output::Exhausted::Rows,
+                        next_bytes: 180,
+                        limits: wire::output::Limits {
+                            rows: 0,
+                            bytes: 8_192,
+                            text: 240,
+                        },
+                        continuation: wire::SpiceCommand::new("journal", ["--after", "19"])
+                            .expect("fixture command is valid"),
                     }),
-                    horizon: seq(19),
                 },
             },
         ],

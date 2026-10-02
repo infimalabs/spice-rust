@@ -11,23 +11,15 @@ fn restart_preserves_pending_journal_authority(
         &["steer", &lane, "remain authoritative across restart"],
         false,
     ));
-    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
-    assert!(
-        inbox.lanes[0]
-            .pending
-            .iter()
-            .any(|pending| pending.directive == sent.directive)
-    );
+    let (_, pending) = inbox(fixture, &lane);
+    assert!(holds(&pending, sent.directive));
 
     stop(fixture, resident);
     let mut restarted = RunningResident::spawn(fixture);
     restarted.assert_ready(fixture);
-    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
+    let (_, pending) = inbox(fixture, &lane);
     assert!(
-        inbox.lanes[0]
-            .pending
-            .iter()
-            .any(|pending| pending.directive == sent.directive),
+        holds(&pending, sent.directive),
         "restart retired the pending operator directive"
     );
     let canceled = text_directive(&invoke(
@@ -88,15 +80,13 @@ fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
     assert_eq!(resent.authored, sent.authored);
     assert_eq!(resent.disposition, sent.disposition);
 
-    let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
-    let pending = inbox.lanes[0]
-        .pending
+    let (_, pending) = inbox(&fixture, &lane);
+    let pending = pending
         .iter()
-        .find(|pending| pending.directive == sent.directive)
+        .find(|pending| pending["directive"] == sent.directive.to_string())
         .expect("redelivered directive remains pending");
-    assert_eq!(pending.key, sent.key);
-    assert_eq!(pending.stage, wire::body::SteeringStage::Published);
-    assert!(pending.escalations.is_empty());
+    assert_eq!(pending["key"], sent.key);
+    assert_eq!(pending["stage"], "published");
 
     let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     let snapshot = journal.fact_snapshot().expect("steering facts read");

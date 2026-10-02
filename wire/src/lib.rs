@@ -109,9 +109,9 @@ pub use quote::{
     QuoteTargetError, QuoteUnavailable, ResolvedQuote, steering_key,
 };
 pub use reply::{
-    CanvasOpen, DemoAnswer, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
-    JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,
-    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    CanvasOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex,
+    JournalReport, JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome,
+    ProofEvidence, Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
     ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
     RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
     ThreadReport, Version,

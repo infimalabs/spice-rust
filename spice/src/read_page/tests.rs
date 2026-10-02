@@ -85,7 +85,7 @@ fn an_oversized_record_continues_under_a_widened_byte_limit() {
     let history = [
         row(
             "2026-01-01T00:00:01.000Z",
-            &"x".repeat(HISTORY.default_limits().bytes),
+            &"x".repeat(INTERACTIVE.default_limits().bytes),
         ),
         row("2026-01-01T00:00:02.000Z", "newest"),
     ];
@@ -108,7 +108,7 @@ fn an_oversized_record_continues_under_a_widened_byte_limit() {
 fn a_record_beyond_the_interactive_maximum_continues_only_as_an_export() {
     let history = [row(
         "2026-01-01T00:00:01Z",
-        &"x".repeat(HISTORY.maximum().bytes),
+        &"x".repeat(INTERACTIVE.maximum().bytes),
     )];
     let bounded = scan(
         page(&words(&["session", "turns", "fixture.jsonl"])).expect("defaults admit"),
@@ -131,9 +131,9 @@ fn a_record_beyond_the_interactive_maximum_continues_only_as_an_export() {
 #[test]
 fn bounds_beyond_the_surface_maximum_are_refused() {
     for (flag, maximum) in [
-        ("--limit", HISTORY.maximum().rows),
-        ("--max-bytes", HISTORY.maximum().bytes),
-        ("--max-text", HISTORY.maximum().text),
+        ("--limit", INTERACTIVE.maximum().rows),
+        ("--max-bytes", INTERACTIVE.maximum().bytes),
+        ("--max-text", INTERACTIVE.maximum().text),
     ] {
         let over = (maximum + 1).to_string();
         let refused = page(&words(&["session", "turns", "fixture.jsonl", flag, &over]))

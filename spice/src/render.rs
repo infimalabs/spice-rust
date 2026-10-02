@@ -116,6 +116,24 @@ fn no_reply_text<B>(_body: &B) -> Option<&str> {
     None
 }
 
+/// Renders one outcome whose reply body has its own human page.
+///
+/// Text form speaks the body's [`Display`](std::fmt::Display) page; JSON
+/// always retains the complete typed outcome, so both forms carry the same
+/// rows and omission.
+pub fn render_display<B: Serialize + std::fmt::Display>(
+    outcome: &Outcome<B>,
+    form: Form,
+) -> Result<Rendering, String> {
+    match (outcome, form) {
+        (Outcome::Reply(reply), Form::Text) => Ok(Rendering {
+            stream: Stream::Out,
+            document: terminated(reply.body.to_string().into_bytes()),
+        }),
+        _ => render(outcome, form),
+    }
+}
+
 /// Render the commit gate's evidence-first refusal while keeping admission silent.
 ///
 /// The shared refusal renderer owns both text and JSON grammar. Successful

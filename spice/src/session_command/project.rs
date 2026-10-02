@@ -15,8 +15,8 @@ use super::model::{
     MessageRecord, MessageView, OutstandingAskView, Report, SliceView, SweepWindow, TurnRecord,
     TurnView,
 };
-use super::page::{self, Page, Paged};
 use super::source::ResolvedSource;
+use crate::read_page::{self as page, Page, Paged};
 
 // Two report families are split out by `mod` rather than left inline, following
 // the decision recorded at `board_command.rs`: a child module already reads its

@@ -9,6 +9,7 @@ use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal};
 
 use crate::command_client::{SelectedCommand, execute_steering};
 
+pub(crate) mod inbox;
 pub(crate) mod media_projection;
 #[cfg(test)]
 mod tests;

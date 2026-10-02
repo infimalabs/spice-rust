@@ -308,6 +308,27 @@ impl JournalRead<'_> {
         before: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
+        self.recent_page(Some(kind), before, budget)
+    }
+
+    /// Read one bounded newest-first page of every fact kind, by primary key.
+    ///
+    /// The continuation is the oldest returned cursor, so the next call passes
+    /// it as `before` and resumes strictly before it.
+    pub fn recent_facts(
+        &self,
+        before: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.recent_page(None, before, budget)
+    }
+
+    fn recent_page(
+        &self,
+        kind: Option<wire::FactKind>,
+        before: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
         let Some(horizon) = self.cursor else {
             return Ok(SelectedFactPage {
                 rows: Vec::new(),
@@ -329,23 +350,21 @@ impl JournalRead<'_> {
         let query_limit = i64::try_from(query_limit)
             .map_err(|_| GuardError::Invalid("recent fact page limit exceeds SQLite".to_owned()))?;
         let mut sql = String::from(
-            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
-             WHERE kind = ?1 AND seq <= ?2",
+            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes WHERE seq <= ?",
         );
-        let mut parameters = vec![
-            Value::Text(kind.as_str().to_owned()),
-            Value::Integer(horizon_sql),
-        ];
+        let mut parameters = vec![Value::Integer(horizon_sql)];
+        if let Some(kind) = kind {
+            sql.push_str(" AND kind = ?");
+            parameters.push(Value::Text(kind.as_str().to_owned()));
+        }
         if let Some(before) = before {
             let before = i64::try_from(before.get())
                 .map_err(|_| GuardError::Invalid("recent fact cursor exceeds SQLite".to_owned()))?;
-            sql.push_str(" AND seq < ?3 ORDER BY seq DESC LIMIT ?4");
+            sql.push_str(" AND seq < ?");
             parameters.push(Value::Integer(before));
-            parameters.push(Value::Integer(query_limit));
-        } else {
-            sql.push_str(" ORDER BY seq DESC LIMIT ?3");
-            parameters.push(Value::Integer(query_limit));
         }
+        sql.push_str(" ORDER BY seq DESC LIMIT ?");
+        parameters.push(Value::Integer(query_limit));
         read_metrics::observe_query();
         let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
         let mut rows = statement

@@ -8,7 +8,6 @@ use super::super::model::{
     ActivityView, CompactionRecord, FoldBuffer, MessageRecord, PhaseExample, PhaseView, Report,
     Residue, SourceView, ThreadView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
 };
-use super::super::page::{Page, Paged};
 use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
 };
@@ -20,6 +19,7 @@ use super::{
     SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
     source_view_text_bytes, stream_records,
 };
+use crate::read_page::{Page, Paged};
 
 mod commit;
 mod recent;

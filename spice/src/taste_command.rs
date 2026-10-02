@@ -19,6 +19,7 @@ use wire::{
 use crate::cli::Contract;
 
 mod mining;
+pub(crate) mod view;
 pub(crate) use mining::mine;
 
 /// Conservatively reject evidence that may contain credentials before it can
@@ -157,9 +158,12 @@ struct TasteDefinition {
     scopes: gate::ScopeSelector,
 }
 
-/// Bare `spice taste` answer.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct TasteReport {
+/// Every tracked taste with its complete recent evidence, from one snapshot.
+///
+/// `spice taste` projects this onto bounded pages; curation proposals cite
+/// it whole.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TasteSnapshot {
     digest: Digest,
     provenance: TasteProvenance,
     tastes: Vec<TasteRow>,
@@ -276,11 +280,37 @@ enum Verdict {
 
 /// Authenticate through the resident and report one exact tracked generation.
 pub(crate) fn report(
+    matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
-) -> Outcome<TasteReport> {
-    match snapshot::<TasteReport>(contract, configuration) {
-        Ok((_, reply)) => Outcome::Reply(reply),
+) -> Outcome<view::TasteView> {
+    let page = match crate::read_page::Page::from_matches(matches, &["taste"]) {
+        Ok(page) => page,
+        Err(refusal) => return Outcome::Refusal(refusal),
+    };
+    let name = match matches
+        .get_one::<String>("name")
+        .map(|written| written.parse::<Name>())
+        .transpose()
+    {
+        Ok(name) => name,
+        Err(error) => {
+            return refusal(
+                "taste::name-invalid",
+                Some("one current lower-case taste name".to_owned()),
+                Some(error.to_string()),
+                "copy one exact name from spice taste output",
+            );
+        }
+    };
+    match snapshot::<view::TasteView>(contract, configuration) {
+        Ok((_, reply)) => match view::project(reply.body, page, name.as_ref()) {
+            Ok(body) => Outcome::Reply(Reply {
+                position: reply.position,
+                body,
+            }),
+            Err(refusal) => Outcome::Refusal(refusal),
+        },
         Err(outcome) => outcome,
     }
 }
@@ -486,7 +516,7 @@ fn render_scopes(scopes: &gate::ScopeSelector) -> String {
 fn snapshot<B>(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
-) -> Result<(Repository, Reply<TasteReport>), Outcome<B>> {
+) -> Result<(Repository, Reply<TasteSnapshot>), Outcome<B>> {
     let repository = current_repository()?;
     let state = repository
         .admit_state()
@@ -575,7 +605,7 @@ fn snapshot<B>(
             }
         })
         .collect();
-    let report = TasteReport {
+    let report = TasteSnapshot {
         digest: surface.digest.clone(),
         provenance: surface.provenance(),
         tastes,

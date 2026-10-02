@@ -1,23 +1,130 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use clap::ArgMatches;
+use serde::Serialize;
 use spice::repository::Repository;
-use wire::intent::{CommandAnswer, ConsentAnswer, ConsentPolicyAnswer, ConsentQueueAnswer};
-use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
+use wire::body::ConsentQueueCause;
+use wire::intent::{
+    CommandAnswer, ConsentAnswer, ConsentBudgetAnswer, ConsentPendingAnswer, ConsentPolicyAnswer,
+    ConsentQueueAnswer,
+};
+use wire::output::{Bounded, ClippedText};
+use wire::{CanonicalUuid, Fault, FaultClass, Name, Outcome, Refusal, Reply};
 
 use crate::cli::Contract;
 use crate::command_client::{self, SelectedCommand};
+use crate::read_page::Page;
 
-pub(crate) fn read(contract: &Contract) -> Outcome<ConsentQueueAnswer> {
+/// Bare `spice consent`: every pending request identity, the current
+/// budgets, and one bounded page of request detail in queue order.
+///
+/// The index is never paged, so no request waiting on the operator can be
+/// hidden by a page boundary; only the detail rows are.
+#[derive(Debug, Serialize)]
+pub(crate) struct ConsentQueueView {
+    /// Every pending request, in the order the detail pages walk.
+    index: Vec<CanonicalUuid>,
+    budgets: Vec<ConsentBudgetAnswer>,
+    pending: Bounded<ConsentPendingRow>,
+}
+
+/// One pending request with its operation clipped to the page's text limit.
+#[derive(Debug, Serialize)]
+struct ConsentPendingRow {
+    request: CanonicalUuid,
+    lane: CanonicalUuid,
+    operation: ClippedText,
+    rule: Name,
+    cause: ConsentQueueCause,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget: Option<ConsentBudgetAnswer>,
+}
+
+impl ConsentPendingRow {
+    fn of(pending: ConsentPendingAnswer, text: usize) -> Self {
+        Self {
+            request: pending.request,
+            lane: pending.lane,
+            operation: wire::output::clip(&pending.operation, text),
+            rule: pending.rule,
+            cause: pending.cause,
+            budget: pending.budget,
+        }
+    }
+}
+
+impl fmt::Display for ConsentQueueView {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "consent pending {}", self.index.len())?;
+        for request in &self.index {
+            write!(formatter, " {request}")?;
+        }
+        for budget in &self.budgets {
+            write!(
+                formatter,
+                "\nbudget {} {}/{}",
+                budget.rule, budget.remaining, budget.bound
+            )?;
+        }
+        for row in &self.pending.rows {
+            let cause = match row.cause {
+                ConsentQueueCause::Policy {} => "policy".to_owned(),
+                ConsentQueueCause::BudgetExhausted { bound } => format!("budget-exhausted/{bound}"),
+            };
+            write!(
+                formatter,
+                "\n{} lane={} rule={} cause={} {}",
+                row.request, row.lane, row.rule, cause, row.operation
+            )?;
+        }
+        match &self.pending.omission {
+            Some(omission) => write!(formatter, "\n{omission}"),
+            None => Ok(()),
+        }
+    }
+}
+
+pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<ConsentQueueView> {
+    let page = match Page::from_matches(matches, &["consent"]) {
+        Ok(page) => page,
+        Err(refusal) => return Outcome::Refusal(refusal),
+    };
     let canvas = match canvas_path() {
         Ok(canvas) => canvas,
         Err(outcome) => return outcome,
     };
-    queue_outcome(command_client::execute(
+    let reply = match queue_outcome(command_client::execute(
         &canvas,
         contract,
         SelectedCommand::ConsentRead,
-    ))
+    )) {
+        Outcome::Reply(reply) => reply,
+        Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => return Outcome::Fault(fault),
+    };
+    let ConsentQueueAnswer { pending, budgets } = reply.body;
+    let index = pending.iter().map(|pending| pending.request).collect();
+    let text = page.limits().text;
+    let rows = pending
+        .into_iter()
+        .map(|pending| ConsentPendingRow::of(pending, text))
+        .collect();
+    match page.listed(
+        rows,
+        |row| row.request.to_string(),
+        "ID of a pending request",
+    ) {
+        Ok(pending) => Outcome::Reply(Reply {
+            position: reply.position,
+            body: ConsentQueueView {
+                index,
+                budgets,
+                pending,
+            },
+        }),
+        Err(refusal) => Outcome::Refusal(refusal),
+    }
 }
 
 pub(crate) fn policy(contract: &Contract) -> Outcome<ConsentPolicyAnswer> {

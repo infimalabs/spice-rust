@@ -8,17 +8,18 @@ use crate::journal_lock::JournalLock;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
-    Actor, Digest, Domain, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
-    JournalVerification, Outcome, Overflow, Packed, Producer, Refusal, Reply, ReplyPosition, Seq,
+    Actor, Digest, Domain, FactRow, Fault, FaultClass, JournalBackup, JournalReindex,
+    JournalReport, JournalVerification, Outcome, Producer, Refusal, Reply, ReplyPosition, Seq,
     SeqRange, ThreadReport, WireVersion,
 };
+
+use crate::read_page::Page;
 
 const AUTHORITY_MEMBER: &str = "spicejournal.sqlite3";
 const ARTIFACT_MEMBERS: &str = "artifacts/tasks";
 const MANIFEST: &str = "manifest.json";
 const PRIVATE_FILE: u32 = 0o600;
 const PRIVATE_DIRECTORY: u32 = 0o700;
-const MAX_REPORT_FACTS: usize = 256;
 static NEXT_BACKUP: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
@@ -31,8 +32,11 @@ pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
     }
 }
 
-pub(crate) fn report(contract: &Contract) -> Outcome<JournalReport> {
-    match report_inner(contract) {
+pub(crate) fn report(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<JournalReport> {
+    match Page::from_matches(matches, &["journal"])
+        .map_err(Failure::Refusal)
+        .and_then(|page| report_inner(page, contract))
+    {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
@@ -56,7 +60,10 @@ pub(crate) fn thread(matches: &clap::ArgMatches, contract: &Contract) -> Outcome
     let reference = matches
         .get_one::<String>("REF")
         .expect("the generated thread parser requires REF");
-    match thread_inner(reference, contract) {
+    match Page::from_matches(matches, &["thread"])
+        .map_err(Failure::Refusal)
+        .and_then(|page| thread_inner(reference, page, contract))
+    {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
@@ -173,21 +180,69 @@ fn stage_artifact_members(
     Ok(members)
 }
 
-fn report_inner(contract: &Contract) -> Result<(ReplyPosition, JournalReport), Failure> {
+/// Newest facts first, from the caller's `--after SEQ` cursor down.
+///
+/// Facts occupy every position from 1 through the journal cursor, so the
+/// population at or before a start position is that position. Retained fact
+/// pages are read under the journal's own decoded-byte ceiling and clipped to
+/// rows as they arrive, so a large or oversized fact costs one bounded row.
+fn report_inner(
+    page: Page,
+    contract: &Contract,
+) -> Result<(ReplyPosition, JournalReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
-    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
-        read.fact_snapshot().map_err(snapshot_failure)
+    let text = page.limits().text;
+    let retain = page.retain();
+    let (cursor, (start, rows)) = read_authenticated(&state, &reader, contract, |read| {
+        let horizon = read
+            .cursor()
+            .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?
+            .ok_or_else(cursor_missing)?;
+        let start = match page.after() {
+            None => horizon,
+            Some(after) => after
+                .parse::<u64>()
+                .ok()
+                .and_then(Seq::new)
+                .filter(|seq| *seq <= horizon)
+                .ok_or_else(|| {
+                    Failure::Refusal(page.cursor_refusal(&format!("SEQ from 1 to {horizon}")))
+                })?,
+        };
+        let mut rows = Vec::new();
+        let mut before = start.get().checked_add(1).and_then(Seq::new);
+        while rows.len() < retain {
+            let budget = journal::FactReadBudget::new(
+                (retain - rows.len()).min(journal::MAX_RETAINED_FACT_PAGE_ROWS),
+                journal::MAX_RETAINED_FACT_PAGE_BYTES,
+            )
+            .map_err(|error| Failure::protocol("journal::read-budget", error.to_string()))?;
+            let fetched = read
+                .recent_facts(before, budget)
+                .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?;
+            rows.extend(fetched.rows.iter().map(|fact| {
+                let row = FactRow::of(fact, text);
+                let key = row.seq.to_string();
+                (row, key)
+            }));
+            match fetched.continuation {
+                Some(next) => before = Some(next),
+                None => break,
+            }
+        }
+        Ok((start, rows))
     })?;
-    let facts = count(snapshot.facts().len(), "facts")?;
-    let entries = pack_facts(snapshot.facts().to_vec(), cursor)?;
+    let population = usize::try_from(start.get())
+        .map_err(|error| Failure::protocol("journal::count-overflow", error.to_string()))?;
+    let entries = page.shown(rows, population).map_err(Failure::Refusal)?;
     Ok((
         ReplyPosition::Snapshot(cursor),
         JournalReport {
             schema,
             cursor: Some(cursor),
-            facts,
+            facts: cursor.get(),
             entries,
         },
     ))
@@ -244,6 +299,7 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
 
 fn thread_inner(
     reference: &str,
+    page: Page,
     contract: &Contract,
 ) -> Result<(ReplyPosition, ThreadReport), Failure> {
     let state = state()?;
@@ -251,12 +307,34 @@ fn thread_inner(
     let (cursor, thread) = read_authenticated(&state, &reader, contract, |read| {
         read.thread(reference).map_err(thread_failure)
     })?;
+    let start = match page.after() {
+        None => 0,
+        Some(after) => thread
+            .entries
+            .iter()
+            .position(|fact| fact.seq.to_string() == after)
+            .ok_or_else(|| Failure::Refusal(page.cursor_refusal("SEQ of a fact in this thread")))?,
+    };
+    let remaining = &thread.entries[start..];
+    let text = page.limits().text;
+    let rows = remaining
+        .iter()
+        .take(page.retain())
+        .map(|fact| {
+            let row = FactRow::of(fact, text);
+            let key = row.seq.to_string();
+            (row, key)
+        })
+        .collect();
+    let entries = page
+        .shown(rows, remaining.len())
+        .map_err(Failure::Refusal)?;
     Ok((
         ReplyPosition::Snapshot(cursor),
         ThreadReport {
             reference: thread.reference,
             root: thread.root,
-            entries: pack_facts(thread.entries, cursor)?,
+            entries,
         },
     ))
 }
@@ -510,28 +588,6 @@ fn count(value: usize, subject: &str) -> Result<u64, Failure> {
             "journal::count-overflow",
             format!("{subject} cannot cross as u64: {error}"),
         )
-    })
-}
-
-fn pack_facts(
-    mut entries: Vec<wire::Envelope<wire::AnyFact>>,
-    horizon: Seq,
-) -> Result<Packed<wire::Envelope<wire::AnyFact>>, Failure> {
-    let overflow = if entries.len() > MAX_REPORT_FACTS {
-        let continuation = entries[MAX_REPORT_FACTS].seq;
-        let omitted = count(entries.len() - MAX_REPORT_FACTS, "omitted facts")?;
-        entries.truncate(MAX_REPORT_FACTS);
-        Some(Overflow {
-            omitted,
-            continuation,
-        })
-    } else {
-        None
-    };
-    Ok(Packed {
-        rows: entries,
-        overflow,
-        horizon,
     })
 }
 
