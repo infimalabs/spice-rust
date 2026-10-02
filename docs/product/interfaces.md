@@ -249,6 +249,9 @@ under the interactive row, byte, and text limits. `spice task list` always
 orders current/actionable rows before waiting and terminal rows, then newest
 first, and applies the 20-row interactive default even with `--all` or
 `--project`. Both surfaces emit an exact `--after` continuation when rows remain.
+When both detail switches are present, context rows, closure, and notes share
+one aggregate detail budget. Their continuation preserves both switches and
+resumes at the first withheld context-row cursor or note position.
 
 `spice lane list` uses the same interactive row and byte limits. It orders the
 calling lane first, then occupied or claim-holding lanes, then remaining lanes;
