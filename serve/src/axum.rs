@@ -158,7 +158,7 @@ impl Capabilities {
             .map_err(|_| {
                 OpeningError::Fault(wire::Fault {
                     class: wire::FaultClass::Environment,
-                    reason: "canvas::capability-unavailable".to_owned(),
+                    reason: "serve::capability-unavailable".to_owned(),
                     detail: "resident capability registry is unavailable".to_owned(),
                 })
             })?
@@ -701,7 +701,7 @@ impl Server {
         .await
     }
 
-    /// Bind the command socket and Bus-backed canvas stream to one generation.
+    /// Bind the command socket and Bus-backed app stream to one generation.
     ///
     /// `binding` carries the address and access policy the caller owns: an
     /// operator reaching this surface from another machine needs a routable one

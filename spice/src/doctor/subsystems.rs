@@ -61,7 +61,7 @@ impl<'a> Context<'a> {
             DoctorSubsystem::Journal => state.authority.observation(),
             DoctorSubsystem::Steering => steering(&state.authority),
             DoctorSubsystem::Lane => lane(&state.authority),
-            DoctorSubsystem::Transport => transport(state.paths.canvas(), state.paths.resident()),
+            DoctorSubsystem::Transport => transport(state.paths.serve(), state.paths.resident()),
             DoctorSubsystem::Installation => installation(self.repository),
             DoctorSubsystem::Release => release(&state.authority),
         }
@@ -245,7 +245,7 @@ fn transport(path: &Path, resident: &Path) -> DoctorObservation {
     if length > MAX_DISCOVERY_BYTES {
         return unavailable("resident transport discovery exceeds its bounded document size");
     }
-    let discovery = match wire::decode::<canvas::Discovery>(&bytes) {
+    let discovery = match wire::decode::<serve::Discovery>(&bytes) {
         Ok(discovery) => discovery,
         Err(error) => {
             return unavailable(format!(

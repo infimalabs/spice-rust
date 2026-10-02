@@ -55,7 +55,7 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.locks(), common.join(".spice-rs/locks"));
     assert_eq!(state.proof(), common.join(".spice-rs/proof"));
     assert_eq!(state.resident(), common.join(".spice-rs/resident"));
-    assert_eq!(state.canvas(), common.join(".spice-rs/canvas"));
+    assert_eq!(state.serve(), common.join(".spice-rs/serve"));
     assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
     assert_eq!(state.rtk(), common.join(".spice-rs/rtk"));
@@ -69,7 +69,7 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
             "rtk",
             "supervisors",
             "steering-media",
-            "canvas-lanes"
+            "serve-lanes"
         ]
         .map(|name| Path::new(".spice-rs").join(name)),
     );
@@ -291,7 +291,7 @@ fn state_admission_refuses_every_link_at_its_exact_component() {
         ("locks", Path::new("locks")),
         ("proof", Path::new("proof")),
         ("resident", Path::new("resident")),
-        ("canvas", Path::new("canvas")),
+        ("serve", Path::new("serve")),
         ("degraded", Path::new("degraded")),
         ("tape", Path::new("tape")),
         ("supervisors", Path::new("supervisors")),
@@ -347,7 +347,7 @@ fn state_admission_refuses_non_directory_parents_and_non_regular_leaves() {
     for (label, relative) in [
         ("journal", Path::new("data/spicejournal.sqlite3")),
         ("resident", Path::new("resident")),
-        ("canvas", Path::new("canvas")),
+        ("serve", Path::new("serve")),
     ] {
         let (repository, runtime) = state_case(&scratch, &format!("directory-{label}"));
         let path = runtime.join(relative);

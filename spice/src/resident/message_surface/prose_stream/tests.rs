@@ -54,11 +54,11 @@ fn completed_ack_is_visible_before_settlement_and_survives_both_settled_shapes()
             bus.commit(write).expect("authority cursor commits"),
             bus::CommitOutcome::Committed(_)
         ));
-        let source = canvas::stream::Source::new(
+        let source = serve::stream::Source::new(
             bus.reader(),
             identity(0xc3),
             8,
-            canvas::stream::QuotePresenter::new(|_| Vec::new()),
+            serve::stream::QuotePresenter::new(|_| Vec::new()),
         );
         let publisher = source.message_publisher();
         let mut updates = source.subscribe_messages();

@@ -506,7 +506,7 @@ impl Resident {
             &runtime,
             readiness::ARRIVAL_HORIZON,
             "reference fixture resident",
-            || runtime.join("canvas").is_file(),
+            || runtime.join("serve").is_file(),
         ) {
             readiness::Readiness::Ready => resident,
             readiness::Readiness::Exited => panic!("reference fixture resident exited early"),

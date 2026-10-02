@@ -375,7 +375,7 @@ fn first_free_derived_team(head: &wire::ResidencyHead, source: CanonicalUuid) ->
 /// First appearance is not an arbitrary choice: it is exactly how the Canvas
 /// groups the lane answer into team surfaces, so the head's lane order *is* the
 /// durable team order. Rewriting that order below is what makes a drag durable
-/// without teaching the canvas a second ordering to disagree with.
+/// without teaching the app a second ordering to disagree with.
 /// Lanes this arrangement moved between teams, in arranged order.
 ///
 /// Reordering lanes inside one team moves no lane between teams and so
@@ -476,7 +476,7 @@ fn inherited_split_subscriptions(
 /// Every rule here is stated over the arrangement as a whole. A partial
 /// arrangement is never repaired by inference: a lane the operator forgot would
 /// otherwise be silently dropped from every team, which is a lane that exists
-/// in the resident and appears nowhere on the canvas.
+/// in the resident and appears nowhere in the app.
 fn admit_arrangement(
     head: &wire::ResidencyHead,
     request: &TeamArrange,

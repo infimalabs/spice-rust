@@ -29,23 +29,23 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
     fs::create_dir_all(root.join(".git")).expect("git directory");
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     fs::create_dir_all(&paths.runtime).expect("runtime directory");
-    let stale = canvas::Discovery {
+    let stale = serve::Discovery {
         endpoint: "http://127.0.0.1:48250".to_owned(),
         capability: test_uuid(1),
         epoch: test_uuid(2),
     };
     stale
-        .publish(&paths.canvas)
+        .publish(&paths.serve)
         .expect("the killed resident published this and never removed it");
 
     let resident_lock = ResidentLock::acquire(&paths).expect("a killed holder leaves no lock");
 
     let mut launched = Vec::new();
-    let inside = open_app(&paths.canvas, &mut launched);
+    let inside = open_app(&paths.serve, &mut launched);
     let Outcome::Fault(fault) = inside else {
         panic!("a record inside the startup window must fault: {inside:?}");
     };
-    assert_eq!(fault.reason, "canvas::publisher-replaced");
+    assert_eq!(fault.reason, "serve::publisher-replaced");
     assert!(
         launched.is_empty(),
         "a record no live resident published must not reach the launcher: {launched:?}"
@@ -58,7 +58,7 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
     resident_lock
         .set_epoch(stale.epoch)
         .expect("the holder names the generation it published");
-    let claimed = open_app(&paths.canvas, &mut launched);
+    let claimed = open_app(&paths.serve, &mut launched);
     assert!(
         matches!(claimed, Outcome::Reply(_)),
         "a record its holder claims must open: {claimed:?}"
@@ -67,11 +67,11 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
 
     // No holder at all is the older fault, and it keeps its own name.
     drop(resident_lock);
-    let orphaned = open_app(&paths.canvas, &mut launched);
+    let orphaned = open_app(&paths.serve, &mut launched);
     let Outcome::Fault(orphaned) = orphaned else {
         panic!("a record whose publisher is gone must fault: {orphaned:?}");
     };
-    assert_eq!(orphaned.reason, "canvas::publisher-gone");
+    assert_eq!(orphaned.reason, "serve::publisher-gone");
     assert_eq!(
         launched,
         [stale.endpoint.as_str()],
@@ -83,7 +83,7 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
     paths
         .clear_stale_surfaces()
         .expect("stale surfaces clear the way up clears them");
-    assert!(!paths.canvas.exists());
+    assert!(!paths.serve.exists());
     fs::remove_dir_all(&root).expect("startup window fixture cleanup");
 }
 

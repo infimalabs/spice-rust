@@ -45,7 +45,7 @@ pub(crate) fn open_app_result_with(
     if let Err(detail) = launch(&discovery.value.endpoint) {
         return Err(Fault {
             class: FaultClass::Environment,
-            reason: "canvas::launch-failed".to_owned(),
+            reason: "serve::launch-failed".to_owned(),
             detail,
         });
     }

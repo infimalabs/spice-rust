@@ -29,8 +29,8 @@ pub(crate) fn run(
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    let canvas = match repository.admit_resident_client() {
-        Ok(canvas) => canvas,
+    let serve = match repository.admit_resident_client() {
+        Ok(serve) => serve,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
     let (selected, lane_context) = match select(matches, contract, lane_environment) {
@@ -40,7 +40,7 @@ pub(crate) fn run(
     if let SelectedCommand::SteerTell { lane, message } = selected {
         return crate::command_client::execute_tell(&repository, contract, lane, message);
     }
-    execute_steering(&canvas, contract, selected, lane_context)
+    execute_steering(&serve, contract, selected, lane_context)
 }
 
 /// Choose the command one steering contract names, with its lane context.

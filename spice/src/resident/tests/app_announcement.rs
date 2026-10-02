@@ -195,11 +195,11 @@ pub(super) fn test_uuid(last: u8) -> CanonicalUuid {
 fn published_discovery(
     name: &str,
     port: u16,
-) -> (PathBuf, PathBuf, canvas::Discovery, sill::Possession) {
+) -> (PathBuf, PathBuf, serve::Discovery, sill::Possession) {
     let root = fixture(name);
     fs::create_dir_all(&root).expect("announcement fixture root");
-    let path = root.join("canvas");
-    let discovery = canvas::Discovery {
+    let path = root.join("serve");
+    let discovery = serve::Discovery {
         endpoint: format!("http://127.0.0.1:{port}"),
         capability: test_uuid(1),
         epoch: test_uuid(2),
@@ -235,7 +235,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
 
-    announce_canvas(
+    announce_app(
         &path,
         None,
         false,
@@ -266,7 +266,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
 
-    announce_canvas(
+    announce_app(
         &path,
         None,
         true,
@@ -299,7 +299,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
 
-    announce_canvas(
+    announce_app(
         &path,
         Some(TOKEN),
         true,
@@ -338,7 +338,7 @@ fn authenticated_opening_at_start_carries_the_token_as_a_fragment() {
 #[test]
 fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
     let (root, path, discovery, _publisher) = published_discovery("announce-stale", 48233);
-    let replacement = canvas::Discovery {
+    let replacement = serve::Discovery {
         capability: test_uuid(3),
         epoch: test_uuid(4),
         ..discovery.clone()
@@ -347,7 +347,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
 
-    announce_canvas(
+    announce_app(
         &path,
         None,
         true,
@@ -366,7 +366,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 
     let diagnostic = String::from_utf8(diagnostics).expect("diagnostic is text");
     assert!(
-        diagnostic.contains("canvas::discovery-replaced"),
+        diagnostic.contains("serve::discovery-replaced"),
         "the refusal must name its reason: {diagnostic}"
     );
     assert!(
@@ -391,12 +391,12 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     let root = fixture("announce-missing");
     fs::create_dir_all(&root).expect("announcement fixture root");
-    let path = root.join("canvas");
+    let path = root.join("serve");
     let mut dialled = None;
     let mut announced = Vec::new();
     let mut diagnostics = Vec::new();
 
-    announce_canvas(
+    announce_app(
         &path,
         None,
         true,

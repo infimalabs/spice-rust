@@ -661,7 +661,7 @@ impl fmt::Debug for ServedAsset {
     }
 }
 
-/// Why a canvas could not settle or serve its app source.
+/// Why an app server could not settle or serve its app source.
 #[derive(Debug)]
 pub enum AppSourceError {
     /// An app stage directory exists without the whole app in it.
@@ -1220,12 +1220,12 @@ mod tests {
     #[test]
     fn discovery_is_atomic_owner_only_and_never_debugs_its_capability() {
         let root = std::env::temp_dir().join(format!(
-            "spice-canvas-discovery-{}-{}",
+            "spice-serve-discovery-{}-{}",
             std::process::id(),
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("fixture directory");
-        let path = root.join("canvas");
+        let path = root.join("serve");
         let discovery = Discovery {
             endpoint: "http://127.0.0.1:48123".to_owned(),
             capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
@@ -1259,12 +1259,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let root = std::env::temp_dir().join(format!(
-            "spice-canvas-private-stage-{}-{}",
+            "spice-serve-private-stage-{}-{}",
             std::process::id(),
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("fixture directory");
-        let path = root.join("canvas");
+        let path = root.join("serve");
         let discovery = Discovery {
             endpoint: "http://127.0.0.1:48123".to_owned(),
             capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),

@@ -226,11 +226,11 @@ impl Fixture {
         path
     }
 
-    fn publish(&self, endpoint: &str) -> spice::canvas::Discovery {
+    fn publish(&self, endpoint: &str) -> spice::serve::Discovery {
         let identity = "00000000-0000-4000-8000-000000000000"
             .parse::<wire::CanonicalUuid>()
             .expect("fixture identity is canonical");
-        let discovery = spice::canvas::Discovery {
+        let discovery = spice::serve::Discovery {
             endpoint: endpoint.to_owned(),
             capability: identity,
             epoch: identity,
@@ -239,11 +239,11 @@ impl Fixture {
             .repository()
             .admit_state()
             .expect("scratch repository state is admitted");
-        if let Some(parent) = state.canvas().parent() {
+        if let Some(parent) = state.serve().parent() {
             fs::create_dir_all(parent).expect("scratch discovery parent is created");
         }
         discovery
-            .publish(state.canvas())
+            .publish(state.serve())
             .expect("scratch discovery publishes");
         fs::write(
             state.resident(),
@@ -294,7 +294,7 @@ fn unbound_port() -> u16 {
 /// Serve one exact resident bootstrap from `listener`.
 fn serve_bootstrap(
     listener: TcpListener,
-    discovery: spice::canvas::Discovery,
+    discovery: spice::serve::Discovery,
     binary: Digest,
 ) -> thread::JoinHandle<()> {
     serve_bootstraps(listener, discovery, vec![binary])
@@ -303,7 +303,7 @@ fn serve_bootstrap(
 /// Serve successive resident generations from one stable endpoint.
 fn serve_bootstraps(
     listener: TcpListener,
-    discovery: spice::canvas::Discovery,
+    discovery: spice::serve::Discovery,
     binaries: Vec<Digest>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -361,7 +361,7 @@ fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority(
     let fixture = Fixture::new("two-install-predecessor");
     let repository = fixture.repository();
     let state = repository.admit_state().expect("fixture state is admitted");
-    let discovery_path = state.canvas().to_path_buf();
+    let discovery_path = state.serve().to_path_buf();
     let stopped = fixture.0.join("predecessor-stopped");
     let started = fixture.0.join("successor-started");
     let saved_discovery = fixture.0.join("saved-discovery");
@@ -451,7 +451,7 @@ fn rollback_promotion_failure_restores_the_predecessor_resident() {
     let fixture = Fixture::new("rollback-promotion-failure");
     let repository = fixture.repository();
     let state = repository.admit_state().expect("fixture state is admitted");
-    let discovery_path = state.canvas().to_path_buf();
+    let discovery_path = state.serve().to_path_buf();
     let saved_discovery = fixture.0.join("saved-discovery");
     let restored = fixture.0.join("predecessor-restored");
     let common = workspace(&repository).expect("common refresh workspace exists");
@@ -724,7 +724,7 @@ fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
         .expect("readiness is UTF-8");
     let script = format!(
         "#!/bin/sh\nif [ \"$1\" = down ]; then rm -f '{}'; exit 0; fi\nif [ -f '{}' ]; then printf '%s\\n' '{}'; exit 0; fi\n: > '{}'\necho 'spice: resident::already-up; pid=42' >&2\nexit 2\n",
-        state.canvas().display(),
+        state.serve().display(),
         marker.display(),
         readiness,
         marker.display(),

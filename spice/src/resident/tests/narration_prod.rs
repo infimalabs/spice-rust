@@ -85,7 +85,7 @@ fn a_silent_lane_is_prodded_and_falls_silent_once_it_speaks() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     let epoch = test_uuid(4);
-    canvas_announcement::seat_occupied_ingestion_residency(&bus, lane, occupant, epoch);
+    app_announcement::seat_occupied_ingestion_residency(&bus, lane, occupant, epoch);
     let mut seats = Seats::new();
     seats
         .seat_detached(
@@ -107,7 +107,7 @@ fn a_silent_lane_is_prodded_and_falls_silent_once_it_speaks() {
         state: std::sync::Mutex::new(MessageState::default()),
         diagnostics: Vec::new(),
     };
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();

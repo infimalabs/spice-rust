@@ -245,9 +245,9 @@ fn evidence_failure(error: &gate::EvidenceStoreError) -> WorkerFailure {
 fn prove_failure(error: super::super::prove::ProveFailure) -> WorkerFailure {
     let reason = match error.reason() {
         "gate::source-moved" | "gate::prove-source-moved" => "gate::pre-commit-staged-source-moved",
-        "gate::prove-action-not-reusable"
-        | "gate::prove-cargo-action-not-reusable"
-        | "gate::prove-canvas-build-not-reusable" => "gate::pre-commit-proof-closure-mismatch",
+        "gate::prove-action-not-reusable" | "gate::prove-cargo-action-not-reusable" => {
+            "gate::pre-commit-proof-closure-mismatch"
+        }
         reason => reason,
     };
     WorkerFailure {

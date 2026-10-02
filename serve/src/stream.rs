@@ -104,7 +104,7 @@ impl QuotaFeed {
     }
 }
 
-/// Generation-owned source for every streamed canvas answer.
+/// Generation-owned source for every streamed app answer.
 #[derive(Clone, Debug)]
 pub struct Source {
     bus: BusReader,
@@ -124,7 +124,7 @@ struct ReadCounts {
 }
 
 impl Source {
-    /// Bind canvas reads to one resident Bus generation and one packing bound.
+    /// Bind app reads to one resident Bus generation and one packing bound.
     #[must_use]
     pub fn new(
         bus: BusReader,

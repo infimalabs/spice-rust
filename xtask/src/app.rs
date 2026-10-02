@@ -67,7 +67,7 @@ fn app_from(
             output,
             "[app] {} generation {identity} from selected sources {} ({source_identity}) is \
              already current; the compiler was not run",
-            root.join(spice::canvas::APP_STAGE).display(),
+            root.join(spice::serve::APP_STAGE).display(),
             root.display(),
         )
         .map_err(AppBuildError::Output);
@@ -88,7 +88,7 @@ fn app_at<W: Write>(
     build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
     verify_sources: impl FnOnce() -> Result<(), AppBuildError>,
 ) -> Result<(), AppBuildError> {
-    let stage = root.join(spice::canvas::APP_STAGE);
+    let stage = root.join(spice::serve::APP_STAGE);
     let temporary = root.join("dist").join(format!(
         ".stage-app-build-{}-{}",
         std::process::id(),
@@ -136,10 +136,10 @@ fn app_at<W: Write>(
 /// no app source was paying. Any defect in the published stage answers `None`
 /// and the compiler runs as before.
 fn current_generation_of(publish_root: &Path, source_identity: &Digest) -> Option<Digest> {
-    let stage = spice::canvas::AppSource::resolve(publish_root).ok()?;
+    let stage = spice::serve::AppSource::resolve(publish_root).ok()?;
     let generation = stage.current_generation().ok()?;
     let wasm = generation
-        .served(spice::canvas::APP.asset(WASM_ROUTE)?)
+        .served(spice::serve::APP.asset(WASM_ROUTE)?)
         .ok()?;
     carries_identity(wasm.bytes(), source_identity).then(|| generation.identity().clone())
 }
@@ -154,13 +154,13 @@ fn publish_generation(
     temporary: &Path,
     identity: &Digest,
 ) -> Result<(), AppBuildError> {
-    if stage.exists() && !stage.join(spice::canvas::APP_STAGE_CURRENT).is_file() {
+    if stage.exists() && !stage.join(spice::serve::APP_STAGE_CURRENT).is_file() {
         fs::remove_dir_all(stage).map_err(|source| AppBuildError::Io {
             path: stage.to_path_buf(),
             source,
         })?;
     }
-    let generations = stage.join(spice::canvas::APP_STAGE_GENERATIONS);
+    let generations = stage.join(spice::serve::APP_STAGE_GENERATIONS);
     fs::create_dir_all(&generations).map_err(|source| AppBuildError::Io {
         path: generations.clone(),
         source,
@@ -183,7 +183,7 @@ fn publish_generation(
         })?;
     }
 
-    let pointer = stage.join(spice::canvas::APP_STAGE_CURRENT);
+    let pointer = stage.join(spice::serve::APP_STAGE_CURRENT);
     let destination = atomic::Destination::new(&pointer).map_err(AppBuildError::Atomic)?;
     let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
     writeln!(staged, "{identity}").map_err(|source| AppBuildError::Io {
@@ -387,14 +387,14 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
         )));
     }
     let mut qualified = html.replace(APP_GENERATION_PLACEHOLDER, identity.as_str());
-    for asset in spice::canvas::APP
+    for asset in spice::serve::APP
         .assets()
         .iter()
         .filter(|asset| asset.path() != "/")
     {
         let route = format!(
             "{}/{identity}/{}",
-            spice::canvas::APP_GENERATION_ROUTE,
+            spice::serve::APP_GENERATION_ROUTE,
             asset.file()
         );
         qualified = qualified.replace(asset.path(), &route);
@@ -420,7 +420,7 @@ fn validate_wasm_source(stage: &Path, source_identity: &Digest) -> Result<(), Ap
 }
 
 fn validate_qualified_references(html: &str, identity: &Digest) -> Result<(), AppBuildError> {
-    for asset in spice::canvas::APP
+    for asset in spice::serve::APP
         .assets()
         .iter()
         .filter(|asset| asset.path() != "/")
@@ -431,7 +431,7 @@ fn validate_qualified_references(html: &str, identity: &Digest) -> Result<(), Ap
             .expect("every non-root app asset has one generated reference count");
         let route = format!(
             "{}/{identity}/{}",
-            spice::canvas::APP_GENERATION_ROUTE,
+            spice::serve::APP_GENERATION_ROUTE,
             asset.file()
         );
         let qualified = html.matches(&route).count();

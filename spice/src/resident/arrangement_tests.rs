@@ -1,6 +1,6 @@
 //! One drag, one durable arrangement.
 //!
-//! Every gesture the canvas offers -- dragging a team into another's place,
+//! Every gesture the app offers -- dragging a team into another's place,
 //! dropping one onto another's edge to join them -- arrives here as the same
 //! whole restatement of the lane table. These tests share one fixture because
 //! the law under them is shared: an arrangement is admitted entire or refused
@@ -88,8 +88,8 @@ impl Arranged {
             worktree: None,
         };
         let command = state_command(self.epoch, test_uuid(id), &request);
-        let capabilities = canvas::axum::Capabilities::default();
-        let discovery = canvas::Discovery {
+        let capabilities = serve::axum::Capabilities::default();
+        let discovery = serve::Discovery {
             endpoint: "http://127.0.0.1:1".to_owned(),
             capability: test_uuid(98),
             epoch: self.epoch,
@@ -377,7 +377,7 @@ fn committed_lane_change(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::L
     answer
 }
 
-/// One arranged team, stated as the operator's canvas states it.
+/// One arranged team, stated as the operator's app states it.
 fn standing(team: CanonicalUuid, lanes: &[CanonicalUuid]) -> wire::intent::TeamArrangement {
     wire::intent::TeamArrangement {
         team,
@@ -453,7 +453,7 @@ fn arranged_fact(bus: &Bus, field: &str) -> serde_json::Value {
 /// Both drag gestures commit through one arrangement.
 ///
 /// The reorder and the join are asserted in a single arrangement because that
-/// is the only shape the canvas can send: a drag states where every team and
+/// is the only shape the app can send: a drag states where every team and
 /// every lane stands afterwards, so a test that moved one lane at a time would
 /// be proving a law this resident does not offer. The occupant, its team,
 /// and its supervised seat are asserted across the move because a joined lane

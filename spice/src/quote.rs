@@ -202,8 +202,8 @@ pub fn presenter(
     tape: PathBuf,
     bus: BusReader,
     agent_presenter: AgentProsePresenter,
-) -> canvas::stream::QuotePresenter {
-    canvas::stream::QuotePresenter::new(move |text| {
+) -> serve::stream::QuotePresenter {
+    serve::stream::QuotePresenter::new(move |text| {
         Resolver::from_tape_with_agent_presenter(&tape, &bus, agent_presenter).present(text)
     })
 }

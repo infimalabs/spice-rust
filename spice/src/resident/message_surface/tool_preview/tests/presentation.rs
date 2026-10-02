@@ -14,7 +14,7 @@ impl AgentMessagePublisher for Messages {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         self.0.lock().expect("message lock").push(message);
         Ok(true)
     }
@@ -22,14 +22,14 @@ impl AgentMessagePublisher for Messages {
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         *self.1.lock().expect("revision lock") += 1;
         let mut messages = self.0.lock().expect("message lock");
         let Some(existing) = messages
             .iter_mut()
             .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
         else {
-            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+            return Err(serve::stream::MessagePublishError::IdentityConflict);
         };
         *existing = message;
         Ok(true)

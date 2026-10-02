@@ -31,7 +31,7 @@ pub(crate) fn run() -> Outcome<LanePurgeReport> {
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let lanes = match read_lanes(state.canvas()) {
+    let lanes = match read_lanes(state.serve()) {
         Ok(lanes) => lanes,
         Err(outcome) => return outcome,
     };
@@ -156,8 +156,8 @@ mod tests {
     fn purge_retires_only_unseated_canonical_residue_across_every_family() {
         let (root, state) = state();
         for family in state.lane_families() {
-            plant(family, SEATED, family != state.lane_canvas());
-            plant(family, GONE, family != state.lane_canvas());
+            plant(family, SEATED, family != state.lane_serve());
+            plant(family, GONE, family != state.lane_serve());
             plant(family, "notes", false);
         }
         let seated = BTreeSet::from([SEATED.parse::<CanonicalUuid>().expect("seated lane")]);
@@ -173,7 +173,7 @@ mod tests {
                 "rtk",
                 "supervisors",
                 "steering-media",
-                "canvas-lanes"
+                "serve-lanes"
             ]
             .map(|family| format!("{family}/{GONE}")),
         );

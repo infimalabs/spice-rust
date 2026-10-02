@@ -125,7 +125,7 @@ shards = 5
 directory = "locks/a[0]"
 shards = 6
 
-[canvas.pack]
+[serve.pack]
 rows = 80
 
 [proof]
@@ -300,7 +300,7 @@ fn root_is_exactly_the_eighteen_typed_domains() {
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
             "commands", "wrappers", "rtk", "tasks", "judge", "policy", "taste", "consent", "gate",
-            "board", "lane", "steer", "vendor", "listen", "lock", "canvas", "say", "proof",
+            "board", "lane", "steer", "vendor", "listen", "lock", "serve", "say", "proof",
         ])
     );
 
@@ -590,7 +590,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "lock.<name>.path",
     "lock.<name>.directory",
     "lock.<name>.shards",
-    "canvas.pack.rows",
+    "serve.pack.rows",
     "say.backend",
     "say.command",
     "say.voice",
@@ -727,7 +727,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.<name>.path",
             "lock.<name>.directory",
             "lock.<name>.shards",
-            "canvas.pack.rows",
+            "serve.pack.rows",
             "say.backend",
             "say.command",
             "say.content_type",

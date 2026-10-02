@@ -130,7 +130,7 @@ pub(super) fn cover_reply_frames() {
             DemoAnswer {
                 root: "/tmp/spice-demo-two".to_owned(),
                 transcript: "/tmp/spice-demo-two/spice-demo-transcript.jsonl".to_owned(),
-                mode: "canvas".to_owned(),
+                mode: "app".to_owned(),
                 lifecycle: "removed".to_owned(),
                 endpoint: Some("http://127.0.0.1:48213".to_owned()),
                 launch_command: "spice demo --reuse /tmp/spice-demo-two".to_owned(),

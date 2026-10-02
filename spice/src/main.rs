@@ -260,7 +260,7 @@ fn main() {
         deliver_fault(
             Fault {
                 class: FaultClass::Environment,
-                reason: "canvas::test-app-selection-invalid".to_owned(),
+                reason: "serve::test-app-selection-invalid".to_owned(),
                 detail: "the debug-only app stage argument is valid only for `spice up`".to_owned(),
             },
             form,
@@ -289,7 +289,7 @@ fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Faul
     if occurrences > 1 {
         return Err(Fault {
             class: FaultClass::Environment,
-            reason: "canvas::test-app-selection-invalid".to_owned(),
+            reason: "serve::test-app-selection-invalid".to_owned(),
             detail: "the debug-only app stage argument may appear only once".to_owned(),
         });
     }
@@ -738,7 +738,7 @@ fn version_outcome() -> Outcome<wire::Version> {
         Ok(state) => state,
         Err(error) => return state_failure(&error).outcome(),
     };
-    let app = match canvas::AppSource::resolve(repository.worktree_root())
+    let app = match serve::AppSource::resolve(repository.worktree_root())
         .and_then(|source| source.current_generation())
     {
         Ok(generation) => generation.identity().clone(),

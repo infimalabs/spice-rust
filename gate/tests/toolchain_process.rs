@@ -37,7 +37,7 @@ fn app_public_acquisition_retains_unparsed_nonzero_without_running_trunk() {
         "trunk ran after the cargo analysis refused"
     );
 
-    measure_toolchain(observations).expect("canvas nonzero observation is admitted");
+    measure_toolchain(observations).expect("app nonzero observation is admitted");
     repository.remove();
     stubs.remove();
 }

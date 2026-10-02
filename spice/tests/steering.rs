@@ -101,12 +101,12 @@ impl Fixture {
         self.runtime.join("data/spicejournal.sqlite3")
     }
 
-    fn canvas(&self) -> PathBuf {
-        self.runtime.join("canvas")
+    fn serve(&self) -> PathBuf {
+        self.runtime.join("serve")
     }
 
-    fn discovery(&self) -> canvas::Discovery {
-        wire::decode(&fs::read(self.canvas()).expect("operator discovery reads"))
+    fn discovery(&self) -> serve::Discovery {
+        wire::decode(&fs::read(self.serve()).expect("operator discovery reads"))
             .expect("operator discovery decodes")
     }
 
@@ -188,7 +188,7 @@ impl RunningResident {
             &fixture.runtime,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
-            || fixture.canvas().is_file(),
+            || fixture.serve().is_file(),
         ) {
             Readiness::Ready => {}
             Readiness::Exited => self.assert_running(),
@@ -303,7 +303,7 @@ fn holds(rows: &[serde_json::Value], directive: wire::CanonicalUuid) -> bool {
         .any(|row| row["directive"] == directive.to_string())
 }
 
-fn operator_socket(fixture: &Fixture) -> (WebSocket<TcpStream>, canvas::Discovery) {
+fn operator_socket(fixture: &Fixture) -> (WebSocket<TcpStream>, serve::Discovery) {
     let discovery = fixture.discovery();
     let authority = discovery
         .endpoint
@@ -356,7 +356,7 @@ fn socket_receive<T: DeserializeOwned>(socket: &mut WebSocket<TcpStream>) -> T {
 
 fn send_operator_direction(
     socket: &mut WebSocket<TcpStream>,
-    discovery: &canvas::Discovery,
+    discovery: &serve::Discovery,
     directive: wire::CanonicalUuid,
     fanout: wire::CanonicalUuid,
     lane: wire::CanonicalUuid,
@@ -424,7 +424,7 @@ fn setup() -> (Fixture, RunningResident, Lanes) {
     assert!(
         fixture
             .runtime
-            .join("canvas-lanes")
+            .join("serve-lanes")
             .join(lanes.target.to_string())
             .is_file(),
         "resident did not publish the lane capability document"

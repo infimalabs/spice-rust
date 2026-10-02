@@ -130,7 +130,7 @@ enum Connection {
 
 /// Submit one contract-bound command to the current repository resident.
 ///
-/// `discovery_path` must be the canvas path returned by the caller's single
+/// `discovery_path` must be the app-server path returned by the caller's single
 /// [`spice::repository::Repository::admit_state`] admission.
 pub(crate) fn execute(
     discovery_path: &Path,
@@ -285,7 +285,7 @@ fn restart_unfinished(
     bound: Duration,
 ) -> Outcome<CommandAnswer> {
     match &outcome {
-        Outcome::Fault(fault) if fault.reason == "canvas::deadline-elapsed" => {}
+        Outcome::Fault(fault) if fault.reason == "serve::deadline-elapsed" => {}
         _ => return outcome,
     }
     Outcome::Refusal(Refusal::bare(
@@ -489,24 +489,24 @@ fn refreshable_fault<'a>(
         return Ok(None);
     };
     match fault.reason.as_str() {
-        "canvas::publisher-replaced" => Ok(Some(fault)),
-        "canvas::discovery-unavailable" | "canvas::discovery-replaced" => {
+        "serve::publisher-replaced" => Ok(Some(fault)),
+        "serve::discovery-unavailable" | "serve::discovery-replaced" => {
             if recovering_submission {
                 return Ok(Some(fault));
             }
             match publisher_availability(resident_lock)? {
                 Availability::Held => Ok(Some(fault)),
                 Availability::Available => Err(environment_fault_value(
-                    "canvas::publisher-gone",
+                    "serve::publisher-gone",
                     "no resident holds the runtime lock or publishes its discovery; run `spice up` from this repository to restore resident commands",
                 )),
             }
         }
-        "canvas::publisher-gone"
-        | "canvas::connect-failed"
-        | "canvas::opening-failed"
-        | "canvas::send-failed"
-        | "canvas::receive-failed"
+        "serve::publisher-gone"
+        | "serve::connect-failed"
+        | "serve::opening-failed"
+        | "serve::send-failed"
+        | "serve::receive-failed"
             if recovering_submission =>
         {
             Ok(Some(fault))
@@ -521,7 +521,7 @@ fn interrupted_submission(outcome: &Outcome<CommandAnswer>) -> Option<&Fault> {
     };
     matches!(
         fault.reason.as_str(),
-        "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
+        "serve::send-failed" | "serve::receive-failed" | "serve::closed-without-answer"
     )
     .then_some(fault)
 }
@@ -530,12 +530,12 @@ fn publisher_availability(resident_lock: &Path) -> Result<Availability, Fault> {
     let name = LockName::new("resident").expect("resident is a non-empty lock name");
     LockFile::new(name, resident_lock)
         .availability()
-        .map_err(|error| environment_fault_value("canvas::publisher-unknown", &error.to_string()))
+        .map_err(|error| environment_fault_value("serve::publisher-unknown", &error.to_string()))
 }
 
 fn acquisition_deadline(bound: Duration, prior: &str) -> Outcome<CommandAnswer> {
     environment_fault(
-        "canvas::deadline-elapsed",
+        "serve::deadline-elapsed",
         &format!(
             "resident did not publish an authenticated surface within the {bound:?} client bound after {prior}"
         ),
@@ -689,7 +689,7 @@ fn discloses_capability(frame: &[u8], capability: CanonicalUuid) -> bool {
 fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> ClientResult<()> {
     let bytes = wire::encode(value).map_err(|_| {
         protocol_fault(
-            "canvas::request-unencodable",
+            "serve::request-unencodable",
             "current client request did not retain its wire representation",
         )
     })?;
@@ -716,7 +716,7 @@ fn transport_fault(
     });
     if failure.deadline_elapsed {
         return environment_fault(
-            "canvas::deadline-elapsed",
+            "serve::deadline-elapsed",
             &format!(
                 "resident did not answer within the {:?} client bound: {detail}",
                 stream.bound
@@ -724,8 +724,8 @@ fn transport_fault(
         );
     }
     match failure.direction {
-        IoDirection::Read => environment_fault("canvas::receive-failed", detail),
-        IoDirection::Write => environment_fault("canvas::send-failed", detail),
+        IoDirection::Read => environment_fault("serve::receive-failed", detail),
+        IoDirection::Write => environment_fault("serve::send-failed", detail),
     }
 }
 
@@ -747,14 +747,14 @@ struct OpeningBound {
 fn opening_fault(opening: OpeningBound, detail: &str) -> Outcome<CommandAnswer> {
     if Instant::now() >= opening.deadline {
         return environment_fault(
-            "canvas::deadline-elapsed",
+            "serve::deadline-elapsed",
             &format!(
                 "resident did not open a socket within the {:?} client bound: {detail}",
                 opening.bound
             ),
         );
     }
-    environment_fault("canvas::opening-failed", detail)
+    environment_fault("serve::opening-failed", detail)
 }
 
 fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
@@ -775,7 +775,7 @@ fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
             Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
             Message::Close(_) => {
                 return Err(protocol_fault(
-                    "canvas::closed-without-answer",
+                    "serve::closed-without-answer",
                     "resident closed the socket before answering",
                 ));
             }
@@ -784,19 +784,19 @@ fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
 }
 
 fn discovery_unavailable(error: io::Error) -> Fault {
-    environment_fault_value("canvas::discovery-unavailable", &error.to_string())
+    environment_fault_value("serve::discovery-unavailable", &error.to_string())
 }
 
 fn discovery_replaced() -> Fault {
     environment_fault_value(
-        "canvas::discovery-replaced",
+        "serve::discovery-replaced",
         "resident discovery changed identity while the current generation was acquired",
     )
 }
 
 fn capability_disclosed() -> Outcome<CommandAnswer> {
     protocol_fault(
-        "canvas::capability-disclosed",
+        "serve::capability-disclosed",
         "resident response attempted to disclose the opening capability",
     )
 }

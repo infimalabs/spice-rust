@@ -20,7 +20,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     let lane = test_uuid(5);
     let occupant = test_uuid(6);
     let epoch = test_uuid(4);
-    canvas_announcement::seat_ingestion_residency(&bus, lane, epoch);
+    app_announcement::seat_ingestion_residency(&bus, lane, epoch);
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the lane tape opens");
     let first = tape.tee(FIRST).expect("the first record is durable");
@@ -36,7 +36,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
             }),
         )
         .expect("the sweep fixture occupant is seated");
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let mut diagnostics = Vec::new();

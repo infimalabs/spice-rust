@@ -13,13 +13,13 @@ use super::*;
 /// evidence a killed resident leaves behind — and exactly why the pid in it
 /// cannot be the check.
 #[test]
-fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
-    let mut fixture = Fixture::new("canvas-publisher-gone");
+fn app_server_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
+    let mut fixture = Fixture::new("serve-publisher-gone");
     let discovery = fixture.publish();
     let mut launched = Vec::new();
 
     let live = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |endpoint| {
             launched.push(endpoint.to_owned());
@@ -32,11 +32,11 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
     );
     assert_eq!(launched, [discovery.endpoint.as_str()]);
 
-    let record = fs::read(&fixture.canvas).expect("published record reads");
+    let record = fs::read(&fixture.serve).expect("published record reads");
     let holder = fs::read(fixture.root.join("resident")).expect("holder line reads");
     fixture.release_publisher();
     assert_eq!(
-        fs::read(&fixture.canvas).expect("record survives the publisher"),
+        fs::read(&fixture.serve).expect("record survives the publisher"),
         record,
         "releasing the lock must not be a rewrite of the record under test"
     );
@@ -47,7 +47,7 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
     );
 
     let gone = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |endpoint| {
             launched.push(endpoint.to_owned());
@@ -58,7 +58,7 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
     let Outcome::Fault(fault) = gone else {
         panic!("a record whose publisher is gone must fault");
     };
-    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(fault.reason, "serve::publisher-gone");
     assert_eq!(
         launched,
         [discovery.endpoint],
@@ -74,8 +74,8 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
 /// is not at fault, and admitting it would dial an endpoint nobody has shown
 /// is served.
 #[test]
-fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
-    let mut fixture = Fixture::new("canvas-publisher-unknown");
+fn app_server_refuses_a_publisher_whose_lock_cannot_be_probed() {
+    let mut fixture = Fixture::new("serve-publisher-unknown");
     let discovery = fixture.publish();
     fixture.release_publisher();
 
@@ -85,7 +85,7 @@ fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
 
     let mut launched = false;
     let outcome = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |_| {
             launched = true;
@@ -96,7 +96,7 @@ fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
     let Outcome::Fault(fault) = outcome else {
         panic!("an unprobeable lock must fault");
     };
-    assert_eq!(fault.reason, "canvas::publisher-unknown");
+    assert_eq!(fault.reason, "serve::publisher-unknown");
     assert!(!launched, "an unprobeable lock must not reach the launcher");
     assert!(!fault.detail.contains(&discovery.capability.to_string()));
 }
@@ -192,7 +192,7 @@ const PEER_BOUND: Duration = Duration::from_secs(10);
 /// refusal cannot be explained by a client that never got that far.
 fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResult<()>, Vec<u8>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("peer binds an endpoint");
-    let discovery = canvas::Discovery {
+    let discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             listener.local_addr().expect("peer endpoint address")
@@ -201,7 +201,7 @@ fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResu
         epoch: uuid(2),
     };
     discovery
-        .publish(&fixture.canvas)
+        .publish(&fixture.serve)
         .expect("fixture discovery publishes");
     fixture.hold(discovery.epoch);
 
@@ -213,7 +213,7 @@ fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResu
         move || answer_one_opening(listener, accepted, seen, epoch)
     });
 
-    let read = DiscoveryRead::open(&fixture.canvas, &resident_lock_path(&fixture.canvas))
+    let read = DiscoveryRead::open(&fixture.serve, &resident_lock_path(&fixture.serve))
         .expect("fixture discovery reads");
     let outcome = open_session_with(&COMMAND_CONTRACT, read, OPENING_BOUND, || {
         connected
@@ -247,8 +247,8 @@ fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResu
 /// not what the client believes it withheld but what actually reached a
 /// stranger's socket.
 #[test]
-fn canvas_refuses_a_publisher_lost_between_the_connect_and_the_handshake() {
-    let mut fixture = Fixture::new("canvas-publisher-lost-after-connect");
+fn app_server_refuses_a_publisher_lost_between_the_connect_and_the_handshake() {
+    let mut fixture = Fixture::new("serve-publisher-lost-after-connect");
     let capability = uuid(1).to_string();
 
     let (live, live_seen) = open_against_peer(&mut fixture, false);
@@ -272,7 +272,7 @@ fn canvas_refuses_a_publisher_lost_between_the_connect_and_the_handshake() {
     let Err(Outcome::Fault(fault)) = gone else {
         panic!("a publisher lost after the connect must fault: {gone:?}");
     };
-    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(fault.reason, "serve::publisher-gone");
     assert!(
         gone_seen.is_empty(),
         "a refused opening writes nothing at all: {:?}",
@@ -288,12 +288,12 @@ fn canvas_refuses_a_publisher_lost_between_the_connect_and_the_handshake() {
 }
 
 #[test]
-fn canvas_launcher_interruption_is_one_typed_fault() {
-    let fixture = Fixture::new("canvas-launch-interruption");
+fn app_server_launcher_interruption_is_one_typed_fault() {
+    let fixture = Fixture::new("serve-launch-interruption");
     let discovery = fixture.publish();
 
     let outcome = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |_| Err("fixture launcher was interrupted".to_owned()),
     );
@@ -301,14 +301,14 @@ fn canvas_launcher_interruption_is_one_typed_fault() {
     let Outcome::Fault(fault) = outcome else {
         panic!("launcher interruption must fault");
     };
-    assert_eq!(fault.reason, "canvas::launch-failed");
+    assert_eq!(fault.reason, "serve::launch-failed");
     assert_eq!(fault.detail, "fixture launcher was interrupted");
     assert!(!fault.detail.contains(&discovery.capability.to_string()));
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn canvas_platform_launcher_has_one_fixed_program_and_exact_endpoint() {
+fn app_server_platform_launcher_has_one_fixed_program_and_exact_endpoint() {
     use std::ffi::OsStr;
 
     let endpoint = "http://127.0.0.1:48123";
@@ -338,25 +338,25 @@ fn discovery_symlinks_and_public_modes_are_refused() {
 
     let fixture = Fixture::new("insecure");
     let discovery = fixture.publish();
-    fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o644))
+    fs::set_permissions(&fixture.serve, fs::Permissions::from_mode(0o644))
         .expect("fixture mode changes");
     let Err(Outcome::Fault(fault)) =
-        DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+        DiscoveryRead::open(&fixture.serve, &fixture.root.join("resident"))
     else {
         panic!("public discovery must be refused");
     };
-    assert_eq!(fault.reason, "canvas::discovery-insecure");
+    assert_eq!(fault.reason, "serve::discovery-insecure");
 
-    fs::remove_file(&fixture.canvas).expect("public fixture removes");
+    fs::remove_file(&fixture.serve).expect("public fixture removes");
     let target = fixture.root.join("target");
     discovery.publish(&target).expect("target publishes");
-    symlink(&target, &fixture.canvas).expect("fixture symlink");
+    symlink(&target, &fixture.serve).expect("fixture symlink");
     let Err(Outcome::Fault(fault)) =
-        DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+        DiscoveryRead::open(&fixture.serve, &fixture.root.join("resident"))
     else {
         panic!("symlink discovery must be refused");
     };
-    assert_eq!(fault.reason, "canvas::discovery-insecure");
+    assert_eq!(fault.reason, "serve::discovery-insecure");
 }
 
 #[cfg(unix)]
@@ -370,10 +370,10 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     let mut anchor = None;
 
     let started = Instant::now();
-    let outcome = DiscoveryRead::open_with(&fixture.canvas, &fixture.root.join("resident"), || {
-        fs::remove_file(&fixture.canvas).expect("regular discovery removes");
+    let outcome = DiscoveryRead::open_with(&fixture.serve, &fixture.root.join("resident"), || {
+        fs::remove_file(&fixture.serve).expect("regular discovery removes");
         let status = ProcessCommand::new("mkfifo")
-            .arg(&fixture.canvas)
+            .arg(&fixture.serve)
             .status()
             .expect("mkfifo launches");
         assert!(status.success(), "mkfifo creates the substitution");
@@ -382,7 +382,7 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
                 .read(true)
                 .write(true)
                 .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
-                .open(&fixture.canvas)
+                .open(&fixture.serve)
                 .expect("fixture anchor opens without waiting"),
         );
     });
@@ -390,14 +390,14 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     let Err(Outcome::Fault(fault)) = outcome else {
         panic!("FIFO substitution must fault");
     };
-    assert_eq!(fault.reason, "canvas::discovery-insecure");
+    assert_eq!(fault.reason, "serve::discovery-insecure");
     assert!(
         started.elapsed() < Duration::from_secs(1),
         "FIFO substitution must not wait for a writer"
     );
     assert!(!fault.detail.contains(&discovery.capability.to_string()));
 
-    let opened = open_discovery(&fixture.canvas).expect("FIFO descriptor opens");
+    let opened = open_discovery(&fixture.serve).expect("FIFO descriptor opens");
     let flags = fcntl_getfl(&opened).expect("FIFO descriptor flags read");
     assert!(flags.contains(OFlags::NONBLOCK));
     drop(anchor);
@@ -480,7 +480,7 @@ fn response_binds_identity_epoch_position_and_answer_shape() {
 #[test]
 fn remote_outcomes_cannot_echo_the_discovery_capability() {
     let capability = uuid(8);
-    let discovery = canvas::Discovery {
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:48123".to_owned(),
         capability,
         epoch: uuid(9),
@@ -495,7 +495,7 @@ fn remote_outcomes_cannot_echo_the_discovery_capability() {
     let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery) else {
         panic!("opening capability echo must fault");
     };
-    assert_eq!(fault.reason, "canvas::capability-disclosed");
+    assert_eq!(fault.reason, "serve::capability-disclosed");
     assert!(!fault.detail.contains(&capability.to_string()));
 
     let mapped = mapped();
@@ -516,6 +516,6 @@ fn remote_outcomes_cannot_echo_the_discovery_capability() {
     ) else {
         panic!("response capability echo must fault");
     };
-    assert_eq!(fault.reason, "canvas::capability-disclosed");
+    assert_eq!(fault.reason, "serve::capability-disclosed");
     assert!(!fault.detail.contains(&capability.to_string()));
 }

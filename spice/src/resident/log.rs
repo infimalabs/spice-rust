@@ -2,7 +2,7 @@
 //!
 //! The resident writes its diagnostics as bare lines to the stream the daemon
 //! points at `resident.log`, and a stuck lane says the same sentence on every
-//! turn: one recorded log holds 4,135 consecutive copies of a single canvas
+//! turn: one recorded log holds 4,135 consecutive copies of one app-server
 //! refusal. Repetition is information about how often, not about what, so the
 //! stream keeps the first telling and then one line that counts the rest.
 //!

@@ -122,8 +122,8 @@ impl AdvisoryRtkFixture {
     pub(in crate::resident) fn lane_runtime<'a>(
         &'a self,
         bus: &Bus,
-        capabilities: &'a canvas::axum::Capabilities,
-        discovery: &'a canvas::Discovery,
+        capabilities: &'a serve::axum::Capabilities,
+        discovery: &'a serve::Discovery,
     ) -> super::super::Runtime<'a> {
         let reads = self
             .reads

@@ -276,23 +276,22 @@ pub fn select_change_gates(
     policy: &ChangeSelectionPolicy,
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
     let applicable = policy.applicable_gates(changed_sources);
+    let authority_source = changed_sources
+        .iter()
+        .find(|path| policy.selection_authority(path));
+    let exhaustive = authority_source.is_some();
     let mut report = select_with(source, changed_sources, applicable.clone(), |path| {
-        if policy.selection_authority(path) {
+        if exhaustive {
             Ok(applicable.clone())
         } else {
             policy.gates_for_path(path)
         }
     })?;
-    if let Some(authority_source) = report
-        .changed_sources()
-        .iter()
-        .find(|path| policy.selection_authority(path))
-        .cloned()
-    {
+    if let Some(authority_source) = authority_source {
         report = with_exhaustive_authority_reach(
             report,
             "compiled packaged selection authority changed",
-            &authority_source,
+            authority_source,
         )?;
     }
     Ok(report)
@@ -491,3 +490,39 @@ impl fmt::Display for ChangeSelectionError {
 }
 
 impl Error for ChangeSelectionError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_changes_select_exhaustively_before_removed_paths_are_classified() {
+        let tracked = ["Cargo.toml".to_owned(), "serve/Cargo.toml".to_owned()];
+        let package_roots = ["serve".to_owned()];
+        let empty = Vec::new();
+        let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+            tracked_sources: &tracked,
+            policy_authorities: &empty,
+            configured: false,
+            repository_documents: None,
+            file_shape_suffixes: None,
+            complexity_suffixes: None,
+            magic_suffixes: None,
+            package_roots: &package_roots,
+            declared_rust_sources: &empty,
+            generated_paths: &empty,
+            test_paths: &empty,
+        })
+        .expect("fixture policy compiles");
+        let sources = ["Cargo.toml".to_owned(), "retired/Cargo.toml".to_owned()];
+
+        let report = select_change_gates(
+            Digest::compute(wire::Domain::GateTree, b"fixture source"),
+            &sources,
+            &policy,
+        )
+        .expect("authority changes admit every path into exhaustive selection");
+
+        assert_eq!(report.changed_sources(), sources);
+    }
+}

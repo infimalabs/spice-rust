@@ -2,9 +2,9 @@
 
 #![forbid(unsafe_code)]
 
-/// The canvas this appliance serves, re-exported so the lane builder and
-/// resident share the sole [`canvas::APP_STAGE`] generation store.
-pub use canvas;
+/// The app server, re-exported so the lane builder and resident share the sole
+/// [`serve::APP_STAGE`] generation store.
+pub use serve;
 
 pub mod agent_launch;
 #[cfg(not(target_arch = "wasm32"))]

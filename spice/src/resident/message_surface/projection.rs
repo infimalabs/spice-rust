@@ -45,7 +45,7 @@ pub(super) fn publish_agent_messages_in(
     let mut events = Vec::new();
     for (event, decoded) in record.decoded.events().iter().enumerate() {
         let event = u32::try_from(event)
-            .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
+            .map_err(|error| store_fault("serve::message-locus-invalid", &error.to_string()))?;
         events.push((event, decoded));
     }
     publish_agent_record(
@@ -171,7 +171,7 @@ pub(super) fn publish_agent_record(
             .checked_add(record.locus.length)
             .ok_or_else(|| {
                 store_fault(
-                    "canvas::message-locus-invalid",
+                    "serve::message-locus-invalid",
                     "record end exceeds the tape position range",
                 )
             })?,
@@ -255,7 +255,7 @@ fn publish_message(
 ) -> CommandResult<()> {
     publisher
         .publish(message)
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     Ok(())
 }
 
@@ -265,7 +265,7 @@ fn revise_final_message(
 ) -> CommandResult<()> {
     publisher
         .revise_final(message)
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     Ok(())
 }
 
@@ -335,7 +335,7 @@ fn project_agent_event(
         .then(|| observed.or_else(|| observations.at(lane, locus)))
         .flatten();
     wire::media::validate_media(&media)
-        .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-media-invalid", &error.to_string()))?;
     let locus = wire::MessageLocus {
         member: locus.member,
         offset: locus.offset,
@@ -501,7 +501,7 @@ fn agent_quote_target(
     }
     let source = source.ok_or_else(|| {
         store_fault(
-            "canvas::message-source-unavailable",
+            "serve::message-source-unavailable",
             "quoteable agent prose has no durable tape source",
         )
     })?;
@@ -636,7 +636,7 @@ fn parse_agent_message_authored(
         Some(timestamp) => timestamp
             .parse::<wire::Instant>()
             .map(|authored| (authored, false))
-            .map_err(|error| store_fault("canvas::message-authored-invalid", &error.to_string())),
+            .map_err(|error| store_fault("serve::message-authored-invalid", &error.to_string())),
         None => synthetic_agent_message_authored(locus, event).map(|authored| (authored, true)),
     }
 }
@@ -662,13 +662,13 @@ fn synthetic_agent_message_authored(
     };
     let member = i64::try_from(member).map_err(|error| {
         store_fault(
-            "canvas::message-authored-unrepresentable",
+            "serve::message-authored-unrepresentable",
             &error.to_string(),
         )
     })?;
     let offset = i64::try_from(locus.offset).map_err(|error| {
         store_fault(
-            "canvas::message-authored-unrepresentable",
+            "serve::message-authored-unrepresentable",
             &error.to_string(),
         )
     })?;
@@ -678,25 +678,25 @@ fn synthetic_agent_message_authored(
         .and_then(|millis| millis.checked_add(i64::from(event)))
         .ok_or_else(|| {
             store_fault(
-                "canvas::message-authored-unrepresentable",
+                "serve::message-authored-unrepresentable",
                 "transcript locus cannot fit a synthetic authored instant",
             )
         })?;
     let millis = BASE_MILLIS.checked_add(delta).ok_or_else(|| {
         store_fault(
-            "canvas::message-authored-unrepresentable",
+            "serve::message-authored-unrepresentable",
             "transcript locus cannot fit a synthetic authored instant",
         )
     })?;
     let authored = jiff::Timestamp::from_millisecond(millis).map_err(|error| {
         store_fault(
-            "canvas::message-authored-unrepresentable",
+            "serve::message-authored-unrepresentable",
             &error.to_string(),
         )
     })?;
     wire::Instant::new(authored).map_err(|error| {
         store_fault(
-            "canvas::message-authored-unrepresentable",
+            "serve::message-authored-unrepresentable",
             &error.to_string(),
         )
     })

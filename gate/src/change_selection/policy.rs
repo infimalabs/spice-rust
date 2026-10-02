@@ -378,7 +378,7 @@ fn compiled_package_source(path: &str) -> bool {
 }
 
 fn frontend_path(path: &str) -> bool {
-    path.starts_with("app/") || path.starts_with("canvas/")
+    path.starts_with("app/") || path.starts_with("serve/")
 }
 
 fn compiled_package_root(path: &str) -> Option<&str> {

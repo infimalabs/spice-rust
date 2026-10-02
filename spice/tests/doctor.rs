@@ -135,7 +135,7 @@ struct HealthyFixture {
     bin: PathBuf,
     journal: PathBuf,
     install: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
     before: BTreeMap<PathBuf, Entry>,
 }
 
@@ -152,9 +152,9 @@ fn healthy_fixture() -> HealthyFixture {
     fs::write(&journal, b"not an opened journal\n").expect("write authority sentinel");
     let install = repository.path().join(".git/.spice-rs/install.json");
     fs::write(&install, b"not an install receipt\n").expect("write install sentinel");
-    let canvas = repository.path().join(".git/.spice-rs/canvas");
-    fs::write(&canvas, b"not a discovery document\n").expect("write transport sentinel");
-    fs::set_permissions(&canvas, fs::Permissions::from_mode(0o600))
+    let serve = repository.path().join(".git/.spice-rs/serve");
+    fs::write(&serve, b"not a discovery document\n").expect("write transport sentinel");
+    fs::set_permissions(&serve, fs::Permissions::from_mode(0o600))
         .expect("secure transport sentinel");
 
     for (relative, bytes) in [
@@ -216,7 +216,7 @@ fn healthy_fixture() -> HealthyFixture {
         bin,
         journal,
         install,
-        canvas,
+        serve,
         before,
     }
 }
@@ -591,7 +591,7 @@ fn both_forms_report_the_same_read_only_state_without_leaking_environment() {
         b"not an install receipt\n"
     );
     assert_eq!(
-        fs::read(&fixture.canvas).expect("read transport sentinel"),
+        fs::read(&fixture.serve).expect("read transport sentinel"),
         b"not a discovery document\n"
     );
     assert_eq!(directory_state(fixture.repository.path()), fixture.before);
@@ -628,14 +628,14 @@ fn initialized_authority_is_diagnosed_without_writing_any_state() {
             spice::resident_lock::holder_record(std::process::id(), Some(epoch)).as_bytes(),
         )
         .expect("publish fixture holder record");
-    canvas::Discovery {
+    serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: "00000000-0000-4000-8000-000000000052"
             .parse()
             .expect("fixture capability"),
         epoch,
     }
-    .publish(repository.path().join(".git/.spice-rs/canvas"))
+    .publish(repository.path().join(".git/.spice-rs/serve"))
     .expect("publish fixture discovery");
     let empty_path = repository.path().join("empty-path");
     fs::create_dir(&empty_path).expect("create empty executable search path");

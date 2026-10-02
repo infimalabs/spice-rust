@@ -24,7 +24,7 @@ struct Fixture {
     root: PathBuf,
     main: PathBuf,
     linked: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
 }
 
 impl Fixture {
@@ -44,12 +44,12 @@ impl Fixture {
         .expect("write linked policy");
         let main = fs::canonicalize(main).expect("canonicalize main worktree");
         let linked = fs::canonicalize(linked).expect("canonicalize linked worktree");
-        let canvas = main.join(".git/.spice-rs/canvas");
+        let serve = main.join(".git/.spice-rs/serve");
         Self {
             root,
             main,
             linked,
-            canvas,
+            serve,
         }
     }
 
@@ -137,17 +137,14 @@ impl Resident {
             .spawn()
             .expect("shared resident starts");
         let mut resident = Self { child: Some(child) };
-        let watched = fixture
-            .canvas
-            .parent()
-            .expect("canvas has a runtime parent");
+        let watched = fixture.serve.parent().expect("serve has a runtime parent");
         fs::create_dir_all(watched).expect("runtime directory exists");
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
             watched,
             readiness::ARRIVAL_HORIZON,
             "shared resident discovery",
-            || fixture.canvas.is_file(),
+            || fixture.serve.is_file(),
         ) {
             Readiness::Ready => resident,
             Readiness::Exited => {

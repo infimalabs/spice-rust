@@ -49,7 +49,7 @@ impl proof::ManifestPublisher for CurrentPublisher<'_> {
 
 struct Prepared {
     published: proof::PublishedManifest,
-    canvas: PathBuf,
+    serve: PathBuf,
     head: wire::Seq,
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn run(contract: &crate::cli::Contract) -> Outcome<SealedManifest> {
         manifest: prepared.published.manifest.clone(),
     };
     let outcome = crate::command_client::execute(
-        &prepared.canvas,
+        &prepared.serve,
         contract,
         crate::command_client::SelectedCommand::ProofRecognize {
             manifest: &prepared.published,
@@ -137,7 +137,7 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
     }
     Ok(Prepared {
         published,
-        canvas: state.canvas().to_path_buf(),
+        serve: state.serve().to_path_buf(),
         head,
     })
 }

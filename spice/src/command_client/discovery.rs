@@ -16,7 +16,7 @@ pub(super) fn selected_discovery_path(
     match connection {
         Connection::Operator => operator_discovery.to_path_buf(),
         Connection::Lane(lane) => operator_discovery
-            .with_file_name("canvas-lanes")
+            .with_file_name("serve-lanes")
             .join(lane.to_string()),
     }
 }
@@ -24,10 +24,10 @@ pub(super) fn selected_discovery_path(
 /// The lock the resident that published a discovery record holds while it runs.
 ///
 /// This is the same sibling derivation [`selected_discovery_path`] makes:
-/// `repository.rs` builds both `canvas` and `resident` on the runtime
+/// `repository.rs` builds both `serve` and `resident` on the runtime
 /// directory, so the operator discovery path names the lock beside it. The
 /// operator path is used for lane records too, because one resident publishes
-/// every lane surface under `canvas-lanes` and holds exactly one lock for all
+/// every lane surface under `serve-lanes` and holds exactly one lock for all
 /// of them; walking up from a lane record instead would have to know how deep
 /// it sits.
 pub(super) fn resident_lock_path(operator_discovery: &Path) -> PathBuf {
@@ -40,7 +40,7 @@ pub(super) struct DiscoveryRead {
     resident_lock: PathBuf,
     parent_identity: FileIdentity,
     file_identity: FileIdentity,
-    pub(super) value: canvas::Discovery,
+    pub(super) value: serve::Discovery,
 }
 
 impl DiscoveryRead {
@@ -68,7 +68,7 @@ impl DiscoveryRead {
     ) -> Result<Self, Fault> {
         let parent = path.parent().ok_or_else(|| {
             environment_fault_value(
-                "canvas::discovery-unavailable",
+                "serve::discovery-unavailable",
                 "resident discovery has no repository runtime parent",
             )
         })?;
@@ -78,7 +78,7 @@ impl DiscoveryRead {
         let file_identity = FileIdentity::from_metadata(&before);
         if file_identity.len > MAX_DISCOVERY_BYTES {
             return Err(protocol_fault_value(
-                "canvas::discovery-malformed",
+                "serve::discovery-malformed",
                 "resident discovery exceeds the current bounded document size",
             ));
         }
@@ -99,7 +99,7 @@ impl DiscoveryRead {
         }
         let value = wire::decode(&bytes).map_err(|_| {
             protocol_fault_value(
-                "canvas::discovery-malformed",
+                "serve::discovery-malformed",
                 "resident discovery does not match the current wire shape",
             )
         })?;
@@ -146,12 +146,12 @@ impl DiscoveryRead {
         let availability = LockFile::new(name, &self.resident_lock)
             .availability()
             .map_err(|error| {
-                environment_fault_value("canvas::publisher-unknown", &error.to_string())
+                environment_fault_value("serve::publisher-unknown", &error.to_string())
             })?;
         match availability {
             Availability::Held => self.require_publishing_holder(),
             Availability::Available => Err(environment_fault_value(
-                "canvas::publisher-gone",
+                "serve::publisher-gone",
                 "resident discovery outlived the resident that published it",
             )),
         }
@@ -180,13 +180,13 @@ impl DiscoveryRead {
     /// covers it instead of earning a second.
     fn require_publishing_holder(&self) -> Result<(), Fault> {
         let holder = fs::read(&self.resident_lock).map_err(|error| {
-            environment_fault_value("canvas::publisher-unknown", &error.to_string())
+            environment_fault_value("serve::publisher-unknown", &error.to_string())
         })?;
         if spice::resident_lock::holder_epoch(&holder) == Some(self.value.epoch) {
             return Ok(());
         }
         Err(environment_fault_value(
-            "canvas::publisher-replaced",
+            "serve::publisher-replaced",
             "the resident holding the lock did not publish this discovery",
         ))
     }
@@ -285,20 +285,20 @@ pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result
     };
     if !shape_matches {
         return Err(environment_fault_value(
-            "canvas::discovery-insecure",
+            "serve::discovery-insecure",
             "resident discovery path is not a real repository-owned file",
         ));
     }
     let owner = rustix::process::geteuid().as_raw();
     if metadata.uid() != owner {
         return Err(environment_fault_value(
-            "canvas::discovery-non-owner",
+            "serve::discovery-non-owner",
             "resident discovery path is not owned by the effective user",
         ));
     }
     if matches!(kind, DiscoveryKind::File) && metadata.mode() & 0o077 != 0 {
         return Err(environment_fault_value(
-            "canvas::discovery-insecure",
+            "serve::discovery-insecure",
             "resident discovery is readable or writable by group or other",
         ));
     }
@@ -313,7 +313,7 @@ pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result
     };
     if !shape_matches {
         return Err(environment_fault_value(
-            "canvas::discovery-insecure",
+            "serve::discovery-insecure",
             "resident discovery path is not a real repository-owned file",
         ));
     }

@@ -10,8 +10,8 @@ pub(super) struct RuntimePaths {
     pub(super) data: PathBuf,
     pub(super) journal: PathBuf,
     pub(super) resident: PathBuf,
-    pub(super) canvas: PathBuf,
-    pub(super) lane_canvas: PathBuf,
+    pub(super) serve: PathBuf,
+    pub(super) lane_serve: PathBuf,
     pub(super) degraded: PathBuf,
     pub(super) tape: PathBuf,
     pub(super) supervisors: PathBuf,
@@ -21,26 +21,26 @@ pub(super) struct RuntimePaths {
 
 struct ResidentClientPaths {
     resident: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
 }
 
 impl ResidentClientPaths {
     pub(super) fn from_repository(repository: &Repository) -> CommandResult<Self> {
-        let canvas = repository
+        let serve = repository
             .admit_resident_client()
             .map_err(|error| crate::state_failure(&error).outcome())?;
-        let resident = canvas.with_file_name("resident");
-        Ok(Self { resident, canvas })
+        let resident = serve.with_file_name("resident");
+        Ok(Self { resident, serve })
     }
 }
 
 pub(super) struct SurfaceConfig {
-    canvas: canvas::Config,
+    serve: serve::Config,
     pub(super) steering: steer::Config,
     pub(super) taste: taste::Bag,
     pub(super) judge_enabled: bool,
     pub(super) consent: consent::Policy,
-    speech: canvas::SpeechConfig,
+    speech: serve::SpeechConfig,
     pub(super) allocation: board::NextConfig,
     pub(super) projects: board::ProjectPolicy,
     pub(super) lane: lane::Config,
@@ -48,7 +48,7 @@ pub(super) struct SurfaceConfig {
 }
 
 struct SurfaceLaunch<'a> {
-    app: canvas::AppSource,
+    app: serve::AppSource,
     version: wire::Version,
     binding: AppBinding,
     resident_lock: &'a ResidentLock,
@@ -110,7 +110,7 @@ where
 fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface {
     StartupSurface {
         config: SurfaceConfig {
-            canvas: *loaded.resolved().root().canvas(),
+            serve: *loaded.resolved().root().serve(),
             steering: loaded.resolved().root().steer().clone(),
             taste: loaded.resolved().root().taste().bag().clone(),
             judge_enabled: loaded.resolved().root().judge().enabled().unwrap_or(false),
@@ -162,8 +162,8 @@ impl RuntimePaths {
             data: state.data().to_path_buf(),
             journal: state.journal().to_path_buf(),
             resident: state.resident().to_path_buf(),
-            canvas: state.canvas().to_path_buf(),
-            lane_canvas: state.lane_canvas().to_path_buf(),
+            serve: state.serve().to_path_buf(),
+            lane_serve: state.lane_serve().to_path_buf(),
             degraded: state.degraded().to_path_buf(),
             tape: state.tape().to_path_buf(),
             supervisors: state.supervisors().to_path_buf(),
@@ -175,7 +175,7 @@ impl RuntimePaths {
     pub(super) fn speech_for_worktree(
         &self,
         worktree: &str,
-    ) -> Result<canvas::SpeechConfig, String> {
+    ) -> Result<serve::SpeechConfig, String> {
         let repository = Repository::discover(worktree).map_err(|error| error.to_string())?;
         if repository.common_dir() != self.common
             || repository.worktree_root() != Path::new(worktree)
@@ -190,10 +190,10 @@ impl RuntimePaths {
     }
 
     pub(super) fn clear_stale_surfaces(&self) -> CommandResult<()> {
-        remove_if_present(&self.canvas)
-            .map_err(|error| environment_fault("canvas::stale-discovery", &error.to_string()))?;
-        remove_tree_if_present(&self.lane_canvas)
-            .map_err(|error| environment_fault("canvas::stale-lane-discovery", &error.to_string()))
+        remove_if_present(&self.serve)
+            .map_err(|error| environment_fault("serve::stale-discovery", &error.to_string()))?;
+        remove_tree_if_present(&self.lane_serve)
+            .map_err(|error| environment_fault("serve::stale-lane-discovery", &error.to_string()))
     }
 }
 
@@ -267,11 +267,11 @@ impl ResidentLock {
 fn record_bound_launch(
     resident_lock: &ResidentLock,
     epoch: CanonicalUuid,
-    server: &canvas::axum::Server,
+    server: &serve::axum::Server,
     access: ResidentAccess,
 ) -> CommandResult<()> {
     let bound = server.local_addr().map_err(|error| {
-        environment_fault("canvas::bound-address-unavailable", &error.to_string())
+        environment_fault("serve::bound-address-unavailable", &error.to_string())
     })?;
     resident_lock
         .set_launch(epoch, ResidentLaunch::new(bound, access))
@@ -315,7 +315,7 @@ pub(crate) struct AppBinding {
 }
 
 pub(super) struct AppAccess {
-    policy: canvas::axum::Access,
+    policy: serve::axum::Access,
     kind: ResidentAccess,
     pub(super) token: Option<String>,
 }
@@ -326,15 +326,15 @@ enum AppSelection {
 }
 
 impl AppSelection {
-    fn resolve(self, repository: &Repository) -> CommandResult<canvas::AppSource> {
+    fn resolve(self, repository: &Repository) -> CommandResult<serve::AppSource> {
         match self {
             Self::Installed(executable) => {
                 spice::install::installed_app_source(repository, &executable)
                     .map_err(installed_app_refusal)
             }
             Self::Staged => {
-                canvas::AppSource::resolve(repository.worktree_root()).map_err(|error| {
-                    environment_fault("canvas::app-source-invalid", &error.to_string())
+                serve::AppSource::resolve(repository.worktree_root()).map_err(|error| {
+                    environment_fault("serve::app-source-invalid", &error.to_string())
                 })
             }
         }
@@ -346,7 +346,7 @@ impl AppBinding {
         Self {
             listen,
             access: AppAccess {
-                policy: canvas::axum::Access::local(),
+                policy: serve::axum::Access::local(),
                 kind: ResidentAccess::Local,
                 token: None,
             },
@@ -470,10 +470,10 @@ fn requested_access_with(
     };
     let policy = match (&kind, &token) {
         (ResidentAccess::Authenticated, Some(token)) => {
-            canvas::axum::Access::authenticated(token.clone())
+            serve::axum::Access::authenticated(token.clone())
         }
-        (ResidentAccess::Insecure, None) => canvas::axum::Access::insecure(),
-        (ResidentAccess::Local, None) => canvas::axum::Access::local(),
+        (ResidentAccess::Insecure, None) => serve::axum::Access::insecure(),
+        (ResidentAccess::Local, None) => serve::axum::Access::local(),
         _ => unreachable!("access kind and token derive together"),
     };
     Ok(AppAccess {
@@ -487,7 +487,7 @@ fn access_refusal(reason: &str, observed: Option<&str>, detail: &str) -> Outcome
     Outcome::Refusal(Refusal::bare(
         wire::RefusalDiagnostic::new(
             reason.to_owned(),
-            Some("requested-canvas-access".to_owned()),
+            Some("requested-app-access".to_owned()),
             Some("loopback, or an explicitly consented non-loopback bind".to_owned()),
             observed.map(str::to_owned),
         )
@@ -632,8 +632,8 @@ fn installed_app_refusal(error: spice::install::InstallError) -> Outcome<()> {
     let observed = error.to_string();
     Outcome::Refusal(Refusal::bare(
         wire::RefusalDiagnostic::new(
-            "canvas::installed-app-refused".to_owned(),
-            Some("installed-canvas-generation".to_owned()),
+            "serve::installed-app-refused".to_owned(),
+            Some("installed-app-generation".to_owned()),
             Some(
                 "one complete current receipt-owned app generation matching this Spice binary"
                     .to_owned(),
@@ -712,8 +712,8 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
 
 /// Stop the resident serving `current` through the operator connection even
 /// while a lane identity is ambient, for callers whose root never seats
-/// lanes: the demo drives a scratch root that publishes only an operator
-/// canvas, so honoring the ambient seat would dial a discovery path the
+/// lanes: the demo drives a scratch root that publishes only an operator app
+/// server, so honoring the ambient seat would dial a discovery path the
 /// scratch root cannot publish and strand the resident it launched.
 pub(crate) fn down_from_operator(
     current: &Path,
@@ -745,7 +745,7 @@ fn down_from_with(
         Err(outcome) => return typed_outcome(outcome),
     };
     let outcome = execute(
-        &paths.canvas,
+        &paths.serve,
         contract,
         crate::command_client::SelectedCommand::Down,
     );
@@ -760,9 +760,9 @@ fn down_from_with(
 
 fn wait_for_release(paths: &ResidentClientPaths) -> CommandResult<()> {
     let possession = acquire_released_resident(paths)?;
-    if paths.canvas.exists() {
+    if paths.serve.exists() {
         return Err(environment_fault(
-            "canvas::release-incomplete",
+            "serve::release-incomplete",
             "resident lock was released while discovery remained published",
         ));
     }
@@ -772,7 +772,7 @@ fn wait_for_release(paths: &ResidentClientPaths) -> CommandResult<()> {
 
 /// Wait one client bound for the resident to surrender its runtime lock.
 fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Possession> {
-    let release_bound = crate::command_client::answer_bound(CommandKind::UpChange, &paths.canvas);
+    let release_bound = crate::command_client::answer_bound(CommandKind::UpChange, &paths.serve);
 
     let name = LockName::new("resident").expect("resident is a non-empty lock name");
     let lock = LockFile::new(name, &paths.resident);
@@ -791,7 +791,7 @@ fn acquire_released_resident(paths: &ResidentClientPaths) -> CommandResult<Posse
             &error.to_string(),
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(environment_fault(
-            "canvas::deadline-elapsed",
+            "serve::deadline-elapsed",
             &format!("resident did not release within the {release_bound:?} client bound"),
         )),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(environment_fault(
@@ -1015,5 +1015,5 @@ mod last_word;
 pub(super) mod reap;
 mod surface;
 #[cfg(test)]
-pub(super) use surface::announce_canvas;
+pub(super) use surface::announce_app;
 use surface::run_surface;

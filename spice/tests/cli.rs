@@ -271,7 +271,7 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
     assert_eq!(text_body.app_protocol, wire::AppProtocolVersion::CURRENT);
     assert_eq!(
         text_body.app,
-        canvas::AppSource::resolve(repository.path())
+        serve::AppSource::resolve(repository.path())
             .expect("fixture app source resolves")
             .current_generation()
             .expect("fixture app generation reads")

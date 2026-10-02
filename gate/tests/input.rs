@@ -40,7 +40,7 @@ fn tracked_inputs_load_one_operational_current_contract() {
     // Written out rather than rendered from the constants, so a bound that moves
     // has to be restated here deliberately. The runtime figure in particular is
     // measured rather than chosen: see RUNTIME_DEADLINE in gate/src/input.rs for
-    // the cold canvas-build samples it clears and by how much.
+    // the cold app-build samples it clears and by how much.
     assert_eq!(
         contract.bounds().render(),
         "bounds 1\nowner gate current tools\nruntime-ms 120000\noutput-drain-ms 1000\n\

@@ -203,7 +203,7 @@ fn speech_backends_resolve_with_local_only_external_argv() {
         .expect("tracked disabled speech resolves");
     assert_eq!(
         disabled.root().say().backend(),
-        canvas::SpeechBackend::Disabled
+        serve::SpeechBackend::Disabled
     );
     assert!(disabled.root().say().command().is_none());
     assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Tracked);
@@ -317,6 +317,7 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
             "[policy]\npredecessor_only = ['removed']\n",
             "policy.predecessor_only",
         ),
+        ("[canvas.pack]\nrows = 40\n", "canvas"),
         ("[unknown]\nvalue = 1\n", "unknown"),
     ] {
         let error = resolve(documents(Some(document), None))
@@ -804,7 +805,7 @@ shards = 2
 [lock.single]
 path = "locks/single.lock"
 
-[canvas.pack]
+[serve.pack]
 rows = 50
 
 [say]

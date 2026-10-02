@@ -104,7 +104,7 @@ impl BacklogReader {
         snapshot: &journal::FactSnapshot,
     ) -> CommandResult<Self> {
         let steering = PresentationDirectives::from_snapshot(snapshot)
-            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
+            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
         Ok(Self {
             cursors: BTreeMap::new(),
             startup_work: StartupWork::default(),
@@ -158,7 +158,7 @@ impl StartupWork {
 pub(in crate::resident) fn restore_agent_messages(
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
@@ -169,7 +169,7 @@ pub(in crate::resident) fn restore_agent_messages_indexed(
     bus: &bus::BusReader,
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
@@ -180,14 +180,14 @@ fn restore_agent_messages_with(
     bus: Option<&bus::BusReader>,
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     reader.startup_work = StartupWork::default();
     let generation = publisher
         .batch()
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     let mut available = Vec::new();
     for row in &residency.lanes {
         if !reader.startup_work.admits_lane() {
@@ -206,7 +206,7 @@ fn restore_agent_messages_with(
         .collect::<Vec<_>>();
     publisher
         .set_lane_availability(current, available.iter().copied())
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     let history = Arc::new(DurableHistory::new(bus, paths, residency, reader));
     let history_open = history
         .lanes
@@ -221,7 +221,7 @@ fn restore_agent_messages_with(
                     // Historical projections have the same failure boundary as live replay.
                     app_diagnostic(
                         generation.publish(message).map(|_| ()).map_err(|error| {
-                            store_fault("canvas::message-publish-failed", &error.to_string())
+                            store_fault("serve::message-publish-failed", &error.to_string())
                         }),
                         diagnostic,
                     )?;
@@ -235,16 +235,16 @@ fn restore_agent_messages_with(
     }
     publisher
         .set_history_provider(history)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     publisher
         .set_history_open(history_open)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     generation
         .commit()
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     publisher
         .bound_initial_history()
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     Ok(())
 }
 
@@ -259,7 +259,7 @@ fn initial_history_pages(
     lanes: &[CanonicalUuid],
 ) -> Vec<(
     CanonicalUuid,
-    Result<Option<canvas::stream::MessageHistoryPage>, String>,
+    Result<Option<serve::stream::MessageHistoryPage>, String>,
 )> {
     std::thread::scope(|scope| {
         let reads = lanes
@@ -268,11 +268,11 @@ fn initial_history_pages(
             .map(|lane| {
                 let history = Arc::clone(history);
                 let read = scope.spawn(move || {
-                    canvas::stream::MessageHistoryProvider::history(
+                    serve::stream::MessageHistoryProvider::history(
                         history.as_ref(),
                         lane,
                         None,
-                        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+                        serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
                     )
                 });
                 (lane, read)
@@ -403,13 +403,13 @@ impl DurableHistory {
     }
 }
 
-impl canvas::stream::MessageHistoryProvider for DurableHistory {
+impl serve::stream::MessageHistoryProvider for DurableHistory {
     fn history(
         &self,
         lane: CanonicalUuid,
         before: Option<&wire::AgentMessage>,
         limit: usize,
-    ) -> Result<Option<canvas::stream::MessageHistoryPage>, String> {
+    ) -> Result<Option<serve::stream::MessageHistoryPage>, String> {
         let Some(source) = self.lanes.get(&lane) else {
             return Ok(None);
         };
@@ -437,14 +437,14 @@ impl DurableHistory {
         before: Option<&wire::AgentMessage>,
         limit: usize,
         tape: Option<&listen::Checkpoint>,
-    ) -> Result<canvas::stream::MessageHistoryPage, String> {
+    ) -> Result<serve::stream::MessageHistoryPage, String> {
         let sources = self.history_sources(lane, source, before, limit, tape)?;
         let (messages, more) = sources.page(before, limit);
         if more && let (Some(scan), Some(anchor)) = (&sources.tape, messages.first().or(before)) {
             self.progress
                 .remember_tape(lane, anchor, tape_continuation(scan, anchor))?;
         }
-        Ok(canvas::stream::MessageHistoryPage { messages, more })
+        Ok(serve::stream::MessageHistoryPage { messages, more })
     }
 
     fn history_sources(
@@ -724,14 +724,14 @@ impl AgentMessagePublisher for CollectedMessages {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         if !visible_message(&message) || !self.precedes_anchor(&message) {
             return Ok(true);
         }
         let mut collected = self
             .inner
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+            .map_err(|_| serve::stream::MessagePublishError::Unavailable)?;
         collected.messages.push(message);
         if collected.messages.len() > self.limit {
             collected.messages.remove(0);
@@ -743,11 +743,11 @@ impl AgentMessagePublisher for CollectedMessages {
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         let mut collected = self
             .inner
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+            .map_err(|_| serve::stream::MessagePublishError::Unavailable)?;
         let Some(existing) = collected
             .messages
             .iter_mut()
@@ -757,7 +757,7 @@ impl AgentMessagePublisher for CollectedMessages {
             if !self.precedes_anchor(&message) {
                 return Ok(true);
             }
-            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+            return Err(serve::stream::MessagePublishError::IdentityConflict);
         };
         *existing = message;
         Ok(true)
@@ -842,7 +842,7 @@ fn scan_source(scan: &listen::Scan) -> CommandResult<CanonicalUuid> {
         .source
         .as_str()
         .parse::<CanonicalUuid>()
-        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-source-invalid", &error.to_string()))
 }
 
 /// One bounded backward walk of a lane's accounting facts.
@@ -870,7 +870,7 @@ fn walk_observations(
 ) -> CommandResult<ObservationWalk> {
     let origin = format!("lane:{lane}")
         .parse::<wire::Origin>()
-        .map_err(|error| store_fault("canvas::message-origin-invalid", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-origin-invalid", &error.to_string()))?;
     let mut remaining = records.saturating_mul(4).clamp(32, 4_096);
     let mut before = resume;
     let mut facts = Vec::new();
@@ -885,7 +885,7 @@ fn walk_observations(
                 before,
                 budget,
             )
-            .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
+            .map_err(|error| store_fault("serve::message-time-unavailable", &error.to_string()))?;
         if page.rows.is_empty() {
             before = None;
             break;
@@ -938,7 +938,7 @@ fn hydrate_steering_presentations(
     let rows = load_steering_presentations(bus, &keys)?;
     steering
         .extend_presentations(&rows)
-        .map_err(|error| store_fault("canvas::message-steering-invalid", &error))
+        .map_err(|error| store_fault("serve::message-steering-invalid", &error))
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
@@ -988,7 +988,7 @@ fn publish_scan(
         .source
         .as_str()
         .parse::<CanonicalUuid>()
-        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-source-invalid", &error.to_string()))?;
     let mut published = true;
     for record in scan.records {
         let Some(context) = record.context.as_ref() else {
@@ -1001,7 +1001,7 @@ fn publish_scan(
             .iter()
             .map(|sourced| {
                 let event = u32::try_from(sourced.ordinal).map_err(|error| {
-                    store_fault("canvas::message-locus-invalid", &error.to_string())
+                    store_fault("serve::message-locus-invalid", &error.to_string())
                 })?;
                 Ok((event, &sourced.event))
             })

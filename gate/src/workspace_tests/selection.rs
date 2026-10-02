@@ -885,6 +885,19 @@ fn containing_package<'a>(
         .iter()
         .filter(|package| absolute.starts_with(&package.root))
         .max_by_key(|package| package.root.components().count())
+        .or_else(|| {
+            inventory
+                .moved_package_roots
+                .iter()
+                .filter(|(root, _)| absolute.starts_with(root))
+                .max_by_key(|(root, _)| root.components().count())
+                .and_then(|(_, owner)| {
+                    inventory
+                        .packages
+                        .iter()
+                        .find(|package| package.id == *owner)
+                })
+        })
 }
 
 /// The package whose own coverage answers for a Rust path no Cargo target
@@ -1201,6 +1214,7 @@ mod tests {
         };
         let inventory = Inventory {
             packages: vec![package.clone(), dependent],
+            moved_package_roots: BTreeMap::new(),
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),
             target_directory: root.join("target"),

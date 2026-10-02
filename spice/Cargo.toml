@@ -16,7 +16,7 @@ base64 = "0.22.1"
 blake3 = "1.8.5"
 board = { path = "../board" }
 bus = { path = "../bus" }
-canvas = { path = "../canvas" }
+serve = { path = "../serve" }
 clap = { version = "4.6.5", features = ["string"] }
 consent = { path = "../consent" }
 dialect = { path = "../dialect" }

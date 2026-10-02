@@ -10,12 +10,12 @@ use std::os::unix::fs::PermissionsExt as _;
 const FIXTURE_GENERATION: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 
 pub(super) fn seed(root: &Path) {
-    let stage = root.join(canvas::APP_STAGE);
+    let stage = root.join(serve::APP_STAGE);
     let generation = stage
-        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(serve::APP_STAGE_GENERATIONS)
         .join(FIXTURE_GENERATION);
     create_dir_all(root, &generation).expect("fixture app generation directory");
-    for asset in canvas::APP.assets() {
+    for asset in serve::APP.assets() {
         write_file(
             root,
             &generation.join(asset.file()),
@@ -25,7 +25,7 @@ pub(super) fn seed(root: &Path) {
     }
     write_file(
         root,
-        &stage.join(canvas::APP_STAGE_CURRENT),
+        &stage.join(serve::APP_STAGE_CURRENT),
         format!("{FIXTURE_GENERATION}\n"),
     )
     .expect("fixture app pointer");

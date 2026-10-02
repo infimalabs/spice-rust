@@ -156,7 +156,7 @@ fn app_analysis(
 fn frontend_change_reaches_app(changes: &[String]) -> bool {
     changes.iter().any(|path| {
         path.starts_with("app/")
-            || path.starts_with("canvas/")
+            || path.starts_with("serve/")
             || matches!(path.as_str(), "package.json" | "package-lock.json")
     })
 }

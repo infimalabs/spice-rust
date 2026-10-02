@@ -455,7 +455,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         self.run(CommandSpec::new(
             "embed-build",
             &self.programs.cargo,
-            cargo_build_arguments("canvas", self.target, self.target_dir),
+            cargo_build_arguments("serve", self.target, self.target_dir),
         ))?;
         let observed = read_lane_app_bundle(self.root)?;
         if observed != *app {
@@ -513,7 +513,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
 }
 
 fn read_lane_app_bundle(root: &Path) -> Result<AppBundle, BuildError> {
-    let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
+    let source = spice::serve::AppSource::resolve(root).map_err(build_error)?;
     let generation = source.current_generation().map_err(build_error)?;
     let files = generation
         .files()
@@ -524,14 +524,14 @@ fn read_lane_app_bundle(root: &Path) -> Result<AppBundle, BuildError> {
 
 #[cfg(test)]
 fn read_lane_app_asset(root: &Path, route: &str) -> Result<Vec<u8>, BuildError> {
-    let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
+    let source = spice::serve::AppSource::resolve(root).map_err(build_error)?;
     let generation = source.current_generation().map_err(build_error)?;
-    let asset = spice::canvas::APP
+    let asset = spice::serve::APP
         .asset(route)
         .ok_or_else(|| BuildError::new(format!("lane app route {route} is absent")))?;
     generation
         .served(asset)
-        .map(spice::canvas::ServedAsset::into_bytes)
+        .map(spice::serve::ServedAsset::into_bytes)
         .map_err(build_error)
 }
 

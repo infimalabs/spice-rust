@@ -206,7 +206,7 @@ impl Resident {
             .spawn()
             .expect("fixture resident starts");
         let mut resident = Self(Some(child));
-        let discovery = fixture.root.join(".git/.spice-rs/canvas");
+        let discovery = fixture.root.join(".git/.spice-rs/serve");
         let deadline = Instant::now() + READY;
         while !discovery.is_file() {
             if resident
@@ -264,11 +264,11 @@ fn stage_app(root: &Path) -> Digest {
 fn stage_app_named(root: &Path, marker: &str) -> Digest {
     let identity = Digest::compute(Domain::DistArtifact, marker.as_bytes());
     let generation = root
-        .join(canvas::APP_STAGE)
-        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(serve::APP_STAGE)
+        .join(serve::APP_STAGE_GENERATIONS)
         .join(identity.as_str());
     fs::create_dir_all(&generation).expect("app generation directory");
-    for asset in canvas::APP.assets() {
+    for asset in serve::APP.assets() {
         fs::write(
             generation.join(asset.file()),
             format!("{marker} {}\n", asset.file()),
@@ -276,7 +276,7 @@ fn stage_app_named(root: &Path, marker: &str) -> Digest {
         .expect("app asset");
     }
     fs::write(
-        root.join(canvas::APP_STAGE).join(canvas::APP_STAGE_CURRENT),
+        root.join(serve::APP_STAGE).join(serve::APP_STAGE_CURRENT),
         format!("{identity}\n"),
     )
     .expect("app pointer");
@@ -292,13 +292,13 @@ fn stage_proofs(root: &Path, commit: &str, app: &Digest) -> Digest {
         cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
         proof_container: proof::DEFAULT_IMAGE.to_owned(),
     };
-    let app_inventory = canvas::APP
+    let app_inventory = serve::APP
         .assets()
         .iter()
         .map(|asset| {
             let bytes = fs::read(
-                root.join(canvas::APP_STAGE)
-                    .join(canvas::APP_STAGE_GENERATIONS)
+                root.join(serve::APP_STAGE)
+                    .join(serve::APP_STAGE_GENERATIONS)
                     .join(app.as_str())
                     .join(asset.file()),
             )

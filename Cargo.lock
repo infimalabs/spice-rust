@@ -334,30 +334,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "canvas"
-version = "0.0.0"
-dependencies = [
- "atomic",
- "axum",
- "base64",
- "bus",
- "constant_time_eq",
- "futures-util",
- "journal",
- "serde",
- "serde_json",
- "sha2",
- "sill",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "toml",
- "tungstenite",
- "wire",
-]
-
-[[package]]
 name = "cc"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3104,6 +3080,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "serve"
+version = "0.0.0"
+dependencies = [
+ "atomic",
+ "axum",
+ "base64",
+ "bus",
+ "constant_time_eq",
+ "futures-util",
+ "journal",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sill",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "toml",
+ "tungstenite",
+ "wire",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3221,7 +3221,6 @@ dependencies = [
  "blake3",
  "board",
  "bus",
- "canvas",
  "clap",
  "consent",
  "dialect",
@@ -3243,6 +3242,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "serve",
  "sha1",
  "sha2",
  "shell-words",

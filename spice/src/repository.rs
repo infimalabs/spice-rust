@@ -112,7 +112,7 @@ pub struct StatePaths {
     proof: PathBuf,
     resident: PathBuf,
     resident_log: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
     rtk: PathBuf,
@@ -121,7 +121,7 @@ pub struct StatePaths {
     artifacts: PathBuf,
     install_record: PathBuf,
     local_configuration: PathBuf,
-    lane_canvas: PathBuf,
+    lane_serve: PathBuf,
     install_rollback_blobs: PathBuf,
 }
 
@@ -166,7 +166,7 @@ impl StatePaths {
             proof: runtime.join("proof"),
             resident: runtime.join("resident"),
             resident_log: runtime.join("resident.log"),
-            canvas: runtime.join("canvas"),
+            serve: runtime.join("serve"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
             rtk: runtime.join("rtk"),
@@ -174,7 +174,7 @@ impl StatePaths {
             artifacts: artifact_data.join("tasks"),
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
-            lane_canvas: runtime.join("canvas-lanes"),
+            lane_serve: runtime.join("serve-lanes"),
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             steering_media: runtime.join("steering-media"),
@@ -277,10 +277,10 @@ impl StatePaths {
         &self.resident_log
     }
 
-    /// Owner-only canvas discovery file.
+    /// Owner-only app-server discovery file.
     #[must_use]
-    pub fn canvas(&self) -> &Path {
-        &self.canvas
+    pub fn serve(&self) -> &Path {
+        &self.serve
     }
 
     /// Parent of degraded lane markers.
@@ -325,10 +325,10 @@ impl StatePaths {
         &self.local_configuration
     }
 
-    /// Parent of per-lane canvas discovery files.
+    /// Parent of per-lane app-server discovery files.
     #[must_use]
-    pub fn lane_canvas(&self) -> &Path {
-        &self.lane_canvas
+    pub fn lane_serve(&self) -> &Path {
+        &self.lane_serve
     }
 
     /// Directories whose shape this runtime admits before it does any work.
@@ -371,9 +371,9 @@ impl StatePaths {
     #[must_use]
     pub fn owned_directories(&self) -> Vec<&Path> {
         let mut paths = self.admitted_directories();
-        let lane_canvas = self.lane_canvas();
-        if !paths.contains(&lane_canvas) {
-            paths.push(lane_canvas);
+        let lane_serve = self.lane_serve();
+        if !paths.contains(&lane_serve) {
+            paths.push(lane_serve);
         }
         paths
     }
@@ -401,7 +401,7 @@ impl StatePaths {
             self.gate_state_lock(),
             self.resident(),
             self.resident_log(),
-            self.canvas(),
+            self.serve(),
             self.steering_delivery(),
         ]
     }
@@ -420,7 +420,7 @@ impl StatePaths {
             gate_state_lock,
             resident,
             resident_log,
-            canvas,
+            serve,
             steering_delivery,
         ] = self.admitted_files();
         [
@@ -429,7 +429,7 @@ impl StatePaths {
             gate_state_lock,
             resident,
             resident_log,
-            canvas,
+            serve,
             steering_delivery,
             self.install_record(),
             self.local_configuration(),
@@ -566,13 +566,13 @@ impl Repository {
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
         );
-        for path in [paths.runtime(), paths.lane_canvas()] {
+        for path in [paths.runtime(), paths.lane_serve()] {
             admit(path, StateShape::Directory)?;
         }
-        for path in [paths.resident(), paths.canvas()] {
+        for path in [paths.resident(), paths.serve()] {
             admit(path, StateShape::RegularFile)?;
         }
-        Ok(paths.canvas().to_path_buf())
+        Ok(paths.serve().to_path_buf())
     }
 
     /// Admit only the state components needed to suppress duplicate hook output.

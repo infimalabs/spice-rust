@@ -518,7 +518,7 @@ impl Fixture {
         for path in [
             ".git/.spice-rs/data",
             ".git/.spice-rs/resident",
-            ".git/.spice-rs/canvas",
+            ".git/.spice-rs/serve",
             ".git/.spice-rs/degraded",
             ".git/.spice-rs/tape",
         ] {

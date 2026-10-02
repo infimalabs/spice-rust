@@ -216,7 +216,7 @@ fn foreign_wasm_with_right_css_cannot_publish() {
         "the contamination refusal did not name the foreign generation: {error}"
     );
     assert!(
-        !root.join(spice::canvas::APP_STAGE).exists(),
+        !root.join(spice::serve::APP_STAGE).exists(),
         "foreign Wasm published a current generation"
     );
     fs::remove_dir_all(root).expect("remove contamination fixture");
@@ -256,7 +256,7 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
         "the shell does not name its loaded generation: {shell}"
     );
     assert!(!shell.contains(APP_GENERATION_PLACEHOLDER));
-    for asset in spice::canvas::APP
+    for asset in spice::serve::APP
         .assets()
         .iter()
         .filter(|asset| asset.path() != "/")
@@ -264,7 +264,7 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
         assert!(
             shell.contains(&format!(
                 "{}/{identity}/{}",
-                spice::canvas::APP_GENERATION_ROUTE,
+                spice::serve::APP_GENERATION_ROUTE,
                 asset.file()
             )),
             "the shell did not pin {} to {identity}: {shell}",
@@ -279,7 +279,7 @@ fn a_current_generation_from_the_same_sources_stands_in_for_the_compiler() {
     let root = fixture("worktree-app-current");
     assert_eq!(current_generation_of(&root, &fixture_source()), None);
     publish_fixture(&root, "first");
-    let current = spice::canvas::AppSource::resolve(&root)
+    let current = spice::serve::AppSource::resolve(&root)
         .expect("published generation resolves")
         .current_generation()
         .expect("published generation is current");
@@ -299,12 +299,12 @@ fn publication_retains_only_the_newest_generations() {
     for index in 0..published {
         publish_fixture(&root, &format!("generation {index}"));
     }
-    let stage = root.join(spice::canvas::APP_STAGE);
-    let current = spice::canvas::AppSource::resolve(&root)
+    let stage = root.join(spice::serve::APP_STAGE);
+    let current = spice::serve::AppSource::resolve(&root)
         .expect("last generation resolves")
         .current_generation()
         .expect("last generation is current");
-    let retained = fs::read_dir(stage.join(spice::canvas::APP_STAGE_GENERATIONS))
+    let retained = fs::read_dir(stage.join(spice::serve::APP_STAGE_GENERATIONS))
         .expect("generation store lists")
         .map(|entry| entry.expect("generation entry").file_name())
         .collect::<Vec<_>>();
@@ -321,11 +321,11 @@ fn publication_retains_only_the_newest_generations() {
 fn publication_switches_only_after_an_event_releases_the_complete_generation() {
     let root = fixture("worktree-app-event");
     publish_fixture(&root, "first");
-    let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
+    let source = spice::serve::AppSource::resolve(&root).expect("first generation resolves");
     let first = source
         .current_generation()
         .expect("first generation remains current");
-    let module = spice::canvas::APP
+    let module = spice::serve::APP
         .asset("/app.module")
         .expect("module belongs to the closed inventory");
     let first_route = first.route(module);
@@ -404,7 +404,7 @@ fn publication_switches_only_after_an_event_releases_the_complete_generation() {
 fn a_failed_finalization_preserves_the_prior_pointer_or_first_build_absence() {
     let root = fixture("worktree-app-failure");
     publish_fixture(&root, "first");
-    let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
+    let source = spice::serve::AppSource::resolve(&root).expect("first generation resolves");
     let first = source
         .current_generation()
         .expect("first generation is current")
@@ -445,7 +445,7 @@ fn a_failed_finalization_preserves_the_prior_pointer_or_first_build_absence() {
     )
     .expect_err("first invalid finalization refuses");
     assert!(
-        !fresh.join(spice::canvas::APP_STAGE).exists(),
+        !fresh.join(spice::serve::APP_STAGE).exists(),
         "a failed first build published a visible stage"
     );
     fs::remove_dir_all(root).expect("remove fixture");
@@ -456,7 +456,7 @@ fn a_failed_finalization_preserves_the_prior_pointer_or_first_build_absence() {
 fn a_failed_build_preserves_the_prior_pointer_or_first_build_absence() {
     let root = fixture("worktree-app-build-failure");
     publish_fixture(&root, "first");
-    let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
+    let source = spice::serve::AppSource::resolve(&root).expect("first generation resolves");
     let first = source
         .current_generation()
         .expect("first generation is current")
@@ -492,7 +492,7 @@ fn a_failed_build_preserves_the_prior_pointer_or_first_build_absence() {
     .expect_err("failed first build refuses");
     assert!(matches!(error, AppBuildError::Exit(Some(42))));
     assert!(
-        !fresh.join(spice::canvas::APP_STAGE).exists(),
+        !fresh.join(spice::serve::APP_STAGE).exists(),
         "a failed first build published a visible stage"
     );
     assert!(

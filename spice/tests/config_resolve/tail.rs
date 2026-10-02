@@ -22,7 +22,7 @@ band = -1
 [proof]
 image = "latest"
 
-[canvas.pack]
+[serve.pack]
 rows = "many"
 "#,
         ),
@@ -43,7 +43,7 @@ directory = "locks/beta"
 shards = 2
 mystery = 3
 
-[canvas.pack]
+[serve.pack]
 rows = 0
 
 [bogus]
@@ -73,15 +73,11 @@ value = 1
         ),
         ("bogus", ConfigSource::Local, IssueKind::Unknown),
         (
-            "canvas.pack.rows",
+            "serve.pack.rows",
             ConfigSource::Tracked,
             IssueKind::Malformed,
         ),
-        (
-            "canvas.pack.rows",
-            ConfigSource::Local,
-            IssueKind::Malformed,
-        ),
+        ("serve.pack.rows", ConfigSource::Local, IssueKind::Malformed),
         ("lane.deaths", ConfigSource::Tracked, IssueKind::Malformed),
         ("lane.lease", ConfigSource::Tracked, IssueKind::Malformed),
         ("lane.life", ConfigSource::Local, IssueKind::Policy),

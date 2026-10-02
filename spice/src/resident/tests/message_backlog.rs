@@ -49,7 +49,7 @@ fn history_cursors(generation: &wire::TranscriptGeneration) -> Vec<wire::Message
 }
 
 fn complete_message_history(
-    source: &canvas::stream::Source,
+    source: &serve::stream::Source,
     accepted: &wire::Accepted,
     epoch: wire::CanonicalUuid,
     lane: wire::CanonicalUuid,
@@ -75,7 +75,7 @@ fn complete_message_history(
         let wire::StreamFrame::MessageHistory { generation, .. } = frame else {
             panic!("expected message history page")
         };
-        assert!(generation.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+        assert!(generation.messages.len() <= serve::stream::MESSAGE_HISTORY_PAGE_LIMIT);
         cursor = history_cursors(&generation).into_iter().next();
         window.splice(0..0, generation.messages);
         page += 1;
@@ -85,7 +85,7 @@ fn complete_message_history(
         .map(|message| message.activity)
         .collect::<Vec<_>>();
     let floor =
-        wire::AgentActivityKind::retention_start(&activities, canvas::stream::MESSAGE_CAPACITY);
+        wire::AgentActivityKind::retention_start(&activities, serve::stream::MESSAGE_CAPACITY);
     window.drain(..floor);
     window
 }
@@ -115,7 +115,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     tape.tee(PROSE).expect("durable prose is captured");
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::indexed();
@@ -184,7 +184,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].text, "accepted presentation");
     assert_eq!(messages[1].text, "appended after initial backlog");
-    assert!(String::from_utf8_lossy(&diagnostic).contains("canvas::message-publish-failed"));
+    assert!(String::from_utf8_lossy(&diagnostic).contains("serve::message-publish-failed"));
     bus.shutdown().expect("backlog bus stops");
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
 }
@@ -222,7 +222,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     let observed = observations[0].at;
 
     for generation in 0..2 {
-        let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+        let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
         let publisher = source.message_publisher();
         let bus_reader = bus.reader();
         let mut reader = message_surface::BacklogReader::indexed();
@@ -335,7 +335,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
 
     let mut generation_windows = Vec::new();
     for generation in 0..2 {
-        let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+        let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
         let publisher = source.message_publisher();
         let snapshot = bus.fact_snapshot().expect("durable message times load");
         let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
@@ -378,7 +378,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
             panic!("expected message snapshot")
         };
         let messages = &generation.messages;
-        assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
+        assert_eq!(*limit as usize, serve::stream::MESSAGE_CAPACITY);
         assert_eq!(
             messages.len(),
             wire::MESSAGE_FLOOR,
@@ -428,7 +428,7 @@ fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
     .expect("sparse tape is accounted");
     assert!(ingest_diagnostic.is_empty());
 
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();
@@ -527,7 +527,7 @@ fn append_hidden_tool_horizon(history: &mut Vec<u8>) {
 }
 
 fn message_snapshot(
-    source: &canvas::stream::Source,
+    source: &serve::stream::Source,
     accepted: &wire::Accepted,
     epoch: wire::CanonicalUuid,
     request: wire::CanonicalUuid,
@@ -574,7 +574,7 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
 
     let (oldest_observed, newest_observed) = deep_backlog_instants(&bus, &paths, &tape, lane);
 
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();
@@ -683,7 +683,7 @@ fn deep_backlog_instants(
 /// Page back through every older window, requiring each served card to carry
 /// its own observation, and answer with the oldest card served.
 fn oldest_observed_card(
-    source: &canvas::stream::Source,
+    source: &serve::stream::Source,
     accepted: &wire::Accepted,
     lane: wire::CanonicalUuid,
     generation: u64,
@@ -765,7 +765,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     tape.tee(PROSE).expect("initial prose is captured");
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -849,7 +849,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         .expect("durable history is captured");
     drop(tape);
 
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -999,7 +999,7 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         "Unsafe."
     );
 
-    let live = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = live.message_publisher();
     let steering = message_surface::steering_ledger(&bus, &record)
         .expect("live steering context reads")
@@ -1105,7 +1105,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
         },
     };
 
-    let live = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = live.message_publisher();
     let steering =
         message_surface::steering_ledger(&bus, &record).expect("live steering context reads");
@@ -1192,7 +1192,7 @@ fn restore_mixed_acknowledgement_message(
     expected: &str,
     marker: &str,
 ) {
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();
@@ -1212,7 +1212,7 @@ fn restore_mixed_acknowledgement_message(
 }
 
 fn assert_mixed_acknowledgement_message(
-    source: &canvas::stream::Source,
+    source: &serve::stream::Source,
     epoch: CanonicalUuid,
     request: CanonicalUuid,
     expected: &str,

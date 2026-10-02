@@ -95,9 +95,9 @@ pub(crate) fn write_tree(worktree: &Path) -> String {
 #[allow(dead_code, reason = "shared only by install refresh coverage")]
 pub(crate) fn seed_app_stage_as(worktree: &Path, identity: &[u8]) {
     let generation = wire::Digest::compute(wire::Domain::DistInventory, identity);
-    let stage = worktree.join(canvas::APP_STAGE);
+    let stage = worktree.join(serve::APP_STAGE);
     let root = stage
-        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(serve::APP_STAGE_GENERATIONS)
         .join(generation.as_str());
     fs::create_dir_all(&root).expect("create fixture app generation");
     for file in wire::manifest::APP_FILES {
@@ -108,7 +108,7 @@ pub(crate) fn seed_app_stage_as(worktree: &Path, identity: &[u8]) {
         .expect("write fixture app asset");
     }
     fs::write(
-        stage.join(canvas::APP_STAGE_CURRENT),
+        stage.join(serve::APP_STAGE_CURRENT),
         format!("{generation}\n"),
     )
     .expect("write fixture app pointer");

@@ -44,7 +44,7 @@ pub(super) struct FlightKey {
     pub(super) tape: Option<listen::Checkpoint>,
 }
 
-type PageAnswer = Result<canvas::stream::MessageHistoryPage, String>;
+type PageAnswer = Result<serve::stream::MessageHistoryPage, String>;
 
 #[derive(Debug)]
 struct Flight {

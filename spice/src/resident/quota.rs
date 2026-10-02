@@ -286,7 +286,7 @@ pub(super) struct Runtime {
     settings: Arc<Settings>,
     state: Arc<State>,
     updates: watch::Sender<Arc<State>>,
-    feed: canvas::stream::QuotaFeed,
+    feed: serve::stream::QuotaFeed,
     completions: mpsc::UnboundedReceiver<SampleCompletion>,
     completion_sender: mpsc::UnboundedSender<SampleCompletion>,
     active: Option<Active>,
@@ -327,7 +327,7 @@ impl Runtime {
 
     fn start_with(settings: Settings) -> Self {
         let state = Arc::new(State::default());
-        let feed = canvas::stream::QuotaFeed::new(wire_generation(&state));
+        let feed = serve::stream::QuotaFeed::new(wire_generation(&state));
         let (updates, _) = watch::channel(Arc::clone(&state));
         let (completion_sender, completions) = mpsc::unbounded_channel();
         Self {
@@ -372,7 +372,7 @@ impl Runtime {
         self.updates.subscribe()
     }
 
-    pub(super) fn feed(&self) -> canvas::stream::QuotaFeed {
+    pub(super) fn feed(&self) -> serve::stream::QuotaFeed {
         self.feed.clone()
     }
 
