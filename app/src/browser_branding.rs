@@ -1,20 +1,16 @@
 //! Product-branded browser title and favicon state.
 //!
-//! The icon keeps Canvas's pepper product mark and confines changing state to
-//! one lower-right badge. Counts are exact through 99; larger values use `99+`
-//! in the tiny icon while the title retains the exact total.
+//! The icon keeps Canvas's pepper product mark in its upper-left corner and
+//! gives the changing state one large lower-right badge, so a count stays
+//! readable at the 16px tab size. Counts are exact through 99; larger values
+//! use `99+` in the tiny icon while the title retains the exact total.
 
 const PRODUCT_TITLE: &str = "Spice Canvas";
-const CURRENT_BADGE: &str = "#68c89d";
-const STALE_BADGE: &str = "#e8b84e";
-const DISCONNECTED_BADGE: &str = "#ef7358";
-const LOADING_BADGE: &str = "#9aa29b";
 const MAX_EXACT_BADGE_COUNT: usize = 99;
-const SINGLE_CHARACTER: usize = 1;
-const DOUBLE_CHARACTERS: usize = 2;
-const SINGLE_CHARACTER_FONT_SIZE: usize = 18;
-const DOUBLE_CHARACTER_FONT_SIZE: usize = 15;
-const COMPACT_FONT_SIZE: usize = 12;
+/// Badge rectangle width in icon units; every label must fit inside it.
+const BADGE_WIDTH: usize = 49;
+/// Font size and baseline in icon units for one-, two-, and three-character labels.
+const LABEL_METRICS: [(usize, usize); 3] = [(42, 57), (34, 54), (24, 51)];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConnectionState {
@@ -49,41 +45,60 @@ impl CountState {
     }
 }
 
+/// Badge colour: green current, amber stale, red disconnected, grey loading.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tone {
+    Loading,
+    Current,
+    Stale,
+    Disconnected,
+}
+
+impl Tone {
+    #[cfg(target_arch = "wasm32")]
+    const fn color(self) -> &'static str {
+        match self {
+            Self::Loading => "#9aa29b",
+            Self::Current => "#68c89d",
+            Self::Stale => "#e8b84e",
+            Self::Disconnected => "#ef7358",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BrowserBranding {
     title: String,
-    icon: String,
+    badge: String,
+    tone: Tone,
 }
 
 impl BrowserBranding {
     #[must_use]
     pub(crate) fn for_state(state: CountState) -> Self {
-        let (title, badge, color) = match state {
+        let (title, badge, tone) = match state {
             CountState::Loading => (
                 format!("{PRODUCT_TITLE} — Loading"),
                 "…".to_owned(),
-                LOADING_BADGE,
+                Tone::Loading,
             ),
             CountState::Disconnected => (
                 format!("{PRODUCT_TITLE} — Disconnected"),
                 "!".to_owned(),
-                DISCONNECTED_BADGE,
+                Tone::Disconnected,
             ),
             CountState::Current(count) => (
                 remaining_title(count, false),
                 badge_count(count),
-                CURRENT_BADGE,
+                Tone::Current,
             ),
             CountState::Stale(count) => (
                 remaining_title(count, true),
                 badge_count(count),
-                STALE_BADGE,
+                Tone::Stale,
             ),
         };
-        Self {
-            title,
-            icon: icon_svg(&badge, color),
-        }
+        Self { title, badge, tone }
     }
 
     #[must_use]
@@ -91,9 +106,26 @@ impl BrowserBranding {
         &self.title
     }
 
+    /// Standalone SVG document for the favicon.
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub(crate) fn icon(&self) -> &str {
-        &self.icon
+    pub(crate) fn icon(&self) -> String {
+        let (font_size, baseline) = label_metrics(&self.badge);
+        format!(
+            concat!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">",
+                "<rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#101411\"/>",
+                "<text x=\"16\" y=\"29\" text-anchor=\"middle\" font-family=\"Apple Color Emoji,Segoe UI Emoji,sans-serif\" font-size=\"28\">🌶️</text>",
+                "<rect x=\"13.5\" y=\"21.5\" width=\"{width}\" height=\"41\" rx=\"13\" fill=\"{color}\" stroke=\"#101411\" stroke-width=\"3\"/>",
+                "<text x=\"38\" y=\"{baseline}\" text-anchor=\"middle\" font-family=\"ui-monospace,SFMono-Regular,Menlo,monospace\" font-size=\"{font_size}\" font-weight=\"800\" fill=\"#101411\">{label}</text>",
+                "</svg>"
+            ),
+            width = BADGE_WIDTH,
+            color = self.tone.color(),
+            baseline = baseline,
+            font_size = font_size,
+            label = self.badge
+        )
     }
 }
 
@@ -111,27 +143,10 @@ fn badge_count(count: usize) -> String {
     }
 }
 
-fn icon_svg(label: &str, badge: &str) -> String {
-    let font_size = if label.len() <= SINGLE_CHARACTER {
-        SINGLE_CHARACTER_FONT_SIZE
-    } else if label.len() == DOUBLE_CHARACTERS {
-        DOUBLE_CHARACTER_FONT_SIZE
-    } else {
-        COMPACT_FONT_SIZE
-    };
-    format!(
-        concat!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">",
-            "<rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#101411\"/>",
-            "<text x=\"25\" y=\"40\" text-anchor=\"middle\" font-family=\"Apple Color Emoji,Segoe UI Emoji,sans-serif\" font-size=\"34\">🌶️</text>",
-            "<rect x=\"28\" y=\"32\" width=\"34\" height=\"30\" rx=\"15\" fill=\"{badge}\" stroke=\"#101411\" stroke-width=\"3\"/>",
-            "<text x=\"45\" y=\"52\" text-anchor=\"middle\" font-family=\"ui-monospace,monospace\" font-size=\"{font_size}\" font-weight=\"800\" fill=\"#101411\">{label}</text>",
-            "</svg>"
-        ),
-        badge = badge,
-        font_size = font_size,
-        label = label
-    )
+/// Largest font and its baseline for a badge label of this many characters.
+fn label_metrics(label: &str) -> (usize, usize) {
+    let characters = label.chars().count().clamp(1, LABEL_METRICS.len());
+    LABEL_METRICS[characters - 1]
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -139,10 +154,7 @@ fn icon_svg(label: &str, badge: &str) -> String {
 pub(crate) fn use_browser_branding(state: CountState) {
     use yew::prelude::use_effect_with;
 
-    let branding = BrowserBranding::for_state(state);
-    use_effect_with(branding, |branding| {
-        apply(branding);
-    });
+    use_effect_with(state, |state| apply(&BrowserBranding::for_state(*state)));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -182,6 +194,9 @@ mod tests {
     use super::*;
     const KNOWN_COUNT: usize = 7;
     const LARGE_TITLE_COUNT: usize = 1_234;
+    /// Monospace advance as a percentage of the font size.
+    const MONOSPACE_ADVANCE_PERCENT: usize = 60;
+    const PERCENT: usize = 100;
 
     #[test]
     fn connection_and_snapshot_state_define_freshness() {
@@ -228,20 +243,30 @@ mod tests {
     }
 
     #[test]
-    fn icon_badges_are_distinct_and_bound_large_counts() {
-        let zero = BrowserBranding::for_state(CountState::Current(0));
-        let one = BrowserBranding::for_state(CountState::Current(1));
-        let large = BrowserBranding::for_state(CountState::Current(MAX_EXACT_BADGE_COUNT + 1));
-        let stale = BrowserBranding::for_state(CountState::Stale(1));
-        let disconnected = BrowserBranding::for_state(CountState::Disconnected);
-
-        assert!(zero.icon().contains(">0</text>"));
-        assert!(zero.icon().contains("🌶️"));
-        assert!(one.icon().contains(">1</text>"));
-        assert!(large.icon().contains(">99+</text>"));
-        assert!(!large.icon().contains(">100</text>"));
-        assert_ne!(one.icon(), stale.icon());
-        assert!(disconnected.icon().contains(">!</text>"));
-        assert!(one.icon().contains("#68c89d"));
+    fn badges_bound_large_counts_mark_freshness_and_fit_the_icon() {
+        for (state, badge, tone) in [
+            (CountState::Loading, "…", Tone::Loading),
+            (CountState::Disconnected, "!", Tone::Disconnected),
+            (CountState::Current(0), "0", Tone::Current),
+            (CountState::Current(1), "1", Tone::Current),
+            (CountState::Stale(1), "1", Tone::Stale),
+            (
+                CountState::Current(MAX_EXACT_BADGE_COUNT),
+                "99",
+                Tone::Current,
+            ),
+            (
+                CountState::Current(MAX_EXACT_BADGE_COUNT + 1),
+                "99+",
+                Tone::Current,
+            ),
+            (CountState::Current(LARGE_TITLE_COUNT), "99+", Tone::Current),
+        ] {
+            let branding = BrowserBranding::for_state(state);
+            assert_eq!((branding.badge.as_str(), branding.tone), (badge, tone));
+            let (font_size, _) = label_metrics(badge);
+            let advance = badge.chars().count() * font_size * MONOSPACE_ADVANCE_PERCENT / PERCENT;
+            assert!(advance < BADGE_WIDTH, "{badge:?} overflows the badge");
+        }
     }
 }
