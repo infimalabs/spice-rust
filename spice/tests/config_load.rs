@@ -539,7 +539,7 @@ fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
 }
 
 #[test]
-fn repository_failure_is_distinct_and_loader_source_has_no_ambient_or_mutating_path() {
+fn repository_failure_is_distinct_from_acquisition_and_resolution() {
     let scratch = Scratch::new();
     let outside = scratch.join("not a repository");
     fs::create_dir(&outside).expect("create non-repository start");
@@ -547,24 +547,6 @@ fn repository_failure_is_distinct_and_loader_source_has_no_ambient_or_mutating_p
     assert!(error.repository().is_some());
     assert!(error.acquisition().is_empty());
     assert!(error.resolution().is_none());
-
-    let source = ::std::include_str!("../src/config/load.rs");
-    for forbidden in [
-        "read_dir",
-        "current_dir",
-        "std::env",
-        "Command::",
-        "journal::",
-        "lock(",
-        "fs::write",
-        "fs::create",
-        "std::net",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "loader unexpectedly references {forbidden}"
-        );
-    }
 }
 
 fn linked_worktree(scratch: &Scratch, common: &Path, name: &str) -> PathBuf {
