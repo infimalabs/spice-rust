@@ -335,8 +335,12 @@ pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'
     let creator_context = Callback::from(|event: MouseEvent| {
         super::card_target::remember_global_work_return(&event);
     });
+    let lanes = runtime
+        .and_then(AppRuntime::lanes)
+        .map_or(&[][..], |lanes| lanes.lanes.as_slice());
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
+            {super::watchband::render_global_jobs(lanes)}
             <section tabindex="-1" class="section work-board-section">
                 {work_board::render(
                     work,
