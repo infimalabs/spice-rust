@@ -199,17 +199,7 @@ fn change(
         return missing_lane(selection.lane());
     };
     let from = selection.replace_seat(row);
-    let occupant = row.occupant;
-    let runtime_applied = selection.live_request(row).is_some_and(|request| {
-        let occupant = occupant.expect("a live request requires an occupant");
-        matches!(
-            super::super::supervisor::command::retune(paths, selection.lane(), occupant, request,),
-            Ok(super::super::supervisor::command::LiveRetuneResult::Applied)
-        )
-    });
-    if runtime_applied {
-        selection.apply_runtime(row);
-    }
+    let live = selection.live_request(row).zip(row.occupant);
     let answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -246,19 +236,7 @@ fn change(
         Ok(fact) => fact,
         Err(error) => return typed_store_fault("lane::fact-invalid", &error.to_string()),
     };
-    let head_fact = if runtime_applied {
-        let occupant = occupant.expect("an applied live request has an occupant");
-        match write.fact(
-            selection.runtime_fact(occupant),
-            FactCause::Pending(seat_fact),
-        ) {
-            Ok(fact) => fact,
-            Err(error) => return typed_store_fault("lane::fact-invalid", &error.to_string()),
-        }
-    } else {
-        seat_fact
-    };
-    write.residency_head(head_fact, move |_| next);
+    write.residency_head(seat_fact, move |_| next);
     let result = match selection {
         Selection::Model(request) => {
             command_result(&mut write, command, request.clone(), epoch, answer.clone())
@@ -270,14 +248,82 @@ fn change(
     if let Err(outcome) = result {
         return typed_outcome(outcome);
     }
-    match commit(bus, write) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::Lane(Box::new(answer)),
-        }),
-        Err(outcome) => typed_outcome(outcome),
+    let seated = match commit(bus, write) {
+        Ok(committed) => committed,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let first = seq(seated.first());
+    let mut last = seq(seated.last());
+    let mut answer = answer;
+    // The seat is durable before the occupant is touched, so no later refusal
+    // can leave a running change that the journal never heard about.
+    if let Some((request, occupant)) = live {
+        let applied = matches!(
+            super::super::supervisor::command::retune(paths, selection.lane(), occupant, request),
+            Ok(super::super::supervisor::command::LiveRetuneResult::Applied)
+        );
+        if applied
+            && let Some((position, recorded)) =
+                record_runtime(bus, paths, epoch, seats, command, selection, occupant)
+        {
+            last = position;
+            answer = recorded;
+        }
     }
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange { first, last }),
+        body: CommandAnswer::Lane(Box::new(answer)),
+    })
+}
+
+/// Commits a runtime fact may race before it gives up; each attempt re-reads
+/// the head, so only a lane whose residency changes this often goes unrecorded.
+const RUNTIME_RECORD_ATTEMPTS: usize = 3;
+
+/// Journal one confirmed live change against the current head, as long as
+/// the same occupant still runs; a successor launches from the seat instead.
+fn record_runtime(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command: &wire::AdmittedCommand,
+    selection: Selection<'_>,
+    occupant: CanonicalUuid,
+) -> Option<(wire::Seq, wire::intent::LaneAnswer)> {
+    for _ in 0..RUNTIME_RECORD_ATTEMPTS {
+        let observed = current_residency(bus, epoch).ok()?;
+        let mut next = observed.body().clone();
+        let row = next
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == selection.lane())?;
+        let launched = row
+            .session
+            .as_ref()
+            .is_some_and(|session| session.launch.is_some());
+        if row.occupant != Some(occupant) || !launched {
+            return None;
+        }
+        selection.apply_runtime(row);
+        let answer = answer(&next, None, seats, paths).ok()?;
+        let mut write = write(
+            command.actor().clone(),
+            epoch,
+            Producer::ResidentRecognition,
+        )
+        .ok()?;
+        guard_residency(&mut write, &observed);
+        let fact = write
+            .fact(
+                selection.runtime_fact(occupant),
+                FactCause::Existing(observed.position()),
+            )
+            .ok()?;
+        write.residency_head(fact, move |_| next);
+        if let Ok(committed) = commit(bus, write) {
+            return Some((seq(committed.last()), answer));
+        }
+    }
+    None
 }

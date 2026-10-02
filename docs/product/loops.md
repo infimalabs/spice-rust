@@ -406,11 +406,12 @@ flowchart LR
   `lane effort ID [EFFORT]` topology-guard and journal the value every future
   launch reads; omission restores vendor configuration. Lane rows report the
   running `model`/`effort` separately from `seat_model`/`seat_effort`. A
-  command-driven OMP occupant changes immediately only after the exact
-  correlated `set_model` or `set_thinking_level` response succeeds. Live model
-  selection requires explicit `provider/model`; bare models, clears,
-  unsupported occupants, refusals, and interrupted RPC retain the running
-  value while the durable next-launch selection remains committed.
+  command-driven OMP occupant is asked only after the seat commits, and its
+  running value changes only after the exact correlated `set_model` or
+  `set_thinking_level` response succeeds, journaled against the then-current
+  head while the same occupant still runs. Live model selection requires
+  explicit `provider/model`; bare models, clears, unsupported occupants,
+  refusals, and interrupted RPC retain the running value.
 - A lane names exactly one worktree seat. A team may hold one or many lanes;
    the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
