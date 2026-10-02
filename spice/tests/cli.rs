@@ -4,10 +4,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use listen::{Dialect, EventKind, Mode, Observation, Span, StreamOutcome, SurfaceEvent};
+use listen::{EventKind, Mode, Observation, StreamOutcome};
 use rusqlite::{Connection, params};
 use spice::placeholder::PlaceholderReason;
 use tape::Tape;
@@ -24,7 +23,6 @@ const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
 
 const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}"#;
-const PROSE_TEXT: &str = "working";
 
 struct Scratch(PathBuf);
 
@@ -223,11 +221,12 @@ fn watch_accounts_for_a_selected_symlink_without_following_it() {
     let spoken = invoke(&["--json", "watch", &alias]);
     assert_eq!(spoken.code, Some(0), "a symlink is finite, not followed");
     assert!(spoken.err.is_empty());
-    let outcome: StreamOutcome = wire::decode(&spoken.out).expect("absence DTO decodes");
-    assert!(matches!(
-        outcome.observations.as_slice(),
-        [Observation::Absent { .. }]
-    ));
+    let outcome: serde_json::Value =
+        serde_json::from_slice(&spoken.out).expect("watch reply decodes");
+    assert_eq!(
+        outcome["body"]["batches"]["rows"][0]["outcome"]["observations"][0]["type"],
+        "absent"
+    );
 
     scratch.remove();
 }

@@ -78,9 +78,8 @@ impl Rendering {
 /// Callers whose reply type has an explicit human-text variant use
 /// [`render_with_reply_text`] to select that prose without changing `--json`.
 /// Refusals keep their typed arm's output order and faults keep their
-/// one-sentence form. Long-running transcript wakes use [`render_stream`]; a
-/// finite transcript command uses [`render_stream_reply`] so its one result
-/// keeps the reply envelope.
+/// one-sentence form. Finite transcript commands use [`render_stream_reply`]
+/// so their result keeps the reply envelope.
 ///
 /// # Errors
 ///
@@ -148,18 +147,6 @@ pub fn render_commit_gate<B: Serialize>(
         Outcome::Reply(_) => Ok(None),
         Outcome::Refusal(_) | Outcome::Fault(_) => render(outcome, form).map(Some),
     }
-}
-
-/// Renders one successful transcript report in the requested form.
-pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
-    let document = match form {
-        Form::Text => terminated(outcome.to_string().into_bytes()),
-        Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
-    };
-    Ok(Rendering {
-        stream: Stream::Out,
-        document,
-    })
 }
 
 /// Renders one finite transcript command result in the requested form.

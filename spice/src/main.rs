@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::{
     io::{self, Write},
     process::ExitStatus,
-    sync::{OnceLock, mpsc},
-    time::{Duration, Instant},
+    sync::OnceLock,
+    time::Instant,
 };
 
-use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
+use listen::{RetroSelector, StreamOutcome, SurfaceError};
 use spice::cli;
 #[cfg(not(target_arch = "wasm32"))]
 use spice::placeholder::PlaceholderReason;
@@ -96,14 +96,13 @@ mod taste_command;
 mod test_repository;
 #[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
+mod watch_command;
 
 use render::Form;
 
 const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
-#[cfg(not(target_arch = "wasm32"))]
-const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 enum StateFailure {
     Refusal(Refusal),
@@ -865,19 +864,7 @@ fn run(command: Vec<OsString>) -> ! {
 }
 
 fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
-    let root = matches
-        .get_one::<String>("ROOT")
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let mut watch = Watch::new(&root, extension_dialects());
-
-    if !is_real_directory(&root) {
-        match poll_and_emit(&mut watch, form) {
-            Ok(()) => terminate_stream(),
-            Err(fault) => deliver_fault(fault, form),
-        }
-    }
-
-    follow(&root, &mut watch, form)
+    deliver_display(&watch_command::run(matches, extension_dialects()), form)
 }
 
 fn extension_dialects() -> Vec<(&'static str, listen::Dialect)> {
@@ -887,77 +874,6 @@ fn extension_dialects() -> Vec<(&'static str, listen::Dialect)> {
         .into_iter()
         .map(|vendor| (vendor.name(), vendor.dialect()))
         .collect()
-}
-
-fn is_real_directory(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn follow(root: &Path, watch: &mut Watch, form: Form) -> ! {
-    use notify::{RecursiveMode, Watcher};
-
-    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = match notify::PollWatcher::new(
-        move |event| {
-            let _ = sender.send(event);
-        },
-        notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
-    ) {
-        Ok(watcher) => watcher,
-        Err(error) => deliver_fault(watch_fault("create filesystem watcher", error), form),
-    };
-    if let Err(error) = watcher.watch(root, RecursiveMode::Recursive) {
-        deliver_fault(watch_fault("arm filesystem watcher", error), form);
-    }
-    if let Err(fault) = poll_and_emit(watch, form) {
-        deliver_fault(fault, form);
-    }
-
-    loop {
-        match receiver.recv() {
-            Ok(Ok(_)) => {
-                if let Err(fault) = poll_and_emit(watch, form) {
-                    deliver_fault(fault, form);
-                }
-            }
-            Ok(Err(error)) => {
-                deliver_fault(watch_fault("receive filesystem notification", error), form);
-            }
-            Err(error) => {
-                deliver_fault(
-                    Fault {
-                        class: FaultClass::Environment,
-                        reason: "watch::notification".to_owned(),
-                        detail: format!("filesystem notification channel disconnected: {error}"),
-                    },
-                    form,
-                );
-            }
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn follow(_root: &Path, _watch: &mut Watch, form: Form) -> ! {
-    deliver_fault(
-        Fault {
-            class: FaultClass::Environment,
-            reason: "watch::unavailable".to_owned(),
-            detail: "filesystem notifications are unavailable on wasm32".to_owned(),
-        },
-        form,
-    )
-}
-
-fn poll_and_emit(watch: &mut Watch, form: Form) -> Result<(), Fault> {
-    let outcome = watch.poll().map_err(surface_fault)?;
-    if !outcome.is_empty() {
-        render::render_stream(&outcome, form)
-            .map_err(render_fault)?
-            .speak();
-    }
-    Ok(())
 }
 
 fn deliver_stream_once(outcome: &StreamOutcome, form: Form) -> ! {
@@ -975,15 +891,6 @@ fn surface_fault(error: SurfaceError) -> Fault {
         class: FaultClass::Environment,
         reason: "listen::surface".to_owned(),
         detail: error.to_string(),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn watch_fault(operation: &str, error: notify::Error) -> Fault {
-    Fault {
-        class: FaultClass::Environment,
-        reason: "watch::notification".to_owned(),
-        detail: format!("failed to {operation}: {error}"),
     }
 }
 
@@ -1039,7 +946,6 @@ fn deliver_with_reply_text<B: serde::Serialize>(
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn deliver_display<B: serde::Serialize + std::fmt::Display>(outcome: &Outcome<B>, form: Form) -> ! {
     deliver_rendering(outcome, render::render_display(outcome, form))
 }

@@ -20,9 +20,10 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     local_direct!(
         ["watch"],
-        "watch [ROOT]",
+        "watch [ROOT] [--follow] [--deadline-seconds SECONDS] [--after CURSOR] [--limit N] \
+         [--max-bytes N] [--max-text N]",
         [Daemonless, Offline],
-        Stream,
+        Reply,
         "listen::watch"
     ),
     local_direct!(

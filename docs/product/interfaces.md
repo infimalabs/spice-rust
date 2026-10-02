@@ -205,10 +205,10 @@ document. A successful daemonless command is
 `{"kind":"reply","body":...}`; a read adds its snapshot `cursor`, and a mutation
 adds its committed `seq` range. The absence of both coordinates is the one
 spelling of a daemonless reply—there is no empty `direct` marker. Refusals and
-faults use the same envelope with their respective `kind`. A long-running
-stream emits one stream document per wake because it has no finite command
-reply; finite `retro` returns its `StreamOutcome` inside the ordinary reply
-envelope.
+faults use the same envelope with their respective `kind`. Transcript reads are
+finite replies: `retro` returns one `StreamOutcome`, while `watch` returns one
+bounded report containing its admitted batches, stable resume cursor, and
+terminal reason.
 
 ### Bounded reads
 
@@ -253,6 +253,20 @@ strictly older records without replaying it. History outside the decoded window
 reports the exact withheld source-byte count and its authenticated older cursor.
 A cursor from a replaced tape is refused rather than replayed against the new
 generation.
+
+Bare `spice watch [ROOT]` is one bounded current snapshot and exits. Persistent
+observation is explicit: `--follow` requires a positive
+`--deadline-seconds SECONDS` no greater than 300 seconds. The run blocks on real
+filesystem notifications, coalesces them at a maximum ten-hertz watcher rate,
+and stops after at most 3000 wakes. All snapshots in the run share one aggregate
+row and encoded-byte admission budget; every text field is clipped under the
+same text ceiling. Its opaque `watch.v1` cursor records each tape generation,
+complete-record boundary, and emitted decoder canaries. `--after CURSOR`
+therefore resumes without replaying admitted records. Replacement, disappeared
+sources, history skipped outside the bounded tail, and records skipped above
+the repository byte maximum are explicit `missing` observations rather than
+silent loss. If output admission closes, the cursor remains immediately before
+the first omitted row and the reply carries the exact continuation command.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,

@@ -13,7 +13,6 @@
 //! resolves one syntactic selector, reads only the resulting tape spans, and
 //! turns every absence or untyped byte range into an observation.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
@@ -25,8 +24,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tape::{Locus, Tape};
 
 use crate::{
-    Checkpoint, Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, RecordPayload,
-    ResidueKind, Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
+    Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, RecordPayload, ResidueKind,
+    Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
 };
 mod page;
 pub use page::{
@@ -35,6 +34,8 @@ pub use page::{
     TranscriptPageRow, TranscriptPageStart, TranscriptRecord, TranscriptStatus, TranscriptWork,
     transcript_page,
 };
+mod watch;
+pub use watch::{Watch, WatchBatch, WatchCursor, WatchDelta, WatchDeltaRow};
 
 /// Which daemonless surface produced a stream outcome.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -707,94 +708,6 @@ impl Session {
     }
 }
 
-/// Cursor-following observation over one selected root.
-#[derive(Debug)]
-pub struct Watch {
-    root: PathBuf,
-    dialects: Vec<(&'static str, Dialect)>,
-    checkpoints: BTreeMap<PathBuf, Checkpoint>,
-    seen: BTreeMap<PathBuf, BTreeSet<EventKind>>,
-}
-
-impl Watch {
-    /// Begin a read-only cursor view. No filesystem access occurs until poll.
-    #[must_use]
-    pub fn new(
-        root: impl Into<PathBuf>,
-        dialects: impl IntoIterator<Item = (&'static str, Dialect)>,
-    ) -> Self {
-        Self {
-            root: root.into(),
-            dialects: dialects.into_iter().collect(),
-            checkpoints: BTreeMap::new(),
-            seen: BTreeMap::new(),
-        }
-    }
-
-    /// Reconcile every current session with its durable cursor once.
-    ///
-    /// Calling this after any filesystem notification is sufficient; the
-    /// event's path and multiplicity are deliberately ignored because the tape
-    /// bounds, not the notification queue, decide what has arrived.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed surface failure when discovery or tape reads fail, or
-    /// when append-only member bounds retreat behind an emitted cursor.
-    pub fn poll(&mut self) -> Result<StreamOutcome, SurfaceError> {
-        let sessions = discover(&self.root, &self.dialects)?;
-        let mut observations = Vec::new();
-        if sessions.is_empty() {
-            observations.push(Observation::Absent {
-                selector: self.root.display().to_string(),
-            });
-        }
-
-        for session in sessions {
-            let scanned = scan_records(
-                &session.tape,
-                session.decoder(),
-                self.checkpoints.get(&session.tape),
-            )
-            .map_err(|source| SurfaceError::Scan {
-                path: session.tape.clone(),
-                source,
-            })?;
-            self.checkpoints
-                .insert(session.tape.clone(), scanned.checkpoint.clone());
-            let surfaced = surface_scan(&session, &scanned, false);
-            if surfaced.observations.is_empty() && scanned.extents_empty {
-                observations.push(Observation::Absent {
-                    selector: session.tape.display().to_string(),
-                });
-            }
-
-            if surfaced.accounted {
-                let seen = self.seen.entry(session.tape.clone()).or_default();
-                seen.extend(surfaced.event_kinds);
-                observations.extend(
-                    EventKind::ALL
-                        .into_iter()
-                        .filter(|kind| !seen.contains(kind))
-                        .map(|kind| Observation::Canary {
-                            lane: session.lane.clone(),
-                            dialect: session.dialect,
-                            tape: session.tape.clone(),
-                            expected: kind,
-                        }),
-                );
-            }
-            observations.extend(surfaced.observations);
-        }
-
-        Ok(StreamOutcome {
-            mode: Mode::Watch,
-            root: self.root.clone(),
-            observations,
-        })
-    }
-}
-
 /// Replay exactly the sessions or span selected beneath `root`.
 ///
 /// # Errors
@@ -871,7 +784,6 @@ pub fn retro(
 struct SurfacedScan {
     observations: Vec<Observation>,
     event_kinds: Vec<EventKind>,
-    accounted: bool,
 }
 
 fn surface_scan(session: &Session, scan: &Scan, finish_partial: bool) -> SurfacedScan {
@@ -923,7 +835,6 @@ fn surface_scan(session: &Session, scan: &Scan, finish_partial: bool) -> Surface
     SurfacedScan {
         observations,
         event_kinds,
-        accounted: !scan.records.is_empty() || (finish_partial && !scan.pending.is_empty()),
     }
 }
 
