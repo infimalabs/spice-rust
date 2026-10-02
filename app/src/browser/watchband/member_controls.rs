@@ -128,10 +128,10 @@ fn confirmed(
 ) -> Html {
     html! {
         <details class="member-confirm" data-member-control={key}>
-            <summary class="team-mode">{label.to_owned()}</summary>
+            <summary class="agent-menu-action">{label.to_owned()}</summary>
             <div class="member-confirm-body">
                 <p>{question}</p>
-                <button type="button" class="team-mode" disabled={busy} {onclick}>{action}</button>
+                <button type="button" class="agent-menu-action" disabled={busy} {onclick}>{action}</button>
             </div>
         </details>
     }
@@ -201,9 +201,9 @@ fn model_form(props: &ModelFormProps) -> Html {
                 disabled={busy}
                 {oninput}
             />
-            <button type="submit" class="team-mode" disabled={busy}>{"Set model"}</button>
+            <button type="submit" class="agent-menu-action" disabled={busy}>{"Set model"}</button>
             if let Some(reset) = reset {
-                <button type="button" class="team-mode" disabled={busy} onclick={reset}>
+                <button type="button" class="agent-menu-action" disabled={busy} onclick={reset}>
                     {"Use default"}
                 </button>
             }
@@ -291,7 +291,7 @@ fn render_renewal(
         html! {
             <button
                 type="button"
-                class="team-mode"
+                class="agent-menu-action"
                 data-member-control="renew"
                 aria-label={renewal.label}
                 title={renewal.title}
@@ -315,7 +315,7 @@ fn render_lifecycle(
             if member.occupant.is_none() && member.wakeable {
                 <button
                     type="button"
-                    class="team-mode"
+                    class="agent-menu-action"
                     data-member-control="wake"
                     disabled={busy}
                     onclick={send(command, lane, MemberCommand::Wake)}
