@@ -104,6 +104,11 @@ pub struct TailScan {
     pub scan: Scan,
     /// Exact work consumed to produce this window.
     pub work: TailWork,
+    /// Exact plaintext source bytes preceding this window.
+    ///
+    /// A nonzero value means older history exists even when every decoded
+    /// record in this window fits the presentation budget.
+    pub withheld_source_bytes: u64,
 }
 
 /// Scan the newest caller-bounded byte window without beginning inside a record.
@@ -157,6 +162,7 @@ pub fn scan_tail(
     let work = tracker.complete()?;
     Ok(TailScan {
         start,
+        withheld_source_bytes: bytes_before(&extents, next),
         scan: Scan {
             records: state.records,
             checkpoint: Checkpoint {
@@ -233,6 +239,7 @@ pub fn scan_before(
     let work = tracker.complete()?;
     Ok(TailScan {
         start,
+        withheld_source_bytes: bytes_before(&extents, next),
         scan: Scan {
             records: state.records,
             checkpoint: Checkpoint {
@@ -244,6 +251,21 @@ pub fn scan_before(
         },
         work,
     })
+}
+
+fn bytes_before(extents: &[Extent], position: Position) -> u64 {
+    extents
+        .iter()
+        .map(|extent| {
+            if extent.member < position.member {
+                extent.length
+            } else if extent.member == position.member {
+                position.offset.min(extent.length)
+            } else {
+                0
+            }
+        })
+        .sum()
 }
 
 pub(super) struct WorkTracker {
