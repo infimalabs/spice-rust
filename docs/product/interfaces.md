@@ -250,6 +250,11 @@ orders current/actionable rows before waiting and terminal rows, then newest
 first, and applies the 20-row interactive default even with `--all` or
 `--project`. Both surfaces emit an exact `--after` continuation when rows remain.
 
+`spice lane list` uses the same interactive row and byte limits. It orders the
+calling lane first, then occupied or claim-holding lanes, then remaining lanes;
+UUID order makes each group deterministic. A partial page names the first
+withheld lane in its exact `--after` continuation.
+
 Mutation replies are outside this contract: they stay complete and concise.
 
 `spice board` is a posture, not a dump: counts of the reader's visible and

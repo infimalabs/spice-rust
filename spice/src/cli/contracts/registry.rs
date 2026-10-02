@@ -721,7 +721,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     operator!(["lane"], "lane", Read, [], Reply, "lane::read"),
     row!(
         ["lane", "list"],
-        "lane list",
+        "lane list [--limit N] [--max-bytes N] [--after LANE]",
         OperatorOrLane,
         Read,
         [],
