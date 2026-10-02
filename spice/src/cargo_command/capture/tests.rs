@@ -23,6 +23,11 @@ impl Write for Sink {
     }
 }
 
+/// One fixture child at a time: where pipe creation and close-on-exec are two
+/// steps (Apple targets), a concurrent test's child can inherit this child's
+/// output pipe and hold it open, which the drain bound would then report.
+static SPAWN: Mutex<()> = Mutex::new(());
+
 struct Fixture {
     directory: PathBuf,
     sink: Sink,
@@ -31,8 +36,10 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         Self {
+            // A legal Git common directory a bare shell word would split,
+            // glob, and substitute.
             directory: std::env::temp_dir().join(format!(
-                "spice-cargo-output-{}-{}",
+                "spice-cargo-output-{}-{} it's $(exit 7) *",
                 std::process::id(),
                 uuid::Uuid::new_v4().simple()
             )),
@@ -49,6 +56,9 @@ impl Fixture {
             verbose,
             directory: self.directory.clone(),
         };
+        let _serial = SPAWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let status =
             run(command, Stdout::Capture, &settings, |_| Ok(())).expect("captured child runs");
         (status, self.sink.text())
@@ -144,17 +154,17 @@ fn noisy_failure_shows_a_bounded_tail_with_truncation_facts_and_an_inspection_co
         )),
         "{report}"
     );
-    let path = report
+    let inspect = report
         .lines()
-        .find_map(|line| line.strip_prefix("complete output: "))
-        .and_then(|rest| rest.split(" (").next())
-        .expect("failure names the capture");
-    assert!(
-        report.ends_with(&format!(
-            "inspect: grep -n -E 'error|warning|FAILED|panicked' {path}\n"
-        )),
-        "{report}"
-    );
+        .find_map(|line| line.strip_prefix("inspect: "))
+        .expect("failure names an inspection command");
+    let inspected = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(inspect)
+        .output()
+        .expect("inspection command runs");
+    assert!(inspected.status.success(), "{inspect}");
+    assert_eq!(inspected.stdout, b"5001:error: boom\n", "{inspect}");
 }
 
 #[test]
@@ -236,10 +246,10 @@ fn verbose_streams_live_lines_only_up_to_its_bound() {
 fn output_held_open_by_a_descendant_does_not_hold_the_run() {
     let fixture = Fixture::new();
     let started = Instant::now();
-    let (status, report) = fixture.run(&mut sh("sleep 30 & echo parent done"), false);
+    let (status, report) = fixture.run(&mut sh("sleep 10 & echo parent done"), false);
 
     assert!(status.success());
-    assert!(started.elapsed() < Duration::from_secs(20), "{report}");
+    assert!(started.elapsed() < Duration::from_secs(8), "{report}");
     assert!(
         report.contains("a descendant still held the output open"),
         "{report}"
