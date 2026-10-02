@@ -254,6 +254,14 @@ snapshot; reversing that migration restores the exact pre-migration assets and
 version-7 receipt. Snapshot blobs remain inert unless the receipt authenticates
 them.
 
+Pre-App receipts may retain `canvas-app.html` only as migration evidence.
+Preview validates the recorded file in place, then derives one current plan
+that publishes the retained generation as `app.html` and retires the old path.
+Published operations and every later retained generation use only `app.html`;
+the old name remains only as retirement evidence. A retired shell name on a
+newly published current generation, or any unknown generation file, refuses.
+Preview remains non-mutating.
+
 The manual refresh above is complete only when no resident is published. It does
 not replace a running resident's in-memory generation. When one is running, use
 the supervising shortcut: it stops the exact published resident before refresh

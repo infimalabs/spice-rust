@@ -263,20 +263,32 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
         // Only a plan without symbols may discard a retained bundle.
         if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
             && plan.symbols.is_none()
-            && fixed.len() == expected.len() + symbols::DISCARD_PATHS.len()
+            && fixed
+                .get(expected.len()..expected.len() + symbols::DISCARD_PATHS.len())
+                .is_some_and(|retirements| {
+                    retirements
+                        .iter()
+                        .zip(symbols::DISCARD_PATHS)
+                        .all(|(retirement, path)| retirement.path == path)
+                })
         {
             expected.extend(symbols::DISCARD_PATHS);
         }
-        if fixed.len() != expected.len()
-            || fixed
-                .iter()
-                .zip(expected)
-                .any(|(retirement, path)| retirement.path != path)
+        let Some((fixed, migrated)) = fixed.split_at_checked(expected.len()) else {
+            return Err(InstallError::InvalidRecord(
+                "install retirement inventory is not exact and ordered".to_owned(),
+            ));
+        };
+        if fixed
+            .iter()
+            .zip(expected)
+            .any(|(retirement, path)| retirement.path != path)
         {
             return Err(InstallError::InvalidRecord(
                 "install retirement inventory is not exact and ordered".to_owned(),
             ));
         }
+        record::validate_migration_retirements(plan, migrated)?;
         validate_retired_generations(plan, retired)?;
     }
     if plan
@@ -330,7 +342,7 @@ fn validate_retired_generations(
     for retirement in retired {
         let (generation, file) =
             app::generation_file(&retirement.path).expect("the tail holds only generation files");
-        let asset = app::recorded_asset_file(file).expect("a generation file names an asset");
+        let asset = app::asset_file(file).expect("a generation file names an asset");
         let published = plan
             .app
             .iter()
@@ -438,15 +450,8 @@ pub(super) fn validate_operation(
     app: Option<&Digest>,
 ) -> Result<(), InstallError> {
     let generation = app::operation_generation(operation.asset, &operation.path);
-    let (location, mut path, expected_mode) =
+    let (location, path, expected_mode) =
         asset_contract(operation.asset, generation.as_ref().or(app))?;
-    // A generation published before the App rename keeps its recorded shell
-    // until it retires; a current build never publishes the retired name.
-    if app::retired_spelling(operation.asset, &operation.path)
-        && (content == GeneratedContentAuthority::HistoricalReceipt || generation.as_ref() != app)
-    {
-        path.clone_from(&operation.path);
-    }
     validate_operation_contract(operation, location, &path, expected_mode)?;
     validate_generated_content(operation, content, common_git)?;
     validate_introduced_parents(operation, introduced)

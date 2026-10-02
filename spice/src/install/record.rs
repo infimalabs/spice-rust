@@ -19,6 +19,31 @@ mod migration;
 #[cfg(test)]
 mod tests;
 
+pub(super) fn migrate_shell_plan(
+    plan: &InstallPlan,
+) -> Result<(InstallPlan, Vec<String>, Vec<String>), InstallError> {
+    let migrated = migration::refresh(plan)?;
+    Ok((migrated.plan, migrated.retirements, migrated.introductions))
+}
+
+pub(super) fn requires_shell_migration(plan: &InstallPlan) -> bool {
+    migration::required(plan)
+}
+
+pub(super) fn validate_migration_retirements(
+    plan: &InstallPlan,
+    retirements: &[super::Retirement],
+) -> Result<(), InstallError> {
+    migration::validate_retirements(plan, retirements)
+}
+
+pub(super) fn migration_introduction_image<'a>(
+    plan: &'a InstallPlan,
+    operation: &super::Operation,
+) -> Result<Option<&'a FileImage>, InstallError> {
+    migration::introduction_image(plan, operation)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InstallRecord {
@@ -266,9 +291,10 @@ impl InstallRecord {
     /// while interrupted directions remain owned by the build that started
     /// them.
     fn validate_loaded(&self) -> Result<(), InstallError> {
+        if self.version == super::PREVIOUS_RECORD_VERSION || migration::required(&self.plan) {
+            return migration::validate(self);
+        }
         let historical = self.status == InstallStatus::Uninstalled
-            || (self.status == InstallStatus::Complete
-                && self.version == super::PREVIOUS_RECORD_VERSION)
             || (self.status == InstallStatus::Complete
                 && super::binary_operation(&self.plan).is_some());
         self.validate_with_content(historical)
@@ -930,7 +956,11 @@ pub(super) fn publish_test_historical_receipt(
     record.plan.version = version;
     record.completed = record.plan.operation_count();
     record.plan_digest = record.plan.digest()?;
-    record.validate_with_content(true)?;
+    if version == super::PREVIOUS_RECORD_VERSION {
+        migration::validate(&record)?;
+    } else {
+        record.validate_with_content(true)?;
+    }
     record.plan.publish_staged_rollback(repository)?;
     let bytes = if version == super::PREVIOUS_RECORD_VERSION {
         migration::encode(&record)?

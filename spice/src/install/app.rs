@@ -101,31 +101,14 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
 /// Common-directory root under which every installed app generation lives.
 pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
 
-/// Shell file name of generations published before the browser Canvas was
-/// renamed App. An installed generation keeps the files its receipt recorded
-/// until retention withdraws it; no generation is published under this name.
-const RETIRED_SHELL: &str = "canvas-app.html";
-
-/// The asset an installed generation file holds, under its current or retired
-/// file name.
-pub(super) fn recorded_asset_file(file: &str) -> Option<Asset> {
-    asset_file(file).or_else(|| (file == RETIRED_SHELL).then_some(Asset::AppHtml))
-}
-
-/// Whether a recorded generation path spells its asset with a retired file name.
-pub(super) fn retired_spelling(asset: Asset, path: &str) -> bool {
-    asset == Asset::AppHtml
-        && split_generation_path(path).is_some_and(|(_, file)| file == RETIRED_SHELL)
-}
-
 pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
     let (generation, file) = split_generation_path(path)?;
-    (recorded_asset_file(file) == Some(asset)).then_some(generation)
+    (asset_file(file) == Some(asset)).then_some(generation)
 }
 
-/// Generation and file named by any installed app generation file path.
+/// Generation and file named by a current app generation file path.
 pub(super) fn generation_file(path: &str) -> Option<(&str, &str)> {
-    split_generation_path(path).filter(|(_, file)| recorded_asset_file(file).is_some())
+    split_generation_path(path).filter(|(_, file)| asset_file(file).is_some())
 }
 
 fn split_generation_path(path: &str) -> Option<(&str, &str)> {

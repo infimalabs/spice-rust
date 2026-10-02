@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
 use super::super::{
-    Asset, BoundDestination, GeneratedImage, Generation, HookActivationPlan, InstallError,
-    InstallPlan, InstallStatus, Location, ObservedFile, Operation, ParentObservation,
-    RepositoryIdentity, Retirement, RollbackArchive, SymbolProvenance,
+    Asset, BoundDestination, FileImage, GeneratedImage, Generation, HookActivationPlan,
+    InstallError, InstallPlan, InstallStatus, Location, ObservedFile, Operation, ParentObservation,
+    RepositoryIdentity, Retirement, RollbackArchive, SymbolProvenance, app,
 };
 use super::InstallRecord;
 
@@ -129,6 +129,226 @@ pub(super) fn decode(bytes: &[u8]) -> Result<InstallRecord, InstallError> {
         ));
     }
     Ok(previous.into())
+}
+
+const RETIRED_SHELL: &str = "canvas-app.html";
+
+pub(super) struct ShellRefresh {
+    pub(super) plan: InstallPlan,
+    pub(super) retirements: Vec<String>,
+    pub(super) introductions: Vec<String>,
+}
+
+pub(super) fn required(plan: &InstallPlan) -> bool {
+    plan.operations.iter().any(|operation| {
+        operation.asset == Asset::AppHtml && retired_shell_generation(&operation.path).is_some()
+    })
+}
+
+/// Normalize one admitted pre-rename shell receipt before current planning.
+///
+/// Installed predecessor files still use the retired name while progress is
+/// verified. The derived current plan publishes only `app.html` and withdraws
+/// those old files through ordinary retirement execution.
+pub(super) fn refresh(plan: &InstallPlan) -> Result<ShellRefresh, InstallError> {
+    let mut plan = plan.clone();
+    let mut retirements = Vec::new();
+    let mut introductions = Vec::new();
+    for operation in &mut plan.operations {
+        let Some((generation, current_path)) =
+            migrated_shell_path(operation.asset, &operation.path)?
+        else {
+            continue;
+        };
+        if !plan
+            .app
+            .iter()
+            .chain(&plan.app_predecessors)
+            .any(|installed| installed == &generation)
+        {
+            return Err(InstallError::InvalidRecord(
+                "retired app shell names an unrecorded generation".to_owned(),
+            ));
+        }
+        if plan.version != super::super::PREVIOUS_RECORD_VERSION
+            && plan.app.as_ref() == Some(&generation)
+        {
+            return Err(InstallError::InvalidRecord(
+                "current receipt publishes a retired app shell".to_owned(),
+            ));
+        }
+        let current_destination = respell_destination(&operation.destination)?;
+        retirements.push(std::mem::replace(&mut operation.path, current_path.clone()));
+        introductions.push(current_path);
+        operation.destination = current_destination;
+    }
+    for retirement in &mut plan.retirements {
+        let Some((_, current_path)) = migrated_shell_path(Asset::AppHtml, &retirement.path)? else {
+            continue;
+        };
+        retirement.destination = respell_destination(&retirement.destination)?;
+        retirement.path = current_path;
+    }
+    retirements.sort();
+    introductions.sort();
+    Ok(ShellRefresh {
+        plan,
+        retirements,
+        introductions,
+    })
+}
+
+/// Validate a receipt requiring old-shell migration through its normalized
+/// in-memory shape without changing the receipt or its on-disk destinations.
+pub(super) fn validate(record: &InstallRecord) -> Result<(), InstallError> {
+    if record.version != super::super::PREVIOUS_RECORD_VERSION
+        && record.plan_digest != record.plan.digest()?
+    {
+        return Err(InstallError::InvalidRecord(
+            "install record plan digest does not match its canonical plan".to_owned(),
+        ));
+    }
+    let mut normalized = record.clone();
+    normalized.plan = refresh(&record.plan)?.plan;
+    normalized.plan_digest = normalized.plan.digest()?;
+    for ((_, destination), operation) in normalized
+        .destinations
+        .iter_mut()
+        .zip(&normalized.plan.operations)
+    {
+        destination.clone_from(&operation.destination);
+    }
+    let historical = normalized.status == InstallStatus::Uninstalled
+        || (normalized.status == InstallStatus::Complete
+            && normalized.version == super::super::PREVIOUS_RECORD_VERSION)
+        || (normalized.status == InstallStatus::Complete
+            && super::super::binary_operation(&normalized.plan).is_some());
+    normalized.validate_with_content(historical)
+}
+
+/// Validate the one-time old-shell withdrawals carried by a current plan.
+pub(super) fn validate_retirements(
+    plan: &InstallPlan,
+    retirements: &[Retirement],
+) -> Result<(), InstallError> {
+    let mut prior = None;
+    for retirement in retirements {
+        let Some(generation) = retired_shell_generation(&retirement.path) else {
+            return Err(InstallError::InvalidRecord(
+                "install retirement inventory is not exact and ordered".to_owned(),
+            ));
+        };
+        let generation: wire::Digest = generation.parse().map_err(|_| {
+            InstallError::InvalidRecord(
+                "previous app shell has an invalid generation identity".to_owned(),
+            )
+        })?;
+        if let Some(prior) = &prior
+            && prior >= &generation
+        {
+            return Err(InstallError::InvalidRecord(format!(
+                "previous app shell retirements are not ordered: {prior} before {generation}"
+            )));
+        }
+        let current = app::operation_path(Asset::AppHtml, Some(&generation))?
+            .expect("an app shell has a generation path");
+        let Some(operation) = plan
+            .operations
+            .iter()
+            .find(|operation| operation.asset == Asset::AppHtml && operation.path == current)
+        else {
+            return Err(InstallError::InvalidRecord(
+                "previous app shell retirement has no current replacement".to_owned(),
+            ));
+        };
+        if retirement
+            .observed
+            .as_ref()
+            .is_none_or(|observed| observed.image.generated() != operation.generated)
+        {
+            return Err(InstallError::InvalidRecord(
+                "previous app shell retirement has no authenticated replacement image".to_owned(),
+            ));
+        }
+        prior = Some(generation);
+    }
+    Ok(())
+}
+
+/// Authenticated retired bytes republished once under their current name.
+pub(super) fn introduction_image<'a>(
+    plan: &'a InstallPlan,
+    operation: &Operation,
+) -> Result<Option<&'a FileImage>, InstallError> {
+    let Some(generation) = app::operation_generation(operation.asset, &operation.path) else {
+        return Ok(None);
+    };
+    if operation.asset != Asset::AppHtml {
+        return Ok(None);
+    }
+    let retired = format!("{}/{generation}/{RETIRED_SHELL}", app::GENERATIONS_PATH);
+    let Some(retirement) = plan
+        .retirements
+        .iter()
+        .find(|retirement| retirement.path == retired)
+    else {
+        return Ok(None);
+    };
+    let image = retirement
+        .observed
+        .as_ref()
+        .map(|observed| &observed.image)
+        .ok_or_else(|| {
+            InstallError::InvalidRecord(
+                "previous app shell retirement has no authenticated replacement image".to_owned(),
+            )
+        })?;
+    if image.generated() != operation.generated {
+        return Err(InstallError::InvalidRecord(
+            "previous app shell retirement image does not match its current replacement".to_owned(),
+        ));
+    }
+    Ok(Some(image))
+}
+
+fn migrated_shell_path(
+    asset: Asset,
+    path: &str,
+) -> Result<Option<(wire::Digest, String)>, InstallError> {
+    if asset != Asset::AppHtml {
+        return Ok(None);
+    }
+    let Some(generation) = retired_shell_generation(path) else {
+        return Ok(None);
+    };
+    let generation = generation.parse().map_err(|_| {
+        InstallError::InvalidRecord(
+            "previous app shell has an invalid generation identity".to_owned(),
+        )
+    })?;
+    let current =
+        app::operation_path(asset, Some(&generation))?.expect("an app shell has a generation path");
+    Ok(Some((generation, current)))
+}
+
+fn retired_shell_generation(path: &str) -> Option<&str> {
+    let relative = path
+        .strip_prefix(app::GENERATIONS_PATH)?
+        .strip_prefix('/')?;
+    relative
+        .strip_suffix(RETIRED_SHELL)?
+        .strip_suffix('/')
+        .filter(|generation| !generation.is_empty() && !generation.contains('/'))
+}
+
+fn respell_destination(path: &str) -> Result<String, InstallError> {
+    path.strip_suffix(RETIRED_SHELL)
+        .map(|parent| format!("{parent}{}", wire::manifest::APP_HTML))
+        .ok_or_else(|| {
+            InstallError::InvalidRecord(
+                "previous app shell destination has no retired spelling".to_owned(),
+            )
+        })
 }
 
 #[cfg(debug_assertions)]

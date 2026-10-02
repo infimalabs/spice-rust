@@ -590,7 +590,7 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None, None, None, None)
+    build_plan_over(repository, spice_binary, None, None, None, None, &[], &[])
 }
 
 /// Derive the plan that installs this build over `installed`, or from nothing.
@@ -606,11 +606,12 @@ fn append_planned_operations(
     (spice_binary, binary_superseded): (Option<&Path>, Option<&GeneratedImage>),
     (app, predecessors, symbols): (Option<&app::Source>, &[Digest], Option<&symbols::Source>),
     archiving: bool,
+    migration_introductions: &[String],
 ) -> Result<(Vec<Operation>, Vec<Option<FileImage>>), InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
     let mut observed_operations = Vec::new();
-    let installed_operations = operation_index(installed);
+    let installed_operations = operation_index_without(installed, migration_introductions);
 
     append_fixed_operations(
         repository,
@@ -675,6 +676,8 @@ fn build_plan_over(
     binary_superseded: Option<&GeneratedImage>,
     rollback_record: Option<&FileImage>,
     rollback_archive: Option<&RollbackArchive>,
+    migration_retirements: &[String],
+    migration_introductions: &[String],
 ) -> Result<InstallPlan, InstallError> {
     let app = spice_binary
         .map(|binary| app::Source::resolve(repository, binary))
@@ -694,6 +697,7 @@ fn build_plan_over(
         (spice_binary, binary_superseded),
         (app.as_ref(), &predecessors, symbols.as_ref()),
         archiving,
+        migration_introductions,
     )?;
 
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
@@ -713,6 +717,7 @@ fn build_plan_over(
             .into_iter()
             .flatten(),
     )
+    .chain(migration_retirements.iter().map(String::as_str))
     .map(|path| retirement(repository, installed, path, archiving))
     .collect::<Result<Vec<_>, _>>()?;
     let (mut retirements, mut rollback_retirements): (Vec<_>, Vec<_>) =
@@ -747,6 +752,7 @@ fn build_plan_over(
             &observed_operations,
             &retirements,
             &rollback_retirements,
+            migration_introductions,
         )?,
     };
     let plan = InstallPlan {
@@ -778,6 +784,7 @@ fn current_rollback_archive(
     observed_operations: &[Option<FileImage>],
     retirements: &[Retirement],
     observed_retirements: &[Option<FileImage>],
+    migration_introductions: &[String],
 ) -> Result<Option<RollbackArchive>, InstallError> {
     let Some(archive) = archive else {
         return Ok(None);
@@ -804,6 +811,7 @@ fn current_rollback_archive(
         .operations
         .iter()
         .enumerate()
+        .filter(|(_, operation)| !migration_introductions.contains(&operation.path))
         .map(|(index, operation)| (operation_key(operation.asset, &operation.path), index))
         .collect::<BTreeMap<_, _>>();
     rollback.operations = operations
@@ -936,9 +944,17 @@ fn reversal_context(
 type InstalledOperations<'a> = BTreeMap<(Asset, &'a str), &'a Operation>;
 
 fn operation_index(installed: Option<&InstallPlan>) -> InstalledOperations<'_> {
+    operation_index_without(installed, &[])
+}
+
+fn operation_index_without<'a>(
+    installed: Option<&'a InstallPlan>,
+    excluded: &[String],
+) -> InstalledOperations<'a> {
     installed
         .into_iter()
         .flat_map(|plan| &plan.operations)
+        .filter(|operation| !excluded.contains(&operation.path))
         .map(|operation| (operation_key(operation.asset, &operation.path), operation))
         .collect()
 }
@@ -957,9 +973,6 @@ fn operation_key(asset: Asset, path: &str) -> (Asset, &str) {
 struct PlannedAppAsset {
     asset: Asset,
     generation: Digest,
-    /// Recorded path of a retained generation's file, or the current spelling
-    /// of the source generation's.
-    path: String,
     generated: GeneratedImage,
 }
 
@@ -976,7 +989,6 @@ fn planned_app_assets(
             predecessors.contains(&generation).then(|| PlannedAppAsset {
                 asset: operation.asset,
                 generation,
-                path: operation.path.clone(),
                 generated: operation.generated.clone(),
             })
         })
@@ -990,11 +1002,9 @@ fn planned_app_assets(
         let generated = source
             .image(asset)
             .expect("the complete app source carries every asset");
-        let (_, path, _) = asset_contract(asset, Some(source.generation()))?;
         planned.push(PlannedAppAsset {
             asset,
             generation: source.generation().clone(),
-            path,
             generated,
         });
     }
@@ -1055,8 +1065,7 @@ fn append_app_operations(
     (directories, operations, observed_operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     for planned in planned_app_assets(installed, source, predecessors)? {
-        let (location, _, _) = asset_contract(planned.asset, Some(&planned.generation))?;
-        let path = planned.path;
+        let (location, path, _) = asset_contract(planned.asset, Some(&planned.generation))?;
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
         if archiving {
             observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));

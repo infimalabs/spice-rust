@@ -36,7 +36,12 @@ impl Fixture {
         let generation = stage.join("generations").join(identity.as_str());
         fs::create_dir_all(&generation).expect("fixture generation");
         for asset in serve::APP.assets() {
-            fs::write(generation.join(asset.file()), asset.file()).expect("fixture app asset");
+            let bytes = if asset.file() == wire::manifest::APP_HTML {
+                label
+            } else {
+                asset.file().as_bytes()
+            };
+            fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
         }
         fs::write(stage.join("current"), format!("{identity}\n")).expect("fixture pointer");
         identity
@@ -259,10 +264,46 @@ fn version_16_receipt_refreshes_and_retires_its_pre_rename_generations() {
     );
     assert_eq!(plan.app_predecessors, [oldest.clone(), installed.clone()]);
     assert!(
-        plan.retirements
+        plan.operations
             .iter()
-            .all(|retirement| install::app::generation_file(&retirement.path).is_none())
+            .all(|operation| !operation.path.ends_with("/canvas-app.html"))
     );
+    for retained in [&oldest, &installed] {
+        let retired = format!(".spice-install/app/generations/{retained}/canvas-app.html");
+        assert!(
+            plan.retirements
+                .iter()
+                .any(|retirement| retirement.path == retired)
+        );
+    }
+    let refuse_current_shell = |file: &str| {
+        let mut malformed = plan.clone();
+        let operation = malformed
+            .operations
+            .iter_mut()
+            .find(|operation| {
+                operation.asset == Asset::AppHtml
+                    && install::app::operation_generation(operation.asset, &operation.path).as_ref()
+                        == Some(&current)
+            })
+            .expect("current shell operation");
+        let (path_parent, _) = operation.path.rsplit_once('/').expect("generation path");
+        let (destination_parent, _) = operation
+            .destination
+            .rsplit_once('/')
+            .expect("generation destination");
+        operation.path = format!("{path_parent}/{file}");
+        operation.destination = format!("{destination_parent}/{file}");
+        assert!(matches!(
+            malformed.validate(),
+            Err(InstallError::InvalidRecord(_))
+        ));
+        if file == "canvas-app.html" {
+            assert!(migrate_shell_plan(&malformed).is_err());
+        }
+    };
+    refuse_current_shell("canvas-app.html");
+    refuse_current_shell("unknown.html");
     install::apply(
         &repository,
         Some(&fixture.binary()),
@@ -274,11 +315,10 @@ fn version_16_receipt_refreshes_and_retires_its_pre_rename_generations() {
         fixture.installed_generations(),
         sorted(&[&oldest, &installed, &current])
     );
-    for retained in [&oldest, &installed] {
-        assert!(shell(retained, "canvas-app.html").is_file());
-        assert!(!shell(retained, "app.html").exists());
+    for retained in [&oldest, &installed, &current] {
+        assert!(!shell(retained, "canvas-app.html").exists());
+        assert!(shell(retained, "app.html").is_file());
     }
-    assert!(shell(&current, "app.html").is_file());
 
     let newer = fixture.refresh(b"newer");
     let newest = fixture.refresh(b"newest");

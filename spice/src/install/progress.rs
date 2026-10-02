@@ -278,6 +278,9 @@ fn materialize_operations(
         .operations
         .iter()
         .map(|operation| {
+            if let Some(image) = record::migration_introduction_image(&record.plan, operation)? {
+                return Ok(Some(image.clone()));
+            }
             // A retained immutable generation has no source bytes to publish.
             // Its exact installed image is still checked by admission and the
             // operation itself; do not copy every historical payload into RAM.
@@ -392,13 +395,26 @@ fn refresh_plan(
     let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
         .then_some(record.plan.rollback_archive.as_ref())
         .flatten();
+    let migration = (record.plan.version == PREVIOUS_RECORD_VERSION
+        || record::requires_shell_migration(&record.plan))
+    .then(|| record::migrate_shell_plan(&record.plan))
+    .transpose()?;
+    let installed = migration.as_ref().map_or(&record.plan, |(plan, _, _)| plan);
+    let migration_retirements = migration
+        .as_ref()
+        .map_or(&[][..], |(_, retirements, _)| retirements.as_slice());
+    let migration_introductions = migration
+        .as_ref()
+        .map_or(&[][..], |(_, _, introductions)| introductions.as_slice());
     build_plan_over(
         repository,
         spice_binary,
-        Some(&record.plan),
+        Some(installed),
         binary_superseded.as_ref(),
         rollback_record,
         rollback_archive,
+        migration_retirements,
+        migration_introductions,
     )
 }
 
@@ -407,7 +423,8 @@ fn refresh_required(
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
 ) -> Result<bool, InstallError> {
-    Ok(current_build_differs(repository, plan, spice_binary)?
+    Ok(record::requires_shell_migration(plan)
+        || current_build_differs(repository, plan, spice_binary)?
         || hook_activation::topology_changed(repository, plan)?)
 }
 
