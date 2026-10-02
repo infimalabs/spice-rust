@@ -2,17 +2,44 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use listen::{
-    Dialect, EventKind, Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceEvent,
-    SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, Watch, retro,
+    Dialect, EventKind, Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError,
+    SurfaceEvent, SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult,
+    TailBudget, Watch, retro,
 };
 use tape::Tape;
 
 const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}],"stopReason":"stop"}}"#;
 const REASONING: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"inspect"}],"stopReason":"stop"}}"#;
 const DIALECTS: &[(&str, Dialect)] = &[("omp", Dialect::Omp), ("fixture", Dialect::Omp)];
+fn watch_budget() -> TailBudget {
+    TailBudget::new(
+        1024 * 1024,
+        16 * 1024 * 1024,
+        1_000,
+        256,
+        Duration::from_secs(1),
+    )
+    .expect("surface fixture tail budget is valid")
+}
+
+fn poll_watch(watch: &mut Watch) -> Result<StreamOutcome, SurfaceError> {
+    let delta = watch.poll_bounded(watch_budget())?;
+    let mut root = PathBuf::new();
+    let mut observations = Vec::new();
+    for row in delta.rows {
+        root = row.outcome.root;
+        observations.extend(row.outcome.observations);
+        watch.resume_at(row.cursor);
+    }
+    Ok(StreamOutcome {
+        mode: Mode::Watch,
+        root,
+        observations,
+    })
+}
 
 #[derive(Debug, Eq, PartialEq)]
 struct Entry {
@@ -156,7 +183,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
     let (_, tape) = session(scratch.path(), "lane-a", "omp");
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
 
-    let empty = watch.poll().expect("empty session is observed");
+    let empty = poll_watch(&mut watch).expect("empty session is observed");
     assert!(matches!(
         empty.observations.as_slice(),
         [Observation::Absent { .. }]
@@ -164,7 +191,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
 
     tape.tee(&record(PROSE))
         .expect("first complete record is durable");
-    let first = watch.poll().expect("first cursor delta reads");
+    let first = poll_watch(&mut watch).expect("first cursor delta reads");
     assert_eq!(event_count(&first.observations), 1);
     assert!(first.observations.iter().any(|observation| matches!(
         observation,
@@ -174,8 +201,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         }
     )));
     assert!(
-        watch
-            .poll()
+        poll_watch(&mut watch)
             .expect("an unchanged cursor reconciles")
             .is_empty()
     );
@@ -184,16 +210,14 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
     let split = complete.len() / 2;
     tape.tee(&complete[..split])
         .expect("partial record prefix is durable");
-    let partial = watch.poll().expect("partial record is visible");
+    let partial = poll_watch(&mut watch).expect("partial record is visible");
     assert!(matches!(
         partial.observations.as_slice(),
         [Observation::Pending { .. }]
     ));
     tape.tee(&complete[split..])
         .expect("record suffix is durable without a separate watch wake");
-    let completed = watch
-        .poll()
-        .expect("cursor comparison heals the missed wake");
+    let completed = poll_watch(&mut watch).expect("cursor comparison heals the missed wake");
     assert_eq!(event_count(&completed.observations), 1);
 
     tape.tee(&record(PROSE))
@@ -202,8 +226,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         .expect("second unobserved record is durable");
     assert_eq!(
         event_count(
-            &watch
-                .poll()
+            &poll_watch(&mut watch)
                 .expect("one reconciliation reads both missed records")
                 .observations
         ),
@@ -215,12 +238,123 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         .expect("next member begins after rotation");
     assert_eq!(
         event_count(
-            &watch
-                .poll()
+            &poll_watch(&mut watch)
                 .expect("cursor crosses the sealed member boundary")
                 .observations
         ),
         1
+    );
+
+    scratch.remove();
+}
+
+#[test]
+fn a_resumed_watch_emits_only_records_after_its_durable_cursor() {
+    let scratch = Scratch::new("watch-resume");
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE)).expect("first record is durable");
+
+    let first = Watch::new(scratch.path(), DIALECTS.iter().copied())
+        .poll_bounded(watch_budget())
+        .expect("first bounded snapshot succeeds");
+    assert_eq!(
+        first
+            .rows
+            .iter()
+            .flat_map(|row| &row.outcome.observations)
+            .filter(|observation| matches!(observation, Observation::Event { .. }))
+            .count(),
+        1
+    );
+    let cursor = first
+        .rows
+        .last()
+        .expect("first snapshot has a resumable row")
+        .cursor
+        .clone();
+
+    let resumed = Watch::resume(scratch.path(), DIALECTS.iter().copied(), cursor);
+    assert!(
+        resumed
+            .poll_bounded(watch_budget())
+            .expect("unchanged resumed source reconciles")
+            .rows
+            .is_empty()
+    );
+    tape.tee(&record(REASONING))
+        .expect("second record is durable");
+    let next = resumed
+        .poll_bounded(watch_budget())
+        .expect("resumed source reads new records");
+    let events = next
+        .rows
+        .iter()
+        .flat_map(|row| &row.outcome.observations)
+        .filter_map(|observation| match observation {
+            Observation::Event { event, .. } => Some(event.kind()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events, vec![EventKind::Reasoning]);
+
+    scratch.remove();
+}
+
+#[test]
+fn watch_reports_replacement_and_resumes_from_the_new_generation() {
+    let scratch = Scratch::new("watch-replacement");
+    let (path, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE))
+        .expect("first-generation record is durable");
+    let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
+    assert_eq!(
+        event_count(
+            &poll_watch(&mut watch)
+                .expect("first generation is observed")
+                .observations
+        ),
+        1
+    );
+
+    drop(tape);
+    fs::remove_dir_all(&path).expect("first generation is removed");
+    let replacement = Tape::open(&path).expect("replacement generation opens");
+    replacement
+        .tee(&record(REASONING))
+        .expect("replacement record is durable");
+    let observed = poll_watch(&mut watch).expect("replacement generation reconciles");
+    assert!(observed.observations.iter().any(|observation| matches!(
+        observation,
+        Observation::Missing { detail, .. } if detail.contains("transcript source replaced")
+    )));
+    assert!(observed.observations.iter().any(|observation| matches!(
+        observation,
+        Observation::Event { event, .. } if event.kind() == EventKind::Reasoning
+    )));
+
+    scratch.remove();
+}
+
+#[test]
+fn a_bounded_snapshot_reports_history_outside_its_tail_window() {
+    let scratch = Scratch::new("watch-skipped");
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    for _ in 0..20 {
+        tape.tee(&record(PROSE)).expect("history record is durable");
+    }
+    let budget = TailBudget::new(64, 16 * 1024 * 1024, 8, 32, Duration::from_secs(1))
+        .expect("small fixture budget is valid");
+    let delta = Watch::new(scratch.path(), DIALECTS.iter().copied())
+        .poll_bounded(budget)
+        .expect("bounded snapshot succeeds");
+    assert!(
+        delta.rows.iter().any(
+            |row| row.outcome.observations.iter().any(|observation| matches!(
+                observation,
+                Observation::Missing { detail, .. }
+                    if detail.contains("bounded current snapshot skipped")
+            ))
+        )
     );
 
     scratch.remove();
@@ -319,7 +453,7 @@ fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
 
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
     assert_eq!(
-        event_count(&watch.poll().expect("watch reads").observations),
+        event_count(&poll_watch(&mut watch).expect("watch reads").observations),
         1
     );
     let replay =
@@ -331,8 +465,7 @@ fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
     let missing = scratch.path().join("never-created/omp");
     let mut missing_watch = Watch::new(&missing, DIALECTS.iter().copied());
     assert!(matches!(
-        missing_watch
-            .poll()
+        poll_watch(&mut missing_watch)
             .expect("missing watch root is accounted")
             .observations
             .as_slice(),
@@ -407,7 +540,7 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
         .expect("record delimiter is durable in the active member");
 
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
-    let watched = watch.poll().expect("watch joins all three fragments");
+    let watched = poll_watch(&mut watch).expect("watch joins all three fragments");
     let events = watched
         .observations
         .iter()
@@ -442,7 +575,11 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
         observation,
         Observation::Residue { .. } | Observation::Pending { .. }
     )));
-    assert!(watch.poll().expect("cursor advances once").is_empty());
+    assert!(
+        poll_watch(&mut watch)
+            .expect("cursor advances once")
+            .is_empty()
+    );
 
     let replay = retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS)
         .expect("retro joins the same fragments");
@@ -466,7 +603,7 @@ fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
     tape.seal().expect("record prefix seals");
 
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
-    let pending = watch.poll().expect("sealed prefix remains pending");
+    let pending = poll_watch(&mut watch).expect("sealed prefix remains pending");
     assert!(matches!(
         pending.observations.as_slice(),
         [Observation::Pending { spans, .. }] if spans == &vec![Span {
@@ -478,7 +615,7 @@ fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
 
     tape.tee(&complete[split..])
         .expect("active member completes the record");
-    let completed = watch.poll().expect("completion joins the sealed prefix");
+    let completed = poll_watch(&mut watch).expect("completion joins the sealed prefix");
     assert_eq!(event_count(&completed.observations), 1);
     assert!(completed.observations.iter().any(|observation| matches!(
         observation,
@@ -509,7 +646,7 @@ fn a_newline_before_rotation_keeps_the_next_split_record_distinct() {
         .expect("second record completes after rotation");
 
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
-    let observed = watch.poll().expect("both records decode once");
+    let observed = poll_watch(&mut watch).expect("both records decode once");
     let events = observed
         .observations
         .iter()
