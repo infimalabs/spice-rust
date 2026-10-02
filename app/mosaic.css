@@ -836,8 +836,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* Ranges over the full-width submit; regions round their own corners so focus
    and preview rings stay visible. The frame holds no words but the submit's: it
-   starts one label row down, and the values ride above it, speech flush left and
-   lifetime flush right, reading as one phrase ("quiet drain", "narrate steer"). */
+   starts one label row down, and the values ride above it, leaning on the
+   center seam, reading as one phrase ("quiet drain", "narrate steer"). */
 .team-composer .team-composer-controls {
   --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
   --team-control-inner-radius: calc(var(--canvas-radius-compact) - 1px);
@@ -879,10 +879,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   text-transform: lowercase;
   white-space: nowrap;
 }
-/* The frame is the label's containing block, so slider clipping never reaches it. */
+/* The frame is the label's containing block, so slider clipping never reaches it.
+   Speech ends and lifetime starts 3px from the divider (its 1px sits right of
+   50%); "narrate" overhangs the frame's left edge, short of the draft. */
 .team-composer .team-slider span { position: absolute; bottom: calc(100% + 3px); }
-.team-composer .team-speech span { inset-inline-start: 0; }
-.team-composer .team-lifetime span { inset-inline-end: 0; }
+.team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
+.team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--canvas-control-edge);
