@@ -325,8 +325,11 @@ A tool card whose face is one image uses the same standard 15.75rem square as
 an operator's lone image, cover-cropped. Like prose, its round controls (open
 full size, copy as PNG) hold the top edge and a right-aligned signoff of lane
 name then age closes it; once the card commits, the square stays centred both
-ways in the room between them, so it never resizes the committed card. Operator
-messages and quotes keep their floors.
+ways in the room between them, so it never resizes the committed card. A lane
+reading back an operator's steering attachment gets no second image card: that
+image already stands with its directive, and repeating it on the leading edge
+would push the acknowledgment out of view. Operator messages and quotes keep
+their floors.
 Source/error stays in-place. All images share an inert modal over the whole
 viewport: the interface beneath shows through the shared frosted veil, the image
 sits at natural size capped to the viewport, and Escape, Close, or a click on the

@@ -378,7 +378,7 @@ fn project_event_body(
     let projected = match event.decoded {
         listen::Event::Tool(tool) => {
             let activity = tool_preview::activity(event.lane, tool, previews);
-            let media = tool_message_media(tool);
+            let media = tool_preview::result_media(event.lane, tool, previews);
             let text = tool_preview::message_text(tool, activity, &media);
             ProjectedEvent {
                 activity: AgentActivityKind::Tool,
@@ -523,13 +523,6 @@ fn project_prose_presentation(
     let presented = present_steering_acknowledgements(&prose.text, steering, event)?;
     let automatic_speech = automatic_speech::classify(prose, steering, event);
     Ok((presented, automatic_speech))
-}
-
-fn tool_message_media(tool: &listen::Tool) -> Vec<wire::Media> {
-    match &tool.moment {
-        listen::ToolMoment::Result(outcome) => outcome.media.clone(),
-        listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
-    }
 }
 
 /// Vendor identity of the compaction this event records, if it records one.

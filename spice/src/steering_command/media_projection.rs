@@ -177,17 +177,49 @@ impl Record {
     }
 }
 
+/// File extension each projectable attachment type is published under.
+const EXTENSIONS: [(&str, &str); 4] = [
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/gif", "gif"),
+    ("image/webp", "webp"),
+];
+
+/// Whether `path` names a file in `lane`'s projection layout.
+///
+/// The layout is `<root>/<lane>/<directive>/<ordinal>-<digest>.<extension>`,
+/// so a lane reading one of these files is looking at an attachment the
+/// operator sent it, not at media the lane produced.
+pub(crate) fn names_projection(path: &str, lane: CanonicalUuid) -> bool {
+    fn name(path: Option<&Path>) -> Option<&str> {
+        path.and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+    }
+    let path = Path::new(path);
+    let directive = path.parent();
+    let owner = directive.and_then(Path::parent);
+    let file = name(Some(path)).and_then(|file| {
+        let (ordinal, rest) = file.split_once('-')?;
+        let (digest, extension) = rest.rsplit_once('.')?;
+        Some((ordinal, digest, extension))
+    });
+    file.is_some_and(|(ordinal, digest, extension)| {
+        ordinal.parse::<u8>().is_ok()
+            && digest.parse::<Digest>().is_ok()
+            && EXTENSIONS.iter().any(|(_, known)| *known == extension)
+    }) && name(directive).is_some_and(|directive| directive.parse::<CanonicalUuid>().is_ok())
+        && name(owner) == Some(lane.to_string().as_str())
+}
+
 fn projection_path(root: &Path, lane: CanonicalUuid, record: &Record) -> Result<PathBuf, String> {
-    let extension = match record.content_type.as_str() {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        found => {
-            return Err(format!(
-                "steering media projection type {found:?} is unsupported"
-            ));
-        }
+    let Some((_, extension)) = EXTENSIONS
+        .iter()
+        .find(|(content_type, _)| *content_type == record.content_type)
+    else {
+        return Err(format!(
+            "steering media projection type {:?} is unsupported",
+            record.content_type
+        ));
     };
     let lane = root.join(lane.to_string());
     let directive = lane.join(record.directive.to_string());

@@ -7,7 +7,7 @@
 //! instead of the `tool_use` id that joins them. The rules here follow the
 //! predecessor at `spice-z spice/serve/messagepresentation.py`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 use wire::CanonicalUuid;
@@ -44,11 +44,15 @@ const ARGUMENT_KEYS: [&str; 8] = [
 #[derive(Debug, Default)]
 pub(in crate::resident) struct CallPreviews {
     by_call: BTreeMap<(CanonicalUuid, String), String>,
+    /// Outstanding calls that read a steering attachment the lane was sent.
+    attachment_reads: BTreeSet<(CanonicalUuid, String)>,
 }
 
 impl CallPreviews {
     pub(super) fn clear_lane(&mut self, lane: CanonicalUuid) {
         self.by_call.retain(|(candidate, _), _| *candidate != lane);
+        self.attachment_reads
+            .retain(|(candidate, _)| *candidate != lane);
     }
 }
 
@@ -64,11 +68,17 @@ pub(super) fn activity(
             name, arguments, ..
         } => {
             let preview = identified_preview(name, arguments, &tool.call_id);
+            if reads_steering_attachment(lane, arguments) {
+                previews.attachment_reads.insert(key.clone());
+            }
             previews.by_call.insert(key, preview.clone());
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
             let preview = identified_preview(name, arguments, &tool.call_id);
+            if reads_steering_attachment(lane, arguments) {
+                previews.attachment_reads.insert(key.clone());
+            }
             previews.by_call.insert(key, preview.clone());
             flatten(&format!("{preview} update"))
         }
@@ -84,6 +94,40 @@ pub(super) fn activity(
             )
         }
     }
+}
+
+/// Media a tool result shows as its own card.
+///
+/// A lane reading an attachment the operator sent it gets back that same image,
+/// which the Canvas already shows with the directive the lane acknowledges.
+/// Showing it again as a lone tool image would put the operator's own picture
+/// on the leading edge, directly above the acknowledgment that answered it.
+pub(super) fn result_media(
+    lane: CanonicalUuid,
+    tool: &listen::Tool,
+    previews: &mut CallPreviews,
+) -> Vec<wire::Media> {
+    let listen::ToolMoment::Result(outcome) = &tool.moment else {
+        return Vec::new();
+    };
+    if previews
+        .attachment_reads
+        .remove(&(lane, tool.call_id.clone()))
+    {
+        return Vec::new();
+    }
+    outcome.media.clone()
+}
+
+fn reads_steering_attachment(lane: CanonicalUuid, arguments: &str) -> bool {
+    let Ok(Value::Object(fields)) = serde_json::from_str::<Value>(arguments) else {
+        return false;
+    };
+    fields.values().any(|value| {
+        value.as_str().is_some_and(|path| {
+            crate::steering_command::media_projection::names_projection(path, lane)
+        })
+    })
 }
 
 fn identified_preview(name: &str, arguments: &str, call_id: &str) -> String {
