@@ -55,6 +55,11 @@ button. Their upright labels keep a natural gap below the vertical ranges at
 both narrow and wide layouts; that breathing room stays inside the upper region
 so the frame and neighboring composer geometry do not move.
 
+Both sliders take one stop per arrow press on every engine: Up and Right
+raise, Down and Left lower. A native vertical range in WebKit and Firefox
+raises on Left, so Canvas handles Left and Right itself rather than inheriting
+each engine's mapping.
+
 ## Lane menu
 
 Each Chat lane's menu button swaps that lane's composer for its seat panel
