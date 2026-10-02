@@ -611,6 +611,7 @@ pub(super) fn render_team_controls(
                     min="0"
                     max="2"
                     step="1"
+                    aria-orientation="vertical"
                     value={speech.index().to_string()}
                     aria-label={format!("Speech mode: {}", speech.label())}
                     oninput={Callback::from(move |event: InputEvent| {
@@ -640,6 +641,7 @@ pub(super) fn render_team_controls(
                     min="0"
                     max="2"
                     step="1"
+                    aria-orientation="vertical"
                     value={selected.index().to_string()}
                     aria-label={format!("Task allocation policy: {}", selected.help())}
                     title={selected.help()}
