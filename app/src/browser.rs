@@ -711,7 +711,7 @@ fn use_route_settlement(
         scope: route
             .work_scope()
             .zip(work)
-            .map(|(scope, work)| work.contains_scope(scope)),
+            .and_then(|(scope, work)| work.contains_scope(scope)),
         task: route.task().and_then(|task| {
             surface
                 .read()
