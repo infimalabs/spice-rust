@@ -431,7 +431,11 @@ impl NativeInvocation<'_> {
             ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
             ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
             ["version"] => deliver(&version_outcome(), form),
-            ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),
+            ["release", "notes"] => deliver_with_reply_text(
+                &release_command::notes(leaf),
+                form,
+                release_command::NotesView::text,
+            ),
             _ => {}
         }
     }
@@ -469,7 +473,9 @@ impl NativeInvocation<'_> {
             | ["recall"] => deliver(&lane_command::run(leaf, contract, configuration), form),
             ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
             ["release", "publish"] => match release_command::run(leaf, contract) {
-                release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
+                release_command::RunResult::Plan(outcome) => {
+                    deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
+                }
                 release_command::RunResult::Published(outcome) => deliver(&outcome, form),
             },
             ["release", "seal"] => deliver(&release_seal::run(contract), form),
@@ -1113,23 +1119,6 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
             terminate(&fault);
         }
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn deliver_release_notes(outcome: &Outcome<wire::ReleaseNotes>, form: Form) -> ! {
-    if form == Form::Text
-        && let Outcome::Reply(reply) = outcome
-    {
-        let mut document = reply.body.document.as_bytes().to_vec();
-        if !document.ends_with(b"\n") {
-            document.push(b'\n');
-        }
-        let mut stdout = io::stdout().lock();
-        let _ = stdout.write_all(&document);
-        let _ = stdout.flush();
-        terminate_code(REPLY_EXIT);
-    }
-    deliver(outcome, form)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

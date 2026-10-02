@@ -60,6 +60,19 @@ operator after the push with a failure that was knowable up front.
 the notes, and previewing the range never bump, commit, tag, push, or publish —
 so "what would the next release contain?" is a safe question.
 
+**Invariant —** Release documents are complete only as files. Bare
+`spice release notes` prints bounded metadata (version, commit, identity,
+entry count, document bytes) and an entry page ordered by landings, most
+first, then first landing; long subjects are clipped with their withheld byte
+counts, and an omission names `release notes --output FILE`, which atomically
+writes the complete Markdown and reports its identity, path, and bytes. A
+publish preview first retains the complete plan as
+`.spice-rs/release-plans/release-plan-KEY.json` under the Git common directory,
+then prints every authorizing field (identities, targets, each ordered
+operation, every observation), bounds only the curated note lines, names that
+file, and ends with the exact `--apply=KEY` command; that key remains the only
+accepted authority. `--json` carries the same identities and truncation facts.
+
 **Invariant —** One executor owns the ordered operation vocabulary. It records an
 operation's exact prior state before crossing the effect boundary and a typed
 receipt after convergence. Resumption admits only that same plan and receipt

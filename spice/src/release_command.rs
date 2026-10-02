@@ -10,9 +10,12 @@ use clap::ArgMatches;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
 use wire::manifest::ProductVersion;
 use wire::{
-    Digest, Domain, Fault, FaultClass, Outcome, Refusal, ReleaseNotes, ReleasePlan, Reply,
-    ReplyPosition, Seq,
+    Digest, Domain, Fault, FaultClass, Outcome, Refusal, ReleasePlan, Reply, ReplyPosition, Seq,
 };
+
+mod view;
+
+pub(crate) use view::{NotesView, PlanPreview};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedRelease {
@@ -136,20 +139,21 @@ impl PublicationState {
 }
 
 pub(crate) enum RunResult {
-    Plan(Box<Outcome<ReleasePlan>>),
+    Plan(Box<Outcome<PlanPreview>>),
     Published(Outcome<wire::intent::RecognitionAnswer>),
 }
 
 pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunResult {
     let prepared = match prepare(matches) {
         Ok(prepared) => prepared,
-        Err(outcome) => return RunResult::Plan(outcome),
+        Err(outcome) => return RunResult::Plan(Box::new(retag(*outcome))),
     };
     let Some(apply) = matches.get_one::<String>("apply") else {
-        return RunResult::Plan(Box::new(Outcome::Reply(Reply {
-            position: ReplyPosition::Direct {},
-            body: prepared.release.plan(),
-        })));
+        return RunResult::Plan(Box::new(view::plan_preview(
+            prepared.release.plan(),
+            &prepared.common,
+            &publish_words(matches),
+        )));
     };
     let applied = match apply.parse::<Digest>() {
         Ok(applied) => applied,
@@ -199,6 +203,7 @@ struct Prepared {
     canvas: PathBuf,
     worktree: PathBuf,
     operation_journal: PathBuf,
+    common: PathBuf,
 }
 
 fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
@@ -308,7 +313,32 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         canvas: state_paths.canvas().to_path_buf(),
         worktree: repository.worktree_root().to_path_buf(),
         operation_journal: state_paths.data().join("release-operations"),
+        common: repository.common_dir().to_path_buf(),
     })
+}
+
+/// Carry a refusal or fault from plan preparation over to the preview.
+fn retag<B>(outcome: Outcome<ReleasePlan>) -> Outcome<B> {
+    match outcome {
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Reply(_) => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "release::preparation-answered".to_owned(),
+            detail: "release preparation answered where it could only refuse".to_owned(),
+        }),
+    }
+}
+
+/// The exact preview invocation, which `--apply` repeats.
+fn publish_words(matches: &ArgMatches) -> Vec<String> {
+    let mut words = vec!["release".to_owned(), "publish".to_owned()];
+    for flag in ["notes-file", "release-commit", "version", "action"] {
+        if let Some(value) = matches.get_one::<String>(flag) {
+            words.extend([format!("--{flag}"), value.clone()]);
+        }
+    }
+    words
 }
 
 fn recognition_outcome(
@@ -977,7 +1007,7 @@ fn environment<B>(reason: &str, detail: &str) -> Outcome<B> {
     })
 }
 
-pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
+pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<NotesView> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
@@ -990,18 +1020,21 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
             return environment(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    match crate::release_history::draft(
-        repository.worktree_root(),
-        matches
-            .get_one::<String>("release-commit")
-            .map(String::as_str),
-        None,
-    ) {
+    let release_commit = matches
+        .get_one::<String>("release-commit")
+        .map(String::as_str);
+    let notes =
+        match crate::release_history::draft(repository.worktree_root(), release_commit, None) {
+            Ok(notes) => notes,
+            Err(error) => return notes_refusal("release::history-refused", &error),
+        };
+    let output = matches.get_one::<String>("output").map(String::as_str);
+    match view::notes_view(&notes, output, release_commit) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body,
         }),
-        Err(error) => notes_refusal("release::history-refused", &error),
+        Err(refusal) => Outcome::Refusal(refusal),
     }
 }
 
