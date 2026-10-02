@@ -37,6 +37,13 @@ pub(super) fn validate_migration_retirements(
     migration::validate_retirements(plan, retirements)
 }
 
+pub(super) fn migration_introduction_image<'a>(
+    plan: &'a InstallPlan,
+    operation: &super::Operation,
+) -> Result<Option<&'a FileImage>, InstallError> {
+    migration::introduction_image(plan, operation)
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InstallRecord {

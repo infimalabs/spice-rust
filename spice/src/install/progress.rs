@@ -278,6 +278,9 @@ fn materialize_operations(
         .operations
         .iter()
         .map(|operation| {
+            if let Some(image) = record::migration_introduction_image(&record.plan, operation)? {
+                return Ok(Some(image.clone()));
+            }
             // A retained immutable generation has no source bytes to publish.
             // Its exact installed image is still checked by admission and the
             // operation itself; do not copy every historical payload into RAM.

@@ -36,7 +36,12 @@ impl Fixture {
         let generation = stage.join("generations").join(identity.as_str());
         fs::create_dir_all(&generation).expect("fixture generation");
         for asset in canvas::APP.assets() {
-            fs::write(generation.join(asset.file()), asset.file()).expect("fixture app asset");
+            let bytes = if asset.file() == wire::manifest::APP_HTML {
+                label
+            } else {
+                asset.file().as_bytes()
+            };
+            fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
         }
         fs::write(stage.join("current"), format!("{identity}\n")).expect("fixture pointer");
         identity

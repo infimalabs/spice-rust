@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
 use super::super::{
-    Asset, BoundDestination, GeneratedImage, Generation, HookActivationPlan, InstallError,
-    InstallPlan, InstallStatus, Location, ObservedFile, Operation, ParentObservation,
+    Asset, BoundDestination, FileImage, GeneratedImage, Generation, HookActivationPlan,
+    InstallError, InstallPlan, InstallStatus, Location, ObservedFile, Operation, ParentObservation,
     RepositoryIdentity, Retirement, RollbackArchive, SymbolProvenance, app,
 };
 use super::InstallRecord;
@@ -252,18 +252,63 @@ pub(super) fn validate_retirements(
         }
         let current = app::operation_path(Asset::AppHtml, Some(&generation))?
             .expect("an app shell has a generation path");
-        if !plan
+        let Some(operation) = plan
             .operations
             .iter()
-            .any(|operation| operation.asset == Asset::AppHtml && operation.path == current)
-        {
+            .find(|operation| operation.asset == Asset::AppHtml && operation.path == current)
+        else {
             return Err(InstallError::InvalidRecord(
                 "previous app shell retirement has no current replacement".to_owned(),
+            ));
+        };
+        if retirement
+            .observed
+            .as_ref()
+            .is_none_or(|observed| observed.image.generated() != operation.generated)
+        {
+            return Err(InstallError::InvalidRecord(
+                "previous app shell retirement has no authenticated replacement image".to_owned(),
             ));
         }
         prior = Some(generation);
     }
     Ok(())
+}
+
+/// Authenticated retired bytes republished once under their current name.
+pub(super) fn introduction_image<'a>(
+    plan: &'a InstallPlan,
+    operation: &Operation,
+) -> Result<Option<&'a FileImage>, InstallError> {
+    let Some(generation) = app::operation_generation(operation.asset, &operation.path) else {
+        return Ok(None);
+    };
+    if operation.asset != Asset::AppHtml {
+        return Ok(None);
+    }
+    let retired = format!("{}/{generation}/{RETIRED_SHELL}", app::GENERATIONS_PATH);
+    let Some(retirement) = plan
+        .retirements
+        .iter()
+        .find(|retirement| retirement.path == retired)
+    else {
+        return Ok(None);
+    };
+    let image = retirement
+        .observed
+        .as_ref()
+        .map(|observed| &observed.image)
+        .ok_or_else(|| {
+            InstallError::InvalidRecord(
+                "previous app shell retirement has no authenticated replacement image".to_owned(),
+            )
+        })?;
+    if image.generated() != operation.generated {
+        return Err(InstallError::InvalidRecord(
+            "previous app shell retirement image does not match its current replacement".to_owned(),
+        ));
+    }
+    Ok(Some(image))
 }
 
 fn migrated_shell_path(
