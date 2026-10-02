@@ -1,4 +1,5 @@
-//! Decision-first terminal output shared by the gate commands.
+//! Decision-first terminal output shared by the gate commands and the
+//! developer Cargo surfaces.
 //!
 //! A gate command tells a person what it is doing and what it decided, not
 //! everything its subprocesses said. [`Progress`] writes bounded live lines to
@@ -24,13 +25,13 @@ use wire::output::Export;
 use wire::{Digest, Domain};
 
 /// Interval between heartbeats while one step runs.
-pub(super) const HEARTBEAT: Duration = Duration::from_secs(30);
+pub(crate) const HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// Diagnostic lines a failure shows from the end of its captured output.
-pub(super) const TAIL_LINES: usize = 40;
+pub(crate) const TAIL_LINES: usize = 40;
 
 /// Bytes a failure shows from the end of its captured output.
-pub(super) const TAIL_BYTES: usize = 4_096;
+pub(crate) const TAIL_BYTES: usize = 4_096;
 
 /// Retained capture files kept per repository; older ones are pruned.
 const RETAINED_CAPTURES: usize = 64;
@@ -42,7 +43,7 @@ const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "gate-output"];
 const CARGO_MESSAGE_PREFIX: &str = "{\"reason\":";
 
 /// Best-effort live progress for one gate command.
-pub(super) struct Progress {
+pub(crate) struct Progress {
     command: &'static str,
     sink: Arc<Mutex<dyn Write + Send>>,
     interval: Duration,
@@ -61,7 +62,7 @@ impl Progress {
         Self::new(command, sink, HEARTBEAT)
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         command: &'static str,
         sink: Arc<Mutex<dyn Write + Send>>,
         interval: Duration,
@@ -74,7 +75,7 @@ impl Progress {
     }
 
     /// Write one progress line; a failed write or flush is ignored.
-    pub(super) fn line(&self, text: fmt::Arguments<'_>) {
+    pub(crate) fn line(&self, text: fmt::Arguments<'_>) {
         let Ok(mut sink) = self.sink.lock() else {
             return;
         };
@@ -90,7 +91,7 @@ impl Progress {
     }
 
     /// Run `work` while a heartbeat names whatever `phase` reads at each beat.
-    pub(super) fn watching<T>(
+    pub(crate) fn watching<T>(
         &self,
         phase: impl Fn() -> String + Sync,
         work: impl FnOnce() -> T,
@@ -342,7 +343,7 @@ fn field<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// `text` cut to at most `chars` characters, marked when cut.
-pub(super) fn clip(text: &str, chars: usize) -> String {
+pub(crate) fn clip(text: &str, chars: usize) -> String {
     match text.char_indices().nth(chars) {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text.to_owned(),
@@ -392,7 +393,7 @@ pub(super) const fn family_name(family: gate::ArmFamily) -> &'static str {
 
 /// A duration as a person reads it: `8.4s`, `2m05s`, `1h03m`.
 #[derive(Clone, Copy)]
-pub(super) struct Elapsed(pub(super) Duration);
+pub(crate) struct Elapsed(pub(crate) Duration);
 
 const SECONDS_PER_MINUTE: u64 = 60;
 const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
@@ -433,7 +434,7 @@ pub(super) fn retain(directory: &Path, bytes: &[u8]) -> Result<Export, String> {
     Ok(export)
 }
 
-fn prune(directory: &Path, keep: &Path) {
+pub(crate) fn prune(directory: &Path, keep: &Path) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };

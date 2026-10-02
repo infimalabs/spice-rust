@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
 #[cfg(unix)]
 use std::thread::JoinHandle;
 
@@ -14,6 +14,10 @@ use spice::cargo_isolation::{
 };
 use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Reply, ReplyPosition};
+
+mod capture;
+
+use capture::{Stage, Stdout};
 
 /// Result of the isolated native Cargo process boundary.
 pub(crate) enum RunResult {
@@ -71,6 +75,15 @@ impl Drop for SignalRelay {
     }
 }
 
+/// How one developer Cargo invocation is launched and reported.
+struct Invocation {
+    arguments: Vec<OsString>,
+    surface: &'static str,
+    identity: String,
+    stdout: Stdout,
+    verbose: bool,
+}
+
 /// Prepare the exact current lock generation and run native Cargo within it.
 pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
     let arguments = matches
@@ -78,11 +91,24 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
         .expect("the generated parser requires trailing Cargo arguments")
         .cloned()
         .collect::<Vec<_>>();
-    run_arguments(arguments)
+    run_invocation(Invocation {
+        identity: capture::identity("cargo", &arguments),
+        stdout: capture::cargo_stdout(&arguments),
+        surface: "dev cargo",
+        verbose: matches.get_flag("verbose"),
+        arguments,
+    })
 }
 
 /// Run the repository's task binary inside the same admitted Cargo boundary.
+///
+/// The task binary's standard output is its product and is always delivered.
 pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
+    let tasks = matches
+        .get_many::<OsString>("XTASK_ARGS")
+        .expect("the generated parser requires trailing xtask arguments")
+        .cloned()
+        .collect::<Vec<_>>();
     let mut arguments = [
         "run",
         "--locked",
@@ -95,20 +121,32 @@ pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
     .into_iter()
     .map(OsString::from)
     .collect::<Vec<_>>();
-    arguments.extend(
-        matches
-            .get_many::<OsString>("XTASK_ARGS")
-            .expect("the generated parser requires trailing xtask arguments")
-            .cloned(),
-    );
-    run_arguments(arguments)
+    let identity = capture::identity("xtask", &tasks);
+    arguments.extend(tasks);
+    run_invocation(Invocation {
+        arguments,
+        surface: "dev xtask",
+        identity,
+        stdout: Stdout::Deliver,
+        verbose: matches.get_flag("verbose"),
+    })
 }
 
-fn run_arguments(arguments: Vec<OsString>) -> RunResult {
-    match run_inner(arguments) {
+fn run_invocation(invocation: Invocation) -> RunResult {
+    match run_inner(invocation) {
         Ok(status) => RunResult::Child(status),
         Err((outcome, code)) => RunResult::Rejected { outcome, code },
     }
+}
+
+/// A supervising pre-commit worker parses the configured leaf's own progress
+/// protocol and captures its output, so its child streams stay verbatim.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "developer Cargo detects authority injected by its supervising pre-commit worker"
+)]
+fn supervised_by_pre_commit() -> bool {
+    std::env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
 }
 
 /// Developer toolchains and their tests must opt into lane interception state.
@@ -168,7 +206,7 @@ pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
     }
 }
 
-fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)> {
+fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
     let working = std::env::current_dir().map_err(|error| {
         rejected(
             FaultClass::Environment,
@@ -189,7 +227,7 @@ fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)>
     let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
     let mut command = Command::new(prepared.cargo());
     command
-        .args(arguments)
+        .args(&invocation.arguments)
         .current_dir(&working)
         .env(CARGO_HOME_VARIABLE, prepared.home())
         .env(BOOTSTRAP_HOME_VARIABLE, host.bootstrap_home())
@@ -207,49 +245,93 @@ fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)>
     prepared
         .retain_pin_for_child(&mut command)
         .map_err(isolation_rejection)?;
-    let mut child = command.spawn().map_err(|error| {
-        let code = match error.kind() {
-            io::ErrorKind::NotFound => 127,
-            io::ErrorKind::PermissionDenied => 126,
-            _ => 1,
-        };
-        rejected(
-            FaultClass::Environment,
-            "cargo-isolation::native-cargo-launch-failed",
-            error.to_string(),
-            code,
-        )
-    })?;
-    #[cfg(unix)]
-    let relay = {
-        let pid = i32::try_from(child.id())
-            .ok()
-            .and_then(rustix::process::Pid::from_raw);
-        match pid.map(SignalRelay::install).transpose() {
-            Ok(relay) => relay,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(rejected(
-                    FaultClass::Environment,
-                    "cargo-isolation::signals-unavailable",
-                    error.to_string(),
-                    1,
-                ));
-            }
-        }
+    if supervised_by_pre_commit() {
+        return run_verbatim(&mut command);
+    }
+    let settings = capture::Settings {
+        surface: invocation.surface,
+        identity: invocation.identity,
+        sink: std::sync::Arc::new(std::sync::Mutex::new(io::stderr())),
+        heartbeat: crate::gate_command::output::HEARTBEAT,
+        verbose: invocation.verbose,
+        directory: capture::capture_directory(repository.common_dir()),
     };
-    let status = child.wait().map_err(|error| {
-        rejected(
+    capture::run(&mut command, invocation.stdout, &settings, relay).map_err(|stage| match stage {
+        Stage::Log(error) => rejected(
             FaultClass::Environment,
-            "cargo-isolation::native-cargo-wait-failed",
+            "cargo-isolation::output-capture-unavailable",
             error.to_string(),
             1,
-        )
-    })?;
-    #[cfg(unix)]
-    drop(relay);
+        ),
+        Stage::Spawn(error) => launch_rejection(&error),
+        Stage::Relay(error) => relay_rejection(&error),
+        Stage::Wait(error) => wait_rejection(&error),
+    })
+}
+
+/// Run the child with inherited streams, as a supervising worker expects.
+fn run_verbatim(command: &mut Command) -> Result<ExitStatus, (Outcome<()>, i32)> {
+    let mut child = command.spawn().map_err(|error| launch_rejection(&error))?;
+    let guard = match relay(&child) {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(relay_rejection(&error));
+        }
+    };
+    let status = child.wait().map_err(|error| wait_rejection(&error))?;
+    drop(guard);
     Ok(status)
+}
+
+/// Forward termination signals to the child's process group until dropped.
+#[cfg(unix)]
+fn relay(child: &Child) -> io::Result<Option<SignalRelay>> {
+    i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .map(SignalRelay::install)
+        .transpose()
+}
+
+#[cfg(not(unix))]
+fn relay(_child: &Child) -> io::Result<()> {
+    Ok(())
+}
+
+/// A launch failure keeps the shell's status conventions: 127 when Cargo is
+/// missing, 126 when it is not executable.
+fn launch_rejection(error: &io::Error) -> (Outcome<()>, i32) {
+    let code = match error.kind() {
+        io::ErrorKind::NotFound => 127,
+        io::ErrorKind::PermissionDenied => 126,
+        _ => 1,
+    };
+    rejected(
+        FaultClass::Environment,
+        "cargo-isolation::native-cargo-launch-failed",
+        error.to_string(),
+        code,
+    )
+}
+
+fn relay_rejection(error: &io::Error) -> (Outcome<()>, i32) {
+    rejected(
+        FaultClass::Environment,
+        "cargo-isolation::signals-unavailable",
+        error.to_string(),
+        1,
+    )
+}
+
+fn wait_rejection(error: &io::Error) -> (Outcome<()>, i32) {
+    rejected(
+        FaultClass::Environment,
+        "cargo-isolation::native-cargo-wait-failed",
+        error.to_string(),
+        1,
+    )
 }
 
 fn isolation_rejection(error: spice::cargo_isolation::IsolationError) -> (Outcome<()>, i32) {
@@ -307,25 +389,5 @@ mod tests {
             name == vendor::OMP.thread_id_environment()
                 && value == Some(std::ffi::OsStr::new("owned-omp"))
         }));
-    }
-
-    #[test]
-    fn launch_failures_preserve_shell_status_conventions() {
-        let missing = io::Error::from(io::ErrorKind::NotFound);
-        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
-        assert_eq!(
-            match missing.kind() {
-                io::ErrorKind::NotFound => 127,
-                _ => 1,
-            },
-            127
-        );
-        assert_eq!(
-            match denied.kind() {
-                io::ErrorKind::PermissionDenied => 126,
-                _ => 1,
-            },
-            126
-        );
     }
 }

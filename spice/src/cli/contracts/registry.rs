@@ -219,7 +219,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["dev", "cargo"],
-        "dev cargo -- CARGO_ARGS...",
+        "dev cargo [--verbose] -- CARGO_ARGS...",
         Local,
         None,
         [],
@@ -230,7 +230,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["dev", "xtask"],
-        "dev xtask -- XTASK_ARGS...",
+        "dev xtask [--verbose] -- XTASK_ARGS...",
         Local,
         None,
         [],
