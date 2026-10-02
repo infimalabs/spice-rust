@@ -443,6 +443,9 @@ pub(super) struct MarkdownBodyProps {
     /// otherwise takes its own trailing line.
     #[prop_or_default]
     pub(super) signoff: Option<Html>,
+    /// Card controls that either lead the body or mount inside its leading quote.
+    #[prop_or_default]
+    pub(super) corner: Option<Html>,
 }
 
 /// Where a card's signoff mounts once its raw body is in the DOM.
@@ -454,6 +457,63 @@ enum SignoffPlace {
         key: yew::virtual_dom::Key,
     },
     Line,
+}
+
+/// Where card controls mount once the raw body exposes its first content block.
+#[derive(Clone, PartialEq)]
+enum CornerPlace {
+    Pending,
+    Body,
+    Quote {
+        target: web_sys::Element,
+        before: Option<web_sys::Node>,
+    },
+}
+
+fn has_class(element: &web_sys::Element, class: &str) -> bool {
+    element
+        .get_attribute("class")
+        .is_some_and(|classes| classes.split_whitespace().any(|name| name == class))
+}
+
+fn collect_corner_place(host: &web_sys::Element, enabled: bool) -> CornerPlace {
+    if !enabled {
+        return CornerPlace::Pending;
+    }
+    let mut surface = host.first_element_child();
+    while let Some(element) = surface.as_ref().filter(|element| {
+        has_class(element, "message-controls")
+            || has_class(element, MARKDOWN_BODY_PORTALS)
+            || has_class(element, "message-signoff-line")
+    }) {
+        surface = element.next_element_sibling();
+    }
+    let Some(surface) = surface.filter(|element| {
+        element.tag_name() == "BLOCKQUOTE" || has_class(element, "message-quote-card")
+    }) else {
+        return CornerPlace::Body;
+    };
+    CornerPlace::Quote {
+        before: surface.first_child(),
+        target: surface,
+    }
+}
+
+fn render_corner(corner: Option<&Html>, place: &CornerPlace) -> (Option<Html>, Option<Html>) {
+    let Some(corner) = corner else {
+        return (None, None);
+    };
+    match place {
+        CornerPlace::Pending | CornerPlace::Body => (Some(corner.clone()), None),
+        CornerPlace::Quote { target, before } => (
+            None,
+            Some(Html::from(yew::virtual_dom::VPortal::new_before(
+                corner.clone(),
+                target.clone(),
+                before.clone(),
+            ))),
+        ),
+    }
 }
 
 /// A signoff joins the body's last raw block when that block is a prose
@@ -728,12 +788,14 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
     let quote_task_slots = use_state(Vec::<QuoteTaskSlot>::new);
     let signoff_place = use_state(|| SignoffPlace::Pending);
+    let corner_place = use_state(|| CornerPlace::Pending);
     let counter = use_memo((), |()| Cell::new(0_u64));
     use_effect_with(
         (
             props.html.clone(),
             props.sources.len(),
             props.signoff.is_some(),
+            props.corner.is_some(),
         ),
         {
             let host = host.clone();
@@ -742,11 +804,13 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             let quote_age_slots = quote_age_slots.clone();
             let quote_task_slots = quote_task_slots.clone();
             let signoff_place = signoff_place.clone();
+            let corner_place = corner_place.clone();
             let counter = counter.clone();
-            move |(_, source_count, has_signoff)| {
+            move |(_, source_count, has_signoff, has_corner)| {
                 let Some(host) = host.cast::<web_sys::Element>() else {
                     return;
                 };
+                corner_place.set(collect_corner_place(&host, *has_corner));
                 diagram_slots.set(collect_slots(
                     &host,
                     "[data-mermaid-slot]",
@@ -777,6 +841,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
         (Some(signoff), SignoffPlace::Line) => Some(signoff.clone()),
         _ => None,
     };
+    let (body_corner, quote_corner) = render_corner(props.corner.as_ref(), &corner_place);
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
@@ -787,8 +852,9 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 super::card_target::remember_quote_return(&event);
             })}
         >
+            {for body_corner}
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || inline_signoff.is_some() {
+            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || inline_signoff.is_some() || quote_corner.is_some() {
             <span class={MARKDOWN_BODY_PORTALS} hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
@@ -824,6 +890,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                     slot.before.clone(),
                 )))
             })}
+            {for quote_corner}
             {for inline_signoff}
             </span>
             }

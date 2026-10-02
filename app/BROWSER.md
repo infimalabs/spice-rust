@@ -130,6 +130,16 @@ and pasted images retain the entire composer. Provider identity remains
 available through the emblem's accessible label. Quote shards carry no
 watermark, and Dash agent tiles keep their full-size provider emblem.
 
+## Message card control flow
+
+Card actions form a shrink-wrapped island at the content's top inline-end.
+When the first content block is a colored quote, Canvas portals that island
+into the quote before its content. The quote surface itself starts at the card
+edge and keeps the full content width; only its text wraps beside the controls,
+and image rows clear them from inside the same colored surface. Cards without a
+leading quote keep the island in the ordinary message flow. Narrow cards retain
+the same quote-local ownership rather than adding an external controls header.
+
 ## Rich team directions
 
 The team-local **Work** tab renders each direction from its complete admitted
