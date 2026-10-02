@@ -1,10 +1,17 @@
 use super::*;
+use model::ContextRecord;
 use spice::repository::Repository;
 
+/// Tape bytes read on each side of the boundary; the page covers every
+/// complete record inside them.
 const WINDOW_BYTES: u64 = 256 * 1024;
-const WINDOW_RECORDS: usize = 8;
 
-pub(super) fn build(matches: &ArgMatches, environment: &Environment) -> Result<Report, Refusal> {
+pub(super) fn build(
+    matches: &ArgMatches,
+    path: &[&str],
+    environment: &Environment,
+) -> Result<Report, Refusal> {
+    let page = page::Page::from_matches(matches, path)?;
     let session = required(matches, "SESSION")?;
     let lane = parse::<wire::CanonicalUuid>(matches, "lane")?;
     let vendor = parse::<wire::Name>(matches, "vendor")?;
@@ -48,6 +55,26 @@ pub(super) fn build(matches: &ArgMatches, environment: &Environment) -> Result<R
 
     let before = records_before(&tape, &extents, boundary_index, offset)?;
     let after = records_after(&tape, &extents, boundary_index, offset)?;
+    let rows = nearest_first(before, after, &page);
+    let resumed = match page.after() {
+        Some(cursor) => rows
+            .iter()
+            .position(|(_, key)| key == cursor)
+            .ok_or_else(|| {
+                refusal(
+                    "session::cursor-invalid",
+                    Some(cursor.to_owned()),
+                    "pass the --after cursor exactly as a continuation named it",
+                )
+            })?,
+        None => 0,
+    };
+    let population = rows.len() - resumed;
+    let rows = rows.into_iter().skip(resumed).collect();
+    let page = match page.admit(rows, population)? {
+        page::Paged::Shown(page) => page,
+        page::Paged::Exported(export) => return Ok(Report::Exported { export }),
+    };
     Ok(Report::Context {
         identity: session,
         lane: lane.to_string(),
@@ -56,9 +83,39 @@ pub(super) fn build(matches: &ArgMatches, environment: &Environment) -> Result<R
         source: source.to_string(),
         member,
         offset,
-        before,
-        after,
+        page,
     })
+}
+
+/// Records nearest the boundary first, the one before ahead of the one after
+/// at each distance, each keyed `SIDE-DISTANCE`.
+fn nearest_first(
+    before: Vec<String>,
+    after: Vec<String>,
+    page: &page::Page,
+) -> Vec<(ContextRecord, String)> {
+    let mut before = before.into_iter().rev();
+    let mut after = after.into_iter();
+    let mut rows = Vec::new();
+    for distance in 1.. {
+        let sides = [("before", before.next()), ("after", after.next())];
+        if sides.iter().all(|(_, text)| text.is_none()) {
+            break;
+        }
+        for (side, text) in sides {
+            if let Some(text) = text {
+                rows.push((
+                    ContextRecord {
+                        side,
+                        distance,
+                        text: page.clip(&text),
+                    },
+                    format!("{side}-{distance}"),
+                ));
+            }
+        }
+    }
+    rows
 }
 
 fn retained_tape(
@@ -199,11 +256,7 @@ fn records_before(
         ),
         None => true,
     };
-    let mut records = complete_records(&bytes, starts_at_boundary, true)?;
-    if records.len() > WINDOW_RECORDS {
-        records.drain(..records.len() - WINDOW_RECORDS);
-    }
-    Ok(records)
+    complete_records(&bytes, starts_at_boundary, true)
 }
 
 fn records_after(
@@ -229,9 +282,7 @@ fn records_after(
         bytes.extend(chunk);
         remaining -= length;
     }
-    let mut records = complete_records(&bytes, true, false)?;
-    records.truncate(WINDOW_RECORDS);
-    Ok(records)
+    complete_records(&bytes, true, false)
 }
 
 fn complete_records(
@@ -386,16 +437,16 @@ mod tests {
             retained_boundary(&admitted, 1, boundary).expect("complete boundary admits");
         assert_eq!(
             records_before(&admitted, &extents, index, boundary).expect("before window reads"),
-            (3..11)
+            (0..11)
                 .map(|index| format!("record-{index:02}"))
                 .collect::<Vec<_>>()
         );
         assert_eq!(
             records_after(&admitted, &extents, index, boundary).expect("after window reads"),
-            (11..19)
+            (11..21)
                 .map(|index| format!("record-{index:02}"))
                 .collect::<Vec<_>>(),
-            "the bounded window omits both excess complete records and an unterminated tail"
+            "the window carries complete records and omits an unterminated tail"
         );
     }
 
@@ -534,7 +585,8 @@ mod tests {
         let environment = live_environment(LIVE_SESSION);
         let matches = context_matches(LIVE_SESSION);
         let leaf = crate::cli::selected_matches(&matches);
-        let refused = build(leaf, &environment).expect_err("the caller's own session refuses");
+        let refused = build(leaf, &["session", "context"], &environment)
+            .expect_err("the caller's own session refuses");
         assert_eq!(refused.reason(), "session::context-live-session-self");
         assert_eq!(
             refused

@@ -50,8 +50,10 @@ lane. Tell another lane only what it needs for its own work, and only a lane
 that is seated now.
 
 If continuity is clipped, recover only the detail needed with
-`spice session sweep --count N` or
-`spice session turns --turn-id ID --view full`.
+`spice session sweep` (newest compaction windows first, each naming its bounded
+`session turns` read) or `spice session turns --turn-id ID --view full`. Every
+history read is one bounded page; follow its omission's exact continuation
+command for more.
 
 ## Working loop
 

@@ -976,16 +976,15 @@ mod tests {
         else {
             panic!("third declaration reaches briefing");
         };
-        let crate::session_command::model::Report::Recall {
-            sources, window, ..
-        } = reply.body
-        else {
+        let crate::session_command::model::Report::Recall { sources, live, .. } = reply.body else {
             panic!("briefing returns recall");
         };
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].vendor, super::Vendor::declared(fixture));
-        assert_eq!(window.turns.len(), 1);
-        assert_eq!(window.turns[0].vendor, super::Vendor::declared(fixture));
+        assert!(
+            live.turn.is_some(),
+            "the declared transcript folds its turn"
+        );
     }
 
     #[test]

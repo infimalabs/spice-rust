@@ -24,10 +24,10 @@ mod horizon;
 pub(crate) mod stream;
 mod work;
 pub(crate) use aggregate::{
-    Aggregate, CommitScan, WindowOptions, WindowScan, WindowTurn, admit_sources,
+    Aggregate, CommitScan, Recent, WindowOptions, WindowScan, WindowTurn, admit_sources,
 };
 use horizon::{CompactionTracker, admit_source_order};
-pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start, slice_compaction_horizon};
+pub(crate) use horizon::{counted_compaction_horizon, recent_compaction_horizon};
 pub(crate) use stream::CompactionScan;
 use stream::stream_records;
 pub(crate) use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
@@ -79,19 +79,21 @@ pub(crate) struct MessageQuery {
     phases: BTreeSet<String>,
     flavors: BTreeSet<String>,
     limit: NonZeroUsize,
-    oldest_first: bool,
 }
 
 pub(crate) struct MessageDataset {
     pub(crate) sources: Vec<SourceView>,
+    /// Newest matching messages, oldest first.
     pub(crate) rows: Vec<MessageRecord>,
+    /// Every matching message, retained or not.
+    pub(crate) population: usize,
     pub(crate) residues: Vec<Residue>,
 }
 
 impl MessageQuery {
     #[allow(
         clippy::too_many_arguments,
-        reason = "message query syntax owns its filter and pagination fields"
+        reason = "message query syntax owns its filter fields and retained frontier"
     )]
     pub(crate) fn new(
         start: Option<String>,
@@ -102,7 +104,6 @@ impl MessageQuery {
         phases: BTreeSet<String>,
         flavors: BTreeSet<String>,
         limit: usize,
-        oldest_first: bool,
     ) -> Result<Self, Refusal> {
         Ok(Self {
             start,
@@ -113,52 +114,28 @@ impl MessageQuery {
             phases,
             flavors,
             limit: frontier_limit(limit)?,
-            oldest_first,
         })
     }
 }
 
+/// Every message matching the query, counted, with the newest retained.
+///
+/// Counting the population is what lets a page state exactly how many
+/// messages it withheld, so each source is read from the query start.
 pub(crate) fn messages(
     sources: &[ResolvedSource],
     query: &MessageQuery,
 ) -> Result<MessageDataset, Refusal> {
     aggregate::admit_sources(sources)?;
     let mut selected = Vec::with_capacity(sources.len().saturating_mul(query.limit.get()));
+    let mut population = 0_usize;
     let mut source_views = Vec::with_capacity(sources.len());
     let mut residues = ResidueLedger::new();
     let mut work = SessionWork::new(SessionWorkBudget::report());
     for source in sources {
-        let direction = if query.oldest_first {
-            FrontierDirection::Oldest
-        } else {
-            FrontierDirection::Newest
-        };
         let scan =
-            if query.oldest_first || query.start.is_some() || stream::compressed(&source.path) {
-                aggregate::scan_message_source(
-                    source,
-                    query.start.as_deref(),
-                    query,
-                    direction,
-                    &mut work,
-                )?
-            } else {
-                let mut turn_count = query.limit.get();
-                loop {
-                    let start = horizon::recent_turn_start(source, turn_count, &mut work)?;
-                    let scan = aggregate::scan_message_source(
-                        source,
-                        start.as_deref(),
-                        query,
-                        direction,
-                        &mut work,
-                    )?;
-                    if scan.rows.len() == query.limit.get() || start.is_none() {
-                        break scan;
-                    }
-                    turn_count = turn_count.saturating_add(query.limit.get());
-                }
-            };
+            aggregate::scan_message_source(source, query.start.as_deref(), query, &mut work)?;
+        population = population.saturating_add(scan.offered);
         selected.extend(scan.rows);
         for residue in scan.residues {
             residues.push(residue, &mut work, "message source residue")?;
@@ -181,15 +158,12 @@ pub(crate) fn messages(
         (&left.ts, &left.source, &left.side).cmp(&(&right.ts, &right.source, &right.side))
     });
     if selected.len() > query.limit.get() {
-        if query.oldest_first {
-            selected.truncate(query.limit.get());
-        } else {
-            selected.drain(..selected.len() - query.limit.get());
-        }
+        selected.drain(..selected.len() - query.limit.get());
     }
     Ok(MessageDataset {
         sources: source_views,
         rows: selected,
+        population,
         residues: residues.finish(&mut work, "message residue summary")?,
     })
 }
@@ -428,6 +402,7 @@ pub(crate) struct ResultFrontier<T> {
     direction: FrontierDirection,
     limit: NonZeroUsize,
     rows: VecDeque<T>,
+    offered: usize,
 }
 
 struct FrontierPage<T, C> {
@@ -442,16 +417,23 @@ impl<T> ResultFrontier<T> {
             direction,
             limit,
             rows: VecDeque::with_capacity(limit.get()),
+            offered: 0,
         })
     }
 
     pub(crate) fn push(&mut self, row: T) {
+        self.offered += 1;
         if self.rows.len() < self.limit.get() {
             self.rows.push_back(row);
         } else if matches!(self.direction, FrontierDirection::Newest) {
             self.rows.pop_front();
             self.rows.push_back(row);
         }
+    }
+
+    /// Every row offered, retained or not: the population a page reports.
+    pub(crate) const fn offered(&self) -> usize {
+        self.offered
     }
 
     /// Retain results by their report order when completion order differs.
@@ -461,6 +443,7 @@ impl<T> ResultFrontier<T> {
         row: T,
         compare: impl Fn(&T, &T) -> std::cmp::Ordering,
     ) {
+        self.offered += 1;
         let mut index = self
             .rows
             .partition_point(|existing| compare(existing, &row).is_le());

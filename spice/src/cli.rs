@@ -34,7 +34,7 @@ use tools::{
 
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.
-const JSON: &str = "json";
+pub const JSON: &str = "json";
 const MOUNT_ARGUMENT: &str = "MOUNT_ARGUMENTS";
 
 /// Principal admitted to a command leaf.

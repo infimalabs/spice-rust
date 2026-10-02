@@ -41,18 +41,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     local_direct!(
         ["session", "briefing"],
-        "session briefing [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
-         [--turn-id ID...] [--tool NAME...] [--max-lines N] [--max-bytes N] \
-         [--explain-pruning] [--deadline-seconds SECONDS]",
+        "session briefing [FILES...] [--deadline-seconds SECONDS]",
         [Daemonless, Offline],
         Reply,
         "rim::session_briefing"
     ),
     local_direct!(
         ["session", "commands"],
-        "session commands [FILES...] [--limit N] [--newest-first] \
-         [--since-compaction] [--failed] [--pipelines] [--noncanonical-pipelines] \
-         [--summary] [--max-text N]",
+        "session commands [FILES...] [--since-compaction] [--failed] [--pipelines] \
+         [--noncanonical-pipelines] [--summary] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_commands"
@@ -60,21 +58,24 @@ pub(super) const CONTRACTS: &[Contract] = &[
     local_direct!(
         ["session", "context"],
         "session context SESSION [--lane UUID] [--vendor NAME] [--stream NAME] [--source UUID] \
-         [--member N] [--offset N]",
+         [--member N] [--offset N] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_context"
     ),
     local_direct!(
         ["session", "commits"],
-        "session commits [FILES...] [--limit N]",
+        "session commits [FILES...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_commits"
     ),
     local_direct!(
         ["session", "compactions"],
-        "session compactions [FILES...] [--limit N]",
+        "session compactions [FILES...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_compactions"
@@ -84,7 +85,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "session messages [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
          [--turn-id ID...] [--side user|assistant...] \
          [--phase-kind prompt|commentary|final_answer...] [--flavor FLAVOR...] \
-         [--limit N] [--oldest-first] [--max-text N]",
+         [--limit N] [--max-bytes N] [--max-text N] [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_messages"
@@ -92,30 +93,32 @@ pub(super) const CONTRACTS: &[Contract] = &[
     local_direct!(
         ["session", "phases"],
         "session phases [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
-         [--turn-id ID...] [--tool NAME...] [--limit N] [--examples N] [--max-text N]",
+         [--turn-id ID...] [--tool NAME...] [--examples N] [--limit N] [--max-bytes N] \
+         [--max-text N] [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_phases"
     ),
     local_direct!(
         ["session", "slices"],
-        "session slices [FILES...] [--limit N] [--slice-id ID...] \
-         [--view summary|full] [--max-text N]",
+        "session slices [FILES...] [--slice-id ID...] [--view summary|full] [--limit N] \
+         [--max-bytes N] [--max-text N] [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_slices"
     ),
     local_direct!(
         ["session", "summary"],
-        "session summary [FILES...] [--recent N]",
+        "session summary [FILES...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
         Reply,
         "rim::session_summary"
     ),
     local_direct!(
         ["session", "sweep"],
-        "session sweep [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
-         [--turn-id ID...] [--tool NAME...] [--count N] [--deadline-seconds SECONDS]",
+        "session sweep [FILES...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE] [--deadline-seconds SECONDS]",
         [Daemonless, Offline],
         Reply,
         "rim::session_sweep"
@@ -130,7 +133,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["session", "timeline"],
         "session timeline [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
-         [--turn-id ID...] [--tool NAME...] [--limit N] [--max-text N]",
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         Local,
         None,
         [],
@@ -151,7 +155,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["session", "turns"],
         "session turns [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
-         [--turn-id ID...] [--tool NAME...] [--limit N] [--view dialogue|full]",
+         [--turn-id ID...] [--tool NAME...] [--view dialogue|full] [--limit N] \
+         [--max-bytes N] [--max-text N] [--after CURSOR] [--export FILE]",
         Local,
         None,
         [],

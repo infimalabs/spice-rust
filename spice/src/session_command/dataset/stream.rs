@@ -51,9 +51,11 @@ pub(crate) struct CompactionScan {
 }
 
 impl CompactionScan {
+    /// The newest `limit` compactions at or before `end`, oldest first.
     pub(crate) fn scan(
         sources: &[ResolvedSource],
         horizon: CompactionHorizon,
+        end: Option<&str>,
         limit: usize,
     ) -> Result<Self, Refusal> {
         admit_sources(sources)?;
@@ -80,12 +82,14 @@ impl CompactionScan {
                     limit,
                     FrontierDirection::Newest,
                     horizon.start.as_deref(),
-                    None,
+                    end,
                 )?;
                 tracker.seed_assistant(boundary.assistant_before);
                 scan_compaction_rows(source, &mut cursor, &mut tracker, &mut residues, &mut work)?;
                 vendor = cursor.vendor();
-                tracker.finish(&mut work, &source.path.display().to_string())?
+                tracker
+                    .finish(&mut work, &source.path.display().to_string())?
+                    .0
             } else {
                 Vec::new()
             };

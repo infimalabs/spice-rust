@@ -15,6 +15,7 @@ mod authority;
 mod context;
 mod dataset;
 mod model;
+mod page;
 mod project;
 mod source;
 
@@ -125,7 +126,7 @@ pub(crate) fn run(
 ) -> Outcome<Report> {
     let action = path.get(1).copied().unwrap_or("briefing");
     let result = if action == "context" {
-        context::build(matches, environment)
+        context::build(matches, path, environment)
     } else if matches!(action, "briefing" | "sweep") {
         deadline_build(matches, path, action, environment, configuration)
     } else {
@@ -355,14 +356,30 @@ fn build(
             )
         })?;
         let resolved = source::resolve_thread(&id, environment)?;
-        return Ok(dataset::Aggregate::scan(&resolved, 0)?.thread(id));
+        return Ok(dataset::Aggregate::scan(&resolved, dataset::Recent::NONE)?.thread(id));
     }
 
-    validate_options_before_source(matches, action)?;
+    if HISTORY.contains(&action) {
+        page::Page::from_matches(matches, path)?;
+    }
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
     build_resolved(matches, path, action, sources, environment, configuration)
 }
+
+/// Session leaves that page their records through [`page::Page`].
+const HISTORY: [&str; 10] = [
+    "sweep",
+    "turns",
+    "messages",
+    "phases",
+    "timeline",
+    "slices",
+    "commands",
+    "compactions",
+    "commits",
+    "summary",
+];
 
 fn build_resolved(
     matches: &ArgMatches,
@@ -372,139 +389,35 @@ fn build_resolved(
     environment: &Environment,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
-    if let Some(report) = build_bounded_event_report(matches, action, &sources)? {
-        return Ok(report);
-    }
-    if action == "commits" {
-        let limit = project::commit_limit(matches)?;
-        return Ok(project::commits(dataset::CommitScan::scan(
-            &sources, limit,
-        )?));
-    }
-    let filters = project::Filters::from_matches(matches)?;
-    if action == "timeline" {
-        let (limit, max_text) = project::timeline_options(matches)?;
-        let data =
-            dataset::aggregate::timeline::TimelineScan::scan(&sources, &filters, limit, max_text)?;
-        return Ok(project::timeline(data));
-    }
-    if action == "summary" {
-        let recent = project::summary_recent(matches)?;
-        return Ok(dataset::Aggregate::scan(&sources, recent)?.summary());
-    }
-    if action == "tokens" {
-        return Ok(dataset::Aggregate::scan(&sources, 0)?.tokens(project::tokens_by_file(matches)));
-    }
-    if action == "phases" {
-        let options = project::phase_options(matches)?;
-        return dataset::Aggregate::scan_phases(&sources, options, filters);
-    }
-    if matches!(action, "briefing" | "sweep") {
-        let options = project::window_options(matches, action)?;
-        let horizon = dataset::recent_compaction_horizon(
-            &sources,
-            options.compactions(),
-            filters.end_bound(),
-        )?;
-        let start = filters.start_bound().or(horizon.start.as_deref());
-        let data =
-            dataset::WindowScan::scan(&sources, start, filters.end_bound(), &filters, options)?;
-        return if action == "briefing" {
+    match action {
+        "briefing" => {
+            let files = project::values(matches, "FILES");
             let authorities = authority::observe(&sources, environment, configuration);
-            project::recall(&data, &filters, authorities)
-        } else {
-            project::sweep(&data, &filters)
-        };
+            return project::recall(&sources, &files, authorities);
+        }
+        "tokens" => {
+            return Ok(dataset::Aggregate::scan(&sources, dataset::Recent::NONE)?
+                .tokens(project::tokens_by_file(matches)));
+        }
+        _ => {}
     }
-    Err(refusal(
-        "session::query-unregistered",
-        Some(path.join(" ")),
-        "select one generated session query leaf",
-    ))
-}
-
-fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<(), Refusal> {
+    let page = || page::Page::from_matches(matches, path);
     match action {
-        "summary" => project::summary_recent(matches).map(|_| ()),
-        "phases" => project::phase_options(matches).map(|_| ()),
-        "messages" => project::message_options(matches).map(|_| ()),
-        "commands" => project::command_options(matches).map(|_| ()),
-        "commits" => project::commit_limit(matches).map(|_| ()),
-        "timeline" => project::timeline_options(matches).map(|_| ()),
-        "compactions" => project::compaction_limit(matches).map(|_| ()),
-        "turns" => project::turn_options(matches).map(|_| ()),
-        "briefing" | "sweep" => project::validate_window_options(matches, action),
-        "slices" => {
-            project::validate_window_options(matches, action)?;
-            project::slice_options(matches).map(|_| ())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn build_bounded_event_report(
-    matches: &ArgMatches,
-    action: &str,
-    sources: &[source::ResolvedSource],
-) -> Result<Option<Report>, Refusal> {
-    match action {
-        "messages" => {
-            let options = project::message_options(matches)?;
-            let messages = dataset::messages(sources, &options.query)?;
-            Ok(Some(project::messages(messages, options)))
-        }
-        "commands" => {
-            let options = project::command_options(matches)?;
-            project::commands(sources, options).map(Some)
-        }
-        "compactions" => {
-            let limit = project::compaction_limit(matches)?;
-            let horizon = dataset::recent_compaction_horizon(sources, limit, None)?;
-            let data = dataset::CompactionScan::scan(sources, horizon, limit)?;
-            Ok(Some(project::compactions(data)))
-        }
-        "slices" => {
-            let options = project::slice_options(matches)?;
-            let (count, oldest) = options.scan();
-            let (horizon, total) = if oldest {
-                (None, 0)
-            } else {
-                let horizon = dataset::slice_compaction_horizon(sources, count)?;
-                (
-                    horizon.start,
-                    horizon
-                        .total
-                        .expect("slice compaction horizon counts every marker"),
-                )
-            };
-            let data = dataset::WindowScan::scan(
-                sources,
-                horizon.as_deref(),
-                None,
-                &project::Filters::default(),
-                dataset::WindowOptions::Slices {
-                    compactions: count,
-                    oldest,
-                },
-            )?;
-            let ordinal_base = total.saturating_sub(data.compactions.len());
-            Ok(Some(project::slices(data, options, ordinal_base)))
-        }
-        "turns" => {
-            let options = project::turn_options(matches)?;
-            let data = dataset::WindowScan::scan(
-                sources,
-                None,
-                None,
-                &options.filters,
-                dataset::WindowOptions::Turns {
-                    limit: options.limit,
-                    full: options.full,
-                },
-            )?;
-            Ok(Some(project::turns(data)))
-        }
-        _ => Ok(None),
+        "sweep" => project::sweep(&sources, &project::values(matches, "FILES"), page()?),
+        "turns" => project::turns(&sources, matches, page()?),
+        "messages" => project::messages(&sources, matches, page()?),
+        "phases" => project::phases(&sources, matches, page()?),
+        "timeline" => project::timeline(&sources, matches, page()?),
+        "slices" => project::slices(&sources, matches, page()?),
+        "commands" => project::commands(&sources, matches, page()?),
+        "compactions" => project::compactions(&sources, page()?),
+        "commits" => project::commits(&sources, page()?),
+        "summary" => project::summary(&sources, page()?),
+        _ => Err(refusal(
+            "session::query-unregistered",
+            Some(path.join(" ")),
+            "select one generated session query leaf",
+        )),
     }
 }
 
@@ -619,7 +532,10 @@ mod tests {
         );
         let built = Report::Sweep {
             sources: Vec::new(),
-            windows: Vec::new(),
+            page: wire::output::Bounded {
+                rows: Vec::new(),
+                omission: None,
+            },
             residues: Vec::new(),
         };
         let sent = built.clone();
