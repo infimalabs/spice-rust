@@ -130,7 +130,7 @@ fn render_limit(limit: &wire::QuotaLimit) -> Html {
         .status
         .as_deref()
         .filter(|status| !status.eq_ignore_ascii_case("ok"));
-    let used = crate::quota::limit_remaining_fraction(limit).map(|remaining| 1.0 - remaining);
+    let remaining = crate::quota::limit_remaining_fraction(limit);
     html! {
         <li class="quota-limit" data-limit-status={status.map(str::to_owned)}>
             <strong>
@@ -139,49 +139,30 @@ fn render_limit(limit: &wire::QuotaLimit) -> Html {
                     <span class="quota-limit-status">{status.to_owned()}</span>
                 }
             </strong>
-            {render_meter(used)}
-            <span class="quota-limit-used">{usage_text(&limit.amount)}</span>
+            {render_meter(remaining)}
+            <span class="quota-limit-amount">{crate::quota::amount_text(&limit.amount)}</span>
             <span class="quota-limit-reset">{render_reset(limit.window.as_ref())}</span>
         </li>
     }
 }
 
-/// Used share drawn as SVG geometry: the app CSP refuses inline styles.
-fn render_meter(used: Option<f64>) -> Html {
-    let Some(used) = used else {
+/// Remaining share drawn as SVG geometry (the app CSP refuses inline styles),
+/// anchored at the amount label's end so usage eats it from the name side.
+fn render_meter(remaining: Option<f64>) -> Html {
+    let Some(remaining) = remaining else {
         return html! { <span class="quota-meter" aria-hidden="true"></span> };
     };
     html! {
         <svg class="quota-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
             <rect class="quota-meter-track" width="100" height="6" rx="3" />
-            <rect class="quota-meter-used" width={format!("{:.1}", used * 100.0)} height="6" rx="3" />
+            <rect
+                class="quota-meter-left"
+                x={format!("{:.1}", (1.0 - remaining) * 100.0)}
+                width={format!("{:.1}", remaining * 100.0)}
+                height="6"
+                rx="3"
+            />
         </svg>
-    }
-}
-
-/// The amount the operator acts on; a percent limit is always 100, so it and
-/// the complementary remainder are not repeated.
-fn usage_text(amount: &wire::QuotaAmount) -> String {
-    let percent = amount.unit.eq_ignore_ascii_case("percent");
-    let quantity = |value: &str| {
-        if percent {
-            format!("{}%", crate::quota::whole_percent(value))
-        } else {
-            format!("{value} {}", amount.unit)
-        }
-    };
-    match (
-        amount.used.as_deref(),
-        amount.remaining.as_deref(),
-        amount.limit.as_deref(),
-    ) {
-        (Some(used), _, Some(limit)) if !percent => format!("{used} / {}", quantity(limit)),
-        (Some(used), _, _) => format!("{} used", quantity(used)),
-        (None, Some(remaining), Some(limit)) if !percent => {
-            format!("{remaining} / {} left", quantity(limit))
-        }
-        (None, Some(remaining), _) => format!("{} left", quantity(remaining)),
-        (None, None, _) => "usage unknown".to_owned(),
     }
 }
 

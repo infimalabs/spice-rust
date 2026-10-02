@@ -287,6 +287,53 @@ fn parse_quantity(value: Option<&String>) -> Option<f64> {
     value?.parse::<f64>().ok().filter(|value| value.is_finite())
 }
 
+/// The amount beside a limit's meter, leading with what is left: a percent
+/// limit is always 100, so it reads `N% left`; a counted limit reads
+/// `R / L unit left`. A remainder the provider omits is derived from the limit
+/// and the amount used; only when neither is possible does the label fall
+/// back to the amount used.
+pub(crate) fn amount_text(amount: &wire::QuotaAmount) -> String {
+    let percent = amount.unit.eq_ignore_ascii_case("percent");
+    let quantity = |value: &str| {
+        if percent {
+            format!("{}%", whole_percent(value))
+        } else {
+            format!("{value} {}", amount.unit)
+        }
+    };
+    let limit = amount.limit.as_deref();
+    match (
+        remaining_amount(amount).as_deref(),
+        amount.used.as_deref(),
+        limit,
+    ) {
+        (Some(remaining), _, _) if percent => format!("{} left", quantity(remaining)),
+        (Some(remaining), _, Some(limit)) => format!("{remaining} / {} left", quantity(limit)),
+        (Some(remaining), _, None) => format!("{} left", quantity(remaining)),
+        (None, Some(used), Some(limit)) if !percent => format!("{used} / {}", quantity(limit)),
+        (None, Some(used), _) => format!("{} used", quantity(used)),
+        (None, None, _) => "usage unknown".to_owned(),
+    }
+}
+
+/// What is left of a limit as a decimal quantity in the limit's own unit:
+/// the provider's remainder when reported, otherwise the limit (100 for a
+/// percent limit) less the amount used, settled at a millionth and floored at
+/// zero. `None` when neither can be known.
+fn remaining_amount(amount: &wire::QuotaAmount) -> Option<String> {
+    if let Some(remaining) = &amount.remaining {
+        return Some(remaining.clone());
+    }
+    let used = parse_quantity(amount.used.as_ref())?;
+    let limit = match parse_quantity(amount.limit.as_ref()) {
+        Some(limit) => limit,
+        None if amount.unit.eq_ignore_ascii_case("percent") => 100.0,
+        None => return None,
+    };
+    let settled = (((limit - used) * 1e6).round() / 1e6).max(0.0);
+    Some(format!("{}", settled + 0.0))
+}
+
 /// A provider's percent quantity as a whole number, truncated toward zero.
 ///
 /// Providers derive percentages in binary floating point, so `7` may arrive as
@@ -678,6 +725,55 @@ mod tests {
             ("n/a", "n/a"),
         ] {
             assert_eq!(whole_percent(reported), shown, "{reported}");
+        }
+    }
+
+    fn amount(
+        used: Option<&str>,
+        limit: Option<&str>,
+        remaining: Option<&str>,
+        unit: &str,
+    ) -> wire::QuotaAmount {
+        wire::QuotaAmount {
+            used: used.map(str::to_owned),
+            limit: limit.map(str::to_owned),
+            remaining: remaining.map(str::to_owned),
+            used_fraction: None,
+            remaining_fraction: None,
+            unit: unit.to_owned(),
+        }
+    }
+
+    #[test]
+    fn remaining_amount_prefers_the_report_and_otherwise_derives_it_from_usage() {
+        for (case, left) in [
+            // A percent limit is out of 100 even when the limit is omitted.
+            (amount(Some("28"), None, None, "percent"), Some("72")),
+            (
+                amount(Some("28.999999999999996"), None, None, "percent"),
+                Some("71"),
+            ),
+            // The provider's own remainder wins over derivation.
+            (
+                amount(Some("40"), Some("100"), Some("55"), "requests"),
+                Some("55"),
+            ),
+            // Counted: limit less used, without float noise, floored at zero.
+            (
+                amount(Some("40"), Some("100"), None, "requests"),
+                Some("60"),
+            ),
+            (amount(Some("0.1"), Some("0.3"), None, "usd"), Some("0.2")),
+            (
+                amount(Some("120"), Some("100"), None, "requests"),
+                Some("0"),
+            ),
+            // Underivable: no limit for a counted unit, unparsable, or no usage.
+            (amount(Some("40"), None, None, "requests"), None),
+            (amount(Some("40"), Some("n/a"), None, "requests"), None),
+            (amount(None, None, None, "percent"), None),
+        ] {
+            assert_eq!(remaining_amount(&case).as_deref(), left, "{case:?}");
         }
     }
 }
