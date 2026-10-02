@@ -319,7 +319,12 @@ pub(super) fn request(request: Request<'_>) -> bool {
         })
 }
 
-pub(super) fn execute(execution: Execution) -> Result<Digest, ProveFailure> {
+/// Run one shard, capturing its output. A pass retains the capture; a refusal
+/// carries its bounded tail and the retained capture's path.
+pub(super) fn execute(
+    execution: Execution,
+    captures: &Path,
+) -> Result<(Digest, Option<Export>), ProveFailure> {
     let Execution {
         shard,
         root,
@@ -328,15 +333,22 @@ pub(super) fn execute(execution: Execution) -> Result<Digest, ProveFailure> {
         cargo,
         source,
     } = execution;
+    let mut capture = Vec::new();
     let result = gate::run_cargo_gate_shard_at(
         &root,
         &writable_root,
         environment,
         cargo.as_os_str(),
         &shard,
-        &mut std::io::stderr(),
+        &mut capture,
     )
-    .map_err(ProveFailure::cargo)?;
+    .map_err(|error| {
+        ProveFailure::refusal(
+            "gate::prove-cargo-shard-refused",
+            format!("{error}\n{}", output::failure_evidence(captures, &capture)),
+        )
+    })?;
+    let retained = output::retain(captures, &capture).ok();
     let observed = spice::cargo_isolation::readmit_source_generation(
         source.home.home(),
         &source.lockfile,
@@ -356,9 +368,10 @@ pub(super) fn execute(execution: Execution) -> Result<Digest, ProveFailure> {
             ),
         ));
     }
-    Ok(Digest::compute(
+    let digest = Digest::compute(
         Domain::GateFocusedReport,
         &wire::encode(&result)
             .map_err(|error| ProveFailure::fault("gate::prove-result-unencodable", error))?,
-    ))
+    );
+    Ok((digest, retained))
 }

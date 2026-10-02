@@ -14,12 +14,13 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 use spice::repository::Repository;
 
 mod commit_message;
+mod output;
 mod pre_commit;
 mod prove;
 mod reference_transaction;
 mod verify_claim;
 
-pub(crate) use prove::prove;
+pub(crate) use prove::{ProveReport, prove};
 
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(

@@ -1,4 +1,4 @@
-use std::io;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use gate::{EvidenceLease, EvidenceStore, LeaseAcquisition};
 use notify::{RecursiveMode, Watcher as _};
 
+use super::output::{Elapsed, Progress};
 use super::{PreparedAction, ProveActionReport, ProveDisposition, ProveFailure, execute};
 
 #[cfg(test)]
@@ -31,16 +32,19 @@ pub(super) fn run(
     actions: Vec<PreparedAction>,
     mut validate: impl FnMut() -> Result<(), ProveFailure>,
     cleanup: impl FnOnce() -> Result<(), ProveFailure>,
-    progress: &mut impl io::Write,
+    progress: &Progress,
+    captures: &Path,
 ) -> Result<Vec<ProveActionReport>, ProveFailure> {
     let owner = format!(
         "proof:{}:{}",
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     );
+    let total = actions.len();
     let mut present = Vec::new();
     let mut failure = None;
-    for action in actions {
+    for (index, action) in actions.into_iter().enumerate() {
+        let step = format!("{}/{total} {}", index + 1, action.action);
         let claimed = match claim(store, &owner, &action.action, &action.action_key) {
             Ok(claimed) => claimed,
             Err(error) => {
@@ -50,13 +54,16 @@ pub(super) fn run(
         };
         match claimed {
             Claim::Present(report) => {
-                write_progress(progress, "present", &report);
+                progress.line(format_args!("{step} reused"));
                 present.push(report);
             }
             Claim::Lease(lease) => {
-                let receipt = match execute(action) {
+                progress.line(format_args!("{step} started"));
+                let (executed, elapsed) = progress.during(&step, || execute(action, captures));
+                let receipt = match executed {
                     Ok(receipt) => receipt,
                     Err(error) => {
+                        progress.line(format_args!("{step} failed after {}", Elapsed(elapsed)));
                         lease.fail(&error);
                         failure = Some(error);
                         break;
@@ -84,14 +91,15 @@ pub(super) fn run(
                         break;
                     }
                 };
-                let report = ProveActionReport {
+                progress.line(format_args!("{step} proved in {}", Elapsed(elapsed)));
+                present.push(ProveActionReport {
                     action: receipt.action,
                     action_key: receipt.action_key,
                     disposition: ProveDisposition::Published,
                     receipt: publication.receipt().clone(),
-                };
-                write_progress(progress, "published", &report);
-                present.push(report);
+                    elapsed: Some(elapsed),
+                    capture: receipt.capture,
+                });
             }
         }
     }
@@ -109,16 +117,6 @@ pub(super) fn run(
         return Err(error);
     }
     Ok(present)
-}
-
-/// Progress is diagnostic: losing its stream must not stop receipt publication.
-fn write_progress(output: &mut impl io::Write, stage: &str, report: &ProveActionReport) {
-    let _ = writeln!(
-        output,
-        "[gate-prove] stage={stage} action={:?} action_key={} receipt={}",
-        report.action, report.action_key, report.receipt,
-    )
-    .and_then(|()| output.flush());
 }
 
 enum Claim {
@@ -223,12 +221,11 @@ fn present(
     action_key: &gate::ActionKey,
     receipt: gate::PassReceipt,
 ) -> Result<Claim, ProveFailure> {
-    Ok(Claim::Present(ProveActionReport {
-        action: action.to_owned(),
-        action_key: action_key.clone(),
-        disposition: ProveDisposition::Present,
-        receipt: receipt.id().map_err(ProveFailure::store)?,
-    }))
+    Ok(Claim::Present(ProveActionReport::present(
+        action.to_owned(),
+        action_key.clone(),
+        receipt.id().map_err(ProveFailure::store)?,
+    )))
 }
 
 fn acquired(

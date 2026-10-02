@@ -156,12 +156,11 @@ pub(super) fn lookup_complete(
         .zip(resolved)
         .map(|(expected, action)| {
             let action = action.expect("missing fingerprint receipts were handled above");
-            ProveActionReport {
-                action: expected.action().to_owned(),
-                action_key: expected.action_key().clone(),
-                disposition: ProveDisposition::Present,
-                receipt: action.receipt().clone(),
-            }
+            ProveActionReport::present(
+                expected.action().to_owned(),
+                expected.action_key().clone(),
+                action.receipt().clone(),
+            )
         })
         .collect::<Vec<_>>();
     reports.sort_by(|left, right| proof_action_order(&left.action, &right.action));

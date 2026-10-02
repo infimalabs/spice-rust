@@ -35,14 +35,15 @@ pub(super) fn current(
         .actions()
         .iter()
         .zip(resolved)
-        .map(|(expected, observed)| ProveActionReport {
-            action: expected.action().to_owned(),
-            action_key: expected.action_key().clone(),
-            disposition: ProveDisposition::Present,
-            receipt: observed
-                .expect("missing inspection receipts were handled above")
-                .receipt()
-                .clone(),
+        .map(|(expected, observed)| {
+            ProveActionReport::present(
+                expected.action().to_owned(),
+                expected.action_key().clone(),
+                observed
+                    .expect("missing inspection receipts were handled above")
+                    .receipt()
+                    .clone(),
+            )
         })
         .collect::<Vec<_>>();
     actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
@@ -51,11 +52,11 @@ pub(super) fn current(
         return Err(error);
     }
     anchor.reject_state().map_err(ProveFailure::run)?;
-    Ok(ProveReport {
-        candidate_tree: candidate_tree.to_string(),
-        source: authority.source().clone(),
+    Ok(ProveReport::new(
+        candidate_tree.to_string(),
+        authority.source().clone(),
         actions,
-    })
+    ))
 }
 
 fn missing_fingerprint(
