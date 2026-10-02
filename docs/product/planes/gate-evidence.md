@@ -180,6 +180,19 @@ the exact next command. `--verbose` adds rows for already-proven actions with
 their action keys, receipts, and capture paths. `--json` carries the typed
 report unchanged; none of these text projections enter it.
 
+The long mutation-era audits follow the same layering. `spice gate kill`
+writes one stderr line naming the campaign (seed, mutants, attempts), names
+the first ten survivors or unconfirmed mutants as they settle, and otherwise
+writes a heartbeat with done/total, the running mutant, and elapsed time only
+after 30 quiet seconds. Its reply orders the movement against the survivor
+floor, killed, survived, and unconfirmed counts, at most 20 named mutants per
+list (200 with `--verbose`) with the withheld count, the retained report path,
+and the next command. Unconfirmed mutants always show their attempt kinds.
+`spice gate camp` likewise bounds its near loci. The canonical report text,
+including per-attempt process output, is retained under `gate-output` and never
+printed; `gate::kill-regressed` and `gate::kill-unconfirmed` carry the same
+bounded summary. Movement, floors, exit statuses, and `--json` are unchanged.
+
 A failed progress write or flush does not stop later actions, lose their
 reports, or prevent receipt publication. Execution, lease, source-validation,
 cleanup, and final result failures remain authoritative and keep their

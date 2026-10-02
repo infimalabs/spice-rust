@@ -333,11 +333,19 @@ impl NativeInvocation<'_> {
                 form,
                 gate_command::ProveReport::text,
             ),
-            ["gate", "camp"] => deliver(&gate_command::camp(), form),
+            ["gate", "camp"] => deliver_with_reply_text(
+                &gate_command::camp(leaf),
+                form,
+                gate_command::CampAnswer::text,
+            ),
             ["gate", "commit-msg"] => {
                 deliver_commit_message(gate_command::commit_message(leaf, configuration), form)
             }
-            ["gate", "kill"] => deliver(&gate_command::kill(), form),
+            ["gate", "kill"] => deliver_with_reply_text(
+                &gate_command::kill(leaf),
+                form,
+                gate_command::KillAnswer::text,
+            ),
             ["gate", "pre-commit"] => {
                 deliver_commit_gate(&gate_command::pre_commit(leaf, configuration), form)
             }

@@ -7,9 +7,9 @@ use sill::{Completion, SpecError, WaitOutcome};
 use wire::Digest;
 
 use super::{
-    AttemptEvidence, AttemptKind, MutantDisposition, MutationInventory, MutationMovement,
-    MutationToolIdentity, OutcomeEvidence, ProcessCompletion, ProcessEvidence, StreamEvidence,
-    SurvivorRate, ToolOutcomes,
+    AttemptEvidence, AttemptKind, MutantDisposition, MutantEvidence, MutationInventory,
+    MutationMovement, MutationToolIdentity, OutcomeEvidence, ProcessCompletion, ProcessEvidence,
+    StreamEvidence, SurvivorRate, ToolOutcomes,
 };
 use crate::jurisdiction::WalkError;
 
@@ -80,6 +80,27 @@ pub(super) fn classify(attempts: &[AttemptEvidence]) -> MutantDisposition {
     } else {
         MutantDisposition::Unconfirmed
     }
+}
+
+/// The survivor rate a finished campaign measured, if every mutant was
+/// confirmed, and its movement against the committed floor.
+pub(super) fn decide(
+    mutants: &[MutantEvidence],
+    floor: Option<SurvivorRate>,
+) -> (Option<SurvivorRate>, MutationMovement) {
+    let confirmed = mutants
+        .iter()
+        .filter(|mutant| mutant.disposition != MutantDisposition::Unconfirmed)
+        .count();
+    let survivors = mutants
+        .iter()
+        .filter(|mutant| mutant.disposition == MutantDisposition::ConfirmedSurvived)
+        .count();
+    let rate = (confirmed == mutants.len()).then(|| {
+        SurvivorRate::new(survivors as u64, confirmed as u64)
+            .expect("a non-empty confirmed inventory always forms a rate")
+    });
+    (rate, movement(rate, floor, confirmed, mutants.len()))
 }
 
 pub(super) fn movement(

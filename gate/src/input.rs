@@ -415,6 +415,19 @@ impl Contract {
     /// Returns the first selection, tool, inventory, baseline, or integrity
     /// refusal. The caller tree and tracked baseline are never mutation roots.
     pub fn execute_kill(&self, root: &Path) -> Result<KillRun, KillError> {
+        self.execute_kill_with_progress(root, &mut |_| {})
+    }
+
+    /// Execute the mutation profile while observing its canonical campaign.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::execute_kill`].
+    pub fn execute_kill_with_progress(
+        &self,
+        root: &Path,
+        progress: &mut dyn FnMut(crate::KillProgress<'_>),
+    ) -> Result<KillRun, KillError> {
         let floor = self
             .kill_profile
             .floor
@@ -422,9 +435,12 @@ impl Contract {
                 path: root.join(BASELINE_PATH),
                 name: "rust.mutation-survivors",
             })?;
-        self.kill_profile
-            .runner
-            .run(root, self.policy.ignore(), Some(floor))
+        self.kill_profile.runner.run_with_progress(
+            root,
+            self.policy.ignore(),
+            Some(floor),
+            progress,
+        )
     }
 
     /// Complete versioned floor state.
