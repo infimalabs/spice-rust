@@ -355,7 +355,12 @@ fn build(
             )
         })?;
         let resolved = source::resolve_thread(&id, environment)?;
-        return Ok(dataset::Aggregate::scan(&resolved, dataset::Recent::NONE)?.thread(id));
+        return Ok(
+            match dataset::Aggregate::scan(&resolved, dataset::Recent::NONE) {
+                Ok(aggregate) => aggregate.thread(id),
+                Err(error) => dataset::Aggregate::thread_without_summary(&resolved, id, &error),
+            },
+        );
     }
 
     if HISTORY.contains(&action) {

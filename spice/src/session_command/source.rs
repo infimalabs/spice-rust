@@ -279,9 +279,9 @@ fn preferred_vendor(
         .expect("thread resolution requires at least one declared vendor")
 }
 
-/// Every transcript `vendor` keeps for the canonical dashed `thread`: the
-/// folder keyed by the working directory first, then the bounded walk of its
-/// sessions root.
+/// Every transcript `vendor` keeps for the canonical dashed `thread`: folders
+/// implied by the working directory first, then vendor-specific storage
+/// structure, then the generic bounded walk of its sessions root.
 pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
@@ -303,6 +303,17 @@ pub(super) fn find_thread(
     let direct = folders::working_directory_transcripts(&sessions, thread, environment);
     if !direct.is_empty() {
         return Ok(direct);
+    }
+    if vendor == &spice::extension::OMP {
+        let related =
+            folders::related_working_directory_transcripts(&sessions, thread, environment);
+        if !related.is_empty() {
+            return Ok(related);
+        }
+        let stored = folders::stored_transcripts(&sessions, thread)?;
+        if !stored.is_empty() {
+            return Ok(stored);
+        }
     }
     let paths = find_named_transcript(&sessions, &lookup)
         .map_err(|error| error.to_string())?
@@ -789,6 +800,19 @@ mod tests {
         let transcript = sessions.join(folder).join(format!("{stem}.jsonl"));
         fs::write(&transcript, b"\n").expect("fixture transcript exists");
         transcript
+    }
+
+    #[test]
+    fn omp_layout_resolution_precedes_the_bounded_walk() {
+        let scratch = Scratch::new("omp-layout");
+        let transcript = overflowing_omp_sessions(scratch.path(), "-foreign-worktree");
+        let found = find_thread(
+            THREAD_DASHED,
+            &spice::extension::OMP,
+            &walk_environment(&scratch),
+        )
+        .expect("OMP's shallow storage layout resolves before the generic walk");
+        assert_eq!(found, vec![transcript]);
     }
 
     #[cfg(unix)]

@@ -6,7 +6,7 @@ use wire::Refusal;
 
 use super::super::model::{
     ActivityView, CompactionRecord, FoldBuffer, MessageRecord, PhaseExample, PhaseView, Report,
-    Residue, SourceView, ThreadView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
+    Residue, SourceView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
 };
 use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
@@ -23,6 +23,7 @@ use crate::read_page::{Page, Paged};
 
 mod commit;
 mod recent;
+mod thread;
 pub(crate) mod timeline;
 pub(crate) use commit::CommitScan;
 pub(crate) use recent::Recent;
@@ -795,38 +796,6 @@ impl Aggregate {
         Report::Tokens {
             sources: self.sources,
             usage,
-            residues: self.residues,
-        }
-    }
-
-    pub(crate) fn thread(self, id: String) -> Report {
-        let source = self
-            .sources
-            .last()
-            .cloned()
-            .expect("one resolved thread yields at least one source");
-        let thread = ThreadView {
-            id,
-            vendor: source.vendor,
-            transcript: source.path.clone(),
-            transcripts: self
-                .sources
-                .iter()
-                .map(|source| source.path.clone())
-                .collect(),
-            turns: self.turns,
-            compactions: self.compactions,
-            start: self.start,
-            end: self.end,
-            latest_turn: self
-                .latest
-                .as_ref()
-                .map(|turn| turn_view(turn, Some((false, 180)))),
-        };
-        Report::Thread {
-            source,
-            sources: self.sources,
-            thread,
             residues: self.residues,
         }
     }

@@ -167,12 +167,11 @@ fn public_thread_refusal_preserves_an_incomplete_omp_search() {
     scratch.remove();
 }
 
-/// An omp home whose sessions root is wider than the bounded walk will list
-/// still answers for the thread filed beneath the folder oh-my-pi names for
-/// the working directory the command runs from: `-` and the directory
-/// relative to the home.
+/// An omp home whose sessions root is wider than the generic walk will list
+/// still answers through OMP's shallow two-level storage layout, and through
+/// the exact working-directory folder when that directory is known.
 #[test]
-fn an_omp_thread_beneath_the_working_directory_resolves_past_the_walk_bound() {
+fn an_omp_thread_resolves_through_its_shallow_storage_layout() {
     let scratch = Scratch::new("cwd-omp-thread");
     let cwd = scratch.path().join("worktree");
     fs::create_dir(&cwd).expect("fixture working directory exists");
@@ -212,27 +211,20 @@ fn an_omp_thread_beneath_the_working_directory_resolves_past_the_walk_bound() {
         ("SPICE_AGENT_VENDOR", "omp".to_owned()), // env-policy: allow
     ];
 
-    let elsewhere = invoke(
-        &strings(&["--json", "session", "thread", OTHER_THREAD]),
+    let elsewhere = reply_forms(
+        &strings(&["session", "thread", OTHER_THREAD]),
         &environment,
+        "thread",
     );
+    assert_eq!(elsewhere["thread"]["id"], OTHER_THREAD);
+    assert_eq!(elsewhere["thread"]["vendor"], "omp");
     assert_eq!(
-        elsewhere.code,
-        Some(REFUSAL_EXIT),
-        "{}",
-        utf8(&elsewhere.err)
-    );
-    let envelope: Value =
-        serde_json::from_slice(&elsewhere.err).expect("refusal is a structured outcome DTO");
-    let diagnostic = refusal_diagnostic(&envelope);
-    assert_eq!(diagnostic["reason"], "session::thread-unresolved");
-    assert!(
-        diagnostic["detail"]
-            .as_str()
-            .expect("thread refusal carries diagnostic detail")
-            .contains("256-entry limit"),
-        "{}",
-        diagnostic["detail"]
+        elsewhere["thread"]["transcript"],
+        omp_path
+            .canonicalize()
+            .expect("filed transcript canonicalizes")
+            .to_string_lossy()
+            .as_ref()
     );
 
     let thread = reply_forms_in(
