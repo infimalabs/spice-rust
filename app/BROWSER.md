@@ -116,11 +116,12 @@ offers. It leads with what the agent needs from the operator now: consent
 requests to Allow or Deny in place, held tasks iced, blocked, or in review,
 a lease within two minutes of expiry, and direction waiting over five
 minutes. Then come the Wake, Drain, Remove, Renew, and next-launch-model
-commands and refusals, the presence and lease age, the current task, latest
-activity, and waiting direction, copyable agent channel, occupant, session,
-and worktree, and Create new team and Leave all teams. Wide lanes lay those
-groups side by side; narrow lanes stack them and scroll within the lane. The
-button, Escape, or a click elsewhere in the team restores the composer.
+commands and refusals; Renew submits immediately, while Drain and Remove
+confirm first. Presence and lease age, the current task, latest activity,
+waiting direction, copyable agent channel, occupant, session, and worktree
+follow, beside Create new team and Leave all teams. Wide lanes lay those groups
+side by side; narrow lanes stack them and scroll within the lane. The button,
+Escape, or a click elsewhere in the team restores the composer.
 
 ## Composer provider watermark
 

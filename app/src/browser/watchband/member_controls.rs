@@ -359,32 +359,8 @@ fn render_renewal(
     let next = MemberCommand::Renew {
         requested: renewal.next_requested,
     };
-    let onclick = send(command, member.lane, next);
-    if renewal.next_requested {
-        // A vacant seat is marked for replacement and stays vacant until its next start.
-        let consequence = if member.occupant.is_some() {
-            "Its current occupancy ends at the handoff."
-        } else {
-            "The seat stays vacant; its next start launches the successor."
-        };
-        html! {
-            <>
-                {confirmed(
-                    "renew",
-                    renewal.heading,
-                    format!(
-                        "Start a fresh successor for {}? {consequence}",
-                        standing.label
-                    ),
-                    format!("Renew {}", standing.label),
-                    busy,
-                    onclick,
-                )}
-                {refusal}
-            </>
-        }
-    } else {
-        html! {
+    html! {
+        <>
             <button
                 type="button"
                 class="agent-menu-action"
@@ -392,9 +368,10 @@ fn render_renewal(
                 aria-label={renewal.label}
                 title={renewal.title}
                 disabled={busy}
-                {onclick}
+                onclick={send(command, member.lane, next)}
             >{renewal.heading}</button>
-        }
+            {refusal}
+        </>
     }
 }
 
