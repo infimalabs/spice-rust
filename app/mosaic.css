@@ -247,9 +247,10 @@
 }
 /* A lone tool image measures at the square floor, so the lattice may commit a
    card with room left over. Once committed it grows to the largest square that
-   room allows, filled by cover with the same frame as an operator's image, so
-   it never changes the card's committed size. Measuring cards and the in-flow
-   base phase keep the floor they are measured at. */
+   room below the controls allows, resting on its bottom edge and filled by cover
+   with the same frame as an operator's image, so it never changes the card's
+   committed size. Measuring cards and the in-flow base phase keep the floor
+   they are measured at. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .mosaic-message-layers {
@@ -258,12 +259,12 @@
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .mosaic-message-normal {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .message-attachments {
-  min-height: 0; overflow: hidden; container-type: size;
+  min-height: 0; overflow: hidden; container-type: size; align-items: flex-end;
 }
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
@@ -1055,17 +1056,16 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   scroll-margin-block: 8px;
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
+/* Sticky insets resolve inside the plane's padding, which reserves the
+   composer's block; cancel it so controls stick to the plane's top edge and pass
+   beneath the composer overlay rather than above it. */
 .team-surface .mosaic-message-card .message-footer {
-  display: grid;
-  align-self: end;
-  align-items: center;
+  position: sticky; top: calc(-1 * var(--team-composer-block, 0px));
+  order: -1; display: grid; align-self: start; align-items: center;
   grid-template-columns: 3ch minmax(0, 1fr);
-  gap: 8px; min-height: 32px;
-  min-width: 0;
-  width: 100%;
-  margin-top: .5rem;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 8px; min-height: 32px; min-width: 0; width: 100%;
+  margin-bottom: .5rem; background: var(--panel);
+  color: var(--muted); font-size: 12px;
 }
 .team-surface .message-footer-left,
 .team-surface .message-footer-right {
