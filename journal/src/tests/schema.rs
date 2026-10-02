@@ -20,7 +20,7 @@ fn current_schema_is_the_only_executable_journal_shape() {
         SCHEMA_VERSION
     );
     assert_eq!(
-        crate::migrate::baseline(&mut journal.connection).expect("baseline is idempotent"),
+        crate::migrate::admit(&mut journal.connection).expect("baseline is idempotent"),
         None
     );
     assert_eq!(authority_tables(&journal), expected_tables());
@@ -34,6 +34,35 @@ fn current_schema_is_the_only_executable_journal_shape() {
         ),
         (0, 0, 0, 0)
     );
+}
+#[test]
+fn schema_admission_requires_trusted_schema_to_be_disabled_before_inspection() {
+    let mut connection = Connection::open_in_memory().expect("open empty fixture");
+    let trusted: bool = connection
+        .query_row("PRAGMA trusted_schema", [], |row| row.get(0))
+        .expect("default trust posture reads");
+    assert!(trusted);
+
+    let error = crate::migrate::admit(&mut connection)
+        .expect_err("unhardened connection refuses schema inspection");
+
+    assert!(matches!(error, OpenError::TrustedSchemaEnabled));
+    let objects: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("empty fixture remains inspectable");
+    assert_eq!(objects, 0, "refusal initialized no schema objects");
+
+    connection
+        .pragma_update(None, "trusted_schema", false)
+        .expect("disable trusted schema");
+    let migration = crate::migrate::admit(&mut connection)
+        .expect("hardened empty connection initializes")
+        .expect("initialization is recorded");
+    assert_eq!((migration.from(), migration.to()), (0, SCHEMA_VERSION));
 }
 
 #[test]
