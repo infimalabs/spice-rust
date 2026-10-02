@@ -68,6 +68,41 @@ pub struct LaneRetuned {
     )]
     pub model: Option<String>,
 }
+/// A seated lane's effort spelling changed for its next launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneEffortRetuned {
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Effort spelling the seat carried before this transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<String>,
+    /// Effort spelling the seat carries after this transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub effort: Option<String>,
+}
+
+/// A running occupant confirmed a live provider retune.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneRuntimeRetuned {
+    /// Seated member whose running provider changed.
+    pub lane: CanonicalUuid,
+    /// Exact occupant that confirmed the provider response.
+    pub occupant: CanonicalUuid,
+    /// Effective model after the response, present for a model retune.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Effective effort after the response, present for an effort retune.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
 
 /// One Canvas team adopted a task-allocation lifetime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,13 +285,18 @@ impl RtkHealth {
     }
 }
 
-/// Exact model, effort, mode, and observable outcomes for one vendor launch.
+/// Model and effort currently effective for one vendor session, plus immutable
+/// launch mode and observable outcomes.
+///
+/// A declaration initializes every field. Confirmed live retunes update model
+/// or effort only in the residency projection; the declaration fact remains
+/// launch evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
-    /// Concrete model supplied to the vendor launch.
+    /// Concrete model currently selected in the vendor session.
     pub model: String,
-    /// Reasoning effort supplied to the vendor launch.
+    /// Reasoning effort currently selected in the vendor session.
     pub effort: String,
     /// Whether this occupant was launched in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]

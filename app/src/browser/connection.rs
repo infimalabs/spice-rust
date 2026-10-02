@@ -477,22 +477,39 @@ async fn send_lane_retune(
     topology_revision: u64,
     request: &crate::runtime::MemberRequest,
 ) -> Result<(), String> {
-    let crate::runtime::MemberCommand::Retune { model } = &request.command else {
-        return Err("a lane retune carried a non-retune member command".to_owned());
-    };
-    send_untracked_as(
-        principal,
-        writer,
-        id,
-        CommandKind::LaneRetune,
-        vec![],
-        LaneRetune {
-            topology_revision,
-            lane: request.lane,
-            model: model.clone(),
-        },
-    )
-    .await
+    match &request.command {
+        crate::runtime::MemberCommand::Retune { model } => {
+            send_untracked_as(
+                principal,
+                writer,
+                id,
+                CommandKind::LaneRetune,
+                vec![],
+                LaneRetune {
+                    topology_revision,
+                    lane: request.lane,
+                    model: model.clone(),
+                },
+            )
+            .await
+        }
+        crate::runtime::MemberCommand::RetuneEffort { effort } => {
+            send_untracked_as(
+                principal,
+                writer,
+                id,
+                CommandKind::LaneEffortRetune,
+                vec![],
+                LaneEffortRetune {
+                    topology_revision,
+                    lane: request.lane,
+                    effort: effort.clone(),
+                },
+            )
+            .await
+        }
+        _ => Err("a lane retune carried a non-retune member command".to_owned()),
+    }
 }
 
 fn topology_pending_kind(action: &ClientAction) -> PendingKind {
@@ -850,7 +867,9 @@ async fn send_member_lane_state(
         MemberCommand::Wake => LaneAction::Wake,
         MemberCommand::Drain => LaneAction::Drain,
         MemberCommand::Remove => LaneAction::Remove,
-        MemberCommand::Renew { .. } | MemberCommand::Retune { .. } => {
+        MemberCommand::Renew { .. }
+        | MemberCommand::Retune { .. }
+        | MemberCommand::RetuneEffort { .. } => {
             return Err("a lane state change carried a non-lifecycle member command".to_owned());
         }
     };

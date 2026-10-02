@@ -37,6 +37,22 @@ pub struct PromptOutcome {
     /// Whether no queued or background work can wake the session again.
     pub session_settled: bool,
 }
+/// One correlated RPC command response.
+///
+/// This is transport context rather than a transcript event: command drivers
+/// consume it while the preserved record remains available to every ordinary
+/// listener.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandResponse {
+    /// Request identity echoed by the provider, when the caller supplied one.
+    pub id: Option<String>,
+    /// Command the response answers.
+    pub command: String,
+    /// Whether the provider applied the command.
+    pub success: bool,
+    /// Provider refusal detail on an unsuccessful response.
+    pub error: Option<String>,
+}
 
 /// Vendor-neutral context shared by every event decoded from one record.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -47,6 +63,8 @@ pub struct RecordContext {
     pub turn_id: Option<String>,
     /// Identity and block position of an OMP message representation.
     pub message: Option<MessageContext>,
+    /// Correlated RPC command response carried by this record.
+    pub response: Option<CommandResponse>,
     /// Lifecycle position represented by this record, when present.
     pub turn: Option<TurnMoment>,
     /// Model context window advertised on this record, when present.

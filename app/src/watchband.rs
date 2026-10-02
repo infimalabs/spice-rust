@@ -1093,6 +1093,7 @@ mod tests {
             model: None,
             seat_model: None,
             effort: None,
+            seat_effort: None,
             fast_mode: false,
             occupant: None,
             session: None,

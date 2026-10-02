@@ -34,6 +34,8 @@ use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 const KICK_BYTES: usize = 1024;
+const RETUNE_REPLY_BYTES: usize = 4096;
+const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One child's command stream and what has already been said on it.
 type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
@@ -74,6 +76,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     terminal: Option<Terminal>,
     /// The calls being answered now, by the host tool call each answers.
     calls: Mutex<HashMap<String, Handle>>,
+    /// Correlated live retunes awaiting an OMP response.
+    retunes: Mutex<HashMap<String, PendingRetune>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -107,6 +111,54 @@ pub(in crate::resident) struct Ask {
     pub(in crate::resident) request: CanonicalUuid,
     pub(in crate::resident) operation: String,
 }
+/// A live OMP setting change. Exact model parts are required because OMP's
+/// runtime command does not admit the CLI's fuzzy selector.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "setting", rename_all = "snake_case")]
+pub(in crate::resident) enum LiveRetune {
+    Effort { effort: String },
+    Model { provider: String, model: String },
+}
+
+impl LiveRetune {
+    fn command(&self) -> &'static str {
+        match self {
+            Self::Effort { .. } => "set_thinking_level",
+            Self::Model { .. } => "set_model",
+        }
+    }
+
+    fn request(&self, id: &str) -> Vec<u8> {
+        match self {
+            Self::Effort { effort } => vendor::omp::set_thinking_level_request(id, effort),
+            Self::Model { provider, model } => vendor::omp::set_model_request(id, provider, model),
+        }
+    }
+}
+
+struct PendingRetune {
+    command: &'static str,
+    reply: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RetuneReply {
+    request: String,
+    result: RetuneReplyResult,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "disposition", rename_all = "snake_case")]
+enum RetuneReplyResult {
+    Applied,
+    Refused { detail: String },
+}
+
+/// Confirmed disposition of one attempted live provider retune.
+pub(in crate::resident) enum LiveRetuneResult {
+    Applied,
+    Refused,
+}
 
 /// What one datagram at the lane's kick door says.
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -123,6 +175,14 @@ pub(in crate::resident) enum Kick {
     Narration(wire::body::NarrationProdded),
     /// A claimed task changed after this occupant's claim acknowledged it.
     TaskGeneration(TaskGenerationNotice),
+    /// Change one setting on this exact running occupant and answer through a
+    /// one-shot callback door after the correlated provider response.
+    Retune {
+        occupant: CanonicalUuid,
+        request: String,
+        retune: LiveRetune,
+        reply: PathBuf,
+    },
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
 }
@@ -199,6 +259,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
+            retunes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -209,6 +270,78 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// Returns the pipe's error, or `BrokenPipe` once the stream is closed.
     pub(in crate::resident) fn open(&self, opening: &[u8]) -> io::Result<()> {
         self.write(opening)
+    }
+    /// Submit one live setting change after registering its exact correlated
+    /// response. A pipe failure is answered through the same callback path as
+    /// a provider refusal.
+    fn retune(&self, request: String, retune: LiveRetune, reply: PathBuf) {
+        let command = retune.command();
+        self.retunes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(request.clone(), PendingRetune { command, reply });
+        if let Err(error) = self.write(&retune.request(&request))
+            && let Some(pending) = self
+                .retunes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&request)
+        {
+            answer_retune(
+                &pending.reply,
+                RetuneReply {
+                    request,
+                    result: RetuneReplyResult::Refused {
+                        detail: error.to_string(),
+                    },
+                },
+            );
+        }
+    }
+
+    /// Settle a pending live retune only from its matching provider response.
+    fn observe_retune(&self, decoded: &Decoded) {
+        let Some(response) = decoded
+            .context()
+            .and_then(|context| context.response.as_ref())
+        else {
+            return;
+        };
+        let Some(request) = response.id.as_ref() else {
+            return;
+        };
+        let Some(pending) = self
+            .retunes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(request)
+        else {
+            return;
+        };
+        let result = if response.command != pending.command {
+            RetuneReplyResult::Refused {
+                detail: format!(
+                    "provider answered {} with {}",
+                    pending.command, response.command
+                ),
+            }
+        } else if response.success {
+            RetuneReplyResult::Applied
+        } else {
+            RetuneReplyResult::Refused {
+                detail: response
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "provider refused without detail".to_owned()),
+            }
+        };
+        answer_retune(
+            &pending.reply,
+            RetuneReply {
+                request: request.clone(),
+                result,
+            },
+        );
     }
 
     /// Read and interject the current authenticated inbox unless it is empty
@@ -603,6 +736,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// turn ends its input, so the child drains and exits rather than idling
     /// for a prompt nobody sends.
     pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
+        self.observe_retune(decoded);
         // A telling seen on the transcript is now held verbatim. Background
         // delivery also releases its replacement slot for a future notice.
         for prose in decoded.events().iter().filter_map(|event| match event {
@@ -970,6 +1104,76 @@ pub(in crate::resident) fn task_generation(
     send(paths, lane, &Kick::TaskGeneration(notice));
 }
 
+/// Apply one setting change to the exact running occupant and wait for OMP's
+/// correlated response.
+///
+/// # Errors
+///
+/// Returns an I/O error when no matching supervisor can receive the request,
+/// its callback cannot be read, or the provider does not answer in time.
+pub(in crate::resident) fn retune(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    retune: LiveRetune,
+) -> io::Result<LiveRetuneResult> {
+    #[cfg(unix)]
+    {
+        let request = format!("spice-retune-{}", super::super::new_uuid());
+        let mut identity = blake3::Hasher::new();
+        identity.update(paths.common.as_os_str().as_encoded_bytes());
+        identity.update(request.as_bytes());
+        let reply = Path::new("/tmp").join(format!("spice-r-{}.sock", identity.finalize()));
+        let _ = fs::remove_file(&reply);
+        let socket = std::os::unix::net::UnixDatagram::bind(&reply)?;
+        socket.set_read_timeout(Some(RETUNE_TIMEOUT))?;
+        let kick = Kick::Retune {
+            occupant,
+            request: request.clone(),
+            retune,
+            reply: reply.clone(),
+        };
+        let result = send_to(&kick_path(paths, lane), &kick).and_then(|()| {
+            let mut bytes = [0u8; RETUNE_REPLY_BYTES];
+            let length = socket.recv(&mut bytes)?;
+            let answer: RetuneReply = serde_json::from_slice(&bytes[..length])
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            if answer.request != request {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "live retune callback named another request",
+                ));
+            }
+            Ok(match answer.result {
+                RetuneReplyResult::Applied => LiveRetuneResult::Applied,
+                RetuneReplyResult::Refused { .. } => LiveRetuneResult::Refused,
+            })
+        });
+        drop(socket);
+        let _ = fs::remove_file(reply);
+        result
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (paths, lane, occupant, retune);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "live retuning requires Unix command doors",
+        ))
+    }
+}
+
+fn answer_retune(reply: &Path, answer: RetuneReply) {
+    #[cfg(unix)]
+    {
+        let bytes = serde_json::to_vec(&answer).expect("a retune reply is representable as JSON");
+        let _sent = std::os::unix::net::UnixDatagram::unbound()
+            .and_then(|socket| socket.send_to(&bytes, reply));
+    }
+    #[cfg(not(unix))]
+    let _ = (reply, answer);
+}
+
 /// Interrupt the driver listening at `door`, if one does.
 ///
 /// A lane without a command-driven occupant has no door, and a door whose
@@ -1044,6 +1248,13 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_generation(&notice);
                         }
                         Ok(Kick::TaskGeneration(_)) => {}
+                        Ok(Kick::Retune {
+                            occupant: target,
+                            request,
+                            retune,
+                            reply,
+                        }) if target == occupant => driver.retune(request, retune, reply),
+                        Ok(Kick::Retune { .. }) => {}
                         Ok(Kick::Abort) => driver.abort(),
                         Err(_) => {}
                     }

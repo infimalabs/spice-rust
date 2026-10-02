@@ -214,6 +214,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::LaneRead
         | CommandKind::LaneRenewal
         | CommandKind::LaneRetune
+        | CommandKind::LaneEffortRetune
         | CommandKind::LaneArrange
         | CommandKind::TeamConfigure
         | CommandKind::TeamArrange

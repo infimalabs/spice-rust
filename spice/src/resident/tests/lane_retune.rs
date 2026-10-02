@@ -1,12 +1,10 @@
-//! Retuning a seat: what changes, what is left alone, and what launches next.
+//! Retuning durable seat model and effort selections.
 //!
-//! The seat's model is the only input either wake path hands the launcher
-//! (`lane_surface::automatic` reads `row.model` and nothing else), so a case
-//! that proves the durable row carries the new spelling has proven what the
-//! next launch runs without starting a vendor. What no case may find is a
-//! changed occupant: a running process was given its model as argv at spawn,
-//! and a retune that reached back into it would be a lie about a process the
-//! resident cannot rewrite.
+//! Both selections are the launcher's authoritative inputs across relaunch,
+//! recovery, and succession. A running occupant changes only after its
+//! supervisor confirms the exact live provider command; these fixture
+//! occupants have no command door, so they exercise the truthful next-launch
+//! fallback without replacing the supervised process.
 
 use super::*;
 
@@ -92,6 +90,40 @@ impl Seated {
             &request,
         )
     }
+    fn retune_effort(
+        &self,
+        id: u8,
+        effort: Option<&str>,
+        topology_revision: u64,
+    ) -> Outcome<CommandAnswer> {
+        let request = wire::intent::LaneEffortRetune {
+            topology_revision,
+            lane: self.lane,
+            effort: effort.map(str::to_owned),
+        };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind: CommandKind::LaneEffortRetune,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("lane effort retune encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: self.epoch,
+        })
+        .expect("operator effort retune admits");
+        super::super::lane_surface::retune_effort(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
+    }
 
     fn head(&self) -> wire::ResidencyHead {
         current_residency(&self.bus, self.epoch)
@@ -109,6 +141,15 @@ impl Seated {
             .model
             .clone()
     }
+    fn seated_effort(&self) -> Option<String> {
+        self.head()
+            .lanes
+            .iter()
+            .find(|row| row.lane == self.lane)
+            .expect("the seeded lane stays seated")
+            .effort
+            .clone()
+    }
 
     fn retuned_facts(&self) -> Vec<serde_json::Value> {
         self.bus
@@ -117,6 +158,16 @@ impl Seated {
             .facts()
             .iter()
             .filter(|fact| fact.fact.kind() == wire::FactKind::LaneRetuned)
+            .map(|fact| serde_json::Value::Object(fact.fact.body().clone()))
+            .collect()
+    }
+    fn effort_facts(&self) -> Vec<serde_json::Value> {
+        self.bus
+            .fact_snapshot()
+            .expect("retuned journal reads")
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::LaneEffortRetuned)
             .map(|fact| serde_json::Value::Object(fact.fact.body().clone()))
             .collect()
     }
@@ -214,6 +265,60 @@ fn clearing_a_seat_returns_it_to_the_configured_vendor_model() {
         })),
         "the clearing fact carries the spelling it replaced and no successor",
     );
+
+    fixture.release();
+}
+#[test]
+fn effort_retune_persists_next_launch_and_keeps_unconfirmed_runtime_separate() {
+    let fixture = Seated::new("lane-effort-retune");
+    let head = fixture.head();
+    let revision = head.topology_revision;
+    let running = head.lanes[0]
+        .session
+        .as_ref()
+        .and_then(|session| session.launch.as_ref())
+        .map(|launch| launch.effort.as_str());
+    let target = if running == Some("low") { "max" } else { "low" };
+
+    let rows = committed_rows(fixture.retune_effort(4, Some(target), revision));
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the retuned lane is in the answer");
+    assert_eq!(row.seat_effort.as_deref(), Some(target));
+    assert_ne!(
+        row.effort.as_deref(),
+        row.seat_effort.as_deref(),
+        "an occupant without a command door must not claim an immediate change",
+    );
+    assert_eq!(fixture.seated_effort().as_deref(), Some(target));
+    assert_eq!(
+        fixture.effort_facts(),
+        vec![serde_json::json!({
+            "lane": fixture.lane.to_string(),
+            "effort": target,
+        })],
+    );
+
+    let rows = committed_rows(fixture.retune_effort(5, None, revision + 1));
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the cleared lane is in the answer");
+    assert_eq!(row.seat_effort, None);
+    assert_eq!(fixture.seated_effort(), None);
+    assert_eq!(
+        fixture.effort_facts().last(),
+        Some(&serde_json::json!({
+            "lane": fixture.lane.to_string(),
+            "from": target,
+        })),
+    );
+    assert_eq!(
+        refused(fixture.retune_effort(6, Some("turbo"), revision + 2)),
+        "lane::effort-invalid",
+    );
+    assert_eq!(fixture.seated_effort(), None);
 
     fixture.release();
 }

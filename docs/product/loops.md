@@ -402,6 +402,15 @@ flowchart LR
    lane's predecessor is neither started nor notified. While the mark stands,
    the agent's action menu carries it, so the request stays visible after the
    drawer that placed it closes.
+- Model and effort are seat authority. `lane model ID [MODEL]` and
+  `lane effort ID [EFFORT]` topology-guard and journal the value every future
+  launch reads; omission restores vendor configuration. Lane rows report the
+  running `model`/`effort` separately from `seat_model`/`seat_effort`. A
+  command-driven OMP occupant changes immediately only after the exact
+  correlated `set_model` or `set_thinking_level` response succeeds. Live model
+  selection requires explicit `provider/model`; bare models, clears,
+  unsupported occupants, refusals, and interrupted RPC retain the running
+  value while the durable next-launch selection remains committed.
 - A lane names exactly one worktree seat. A team may hold one or many lanes;
    the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
@@ -428,8 +437,11 @@ flowchart LR
 **Incidental** — tiling, fuse gestures, menu placement, the accent palette
 itself.
 
-**Acceptance** — renew an agent mid-draft: the draft is still there. Reorder
-composers: no card moves. Kill the server: the topology returns identically.
+**Acceptance** — renew an agent mid-draft: the draft is still there. Retune a
+running OMP lane with a named effort or exact `provider/model`: running and seat
+values converge only after provider success. Retune an unsupported or
+ambiguous lane: only its seat value changes. Reorder composers: no card moves.
+Kill the server: the topology and seat selections return identically.
 
 ---
 

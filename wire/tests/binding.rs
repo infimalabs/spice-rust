@@ -253,6 +253,14 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::LaneEffortRetune,
+        r#"{
+  "topology_revision": 9,
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "effort": "high"
+}"#,
+    ),
+    (
         CommandKind::LaneArrange,
         r#"{
   "topology_revision": 9,

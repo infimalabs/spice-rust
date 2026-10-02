@@ -25,8 +25,8 @@ pub use event::{
 };
 pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{
-    Decoded, Dialog, LocusLengthError, MessageContext, PromptOutcome, PromptStatus, RecordContext,
-    Residue, ResidueKind, TurnMoment,
+    CommandResponse, Decoded, Dialog, LocusLengthError, MessageContext, PromptOutcome,
+    PromptStatus, RecordContext, Residue, ResidueKind, TurnMoment,
 };
 pub use stream::{
     BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanError,
@@ -365,6 +365,7 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
             .transpose()?
             .flatten(),
         message: message_context,
+        response: omp::command_response(record)?,
         turn,
         model_context_window,
         dialog: omp::dialog(record),

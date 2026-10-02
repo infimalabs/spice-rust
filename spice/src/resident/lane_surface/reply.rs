@@ -2,12 +2,12 @@
 
 use super::*;
 
-pub(super) fn command_result<B: serde::Serialize>(
+pub(super) fn command_result<B: serde::Serialize, A: serde::Serialize>(
     write: &mut JournalWrite,
     admitted: &wire::AdmittedCommand,
     body: B,
     epoch: CanonicalUuid,
-    answer: LaneChangeAnswer,
+    answer: A,
 ) -> CommandResult<()> {
     write
         .command_result(
@@ -76,19 +76,18 @@ fn answer_at(
                 speech: wire::SpeechPlayback::Disabled {},
                 life: row.life.clone(),
                 vendor: row.vendor.clone(),
-                model: row
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.launch.as_ref())
-                    .map(|launch| launch.model.clone())
-                    .or_else(|| row.model.clone()),
+                model: match row.session.as_ref() {
+                    Some(session) => session.launch.as_ref().map(|launch| launch.model.clone()),
+                    None if row.occupant.is_none() => row.model.clone(),
+                    None => None,
+                },
                 seat_model: row.model.clone(),
-                effort: row
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.launch.as_ref())
-                    .map(|launch| launch.effort.clone())
-                    .or_else(|| row.effort.clone()),
+                effort: match row.session.as_ref() {
+                    Some(session) => session.launch.as_ref().map(|launch| launch.effort.clone()),
+                    None if row.occupant.is_none() => row.effort.clone(),
+                    None => None,
+                },
+                seat_effort: row.effort.clone(),
                 fast_mode: row
                     .session
                     .as_ref()

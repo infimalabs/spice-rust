@@ -257,6 +257,10 @@ vocabulary! {
     LaneArranged = "lane::arranged" by ResidentRecognition;
     /// A seated lane's model spelling changed for its next launch.
     LaneRetuned = "lane::retuned" by ResidentRecognition;
+    /// A seated lane's effort spelling changed for its next launch.
+    LaneEffortRetuned = "lane::effort" by ResidentRecognition;
+    /// A running occupant confirmed one live provider setting change.
+    LaneRuntimeRetuned = "lane::runtime" by ResidentRecognition;
     /// One Canvas team adopted a shared task-allocation lifetime.
     TeamConfigured = "team::configured" by ResidentRecognition;
     /// The operator rearranged which lanes each Canvas team holds, and in

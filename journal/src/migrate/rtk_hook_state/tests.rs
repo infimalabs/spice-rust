@@ -98,6 +98,7 @@ fn lane_row() -> LaneAnswerRow {
         vendor: "codex".parse().expect("historical vendor name"),
         model: Some("claude-opus-4-6".to_owned()),
         seat_model: None,
+        seat_effort: None,
         effort: Some("high".to_owned()),
         fast_mode: false,
         git: Some("current".to_owned()),

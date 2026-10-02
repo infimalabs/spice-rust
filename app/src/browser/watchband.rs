@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
+use web_sys::{DragEvent, HtmlInputElement, HtmlSelectElement, PointerEvent};
 
 use super::clock::{Age, Countdown};
 use super::work_card::{self, Density};

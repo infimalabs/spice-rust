@@ -1,5 +1,7 @@
 use super::*;
 
+mod retune;
+
 /// `sockaddr_un.sun_path` on Darwin, the tightest platform bound.
 const SUN_PATH_BYTES: usize = 104;
 
