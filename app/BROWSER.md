@@ -35,12 +35,27 @@ const lightCanvas = await launchCanvasBrowser(chromium, {
 ## Browser branding and remaining work
 
 Canvas keeps the current `Spice Canvas` product name in every tab title and
-the Canvas pepper in every generated icon. The first loopback browser
-predecessor (`ca903af2c`) used the shorter static title `Spice` and no icon;
-the first Rust Canvas (`9904e38a8`) established `Spice Canvas`, also without
-an icon. The current surface deliberately retains the latter title instead of
-reviving the ambiguous predecessor name, and pairs the new badge with the
-pepper already used by Canvas chrome.
+the Canvas pepper in every generated icon. The predecessor Python Spice
+(`spice.git`, `spice/serve/web.py` and `spice/serve/static/app.audio.js`) had
+three branding conventions, and each is decided here:
+
+- Its title and menu label came from `pyproject.toml` `[project] name`, else
+  `[serve] brand`, else `spice`. Rejected: Canvas has one fixed product name in
+  the title and chrome, and a per-repository brand key would add a
+  configuration contract that nothing else here needs.
+- It shipped a static raster set: `favicon.ico`, 16/32px PNGs,
+  `apple-touch-icon`, and `site.webmanifest`. Rejected: one generated SVG icon
+  carries the live count, which a static file cannot. Canvas is a loopback
+  operator tab, not a home-screen install. Until the Wasm app's first branding
+  effect runs, the tab shows the browser's default icon.
+- During speech playback it retitled the tab with the speaking agent first
+  (`main-b - spice`). Rejected: the title holds the remaining-task count and
+  stays stable instead of flipping with each utterance; Canvas marks the
+  speaking message card `now-playing` and turns its speak action into stop.
+
+It also used the lowercase static name `spice`. Like the first Rust loopback
+surface's `Spice` (`ca903af2c`), that is superseded by `Spice Canvas`, which
+the first Rust Canvas (`9904e38a8`) established.
 
 Once the first board snapshot arrives, the title gives the exact number of
 remaining public tasks and the icon wears the same count. The tiny icon shows
