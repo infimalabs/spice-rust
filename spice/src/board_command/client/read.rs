@@ -121,19 +121,6 @@ pub(super) fn client_show(
                 .acknowledgments
                 .get(&task.statement.body.born)
                 .map_or(&[][..], Vec::as_slice);
-            if let Some(after) = options.after {
-                let known = board
-                    .notes
-                    .get(&task.statement.body.born)
-                    .is_some_and(|notes| notes.iter().any(|note| note.position == after));
-                if !known {
-                    return refusal(
-                        "task::show-after-unknown",
-                        Some(after.to_string()),
-                        "name a note position present on this task",
-                    );
-                }
-            }
             let origin_context = if options.context {
                 match task_show_origin_context(
                     repository,
@@ -145,25 +132,27 @@ pub(super) fn client_show(
             } else {
                 None
             };
+            let text = match task_show_bounded(
+                &board,
+                task,
+                &artifacts,
+                TaskShowHistory {
+                    notes: board
+                        .notes
+                        .get(&task.statement.body.born)
+                        .map_or(&[], Vec::as_slice),
+                    acknowledgments,
+                    closure: board.closures.get(&task.statement.body.born),
+                },
+                origin_context.as_deref(),
+                &options,
+            ) {
+                Ok(text) => text,
+                Err(outcome) => return outcome,
+            };
             Outcome::Reply(Reply {
                 position,
-                body: CommandAnswer::Text(TextAnswer {
-                    text: task_show_bounded(
-                        &board,
-                        task,
-                        &artifacts,
-                        TaskShowHistory {
-                            notes: board
-                                .notes
-                                .get(&task.statement.body.born)
-                                .map_or(&[], Vec::as_slice),
-                            acknowledgments,
-                            closure: board.closures.get(&task.statement.body.born),
-                        },
-                        origin_context.as_deref(),
-                        &options,
-                    ),
-                }),
+                body: CommandAnswer::Text(TextAnswer { text }),
             })
         }
         Outcome::Reply(_) => protocol_fault(
@@ -175,14 +164,14 @@ pub(super) fn client_show(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(in crate::board_command) struct TaskShowOptions {
     pub(in crate::board_command) context: bool,
     pub(in crate::board_command) history: bool,
     pub(in crate::board_command) limit: Option<usize>,
     pub(in crate::board_command) max_bytes: Option<usize>,
     pub(in crate::board_command) max_text: Option<usize>,
-    pub(in crate::board_command) after: Option<Seq>,
+    pub(in crate::board_command) after: Option<String>,
 }
 
 impl TaskShowOptions {
@@ -195,22 +184,21 @@ impl TaskShowOptions {
         let _ = read_budget(limit, max_bytes, max_text, "task::show-limits")?;
         let after = matches
             .get_one::<String>("after")
-            .map(|written| {
-                let value = written.parse::<u64>().ok().and_then(Seq::new);
-                value.ok_or_else(|| {
-                    refusal(
-                        "task::show-after",
-                        Some(written.clone()),
-                        "name a positive journal position after --after",
-                    )
-                })
-            })
-            .transpose()?;
-        if (limit.is_some() || after.is_some()) && !history {
+            .map(|written| written.trim())
+            .filter(|written| !written.is_empty())
+            .map(str::to_owned);
+        if matches.contains_id("after") && after.is_none() {
             return Err(refusal(
-                "task::show-history-required",
+                "task::show-after",
+                matches.get_one::<String>("after").cloned(),
+                "name the exact detail cursor after --after",
+            ));
+        }
+        if (limit.is_some() || after.is_some()) && !(context || history) {
+            return Err(refusal(
+                "task::show-detail-required",
                 None,
-                "add --history when paging historical rows",
+                "add --context or --history when paging detail rows",
             ));
         }
         if (max_bytes.is_some() || max_text.is_some()) && !(context || history) {
@@ -230,7 +218,7 @@ impl TaskShowOptions {
         })
     }
 
-    fn budget(self) -> wire::output::Budget {
+    fn budget(&self) -> wire::output::Budget {
         read_budget(
             self.limit,
             self.max_bytes,
@@ -381,6 +369,7 @@ pub(in crate::board_command) fn task_show_with_origin(
             after: None,
         },
     )
+    .expect("unpaged task detail has no unknown cursor")
 }
 
 pub(in crate::board_command) fn task_show_bounded(
@@ -390,7 +379,7 @@ pub(in crate::board_command) fn task_show_bounded(
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
     options: &TaskShowOptions,
-) -> String {
+) -> Result<String, Outcome<CommandAnswer>> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
     let environment = board.environment();
@@ -403,9 +392,6 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
     ];
-    if options.context {
-        append_task_show_context(&mut lines, task, history, origin_context, budget);
-    }
     if has_taste_review(&statement.tags) {
         lines.push("taste_review required".to_owned());
     }
@@ -453,28 +439,29 @@ pub(in crate::board_command) fn task_show_bounded(
             ));
         }
     }
-    if options.history {
-        lines.extend(bounded_history_lines(
-            statement.handle.clone(),
+    if options.context || options.history {
+        lines.extend(bounded_detail_lines(
+            task,
             history,
-            *options,
-        ));
+            origin_context,
+            options,
+            budget,
+        )?);
     }
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
-fn append_task_show_context(
-    lines: &mut Vec<String>,
+fn task_show_context_lines(
     task: &BoardTask,
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
     budget: wire::output::Budget,
-) {
+) -> Vec<String> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
-    lines.extend([
+    let mut lines = vec![
         format!(
             "description {}",
             budget.clip(statement.description.as_deref().unwrap_or("-"))
@@ -484,11 +471,12 @@ fn append_task_show_context(
         format!("review {}", workflow.review),
         format!("version {}", statement.revision),
         format!("claim_thread {}", claim_thread(task)),
-    ]);
-    lines.extend(acknowledgment_lines(
-        &statement.provenance,
-        history.acknowledgments,
-    ));
+    ];
+    lines.extend(
+        acknowledgment_lines(&statement.provenance, history.acknowledgments)
+            .into_iter()
+            .map(|line| budget.clip(&line).to_string()),
+    );
     if let Some(origin_context) = origin_context {
         let clipped = budget.clip(origin_context);
         lines.extend(clipped.text.lines().map(str::to_owned));
@@ -510,85 +498,134 @@ fn append_task_show_context(
     if tags.is_empty() {
         lines.push("tags -".to_owned());
     } else {
-        lines.push(format!(
+        let rendered = format!(
             "tags {}",
             tags.iter()
                 .map(|tag| format!("+{tag}"))
                 .collect::<Vec<_>>()
                 .join(" ")
-        ));
-    }
-}
-
-#[derive(serde::Serialize)]
-struct TaskShowHistoryRow {
-    position: Seq,
-    text: String,
-}
-
-fn bounded_history_lines(
-    handle: TaskHandle,
-    history: TaskShowHistory<'_>,
-    options: TaskShowOptions,
-) -> Vec<String> {
-    let budget = options.budget();
-    let mut lines = closure_lines_bounded(history.closure, budget);
-    lines.push("notes:".to_owned());
-    let mut notes = history.notes.iter().collect::<Vec<_>>();
-    notes.sort_by_key(|note| std::cmp::Reverse(note.position));
-    if let Some(after) = options.after {
-        if let Some(index) = notes.iter().position(|note| note.position == after) {
-            notes = notes.split_off(index);
-        } else {
-            lines.push(format!("  cursor {after} is not a note on this task"));
-            return lines;
-        }
-    }
-    let mut admission = wire::output::Admission::new(budget);
-    for note in notes {
-        let origin = history
-            .acknowledgments
-            .iter()
-            .find(|row| row.position == note.position)
-            .map_or_else(String::new, |row| format!(" ack:{}", row.key));
-        let text = budget.clip(&note.text);
-        let mut rendered = format!("  {} {} {}{origin}", note.position, note.at, note.author);
-        for line in text.text.lines() {
-            rendered.push('\n');
-            if !line.is_empty() {
-                rendered.push_str("    ");
-                rendered.push_str(line);
-            }
-        }
-        if let Some(withheld) = text.withheld_bytes {
-            rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
-        }
-        admission
-            .offer(TaskShowHistoryRow {
-                position: note.position,
-                text: rendered,
-            })
-            .expect("a task history text row always serializes");
-    }
-    let page = admission.finish(|resume| task_show_continuation(&handle, options, resume));
-    if page.rows.is_empty() && page.omission.is_none() {
-        lines.push("  -".to_owned());
-    } else {
-        lines.extend(page.rows.into_iter().map(|row| row.text));
-        if let Some(omission) = page.omission {
-            lines.push(omission.to_string());
-        }
+        );
+        lines.push(budget.clip(&rendered).to_string());
     }
     lines
 }
 
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TaskShowDetailSection {
+    Context,
+    Closure,
+    Note,
+}
+
+#[derive(serde::Serialize)]
+struct TaskShowDetailRow {
+    cursor: String,
+    section: TaskShowDetailSection,
+    text: String,
+}
+
+fn bounded_detail_lines(
+    task: &BoardTask,
+    history: TaskShowHistory<'_>,
+    origin_context: Option<&str>,
+    options: &TaskShowOptions,
+    budget: wire::output::Budget,
+) -> Result<Vec<String>, Outcome<CommandAnswer>> {
+    let mut rows = Vec::new();
+    if options.context {
+        rows.extend(
+            task_show_context_lines(task, history, origin_context, budget)
+                .into_iter()
+                .enumerate()
+                .map(|(index, text)| TaskShowDetailRow {
+                    cursor: format!("context:{index}"),
+                    section: TaskShowDetailSection::Context,
+                    text,
+                }),
+        );
+    }
+    if options.history {
+        if let Some(closure) = history.closure {
+            rows.push(TaskShowDetailRow {
+                cursor: format!("closure:{}", closure.position),
+                section: TaskShowDetailSection::Closure,
+                text: closure_lines_bounded(closure, budget).join("\n"),
+            });
+        }
+        let mut notes = history.notes.iter().collect::<Vec<_>>();
+        notes.sort_by_key(|note| std::cmp::Reverse(note.position));
+        rows.extend(notes.into_iter().map(|note| TaskShowDetailRow {
+            cursor: note.position.to_string(),
+            section: TaskShowDetailSection::Note,
+            text: render_task_note(note, history.acknowledgments, budget),
+        }));
+    }
+    if let Some(after) = &options.after {
+        let Some(index) = rows.iter().position(|row| row.cursor == *after) else {
+            return Err(refusal(
+                "task::show-after-unknown",
+                Some(after.clone()),
+                "name a detail cursor present in the selected context or history",
+            ));
+        };
+        rows = rows.split_off(index);
+    }
+
+    let mut admission = wire::output::Admission::new(budget);
+    for row in rows {
+        admission
+            .offer(row)
+            .expect("a task detail text row always serializes");
+    }
+    let page = admission
+        .finish(|resume| task_show_continuation(&task.statement.body.handle, options, resume));
+    let mut lines = Vec::new();
+    let mut notes_started = false;
+    for row in page.rows {
+        if matches!(row.section, TaskShowDetailSection::Note) && !notes_started {
+            lines.push("notes:".to_owned());
+            notes_started = true;
+        }
+        lines.push(row.text);
+    }
+    if options.history && history.notes.is_empty() {
+        lines.extend(["notes:".to_owned(), "  -".to_owned()]);
+    }
+    if let Some(omission) = page.omission {
+        lines.push(omission.to_string());
+    }
+    Ok(lines)
+}
+
+fn render_task_note(
+    note: &wire::intent::TaskDetailNote,
+    acknowledgments: &[wire::intent::TaskAcknowledgment],
+    budget: wire::output::Budget,
+) -> String {
+    let origin = acknowledgments
+        .iter()
+        .find(|row| row.position == note.position)
+        .map_or_else(String::new, |row| format!(" ack:{}", row.key));
+    let text = budget.clip(&note.text);
+    let mut rendered = format!("  {} {} {}{origin}", note.position, note.at, note.author);
+    for line in text.text.lines() {
+        rendered.push('\n');
+        if !line.is_empty() {
+            rendered.push_str("    ");
+            rendered.push_str(line);
+        }
+    }
+    if let Some(withheld) = text.withheld_bytes {
+        rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
+    }
+    rendered
+}
+
 fn closure_lines_bounded(
-    closure: Option<&wire::intent::TaskDetailClosure>,
+    closure: &wire::intent::TaskDetailClosure,
     budget: wire::output::Budget,
 ) -> Vec<String> {
-    let Some(closure) = closure else {
-        return Vec::new();
-    };
     let displaced = closure
         .claimed
         .as_ref()
@@ -613,8 +650,8 @@ fn closure_lines_bounded(
 
 fn task_show_continuation(
     handle: &TaskHandle,
-    options: TaskShowOptions,
-    resume: wire::output::Resume<'_, TaskShowHistoryRow>,
+    options: &TaskShowOptions,
+    resume: wire::output::Resume<'_, TaskShowDetailRow>,
 ) -> wire::SpiceCommand {
     let (row, widened) = match resume {
         wire::output::Resume::At(row) => (row, None),
@@ -622,23 +659,25 @@ fn task_show_continuation(
         wire::output::Resume::Export(row) => (row, Some(wire::output::INTERACTIVE.maximum().bytes)),
     };
     let limits = options.budget().limits();
-    wire::SpiceCommand::new(
-        "task",
-        [
-            "show".to_owned(),
-            handle.to_string(),
-            "--history".to_owned(),
-            "--limit".to_owned(),
-            limits.rows.to_string(),
-            "--max-bytes".to_owned(),
-            widened.unwrap_or(limits.bytes).to_string(),
-            "--max-text".to_owned(),
-            limits.text.to_string(),
-            "--after".to_owned(),
-            row.position.to_string(),
-        ],
-    )
-    .expect("task show continuation has structural arguments")
+    let mut arguments = vec!["show".to_owned(), handle.to_string()];
+    if options.context {
+        arguments.push("--context".to_owned());
+    }
+    if options.history {
+        arguments.push("--history".to_owned());
+    }
+    arguments.extend([
+        "--limit".to_owned(),
+        limits.rows.to_string(),
+        "--max-bytes".to_owned(),
+        widened.unwrap_or(limits.bytes).to_string(),
+        "--max-text".to_owned(),
+        limits.text.to_string(),
+        "--after".to_owned(),
+        row.cursor.clone(),
+    ]);
+    wire::SpiceCommand::new("task", arguments)
+        .expect("task show continuation has structural arguments")
 }
 
 /// One line per distinct steering key naming every task fact it caused.

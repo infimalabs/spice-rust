@@ -352,7 +352,12 @@ fn task_show_renders_current_details_and_artifact_context() {
     assert_eq!(artifact.id, "A1");
 
     let shown = fixture
-        .reply::<TextAnswer>(&["task".to_owned(), "show".to_owned(), task.to_string()])
+        .reply::<TextAnswer>(&[
+            "task".to_owned(),
+            "show".to_owned(),
+            task.to_string(),
+            "--context".to_owned(),
+        ])
         .body
         .text;
     assert!(shown.contains(&format!("handle {task}")));

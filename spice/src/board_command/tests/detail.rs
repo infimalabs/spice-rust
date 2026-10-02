@@ -194,7 +194,8 @@ fn task_show_separates_current_context_and_bounded_history() {
             max_text: None,
             after: None,
         },
-    );
+    )
+    .expect("current task detail has no cursor");
     for required in [
         "handle ",
         "title Bound one task read",
@@ -247,7 +248,8 @@ fn task_show_separates_current_context_and_bounded_history() {
             max_text: None,
             after: None,
         },
-    );
+    )
+    .expect("first history page has no cursor");
     assert_eq!(history.matches("    note-").count(), 20, "{history}");
     assert!(history.contains("withheld 185 of 205 rows"), "{history}");
     assert!(history.contains("continue: spice task show"), "{history}");
@@ -268,13 +270,52 @@ fn task_show_separates_current_context_and_bounded_history() {
             max_text: None,
             after: None,
         },
-    );
+    )
+    .expect("context page has no cursor");
     assert!(
         context.contains("origin_context withheld 4760 bytes"),
         "{context}"
     );
     assert!(context.contains("spice doc ledger"), "{context}");
+
     assert!(!context.contains(&oversized), "{context}");
+    clean(&root, bus);
+}
+
+#[test]
+fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
+    let (root, bus, epoch, _) = fixture("task-show-context-budget", 0);
+    let task = add_born(
+        &bus,
+        epoch,
+        stamp("task-show-context-budget"),
+        "Budget context rows",
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let bounded = task_show_bounded(
+        &answer,
+        at(&answer, &task),
+        &[],
+        TaskShowHistory::default(),
+        None,
+        &TaskShowOptions {
+            context: true,
+            history: false,
+            limit: None,
+            max_bytes: Some(1),
+            max_text: None,
+            after: None,
+        },
+    )
+    .expect("first context page has no cursor");
+    assert!(!bounded.contains("description "), "{bounded}");
+    assert!(
+        bounded.contains("0 shown")
+            && bounded.contains("continue: spice task show")
+            && bounded.contains("--context")
+            && bounded.contains("--after context:0"),
+        "{bounded}"
+    );
     clean(&root, bus);
 }
 
