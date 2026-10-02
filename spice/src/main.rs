@@ -255,7 +255,7 @@ fn main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
-        resident_up(leaf, form, test_canvas_stage, configuration);
+        resident_up(leaf, form, test_canvas_stage);
     } else if test_canvas_stage {
         deliver_fault(
             Fault {
