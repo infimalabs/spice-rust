@@ -9,7 +9,7 @@ use dist::{
     PublishError, Publisher, RequiredPins, StageError,
 };
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget,
+    APP_FILES, BuildPins, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget,
     TargetPayload,
 };
 use wire::{Digest, Domain};
@@ -80,7 +80,7 @@ impl Builder for RecordingBuilder {
 fn app_bundle() -> AppBundle {
     AppBundle::new(
         Digest::compute(Domain::DistArtifact, b"app generation"),
-        CANVAS_APP_FILES
+        APP_FILES
             .iter()
             .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
             .collect(),
@@ -167,9 +167,9 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>(),
         [
+            "app/app.html",
             "app/app.module",
             "app/app_bg.wasm",
-            "app/canvas-app.html",
             "app/chrome.css",
             "app/composer.css",
             "app/mosaic.css",
@@ -191,12 +191,12 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
 }
 
 #[test]
-fn incomplete_canvas_generation_refuses_before_publication() {
+fn incomplete_app_generation_refuses_before_publication() {
     let required = pins();
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
     let app = AppBundle::new(
         app_bundle().generation().clone(),
-        CANVAS_APP_FILES
+        APP_FILES
             .iter()
             .skip(1)
             .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
@@ -230,7 +230,7 @@ fn incomplete_canvas_generation_refuses_before_publication() {
             &mut builder,
             &mut publisher,
         )
-        .expect_err("missing Canvas asset refuses");
+        .expect_err("missing app asset refuses");
     assert!(matches!(
         error,
         StageError::Build {

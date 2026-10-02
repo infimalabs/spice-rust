@@ -45,8 +45,8 @@ pub enum GateId {
     Taste,
     #[serde(rename = "rust-typecheck")]
     RustTypecheck,
-    #[serde(rename = "canvas-web-typecheck")]
-    CanvasWebTypecheck,
+    #[serde(rename = "app-web-typecheck")]
+    AppWebTypecheck,
     #[serde(rename = "javascript-unused")]
     JavascriptUnused,
     #[serde(rename = "csharp-unused-candidates")]
@@ -98,7 +98,7 @@ impl GateId {
         Self::LocalPaths,
         Self::Taste,
         Self::RustTypecheck,
-        Self::CanvasWebTypecheck,
+        Self::AppWebTypecheck,
         Self::JavascriptUnused,
         Self::CsharpUnusedCandidates,
         Self::PythonTypecheck,
@@ -136,7 +136,7 @@ impl GateId {
         Self::LocalPaths,
         Self::Taste,
         Self::RustTypecheck,
-        Self::CanvasWebTypecheck,
+        Self::AppWebTypecheck,
         Self::JavascriptUnused,
         Self::CsharpUnusedCandidates,
         Self::PythonTypecheck,
@@ -172,7 +172,7 @@ impl GateId {
             "local-paths",
             "taste",
             "rust-typecheck",
-            "canvas-web-typecheck",
+            "app-web-typecheck",
             "javascript-unused",
             "csharp-unused-candidates",
             "python-typecheck",
@@ -214,7 +214,7 @@ impl GateId {
     #[must_use]
     pub const fn predecessor_name(self) -> &'static str {
         match self {
-            Self::CanvasWebTypecheck => concat!("ser", "ve-web-typecheck"),
+            Self::AppWebTypecheck => concat!("ser", "ve-web-typecheck"),
             _ => self.as_str(),
         }
     }
@@ -281,7 +281,7 @@ const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 30] = [
         PredecessorStandardArm::AbsentFromBattery,
     ),
     (
-        GateId::CanvasWebTypecheck,
+        GateId::AppWebTypecheck,
         PredecessorStandardArm::InternalBuiltin,
     ),
     (

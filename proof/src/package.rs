@@ -37,7 +37,7 @@ pub struct PackageTargetInput {
     symbols: Option<PackageMember>,
 }
 
-/// Exact bytes supplied for one member of the shared Canvas generation.
+/// Exact bytes supplied for one member of the shared app generation.
 #[derive(Clone, Debug)]
 pub struct PackageAppInput {
     file: String,
@@ -570,7 +570,7 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
             .with_symbols(symbols),
         );
     }
-    let shell = exact_member(members, "app/canvas-app.html", DATA_MODE)?;
+    let shell = exact_member(members, "app/app.html", DATA_MODE)?;
     let html = shell.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
     let renderers =
         wire::manifest::renderer::from_html(&html).map_err(|_| PackageError::Binding {
@@ -1336,7 +1336,7 @@ mod tests {
     fn fixture() -> Fixture {
         let source = digest(Domain::DistSourceCommit, b"source");
         let app_identity = digest(Domain::DistArtifact, b"app generation");
-        let mut app = wire::manifest::CANVAS_APP_FILES
+        let mut app = wire::manifest::APP_FILES
             .iter()
             .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
             .collect::<Vec<_>>();

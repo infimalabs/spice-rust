@@ -340,7 +340,7 @@ impl std::error::Error for Error {}
 mod tests {
     use super::*;
     use wire::manifest::{
-        BuildPins, CANVAS_APP_FILES, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION,
+        APP_FILES, BuildPins, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION,
         ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
         ReleaseManifest, ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
     };
@@ -416,7 +416,7 @@ mod tests {
                 0o644,
             );
         }
-        for file in CANVAS_APP_FILES {
+        for file in APP_FILES {
             assert_eq!(
                 fs::read(staged_root.join("app").join(file)).unwrap(),
                 acquired
@@ -481,8 +481,8 @@ mod tests {
             ReleaseTarget::X86_64UnknownLinuxMusl,
         ];
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
-        let app_identity = Digest::compute(Domain::DistArtifact, b"canvas generation");
-        let mut app = CANVAS_APP_FILES
+        let app_identity = Digest::compute(Domain::DistArtifact, b"app generation");
+        let mut app = APP_FILES
             .iter()
             .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
             .collect::<Vec<_>>();

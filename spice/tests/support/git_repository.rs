@@ -24,12 +24,12 @@ pub(crate) fn initialize(worktree: &Path) -> PathBuf {
     if !exclude.exists() {
         fs::write(exclude, []).expect("write fixture repository exclusions");
     }
-    seed_canvas_stage(worktree);
+    seed_app_stage(worktree);
     git_dir
 }
 
-pub(crate) fn seed_canvas_stage(worktree: &Path) {
-    seed_canvas_stage_as(worktree, b"install fixture app");
+pub(crate) fn seed_app_stage(worktree: &Path) {
+    seed_app_stage_as(worktree, b"install fixture app");
 }
 
 #[allow(dead_code, reason = "shared by release repository fixtures")]
@@ -93,25 +93,25 @@ pub(crate) fn write_tree(worktree: &Path) -> String {
 }
 
 #[allow(dead_code, reason = "shared only by install refresh coverage")]
-pub(crate) fn seed_canvas_stage_as(worktree: &Path, identity: &[u8]) {
+pub(crate) fn seed_app_stage_as(worktree: &Path, identity: &[u8]) {
     let generation = wire::Digest::compute(wire::Domain::DistInventory, identity);
     let stage = worktree.join(canvas::APP_STAGE);
     let root = stage
         .join(canvas::APP_STAGE_GENERATIONS)
         .join(generation.as_str());
-    fs::create_dir_all(&root).expect("create fixture Canvas generation");
-    for file in wire::manifest::CANVAS_APP_FILES {
+    fs::create_dir_all(&root).expect("create fixture app generation");
+    for file in wire::manifest::APP_FILES {
         fs::write(
             root.join(file),
             [identity, b" ", file.as_bytes(), b"\n"].concat(),
         )
-        .expect("write fixture Canvas asset");
+        .expect("write fixture app asset");
     }
     fs::write(
         stage.join(canvas::APP_STAGE_CURRENT),
         format!("{generation}\n"),
     )
-    .expect("write fixture Canvas pointer");
+    .expect("write fixture app pointer");
 }
 
 /// Add one synthetic linked worktree sharing `main`'s common Git directory.

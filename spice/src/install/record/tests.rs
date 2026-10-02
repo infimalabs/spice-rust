@@ -9,7 +9,7 @@ impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "spice-install-canvas-history-{}-{}",
+            "spice-install-app-history-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -51,7 +51,7 @@ impl Fixture {
         let generation = loaded.record.plan.app.clone();
         loaded
             .record
-            .remove_test_operations(&repository, &[Asset::CanvasWork], generation.as_ref())
+            .remove_test_operations(&repository, &[Asset::AppWork], generation.as_ref())
             .expect("recreate the receipt written before work.css existed");
         // Write the historical shape exactly as the previous build did, without
         // asking the current build to authorize it as a new installation.
@@ -69,7 +69,7 @@ impl Fixture {
         plan.app_generation().unwrap().clone()
     }
 
-    /// Stage and install one new Canvas generation through the prepared route.
+    /// Stage and install one new app generation through the prepared route.
     fn refresh(&self, label: &[u8]) -> Digest {
         let repository = self.repository();
         let current = self.stage(label);
@@ -104,7 +104,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn canvas_history_before_work_css_refreshes_without_rewriting_old_generations() {
+fn app_history_before_work_css_refreshes_without_rewriting_old_generations() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     let loaded = fixture.legacy_record();
@@ -148,7 +148,7 @@ fn canvas_history_before_work_css_refreshes_without_rewriting_old_generations() 
             .exists()
     );
     let source =
-        install::installed_canvas_source(&repository, &install::installed_binary(&repository))
+        install::installed_app_source(&repository, &install::installed_binary(&repository))
             .expect("new installed app is complete");
     let old_route = format!("{}/{previous}/style.css", canvas::APP_GENERATION_ROUTE);
     assert_eq!(
@@ -162,7 +162,7 @@ fn canvas_history_before_work_css_refreshes_without_rewriting_old_generations() 
 }
 
 #[test]
-fn canvas_history_exception_does_not_admit_missing_base_assets_or_new_incomplete_plans() {
+fn app_history_exception_does_not_admit_missing_base_assets_or_new_incomplete_plans() {
     let fixture = Fixture::new();
     let mut loaded = fixture.legacy_record();
     assert!(
@@ -173,7 +173,7 @@ fn canvas_history_exception_does_not_admit_missing_base_assets_or_new_incomplete
         .record
         .plan
         .operations
-        .retain(|op| op.asset != Asset::CanvasChrome);
+        .retain(|op| op.asset != Asset::AppChrome);
     assert!(
         loaded.record.plan.validate_historical_receipt().is_err(),
         "historical generations must still contain every original base asset"
@@ -190,23 +190,23 @@ fn sorted(generations: &[&Digest]) -> Vec<String> {
 }
 
 #[test]
-fn canvas_history_stays_bounded_and_ordered_across_refreshes() {
+fn app_history_stays_bounded_and_ordered_across_refreshes() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     let mut history = vec![fixture.install()];
     let mut steady = None;
-    for round in 0..3 * install::RETAINED_CANVAS_PREDECESSORS as u8 + 2 {
+    for round in 0..3 * install::RETAINED_APP_PREDECESSORS as u8 + 2 {
         let current = fixture.refresh(&[b'r', round]);
         install::inspect(&repository).expect("bounded refresh verifies");
         let retained = &history[history
             .len()
-            .saturating_sub(install::RETAINED_CANVAS_PREDECESSORS)..];
+            .saturating_sub(install::RETAINED_APP_PREDECESSORS)..];
         let plan = read_record(&repository).unwrap().unwrap().record.plan;
         assert_eq!(plan.app_predecessors, retained, "recency order is exact");
         let live = retained.iter().chain([&current]).collect::<Vec<_>>();
         assert_eq!(fixture.installed_generations(), sorted(&live));
         let source =
-            install::installed_canvas_source(&repository, &install::installed_binary(&repository))
+            install::installed_app_source(&repository, &install::installed_binary(&repository))
                 .expect("installed app is complete");
         for generation in &history {
             let route = format!("{}/{generation}/style.css", canvas::APP_GENERATION_ROUTE);
@@ -217,7 +217,7 @@ fn canvas_history_stays_bounded_and_ordered_across_refreshes() {
             );
         }
         history.push(current);
-        if history.len() > install::RETAINED_CANVAS_PREDECESSORS + 2 {
+        if history.len() > install::RETAINED_APP_PREDECESSORS + 2 {
             let shape = (
                 plan.operations.len(),
                 plan.retirements.len(),
@@ -232,13 +232,13 @@ fn canvas_history_stays_bounded_and_ordered_across_refreshes() {
 }
 
 #[test]
-fn version_15_history_migrates_to_its_installed_generation_deterministically() {
+fn version_16_asset_vocabulary_migrates_without_losing_history() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     let oldest = fixture.install();
     let installed = fixture.refresh(b"installed");
     install::publish_test_historical_receipt(&repository, install::PREVIOUS_RECORD_VERSION)
-        .expect("version-15 receipt");
+        .expect("version-16 receipt");
     let current = fixture.stage(b"current");
     let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
     assert_eq!(
@@ -248,23 +248,22 @@ fn version_15_history_migrates_to_its_installed_generation_deterministically() {
             .digest()
             .unwrap()
     );
-    assert_eq!(plan.app_predecessors, std::slice::from_ref(&installed));
+    assert_eq!(plan.app_predecessors, [oldest.clone(), installed.clone()]);
     assert!(
         plan.retirements
             .iter()
-            .filter_map(|retirement| install::app::generation_file(&retirement.path))
-            .all(|(generation, _)| generation == oldest.as_str())
+            .all(|retirement| install::app::generation_file(&retirement.path).is_none())
     );
     install::apply(
         &repository,
         Some(&fixture.binary()),
         &plan.digest().unwrap(),
     )
-    .expect("version-15 history retires on refresh");
+    .expect("version-16 asset names migrate on refresh");
     install::inspect(&repository).expect("migrated receipt verifies");
     assert_eq!(
         fixture.installed_generations(),
-        sorted(&[&installed, &current])
+        sorted(&[&oldest, &installed, &current])
     );
 }
 
@@ -273,7 +272,7 @@ fn interrupted_generation_retirement_resumes_to_completion() {
     let fixture = Fixture::new();
     let repository = fixture.repository();
     fixture.install();
-    let mut retained = (0..install::RETAINED_CANVAS_PREDECESSORS as u8)
+    let mut retained = (0..install::RETAINED_APP_PREDECESSORS as u8)
         .map(|round| fixture.refresh(&[b'r', round]))
         .collect::<Vec<_>>();
     let current = fixture.stage(b"current");

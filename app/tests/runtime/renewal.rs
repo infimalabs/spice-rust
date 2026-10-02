@@ -4,7 +4,7 @@ use super::*;
 fn lane_snapshots_project_exact_member_renewal_state() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let predecessor = wire::RenewalIdentity {
         occupant: uuid(LANE_CAPABILITY),
         session: "session-predecessor".to_owned(),

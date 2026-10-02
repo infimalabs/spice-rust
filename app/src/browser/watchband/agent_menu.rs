@@ -23,10 +23,7 @@ pub(super) struct LatestActivity {
 
 /// The member's newest activity card, or its newest prose when no activity
 /// card is retained, cut to fit one row.
-pub(super) fn latest_activity(
-    runtime: &CanvasRuntime,
-    standing: &Standing,
-) -> Option<LatestActivity> {
+pub(super) fn latest_activity(runtime: &AppRuntime, standing: &Standing) -> Option<LatestActivity> {
     let row = runtime
         .newest_lane_activity(standing.lane)
         .and_then(|activity| {
@@ -95,7 +92,7 @@ pub(super) fn waiting_direction(standing: &Standing) -> Option<String> {
 
 /// Everything one lane menu draws from.
 pub(super) struct AgentMenu<'a> {
-    pub(super) runtime: &'a CanvasRuntime,
+    pub(super) runtime: &'a AppRuntime,
     pub(super) member: &'a crate::runtime::LaneMember,
     pub(super) standing: &'a Standing,
     pub(super) select: &'a Callback<wire::TaskStamp>,
@@ -173,7 +170,7 @@ fn close_on_escape(event: KeyboardEvent) {
 /// The head's state and age on one line. The handle a working agent holds is
 /// the Task row's value, so the head names only the state.
 fn render_presence(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
 ) -> Html {
@@ -248,7 +245,7 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
     }
 }
 
-fn render_activity(runtime: &CanvasRuntime, standing: &Standing) -> Html {
+fn render_activity(runtime: &AppRuntime, standing: &Standing) -> Html {
     let Some(activity) = latest_activity(runtime, standing) else {
         return html! {
             <li class="agent-menu-row" data-menu-row="activity" data-empty="true">

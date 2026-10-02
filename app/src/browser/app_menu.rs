@@ -15,7 +15,7 @@ pub(super) fn close(open: &UseStateHandle<bool>) {
         .and_then(|window| window.document())
         .and_then(|document| {
             document
-                .query_selector(".canvas-menu > summary")
+                .query_selector(".app-menu > summary")
                 .ok()
                 .flatten()
         })
@@ -37,7 +37,7 @@ pub(super) fn use_dismissal(open: UseStateHandle<bool>) {
             .then(|| {
                 let document = web_sys::window()?.document()?;
                 if let Some(first_destination) = document
-                    .query_selector(".canvas-navigation .team-mode")
+                    .query_selector(".app-navigation .team-mode")
                     .ok()
                     .flatten()
                     .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
@@ -82,5 +82,5 @@ fn contains(event: &web_sys::Event) -> bool {
     event
         .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .is_some_and(|target| target.closest(".canvas-menu").ok().flatten().is_some())
+        .is_some_and(|target| target.closest(".app-menu").ok().flatten().is_some())
 }

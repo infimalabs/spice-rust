@@ -31,7 +31,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_settled: &'a super::super::team_settled::Controls,
     pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
-    pub(super) runtime: &'a CanvasRuntime,
+    pub(super) runtime: &'a AppRuntime,
     pub(super) epoch: CanonicalUuid,
     pub(super) topology_revision: u64,
     pub(super) authority: SubmissionAuthority,
@@ -407,7 +407,7 @@ fn render_mode_rail(
     team_controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
     html! {
-        <nav class="canvas-control-rail team-mode-rail" role="tablist" aria-label="Live team views">
+        <nav class="app-control-rail team-mode-rail" role="tablist" aria-label="Live team views">
             {for TeamDestination::ALL.map(|destination| {
                 let candidate = TeamMode::from_destination(destination);
                 let selected = candidate == mode;

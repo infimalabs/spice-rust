@@ -1,6 +1,6 @@
 //! Per-member presence projected from resident state and retained chronology.
 
-use crate::runtime::{CanvasRuntime, LaneMember};
+use crate::runtime::{AppRuntime, LaneMember};
 
 use super::Standing;
 
@@ -56,7 +56,7 @@ pub struct MemberPresence {
 /// can prove activity; predecessor records never animate a successor.
 #[must_use]
 pub fn member_presence(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     member: &LaneMember,
     standing: &Standing,
 ) -> MemberPresence {

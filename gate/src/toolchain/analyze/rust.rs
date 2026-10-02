@@ -1,6 +1,6 @@
 //! The native Rust check and its stable selected-source compilation cache.
 //!
-//! The canvas arm in [`super`] already compiles Rust, so the invocation and the
+//! The app arm in [`super`] already compiles Rust, so the invocation and the
 //! diagnostic parse are shared with it rather than restated here. What is not
 //! shared is the reason this arm exists, the target set that serves it, and the
 //! `target` pair it owns; those are the whole of this file.
@@ -29,7 +29,7 @@ use sill::{Acquisition, Environment, Possession, WaitPolicy};
 
 /// Compile changed owners and the exact native surface reached in dependents.
 ///
-/// The canvas arm beside this one already compiles Rust, but only for
+/// The app arm beside this one already compiles Rust, but only for
 /// `wasm32-unknown-unknown` and only the default targets, so nothing in the
 /// battery ever built a `#[cfg(test)]` body. A rename that lands while a peer's
 /// branch was cut before it leaves stale *references* behind, never
@@ -669,7 +669,7 @@ version = \"0.0.0\"
     ///
     /// And it sits in a `#[cfg(test)]` body because the exact test-enabled unit
     /// uses `cargo test --no-run`. A plain `cargo check` builds no test body, so
-    /// the canvas arm beside this one would compile this crate and report nothing.
+    /// the app arm beside this one would compile this crate and report nothing.
     const PLANTED_REFERENCE: &str = "\
 pub fn caller() -> u32 {
     7

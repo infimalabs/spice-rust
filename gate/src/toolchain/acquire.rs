@@ -326,12 +326,12 @@ pub(crate) fn acquire_toolchain_observed(
             observations.push(observation);
             continue;
         }
-        let canvas = declarations
+        let app = declarations
             .next()
-            .expect("canvas analysis follows native Rust analysis");
-        assert_eq!(canvas.id, GateId::CanvasWebTypecheck);
-        let (rust_observation, canvas_observation) = thread::scope(|scope| {
-            let canvas = scope.spawn(|| observe_declaration(canvas, source, contract));
+            .expect("app analysis follows native Rust analysis");
+        assert_eq!(app.id, GateId::AppWebTypecheck);
+        let (rust_observation, app_observation) = thread::scope(|scope| {
+            let app = scope.spawn(|| observe_declaration(app, source, contract));
             let (rust, cargo_artifacts) =
                 observe_declaration_with_artifacts(declaration, source, contract);
             let reusable_workspace = (rust.outcome == ArmOutcome::Passed).then(|| {
@@ -339,13 +339,11 @@ pub(crate) fn acquire_toolchain_observed(
                     .expect("passed native Rust analysis must retain its exact reusable workspace")
             });
             completed(declaration.id, reusable_workspace);
-            let canvas = canvas
-                .join()
-                .expect("canvas toolchain analysis must not panic");
-            completed(canvas.gate_id, None);
-            (rust, canvas)
+            let app = app.join().expect("app toolchain analysis must not panic");
+            completed(app.gate_id, None);
+            (rust, app)
         });
-        observations.extend([rust_observation, canvas_observation]);
+        observations.extend([rust_observation, app_observation]);
     }
     observations
 }
@@ -672,13 +670,13 @@ fn examine(
                     analyze::CompilerResources::new(&programs, source.compiler_environment()),
                 )
             }
-            GateId::CanvasWebTypecheck => {
+            GateId::AppWebTypecheck => {
                 let programs = resolved_programs(declaration, tools);
                 let base = match cargo_base(source) {
                     Ok(base) => base,
                     Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
                 };
-                analyze::canvas_web_typecheck(
+                analyze::app_web_typecheck(
                     declaration,
                     analyze::CargoSelection::new(
                         source.root,
@@ -777,14 +775,14 @@ fn refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<
 /// selected closure. Every other analyzer requires all declared programs
 /// before it can establish applicability.
 fn analyzer_refusal(declaration: ToolchainDeclaration, tools: &[ToolEvidence]) -> Option<Analysis> {
-    if declaration.id != GateId::CanvasWebTypecheck {
+    if declaration.id != GateId::AppWebTypecheck {
         return refusal(declaration, tools);
     }
     let cargo = declaration
         .tools
         .iter()
         .position(|requirement| requirement.program == "cargo")
-        .expect("canvas declaration retains its Cargo metadata authority");
+        .expect("app declaration retains its Cargo metadata authority");
     refusal_for(
         declaration.id,
         std::slice::from_ref(&declaration.tools[cargo]),
@@ -889,7 +887,7 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::LocalPaths
         | GateId::Taste
         | GateId::RustTypecheck
-        | GateId::CanvasWebTypecheck
+        | GateId::AppWebTypecheck
         | GateId::JavascriptUnused
         | GateId::CsharpUnusedCandidates
         | GateId::PythonTypecheck

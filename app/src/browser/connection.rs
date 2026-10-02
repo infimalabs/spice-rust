@@ -1,8 +1,8 @@
 use super::*;
 
-const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:canvas-auth-token:v1";
+const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:app-auth-token:v1";
 
-/// Capture the bearer token carried by a remote Canvas opening before the
+/// Capture the bearer token carried by a remote app opening before the
 /// fragment becomes ordinary route state.
 pub(super) fn capture_opening_auth_token() -> Result<bool, String> {
     let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_owned())?;
@@ -92,7 +92,7 @@ async fn run_connection(
             &handles.connection,
             &handles.surface,
             &handles.identity,
-            &handles.canvas_update,
+            &handles.app_update,
             data,
             &signal,
         )
@@ -228,7 +228,7 @@ fn finish_hydration(
     data: &SurfaceData,
     principal: &Principal,
 ) -> Result<(), String> {
-    let complete = data.read().as_ref().is_some_and(CanvasRuntime::is_hydrated);
+    let complete = data.read().as_ref().is_some_and(AppRuntime::is_hydrated);
     if !complete {
         return Err("replacement scope settled without every current snapshot".to_owned());
     }
@@ -302,7 +302,7 @@ async fn dispatch_client_action(
         let topology_revision = data
             .read()
             .as_ref()
-            .and_then(CanvasRuntime::lanes)
+            .and_then(AppRuntime::lanes)
             .map(|lanes| lanes.topology_revision)
             .ok_or_else(|| "topology action has no authoritative lane table".to_owned())?;
         let id = lease.prepare_topology(topology_revision)?;
@@ -556,12 +556,12 @@ async fn send_probe(principal: &Principal, writer: &mut SocketWriter) -> Result<
 async fn establish_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    identity: &UseStateHandle<Option<CanvasIdentity>>,
-    canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
+    identity: &UseStateHandle<Option<AppIdentity>>,
+    app_update: &UseStateHandle<Option<AppUpdate>>,
     data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) = open_socket(identity, canvas_update, signal).await?;
+    let (session, writer, mut reader) = open_socket(identity, app_update, signal).await?;
     let (principal, hydrating) =
         admit_runtime(&session, &mut reader, connection, surface, data).await?;
     Ok(EstablishedConnection {
@@ -575,8 +575,8 @@ async fn establish_connection(
 
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
-    identity: &UseStateHandle<Option<CanvasIdentity>>,
-    canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
+    identity: &UseStateHandle<Option<AppIdentity>>,
+    app_update: &UseStateHandle<Option<AppUpdate>>,
     signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
     let response = Request::get(&authenticated_path(
@@ -587,43 +587,43 @@ async fn open_socket(
     .send()
     .await
     .map_err(|error| format!("bootstrap request failed: {error}"))?;
-    let canvas = response
+    let app_protocol = response
         .headers()
-        .get(wire::hello::CANVAS_VERSION_HEADER)
+        .get(wire::hello::APP_PROTOCOL_VERSION_HEADER)
         .map(|value| {
             value
-                .parse::<wire::CanvasVersion>()
+                .parse::<wire::AppProtocolVersion>()
                 .map_err(|error| format!("bootstrap app protocol header was invalid: {error}"))
         })
         .transpose()?;
     let generation = response
         .headers()
-        .get(wire::hello::CANVAS_GENERATION_HEADER)
+        .get(wire::hello::APP_GENERATION_HEADER)
         .ok_or_else(|| "bootstrap carried no app generation".to_owned())?
         .parse::<wire::Digest>()
         .map_err(|error| format!("bootstrap app generation was invalid: {error}"))?;
-    let loaded_generation = loaded_canvas_generation()?;
-    canvas_update.set(canvas.and_then(|version| {
-        (!version.is_current() || generation != loaded_generation).then(|| CanvasUpdate {
+    let loaded_generation = loaded_app_generation()?;
+    app_update.set(app_protocol.and_then(|version| {
+        (!version.is_current() || generation != loaded_generation).then(|| AppUpdate {
             version,
             generation: generation.clone(),
             loaded_generation: loaded_generation.clone(),
         })
     }));
-    if let Err(fault) = Session::admit_canvas(canvas) {
+    if let Err(fault) = Session::admit_app_protocol(app_protocol) {
         return Err(format!(
             "{}: {}; explicit app update required",
             fault.reason, fault.detail
         ));
     }
-    let discovery: wire::CanvasBootstrap = response
+    let discovery: wire::AppBootstrap = response
         .json()
         .await
         .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
-    let canvas = canvas.expect("current Canvas admission requires its version header");
+    let app_protocol = app_protocol.expect("current app admission requires its version header");
     identity.set(Some(admit_bootstrap_identity(
         &discovery,
-        canvas,
+        app_protocol,
         &generation,
         loaded_generation,
     )?));
@@ -649,12 +649,12 @@ async fn open_socket(
 }
 
 fn admit_bootstrap_identity(
-    discovery: &wire::CanvasBootstrap,
-    canvas: wire::CanvasVersion,
+    discovery: &wire::AppBootstrap,
+    app_protocol: wire::AppProtocolVersion,
     generation: &wire::Digest,
     loaded_app: wire::Digest,
-) -> Result<CanvasIdentity, String> {
-    if discovery.version.canvas != canvas {
+) -> Result<AppIdentity, String> {
+    if discovery.version.app_protocol != app_protocol {
         return Err("bootstrap body app protocol disagreed with its header".to_owned());
     }
     if &discovery.version.app != generation {
@@ -663,7 +663,7 @@ fn admit_bootstrap_identity(
     if discovery.version.wire != wire::WireVersion::CURRENT {
         return Err("bootstrap body wire schema is not current".to_owned());
     }
-    Ok(CanvasIdentity {
+    Ok(AppIdentity {
         version: discovery.version.clone(),
         loaded_app,
     })
@@ -695,11 +695,11 @@ fn publish_operator_identity(operator: &wire::OperatorIdentity) {
     }
 }
 
-pub(super) fn loaded_canvas_generation() -> Result<wire::Digest, String> {
+pub(super) fn loaded_app_generation() -> Result<wire::Digest, String> {
     web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id("app"))
-        .and_then(|root| root.get_attribute("data-canvas-generation"))
+        .and_then(|root| root.get_attribute("data-app-generation"))
         .ok_or_else(|| "loaded app carried no generation identity".to_owned())?
         .parse()
         .map_err(|error| format!("loaded app generation was invalid: {error}"))
@@ -731,7 +731,7 @@ async fn admit_runtime(
         let replacement = SurfaceData::default();
         let runtime = {
             let current = data.read();
-            CanvasRuntime::rehydrate(
+            AppRuntime::rehydrate(
                 &accepted,
                 current
                     .as_ref()
@@ -749,7 +749,7 @@ async fn admit_runtime(
                     runtime.reconnect(&accepted);
                 }
             }
-            None => *data = Some(CanvasRuntime::new(&accepted)),
+            None => *data = Some(AppRuntime::new(&accepted)),
         }
         data.as_ref()
             .expect("accepted connection creates runtime")
@@ -1262,7 +1262,7 @@ fn browser_auth_token() -> Result<Option<String>, String> {
         .get_item(BROWSER_AUTH_TOKEN_STORAGE)
         .map_err(|_| "browser auth token could not be read".to_owned())?;
     if let Some(token) = token.as_deref()
-        && !crate::view::canvas_auth_token_is_valid(token)
+        && !crate::view::app_auth_token_is_valid(token)
     {
         return Err("retained browser auth token is invalid".to_owned());
     }

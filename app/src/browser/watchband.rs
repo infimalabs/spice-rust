@@ -63,7 +63,7 @@ pub(super) struct BroadcastTarget {
 /// The observer that toasts lane and team request progress and outcomes. It mounts
 /// once at the Canvas root so a request settles in the toast whichever
 /// surface is showing.
-pub(super) fn render_feedback(runtime: Option<&CanvasRuntime>, controls: &TeamControls) -> Html {
+pub(super) fn render_feedback(runtime: Option<&AppRuntime>, controls: &TeamControls) -> Html {
     html! { <feedback::RequestFeedback notices={feedback::Notices::of(runtime, controls)} /> }
 }
 
@@ -75,10 +75,10 @@ pub(super) fn render_feedback(runtime: Option<&CanvasRuntime>, controls: &TeamCo
 /// its own identity is not a formation, so it draws no surface here and stays
 /// reachable through the global menu and each team's import list instead.
 pub(super) fn render_team(
-    render: &view::CanvasRender<'_>,
+    render: &view::AppRender<'_>,
     work: Option<&crate::work::WorkProjection<'_>>,
 ) -> Html {
-    let view::CanvasRender {
+    let view::AppRender {
         connection,
         surface,
         sender,
@@ -188,7 +188,7 @@ pub(super) fn work_shown_teams(
         return Vec::new();
     }
     let surface = surface.read();
-    let Some(lanes) = surface.as_ref().and_then(CanvasRuntime::lanes) else {
+    let Some(lanes) = surface.as_ref().and_then(AppRuntime::lanes) else {
         return Vec::new();
     };
     lanes
@@ -228,7 +228,7 @@ pub(super) fn use_team_fleet_right_edge(host: NodeRef, team_count: usize) {
     reason = "one team render owns its controls"
 )]
 fn render_compose(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
     quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
     standings: &[Standing],
@@ -347,7 +347,7 @@ fn render_compose(
 }
 
 fn history_target(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     lane: CanonicalUuid,
 ) -> Option<(CanonicalUuid, (wire::MessageHistoryCursor, u64))> {
     runtime
@@ -381,7 +381,7 @@ fn broadcast_targets(
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
 fn activity_cards(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
     quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
 ) -> Vec<ActivityCard> {
@@ -531,7 +531,7 @@ struct ComposerHeader {
 /// a vacant member that has never run, shows the empty header rather than the
 /// latest message another member of the team happened to produce.
 fn primary_composer_header(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
     lane: CanonicalUuid,
     standing: &Standing,

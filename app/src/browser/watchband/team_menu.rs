@@ -6,7 +6,7 @@ use super::*;
 pub(super) struct Context<'a> {
     pub(super) controls: &'a UseReducerHandle<TeamControls>,
     pub(super) sender: &'a SenderHandle,
-    pub(super) runtime: &'a CanvasRuntime,
+    pub(super) runtime: &'a AppRuntime,
     pub(super) submissions: &'a SubmissionStatus,
     pub(super) agents: &'a view::AgentControls,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
@@ -326,7 +326,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                 <strong>{"Add agent"}</strong>
                 <button
                     type="button"
-                    class="canvas-compact-control"
+                    class="app-compact-control"
                     onclick={Callback::from(move |_| {
                         close.dispatch(TeamControlAction::ToggleImport { team: identity });
                     })}
@@ -373,7 +373,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                             })}
                         >
                             {view::render_member_presence(status)}
-                            <span class="canvas-member-copy">
+                            <span class="app-member-copy">
                                 <strong>{format!("{label} on {worktree}")}</strong>
                                 <small>{format!(
                                     "{} · {}",

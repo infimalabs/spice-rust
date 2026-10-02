@@ -118,10 +118,10 @@ const REPLY: &str = r#"{
 
 fn version_document() -> String {
     format!(
-        r#"{{"product":"1.2.3","binary":"{binary}","wire":{wire},"journal":1,"canvas":{canvas},"app":"{app}"}}"#,
+        r#"{{"product":"1.2.3","binary":"{binary}","wire":{wire},"journal":1,"app_protocol":{app_protocol},"app":"{app}"}}"#,
         binary = "1".repeat(64),
         wire = WireVersion::CURRENT.0,
-        canvas = wire::CanvasVersion::CURRENT.0,
+        app_protocol = wire::AppProtocolVersion::CURRENT.0,
         app = "2".repeat(64),
     )
 }
@@ -180,7 +180,7 @@ fn version_is_the_exact_stable_six_identity_document() {
     assert_eq!(version.binary.as_str(), "1".repeat(64));
     assert_eq!(version.wire, WireVersion::CURRENT);
     assert_eq!(version.journal, 1);
-    assert_eq!(version.canvas, wire::CanvasVersion::CURRENT);
+    assert_eq!(version.app_protocol, wire::AppProtocolVersion::CURRENT);
     assert_eq!(version.app.as_str(), "2".repeat(64));
     assert_eq!(
         wire::encode(&version).expect("version document re-encodes"),
@@ -273,7 +273,14 @@ fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
     let document: serde_json::Value =
         serde_json::from_str(&version_document()).expect("fixture is JSON");
 
-    for field in ["product", "binary", "wire", "journal", "canvas", "app"] {
+    for field in [
+        "product",
+        "binary",
+        "wire",
+        "journal",
+        "app_protocol",
+        "app",
+    ] {
         let mut missing = document.clone();
         missing
             .as_object_mut()
@@ -309,7 +316,7 @@ fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
         ("binary", serde_json::json!(7)),
         ("wire", serde_json::json!("1")),
         ("journal", serde_json::json!("1")),
-        ("canvas", serde_json::json!("6")),
+        ("app_protocol", serde_json::json!("6")),
         ("app", serde_json::json!("not-a-digest")),
     ] {
         let mut malformed = document.clone();

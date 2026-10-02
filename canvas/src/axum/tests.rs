@@ -222,7 +222,7 @@ fn app_fixture_directory_does_not_outlive_its_owner() {
 #[test]
 fn app_policy_hashes_the_exact_inline_theme_and_loader_bytes() {
     let policy = app_content_security_policy(
-        b"<!doctype html><script data-canvas-theme>theme()</script><script type=\"module\">alert(1)</script>",
+        b"<!doctype html><script data-app-theme>theme()</script><script type=\"module\">alert(1)</script>",
     )
     .expect("the theme resolver and module loader produce one policy");
 
@@ -234,7 +234,7 @@ fn app_policy_hashes_the_exact_inline_theme_and_loader_bytes() {
 #[test]
 fn app_policy_refuses_any_script_outside_the_two_hashed_entries() {
     app_content_security_policy(
-        b"<script data-canvas-theme>theme()</script><script src=\"/other.js\"></script><script type=\"module\">alert(1)</script>",
+        b"<script data-app-theme>theme()</script><script src=\"/other.js\"></script><script type=\"module\">alert(1)</script>",
     )
     .expect_err("an unexpected script element is refused");
 }
@@ -1175,7 +1175,7 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
             .windows(b"img-src 'self' data:".len())
             .any(|window| window == b"img-src 'self' data:")
     );
-    assert!(admitted[split..].starts_with(b"test app canvas-app.html"));
+    assert!(admitted[split..].starts_with(b"test app app.html"));
 
     let script = request(
         address,
@@ -1225,7 +1225,7 @@ impl AppWorktree {
 /// visible in the assertion.
 fn app_worktree() -> AppWorktree {
     let root = tempfile::Builder::new()
-        .prefix("spice-canvas-app-")
+        .prefix("spice-app-")
         .tempdir()
         .expect("fixture temp directory");
     let generation = seed_app_generation(root.path(), "locally built");
@@ -1284,16 +1284,16 @@ async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
         .expect("response carries headers")
         + 4;
     assert!(served.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert!(served[split..].starts_with(b"locally built canvas-app.html"));
+    assert!(served[split..].starts_with(b"locally built app.html"));
 
     // Once the immutable generation is admitted, request completion no longer
     // depends on reopening every file from disk.
-    std::fs::remove_file(fixture.generation().join("canvas-app.html"))
+    std::fs::remove_file(fixture.generation().join("app.html"))
         .expect("fixture removes one staged file");
 
     let cached = request(address, &address.to_string(), "/").await;
     assert!(cached.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert!(response_body(&cached).starts_with(b"locally built canvas-app.html"));
+    assert!(response_body(&cached).starts_with(b"locally built app.html"));
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());

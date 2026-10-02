@@ -51,7 +51,7 @@ pub(super) struct Notices {
 }
 
 impl Notices {
-    pub(super) fn of(runtime: Option<&CanvasRuntime>, controls: &TeamControls) -> Self {
+    pub(super) fn of(runtime: Option<&AppRuntime>, controls: &TeamControls) -> Self {
         let mut notices = Self::default();
         if let Some(runtime) = runtime {
             notices.read_runtime(runtime);
@@ -77,7 +77,7 @@ impl Notices {
         notices
     }
 
-    fn read_runtime(&mut self, runtime: &CanvasRuntime) {
+    fn read_runtime(&mut self, runtime: &AppRuntime) {
         for member in runtime
             .lanes()
             .into_iter()

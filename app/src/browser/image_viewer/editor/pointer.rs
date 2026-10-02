@@ -5,12 +5,12 @@ use super::*;
 
 /// The SVG the gestures land on and the image size its viewBox spans.
 #[derive(Clone, PartialEq)]
-pub(super) struct Canvas {
+pub(super) struct DrawingSurface {
     pub(super) svg: NodeRef,
     pub(super) dimensions: (u32, u32),
 }
 
-fn position(canvas: &Canvas, event: &PointerEvent, clamp: bool) -> Option<Point> {
+fn position(canvas: &DrawingSurface, event: &PointerEvent, clamp: bool) -> Option<Point> {
     let element = canvas.svg.cast::<web_sys::Element>()?;
     let bounds = element.get_bounding_client_rect();
     let (width, height) = (
@@ -93,7 +93,7 @@ fn begin(
 
 pub(super) fn down(
     event: &PointerEvent,
-    canvas: &Canvas,
+    canvas: &DrawingSurface,
     surface: &NodeRef,
     session: &Session,
     tool: Tool,
@@ -123,7 +123,7 @@ pub(super) fn down(
     session.repaint.emit(());
 }
 
-pub(super) fn moved(event: &PointerEvent, canvas: &Canvas, session: &Session) {
+pub(super) fn moved(event: &PointerEvent, canvas: &DrawingSurface, session: &Session) {
     let gesture = session.gesture.borrow();
     let Some(gesture) = gesture
         .as_ref()
@@ -153,7 +153,7 @@ pub(super) fn moved(event: &PointerEvent, canvas: &Canvas, session: &Session) {
 
 /// Release ends the gesture as one undoable edit; a mark too small to see is
 /// dropped rather than committed.
-pub(super) fn up(event: &PointerEvent, canvas: &Canvas, session: &Session) {
+pub(super) fn up(event: &PointerEvent, canvas: &DrawingSurface, session: &Session) {
     if !session.owns(event) {
         return;
     }

@@ -205,7 +205,7 @@ impl Fixture {
         .to_thread_local();
         fs::write(repository.git_dir().join("HEAD"), "ref: refs/heads/main\n")
             .expect("select deterministic scratch branch");
-        seed_canvas_stage(&fixture.0);
+        seed_app_stage(&fixture.0);
         fixture
     }
 
@@ -254,17 +254,16 @@ impl Fixture {
     }
 }
 
-fn seed_canvas_stage(worktree: &Path) {
+fn seed_app_stage(worktree: &Path) {
     let generation = wire::Digest::compute(wire::Domain::DistInventory, b"xtask fixture app");
     let stage = worktree.join("dist/stage-app");
     let root = stage.join("generations").join(generation.as_str());
-    fs::create_dir_all(&root).expect("create fixture Canvas generation");
-    for file in wire::manifest::CANVAS_APP_FILES {
-        fs::write(root.join(file), format!("xtask Canvas asset {file}\n"))
-            .expect("write fixture Canvas asset");
+    fs::create_dir_all(&root).expect("create fixture app generation");
+    for file in wire::manifest::APP_FILES {
+        fs::write(root.join(file), format!("xtask app asset {file}\n"))
+            .expect("write fixture app asset");
     }
-    fs::write(stage.join("current"), format!("{generation}\n"))
-        .expect("write fixture Canvas pointer");
+    fs::write(stage.join("current"), format!("{generation}\n")).expect("write fixture app pointer");
 }
 
 impl Drop for Fixture {
@@ -309,7 +308,7 @@ fn serve_bootstraps(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for binary in binaries {
-            let bootstrap = wire::CanvasBootstrap {
+            let bootstrap = wire::AppBootstrap {
                 endpoint: discovery.endpoint.clone(),
                 capability: discovery.capability,
                 epoch: discovery.epoch,
@@ -319,7 +318,7 @@ fn serve_bootstraps(
                     binary,
                     wire: wire::WireVersion::CURRENT,
                     journal: spice::journal_schema::CURRENT,
-                    canvas: wire::CanvasVersion::CURRENT,
+                    app_protocol: wire::AppProtocolVersion::CURRENT,
                     app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
                 },
                 operator: wire::OperatorIdentity::default(),
@@ -386,7 +385,7 @@ fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority(
     fs::copy(&discovery_path, &saved_discovery).expect("discovery is retained for successor");
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.clone(),
             epoch: discovery.epoch,
         },
@@ -465,7 +464,7 @@ fn rollback_promotion_failure_restores_the_predecessor_resident() {
     fs::copy(&discovery_path, &saved_discovery).expect("discovery is retained for recovery");
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.clone(),
             epoch: discovery.epoch,
         },
@@ -593,7 +592,7 @@ fn restart_consumes_the_daemon_launchers_typed_readiness_without_a_second_probe(
     let endpoint = "http://127.0.0.1:43821";
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.to_owned(),
             epoch,
         },
@@ -716,7 +715,7 @@ fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
         .expect("fixture epoch is canonical");
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.to_owned(),
             epoch,
         },
@@ -1146,7 +1145,7 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
         .expect("fixture epoch is canonical");
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.to_owned(),
             epoch,
         },
@@ -1255,7 +1254,7 @@ fn a_published_origin_splits_into_a_host_and_port() {
         Some(("127.0.0.1".to_owned(), 8767))
     );
     assert_eq!(
-        endpoint_parts("http://127.0.0.1:8767/canvas"),
+        endpoint_parts("http://127.0.0.1:8767/app"),
         Some(("127.0.0.1".to_owned(), 8767))
     );
     assert_eq!(

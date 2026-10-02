@@ -185,7 +185,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                     })}
                 </div>
             </fieldset>
-            <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
+            <div class="work-history-filter-actions app-control-rail team-mode-rail">
                 <button type="button" class="team-mode" onclick={controls.apply.clone()}>{"Apply"}</button>
                 <button type="button" class="team-mode" onclick={controls.clear.clone()}>{"Clear"}</button>
             </div>

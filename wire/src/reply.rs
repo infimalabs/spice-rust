@@ -171,7 +171,7 @@ pub struct Version {
     /// Finalized journal schema this build observed without migrating it.
     pub journal: u32,
     /// Internal browser/resident protocol clock.
-    pub canvas: crate::hello::CanvasVersion,
+    pub app_protocol: crate::hello::AppProtocolVersion,
     /// Identity of the complete app generation served by this build.
     pub app: Digest,
 }
@@ -214,7 +214,7 @@ pub struct LanePurge {
 /// not browser state, and must never cross the native command's output boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CanvasOpen {
+pub struct AppOpen {
     /// Exact loopback HTTP origin read from owner-only discovery.
     pub endpoint: String,
     /// Resident generation whose discovery was still current at launch.

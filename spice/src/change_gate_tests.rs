@@ -194,7 +194,7 @@ fn pretest_screen_covers_reusable_and_cheap_static_policy() {
         screened,
         vec![
             GateId::RustTypecheck,
-            GateId::CanvasWebTypecheck,
+            GateId::AppWebTypecheck,
             GateId::Complexity,
         ],
     );

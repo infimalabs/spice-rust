@@ -1050,7 +1050,7 @@ fn running_resident_version(
         .windows(4)
         .position(|window| window == b"\r\n\r\n")?
         + 4;
-    let bootstrap = wire::decode::<wire::CanvasBootstrap>(&response[split..]).ok()?;
+    let bootstrap = wire::decode::<wire::AppBootstrap>(&response[split..]).ok()?;
     if bootstrap.endpoint != discovery.endpoint
         || bootstrap.capability != discovery.capability
         || bootstrap.epoch != discovery.epoch
@@ -1083,13 +1083,12 @@ fn restart(
         )?;
         return Err(RefreshError::ResidentStartRefused(refusal));
     }
-    let ready =
-        wire::decode::<wire::Outcome<wire::CanvasOpen>>(&answer.stdout).map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("resident readiness reply did not decode: {error}"),
-            )
-        })?;
+    let ready = wire::decode::<wire::Outcome<wire::AppOpen>>(&answer.stdout).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("resident readiness reply did not decode: {error}"),
+        )
+    })?;
     let wire::Outcome::Reply(ready) = ready else {
         return Err(RefreshError::ResidentStartRefused(format!(
             "successful resident launcher returned {ready:?}"

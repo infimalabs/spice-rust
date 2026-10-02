@@ -15,7 +15,7 @@ pub(super) fn use_request(
     let revision = surface
         .read()
         .as_ref()
-        .map_or(0, CanvasRuntime::task_relations_revision);
+        .map_or(0, AppRuntime::task_relations_revision);
     let sender = sender.clone();
     let surface = surface.clone();
     use_effect_with((key, revision), move |(key, _)| {

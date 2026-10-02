@@ -70,7 +70,7 @@ struct Feedback {
     settled: Option<SettledFeedback>,
 }
 
-fn task_subject(runtime: Option<&CanvasRuntime>, task: &TaskStamp) -> String {
+fn task_subject(runtime: Option<&AppRuntime>, task: &TaskStamp) -> String {
     runtime
         .and_then(|runtime| runtime.task_detail(task))
         .and_then(TaskDetailState::answer)
@@ -80,7 +80,7 @@ fn task_subject(runtime: Option<&CanvasRuntime>, task: &TaskStamp) -> String {
         )
 }
 
-fn feedback(state: &CanvasAppState) -> Feedback {
+fn feedback(state: &AppState) -> Feedback {
     let surface = state.surface.read();
     let runtime = surface.as_ref();
     let mut note_pending = None;
@@ -154,7 +154,7 @@ fn feedback(state: &CanvasAppState) -> Feedback {
 
 /// Keep pending task feedback visible until the state that caused it settles.
 #[hook]
-pub(super) fn use_feedback(state: &CanvasAppState) {
+pub(super) fn use_feedback(state: &AppState) {
     let feedback = feedback(state);
     let previous = use_mut_ref(Feedback::default);
     let toaster = toast::use_task_toaster();

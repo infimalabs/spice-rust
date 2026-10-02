@@ -36,7 +36,7 @@ fn clear_input(id: &str) {
 fn queue(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    reserve: impl FnOnce(&mut CanvasRuntime) -> Option<crate::runtime::WorkHistoryRequest>,
+    reserve: impl FnOnce(&mut AppRuntime) -> Option<crate::runtime::WorkHistoryRequest>,
 ) {
     let request = {
         let mut data = surface.write();
@@ -85,7 +85,7 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         let surface = surface.clone();
         use_effect_with((*open, revision), move |(open, _)| {
             if *open {
-                queue(&sender, &surface, CanvasRuntime::begin_work_history);
+                queue(&sender, &surface, AppRuntime::begin_work_history);
             }
         });
     }
@@ -139,21 +139,21 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         let sender = sender.clone();
         let surface = surface.clone();
         Callback::from(move |_: MouseEvent| {
-            queue(&sender, &surface, CanvasRuntime::begin_newer_work_history);
+            queue(&sender, &surface, AppRuntime::begin_newer_work_history);
         })
     };
     let older = {
         let sender = sender.clone();
         let surface = surface.clone();
         Callback::from(move |_: MouseEvent| {
-            queue(&sender, &surface, CanvasRuntime::begin_older_work_history);
+            queue(&sender, &surface, AppRuntime::begin_older_work_history);
         })
     };
     let retry = {
         let sender = sender;
         let surface = surface;
         Callback::from(move |_: MouseEvent| {
-            queue(&sender, &surface, CanvasRuntime::retry_work_history);
+            queue(&sender, &surface, AppRuntime::retry_work_history);
         })
     };
     Controls {

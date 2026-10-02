@@ -1,20 +1,20 @@
 use super::*;
 use app::runtime::{MemberCommand, MemberControlState, MemberSettlement};
 
-fn pending(runtime: &CanvasRuntime, lane: wire::CanonicalUuid) -> Option<&MemberCommand> {
+fn pending(runtime: &AppRuntime, lane: wire::CanonicalUuid) -> Option<&MemberCommand> {
     runtime
         .member_control(lane)
         .and_then(MemberControlState::pending)
         .map(|request| &request.command)
 }
 
-fn settled(runtime: &CanvasRuntime, lane: wire::CanonicalUuid) -> Option<&MemberSettlement> {
+fn settled(runtime: &AppRuntime, lane: wire::CanonicalUuid) -> Option<&MemberSettlement> {
     runtime
         .member_control(lane)
         .and_then(MemberControlState::settled)
 }
 
-fn issue(runtime: &CanvasRuntime, lane: wire::CanonicalUuid) -> Option<&str> {
+fn issue(runtime: &AppRuntime, lane: wire::CanonicalUuid) -> Option<&str> {
     settled(runtime, lane).and_then(|settled| settled.issue.as_deref())
 }
 
@@ -22,7 +22,7 @@ fn issue(runtime: &CanvasRuntime, lane: wire::CanonicalUuid) -> Option<&str> {
 fn member_commands_settle_only_the_exact_reservation_they_answer() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let lane = uuid(THIRD_LANE);
 
     let drain = runtime

@@ -11,7 +11,7 @@ pub(super) fn admit_app(
 ) -> Result<(), PackageError> {
     let shell = app
         .iter()
-        .find(|asset| asset.file == wire::manifest::CANVAS_APP_HTML)
+        .find(|asset| asset.file == wire::manifest::APP_HTML)
         .ok_or(PackageError::Binding {
             index,
             field: "app shell",

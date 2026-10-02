@@ -42,7 +42,7 @@ pub use direction_history::{
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) use publication::CanvasSurface;
+pub(crate) use publication::AppSurface;
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub use team_settled::{TeamSettledRequest, TeamSettledState};
@@ -464,7 +464,7 @@ impl TaskDetailState {
 /// Deliberately not `Debug`: even though scopes redact themselves, snapshots
 /// should never gain an accidental whole-runtime debug path.
 #[derive(PartialEq, Eq)]
-pub struct CanvasRuntime {
+pub struct AppRuntime {
     accepted: Admitted<Accepted>,
     principal: Principal,
     board: ScopedValue<BoardView>,
@@ -508,7 +508,7 @@ pub struct CanvasRuntime {
     presence_transitions: Vec<LanePresenceTransition>,
 }
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// Begin empty for the principal named by an admitted acceptance.
     #[must_use]
     pub fn new(accepted: &Admitted<Accepted>) -> Self {
@@ -1177,7 +1177,7 @@ impl Stale {
 
     /// Evict changed typed families; the active demand hook alone re-requests.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_task_relations(&mut self, runtime: &mut CanvasRuntime, changed: bool) {
+    pub(crate) fn resolve_task_relations(&mut self, runtime: &mut AppRuntime, changed: bool) {
         if changed {
             runtime.invalidate_task_relations(&self.task_relation_kinds);
         }
@@ -1186,7 +1186,7 @@ impl Stale {
 
     /// Re-read the newest matching Direction page after any steering mutation.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_direction_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
+    pub(crate) fn resolve_direction_history(&self, runtime: &mut AppRuntime, changed: bool) {
         if changed && self.direction_history {
             runtime.invalidate_direction_history();
         }
@@ -1194,7 +1194,7 @@ impl Stale {
 
     /// Hold terminal paging until a changed task snapshot has been refreshed.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_work_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
+    pub(crate) fn resolve_work_history(&self, runtime: &mut AppRuntime, changed: bool) {
         if changed && self.board {
             runtime.invalidate_work_history();
         }

@@ -10,38 +10,38 @@ const MEMBER_MIME: &str = "application/x-spice-team-member";
 
 pub(super) struct Context<'a> {
     pub(super) cursor: &'a str,
-    pub(super) identity: Option<&'a CanvasIdentity>,
-    pub(super) update: Option<&'a CanvasUpdate>,
+    pub(super) identity: Option<&'a AppIdentity>,
+    pub(super) update: Option<&'a AppUpdate>,
     pub(super) sender: &'a SenderHandle,
     pub(super) submissions: &'a SubmissionStatus,
 }
 
 pub(super) fn render(
-    destination: CanvasDestination,
-    runtime: Option<&CanvasRuntime>,
+    destination: AppDestination,
+    runtime: Option<&AppRuntime>,
     context: &Context<'_>,
 ) -> Html {
     match destination {
-        CanvasDestination::Dash => render_axis(
+        AppDestination::Dash => render_axis(
             Axis::Topology,
             axis_count(Axis::Topology, runtime),
             runtime,
             context,
         ),
-        CanvasDestination::Work => render_axis(
+        AppDestination::Work => render_axis(
             Axis::Flow,
             axis_count(Axis::Flow, runtime),
             runtime,
             context,
         ),
-        CanvasDestination::Chat => render_chat(runtime, context),
+        AppDestination::Chat => render_chat(runtime, context),
     }
 }
 
 fn render_axis(
     axis: Axis,
     count: usize,
-    runtime: Option<&CanvasRuntime>,
+    runtime: Option<&AppRuntime>,
     context: &Context<'_>,
 ) -> Html {
     let (noun, description) = match axis {
@@ -55,18 +55,18 @@ fn render_axis(
         ),
     };
     html! {
-        <div class="canvas-menu-page" data-menu-page={super::axis_label(axis)}>
+        <div class="app-menu-page" data-menu-page={super::axis_label(axis)}>
             {render_global_settings(runtime, context.sender)}
             if axis == Axis::Topology {
                 {render_operator_settings(runtime, context.sender)}
             }
-            <section class="canvas-menu-section canvas-menu-context">
+            <section class="app-menu-section app-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
-                <div class="canvas-menu-setting">
+                <div class="app-menu-setting">
                     <strong>{axis.question()}</strong>
                     <span>{format!("{count} {noun}")}</span>
                 </div>
-                <p class="canvas-menu-context-copy">{description}</p>
+                <p class="app-menu-context-copy">{description}</p>
             </section>
             {render_version_footer(context.cursor, context.identity, context.update)}
         </div>
@@ -76,15 +76,15 @@ fn render_axis(
 /// Until the resident and its agent state arrive, the same three sections
 /// stand inert with their empty lines saying what is awaited, so the footer and
 /// every section keep their place when teams land.
-fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
-    let lanes = runtime.and_then(CanvasRuntime::lanes);
+fn render_chat(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
+    let lanes = runtime.and_then(AppRuntime::lanes);
     let awaited = match (runtime, lanes) {
         (None, _) => Some("Waiting for resident teams…"),
         (Some(_), None) => Some("Waiting for agent state…"),
         (Some(_), Some(_)) => None,
     };
     let waiting = runtime
-        .and_then(CanvasRuntime::inbox)
+        .and_then(AppRuntime::inbox)
         .map(|inbox| inbox.lanes.as_slice())
         .unwrap_or(&[]);
     let can_configure = lanes.is_some()
@@ -114,12 +114,12 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
         empty: awaited.unwrap_or("No unassigned agents"),
     };
     html! {
-        <div class="canvas-menu-page" data-menu-page="Chat">
+        <div class="app-menu-page" data-menu-page="Chat">
             {render_global_settings(runtime, context.sender)}
-            <section class="canvas-menu-section canvas-open-teams">
+            <section class="app-menu-section app-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_teams.is_empty() {
-                    <p class="canvas-menu-empty">{awaited.unwrap_or("No open teams")}</p>
+                    <p class="app-menu-empty">{awaited.unwrap_or("No open teams")}</p>
                 } else {
                     {for grouped_teams.into_iter().map(|team| {
                         render_team(
@@ -149,8 +149,8 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
     }
 }
 
-fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
-    let settings = runtime.and_then(CanvasRuntime::settings);
+fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+    let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let operator_name = settings.and_then(|settings| settings.operator_name.clone());
     let operator_email = settings.and_then(|settings| settings.operator_email.clone());
@@ -172,15 +172,15 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
         }
     });
     html! {
-        <section class="canvas-menu-section canvas-menu-global">
+        <section class="app-menu-section app-menu-global">
             <h2>{"Global"}</h2>
-            <div class="canvas-menu-global-controls">
+            <div class="app-menu-global-controls">
                 <button
                     class={classes!(
-                        "canvas-menu-setting",
-                        "canvas-menu-setting--action",
-                        "canvas-fast-setting",
-                        fast_mode.then_some("canvas-menu-setting--checked"),
+                        "app-menu-setting",
+                        "app-menu-setting--action",
+                        "app-fast-setting",
+                        fast_mode.then_some("app-menu-setting--checked"),
                     )}
                     type="button"
                     role="menuitemcheckbox"
@@ -209,9 +209,9 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
 /// The operator's identity and its override form. Until settings arrive the
 /// same summary and form stand disabled and say they are loading, so the
 /// sections below stay put when the identity lands.
-fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
     const LOADING: &str = "loading";
-    let settings = runtime.and_then(CanvasRuntime::settings);
+    let settings = runtime.and_then(AppRuntime::settings);
     let unresolved = wire::OperatorIdentity::default();
     let operator = settings.map_or(&unresolved, |settings| &settings.operator);
     let enabled = settings.is_some()
@@ -279,16 +279,16 @@ fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHand
         );
     });
     html! {
-        <section class="canvas-menu-section canvas-menu-operator" data-operator-member="">
+        <section class="app-menu-section app-menu-operator" data-operator-member="">
             <h2>{"You"}</h2>
-            <div class="canvas-operator-summary">
+            <div class="app-operator-summary">
                 {super::render_operator_avatar(operator)}
                 <div>
                     <strong>{summary_name}</strong>
                     <span>{summary_email}</span>
                 </div>
             </div>
-            <form class="canvas-operator-form" {onsubmit}>
+            <form class="app-operator-form" {onsubmit}>
                 <label for="operator-name">
                     <span>{"Name"}</span>
                     <small>{name_source}</small>
@@ -313,7 +313,7 @@ fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHand
                     autocomplete="email"
                     disabled={!enabled}
                 />
-                <button type="submit" class="canvas-compact-control" disabled={!enabled}>
+                <button type="submit" class="app-compact-control" disabled={!enabled}>
                     {"Save identity"}
                 </button>
             </form>
@@ -332,8 +332,8 @@ fn input_value(id: &str) -> Option<String> {
 
 fn render_version_footer(
     cursor: &str,
-    identity: Option<&CanvasIdentity>,
-    update: Option<&CanvasUpdate>,
+    identity: Option<&AppIdentity>,
+    update: Option<&AppUpdate>,
 ) -> Html {
     let IdentityPresentation {
         label,
@@ -344,7 +344,7 @@ fn render_version_footer(
     let native_binary = identity.map(|identity| identity.version.binary.to_string());
     let wire_schema = identity.map(|identity| identity.version.wire.to_string());
     let journal_schema = identity.map(|identity| identity.version.journal.to_string());
-    let canvas_protocol = identity.map(|identity| identity.version.canvas.to_string());
+    let app_protocol = identity.map(|identity| identity.version.app_protocol.to_string());
     let loaded_app = identity.map(|identity| identity.loaded_app.to_string());
     let served_app = identity.map(|identity| identity.version.app.to_string());
     let reload = Callback::from(move |_| {
@@ -377,7 +377,7 @@ fn render_version_footer(
         );
         html! {
             <button
-                class="canvas-menu-version canvas-menu-version--update canvas-compact-control"
+                class="app-menu-version app-menu-version--update app-compact-control"
                 type="button"
                 aria-label={update_accessible}
                 title={update_details}
@@ -385,21 +385,21 @@ fn render_version_footer(
                 data-native-binary={native_binary}
                 data-wire-schema={wire_schema}
                 data-journal-schema={journal_schema}
-                data-canvas-protocol={update.version.to_string()}
+                data-app-protocol={update.version.to_string()}
                 data-loaded-app-generation={update.loaded_generation.to_string()}
                 data-served-app-generation={update.generation.to_string()}
-                data-canvas-update-version={update.version.to_string()}
-                data-canvas-update-generation={update.generation.to_string()}
+                data-app-update-version={update.version.to_string()}
+                data-app-update-generation={update.generation.to_string()}
                 onclick={reload}
             >
-                <span class="canvas-menu-version-label">{label}</span>
-                <span class="canvas-menu-version-indicator" aria-hidden="true">{"↻"}</span>
+                <span class="app-menu-version-label">{label}</span>
+                <span class="app-menu-version-indicator" aria-hidden="true">{"↻"}</span>
             </button>
         }
     } else {
         html! {
             <strong
-                class="canvas-menu-version"
+                class="app-menu-version"
                 tabindex="0"
                 aria-label={accessible}
                 title={details}
@@ -407,18 +407,18 @@ fn render_version_footer(
                 data-native-binary={native_binary}
                 data-wire-schema={wire_schema}
                 data-journal-schema={journal_schema}
-                data-canvas-protocol={canvas_protocol}
+                data-app-protocol={app_protocol}
                 data-loaded-app-generation={loaded_app}
                 data-served-app-generation={served_app}
             >{label}</strong>
         }
     };
     html! {
-        <footer class="canvas-menu-footer">
-            <div class="canvas-menu-version-group">
+        <footer class="app-menu-footer">
+            <div class="app-menu-version-group">
                 {version}
             </div>
-            <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
+            <span class="bar-meta app-menu-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
             </span>
         </footer>
@@ -431,7 +431,7 @@ struct IdentityPresentation {
     accessible: String,
 }
 
-fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentation {
+fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation {
     let Some(identity) = identity else {
         return IdentityPresentation {
             label: "Spice".to_owned(),
@@ -444,7 +444,7 @@ fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentat
         format!("Native binary: {}", identity.version.binary),
         format!("Wire schema: {}", identity.version.wire),
         format!("Journal schema: {}", identity.version.journal),
-        format!("App protocol: {}", identity.version.canvas),
+        format!("App protocol: {}", identity.version.app_protocol),
         format!("Loaded app generation: {}", identity.loaded_app),
     ];
     if identity.loaded_app != identity.version.app {
@@ -462,16 +462,16 @@ fn render_theme_selector() -> Html {
     let selected = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
-        .and_then(|root| root.get_attribute("data-canvas-theme"))
+        .and_then(|root| root.get_attribute("data-app-theme"))
         .unwrap_or_else(|| "system".to_owned());
     html! {
         <div
-            class="canvas-control-rail canvas-theme-selector"
+            class="app-control-rail app-theme-selector"
             role="group"
             aria-label="Theme"
             data-selected-theme={selected.clone()}
         >
-            <span class="canvas-theme-thumb" aria-hidden="true"></span>
+            <span class="app-theme-thumb" aria-hidden="true"></span>
             {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
                 .into_iter()
                 .map(|(mode, label)| {
@@ -479,40 +479,40 @@ fn render_theme_selector() -> Html {
                         let Some(window) = web_sys::window() else { return; };
                         let Ok(setter) = js_sys::Reflect::get(
                             &window,
-                            &JsValue::from_str("__spiceCanvasSetTheme"),
+                            &JsValue::from_str("__spiceAppSetTheme"),
                         ) else { return; };
                         let Ok(setter) = setter.dyn_into::<js_sys::Function>() else { return; };
                         let _ = setter.call1(&JsValue::NULL, &JsValue::from_str(mode));
                     });
                     let icon = match mode {
                         "light" => html! {
-                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <circle cx="12" cy="12" r="3.25"></circle>
                                 <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.28 5.28 6.7 6.7M17.3 17.3l1.42 1.42M18.72 5.28 17.3 6.7M6.7 17.3l-1.42 1.42"></path>
                             </svg>
                         },
                         "system" => html! {
-                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <rect x="3.25" y="4.5" width="17.5" height="13" rx="1.8"></rect>
                                 <path d="M8.5 21h7M12 17.5V21"></path>
                             </svg>
                         },
                         "dark" => html! {
-                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                 <path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8a8.7 8.7 0 1 0 11.5 11.5Z"></path>
                             </svg>
                         },
-                        _ => unreachable!("Canvas theme modes are closed"),
+                        _ => unreachable!("app theme modes are closed"),
                     };
                     let accessible = format!("Use {label} theme");
                     html! {
                         <button
-                            class="canvas-theme-option"
+                            class="app-theme-option"
                             type="button"
                             aria-label={accessible}
                             title={format!("{label} theme")}
                             aria-pressed={(selected == mode).to_string()}
-                            data-canvas-theme={mode}
+                            data-app-theme={mode}
                             onclick={choose}
                         >{icon}</button>
                     }
@@ -545,7 +545,7 @@ fn render_team(
     );
     html! {
         <article
-            class="canvas-team"
+            class="app-team"
             data-team={team.lane.to_string()}
             data-drop-enabled={can_configure.to_string()}
             {ondragover}
@@ -560,7 +560,7 @@ fn render_team(
                     )}</span>
                 </div>
             </header>
-            <div class="canvas-team-members">
+            <div class="app-team-members">
                 {for team.members.iter().enumerate().map(|(position, member)| {
                     render_member(
                         member,
@@ -600,7 +600,7 @@ fn render_member(
     let ondragstart = begin_drag(member.lane, can_configure);
     html! {
         <article
-            class="canvas-team-member"
+            class="app-team-member"
             draggable={can_configure.to_string()}
             aria-disabled={(!can_configure).to_string()}
             data-team-member={member.lane.to_string()}
@@ -609,7 +609,7 @@ fn render_member(
             {ondragstart}
         >
             {render_member_presence(status)}
-            <span class="canvas-member-copy">
+            <span class="app-member-copy">
                 <strong>{format!("{label} on {worktree}")}</strong>
                 <small>{format!(
                     "{} · {}{}",
@@ -618,7 +618,7 @@ fn render_member(
                     if pending == 0 { String::new() } else { format!(" · {pending} pending") }
                 )}</small>
             </span>
-            <span class="canvas-member-drag" aria-hidden="true">{"↕"}</span>
+            <span class="app-member-drag" aria-hidden="true">{"↕"}</span>
         </article>
     }
 }
@@ -633,13 +633,13 @@ fn render_new_team_drop(
     let ondrop = drop_into_new_team(sender.clone(), target, can_configure, topology_revision);
     html! {
         <section
-            class="canvas-menu-section canvas-team-drop"
+            class="app-menu-section app-team-drop"
             data-drop-enabled={can_configure.to_string()}
             {ondragover}
             {ondrop}
         >
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
-            <div class="canvas-drop-target" data-team-drop="new">{"Drop agent here"}</div>
+            <div class="app-drop-target" data-team-drop="new">{"Drop agent here"}</div>
         </section>
     }
 }
@@ -668,7 +668,7 @@ fn render_solo_members_drop(
     );
     html! {
         <section
-            class="canvas-menu-section canvas-unassigned"
+            class="app-menu-section app-unassigned"
             data-drop-enabled={render.can_configure.to_string()}
             {ondragover}
             {ondrop}
@@ -677,9 +677,9 @@ fn render_solo_members_drop(
                 <h2>{"Unassigned Agents"}</h2>
                 <span>{"drop to unassign"}</span>
             </header>
-            <div class="canvas-team-members" data-team-drop="unassigned">
+            <div class="app-team-members" data-team-drop="unassigned">
                 if members.is_empty() {
-                    <p class="canvas-menu-empty">{render.empty}</p>
+                    <p class="app-menu-empty">{render.empty}</p>
                 } else {
                     {for members.iter().map(|member| {
                         render_member(

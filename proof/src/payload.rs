@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use wire::manifest::{CANVAS_APP_FILES, InventoryEntry, ProofImage, TargetPayload};
+use wire::manifest::{APP_FILES, InventoryEntry, ProofImage, TargetPayload};
 use wire::{Digest, Domain};
 
 const PAYLOAD_VERSION: u16 = wire::manifest::TARGET_PAYLOAD_VERSION;
@@ -39,7 +39,7 @@ impl AdmittedPayload {
 ///
 /// Refuses malformed or noncanonical bytes, a stale schema, an unpinned proof
 /// environment, inconsistent subordinate digests, or any inventory other than
-/// the complete Canvas generation and native executable in exact order and mode.
+/// the complete app generation and native executable in exact order and mode.
 pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
     let payload: TargetPayload =
         wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
@@ -183,7 +183,7 @@ fn verify_artifact(
 }
 
 fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
-    let mut artifacts = CANVAS_APP_FILES
+    let mut artifacts = APP_FILES
         .iter()
         .map(|file| Artifact {
             path: format!("app/{file}"),
@@ -421,7 +421,7 @@ mod tests {
         refresh_inventory(&mut missing);
         assert_refuses_before_proof(
             &encode(&missing),
-            PayloadError::MissingArtifact("app/app.module".to_owned()),
+            PayloadError::MissingArtifact("app/app.html".to_owned()),
         );
 
         let mut extra = payload();
@@ -442,7 +442,7 @@ mod tests {
         refresh_inventory(&mut duplicate);
         assert_refuses_before_proof(
             &encode(&duplicate),
-            PayloadError::DuplicateArtifact("app/app.module".to_owned()),
+            PayloadError::DuplicateArtifact("app/app.html".to_owned()),
         );
 
         let mut reordered = payload();
@@ -452,8 +452,8 @@ mod tests {
             &encode(&reordered),
             PayloadError::ReorderedArtifact {
                 index: 0,
-                expected: "app/app.module".to_owned(),
-                observed: "app/app_bg.wasm".to_owned(),
+                expected: "app/app.html".to_owned(),
+                observed: "app/app.module".to_owned(),
             },
         );
     }
@@ -512,7 +512,7 @@ mod tests {
         };
         let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
-        let mut inventory = wire::manifest::CANVAS_APP_FILES
+        let mut inventory = wire::manifest::APP_FILES
             .iter()
             .map(|file| InventoryEntry {
                 path: format!("app/{file}"),

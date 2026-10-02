@@ -279,7 +279,7 @@ fn main() {
 fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
     let mut occurrences = 0;
     arguments.retain(|argument| {
-        if argument == spice::install::TEST_CANVAS_STAGE_ARGUMENT {
+        if argument == spice::install::TEST_APP_STAGE_ARGUMENT {
             occurrences += 1;
             false
         } else {
@@ -776,7 +776,7 @@ fn version_identity(
         binary: running.binary.clone(),
         wire: wire::WireVersion::CURRENT,
         journal,
-        canvas: wire::CanvasVersion::CURRENT,
+        app_protocol: wire::AppProtocolVersion::CURRENT,
         app,
     }
 }

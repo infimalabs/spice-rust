@@ -3,10 +3,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, CANVAS_APP_HTML, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION,
-    MacSymbolArtifact, MacSymbolMetadata, PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment,
-    ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget,
-    ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    APP_FILES, APP_HTML, BuildPins, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact,
+    MacSymbolMetadata, PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment, ProofReceipt,
+    ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget,
+    TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -146,21 +146,21 @@ impl PackageFixture {
             &executable,
             &Digest::compute(Domain::DistArtifact, &executable),
         );
-        let app_identity = Digest::compute(Domain::DistArtifact, b"package fixture Canvas");
-        let mut app = CANVAS_APP_FILES
+        let app_identity = Digest::compute(Domain::DistArtifact, b"package fixture app");
+        let mut app = APP_FILES
             .iter()
             .map(|file| {
-                let bytes = if *file == CANVAS_APP_HTML {
+                let bytes = if *file == APP_HTML {
                     concat!(
                         "<!doctype html><html><body>",
-                        "<script data-canvas-theme>theme();</script>",
+                        "<script data-app-theme>theme();</script>",
                         "<script type=\"module\">boot();</script>",
                         "</body></html>\n"
                     )
                     .as_bytes()
                     .to_vec()
                 } else {
-                    format!("package Canvas asset {file}\n").into_bytes()
+                    format!("package app asset {file}\n").into_bytes()
                 };
                 ((*file).to_owned(), bytes)
             })

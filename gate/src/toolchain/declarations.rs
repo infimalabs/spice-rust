@@ -279,7 +279,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         ],
     },
     ToolchainDeclaration {
-        id: GateId::CanvasWebTypecheck,
+        id: GateId::AppWebTypecheck,
         measurement_engine: MeasurementEngine::ToolchainV1,
         jurisdiction: TreeJurisdiction {
             input: TreeInput::CompleteSelectedTree,

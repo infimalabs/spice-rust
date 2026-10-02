@@ -82,7 +82,7 @@ fn acquire(upper: Seq, directory: &Path, oracle: &Path, output: &mut dyn Write) 
     }
     // Reuse the resident's receipt-owned asset admission; metadata alone is
     // insufficient before executing a credential-bearing native client.
-    let _publication = spice::install::installed_canvas_source(&repository, &binary)?;
+    let _publication = spice::install::installed_app_source(&repository, &binary)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};

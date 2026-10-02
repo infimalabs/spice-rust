@@ -215,7 +215,7 @@ impl SessionCompactions {
             match scanned {
                 ScanAttempt::Complete(records) => {
                     for record in records {
-                        canvas_diagnostic(present(record, lane, author), diagnostic)?;
+                        app_diagnostic(present(record, lane, author), diagnostic)?;
                     }
                 }
                 ScanAttempt::Latched => {}

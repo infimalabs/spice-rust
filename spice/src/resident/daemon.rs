@@ -121,7 +121,7 @@ impl ChildStatus {
 }
 
 /// Start this exact executable as a detached resident and prove it is ready.
-pub(crate) fn launch(leaf: &clap::ArgMatches) -> Outcome<wire::CanvasOpen> {
+pub(crate) fn launch(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
     #[cfg(not(unix))]
     {
         let _ = leaf;
@@ -135,7 +135,7 @@ pub(crate) fn launch(leaf: &clap::ArgMatches) -> Outcome<wire::CanvasOpen> {
 }
 
 #[cfg(unix)]
-fn launch_unix(leaf: &clap::ArgMatches) -> Outcome<wire::CanvasOpen> {
+fn launch_unix(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
     match PreparedLaunch::admit(leaf).and_then(|launch| launch.spawn(leaf)) {
         Ok(launch) => launch.wait(),
         Err(outcome) => map_failure(outcome),
@@ -266,7 +266,7 @@ struct SpawnedLaunch {
 
 #[cfg(unix)]
 impl SpawnedLaunch {
-    fn wait(mut self) -> Outcome<wire::CanvasOpen> {
+    fn wait(mut self) -> Outcome<wire::AppOpen> {
         let ready = wait_for_ready(
             &mut self.child,
             self.observer,
@@ -280,7 +280,7 @@ impl SpawnedLaunch {
         match ready {
             Ok(discovery) => Outcome::Reply(Reply {
                 position: ReplyPosition::Direct {},
-                body: wire::CanvasOpen {
+                body: wire::AppOpen {
                     endpoint: discovery.endpoint,
                     epoch: discovery.epoch,
                 },
@@ -583,7 +583,7 @@ fn probe(discovery: &canvas::Discovery, token: Option<&str>) -> CommandResult<()
                 "bootstrap response had no header terminator",
             )
         })?;
-    let bootstrap = wire::decode::<wire::CanvasBootstrap>(&response[split..])
+    let bootstrap = wire::decode::<wire::AppBootstrap>(&response[split..])
         .map_err(|error| environment_fault("resident::daemon-probe-invalid", &error.to_string()))?;
     if bootstrap.epoch != discovery.epoch
         || bootstrap.capability != discovery.capability
@@ -635,7 +635,7 @@ fn child_diagnostic(path: &Path, offset: u64) -> String {
     }
 }
 
-fn map_failure(outcome: Outcome<()>) -> Outcome<wire::CanvasOpen> {
+fn map_failure(outcome: Outcome<()>) -> Outcome<wire::AppOpen> {
     match outcome {
         Outcome::Reply(_) => Outcome::Fault(Fault {
             class: FaultClass::Protocol,

@@ -1,7 +1,7 @@
 use super::work_history::{history_page_answer, terminal_history_task};
 use super::*;
 
-fn settled_titles(runtime: &CanvasRuntime, team: wire::CanonicalUuid) -> Vec<String> {
+fn settled_titles(runtime: &AppRuntime, team: wire::CanonicalUuid) -> Vec<String> {
     runtime
         .team_settled(team)
         .and_then(app::runtime::TeamSettledState::pages)
@@ -19,7 +19,7 @@ fn settled_titles(runtime: &CanvasRuntime, team: wire::CanonicalUuid) -> Vec<Str
 fn team_settled_pages_are_reread_only_after_open_work_settles() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let open = board_response(&session, "Hidden open work");
     runtime.apply_board(&open);
     let team = uuid(THIRD_LANE);
@@ -132,7 +132,7 @@ fn team_settled_pages_are_reread_only_after_open_work_settles() {
 fn team_settled_filters_keep_an_independent_zero_based_page() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let open = board_response(&session, "Hidden open work");
     runtime.apply_board(&open);
     let team = uuid(SECOND_LANE);

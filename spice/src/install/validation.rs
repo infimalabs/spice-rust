@@ -129,8 +129,9 @@ fn app_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<Vec<Asset>, InstallError> {
-    if plan.app_predecessors.len() > RETAINED_CANVAS_PREDECESSORS
-        || (plan.version != PLAN_VERSION && !plan.app_predecessors.is_empty())
+    if plan.app_predecessors.len() > RETAINED_APP_PREDECESSORS
+        || (!matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
+            && !plan.app_predecessors.is_empty())
     {
         return Err(InstallError::InvalidRecord(
             "app predecessor inventory exceeds its schema or bound".to_owned(),
@@ -176,12 +177,12 @@ fn app_operation_inventory(
         // only the current generation of a new plan must carry the new file.
         let historical = content == GeneratedContentAuthority::HistoricalReceipt
             || *generation != current.as_str();
-        let missing = app::ASSETS.iter().any(|(asset, _)| {
-            !assets.contains(asset) && !(historical && *asset == Asset::CanvasWork)
-        });
+        let missing = app::ASSETS
+            .iter()
+            .any(|(asset, _)| !assets.contains(asset) && !(historical && *asset == Asset::AppWork));
         let renderers = assets
             .iter()
-            .filter(|asset| matches!(asset, Asset::CanvasRenderer(_)))
+            .filter(|asset| matches!(asset, Asset::AppRenderer(_)))
             .count();
         if missing || renderers > wire::manifest::renderer::MAX_FILES {
             return Err(InstallError::InvalidRecord(
@@ -200,7 +201,7 @@ fn app_operation_inventory(
         .iter()
         .map(Digest::as_str)
         .collect::<BTreeSet<_>>();
-    if plan.version == PLAN_VERSION
+    if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
         && (listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()))
     {
         return Err(InstallError::InvalidRecord(
@@ -230,7 +231,7 @@ fn app_operation_inventory(
     Ok(expected
         .into_iter()
         .map(|(_, asset)| asset)
-        .chain([Asset::CanvasCurrent])
+        .chain([Asset::AppCurrent])
         .collect())
 }
 
@@ -242,7 +243,8 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             ));
         }
     } else {
-        let retired_generations = if plan.version == PLAN_VERSION {
+        let retired_generations = if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
+        {
             plan.retirements
                 .iter()
                 .rev()
@@ -395,7 +397,8 @@ fn validate_retirement(retirement: &Retirement, plan_version: u16) -> Result<(),
     let current_discard = (manifest_version
         && (retirement.path == RETIRED_FOLD_STORE_PATH
             || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())))
-        || (plan_version == PLAN_VERSION && app::generation_file(&retirement.path).is_some());
+        || (matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
+            && app::generation_file(&retirement.path).is_some());
     let invalid_discard = if current_discard {
         !retirement.discard
             || retirement.previous.is_some()
@@ -552,11 +555,11 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::HookBash => "Bash startup hook",
         Asset::HookWrapperSpice => "Spice shell wrapper",
         Asset::Skill => "generated skill",
-        Asset::CanvasCurrent => "app generation pointer",
+        Asset::AppCurrent => "app generation pointer",
         Asset::Binary => "Spice executable",
         Asset::SymbolsInfo => "retained dSYM Info.plist",
         Asset::SymbolsDwarf => "retained dSYM DWARF image",
-        _ => unreachable!("Canvas generation assets returned above"),
+        _ => unreachable!("app generation assets returned above"),
     }
 }
 
@@ -646,7 +649,7 @@ pub(super) fn asset_contract(
         ),
         Asset::Skill => (Location::CommonGit, SKILL_PATH.to_owned(), DATA_MODE),
         Asset::Binary => (Location::CommonGit, BINARY_PATH.to_owned(), EXECUTABLE_MODE),
-        _ => unreachable!("Canvas assets returned above"),
+        _ => unreachable!("app assets returned above"),
     };
     Ok(contract)
 }

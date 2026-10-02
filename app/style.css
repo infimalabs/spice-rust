@@ -43,7 +43,7 @@
   letter-spacing: 0;
 }
 
-:root[data-canvas-effective-theme="dark"] {
+:root[data-app-effective-theme="dark"] {
     --page: #101411;
     --panel: #181d19;
     --control: #141915;
@@ -87,11 +87,11 @@ button, select, input, textarea {
 
 select, input, textarea { border-radius: var(--canvas-radius-control); }
 
-.canvas-control-rail { border: var(--canvas-control-edge); border-radius: var(--canvas-radius-pill); background: var(--control-surface-soft); }
+.app-control-rail { border: var(--canvas-control-edge); border-radius: var(--canvas-radius-pill); background: var(--control-surface-soft); }
 
 /* Bare buttons take control geometry, so a button that frames content reads
    as a card. Capsule geometry belongs to the compact-control role: a control
-   class that owns its shape, or canvas-compact-control for a compact action
+   class that owns its shape, or app-compact-control for a compact action
    with no class of its own. */
 button {
   border-radius: var(--canvas-radius-control);
@@ -102,7 +102,7 @@ button {
 }
 
 button:hover { border-color: var(--accent); }
-.canvas-compact-control { border-radius: var(--canvas-radius-pill); }
+.app-compact-control { border-radius: var(--canvas-radius-pill); }
 button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: .5; }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
@@ -640,7 +640,7 @@ a.dash-overview-agent:hover { border-color: var(--accent-slot, var(--accent)); }
 a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .dash-overview-topology-section .section-count { font-variant-numeric: tabular-nums; }
 .dash-overview-agent > header { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 2px; }
-.dash-overview-agent > header .canvas-member-presence { flex: none; width: 6px; height: 6px; border-width: 3px; }
+.dash-overview-agent > header .app-member-presence { flex: none; width: 6px; height: 6px; border-width: 3px; }
 .dash-overview-agent > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: .8rem; }
 .dash-overview-agent > header span,
 .dash-overview-agent > p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -938,12 +938,12 @@ tbody tr:last-child td { border-bottom: 0; }
   font-variant-numeric: tabular-nums;
 }
 /* Whole-team actions ported from the predecessor lane menu. */
-.canvas-team > header {
+.app-team > header {
   align-items: center;
   justify-content: space-between;
 }
-.canvas-team > header > div { display: grid; min-width: 0; gap: 2px; }
-.canvas-menu-panel .canvas-team-member {
+.app-team > header > div { display: grid; min-width: 0; gap: 2px; }
+.app-menu-panel .app-team-member {
   grid-template-columns: 28px minmax(0, 1fr) 16px auto;
 }
 
@@ -1062,7 +1062,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-import-choice:hover,
 .team-import-choice:focus-visible { border-color: var(--accent-slot, var(--accent)); }
 .team-import-choice:disabled { cursor: not-allowed; opacity: 1; }
-.team-import-choice:disabled > :not(.canvas-member-presence) { opacity: .52; }
+.team-import-choice:disabled > :not(.app-member-presence) { opacity: .52; }
 .team-import-action {
   color: var(--accent-slot, var(--accent));
   font: 650 .67rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;

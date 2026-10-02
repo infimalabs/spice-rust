@@ -11,7 +11,7 @@ pub const MAX_FILES: usize = 512;
 /// Maximum complete renderer payload admitted into one generation.
 pub const MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Attribute on the trusted app shell declaring its renderer payloads.
-pub const ATTRIBUTE: &str = "data-canvas-renderer-assets";
+pub const ATTRIBUTE: &str = "data-app-renderer-assets";
 const MAX_DECLARATION_BYTES: usize = 128 * 1024;
 
 /// Closed renderer response kinds; file declarations cannot supply headers.
@@ -145,7 +145,7 @@ pub fn validate(members: &[Member]) -> Result<(), &'static str> {
 /// A shell without renderer files needs no declaration. This remains the
 /// ordinary shell contract; no renderer implementation is selected on error.
 pub fn from_html(html: &[u8]) -> Result<Vec<Member>, &'static str> {
-    const OPEN: &str = "data-canvas-renderer-assets=\"";
+    const OPEN: &str = "data-app-renderer-assets=\"";
     let html = std::str::from_utf8(html).map_err(|_| "app shell is not UTF-8")?;
     let declarations = html.matches(ATTRIBUTE).count();
     if declarations > 1 || (declarations == 1 && !html.contains(OPEN)) {
@@ -180,7 +180,7 @@ pub fn encode(members: &[Member]) -> Result<String, &'static str> {
 
 /// Every exact file the shell declares, including its required base files.
 pub fn filenames(members: &[Member]) -> impl Iterator<Item = std::borrow::Cow<'static, str>> + '_ {
-    super::CANVAS_APP_FILES
+    super::APP_FILES
         .into_iter()
         .map(std::borrow::Cow::Borrowed)
         .chain(
@@ -193,7 +193,7 @@ pub fn filenames(members: &[Member]) -> impl Iterator<Item = std::borrow::Cow<'s
 /// Whether a package path names one supported application asset identity.
 #[must_use]
 pub fn is_app_file(filename: &str) -> bool {
-    super::CANVAS_APP_FILES.contains(&filename) || File::parse_filename(filename).is_some()
+    super::APP_FILES.contains(&filename) || File::parse_filename(filename).is_some()
 }
 
 /// Check that exact bundle bytes match the shell's complete declaration.
@@ -202,18 +202,15 @@ pub fn validate_bundle<'a, N: AsRef<str>>(
 ) -> Result<(), &'static str> {
     let html = files
         .clone()
-        .find_map(|(name, bytes)| (name.as_ref() == super::CANVAS_APP_HTML).then_some(bytes))
+        .find_map(|(name, bytes)| (name.as_ref() == super::APP_HTML).then_some(bytes))
         .ok_or("app bundle has no shell")?;
     let members = from_html(html)?;
-    let mut core = [false; super::CANVAS_APP_FILES.len()];
+    let mut core = [false; super::APP_FILES.len()];
     let mut renderer = [false; MAX_FILES];
     let mut total = 0_u64;
     for (name, bytes) in files {
         let name = name.as_ref();
-        if let Some(index) = super::CANVAS_APP_FILES
-            .iter()
-            .position(|file| *file == name)
-        {
+        if let Some(index) = super::APP_FILES.iter().position(|file| *file == name) {
             if std::mem::replace(&mut core[index], true) {
                 return Err("app bundle repeats a shell file");
             }

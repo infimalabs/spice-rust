@@ -95,13 +95,13 @@ fn history_page_at(
     .expect("message history serializes")
 }
 
-fn apply(runtime: &mut CanvasRuntime, session: &Session, frame: &[u8]) -> bool {
+fn apply(runtime: &mut AppRuntime, session: &Session, frame: &[u8]) -> bool {
     runtime
         .apply_stream_frame(&admitted_stream(session, frame))
         .changed()
 }
 
-fn target_offset(runtime: &CanvasRuntime, lane: &str) -> Option<u64> {
+fn target_offset(runtime: &AppRuntime, lane: &str) -> Option<u64> {
     runtime
         .message_history_target(uuid(lane))
         .and_then(|target| target.before.map(|before| before.offset))
@@ -111,7 +111,7 @@ fn target_offset(runtime: &CanvasRuntime, lane: &str) -> Option<u64> {
 fn hidden_turn_history_advances_to_older_prose_without_rendering_a_card() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let snapshot = message_snapshot(
         vec![agent_message(LANE, 100, T10, "newest prose", None)],
         &[LANE],
@@ -161,7 +161,7 @@ fn hidden_turn_history_advances_to_older_prose_without_rendering_a_card() {
 fn older_history_pages_never_displace_a_lanes_newest_header_prose() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let snapshot = message_snapshot(
         vec![agent_message(LANE, 100, T10, "newest prose", None)],
         &[LANE],
@@ -191,7 +191,7 @@ fn older_history_pages_never_displace_a_lanes_newest_header_prose() {
 fn older_member_history_merges_without_replacing_the_live_activity_head() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let newest = serde_json::json!({
         "lane": LANE,
         "author": LANE_CAPABILITY,
@@ -241,7 +241,7 @@ fn older_member_history_merges_without_replacing_the_live_activity_head() {
 fn history_rejects_a_new_card_inside_the_retained_interval() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let snapshot = message_snapshot(
         vec![
             agent_message(LANE, 100, T10, "retained edge", None),
@@ -274,7 +274,7 @@ fn history_rejects_a_new_card_inside_the_retained_interval() {
 fn an_older_reconnect_snapshot_cannot_roll_back_the_transcript_generation() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let current = message_snapshot_at(
         2,
         vec![agent_message(LANE, 200, T12, "current generation", None)],
@@ -312,7 +312,7 @@ const T14: &str = "2030-04-12T18:44:14.271Z";
 const T15: &str = "2030-04-12T18:44:15.271Z";
 const T16: &str = "2030-04-12T18:44:16.271Z";
 
-fn seed_three_member_frontiers(runtime: &mut CanvasRuntime, session: &Session) {
+fn seed_three_member_frontiers(runtime: &mut AppRuntime, session: &Session) {
     let snapshot = message_snapshot(
         vec![
             agent_message(LANE, 100, T12, "first head", None),
@@ -337,7 +337,7 @@ fn seed_three_member_frontiers(runtime: &mut CanvasRuntime, session: &Session) {
 fn coordinated_history_rejects_duplicate_response_frontiers_before_mutation() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     seed_three_member_frontiers(&mut runtime, &session);
     let requested = vec![
         serde_json::json!({
@@ -381,7 +381,7 @@ fn coordinated_history_rejects_duplicate_response_frontiers_before_mutation() {
 fn a_nonadvancing_open_page_preserves_the_same_cursor() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     seed_three_member_frontiers(&mut runtime, &session);
 
     let empty = history_page(LANE, 100, Vec::new(), true);
@@ -401,7 +401,7 @@ fn a_nonadvancing_open_page_preserves_the_same_cursor() {
 fn a_live_generation_cannot_reopen_an_exhausted_lane_until_a_snapshot_does() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let retained = vec![agent_message(LANE, 100, T12, "retained head", None)];
     assert!(apply(
         &mut runtime,
@@ -457,7 +457,7 @@ fn a_live_generation_cannot_reopen_an_exhausted_lane_until_a_snapshot_does() {
 fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let snapshot = message_snapshot(
         vec![agent_message(LANE, 100, T12, "retained head", None)],
         &[LANE],
@@ -566,7 +566,7 @@ fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
     );
 }
 
-fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &Session) {
+fn interleave_live_work_and_member_pages(runtime: &mut AppRuntime, session: &Session) {
     let third_page = history_page(
         THIRD_LANE,
         300,
@@ -643,7 +643,7 @@ fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &
 }
 
 fn reconnect_and_replay_overlap(
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     session: &Session,
     accepted: &app::Admitted<wire::Accepted>,
 ) {
@@ -715,7 +715,7 @@ fn reconnect_and_replay_overlap(
 fn three_member_frontiers_progress_independently_across_live_work_and_reconnect() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
 
     seed_three_member_frontiers(&mut runtime, &session);
     interleave_live_work_and_member_pages(&mut runtime, &session);

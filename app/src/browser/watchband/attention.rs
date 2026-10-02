@@ -57,7 +57,7 @@ pub(super) struct TeamAttention {
 impl TeamAttention {
     /// Every member's candidate items, dropping consent requests already ruled.
     pub(super) fn new(
-        runtime: &CanvasRuntime,
+        runtime: &AppRuntime,
         standings: &[Standing],
         work: Option<&crate::work::WorkProjection<'_>>,
         sender: &SenderHandle,
@@ -92,7 +92,7 @@ impl TeamAttention {
 
 /// One item renderer that owns every handle its controls need.
 fn item_view(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     sender: &SenderHandle,
     select: &Callback<wire::TaskStamp>,
 ) -> Callback<AttentionItem, Html> {
@@ -280,7 +280,7 @@ fn render_direction(
     } else {
         format!("{pending} waiting")
     };
-    let route = crate::view::CanvasRoute::Directions {
+    let route = crate::view::AppRoute::Directions {
         focus: Some(crate::view::DirectionsFocus::Direction(
             crate::runtime::DirectionRef::Identity(directive),
         )),

@@ -132,7 +132,7 @@ pub(in crate::resident) fn lock_state(
 
 /// Name a card Canvas refused instead of raising it: Canvas is a projection
 /// of durable tapes, so its refusal is a diagnostic, never a resident fault.
-pub(in crate::resident) fn canvas_diagnostic(
+pub(in crate::resident) fn app_diagnostic(
     presented: CommandResult<()>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {

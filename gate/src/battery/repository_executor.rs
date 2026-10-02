@@ -872,7 +872,7 @@ const PATH_LOCAL_ARMS: [GateId; 20] = [
     GateId::MarkdownLinks,
     GateId::AssertionFreeTests,
     GateId::RustTypecheck,
-    GateId::CanvasWebTypecheck,
+    GateId::AppWebTypecheck,
     GateId::JavascriptUnused,
     GateId::CsharpUnusedCandidates,
     GateId::PythonTypecheck,

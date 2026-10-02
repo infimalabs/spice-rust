@@ -245,7 +245,7 @@ fn settle_topology(
 fn apply_command_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     id: CanonicalUuid,
     kind: PendingKind,
     bytes: &[u8],
@@ -288,7 +288,7 @@ fn apply_command_response(
 fn apply_mutating_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     id: CanonicalUuid,
     kind: PendingKind,
     bytes: &[u8],
@@ -369,7 +369,7 @@ fn apply_mutating_response(
 fn apply_note_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     task: wire::TaskStamp,
     text: String,
     after: Option<wire::Seq>,
@@ -417,7 +417,7 @@ fn apply_note_response(
 fn apply_close_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     task: wire::TaskStamp,
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
@@ -454,7 +454,7 @@ fn apply_close_response(
     }
 }
 
-fn refresh_task_detail(runtime: &mut CanvasRuntime, task: &wire::TaskStamp) {
+fn refresh_task_detail(runtime: &mut AppRuntime, task: &wire::TaskStamp) {
     if !runtime.invalidate_task_detail(task) {
         runtime.begin_task_detail(task.clone());
     }
@@ -462,7 +462,7 @@ fn refresh_task_detail(runtime: &mut CanvasRuntime, task: &wire::TaskStamp) {
 
 fn reconcile_note_detail(
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     task: &wire::TaskStamp,
 ) -> CommandApplication {
     let NoteSubmission::Reconciling { text, after } = handles.notes.submission(task) else {
@@ -506,7 +506,7 @@ fn reconcile_note_detail(
 
 fn apply_scalar_response(
     session: &Session,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     kind: PendingKind,
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
@@ -531,7 +531,7 @@ fn apply_scalar_response(
 /// Board history pages: the global Work archive and one team's settled work.
 fn apply_history_response(
     session: &Session,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     kind: PendingKind,
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
@@ -548,7 +548,7 @@ fn apply_history_response(
 fn apply_lane_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     wakes: &[CanonicalUuid],
     refresh_on_failure: bool,
     bytes: &[u8],
@@ -619,7 +619,7 @@ const RENEWAL_ISSUE: &str = "Could not renew this agent";
 fn apply_member_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     kind: PendingKind,
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
@@ -720,7 +720,7 @@ fn apply_lane_renewal_response(
 fn apply_inbox_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     covered: &BTreeMap<CanonicalUuid, String>,
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {

@@ -14,7 +14,7 @@ pub enum SpiceVariable {
     /// Preferred agent vendor selected for transcript forensics.
     #[serde(rename = "SPICE_AGENT_VENDOR")] // env-policy: allow
     AgentVendor,
-    /// Source identity of the canvas app generation the build stamped.
+    /// Source identity of the browser app generation the build stamped.
     #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
     AppSourceIdentity,
     /// Debug marker proving a fast gate path did not launch Cargo metadata.

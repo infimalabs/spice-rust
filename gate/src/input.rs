@@ -43,9 +43,9 @@ pub const LONG_LINE_LIMIT: usize = 100;
 /// Wall-clock ceiling every process a gate run launches answers to.
 ///
 /// One value governs the version probes, `cargo fmt --check`, every metric
-/// parser run, and the canvas analyses alike, so it has to clear the slowest
+/// parser run, and the app analyses alike, so it has to clear the slowest
 /// workload it covers rather than the typical one. That workload is the
-/// `canvas-web-typecheck` arm's `trunk build --release` against a cold
+/// `app-web-typecheck` arm's `trunk build --release` against a cold
 /// `target/xtask-app`. Five cold samples on a machine sharing eleven lanes, at
 /// load averages of 18.8 to 24.2, ran 15.0, 17.2, 19.3, 19.8 and 24.9 seconds;
 /// the same build warm ran 2.6 to 2.9, and the `cargo check` beside it ran 8.9

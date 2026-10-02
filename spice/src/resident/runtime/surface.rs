@@ -114,8 +114,8 @@ async fn start_surface<'a>(
         daemon,
     } = launch;
     let app_description = app.to_string();
-    let CanvasBinding { listen, access } = binding;
-    let CanvasAccess {
+    let AppBinding { listen, access } = binding;
+    let AppAccess {
         policy,
         kind,
         token,
@@ -510,12 +510,12 @@ pub(in crate::resident) fn announce_canvas(
     announcement: &mut dyn io::Write,
     diagnostic: &mut dyn io::Write,
 ) {
-    let result = crate::command_client::open_canvas_result_with(
+    let result = crate::command_client::open_app_result_with(
         discovery_path,
         before_current_check,
         |endpoint| {
             if open {
-                browser(&canvas_opening(endpoint, auth_token))
+                browser(&app_opening(endpoint, auth_token))
             } else {
                 Ok(())
             }
@@ -525,13 +525,13 @@ pub(in crate::resident) fn announce_canvas(
         Ok(opened) => writeln!(
             announcement,
             "app endpoint: {}",
-            canvas_opening(&opened.endpoint, auth_token)
+            app_opening(&opened.endpoint, auth_token)
         ),
         Err(fault) => writeln!(diagnostic, "app unavailable: {}", fault.reason),
     };
 }
 
-fn canvas_opening(endpoint: &str, auth_token: Option<&str>) -> String {
+fn app_opening(endpoint: &str, auth_token: Option<&str>) -> String {
     auth_token.map_or_else(
         || endpoint.to_owned(),
         |token| format!("{endpoint}#{token}"),
@@ -1280,7 +1280,7 @@ fn settle_spoken_acknowledgements(
         message_surface::settle_pending_presentations(bus, &batch, message_state)?;
         commit_message_batch(batch)
     })();
-    message_surface::canvas_diagnostic(settled, diagnostic)
+    message_surface::app_diagnostic(settled, diagnostic)
 }
 
 fn request_lifecycle_reconciliation(

@@ -61,7 +61,7 @@ pub(super) fn render(status: &ArchiveStatus<'_>) -> Html {
                 }}
             </div>
             <div
-                class="work-history-page-actions canvas-control-rail team-mode-rail"
+                class="work-history-page-actions app-control-rail team-mode-rail"
                 role="group"
                 aria-label={status.pages_label}
             >

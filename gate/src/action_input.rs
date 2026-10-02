@@ -44,7 +44,7 @@ pub const fn gate_action_reuse_class(gate_id: GateId) -> Option<ActionReuseClass
         | GateId::LocalPaths
         | GateId::Taste
         | GateId::RustTypecheck
-        | GateId::CanvasWebTypecheck
+        | GateId::AppWebTypecheck
         | GateId::JavascriptUnused
         | GateId::CsharpUnusedCandidates
         | GateId::PythonTypecheck

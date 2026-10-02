@@ -16,7 +16,7 @@ mod source;
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
-const APP_GENERATION_PLACEHOLDER: &str = "__SPICE_CANVAS_GENERATION__";
+const APP_GENERATION_PLACEHOLDER: &str = "__SPICE_APP_GENERATION__";
 const GENERATED_MODULE_REFERENCES: usize = 2;
 const GENERATED_REFERENCES: [(&str, usize); 8] = [
     ("/app.module", 2),
@@ -331,7 +331,7 @@ fn trunk_command(
             "--locked",
             "--filehash=false",
             "--html-output",
-            "canvas-app.html",
+            "app.html",
             "--dist",
         ])
         .arg(stage);
@@ -352,7 +352,7 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
         source,
     })?;
 
-    let html_path = stage.join("canvas-app.html");
+    let html_path = stage.join("app.html");
     let html = fs::read_to_string(&html_path).map_err(|source| AppBuildError::Io {
         path: html_path.clone(),
         source,
@@ -360,7 +360,7 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
     let generated_modules = html.matches("/app.js").count();
     if generated_modules != GENERATED_MODULE_REFERENCES || html.contains("/app.module") {
         return Err(AppBuildError::GeneratedStage(format!(
-            "canvas-app.html carried {generated_modules} app.js references and preexisting \
+            "app.html carried {generated_modules} app.js references and preexisting \
              app.module={}, expected {GENERATED_MODULE_REFERENCES} app.js references only",
             html.contains("/app.module")
         )));
@@ -370,7 +370,7 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
         let observed = html.matches(reference).count();
         if observed != expected {
             return Err(AppBuildError::GeneratedStage(format!(
-                "canvas-app.html carried {observed} {reference} references, expected {expected}"
+                "app.html carried {observed} {reference} references, expected {expected}"
             )));
         }
     }
@@ -383,7 +383,7 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
     let placeholders = html.matches(APP_GENERATION_PLACEHOLDER).count();
     if placeholders != 1 {
         return Err(AppBuildError::GeneratedStage(format!(
-            "canvas-app.html carried {placeholders} app generation placeholders, expected one"
+            "app.html carried {placeholders} app generation placeholders, expected one"
         )));
     }
     let mut qualified = html.replace(APP_GENERATION_PLACEHOLDER, identity.as_str());
@@ -438,7 +438,7 @@ fn validate_qualified_references(html: &str, identity: &Digest) -> Result<(), Ap
         let total = html.matches(asset.path()).count();
         if qualified != expected || total != expected {
             return Err(AppBuildError::GeneratedStage(format!(
-                "rewritten canvas-app.html carried {qualified} qualified and {total} total {} \
+                "rewritten app.html carried {qualified} qualified and {total} total {} \
                  references, expected {expected}",
                 asset.path()
             )));
@@ -509,7 +509,7 @@ fn generation_digest(stage: &Path) -> Result<Digest, AppBuildError> {
 }
 
 fn generation_files(stage: &Path) -> Result<Vec<std::borrow::Cow<'static, str>>, AppBuildError> {
-    let html = read_regular(&stage.join(wire::manifest::CANVAS_APP_HTML))?;
+    let html = read_regular(&stage.join(wire::manifest::APP_HTML))?;
     let members = wire::manifest::renderer::from_html(&html)
         .map_err(|error| AppBuildError::GeneratedStage(error.to_owned()))?;
     Ok(wire::manifest::renderer::filenames(&members).collect())

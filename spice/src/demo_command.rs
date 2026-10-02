@@ -235,7 +235,7 @@ where
         return reply(&environment, "seeded", "preserved", None);
     }
     let cleanup = environment.automatic && !preserve;
-    canvas_environment_with(
+    app_environment_with(
         environment,
         cleanup,
         control.signals,

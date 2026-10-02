@@ -15,9 +15,9 @@ use wire::TaskStamp;
 use yew::prelude::*;
 
 use super::SurfaceData;
-use crate::view::{CanvasRoute, NormalizedCanvasLocation, RouteStep, normalize_canvas_location};
+use crate::view::{AppRoute, NormalizedAppLocation, RouteStep, normalize_app_location};
 use crate::work::{WorkProjection, WorkScope};
-use crate::{CanvasDestination, CanvasRuntime};
+use crate::{AppDestination, AppRuntime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
@@ -36,7 +36,7 @@ pub(super) enum Intent {
 pub(super) enum Navigation {
     Step(RouteStep),
     /// Replace a route whose settled data refused a segment, naming it.
-    Refuse(CanvasRoute, String),
+    Refuse(AppRoute, String),
     /// Close the routed task detail. Back consumes the entry this page pushed
     /// to open it; any other task entry is replaced by its containing scope.
     CloseTask,
@@ -52,15 +52,15 @@ pub(super) struct RouteNotice {
 
 /// Translate one reader intent against the route it was made on.
 pub(super) fn intent_callback(
-    route: CanvasRoute,
+    route: AppRoute,
     navigate: Callback<Navigation>,
     local_task: UseStateHandle<Option<TaskStamp>>,
     surface: UseStateHandle<SurfaceData>,
 ) -> Callback<Intent> {
     Callback::from(move |intent| {
         let step = match intent {
-            Intent::Dash => route.show(CanvasDestination::Dash),
-            Intent::Chat => route.show(CanvasDestination::Chat),
+            Intent::Dash => route.show(AppDestination::Dash),
+            Intent::Chat => route.show(AppDestination::Chat),
             Intent::Work(scope) => route.show_work(scope),
             Intent::Task(task) => {
                 let Some(scope) = route.work_scope() else {
@@ -70,7 +70,7 @@ pub(super) fn intent_callback(
                 let scope = surface
                     .read()
                     .as_ref()
-                    .and_then(CanvasRuntime::board)
+                    .and_then(AppRuntime::board)
                     .map_or(WorkScope::AllOpen, |board| {
                         WorkProjection::from_board(board).scope_showing(&task, scope)
                     });
@@ -92,7 +92,7 @@ pub(super) fn intent_callback(
 }
 
 #[hook]
-pub(super) fn use_route() -> (CanvasRoute, Option<RouteNotice>, Callback<Navigation>) {
+pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<Navigation>) {
     let location = use_state(location_route);
     let notice = use_state(|| None::<RouteNotice>);
     let announced = use_mut_ref(|| 0_u64);
@@ -184,7 +184,7 @@ pub(super) fn use_route() -> (CanvasRoute, Option<RouteNotice>, Callback<Navigat
 
 /// Replace the current entry, carrying this page's ownership of a task entry
 /// to the task that replaces it.
-fn replace_owned(owned: &Rc<RefCell<Option<String>>>, current: &str, route: &CanvasRoute) {
+fn replace_owned(owned: &Rc<RefCell<Option<String>>>, current: &str, route: &AppRoute) {
     let path = route.path();
     let mut owned = owned.borrow_mut();
     if owned.as_deref() == Some(current) {
@@ -193,7 +193,7 @@ fn replace_owned(owned: &Rc<RefCell<Option<String>>>, current: &str, route: &Can
     write_location(&path, Entry::Replace);
 }
 
-fn location_route() -> NormalizedCanvasLocation {
+fn location_route() -> NormalizedAppLocation {
     let window = web_sys::window().expect("Canvas navigation requires a browser window");
     let location = window.location();
     let search = location
@@ -202,11 +202,11 @@ fn location_route() -> NormalizedCanvasLocation {
     let hash = location
         .hash()
         .expect("Canvas navigation requires the current fragment");
-    normalize_canvas_location(&search, &hash)
+    normalize_app_location(&search, &hash)
 }
 
 /// Replace the current entry with one route before routing starts.
-pub(super) fn replace_location(route: &CanvasRoute) {
+pub(super) fn replace_location(route: &AppRoute) {
     write_location(&route.path(), Entry::Replace);
 }
 

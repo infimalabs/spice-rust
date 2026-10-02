@@ -46,7 +46,7 @@ pub(super) fn history_page_answer(
 fn work_history_replaces_pages_and_navigates_in_both_directions() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let open = board_response(&session, "Hidden open work");
     runtime.apply_board(&open);
 
@@ -130,7 +130,7 @@ fn work_history_filters_and_reconnects_invalidate_older_requests() {
 
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let open = board_response(&session, "Hidden open work");
     runtime.apply_board(&open);
     let stale = runtime

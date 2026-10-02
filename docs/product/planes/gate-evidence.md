@@ -304,7 +304,7 @@ without a declaration, because nothing it could have been compiled by remains.
 | `local-paths` | cacheable | reached paths and local-path policy |
 | `taste` | cacheable | reached text, taste policy and parser declaration |
 | `rust-typecheck` | cacheable | Cargo closure, manifest and lockfile, closed build-script/proc-macro file, environment, and generated-output derivations, Rust toolchain, exact command and environment |
-| `canvas-web-typecheck` | cacheable | App TypeScript closure, package lock, Node tool identity, exact command and environment |
+| `app-web-typecheck` | cacheable | App TypeScript closure, package lock, Node tool identity, exact command and environment |
 | `javascript-unused` | cacheable | JavaScript dependency closure, parser and policy |
 | `csharp-unused-candidates` | cacheable | C# dependency closure, parser and policy |
 | `python-typecheck` | cacheable | Python dependency closure, interpreter and policy |

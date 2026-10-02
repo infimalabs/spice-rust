@@ -3,16 +3,16 @@ use std::fs;
 use super::fixture::{Fixture, execution_starts, proof_action, streams};
 
 #[test]
-fn not_applicable_canvas_web_proof_does_not_claim_tool_movement() {
+fn not_applicable_app_web_proof_does_not_claim_tool_movement() {
     let fixture = Fixture::new();
-    let output = fixture.prove_action_output(&fixture.older, "canvas-web-typecheck");
+    let output = fixture.prove_action_output(&fixture.older, "app-web-typecheck");
     assert!(
         output.status.success(),
-        "not-applicable Canvas proof failed: {}",
+        "not-applicable app proof failed: {}",
         streams(&output)
     );
     let action = proof_action(&output);
-    assert_eq!(action["action"], "canvas-web-typecheck");
+    assert_eq!(action["action"], "app-web-typecheck");
     assert_eq!(action["disposition"], "published");
     assert_eq!(execution_starts(&fixture.executions), 0);
 }

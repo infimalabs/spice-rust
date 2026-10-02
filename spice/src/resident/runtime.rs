@@ -50,7 +50,7 @@ pub(super) struct SurfaceConfig {
 struct SurfaceLaunch<'a> {
     app: canvas::AppSource,
     version: wire::Version,
-    binding: CanvasBinding,
+    binding: AppBinding,
     resident_lock: &'a ResidentLock,
     /// Whether the operator asked this start to also open the app.
     ///
@@ -309,12 +309,12 @@ impl Drop for PublishedDiscovery {
 pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
-pub(crate) struct CanvasBinding {
+pub(crate) struct AppBinding {
     listen: SocketAddr,
-    access: CanvasAccess,
+    access: AppAccess,
 }
 
-pub(super) struct CanvasAccess {
+pub(super) struct AppAccess {
     policy: canvas::axum::Access,
     kind: ResidentAccess,
     pub(super) token: Option<String>,
@@ -329,7 +329,7 @@ impl AppSelection {
     fn resolve(self, repository: &Repository) -> CommandResult<canvas::AppSource> {
         match self {
             Self::Installed(executable) => {
-                spice::install::installed_canvas_source(repository, &executable)
+                spice::install::installed_app_source(repository, &executable)
                     .map_err(installed_app_refusal)
             }
             Self::Staged => {
@@ -341,11 +341,11 @@ impl AppSelection {
     }
 }
 
-impl CanvasBinding {
+impl AppBinding {
     pub(crate) fn local(listen: SocketAddr) -> Self {
         Self {
             listen,
-            access: CanvasAccess {
+            access: AppAccess {
                 policy: canvas::axum::Access::local(),
                 kind: ResidentAccess::Local,
                 token: None,
@@ -388,7 +388,7 @@ pub(crate) fn up(
     up_from_with(
         &current,
         app,
-        CanvasBinding { listen, access },
+        AppBinding { listen, access },
         leaf.get_flag("open"),
         progress,
         endpoint,
@@ -424,7 +424,7 @@ pub(super) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketA
 pub(super) fn requested_access(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
-) -> CommandResult<CanvasAccess> {
+) -> CommandResult<AppAccess> {
     requested_access_with(leaf, listen, None)
 }
 
@@ -432,7 +432,7 @@ fn requested_access_with(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
     handoff_token: Option<String>,
-) -> CommandResult<CanvasAccess> {
+) -> CommandResult<AppAccess> {
     let argument_token = leaf.get_one::<String>("auth-token").cloned();
     if argument_token.is_some() && handoff_token.is_some() {
         return Err(environment_fault(
@@ -476,7 +476,7 @@ fn requested_access_with(
         (ResidentAccess::Local, None) => canvas::axum::Access::local(),
         _ => unreachable!("access kind and token derive together"),
     };
-    Ok(CanvasAccess {
+    Ok(AppAccess {
         policy,
         kind,
         token,
@@ -505,7 +505,7 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
 }
 
 /// Run the explicit demo/test surface against its worktree-built app stage.
-pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
+pub(crate) fn up_from(current: &Path, binding: AppBinding) -> Outcome<()> {
     up_from_with(
         current,
         AppSelection::Staged,
@@ -520,7 +520,7 @@ pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
 fn up_from_with(
     current: &Path,
     app: AppSelection,
-    binding: CanvasBinding,
+    binding: AppBinding,
     open: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
@@ -563,7 +563,7 @@ fn up_from_with(
     if let Err(outcome) = steering::admit_index(&mut journal) {
         return outcome;
     }
-    let version = match identity::canvas_version_from_journal(&app, &journal) {
+    let version = match identity::app_version_from_journal(&app, &journal) {
         Ok(version) => version,
         Err(outcome) => return outcome,
     };

@@ -54,7 +54,7 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
         ),
     );
 
-    for gate_id in ["rust-typecheck", "canvas-web-typecheck"] {
+    for gate_id in ["rust-typecheck", "app-web-typecheck"] {
         let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
             .args(["gate", gate_id])
             .current_dir(&fixture.repository)
@@ -81,7 +81,7 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
                 "-- -D warnings",
             )
         }),
-        "canvas standalone Cargo analysis did not run: {cargo}"
+        "app standalone Cargo analysis did not run: {cargo}"
     );
     let trunk = fs::read_to_string(&trunk_log).expect("read standalone Trunk trace");
     assert_eq!(
@@ -287,7 +287,7 @@ impl Fixture {
             .expect("write verifier fixture source");
         let repository_fixture = RepositoryFixture::initialize(&repository);
         repository_fixture.commit_all();
-        seed_canvas_stage(&repository);
+        seed_app_stage(&repository);
 
         let binaries = root.join("current-build");
         fs::create_dir(&binaries).expect("create fixture current-build directory");
@@ -306,25 +306,25 @@ impl Fixture {
     }
 }
 
-fn seed_canvas_stage(worktree: &Path) {
+fn seed_app_stage(worktree: &Path) {
     let generation = wire::Digest::compute(wire::Domain::DistInventory, b"xtask verifier app");
     let stage = worktree.join(spice::canvas::APP_STAGE);
     let root = stage
         .join(spice::canvas::APP_STAGE_GENERATIONS)
         .join(generation.as_str());
-    fs::create_dir_all(&root).expect("create verifier fixture Canvas generation");
+    fs::create_dir_all(&root).expect("create verifier fixture app generation");
     for asset in spice::canvas::APP.assets() {
         fs::write(
             root.join(asset.file()),
-            format!("xtask verifier Canvas asset {}\n", asset.file()),
+            format!("xtask verifier app asset {}\n", asset.file()),
         )
-        .expect("write verifier fixture Canvas asset");
+        .expect("write verifier fixture app asset");
     }
     fs::write(
         stage.join(spice::canvas::APP_STAGE_CURRENT),
         format!("{generation}\n"),
     )
-    .expect("write verifier fixture Canvas pointer");
+    .expect("write verifier fixture app pointer");
 }
 
 impl Drop for Fixture {

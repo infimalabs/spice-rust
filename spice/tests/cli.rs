@@ -268,7 +268,7 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
     );
     assert_eq!(text_body.wire, wire::WireVersion::CURRENT);
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);
-    assert_eq!(text_body.canvas, wire::CanvasVersion::CURRENT);
+    assert_eq!(text_body.app_protocol, wire::AppProtocolVersion::CURRENT);
     assert_eq!(
         text_body.app,
         canvas::AppSource::resolve(repository.path())

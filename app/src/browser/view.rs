@@ -61,7 +61,7 @@ pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html
     let label = status.label();
     html! {
         <span
-            class={classes!("agent-presence-indicator", "canvas-member-presence", status.key())}
+            class={classes!("agent-presence-indicator", "app-member-presence", status.key())}
             role="img"
             data-lane-status={status.key()}
             aria-label={label}
@@ -70,17 +70,17 @@ pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html
     }
 }
 
-pub(super) struct CanvasRender<'a> {
+pub(super) struct AppRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
-    pub destination: CanvasDestination,
+    pub destination: AppDestination,
     pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
-    pub canvas_menu_open: &'a UseStateHandle<bool>,
+    pub app_menu_open: &'a UseStateHandle<bool>,
     pub work_scope: &'a WorkScope,
     pub work_arrangement: &'a UseStateHandle<WorkArrangement>,
-    pub identity: &'a UseStateHandle<Option<CanvasIdentity>>,
-    pub canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
+    pub identity: &'a UseStateHandle<Option<AppIdentity>>,
+    pub app_update: &'a UseStateHandle<Option<AppUpdate>>,
     pub team_controls: &'a UseReducerHandle<TeamControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
@@ -107,22 +107,22 @@ pub(super) struct CanvasRender<'a> {
     pub retry_relations: Callback<MouseEvent>,
 }
 
-pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let surface = render.surface.read();
     let cursor = surface
         .as_ref()
-        .and_then(CanvasRuntime::resume)
+        .and_then(AppRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     let topology_revision = surface
         .as_ref()
-        .and_then(CanvasRuntime::lanes)
+        .and_then(AppRuntime::lanes)
         .map(|lanes| lanes.topology_revision.to_string());
     html! {
         <div
             class={classes!(
                 "shell",
-                (render.destination == CanvasDestination::Chat).then_some("shell--mosaic"),
+                (render.destination == AppDestination::Chat).then_some("shell--mosaic"),
             )}
             data-topology-revision={topology_revision}
             data-unsafe-intent={render.unsafe_intent.to_string()}
@@ -131,10 +131,10 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             {chrome::render_command_bar(chrome::CommandBarRender {
                 connection: render.connection,
                 destination: render.destination,
-                menu_open: render.canvas_menu_open,
+                menu_open: render.app_menu_open,
                 navigate: render.navigate,
                 identity: render.identity,
-                canvas_update: render.canvas_update,
+                app_update: render.app_update,
                 work_scope: render.work_scope,
                 work,
                 surface: render.surface,
@@ -157,11 +157,8 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
     }
 }
 
-pub(super) fn render_workspace(
-    render: &CanvasRender<'_>,
-    work: Option<&WorkProjection<'_>>,
-) -> Html {
-    let mosaic_active = render.destination == CanvasDestination::Chat;
+pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+    let mosaic_active = render.destination == AppDestination::Chat;
     let active_axis = render.destination.axis();
     html! {
         <>
@@ -189,7 +186,7 @@ pub(super) fn render_workspace(
 }
 
 fn render_analytics(
-    render: &CanvasRender<'_>,
+    render: &AppRender<'_>,
     active_axis: Axis,
     work: Option<&WorkProjection<'_>>,
 ) -> Html {
@@ -216,7 +213,7 @@ fn render_analytics(
 }
 
 pub(super) const fn axis_label(axis: Axis) -> &'static str {
-    CanvasDestination::for_axis(axis).label()
+    AppDestination::for_axis(axis).label()
 }
 fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
     match axis {
@@ -251,10 +248,10 @@ pub(super) struct SeatDraft {
     pub(super) notice: UseStateHandle<Notice>,
 }
 
-pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
+pub(super) fn render_seat_panel(runtime: Option<&AppRuntime>, controls: &AgentControls) -> Html {
     let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
     let draft = &controls.seat;
-    let catalog = runtime.and_then(CanvasRuntime::vendor_catalog);
+    let catalog = runtime.and_then(AppRuntime::vendor_catalog);
     let selected = catalog.and_then(crate::compose::seat_vendor);
     let ready = can_seat && selected.is_some() && !draft.life.trim().is_empty();
     let default_model = selected.map_or("", |vendor| vendor.default_model.as_str());
@@ -262,7 +259,7 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     html! {
         <aside class="seat-panel">
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
-                <button type="submit" class="canvas-compact-control" disabled={!ready}>{"Seat agent"}</button>
+                <button type="submit" class="app-compact-control" disabled={!ready}>{"Seat agent"}</button>
                 <label>
                     <span title="Name">{"Name"}</span>
                     <input id="seat-name" type="text" placeholder="Ava" />
@@ -312,7 +309,7 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     }
 }
 
-pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let Some(work) = work else {
         return match &**render.connection {
             Connection::Starting | Connection::Connecting => {
@@ -350,11 +347,11 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                         map: render.work_map,
                         select: render.select_task.clone(),
                         creator_context,
-                        creator_messages: runtime.map(CanvasRuntime::messages).unwrap_or_default(),
+                        creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
                         toggle_map_root,
                         arrangement: render.work_arrangement,
-                        lanes: runtime.and_then(CanvasRuntime::lanes),
-                        history_state: runtime.map(CanvasRuntime::work_history),
+                        lanes: runtime.and_then(AppRuntime::lanes),
+                        history_state: runtime.map(AppRuntime::work_history),
                         history: render.work_history,
                     },
                 )}
@@ -373,7 +370,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     }
 }
 
-fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let Some(work) = work else {
         return Html::default();
     };
@@ -388,10 +385,10 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
     work_detail::render(work_detail::WorkDetailRender {
         work,
         scope: render.work_scope,
-        lanes: runtime.and_then(CanvasRuntime::lanes),
+        lanes: runtime.and_then(AppRuntime::lanes),
         navigate: render.navigate,
         team_controls: render.team_controls,
-        creator_messages: runtime.map(CanvasRuntime::messages).unwrap_or_default(),
+        creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
         selected,
         presented: render.detail_presented,
         closing: render.detail_closing,
@@ -415,7 +412,7 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
 
 /// The resident dashboard body and, once agent standings are held, the page
 /// summary over the same standings the topology section renders.
-fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
+fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
     let surface = render.surface.read();
     let Some(runtime) = surface.as_ref() else {
         return (None, empty("No admitted topology is available."));
@@ -514,7 +511,7 @@ fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
 
 fn render_operator_and_resident(
     settings: Option<&wire::intent::GlobalSettingsAnswer>,
-    identity: Option<&CanvasIdentity>,
+    identity: Option<&AppIdentity>,
     connection: &Connection,
 ) -> Html {
     let appliance = identity.map_or_else(

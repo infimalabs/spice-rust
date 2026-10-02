@@ -198,5 +198,5 @@ pub(super) fn present<P: AgentMessagePublisher>(
         None,
         None,
     );
-    canvas_diagnostic(presented, views.diagnostic)
+    app_diagnostic(presented, views.diagnostic)
 }

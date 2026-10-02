@@ -128,7 +128,7 @@ impl Resident {
             // shared machine cannot all have it.
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
-            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
+            .arg(spice::install::TEST_APP_STAGE_ARGUMENT)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

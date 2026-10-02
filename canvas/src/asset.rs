@@ -9,51 +9,43 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 static APP_ASSETS: [AppAsset; 9] = [
-    AppAsset::new(
-        "/",
-        wire::manifest::CANVAS_APP_HTML,
-        "text/html; charset=utf-8",
-    ),
+    AppAsset::new("/", wire::manifest::APP_HTML, "text/html; charset=utf-8"),
     AppAsset::new(
         "/app.module",
-        wire::manifest::CANVAS_APP_MODULE,
+        wire::manifest::APP_MODULE,
         "text/javascript; charset=utf-8",
     ),
     AppAsset::new(
         "/style.css",
-        wire::manifest::CANVAS_STYLE,
+        wire::manifest::APP_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
         "/mosaic.css",
-        wire::manifest::CANVAS_MOSAIC_STYLE,
+        wire::manifest::MOSAIC_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
         "/chrome.css",
-        wire::manifest::CANVAS_CHROME_STYLE,
+        wire::manifest::CHROME_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
         "/composer.css",
-        wire::manifest::CANVAS_COMPOSER_STYLE,
+        wire::manifest::COMPOSER_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
         "/work.css",
-        wire::manifest::CANVAS_WORK_STYLE,
+        wire::manifest::WORK_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
         "/responsive.css",
-        wire::manifest::CANVAS_RESPONSIVE_STYLE,
+        wire::manifest::RESPONSIVE_STYLE,
         "text/css; charset=utf-8",
     ),
-    AppAsset::new(
-        "/app_bg.wasm",
-        wire::manifest::CANVAS_WASM,
-        "application/wasm",
-    ),
+    AppAsset::new("/app_bg.wasm", wire::manifest::APP_WASM, "application/wasm"),
 ];
 
 /// The sole browser app generation store, built and served per worktree.
@@ -155,7 +147,7 @@ impl fmt::Debug for App {
     }
 }
 
-/// The lane-built browser app served by one canvas generation.
+/// The lane-built browser app served by one app generation.
 #[derive(Clone)]
 pub struct AppSource {
     stage: PathBuf,
@@ -254,16 +246,13 @@ impl AppSource {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(generation) = cache.generations.get(&identity).cloned() {
             if current {
-                if !generation
-                    .assets
-                    .contains_key(wire::manifest::CANVAS_WORK_STYLE)
-                {
+                if !generation.assets.contains_key(wire::manifest::WORK_STYLE) {
                     return Err(AppSourceError::Incomplete {
                         directory: self
                             .stage
                             .join(APP_STAGE_GENERATIONS)
                             .join(identity.as_str()),
-                        missing: vec![wire::manifest::CANVAS_WORK_STYLE.to_owned()],
+                        missing: vec![wire::manifest::WORK_STYLE.to_owned()],
                         source: None,
                     });
                 }
@@ -283,7 +272,7 @@ impl AppSource {
             .iter()
             .map(|asset| {
                 let path = directory.join(asset.file());
-                let bytes = if asset.file() == wire::manifest::CANVAS_APP_HTML {
+                let bytes = if asset.file() == wire::manifest::APP_HTML {
                     Arc::clone(&inventory.html)
                 } else {
                     Arc::<[u8]>::from(
@@ -562,14 +551,11 @@ fn validate_generation(
         })
         .collect::<Result<Vec<_>, _>>()?;
     observed.sort();
-    let path = directory.join(wire::manifest::CANVAS_APP_HTML);
-    if !observed
-        .iter()
-        .any(|file| file == wire::manifest::CANVAS_APP_HTML)
-    {
+    let path = directory.join(wire::manifest::APP_HTML);
+    if !observed.iter().any(|file| file == wire::manifest::APP_HTML) {
         return Err(AppSourceError::Incomplete {
             directory: directory.to_path_buf(),
-            missing: vec![wire::manifest::CANVAS_APP_HTML.to_owned()],
+            missing: vec![wire::manifest::APP_HTML.to_owned()],
             source: None,
         });
     }
@@ -584,9 +570,9 @@ fn validate_generation(
     let legacy = !current
         && !observed
             .iter()
-            .any(|file| file == wire::manifest::CANVAS_WORK_STYLE);
+            .any(|file| file == wire::manifest::WORK_STYLE);
     let mut expected = wire::manifest::renderer::filenames(&members)
-        .filter(|file| !legacy || file.as_ref() != wire::manifest::CANVAS_WORK_STYLE)
+        .filter(|file| !legacy || file.as_ref() != wire::manifest::WORK_STYLE)
         .map(std::borrow::Cow::into_owned)
         .collect::<Vec<_>>();
     expected.sort();
@@ -617,7 +603,7 @@ fn validate_generation(
             .assets()
             .iter()
             .copied()
-            .filter(|asset| !legacy || asset.file() != wire::manifest::CANVAS_WORK_STYLE)
+            .filter(|asset| !legacy || asset.file() != wire::manifest::WORK_STYLE)
             .collect(),
         renderers: members,
         html,
@@ -678,7 +664,7 @@ impl fmt::Debug for ServedAsset {
 /// Why a canvas could not settle or serve its app source.
 #[derive(Debug)]
 pub enum AppSourceError {
-    /// A app stage directory exists without the whole app in it.
+    /// An app stage directory exists without the whole app in it.
     Incomplete {
         /// The directory that was read.
         directory: PathBuf,
@@ -884,7 +870,7 @@ mod tests {
     /// A worktree with nothing in it yet.
     fn worktree() -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "spice-canvas-app-source-{}-{}",
+            "spice-app-source-{}-{}",
             std::process::id(),
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -954,7 +940,7 @@ mod tests {
             .expect("staged files are readable")
             .expect("the root route is served");
         assert_eq!(served.content_type(), "text/html; charset=utf-8");
-        assert_eq!(served.bytes(), b"locally built canvas-app.html");
+        assert_eq!(served.bytes(), b"locally built app.html");
         let wasm_route = first_generation.route(
             APP.asset("/app_bg.wasm")
                 .expect("the closed inventory has wasm"),
@@ -969,7 +955,7 @@ mod tests {
         let mut rebuilt = app();
         rebuilt
             .iter_mut()
-            .find(|(file, _)| *file == "canvas-app.html")
+            .find(|(file, _)| *file == "app.html")
             .expect("fixture shell")
             .1 = b"rebuilt".to_vec();
         staged_as(&root, SECOND_GENERATION, &rebuilt);
@@ -1072,7 +1058,7 @@ mod tests {
                 .expect("the root remains routed")
                 .bytes()
                 .to_vec(),
-            b"locally built canvas-app.html"
+            b"locally built app.html"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -1099,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_history_without_work_css_cannot_be_promoted_to_the_current_generation() {
+    fn app_history_without_work_css_cannot_be_promoted_to_the_current_generation() {
         let root = worktree();
         let legacy = app()
             .into_iter()

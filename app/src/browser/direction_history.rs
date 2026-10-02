@@ -42,7 +42,7 @@ fn clear_input(id: &str) {
 fn queue(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    reserve: impl FnOnce(&mut CanvasRuntime) -> Option<crate::runtime::DirectionHistoryRequest>,
+    reserve: impl FnOnce(&mut AppRuntime) -> Option<crate::runtime::DirectionHistoryRequest>,
 ) {
     let request = {
         let mut data = surface.write();
@@ -81,7 +81,7 @@ fn queue(
 fn release_route(navigate: &Callback<navigation::Navigation>, focused: bool) {
     if focused {
         navigate.emit(navigation::Navigation::Step(
-            crate::view::RouteStep::Replace(CanvasRoute::Directions { focus: None }),
+            crate::view::RouteStep::Replace(AppRoute::Directions { focus: None }),
         ));
     }
 }
@@ -93,7 +93,7 @@ fn team_lanes(
     surface
         .read()
         .as_ref()
-        .and_then(CanvasRuntime::lanes)
+        .and_then(AppRuntime::lanes)
         .map(|topology| {
             topology
                 .lanes
@@ -153,7 +153,7 @@ impl Selections {
 fn read_on_click(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    reserve: fn(&mut CanvasRuntime) -> Option<crate::runtime::DirectionHistoryRequest>,
+    reserve: fn(&mut AppRuntime) -> Option<crate::runtime::DirectionHistoryRequest>,
 ) -> Callback<MouseEvent> {
     let sender = sender.clone();
     let surface = surface.clone();
@@ -190,7 +190,7 @@ fn serve_route(
             if surface
                 .read()
                 .as_ref()
-                .and_then(CanvasRuntime::lanes)
+                .and_then(AppRuntime::lanes)
                 .is_none()
             {
                 return false;
@@ -272,7 +272,7 @@ pub(super) fn use_controls(
             (active, revision, surface_ready),
             move |(active, _, surface_ready)| {
                 if *active && *surface_ready {
-                    queue(&sender, &surface, CanvasRuntime::begin_direction_history);
+                    queue(&sender, &surface, AppRuntime::begin_direction_history);
                 }
             },
         );
@@ -310,17 +310,9 @@ pub(super) fn use_controls(
     let toggle_agent = toggle_set(&selected_agents);
     let toggle_team = toggle_set(&selected_teams);
     let toggle_state = toggle_set(&selected_states);
-    let newer = read_on_click(
-        &sender,
-        &surface,
-        CanvasRuntime::begin_newer_direction_history,
-    );
-    let older = read_on_click(
-        &sender,
-        &surface,
-        CanvasRuntime::begin_older_direction_history,
-    );
-    let retry = read_on_click(&sender, &surface, CanvasRuntime::retry_direction_history);
+    let newer = read_on_click(&sender, &surface, AppRuntime::begin_newer_direction_history);
+    let older = read_on_click(&sender, &surface, AppRuntime::begin_older_direction_history);
+    let retry = read_on_click(&sender, &surface, AppRuntime::retry_direction_history);
     Controls {
         validation,
         selected_agents,

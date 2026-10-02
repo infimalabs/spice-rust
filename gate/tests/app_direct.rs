@@ -1,4 +1,4 @@
-//! Process proof for the direct Canvas WASM typecheck command.
+//! Process proof for the direct app WASM typecheck command.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,19 +8,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn canvas_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache() {
+fn app_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache() {
     let fixture = Fixture::new();
     let repository_config = fs::read_to_string(fixture.repository().join(".cargo/config.toml"))
         .expect("read repository Cargo aliases");
     assert!(
         repository_config.contains(concat!(
-            "canvas-wasm-typecheck = \"clippy --locked --package app ",
+            "app-wasm-typecheck = \"clippy --locked --package app ",
             "--target wasm32-unknown-unknown -- -D warnings\"",
         )),
-        "the direct alias must remain the package-scoped canonical Canvas command",
+        "the direct alias must remain the package-scoped canonical app command",
     );
     fixture.write(".cargo/config.toml", &repository_config);
-    fixture.package("app", "pub fn canvas() -> u8 { 1 }\n");
+    fixture.package("app", "pub fn app() -> u8 { 1 }\n");
     fixture.package(
         "unrelated-native",
         "compile_error!(\"unrelated native package was compiled\");\n",
@@ -49,7 +49,7 @@ fn canvas_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache() {
     );
 
     let output = Command::new(env!("CARGO"))
-        .arg("canvas-wasm-typecheck")
+        .arg("app-wasm-typecheck")
         .current_dir(fixture.root())
         .env("CARGO_TARGET_DIR", fixture.root().join("cold-target"))
         .env(
@@ -60,7 +60,7 @@ fn canvas_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache() {
         .env("RUSTC_WORKSPACE_WRAPPER", "")
         .env("CARGO_TERM_COLOR", "never")
         .output()
-        .expect("launch direct Canvas WASM typecheck");
+        .expect("launch direct app WASM typecheck");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "{stderr}");
@@ -82,13 +82,13 @@ impl Fixture {
         let root = loop {
             let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
             let candidate = std::env::temp_dir().join(format!(
-                "canvas-direct-fixture-{}-{ordinal}",
+                "app-direct-fixture-{}-{ordinal}",
                 std::process::id()
             ));
             match fs::create_dir(&candidate) {
                 Ok(()) => break candidate,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => panic!("create cold Canvas fixture: {error}"),
+                Err(error) => panic!("create cold app fixture: {error}"),
             }
         };
         Self {
@@ -131,6 +131,6 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).expect("remove cold Canvas fixture");
+        fs::remove_dir_all(&self.root).expect("remove cold app fixture");
     }
 }

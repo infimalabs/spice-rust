@@ -2,20 +2,20 @@
 
 ## Browser evidence follows the host system theme
 
-Use the repository-owned `launchCanvasBrowser` helper for disposable app
+Use the repository-owned `launchAppBrowser` helper for disposable app
 browser checks. It detects the host appearance and gives the headless context
 the matching `prefers-color-scheme`; callers do not repeat theme setup:
 
 ```js
 import { chromium } from "playwright";
-import launchCanvasBrowser from "./app/browser/canvas.mjs";
+import launchAppBrowser from "./app/browser/app.mjs";
 
-const canvas = await launchCanvasBrowser(chromium);
+const app = await launchAppBrowser(chromium);
 try {
-  await canvas.page.goto(canvasUrl);
+  await app.page.goto(appUrl);
   // Inspect or capture the actual app surface.
 } finally {
-  await canvas.close();
+  await app.close();
 }
 ```
 
@@ -24,10 +24,10 @@ Ordinary screenshots and visual checks retain the system default. The returned
 `colorScheme` and `colorSchemeSource` report the selected value and whether it
 came from `"system"` detection or `"explicit"` configuration. This browser
 preference never changes an explicit app preference: a stored
-`spice:canvas-theme` still wins.
+`spice:app-theme` still wins.
 
 ```js
-const lightCanvas = await launchCanvasBrowser(chromium, {
+const lightApp = await launchAppBrowser(chromium, {
   contextOptions: { colorScheme: "light" },
 });
 ```
@@ -186,9 +186,9 @@ quote presentation.
 
 The app exposes opt-in User Timing diagnostics without changing route parsing.
 Open the ordinary app URL, run
-`sessionStorage.setItem("spice:canvas-trace", "1"); location.reload()` in its
+`sessionStorage.setItem("spice:app-trace", "1"); location.reload()` in its
 developer console, and leave that tab open for the capture. A traced page
-installs `window.__spiceCanvasTrace`; an ordinary page does not attach the
+installs `window.__spiceAppTrace`; an ordinary page does not attach the
 native input listeners or create timing entries.
 
 Build the current browser body with `spice dev xtask -- app` and serve that
@@ -197,7 +197,7 @@ same interaction:
 
 1. Open `about:profiling` in Firefox, select the **Web Developer** preset, and
    start the profiler.
-2. In the traced app tab, run `window.__spiceCanvasTrace.clear()` in the
+2. In the traced app tab, run `window.__spiceAppTrace.clear()` in the
    developer console immediately before the scenario.
 3. Perform one fixed scenario: use the same loaded board, focus the same
    composer, enter or dictate the same text, and trigger the same resident
@@ -210,7 +210,7 @@ same interaction:
    trace, repeat the identical scenario without compilation, then stop and save
    the settled profile.
 6. In each Firefox profile, use the Marker Chart and filter for
-   `spice.canvas.`. Compare those markers on the Canvas content main thread
+   `spice.app.`. Compare those markers on the app content main thread
    against DOM events, task scheduling gaps, style recalculation, layout, and
    paint. Retain the profile URLs or exported profiles with the investigation
    notes.
@@ -222,19 +222,19 @@ Marker names carry only bounded structural metadata:
 | `trace.start` | App source/build identity for the capture. |
 | `frame.received`, `frame.decode.*` | Incoming frame size and browser-side decode/admission work. |
 | `state.apply.*`, `state.publish` | Runtime mutation and the Yew publication that schedules rendering. |
-| `render.canvas` | Rust/Yew virtual-DOM construction with the retained card count. |
+| `render.app` | Rust/Yew virtual-DOM construction with the retained card count. |
 | `layout.measure` | Mosaic DOM measurement, including card count and measured width. |
 | `composer.textarea.mount`, `composer.textarea.unmount` | Native textarea instance lifetime, focus, and selection. A changed instance during one interaction is a remount. |
 | `composer.input`, `composer.keydown` | Native event kind, composition state, focus, and selection without draft text. |
 
-The browser retains at most 256 Canvas diagnostic records; completed spans use
+The browser retains at most 256 app diagnostic records; completed spans use
 one measure and two marks, and the oldest record is removed as the bound rolls.
-`window.__spiceCanvasTrace.clear()` removes only entries owned by the current
-Canvas trace. Run
-`sessionStorage.removeItem("spice:canvas-trace"); location.reload()` to disable
+`window.__spiceAppTrace.clear()` removes only entries owned by the current
+app trace. Run
+`sessionStorage.removeItem("spice:app-trace"); location.reload()` to disable
 collection.
 
-Interpret ordering conservatively. `render.canvas` ends when Rust finishes
+Interpret ordering conservatively. `render.app` ends when Rust finishes
 building Yew nodes, not when the DOM is committed or painted.
 `layout.measure` covers synchronous Mosaic DOM reads and writes, but a later
 paint must be established from Firefox's own markers. A DOM `beforeinput` or

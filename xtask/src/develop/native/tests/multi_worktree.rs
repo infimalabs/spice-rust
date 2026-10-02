@@ -15,7 +15,7 @@ impl Fixture {
         fs::write(admin.join("commondir"), "../..\n").expect("linked common pointer writes");
         fs::write(admin.join("HEAD"), "ref: refs/heads/main\n")
             .expect("linked worktree HEAD writes");
-        seed_canvas_stage(&worktree);
+        seed_app_stage(&worktree);
         Repository::discover(worktree).expect("linked repository resolves")
     }
 }
@@ -55,7 +55,7 @@ fn publications_retain_one_shared_resident_authority() {
     fs::copy(&discovery_path, &saved_discovery).expect("discovery is retained for successor");
     let readiness = wire::Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::CanvasOpen {
+        body: wire::AppOpen {
             endpoint: endpoint.clone(),
             epoch: discovery.epoch,
         },

@@ -57,15 +57,15 @@ impl Axis {
 /// presentation boundary for global Canvas controls. Team controls select
 /// their closed, scoped subset through `TeamMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CanvasDestination {
+pub enum AppDestination {
     Dash,
     Work,
     Chat,
 }
 
-/// Canvas destinations that are meaningful inside one team surface.
+/// App destinations that are meaningful inside one team surface.
 ///
-/// This type is intentionally distinct from [`CanvasDestination`]: adding a
+/// This type is intentionally distinct from [`AppDestination`]: adding a
 /// global destination cannot make it appear in a team tablist without an
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,21 +80,21 @@ impl TeamDestination {
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
-    pub const fn canvas(self) -> CanvasDestination {
+    pub const fn app(self) -> AppDestination {
         match self {
-            Self::Work => CanvasDestination::Work,
-            Self::Chat => CanvasDestination::Chat,
+            Self::Work => AppDestination::Work,
+            Self::Chat => AppDestination::Chat,
         }
     }
 
     /// Presentation label shared with the corresponding global destination.
     #[must_use]
     pub const fn label(self) -> &'static str {
-        self.canvas().label()
+        self.app().label()
     }
 }
 
-impl CanvasDestination {
+impl AppDestination {
     /// Every global destination, left to right.
     pub const ALL: [Self; 3] = [Self::Dash, Self::Work, Self::Chat];
     /// Exact hash-history path for this destination.
@@ -169,19 +169,19 @@ pub(crate) enum ConnectionStage {
 /// present a current admitted lane snapshot.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CanvasNotice {
-    LoadingCanvas,
+pub(crate) enum AppNotice {
+    LoadingApp,
     OpeningResident,
     Reconnecting,
     LoadingAgents,
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-impl CanvasNotice {
+impl AppNotice {
     #[must_use]
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            Self::LoadingCanvas => "Loading spice",
+            Self::LoadingApp => "Loading spice",
             Self::OpeningResident => "Opening resident",
             Self::Reconnecting => "Reconnecting",
             Self::LoadingAgents => "Loading agents",
@@ -196,17 +196,17 @@ impl CanvasNotice {
 /// runtime and its lane snapshot have been admitted.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
-pub(crate) const fn canvas_notice(
+pub(crate) const fn app_notice(
     connection: ConnectionStage,
     runtime_admitted: bool,
     lanes_admitted: bool,
-) -> Option<CanvasNotice> {
+) -> Option<AppNotice> {
     match connection {
-        ConnectionStage::Starting => Some(CanvasNotice::LoadingCanvas),
-        ConnectionStage::Connecting => Some(CanvasNotice::OpeningResident),
-        ConnectionStage::Offline => Some(CanvasNotice::Reconnecting),
-        ConnectionStage::Online if !runtime_admitted => Some(CanvasNotice::LoadingCanvas),
-        ConnectionStage::Online if !lanes_admitted => Some(CanvasNotice::LoadingAgents),
+        ConnectionStage::Starting => Some(AppNotice::LoadingApp),
+        ConnectionStage::Connecting => Some(AppNotice::OpeningResident),
+        ConnectionStage::Offline => Some(AppNotice::Reconnecting),
+        ConnectionStage::Online if !runtime_admitted => Some(AppNotice::LoadingApp),
+        ConnectionStage::Online if !lanes_admitted => Some(AppNotice::LoadingAgents),
         ConnectionStage::Online => None,
     }
 }
@@ -314,7 +314,7 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
-/// One team-local direction named by a durable Canvas route.
+/// One team-local direction named by a durable app route.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DirectionTarget {
@@ -357,7 +357,7 @@ pub(crate) enum ChatTarget {
 /// and arrangement stay browser-local.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CanvasRoute {
+pub(crate) enum AppRoute {
     Dash,
     Work {
         scope: WorkScope,
@@ -387,8 +387,8 @@ pub(crate) enum DirectionsFocus {
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RouteStep {
-    Push(CanvasRoute),
-    Replace(CanvasRoute),
+    Push(AppRoute),
+    Replace(AppRoute),
 }
 
 /// Settled evidence for the data a route names; `None` until authoritative
@@ -407,16 +407,16 @@ pub(crate) struct RouteEvidence {
 static DIRECTIONS_SCOPE: WorkScope = WorkScope::AllOpen;
 
 #[cfg(any(target_arch = "wasm32", test))]
-impl CanvasRoute {
+impl AppRoute {
     #[must_use]
-    pub(crate) const fn destination(destination: CanvasDestination) -> Self {
+    pub(crate) const fn destination(destination: AppDestination) -> Self {
         match destination {
-            CanvasDestination::Dash => Self::Dash,
-            CanvasDestination::Work => Self::Work {
+            AppDestination::Dash => Self::Dash,
+            AppDestination::Work => Self::Work {
                 scope: WorkScope::AllOpen,
                 task: None,
             },
-            CanvasDestination::Chat => Self::Chat { target: None },
+            AppDestination::Chat => Self::Chat { target: None },
         }
     }
 
@@ -497,11 +497,11 @@ impl CanvasRoute {
     }
 
     #[must_use]
-    pub(crate) const fn canvas_destination(&self) -> CanvasDestination {
+    pub(crate) const fn app_destination(&self) -> AppDestination {
         match self {
-            Self::Dash => CanvasDestination::Dash,
-            Self::Work { .. } | Self::Directions { .. } => CanvasDestination::Work,
-            Self::Chat { .. } => CanvasDestination::Chat,
+            Self::Dash => AppDestination::Dash,
+            Self::Work { .. } | Self::Directions { .. } => AppDestination::Work,
+            Self::Chat { .. } => AppDestination::Chat,
         }
     }
 
@@ -555,8 +555,8 @@ impl CanvasRoute {
     #[must_use]
     pub(crate) fn path(&self) -> String {
         match self {
-            Self::Dash => CanvasDestination::Dash.path().to_owned(),
-            Self::Chat { target: None } => CanvasDestination::Chat.path().to_owned(),
+            Self::Dash => AppDestination::Dash.path().to_owned(),
+            Self::Chat { target: None } => AppDestination::Chat.path().to_owned(),
             Self::Chat {
                 target: Some(ChatTarget::Card(card)),
             } => format!("/chat/{CARD_SEGMENT}/{card}"),
@@ -574,7 +574,7 @@ impl CanvasRoute {
                 focus: Some(DirectionsFocus::Direction(direction)),
             } => format!("/work/{DIRECTION_SEGMENT}/{direction}"),
             Self::Work { scope, task } => {
-                let mut path = CanvasDestination::Work.path().to_owned();
+                let mut path = AppDestination::Work.path().to_owned();
                 if let Some(stem) = scope.stem() {
                     path.push('/');
                     path.push_str(if stem.hidden() {
@@ -598,7 +598,7 @@ impl CanvasRoute {
 
     /// Show one global destination: a new entry unless already there.
     #[must_use]
-    pub(crate) fn show(&self, destination: CanvasDestination) -> Option<RouteStep> {
+    pub(crate) fn show(&self, destination: AppDestination) -> Option<RouteStep> {
         let next = Self::destination(destination);
         (*self != next).then_some(RouteStep::Push(next))
     }
@@ -672,7 +672,7 @@ impl CanvasRoute {
                 scope: WorkScope::Stem(stem),
                 ..
             } if evidence.scope == Some(false) => Some((
-                Self::destination(CanvasDestination::Work),
+                Self::destination(AppDestination::Work),
                 format!("Work scope {stem} is no longer available; showing All open work."),
             )),
             Self::Work {
@@ -688,7 +688,7 @@ impl CanvasRoute {
             Self::Chat {
                 target: Some(ChatTarget::Card(card)),
             } if evidence.card == Some(false) => Some((
-                Self::destination(CanvasDestination::Chat),
+                Self::destination(AppDestination::Chat),
                 format!("Linked card {card} is unavailable in retained Chat history; opened Chat."),
             )),
             Self::Directions { focus: Some(focus) } if evidence.direction == Some(false) => Some((
@@ -799,19 +799,19 @@ fn decode_segment(segment: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-/// One browser location resolved to a usable Canvas route.
+/// One browser location resolved to a usable app route.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NormalizedCanvasLocation {
-    route: CanvasRoute,
+pub(crate) struct NormalizedAppLocation {
+    route: AppRoute,
     replace: bool,
     notice: Option<String>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-impl NormalizedCanvasLocation {
+impl NormalizedAppLocation {
     #[must_use]
-    pub(crate) const fn route(&self) -> &CanvasRoute {
+    pub(crate) const fn route(&self) -> &AppRoute {
         &self.route
     }
 
@@ -831,7 +831,7 @@ const OPENING_AUTH_TOKEN_MIN_BYTES: usize = 16;
 #[cfg(any(target_arch = "wasm32", test))]
 const OPENING_AUTH_TOKEN_MAX_BYTES: usize = 256;
 
-/// The one-time bearer token carried by an authenticated Canvas opening.
+/// The one-time bearer token carried by an authenticated app opening.
 ///
 /// This mirrors the resident's published URL-safe token contract. Canonical
 /// routes contain a slash and shorthand destinations are below its minimum.
@@ -839,42 +839,42 @@ const OPENING_AUTH_TOKEN_MAX_BYTES: usize = 256;
 #[must_use]
 pub(crate) fn opening_auth_token(hash: &str) -> Option<&str> {
     let token = hash.strip_prefix('#')?;
-    canvas_auth_token_is_valid(token).then_some(token)
+    app_auth_token_is_valid(token).then_some(token)
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
-pub(crate) fn canvas_auth_token_is_valid(token: &str) -> bool {
+pub(crate) fn app_auth_token_is_valid(token: &str) -> bool {
     (OPENING_AUTH_TOKEN_MIN_BYTES..=OPENING_AUTH_TOKEN_MAX_BYTES).contains(&token.len())
         && token
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
 }
 
-/// Resolve a browser query and hash through the one Canvas route grammar.
+/// Resolve a browser query and hash through the one app route grammar.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
-pub(crate) fn normalize_canvas_location(search: &str, hash: &str) -> NormalizedCanvasLocation {
+pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppLocation {
     let fragment = hash.strip_prefix('#').unwrap_or(hash);
     if search.is_empty() {
-        if let Some(route) = CanvasRoute::from_path(fragment) {
+        if let Some(route) = AppRoute::from_path(fragment) {
             let replace = hash.strip_prefix('#') != Some(route.path().as_str());
-            return NormalizedCanvasLocation {
+            return NormalizedAppLocation {
                 route,
                 replace,
                 notice: None,
             };
         }
         if let Some(destination) = normalized_destination(fragment) {
-            return NormalizedCanvasLocation {
-                route: CanvasRoute::destination(destination),
+            return NormalizedAppLocation {
+                route: AppRoute::destination(destination),
                 replace: true,
                 notice: None,
             };
         }
         if let Some(segment) = malformed_direction(fragment) {
-            return NormalizedCanvasLocation {
-                route: CanvasRoute::Directions { focus: None },
+            return NormalizedAppLocation {
+                route: AppRoute::Directions { focus: None },
                 replace: true,
                 notice: Some(format!(
                     "`{segment}` names no direction or team; showing Directions."
@@ -883,8 +883,8 @@ pub(crate) fn normalize_canvas_location(search: &str, hash: &str) -> NormalizedC
         }
     }
 
-    NormalizedCanvasLocation {
-        route: CanvasRoute::destination(CanvasDestination::Chat),
+    NormalizedAppLocation {
+        route: AppRoute::destination(AppDestination::Chat),
         replace: true,
         notice: Some(format!("Unrecognized route `{search}{hash}`; opened Chat.")),
     }
@@ -901,22 +901,22 @@ fn malformed_direction(fragment: &str) -> Option<&str> {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn normalized_destination(fragment: &str) -> Option<CanvasDestination> {
+fn normalized_destination(fragment: &str) -> Option<AppDestination> {
     let name = fragment.trim_matches('/');
     if name.contains('/') {
         return None;
     }
     match name {
-        "" | "chat" => Some(CanvasDestination::Chat),
-        "dash" => Some(CanvasDestination::Dash),
-        "work" => Some(CanvasDestination::Work),
+        "" | "chat" => Some(AppDestination::Chat),
+        "dash" => Some(AppDestination::Dash),
+        "work" => Some(AppDestination::Work),
         _ => None,
     }
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn card_href(target: &str) -> String {
-    let route = CanvasRoute::card(target.to_owned())
+    let route = AppRoute::card(target.to_owned())
         .expect("a rendered Canvas card has a canonical route target");
     format!("#{}", route.path())
 }

@@ -33,7 +33,7 @@ mod typed;
 
 #[cfg(test)]
 use browser::browser_command;
-pub(crate) use browser::{open_canvas_result_with, open_canvas_with, system_browser};
+pub(crate) use browser::{open_app_result_with, open_app_with, system_browser};
 use deadline_stream::{DeadlineStream, IoDirection, IoFailure, remaining};
 #[cfg(test)]
 use discovery::open_discovery;
@@ -50,7 +50,7 @@ use typed::kind_for;
 
 /// Bound for an opening that proves a contract and sends no command, so no
 /// registry row governs it.
-const OPENING_BOUND: Duration = crate::cli::CANVAS_ANSWER_BOUND;
+const OPENING_BOUND: Duration = crate::cli::APP_ANSWER_BOUND;
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 
 type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;

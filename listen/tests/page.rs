@@ -80,6 +80,83 @@ fn prose(text: &str) -> Vec<u8> {
     .expect("fixture record encodes")
 }
 
+fn oversized_tool_image() -> Vec<u8> {
+    let media = (0..8)
+        .map(|_| {
+            serde_json::json!({
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png",
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_vec(&serde_json::json!({
+        "type": "message_end",
+        "message": {
+            "role": "toolResult",
+            "toolCallId": "call-image",
+            "toolName": "read",
+            "content": media,
+            "isError": false,
+        },
+    }))
+    .expect("image fixture encodes")
+}
+
+fn tiny_surface() -> Surface {
+    Surface::new(
+        Limits {
+            rows: 2,
+            bytes: 256,
+            text: 32,
+        },
+        Limits {
+            rows: 8,
+            bytes: 512,
+            text: 64,
+        },
+    )
+}
+
+fn read_oversized_tool_page(path: &Path, surface: &Surface) -> TranscriptPage {
+    transcript_page(
+        path,
+        "lane-a",
+        Dialect::Omp,
+        TranscriptPageRequest {
+            scan: scan_budget(64 * 1024),
+            output: surface
+                .budget(Request::default())
+                .expect("tiny output budget is valid"),
+            start: TranscriptPageStart::Current { expected: None },
+            filter: TranscriptFilter::only([EventKind::Tool]),
+        },
+    )
+    .expect("oversized presentation is accounted")
+}
+
+fn export_cursor(page: &TranscriptPage) -> listen::TranscriptCursor {
+    let omission = page
+        .rows
+        .omission
+        .as_ref()
+        .expect("oversized record has omission metadata");
+    let TranscriptContinuation::Export {
+        spans,
+        continuation,
+    } = &omission.continuation
+    else {
+        panic!("record above the surface maximum requires exact export")
+    };
+    assert_eq!(spans.len(), 1, "one source record is exported once");
+    match continuation.as_ref() {
+        TranscriptContinuation::Cursor { cursor } => cursor.clone(),
+        TranscriptContinuation::Current { .. } | TranscriptContinuation::Export { .. } => {
+            panic!("record export must continue at its older boundary")
+        }
+    }
+}
+
 fn append(tape: &Tape, bytes: &[u8]) {
     let mut record = bytes.to_vec();
     record.push(b'\n');
@@ -208,82 +285,17 @@ fn oversized_record_export_continues_with_strictly_older_rows() {
     append(&tape, &prose("older first"));
     append(&tape, &prose("older second"));
 
-    let media = (0..8)
-        .map(|_| {
-            serde_json::json!({
-                "type": "image",
-                "data": "iVBORw0KGgo=",
-                "mimeType": "image/png",
-            })
-        })
-        .collect::<Vec<_>>();
-    let image = serde_json::to_vec(&serde_json::json!({
-        "type": "message_end",
-        "message": {
-            "role": "toolResult",
-            "toolCallId": "call-image",
-            "toolName": "read",
-            "content": media,
-            "isError": false,
-        },
-    }))
-    .expect("image fixture encodes");
+    let image = oversized_tool_image();
     append(&tape, &image);
-    let tiny = Surface::new(
-        Limits {
-            rows: 2,
-            bytes: 256,
-            text: 32,
-        },
-        Limits {
-            rows: 8,
-            bytes: 512,
-            text: 64,
-        },
-    );
-    let oversized = transcript_page(
-        &tape_path,
-        "lane-a",
-        Dialect::Omp,
-        TranscriptPageRequest {
-            scan: scan_budget(64 * 1024),
-            output: tiny
-                .budget(Request::default())
-                .expect("tiny output budget is valid"),
-            start: TranscriptPageStart::Current { expected: None },
-            filter: TranscriptFilter::only([EventKind::Tool]),
-        },
-    )
-    .expect("oversized presentation is accounted");
+    let tiny = tiny_surface();
+    let oversized = read_oversized_tool_page(&tape_path, &tiny);
     assert_eq!(oversized.rows.rows.len(), 1);
     assert!(matches!(
         &oversized.rows.rows[0],
         TranscriptPageRow::Status { status }
             if status.canaries.contains(&EventKind::Reasoning)
     ));
-    let omission = oversized
-        .rows
-        .omission
-        .as_ref()
-        .expect("oversized record has omission metadata");
-    let (spans, continuation) = match &omission.continuation {
-        TranscriptContinuation::Export {
-            spans,
-            continuation,
-        } => {
-            let cursor = match continuation.as_ref() {
-                TranscriptContinuation::Cursor { cursor } => cursor.clone(),
-                TranscriptContinuation::Current { .. } | TranscriptContinuation::Export { .. } => {
-                    panic!("record export must continue at its older boundary")
-                }
-            };
-            (spans, cursor)
-        }
-        TranscriptContinuation::Current { .. } | TranscriptContinuation::Cursor { .. } => {
-            panic!("record above the surface maximum requires exact export")
-        }
-    };
-    assert_eq!(spans.len(), 1, "one source record is exported once");
+    let continuation = export_cursor(&oversized);
     assert!(oversized.rows.omission.as_ref().is_some_and(|omission| {
         omission.population == 2 && omission.shown == 1 && omission.withheld == 1
     }));

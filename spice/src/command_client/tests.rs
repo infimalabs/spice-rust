@@ -812,7 +812,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
 fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("classifier peer binds");
     let address = listener.local_addr().expect("classifier peer address");
-    let bound = crate::cli::CANVAS_ANSWER_BOUND;
+    let bound = crate::cli::APP_ANSWER_BOUND;
     let mut stream = DeadlineStream::connect(&address, bound).expect("classifier peer accepts");
 
     for (recorded, assumed, reason) in [
@@ -913,7 +913,7 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
     let discovery = fixture.publish();
     let mut launched = None;
 
-    let outcome = open_canvas_with(
+    let outcome = open_app_with(
         &fixture.canvas,
         || {},
         |endpoint| {
@@ -929,7 +929,7 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
     assert_eq!(*position, ReplyPosition::Direct {});
     assert_eq!(
         body,
-        &wire::CanvasOpen {
+        &wire::AppOpen {
             endpoint: discovery.endpoint,
             epoch: discovery.epoch,
         }
@@ -937,13 +937,13 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
 
     let capability = discovery.capability.to_string();
     let text = render::render(&outcome, Form::Text).expect("Canvas receipt renders as text");
-    let text_body: wire::CanvasOpen =
+    let text_body: wire::AppOpen =
         wire::decode(text.document()).expect("text carries the typed body");
     assert_eq!(text_body, *body);
     assert!(!String::from_utf8_lossy(text.document()).contains(&capability));
 
     let json = render::render(&outcome, Form::Json).expect("Canvas receipt renders as JSON");
-    let json_outcome: Outcome<wire::CanvasOpen> =
+    let json_outcome: Outcome<wire::AppOpen> =
         wire::decode(json.document()).expect("JSON carries the typed outcome");
     assert_eq!(json_outcome, outcome);
     assert!(!String::from_utf8_lossy(json.document()).contains(&capability));
@@ -953,7 +953,7 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
 fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching() {
     let fixture = Fixture::new("canvas-refusals");
     let mut launches = 0_u8;
-    let missing = open_canvas_with(
+    let missing = open_app_with(
         &fixture.canvas,
         || {},
         |_| {
@@ -974,7 +974,7 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
         fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o600))
             .expect("malformed fixture becomes owner-only");
     }
-    let malformed = open_canvas_with(
+    let malformed = open_app_with(
         &fixture.canvas,
         || {},
         |_| {
@@ -997,7 +997,7 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
     }
     .publish(&fixture.canvas)
     .expect("unresolved fixture publishes");
-    let unresolved = open_canvas_with(
+    let unresolved = open_app_with(
         &fixture.canvas,
         || {},
         |_| {
@@ -1032,7 +1032,7 @@ fn canvas_opens_a_discovery_naming_an_address_the_operator_bound() {
     .expect("routable fixture publishes");
     fixture.hold(uuid(4));
 
-    let outcome = open_canvas_with(
+    let outcome = open_app_with(
         &fixture.canvas,
         || {},
         |endpoint| {
@@ -1059,7 +1059,7 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
     };
     let mut launched = false;
 
-    let outcome = open_canvas_with(
+    let outcome = open_app_with(
         &fixture.canvas,
         || {
             replacement

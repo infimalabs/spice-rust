@@ -19,7 +19,7 @@
 rustc-wrapper = ""
 
 [alias]
-# Keep the change-local Canvas compiler check on the app's Wasm unit graph.
+# Keep the change-local app compiler check on the app's Wasm unit graph.
 # Routing this through the native xtask graph before the package-scoped command
-# would add unrelated host compilation to the Canvas check.
-canvas-wasm-typecheck = "clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings"
+# would add unrelated host compilation to the app check.
+app-wasm-typecheck = "clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings"

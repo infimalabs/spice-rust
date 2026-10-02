@@ -51,7 +51,7 @@ impl fmt::Display for AdvisoryLaneShare {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Direct policy roots share at most `worker_processes` permits. Native and
-/// Canvas compiler children publish their combined policy peak explicitly;
+/// app compiler children publish their combined policy peak explicitly;
 /// the later test phase does not overlap it, so policy and test peaks never add.
 pub(super) struct CargoBudget {
     cpus: usize,

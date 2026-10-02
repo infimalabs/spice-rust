@@ -48,7 +48,7 @@ const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
 const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
 const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
 const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
-const INLINE_THEME_OPEN: &str = "<script data-canvas-theme>";
+const INLINE_THEME_OPEN: &str = "<script data-app-theme>";
 const INLINE_MODULE_OPEN: &str = "<script type=\"module\">";
 const INLINE_MODULE_CLOSE: &str = "</script>";
 const SCRIPT_OPEN: &str = "<script";
@@ -1127,25 +1127,24 @@ fn speech_error(status: StatusCode, message: impl Into<String>) -> Response {
 }
 
 fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
-    let html =
-        std::str::from_utf8(html).map_err(|_| "app unavailable: canvas-app.html was not UTF-8")?;
+    let html = std::str::from_utf8(html).map_err(|_| "app unavailable: app.html was not UTF-8")?;
     let (before_theme, rest) = html
         .split_once(INLINE_THEME_OPEN)
-        .ok_or("app unavailable: canvas-app.html did not carry one inline theme resolver")?;
+        .ok_or("app unavailable: app.html did not carry one inline theme resolver")?;
     let (theme, after_theme) = rest
         .split_once(INLINE_MODULE_CLOSE)
-        .ok_or("app unavailable: canvas-app.html did not close its inline theme resolver")?;
+        .ok_or("app unavailable: app.html did not close its inline theme resolver")?;
     let (between, rest) = after_theme
         .split_once(INLINE_MODULE_OPEN)
-        .ok_or("app unavailable: canvas-app.html did not carry one inline module loader")?;
+        .ok_or("app unavailable: app.html did not carry one inline module loader")?;
     let (module, after_module) = rest
         .split_once(INLINE_MODULE_CLOSE)
-        .ok_or("app unavailable: canvas-app.html did not close its inline module loader")?;
+        .ok_or("app unavailable: app.html did not close its inline module loader")?;
     if [before_theme, between, after_module]
         .iter()
         .any(|section| section.contains(SCRIPT_OPEN) || section.contains(INLINE_MODULE_CLOSE))
     {
-        return Err("app unavailable: canvas-app.html carried unexpected script elements");
+        return Err("app unavailable: app.html carried unexpected script elements");
     }
     let theme_hash =
         base64::engine::general_purpose::STANDARD.encode(Sha256::digest(theme.as_bytes()));

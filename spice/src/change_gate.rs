@@ -1044,7 +1044,7 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
 const fn pretest_screen_gate(gate_id: GateId) -> bool {
     matches!(
         gate_id,
-        GateId::RustTypecheck | GateId::CanvasWebTypecheck | GateId::Complexity
+        GateId::RustTypecheck | GateId::AppWebTypecheck | GateId::Complexity
     )
 }
 
@@ -1235,7 +1235,7 @@ fn publish_policy_schedule(
 
 const fn policy_schedule_rank(gate_id: GateId) -> u8 {
     match gate_id {
-        GateId::RustTypecheck | GateId::CanvasWebTypecheck | GateId::Complexity => 0,
+        GateId::RustTypecheck | GateId::AppWebTypecheck | GateId::Complexity => 0,
         GateId::EnvNameLedger | GateId::MarkdownLinks | GateId::Formatters => 1,
         GateId::MagicNumbers | GateId::JavascriptUnused => 2,
         _ => 3,

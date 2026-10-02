@@ -277,7 +277,7 @@ fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
         .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
     let discovery_path = environment.state.canvas().to_path_buf();
-    let outcome = canvas_environment_with(environment, false, false, true, false, |endpoint| {
+    let outcome = app_environment_with(environment, false, false, true, false, |endpoint| {
         let discovery = read_discovery(&discovery_path);
         assert_eq!(endpoint, discovery.endpoint);
         assert_browser_seed(&discovery);
@@ -408,7 +408,7 @@ fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let root = scratch.child("failed-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("failure demo seed succeeds");
-    let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
+    let outcome = app_environment_with(environment, true, false, true, false, |_endpoint| {
         Err("fixture browser launcher failed".to_owned())
     });
     let Outcome::Fault(fault) = outcome else {
@@ -436,8 +436,7 @@ fn interruption_preserves_even_an_automatic_cleanup_root() {
     fs::create_dir(&root).unwrap();
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic demo seed succeeds");
-    let outcome =
-        canvas_environment_with(environment, true, false, false, true, |_endpoint| Ok(()));
+    let outcome = app_environment_with(environment, true, false, false, true, |_endpoint| Ok(()));
     let Outcome::Reply(answer) = outcome else {
         panic!("interrupted demo replies with recovery: {outcome:?}");
     };
@@ -455,7 +454,7 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
-    let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
+    let outcome = app_environment_with(environment, true, false, true, false, |_endpoint| {
         let Outcome::Reply(stopped) = crate::resident::down_from_operator(
             &root_for_down,
             crate::cli::contract(&["down"]).expect("down contract"),
@@ -590,7 +589,7 @@ fn an_unwatchable_root_refuses_by_its_own_reason_before_the_browser_is_reached()
     fs::remove_dir_all(&root).expect("the watched root is removed before the watch");
 
     let mut launched = false;
-    let outcome = canvas_environment_with(environment, false, false, true, false, |_endpoint| {
+    let outcome = app_environment_with(environment, false, false, true, false, |_endpoint| {
         launched = true;
         Ok(())
     });

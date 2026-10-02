@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use app::{CanvasRuntime, Session};
+use app::{AppRuntime, Session};
 use wire::{CanonicalUuid, StreamFrame};
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -80,7 +80,7 @@ fn live(id: u64, message: serde_json::Value) -> Vec<u8> {
     .expect("live message generation serializes")
 }
 
-fn card_bytes(runtime: &CanvasRuntime) -> Vec<u8> {
+fn card_bytes(runtime: &AppRuntime) -> Vec<u8> {
     let messages = runtime
         .messages()
         .iter()
@@ -152,7 +152,7 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
     let accepted = session
         .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
         .expect("acceptance is admitted");
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let first = serde_json::json!({
         "lane": LANE,
         "author": LANE_CAPABILITY,
@@ -221,7 +221,7 @@ fn final_answer_revision_invalidates_the_ordinary_card() {
     let accepted = session
         .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
         .expect("acceptance is admitted");
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let ordinary = serde_json::json!({
         "lane": LANE,
         "author": LANE_CAPABILITY,
@@ -267,7 +267,7 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
         second_provider,
     } = mixed_messages();
 
-    let mut one_shot = CanvasRuntime::new(&accepted);
+    let mut one_shot = AppRuntime::new(&accepted);
     one_shot.apply_stream(&admitted(
         &session,
         &snapshot(vec![
@@ -279,7 +279,7 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
         ]),
     ));
 
-    let mut staged = CanvasRuntime::new(&accepted);
+    let mut staged = AppRuntime::new(&accepted);
     staged.apply_stream(&admitted(
         &session,
         &snapshot_with_frontiers(

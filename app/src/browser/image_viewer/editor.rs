@@ -214,7 +214,7 @@ pub(super) fn editor(props: &EditorProps) -> Html {
     let surface = use_node_ref();
     let viewport = use_stage(surface.clone());
     let svg = use_node_ref();
-    let canvas = pointer::Canvas {
+    let canvas = pointer::DrawingSurface {
         svg: svg.clone(),
         dimensions,
     };

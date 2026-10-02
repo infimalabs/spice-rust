@@ -92,7 +92,7 @@ fn task_phase_fact(task: &wire::TaskStamp, position: u64) -> serde_json::Value {
 fn repeated_detail_answers_replace_instead_of_duplicating_notes() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let task = fixture_stamp("detail-replay");
     let response = detail_response(&session, detail_answer("detail-replay", "one note"));
 
@@ -112,7 +112,7 @@ fn repeated_detail_answers_replace_instead_of_duplicating_notes() {
 fn detail_refusal_replaces_loading_with_explicit_unavailable_state() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let task = fixture_stamp("detail-missing");
 
     runtime.begin_task_detail(task.clone());
@@ -130,7 +130,7 @@ fn detail_refusal_replaces_loading_with_explicit_unavailable_state() {
 fn task_fact_invalidates_only_the_affected_open_detail() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let affected = fixture_stamp("detail-affected");
     let untouched = fixture_stamp("detail-untouched");
 
@@ -185,7 +185,7 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
 fn reconnect_rereads_every_retained_task_read() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let shown = fixture_stamp("detail-shown");
     let pending = fixture_stamp("detail-pending");
     let lens = app::TaskRelationsKey::new(

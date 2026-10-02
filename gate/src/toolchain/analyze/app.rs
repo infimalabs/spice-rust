@@ -6,18 +6,18 @@ use std::path::{Path, PathBuf};
 
 use sill::Environment;
 
-use super::build_root::{CanvasSource, CanvasWorkspace};
+use super::build_root::{AppSource, AppWorkspace};
 use super::*;
 
-/// Run the declared canvas checks in order and stop at the first non-clean one.
+/// Run the declared app checks in order and stop at the first non-clean one.
 ///
 /// The analysis is run against a cell its workspace reports a failed removal
 /// into, and that report outranks whatever the analysis concluded. A workspace
-/// left on disk refuses every later canvas analysis of the same tree, so an arm
+/// left on disk refuses every later app analysis of the same tree, so an arm
 /// that passed while leaking one would report a clean tree and then be unable to
 /// measure it again; the refusal here is the same refusal, delivered on the run
 /// that caused it instead of the next one.
-pub(in crate::toolchain) fn canvas_web_typecheck(
+pub(in crate::toolchain) fn app_web_typecheck(
     declaration: ToolchainDeclaration,
     selection: CargoSelection<'_>,
     repository: &Path,
@@ -26,32 +26,32 @@ pub(in crate::toolchain) fn canvas_web_typecheck(
     deferred_trunk_refusal: Option<Analysis>,
 ) -> Analysis {
     let removal = Cell::new(None);
-    let tools = CanvasTools {
+    let tools = AppTools {
         cargo: resources.program(CARGO),
         trunk: resources.program(TRUNK),
         deferred_trunk_refusal,
         compiler_environment: resources.environment(),
     };
-    let analysis = canvas_analysis(declaration, selection, repository, bounds, tools, &removal);
+    let analysis = app_analysis(declaration, selection, repository, bounds, tools, &removal);
     match removal.take() {
         Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
         None => analysis,
     }
 }
 
-struct CanvasTools<'a> {
+struct AppTools<'a> {
     cargo: Option<&'a str>,
     trunk: Option<&'a str>,
     deferred_trunk_refusal: Option<Analysis>,
     compiler_environment: &'a [(std::ffi::OsString, std::ffi::OsString)],
 }
 
-fn canvas_analysis(
+fn app_analysis(
     declaration: ToolchainDeclaration,
     selection: CargoSelection<'_>,
     repository: &Path,
     bounds: &Bounds,
-    tools: CanvasTools<'_>,
+    tools: AppTools<'_>,
     removal: &Cell<Option<String>>,
 ) -> Analysis {
     let CargoSelection {
@@ -70,7 +70,7 @@ fn canvas_analysis(
     };
     // The mirror must outlive both compiler invocations; only the generated
     // trunk distribution belongs to the transient per-run workspace below.
-    let source = match CanvasSource::create(root, repository, removal) {
+    let source = match AppSource::create(root, repository, removal) {
         Ok(source) => source,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -82,7 +82,7 @@ fn canvas_analysis(
 
     let source = source.path();
     let app = source.join("app");
-    if !frontend_change_reaches_canvas(changes) {
+    if !frontend_change_reaches_app(changes) {
         match crate::workspace_tests::workspace_package_reach_at(
             source,
             base,
@@ -104,21 +104,21 @@ fn canvas_analysis(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
-    let workspace = match CanvasWorkspace::create(root, removal) {
+    let workspace = match AppWorkspace::create(root, removal) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let outputs = match CanvasOutputs::create(&workspace, root, repository) {
+    let outputs = match AppOutputs::create(&workspace, root, repository) {
         Ok(outputs) => outputs,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let environment = match canvas_environment(cargo, trunk, &outputs, tools.compiler_environment) {
+    let environment = match app_environment(cargo, trunk, &outputs, tools.compiler_environment) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
     let invocations = [
         CompileInvocation {
-            name: "cargo canvas-wasm-typecheck",
+            name: "cargo app-wasm-typecheck",
             program: cargo,
             arguments: CARGO_WASM_ARGUMENTS,
             cwd: source,
@@ -139,7 +139,7 @@ fn canvas_analysis(
             invocation,
             bounds,
             &environment,
-            |code, message| FindingDetail::CanvasWebOutput { code, message },
+            |code, message| FindingDetail::AppWebOutput { code, message },
         ) {
             return *failure.analysis;
         }
@@ -153,7 +153,7 @@ fn canvas_analysis(
     )
 }
 
-fn frontend_change_reaches_canvas(changes: &[String]) -> bool {
+fn frontend_change_reaches_app(changes: &[String]) -> bool {
     changes.iter().any(|path| {
         path.starts_with("app/")
             || path.starts_with("canvas/")
@@ -161,10 +161,10 @@ fn frontend_change_reaches_canvas(changes: &[String]) -> bool {
     })
 }
 
-fn canvas_environment(
+fn app_environment(
     cargo: &str,
     trunk: &str,
-    outputs: &CanvasOutputs,
+    outputs: &AppOutputs,
     inherited: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<Environment, String> {
     let path = tool_search_path("app", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
@@ -196,8 +196,8 @@ fn canvas_environment(
 
 /// Writable output roots for tools examining one immutable selected tree.
 ///
-/// The Cargo pair is deliberately not inside [`CanvasWorkspace`]: it is a
-/// fixed repository path that every canvas analysis of this repository shares,
+/// The Cargo pair is deliberately not inside [`AppWorkspace`]: it is a fixed
+/// repository path that every app analysis of this repository shares,
 /// so the compiled artifacts survive the run that produced them. `input.rs`
 /// records what that warmth is worth -- five cold samples of the `trunk build`
 /// this arm runs took 15.0 to 24.9 seconds against the 2.6 to 2.9 they take
@@ -209,19 +209,19 @@ fn canvas_environment(
 /// pair: the second reported `Blocking waiting for file lock on build
 /// directory` and then completed, both exiting zero. What must not be shared is
 /// the generated output, and that is the part living under the owned root.
-struct CanvasOutputs {
+struct AppOutputs {
     cargo_target: PathBuf,
     cargo_build: PathBuf,
     trunk_dist: PathBuf,
 }
 
-impl CanvasOutputs {
+impl AppOutputs {
     fn create(
-        workspace: &CanvasWorkspace<'_>,
+        workspace: &AppWorkspace<'_>,
         selected: &Path,
         repository: &Path,
     ) -> Result<Self, String> {
-        let (cargo_target, cargo_build) = canvas_output_roots(repository);
+        let (cargo_target, cargo_build) = app_output_roots(repository);
         let trunk_dist = workspace.path().join("trunk-dist");
         if let Err(error) = fs::create_dir_all(&cargo_target)
             .and_then(|()| fs::create_dir_all(&cargo_build))
@@ -240,7 +240,7 @@ impl CanvasOutputs {
     }
 }
 
-pub(in crate::toolchain) fn canvas_output_roots(repository: &Path) -> (PathBuf, PathBuf) {
+pub(in crate::toolchain) fn app_output_roots(repository: &Path) -> (PathBuf, PathBuf) {
     (
         repository.join("target/xtask-app"),
         repository.join("target/xtask-app-build"),
@@ -252,8 +252,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canvas_normalizes_trunks_boolean_no_color_input() {
-        let outputs = CanvasOutputs {
+    fn app_normalizes_trunks_boolean_no_color_input() {
+        let outputs = AppOutputs {
             cargo_target: PathBuf::from("/fixture/cargo-target"),
             cargo_build: PathBuf::from("/fixture/cargo-build"),
             trunk_dist: PathBuf::from("/fixture/trunk-dist"),
@@ -263,8 +263,8 @@ mod tests {
             ("PRESERVED_COMPILER_INPUT".into(), "value".into()),
         ];
 
-        let environment = canvas_environment("/bin/echo", "/bin/echo", &outputs, &inherited)
-            .expect("valid Canvas environment");
+        let environment = app_environment("/bin/echo", "/bin/echo", &outputs, &inherited)
+            .expect("valid app environment");
         let entries = environment
             .entries()
             .iter()

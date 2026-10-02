@@ -68,7 +68,7 @@ impl StreamApplication {
     }
 }
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// Apply one admitted stream frame and return immediate writer work.
     pub fn apply_stream(&mut self, admitted: &Admitted<StreamFrame>) -> Vec<StreamDirective> {
         self.apply_stream_frame(admitted).into_directives()

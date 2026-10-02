@@ -1,4 +1,4 @@
-//! The one bounded compiler process shared by native and Canvas analysis.
+//! The one bounded compiler process shared by native and app analysis.
 
 use std::ffi::OsStr;
 use std::path::Path;

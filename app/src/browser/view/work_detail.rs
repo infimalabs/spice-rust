@@ -75,7 +75,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     <button
                         ref={render.close_ref.clone()}
                         type="button"
-                        class="work-detail-close canvas-compact-control"
+                        class="work-detail-close app-compact-control"
                         aria-label="Close task detail"
                         onclick={close_click}
                     >{"Close"}</button>
@@ -142,7 +142,7 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
                     if let Some(detail) = detail {
                         <p>{detail}</p>
                     }
-                    <button type="button" class="canvas-compact-control" onclick={retry}>{"Retry detail"}</button>
+                    <button type="button" class="app-compact-control" onclick={retry}>{"Retry detail"}</button>
                 </div>
             }
         }
@@ -189,7 +189,7 @@ fn render_available(
             <div class="work-detail-identity">
                 <code>{statement.handle.to_string()}</code>
                 <chrome::CopyButton
-                    class="canvas-compact-control"
+                    class="app-compact-control"
                     text={AttrValue::from(statement.handle.to_string())}
                     subject="task handle"
                 >{"Copy identity"}</chrome::CopyButton>
@@ -243,7 +243,7 @@ fn render_available(
                 {render_git_context(row)}
             </section>
             {render_activity(render, answer)}
-            <button type="button" class="work-detail-back canvas-compact-control" onclick={render.close.reform(|_: MouseEvent| ())}>
+            <button type="button" class="work-detail-back app-compact-control" onclick={render.close.reform(|_: MouseEvent| ())}>
                 {"Back to Work"}
             </button>
         </div>

@@ -1,7 +1,7 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
 //! Every declared analysis enters through this module: the formatter check,
-//! native and Canvas compilers, workstation-path and prose scanners,
+//! native and app compilers, workstation-path and prose scanners,
 //! JavaScript and C# declaration/reference analyses, Python typecheck, and the
 //! two environment scanners. Each reports only what it observed, and
 //! [`super::measure_toolchain`] remains the sole authority that admits it.
@@ -40,11 +40,11 @@ use crate::jurisdiction::{Ignore, Jurisdiction};
 use crate::measure::Bounds;
 use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
+mod app;
 mod build_root;
-mod canvas;
 mod formatter;
 
-pub(super) use canvas::canvas_web_typecheck;
+pub(super) use app::app_web_typecheck;
 pub(super) use formatter::{formatter_edition, formatter_sources, formatters};
 use formatter::{relative_to, reported_roots};
 
@@ -209,7 +209,7 @@ pub(super) fn before_tools(
             Ok(_) => None,
             Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
         },
-        GateId::CanvasWebTypecheck
+        GateId::AppWebTypecheck
             if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() =>
         {
             Some(Analysis::not_applicable(declaration))
@@ -290,7 +290,7 @@ const FORMATTER: &str = "rustfmt";
 /// The declared program the formatter check is invoked through.
 const CARGO: &str = "cargo";
 
-/// The declared program that validates the canvas asset graph.
+/// The declared program that validates the app asset graph.
 const TRUNK: &str = "trunk";
 
 /// Cargo's external build directory, constructed so the workspace ledger does
@@ -315,7 +315,7 @@ const COMPILED_HOME_DIRECTORY: &str = env!("HOME");
 /// Home is a tool-runtime input, not a Spice-owned environment declaration.
 const HOME_DIRECTORY: &str = concat!("HO", "ME");
 
-/// The first canvas analysis, kept in its declaration order.
+/// The first app analysis, kept in its declaration order.
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "clippy",
     "--locked",
@@ -328,7 +328,7 @@ const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "warnings",
 ];
 
-/// The second canvas analysis, kept in its declaration order.
+/// The second app analysis, kept in its declaration order.
 const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
     "build",
     "index.html",
@@ -760,7 +760,7 @@ fn compile_findings(
     let mut findings = BTreeSet::new();
     for raw in printed.lines() {
         let line = raw.trim_start();
-        if let Some(diagnostic) = canvas_diagnostic(line) {
+        if let Some(diagnostic) = app_diagnostic(line) {
             pending = Some(diagnostic);
             continue;
         }
@@ -770,7 +770,7 @@ fn compile_findings(
         let Some((code, message)) = pending.take() else {
             continue;
         };
-        let Some((path, line, column)) = canvas_locus(root, cwd, location) else {
+        let Some((path, line, column)) = app_locus(root, cwd, location) else {
             continue;
         };
         findings.insert(ArmFinding {
@@ -783,13 +783,13 @@ fn compile_findings(
     findings.into_iter().collect()
 }
 
-fn canvas_diagnostic(line: &str) -> Option<(String, String)> {
+fn app_diagnostic(line: &str) -> Option<(String, String)> {
     let rest = line.strip_prefix("error[")?;
     let (code, message) = rest.split_once("]: ")?;
     (!code.is_empty() && !message.is_empty()).then(|| (code.to_owned(), message.to_owned()))
 }
 
-fn canvas_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32, u32)> {
+fn app_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32, u32)> {
     let (path_and_line, column) = location.rsplit_once(':')?;
     let (reported, line) = path_and_line.rsplit_once(':')?;
     let line = line.parse::<u32>().ok().filter(|line| *line > 0)?;

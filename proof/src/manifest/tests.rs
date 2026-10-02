@@ -488,7 +488,7 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
         proof_container: format!("registry.example/spice-proof@sha256:{}", "0".repeat(64)),
     };
-    let mut inventory = wire::manifest::CANVAS_APP_FILES
+    let mut inventory = wire::manifest::APP_FILES
         .iter()
         .map(|file| InventoryEntry {
             path: format!("app/{file}"),
