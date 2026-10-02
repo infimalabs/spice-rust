@@ -90,7 +90,10 @@ impl TranscriptFilter {
         }
     }
 
-    fn admits(&self, observation: &Observation) -> bool {
+    /// Whether `observation` survives this selection. Only typed events carry
+    /// a kind, so every other observation is admitted only by an empty set.
+    #[must_use]
+    pub fn admits(&self, observation: &Observation) -> bool {
         match observation {
             Observation::Event { event, .. } => {
                 self.kinds.is_empty() || self.kinds.contains(&event.kind())
@@ -158,6 +161,31 @@ pub struct TranscriptObservation {
     pub observation: Observation,
     /// Exact UTF-8 bytes withheld across this observation's text fields.
     pub withheld_text_bytes: usize,
+}
+
+impl TranscriptObservation {
+    /// `observation` with every text field cut to `budget`'s text limit.
+    #[must_use]
+    pub fn clipped(mut observation: Observation, budget: Budget) -> Self {
+        let mut withheld = 0;
+        match &mut observation {
+            Observation::Event { event, .. } => clip_event(event, budget, &mut withheld),
+            Observation::Residue { residue, .. } => clip_residue(residue, budget, &mut withheld),
+            Observation::Missing { selector, detail } => {
+                clip_field(selector, budget, &mut withheld);
+                clip_field(detail, budget, &mut withheld);
+            }
+            Observation::Absent { selector } => clip_field(selector, budget, &mut withheld),
+            Observation::Ambiguous { selector, .. } => {
+                clip_field(selector, budget, &mut withheld);
+            }
+            Observation::Pending { .. } | Observation::Canary { .. } => {}
+        }
+        Self {
+            observation,
+            withheld_text_bytes: withheld,
+        }
+    }
 }
 
 /// How a presentation omission can be recovered without flooding stdout.
@@ -233,7 +261,9 @@ impl From<TailWork> for TranscriptWork {
 pub struct TranscriptPage {
     /// Selected tape.
     pub tape: PathBuf,
-    /// Current status followed by complete records in newest-first order.
+    /// On a current page, its status; then complete records in newest-first
+    /// order. An older page carries records only, so a continuation that
+    /// widens the byte limit for one withheld record admits that record.
     pub rows: Bounded<TranscriptPageRow, TranscriptContinuation>,
     /// Older bytes outside the bounded source window, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -246,8 +276,10 @@ pub struct TranscriptPage {
 ///
 /// Records are presented newest first. One vendor record is the atomic paging
 /// row, so a record that emits several events cannot be split across pages or
-/// replay a previously admitted event. A continuation authenticates the tape
-/// generation and is refused by the tail scanner after replacement.
+/// replay a previously admitted event. Pending bytes and decoder canaries
+/// describe the tape's end, so only a current page reports them. A
+/// continuation authenticates the tape generation and is refused by the tail
+/// scanner after replacement.
 ///
 /// # Errors
 ///
@@ -261,10 +293,7 @@ pub fn transcript_page(
 ) -> Result<TranscriptPage, SurfaceError> {
     let tape = tape.as_ref();
     let lane = lane.into();
-    let status_continuation = match &request.start {
-        TranscriptPageStart::Current { .. } => None,
-        TranscriptPageStart::Before(cursor) => Some(cursor.clone()),
-    };
+    let current = matches!(request.start, TranscriptPageStart::Current { .. });
     let tail = match request.start {
         TranscriptPageStart::Before(cursor) => scan_before(
             tape,
@@ -293,85 +322,33 @@ pub fn transcript_page(
         source,
     })?;
 
-    let mut seen = BTreeSet::new();
-    for record in &tail.scan.records {
-        if let RecordPayload::Events(events) = &record.payload {
-            seen.extend(events.iter().map(|event| event.event.kind()));
-        }
-    }
-    let status = TranscriptStatus {
-        pending: tail.scan.pending.clone(),
-        canaries: EventKind::ALL
-            .into_iter()
-            .filter(|kind| !seen.contains(kind))
-            .collect(),
-    };
-    let status_continuation = status_continuation.map_or_else(
-        || TranscriptContinuation::Current {
-            source: tail.start.source.clone(),
-        },
-        |cursor| TranscriptContinuation::Cursor { cursor },
-    );
+    let source = tail.start.source.clone();
     let mut admission = Admission::new(request.output);
-    if !status.pending.is_empty() || !status.canaries.is_empty() {
-        admission
-            .offer(TranscriptPageRow::Status { status })
-            .map_err(|error| SurfaceError::Encode(error.to_string()))?;
+    if current {
+        let status = window_status(&tail.scan);
+        if !status.pending.is_empty() || !status.canaries.is_empty() {
+            admission
+                .offer(TranscriptPageRow::Status { status })
+                .map_err(|error| SurfaceError::Encode(error.to_string()))?;
+        }
     }
     for source_record in tail.scan.records.iter().rev() {
-        let mut observations = record_observations(&lane, dialect, tape, source_record);
-        observations.retain(|observation| request.filter.admits(observation));
-        if observations.is_empty() {
+        let Some(record) = page_record(
+            &lane,
+            dialect,
+            tape,
+            source_record,
+            &request.filter,
+            request.output,
+        ) else {
             continue;
-        }
-        let observations = observations
-            .into_iter()
-            .map(|observation| clipped(observation, request.output))
-            .collect();
-        let record = TranscriptRecord {
-            start: TranscriptCursor {
-                source: source_record.next.source.clone(),
-                before: Position {
-                    member: source_record.locus.member,
-                    offset: source_record.locus.offset,
-                },
-            },
-            end: TranscriptCursor {
-                source: source_record.next.source.clone(),
-                before: source_record.next.next,
-            },
-            observations,
         };
         admission
             .offer(TranscriptPageRow::Record { record })
             .map_err(|error| SurfaceError::Encode(error.to_string()))?;
     }
     let presentation_closed = admission.is_closed();
-    let rows = admission.finish(|resume| {
-        let row = match resume {
-            Resume::At(row) | Resume::Widened { record: row, .. } | Resume::Export(row) => row,
-        };
-        match resume {
-            Resume::Export(_) => match row {
-                TranscriptPageRow::Status { .. } => TranscriptContinuation::Export {
-                    spans: page_row_spans(row),
-                    continuation: Box::new(status_continuation.clone()),
-                },
-                TranscriptPageRow::Record { record } => TranscriptContinuation::Export {
-                    spans: transcript_record_spans(record),
-                    continuation: Box::new(TranscriptContinuation::Cursor {
-                        cursor: record.start.clone(),
-                    }),
-                },
-            },
-            Resume::At(_) | Resume::Widened { .. } => match row {
-                TranscriptPageRow::Status { .. } => status_continuation.clone(),
-                TranscriptPageRow::Record { record } => TranscriptContinuation::Cursor {
-                    cursor: record.end.clone(),
-                },
-            },
-        }
-    });
+    let rows = admission.finish(|resume| resume_continuation(&resume, &source));
     let history =
         (!presentation_closed && tail.withheld_source_bytes > 0).then(|| TranscriptHistory {
             withheld_source_bytes: tail.withheld_source_bytes,
@@ -387,6 +364,87 @@ pub fn transcript_page(
         history,
         work: tail.work.into(),
     })
+}
+
+/// Pending bytes at the window's end and the event kinds it never decoded.
+fn window_status(scan: &crate::Scan) -> TranscriptStatus {
+    let mut seen = BTreeSet::new();
+    for record in &scan.records {
+        if let RecordPayload::Events(events) = &record.payload {
+            seen.extend(events.iter().map(|event| event.event.kind()));
+        }
+    }
+    TranscriptStatus {
+        pending: scan.pending.clone(),
+        canaries: EventKind::ALL
+            .into_iter()
+            .filter(|kind| !seen.contains(kind))
+            .collect(),
+    }
+}
+
+/// One source record as a page row, or nothing when the filter admits none
+/// of its observations.
+fn page_record(
+    lane: &str,
+    dialect: Dialect,
+    tape: &Path,
+    source_record: &Record,
+    filter: &TranscriptFilter,
+    output: Budget,
+) -> Option<TranscriptRecord> {
+    let mut observations = record_observations(lane, dialect, tape, source_record);
+    observations.retain(|observation| filter.admits(observation));
+    if observations.is_empty() {
+        return None;
+    }
+    Some(TranscriptRecord {
+        start: TranscriptCursor {
+            source: source_record.next.source.clone(),
+            before: Position {
+                member: source_record.locus.member,
+                offset: source_record.locus.offset,
+            },
+        },
+        end: TranscriptCursor {
+            source: source_record.next.source.clone(),
+            before: source_record.next.next,
+        },
+        observations: observations
+            .into_iter()
+            .map(|observation| TranscriptObservation::clipped(observation, output))
+            .collect(),
+    })
+}
+
+/// How a caller recovers the first row a page withheld. A status row resumes
+/// against the generation it observed; a record resumes at its own end, or,
+/// after exporting it, strictly before it.
+fn resume_continuation(
+    resume: &Resume<'_, TranscriptPageRow>,
+    source: &SourceId,
+) -> TranscriptContinuation {
+    let current = || TranscriptContinuation::Current {
+        source: source.clone(),
+    };
+    match resume {
+        Resume::Export(TranscriptPageRow::Status { status }) => TranscriptContinuation::Export {
+            spans: status.pending.clone(),
+            continuation: Box::new(current()),
+        },
+        Resume::Export(TranscriptPageRow::Record { record }) => TranscriptContinuation::Export {
+            spans: transcript_record_spans(record),
+            continuation: Box::new(TranscriptContinuation::Cursor {
+                cursor: record.start.clone(),
+            }),
+        },
+        Resume::At(row) | Resume::Widened { record: row, .. } => match row {
+            TranscriptPageRow::Status { .. } => current(),
+            TranscriptPageRow::Record { record } => TranscriptContinuation::Cursor {
+                cursor: record.end.clone(),
+            },
+        },
+    }
 }
 
 fn record_observations(
@@ -423,25 +481,6 @@ fn transcript_record_spans(record: &TranscriptRecord) -> Vec<Span> {
         .map(|observation| observation_spans(&observation.observation))
         .find(|spans| !spans.is_empty())
         .unwrap_or_default()
-}
-
-fn clipped(mut observation: Observation, budget: Budget) -> TranscriptObservation {
-    let mut withheld = 0;
-    match &mut observation {
-        Observation::Event { event, .. } => clip_event(event, budget, &mut withheld),
-        Observation::Residue { residue, .. } => clip_residue(residue, budget, &mut withheld),
-        Observation::Missing { selector, detail } => {
-            clip_field(selector, budget, &mut withheld);
-            clip_field(detail, budget, &mut withheld);
-        }
-        Observation::Absent { selector } => clip_field(selector, budget, &mut withheld),
-        Observation::Ambiguous { selector, .. } => clip_field(selector, budget, &mut withheld),
-        Observation::Pending { .. } | Observation::Canary { .. } => {}
-    }
-    TranscriptObservation {
-        observation,
-        withheld_text_bytes: withheld,
-    }
 }
 
 fn clip_event(event: &mut SurfaceEvent, budget: Budget, withheld: &mut usize) {
@@ -503,17 +542,6 @@ fn clip_field(field: &mut String, budget: Budget, withheld: &mut usize) {
     let clipped = budget.clip(field);
     *withheld = withheld.saturating_add(clipped.withheld_bytes.map_or(0, |count| count.get()));
     *field = clipped.text;
-}
-
-fn page_row_spans(row: &TranscriptPageRow) -> Vec<Span> {
-    match row {
-        TranscriptPageRow::Status { status } => status.pending.clone(),
-        TranscriptPageRow::Record { record } => record
-            .observations
-            .iter()
-            .flat_map(|observation| observation_spans(&observation.observation))
-            .collect(),
-    }
 }
 
 fn observation_spans(observation: &Observation) -> Vec<Span> {

@@ -23,7 +23,7 @@ use std::io::{self, Write};
 
 use listen::StreamOutcome;
 use serde::Serialize;
-use wire::{Outcome, Reply, ReplyPosition};
+use wire::Outcome;
 
 /// Which rendering of an outcome the caller asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,9 +78,7 @@ impl Rendering {
 /// Callers whose reply type has an explicit human-text variant use
 /// [`render_with_reply_text`] to select that prose without changing `--json`.
 /// Refusals keep their typed arm's output order and faults keep their
-/// one-sentence form. Long-running transcript wakes use [`render_stream`]; a
-/// finite transcript command uses [`render_stream_reply`] so its one result
-/// keeps the reply envelope.
+/// one-sentence form. Long-running transcript wakes use [`render_stream`].
 ///
 /// # Errors
 ///
@@ -155,27 +153,6 @@ pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, S
     let document = match form {
         Form::Text => terminated(outcome.to_string().into_bytes()),
         Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
-    };
-    Ok(Rendering {
-        stream: Stream::Out,
-        document,
-    })
-}
-
-/// Renders one finite transcript command result in the requested form.
-///
-/// Its human form remains the stream report. Its machine form is a daemonless
-/// reply like every other finite command rather than a bare body.
-pub fn render_stream_reply(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
-    let document = match form {
-        Form::Text => terminated(outcome.to_string().into_bytes()),
-        Form::Json => {
-            let outcome = Outcome::Reply(Reply {
-                position: ReplyPosition::Direct {},
-                body: outcome,
-            });
-            line(wire::encode(&outcome).map_err(|error| error.to_string())?)
-        }
     };
     Ok(Rendering {
         stream: Stream::Out,

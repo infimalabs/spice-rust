@@ -27,10 +27,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     local_direct!(
         ["retro"],
-        "retro [LANE|LOCUS|PATH]",
+        "retro [LANE|LOCUS|PATH] [--kind KIND...] [--limit N] [--max-bytes N] [--max-text N] \
+         [--after CURSOR] [--export FILE]",
         [Daemonless, Offline],
-        Stream,
-        "listen::retro"
+        Reply,
+        "listen::transcript_page"
     ),
     local_direct!(
         ["session"],

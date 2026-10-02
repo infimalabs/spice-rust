@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
+use listen::{SurfaceError, Watch};
 use spice::cli;
 #[cfg(not(target_arch = "wasm32"))]
 use spice::placeholder::PlaceholderReason;
@@ -68,6 +68,8 @@ mod render;
 mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod retro_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod rtk_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -232,7 +234,8 @@ fn main() {
     let leaf = cli::selected_matches(&matches);
     match contract.path {
         ["watch"] => run_watch(leaf, form),
-        ["retro"] => run_retro(leaf, form),
+        #[cfg(not(target_arch = "wasm32"))]
+        ["retro"] => retro_command::run(leaf, form),
         ["proof"] => deliver(&proof_command::seal(configuration), form),
         ["proof", "replay"] => deliver(&proof_command::replay(configuration), form),
         _ => {}
@@ -595,6 +598,10 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
             "task-migration::target-unsupported",
             "reading a predecessor task export is unavailable on wasm32",
         ),
+        ["retro"] => (
+            "retro::target-unsupported",
+            "transcript tape reads and file export are unavailable on wasm32",
+        ),
         ["session", ..] => (
             "session::target-unsupported",
             "filesystem transcript forensics are unavailable on wasm32",
@@ -683,32 +690,6 @@ fn doctor_outcome(
         search_path.as_deref(),
         configuration,
     )
-}
-
-fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
-    let selector = match matches.get_one::<String>("LANE|LOCUS|PATH") {
-        Some(value) => match RetroSelector::parse(value) {
-            Ok(selector) => selector,
-            Err(error) => {
-                let refusal: Outcome<()> = Outcome::Refusal(Refusal::bare(
-                    wire::RefusalDiagnostic::new(
-                        "retro::selector".to_owned(),
-                        None,
-                        Some("LANE, M:O:L, or PATH".to_owned()),
-                        Some(value.clone()),
-                    )
-                    .with_detail(error.to_string()),
-                ));
-                deliver(&refusal, form);
-            }
-        },
-        None => RetroSelector::Path(PathBuf::from(".")),
-    };
-    let dialects = extension_dialects();
-    match listen::retro(".", selector, &dialects) {
-        Ok(outcome) => deliver_stream_once(&outcome, form),
-        Err(error) => deliver_fault(surface_fault(error), form),
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -959,16 +940,6 @@ fn poll_and_emit(watch: &mut Watch, form: Form) -> Result<(), Fault> {
             .speak();
     }
     Ok(())
-}
-
-fn deliver_stream_once(outcome: &StreamOutcome, form: Form) -> ! {
-    match render::render_stream_reply(outcome, form) {
-        Ok(rendering) => {
-            rendering.speak();
-            terminate_stream();
-        }
-        Err(error) => deliver_fault(render_fault(error), form),
-    }
 }
 
 fn surface_fault(error: SurfaceError) -> Fault {

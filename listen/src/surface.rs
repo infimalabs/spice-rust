@@ -539,79 +539,83 @@ impl StreamOutcome {
 impl fmt::Display for StreamOutcome {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for observation in &self.observations {
-            match observation {
-                Observation::Event {
-                    lane,
-                    dialect,
-                    tape,
-                    spans,
-                    event,
-                } => writeln!(
-                    formatter,
-                    "event lane={lane} dialect={} tape={} spans={} kind={} detail={event}",
-                    dialect.as_str(),
-                    tape.display(),
-                    display_spans(spans),
-                    event.kind().as_str(),
-                )?,
-                Observation::Residue {
-                    lane,
-                    dialect,
-                    tape,
-                    spans,
-                    residue,
-                } => writeln!(
-                    formatter,
-                    "residue lane={lane} dialect={} tape={} spans={} detail={residue}",
-                    dialect.as_str(),
-                    tape.display(),
-                    display_spans(spans),
-                )?,
-                Observation::Pending {
-                    lane,
-                    dialect,
-                    tape,
-                    spans,
-                } => writeln!(
-                    formatter,
-                    "pending lane={lane} dialect={} tape={} spans={}",
-                    dialect.as_str(),
-                    tape.display(),
-                    display_spans(spans),
-                )?,
-                Observation::Absent { selector } => {
-                    writeln!(formatter, "absent selector={selector}")?;
-                }
-                Observation::Missing { selector, detail } => {
-                    writeln!(formatter, "missing selector={selector} detail={detail}")?;
-                }
-                Observation::Ambiguous {
-                    selector,
-                    candidates,
-                } => writeln!(
-                    formatter,
-                    "ambiguous selector={selector} candidates={}",
-                    candidates
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )?,
-                Observation::Canary {
-                    lane,
-                    dialect,
-                    tape,
-                    expected,
-                } => writeln!(
-                    formatter,
-                    "canary lane={lane} dialect={} tape={} expected={}",
-                    dialect.as_str(),
-                    tape.display(),
-                    expected.as_str(),
-                )?,
-            }
+            writeln!(formatter, "{observation}")?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for Observation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Event {
+                lane,
+                dialect,
+                tape,
+                spans,
+                event,
+            } => write!(
+                formatter,
+                "event lane={lane} dialect={} tape={} spans={} kind={} detail={event}",
+                dialect.as_str(),
+                tape.display(),
+                display_spans(spans),
+                event.kind().as_str(),
+            ),
+            Self::Residue {
+                lane,
+                dialect,
+                tape,
+                spans,
+                residue,
+            } => write!(
+                formatter,
+                "residue lane={lane} dialect={} tape={} spans={} detail={residue}",
+                dialect.as_str(),
+                tape.display(),
+                display_spans(spans),
+            ),
+            Self::Pending {
+                lane,
+                dialect,
+                tape,
+                spans,
+            } => write!(
+                formatter,
+                "pending lane={lane} dialect={} tape={} spans={}",
+                dialect.as_str(),
+                tape.display(),
+                display_spans(spans),
+            ),
+            Self::Absent { selector } => write!(formatter, "absent selector={selector}"),
+            Self::Missing { selector, detail } => {
+                write!(formatter, "missing selector={selector} detail={detail}")
+            }
+            Self::Ambiguous {
+                selector,
+                candidates,
+            } => write!(
+                formatter,
+                "ambiguous selector={selector} candidates={}",
+                candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Self::Canary {
+                lane,
+                dialect,
+                tape,
+                expected,
+            } => write!(
+                formatter,
+                "canary lane={lane} dialect={} tape={} expected={}",
+                dialect.as_str(),
+                tape.display(),
+                expected.as_str(),
+            ),
+        }
     }
 }
 
@@ -694,14 +698,18 @@ impl RetroSelector {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Session {
-    lane: String,
-    dialect: Dialect,
-    tape: PathBuf,
+/// One preserved session tape a retro selector resolved, ordered by tape path.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct RetroSession {
+    /// Preserved tape.
+    pub tape: PathBuf,
+    /// Lane owning the session.
+    pub lane: String,
+    /// Decoder spelling.
+    pub dialect: Dialect,
 }
 
-impl Session {
+impl RetroSession {
     const fn decoder(&self) -> Dialect {
         self.dialect
     }
@@ -795,6 +803,32 @@ impl Watch {
     }
 }
 
+/// The preserved session tapes `selector` resolves beneath `root`, in path order.
+///
+/// A lane selects its sessions under `root`, a path selects the sessions under
+/// it, and a locus resolves every session under `root` because it must name
+/// exactly one of them.
+///
+/// # Errors
+///
+/// Returns a typed surface failure when discovery cannot read a directory.
+pub fn retro_sessions(
+    root: &Path,
+    selector: &RetroSelector,
+    dialects: &[(&'static str, Dialect)],
+) -> Result<Vec<RetroSession>, SurfaceError> {
+    let mut sessions = match selector {
+        RetroSelector::Lane(lane) => discover(root, dialects)?
+            .into_iter()
+            .filter(|session| &session.lane == lane)
+            .collect::<Vec<_>>(),
+        RetroSelector::Path(path) => discover(path, dialects)?,
+        RetroSelector::Locus(_) => discover(root, dialects)?,
+    };
+    sessions.sort();
+    Ok(sessions)
+}
+
 /// Replay exactly the sessions or span selected beneath `root`.
 ///
 /// # Errors
@@ -810,15 +844,7 @@ pub fn retro(
 ) -> Result<StreamOutcome, SurfaceError> {
     let root = root.into();
     let selector_text = selector_text(&selector);
-    let mut sessions = match &selector {
-        RetroSelector::Lane(lane) => discover(&root, dialects)?
-            .into_iter()
-            .filter(|session| &session.lane == lane)
-            .collect::<Vec<_>>(),
-        RetroSelector::Path(path) => discover(path, dialects)?,
-        RetroSelector::Locus(_) => discover(&root, dialects)?,
-    };
-    sessions.sort();
+    let sessions = retro_sessions(&root, &selector, dialects)?;
 
     let mut observations = Vec::new();
     if sessions.is_empty() {
@@ -874,7 +900,7 @@ struct SurfacedScan {
     accounted: bool,
 }
 
-fn surface_scan(session: &Session, scan: &Scan, finish_partial: bool) -> SurfacedScan {
+fn surface_scan(session: &RetroSession, scan: &Scan, finish_partial: bool) -> SurfacedScan {
     let mut observations = Vec::new();
     let mut event_kinds = Vec::new();
     for record in &scan.records {
@@ -928,7 +954,7 @@ fn surface_scan(session: &Session, scan: &Scan, finish_partial: bool) -> Surface
 }
 
 fn decode_record(
-    session: &Session,
+    session: &RetroSession,
     bytes: &[u8],
     locus: Locus,
     spans: &[Span],
@@ -942,7 +968,7 @@ fn decode_record(
     Ok((decoded, observations))
 }
 
-fn observe(session: &Session, decoded: &Decoded, spans: &[Span]) -> Vec<Observation> {
+fn observe(session: &RetroSession, decoded: &Decoded, spans: &[Span]) -> Vec<Observation> {
     match decoded {
         Decoded::Events { events, .. } => events
             .iter()
@@ -967,7 +993,7 @@ fn observe(session: &Session, decoded: &Decoded, spans: &[Span]) -> Vec<Observat
     }
 }
 
-fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, SurfaceError> {
+fn replay_locus(session: &RetroSession, span: Span) -> Result<Vec<Observation>, SurfaceError> {
     let tape = Tape::open_existing(&session.tape).map_err(|source| SurfaceError::Tape {
         path: session.tape.clone(),
         source,
@@ -995,7 +1021,7 @@ fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, Surfa
 fn discover(
     root: &Path,
     dialects: &[(&'static str, Dialect)],
-) -> Result<Vec<Session>, SurfaceError> {
+) -> Result<Vec<RetroSession>, SurfaceError> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1030,7 +1056,7 @@ fn discover(
 fn tape_session(
     path: &Path,
     dialects: &[(&'static str, Dialect)],
-) -> Result<Option<Session>, SurfaceError> {
+) -> Result<Option<RetroSession>, SurfaceError> {
     let Some(dialect) = dialect_name(path.file_name(), dialects) else {
         return Ok(None);
     };
@@ -1041,7 +1067,7 @@ fn tape_session(
     else {
         return Err(SurfaceError::NonUtf8Lane(path.to_path_buf()));
     };
-    Ok(Some(Session {
+    Ok(Some(RetroSession {
         lane: lane.to_owned(),
         dialect,
         tape: path.to_path_buf(),
