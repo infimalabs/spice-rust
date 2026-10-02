@@ -185,9 +185,9 @@ pub(super) fn interrupted(event: &PointerEvent, session: &Session) {
     }
 }
 
-/// A click on the SVG root outside any gesture is the backdrop and closes the
-/// viewer; the click a finished gesture generates is swallowed.
-pub(super) fn backdrop(event: &MouseEvent, svg: &NodeRef, session: &Session, close: &Callback<()>) {
+/// A click on the SVG root outside any gesture clears selection without
+/// dismissing the editor; the click a finished gesture generates is swallowed.
+pub(super) fn backdrop(event: &MouseEvent, svg: &NodeRef, session: &Session) {
     if std::mem::take(&mut *session.gesture_click.borrow_mut()) {
         return;
     }
@@ -197,6 +197,7 @@ pub(super) fn backdrop(event: &MouseEvent, svg: &NodeRef, session: &Session, clo
                 .is_some_and(|svg| JsValue::from(svg) == JsValue::from(target))
         })
     {
-        close.emit(());
+        session.history.borrow_mut().selected = None;
+        session.repaint.emit(());
     }
 }
