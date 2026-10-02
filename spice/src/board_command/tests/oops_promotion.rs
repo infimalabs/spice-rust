@@ -13,6 +13,7 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
             origin: Some("fixture:oops-promotion".parse().expect("fixture origin")),
+            project: None,
         },
     ));
     task
@@ -83,7 +84,6 @@ fn assert_oops_refusal(outcome: Outcome<CommandAnswer>, offenders: &[(&TaskHandl
         detail.contains("status=pending"),
         "refusal omitted workflow state: {detail}",
     );
-    assert!(refusal.explanation().contains("wake HANDLE --into"));
 }
 
 fn capture_parked(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Actor {
@@ -482,7 +482,7 @@ fn assert_claimed_oops_cannot_finish(
 }
 
 #[test]
-fn wake_into_is_the_only_unclaimed_oops_project_exit() {
+fn wake_is_the_only_unclaimed_oops_project_exit() {
     let (root, bus, epoch, _seats) = fixture("oops-unclaimed-promotion", 1);
     let parked = add_parked(&bus, epoch, "OOPS-promote01");
     let unrelated = add(
@@ -499,24 +499,6 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
     let facts = fact_count(&bus);
     assert_unwitnessed_promotion_refuses(&bus, epoch, &parked, heads, facts);
     assert_unrelated_promotion_witness_refuses(&bus, epoch, &parked, heads, unrelated_heads, facts);
-    let plain = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskWake,
-        vec![workflow_witness(heads), deferral_witness(heads)],
-        &TaskWake {
-            task: parked.clone(),
-            into: None,
-            claim: false,
-        },
-    );
-    assert!(matches!(
-        plain,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-required"
-    ));
-    assert_eq!(fact_count(&bus), facts, "plain wake mutated parked work");
-
     let bypass = issue(
         &bus,
         epoch,

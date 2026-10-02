@@ -27,6 +27,7 @@ pub(super) fn add_oops(
             title: title.to_owned(),
             description: title.to_owned(),
             origin: Some("fixture:oops".parse().expect("fixture origin")),
+            project: None,
         },
     ));
     task
@@ -402,6 +403,7 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
             title: "Ungrounded system filing".to_owned(),
             description: "The hidden route still needs causal authority".to_owned(),
             origin: None,
+            project: None,
         },
     );
     assert!(matches!(
@@ -487,39 +489,34 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
     }
 }
 
-/// A caller-selected project on the system route never reaches the journal:
-/// the route DTO rejects it at decode, before any command is admitted.
+/// A hidden project recommended on the system route never reaches the
+/// journal: only a public project this board admits may park beneath `.oops`.
 fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Actor) {
     for actor in [Actor::Operator, lane.clone()] {
         for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
-            let _ = NEXT_COMMAND.fetch_add(1, Ordering::Relaxed);
-            let before = facts_len(bus, "facts before route decode refusal");
-            let rejection = Command {
-                v: WireVersion::CURRENT,
-                id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
+            let before = facts_len(bus, "facts before route refusal");
+            let refused = issue(
+                bus,
                 epoch,
-                kind: CommandKind::TaskOopsAdd,
-                expected: vec![Witness::Absence {
+                actor.clone(),
+                CommandKind::TaskOopsAdd,
+                vec![Witness::Absence {
                     task: wire::TaskStamp::for_micros(43).expect("fixture task stamp"),
                 }],
-                body: serde_json::json!({
-                    "title": "forged hidden route",
-                    "description": "caller-selected project must not cross",
-                    "project": project,
-                }),
-            }
-            .admit(&Accepted {
-                wire: WireVersion::CURRENT,
-                actor: actor.clone(),
-                epoch,
-            })
-            .expect_err("route DTO rejects a caller-selected project");
+                &TaskOopsAdd {
+                    title: "forged hidden route".to_owned(),
+                    description: "caller-selected hidden project must not cross".to_owned(),
+                    origin: Some("fixture:oops".parse().expect("fixture origin")),
+                    project: Some(project.to_owned()),
+                },
+            );
             assert!(
-                matches!(rejection, wire::CommandRejection::Fault(_)),
-                "unexpected rejection for {project}: {rejection:?}",
+                matches!(&refused, Outcome::Refusal(refusal)
+                    if refusal.reason() == "task::oops-project-refused"),
+                "unexpected outcome for {project}: {refused:?}",
             );
             assert_eq!(
-                facts_len(bus, "facts after route decode refusal"),
+                facts_len(bus, "facts after route refusal"),
                 before,
                 "forged route mutated the journal for {project}",
             );

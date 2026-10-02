@@ -616,7 +616,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "oops"],
-        "task oops TEXT [--origin ORIGIN]",
+        "task oops TEXT [--origin ORIGIN] [--project PROJECT]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],

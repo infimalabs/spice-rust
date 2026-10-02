@@ -109,7 +109,9 @@ A task's *flow* is any nonempty sequence of unique lowercase ASCII words; there
 is no global phase enumeration, and the current phase must be a member. Unnamed,
 a task without acceptance receives `plan` → `todo` → `review` and every other
 task `todo` → `review`, regardless of visibility. A hidden `.oops` row parks in
-`plan` with the full three-phase flow and requires explicit promotion.
+`plan` with the full three-phase flow and leaves `.oops` only through an
+explicit wake, which lands in `--into`, else the public project the row
+recommends, else the derived `task` project.
 
 Every accepted transition is a durable journal fact projected by the board. A
 new task-owned tree also produces one attested baseline-first landing; a

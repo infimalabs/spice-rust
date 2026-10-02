@@ -234,6 +234,19 @@ mod task_stamp_tests {
     }
 }
 
+/// Hidden root of the parked `.oops` route.
+pub const OOPS_STEM: &str = "oops";
+
+/// Whether a project spelling is parked under the `.oops` root, whatever
+/// public project it recommends beneath that root.
+#[must_use]
+pub fn is_oops_project(project: &str) -> bool {
+    project
+        .strip_prefix('.')
+        .and_then(|hidden| hidden.split('.').next())
+        == Some(OOPS_STEM)
+}
+
 /// A task handle such as `SPICE-dRyDYZqJJ`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskHandle(String);
@@ -251,9 +264,16 @@ impl TaskHandle {
     }
 
     /// Render the current public name from a project and sole birth stamp.
+    ///
+    /// A parked `.oops` row keeps the `OOPS` family while it carries a public
+    /// recommendation beneath that root; promotion renames it.
     #[must_use]
     pub fn for_project(project: &str, born: &TaskStamp) -> Self {
-        let source = project.rsplit('.').next().unwrap_or(project);
+        let source = if is_oops_project(project) {
+            OOPS_STEM
+        } else {
+            project.rsplit('.').next().unwrap_or(project)
+        };
         let stem = source
             .bytes()
             .filter(|byte| byte.is_ascii_alphanumeric())

@@ -500,7 +500,7 @@ fn client_wake(
         let into = matches.get_one::<String>("into").cloned();
         let claim = matches.get_flag("claim");
         let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
-        if into.is_some() {
+        if into.is_some() || wire::is_oops_project(&heads.statement.body.project) {
             expected.push(statement_witness(heads));
         }
         if claim {
