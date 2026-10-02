@@ -281,9 +281,12 @@ row. A partial page continues with `--after SEQ`, the first withheld position.
 `spice trust` shows the current digest, its standing and provenance, and
 ruling counts first, then a page of recorded rulings: the current digest,
 then pended, granted, and revoked digests, continuing with `--after DIGEST`.
-`spice taste` shows the tracked digest and one summary row per taste, with
-unanswered reminders first; `spice taste --name NAME` pages that taste's
-fires and judgments newest first.
+`spice taste` shows the tracked digest, cumulative judgment counts, and at most
+12 recent fires per taste, with unanswered reminders first. `spice taste
+--name NAME` reads only that taste's indexed evidence frontier and pages fires
+and judgments newest first. Its opaque `--after HORIZON/POSITION/KIND`
+continuation freezes the first page's horizon, so concurrent journal appends
+cannot shift a resumed page.
 
 `spice inbox` and `spice consent` are authority queues: neither may hide an
 item behind a page boundary. Each answer carries a compact index naming every

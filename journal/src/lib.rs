@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 32;
+pub const SCHEMA_VERSION: u32 = 33;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -34,6 +34,8 @@ mod read;
 mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore;
+#[cfg(not(target_arch = "wasm32"))]
+mod taste_index;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
@@ -42,7 +44,8 @@ pub use guard::{
     JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES,
     MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, OperatorDirection, OperatorDirections,
     PendingFact, ReadError, RetiredSteering, SelectedFactPage, SteeringPage, TaskGeneration,
-    TaskHeadPage, TaskHeads, TrustHeadPage,
+    TaskHeadPage, TaskHeads, TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary,
+    TrustHeadPage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};

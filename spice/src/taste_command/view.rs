@@ -12,8 +12,8 @@ use serde::Serialize;
 use wire::output::{Bounded, ClippedText};
 
 use super::{
-    Disposition, Name, Seq, TasteFire, TasteJudgment, TasteProvenance, TasteRow, TasteSnapshot,
-    VendorTally, Verdict,
+    Disposition, HistoryCursor, HistoryKind, Name, Seq, TasteFire, TasteJudgment, TasteProvenance,
+    TasteRow, TasteSnapshot, VendorTally, Verdict,
 };
 use crate::read_page::Page;
 
@@ -75,6 +75,21 @@ impl TasteEvent {
             Self::Judgment(judgment) => judgment.position,
         }
     }
+
+    const fn kind(&self) -> HistoryKind {
+        match self {
+            Self::Fire(_) => HistoryKind::Fire,
+            Self::Judgment(_) => HistoryKind::Judgment,
+        }
+    }
+
+    fn cursor(&self, horizon: Seq) -> HistoryCursor {
+        HistoryCursor {
+            horizon,
+            position: self.position(),
+            kind: self.kind(),
+        }
+    }
 }
 
 /// Project one complete snapshot onto the page the caller asked for.
@@ -87,6 +102,7 @@ pub(super) fn project(
     let TasteSnapshot {
         digest,
         provenance,
+        horizon,
         tastes,
     } = snapshot;
     let Some(name) = name else {
@@ -116,6 +132,8 @@ pub(super) fn project(
         ));
     };
     let taste = summary(&row, text);
+    let mut population = row.history_population;
+    let start = row.history_start;
     let mut history = row
         .fires
         .into_iter()
@@ -126,11 +144,31 @@ pub(super) fn project(
                 .map(|judgment| TasteEvent::Judgment(clip_judgment(judgment, text))),
         )
         .collect::<Vec<_>>();
-    history.sort_by_key(|event| std::cmp::Reverse(event.position()));
-    let history = page.listed(
-        history,
-        |event| event.position().to_string(),
-        "SEQ of an event in this taste's history",
+    history.sort_by_key(|event| {
+        (
+            std::cmp::Reverse(event.position()),
+            matches!(event, TasteEvent::Judgment(_)),
+        )
+    });
+    if let Some(start) = start {
+        let Some(offset) = history
+            .iter()
+            .position(|event| event.cursor(horizon) == start)
+        else {
+            return Err(page.cursor_refusal("HORIZON/POSITION/fire or HORIZON/POSITION/judgment"));
+        };
+        history.drain(..offset);
+        population = population.saturating_sub(offset);
+    }
+    let history = page.shown(
+        history
+            .into_iter()
+            .map(|event| {
+                let key = event.cursor(horizon).key();
+                (event, key)
+            })
+            .collect(),
+        population,
     )?;
     Ok(TasteView::Taste(TasteDetail {
         digest,
@@ -140,12 +178,6 @@ pub(super) fn project(
 }
 
 fn summary(row: &TasteRow, text: usize) -> TasteSummary {
-    let count = |verdict| {
-        row.judgments
-            .iter()
-            .filter(|judgment| judgment.verdict == verdict)
-            .count()
-    };
     TasteSummary {
         name: row.name.clone(),
         enabled: row.enabled,
@@ -160,8 +192,8 @@ fn summary(row: &TasteRow, text: usize) -> TasteSummary {
         fires: row.fires.len(),
         vendors: row.vendors.clone(),
         recurrence: row.recurrence.len(),
-        confirmed: count(Verdict::Confirmed),
-        cleared: count(Verdict::Cleared),
+        confirmed: row.confirmed,
+        cleared: row.cleared,
     }
 }
 
