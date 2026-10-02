@@ -106,20 +106,24 @@ fn an_immutable_open_cannot_see_a_live_log_so_it_is_reserved_for_captured_genera
     assert_eq!(writer.apply(write).expect("commit lands").last(), seq(3));
 
     // The live reader follows the log. The immutable reader, by contract,
-    // reads only the main file -- and nothing has been folded into it yet, so
-    // it does not even find a schema. That is exactly why it may only ever
-    // open a sealed capture, which has no log for it to miss.
+    // reads only the main file: initialization is present there, but every
+    // fixture fact and the new commit are still in the log. That stale view is
+    // why immutable opens are reserved for sealed captures with no log to miss.
     let live = JournalReader::open(&path).expect("open a live reader");
     assert_eq!(
         live.fact_snapshot().expect("live snapshot").horizon(),
         Seq::new(3)
     );
-    let refused = JournalReader::open_immutable(&path)
-        .expect_err("an immutable open of a live authority admits its log-only store");
-    assert!(
-        matches!(refused, OpenError::Migration(MigrationError::MissingSchema)),
-        "{refused:?}"
+    let stale =
+        JournalReader::open_immutable(&path).expect("immutable open reads only the main file");
+    assert_eq!(
+        stale
+            .fact_snapshot()
+            .expect("stale immutable snapshot")
+            .horizon(),
+        None
     );
+    drop(stale);
     drop((live, writer));
 
     // Once the writer has folded the log back in, the two agree, and an

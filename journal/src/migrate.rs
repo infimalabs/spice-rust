@@ -16,34 +16,55 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
+/// Admit exact-current authority or initialize one truly empty database.
+///
+/// Existing authority is classified without a transaction so a retired file
+/// refuses before SQLite can create a rollback journal or change its persistent
+/// journal mode. Empty initialization takes the exclusive transaction, then
+/// rechecks emptiness to close the race with another initializer.
+pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
+    let trusted_schema: bool = connection
+        .query_row("PRAGMA trusted_schema", [], |row| row.get(0))
+        .map_err(OpenError::Sqlite)?;
+    if trusted_schema {
+        return Err(OpenError::TrustedSchemaEnabled);
+    }
+
+    if table_exists(connection, "journal_schema")? {
+        admit_state(connection, stored_state(connection)?)?;
+        return Ok(None);
+    }
+    let object_count = authority_object_count(connection)?;
+    if object_count != 0 {
+        return Err(MigrationError::UnversionedAuthority { object_count }.into());
+    }
+
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
-    if !table_exists(&transaction, "journal_schema")? {
-        let object_count = authority_object_count(&transaction)?;
-        if object_count != 0 {
-            return Err(MigrationError::UnversionedAuthority { object_count }.into());
-        }
-
-        transaction
-            .execute_batch(BASELINE_SQL)
-            .map_err(OpenError::Sqlite)?;
-        crate::historical_receipts::create_schema(&transaction)?;
-        crate::historical_receipts::reserve_identities(&transaction)?;
-        transaction
-            .execute_batch(&fact_bounds::bounds_sql())
-            .map_err(OpenError::Sqlite)?;
+    if table_exists(&transaction, "journal_schema")? {
+        admit_state(&transaction, stored_state(&transaction)?)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
-        return Ok(Some(Migration {
-            from: 0,
-            to: SCHEMA_VERSION,
-        }));
+        return Ok(None);
+    }
+    let object_count = authority_object_count(&transaction)?;
+    if object_count != 0 {
+        return Err(MigrationError::UnversionedAuthority { object_count }.into());
     }
 
-    admit_state(&transaction, stored_state(&transaction)?)?;
+    transaction
+        .execute_batch(BASELINE_SQL)
+        .map_err(OpenError::Sqlite)?;
+    crate::historical_receipts::create_schema(&transaction)?;
+    crate::historical_receipts::reserve_identities(&transaction)?;
+    transaction
+        .execute_batch(&fact_bounds::bounds_sql())
+        .map_err(OpenError::Sqlite)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
-    Ok(None)
+    Ok(Some(Migration {
+        from: 0,
+        to: SCHEMA_VERSION,
+    }))
 }
 
 /// Current-schema initialization completed by this open.
@@ -96,21 +117,6 @@ fn stored_state(connection: &Connection) -> Result<SchemaState, OpenError> {
         .map_err(OpenError::Sqlite)?
         .ok_or(MigrationError::MissingSingleton)?;
     Ok(state)
-}
-/// Admit an existing authority before any persistent storage configuration.
-///
-/// A truly empty database may proceed to current-schema initialization. Every
-/// database that already declares authority must be exact-current before its
-/// journal mode or any other persistent setting can change.
-pub(crate) fn preflight(connection: &Connection) -> Result<(), OpenError> {
-    if !table_exists(connection, "journal_schema")? {
-        let object_count = authority_object_count(connection)?;
-        if object_count == 0 {
-            return Ok(());
-        }
-        return Err(MigrationError::UnversionedAuthority { object_count }.into());
-    }
-    admit_state(connection, stored_state(connection)?).map(|_| ())
 }
 
 /// Reads an existing schema identity without performing baseline or migration.
@@ -275,6 +281,8 @@ pub enum OpenError {
     },
     Sqlite(rusqlite::Error),
     Migration(MigrationError),
+    /// Schema admission was attempted before disabling trusted schema objects.
+    TrustedSchemaEnabled,
     InvalidCursor {
         found: i64,
     },
@@ -296,6 +304,9 @@ impl fmt::Display for OpenError {
             }
             Self::Sqlite(error) => write!(formatter, "journal SQLite operation failed: {error}"),
             Self::Migration(error) => error.fmt(formatter),
+            Self::TrustedSchemaEnabled => {
+                formatter.write_str("journal schema admission requires PRAGMA trusted_schema = OFF")
+            }
             Self::InvalidCursor { found } => {
                 write!(
                     formatter,
@@ -318,7 +329,9 @@ impl Error for OpenError {
             Self::Open { source, .. } => Some(source),
             Self::Sqlite(error) => Some(error),
             Self::Migration(error) => Some(error),
-            Self::InvalidCursor { .. } | Self::JournalMode { .. } => None,
+            Self::InvalidCursor { .. } | Self::JournalMode { .. } | Self::TrustedSchemaEnabled => {
+                None
+            }
         }
     }
 }

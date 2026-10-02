@@ -302,12 +302,11 @@ impl Journal {
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(OpenError::Sqlite)?;
-        migrate::preflight(&connection)?;
-        admit_write_ahead_log(&connection)?;
         connection
-            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
+            .execute_batch("PRAGMA trusted_schema = OFF; PRAGMA foreign_keys = ON;")
             .map_err(OpenError::Sqlite)?;
-        let migration = migrate::baseline(&mut connection)?;
+        let migration = migrate::admit(&mut connection)?;
+        admit_write_ahead_log(&connection)?;
         Ok(Self {
             connection,
             migration,
