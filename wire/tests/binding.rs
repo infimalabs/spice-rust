@@ -416,6 +416,22 @@ fn every_answer_re_encodes_unchanged() {
 }
 
 #[test]
+fn every_answer_decodes_alike_from_its_bytes_and_its_parsed_value() {
+    for (shape, body) in ANSWERS {
+        let from_bytes = shape.decode(body.as_bytes()).expect("the fixture decodes");
+        let value: serde_json::Value =
+            serde_json::from_str(body).expect("the fixture is well-formed JSON");
+        let from_value = shape
+            .decode_value(value)
+            .unwrap_or_else(|error| panic!("{shape:?} parsed answer does not decode: {error}"));
+        assert_eq!(
+            from_value, from_bytes,
+            "{shape:?} decodes differently from a parsed value"
+        );
+    }
+}
+
+#[test]
 fn task_learning_is_only_an_optional_retained_answer_shape() {
     let retained = r#"{
         "task": "SPICE-1kKRRsDP",

@@ -621,17 +621,11 @@ fn decode_response(
                     "resident reply position violates the selected CLI contract",
                 );
             }
-            let body = match wire::encode(&reply.body)
-                .ok()
-                .and_then(|body| kind.binding().answer.decode(&body).ok())
-            {
-                Some(body) => body,
-                None => {
-                    return protocol_fault(
-                        "command::answer-binding",
-                        "resident reply body violates the command registry binding",
-                    );
-                }
+            let Ok(body) = kind.binding().answer.decode_value(reply.body) else {
+                return protocol_fault(
+                    "command::answer-binding",
+                    "resident reply body violates the command registry binding",
+                );
             };
             Outcome::Reply(Reply {
                 position: reply.position,

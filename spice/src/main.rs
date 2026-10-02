@@ -695,12 +695,8 @@ fn doctor_outcome(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn version_flag() -> ! {
-    let running = match spice::version::running() {
-        Ok(running) => running,
-        Err(fault) => deliver_fault(fault, Form::Text),
-    };
     let error = cli::command()
-        .version(running.product.to_string())
+        .version(spice::version::product().to_string())
         .try_get_matches_from(["spice", "--version"])
         .expect_err("the version action exits before command dispatch");
     error.exit()
