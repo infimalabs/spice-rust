@@ -64,14 +64,15 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
             .len(),
         3
     );
-    assert_eq!(
-        reader
-            .thread("3")
-            .expect("publication thread replays")
-            .entries
-            .len(),
-        3
-    );
+    let publication = reader
+        .read(|read| {
+            let root = read.thread_root("3").expect("publication thread resolves");
+            read.thread_page(root, None, crate::FactReadBudget::RETAINED)
+        })
+        .expect("publication thread reads")
+        .expect("publication thread opens");
+    assert_eq!(publication.rows.len(), 3);
+    assert_eq!(publication.overflow, None);
     drop(reader);
 
     let reopened = Journal::open(&path).expect("migrated authority reopens");

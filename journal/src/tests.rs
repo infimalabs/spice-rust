@@ -44,6 +44,7 @@ mod steering_index;
 mod steering_verification;
 mod task_creator_scope_migration;
 mod team_migration;
+mod thread;
 mod topology_revision_migration;
 mod transcript;
 mod vocabulary_migration;
@@ -111,8 +112,8 @@ fn fact_snapshot_reads_the_canonical_authority_stream() {
     assert_eq!(snapshot.facts()[1].fact.kind(), FactKind::TaskPhased);
 }
 
-#[test]
-fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
+/// The authority fixture extended to one 200-fact cause thread rooted at 1.
+fn long_thread_fixture() -> Journal {
     let journal = authority_fixture();
     for position in 3..=200 {
         insert_fact(
@@ -138,7 +139,12 @@ fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
         .connection
         .execute("UPDATE cursor_head SET seq = 200 WHERE singleton = 1", [])
         .expect("advance indexed fixture cursor");
+    journal
+}
 
+#[test]
+fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
+    let journal = long_thread_fixture();
     reset_indexed_read_metrics();
     let causal = journal
         .read(|read| read.causal_page(seq(200), fact_budget(2)))
@@ -183,7 +189,7 @@ fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
 }
 
 #[test]
-fn read_only_snapshot_and_thread_follow_the_verified_cause_chain() {
+fn read_only_snapshot_and_thread_page_follow_the_cause_chain() {
     let scratch = Scratch::new();
     let path = scratch.path().join("authority.sqlite3");
     drop(authority_file_fixture(&path));
@@ -192,17 +198,23 @@ fn read_only_snapshot_and_thread_follow_the_verified_cause_chain() {
     let snapshot = reader.fact_snapshot().expect("read-only fact snapshot");
     assert_eq!(snapshot.horizon(), Seq::new(2));
 
-    let thread = reader.thread("2").expect("resolve descendant sequence");
-    assert_eq!(thread.root, Seq::new(1).expect("root sequence"));
+    let (root, thread) = reader
+        .read(|read| {
+            let root = read.thread_root("2").expect("resolve descendant sequence");
+            Ok((root, read.thread_page(root, None, fact_budget(4))?))
+        })
+        .expect("read-only thread page");
+    let thread = thread.expect("an unanchored page opens the thread");
+    assert_eq!(root, seq(1));
     assert_eq!(
         thread
-            .entries
+            .rows
             .iter()
             .map(|entry| entry.seq.get())
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
-    assert_eq!(thread.entries[1].cause, Seq::new(1));
+    assert_eq!(thread.rows[1].cause, Seq::new(1));
 }
 
 #[test]
