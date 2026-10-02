@@ -276,11 +276,11 @@ fn message(message: &Object, locus: Locus) -> Events {
     }
 }
 
-/// One fully streamed text block retained for evidence only.
+/// One fully streamed assistant text block, before message settlement.
 ///
-/// The settled message remains the presentation authority. Some OMP provider
-/// adapters rewrite commentary into reasoning before that settlement, so this
-/// terminal update is the only byte-exact record of what the operator saw.
+/// Its exact words may be normalized into reasoning by the provider adapter.
+/// The message identity and content index in RecordContext let presentation
+/// retain the authored block without displaying a second settled twin.
 fn message_update(record: &Object, locus: Locus) -> Events {
     let update = object(record, "assistantMessageEvent")?;
     if string(update, "type")? != "text_end" {
@@ -288,7 +288,7 @@ fn message_update(record: &Object, locus: Locus) -> Events {
     }
     let text = string(update, "content")?.to_owned();
     let content = media::decompose(OwnedContent::AuthoredText(&text))?;
-    Ok(vec![Event::ProseEvidence(Prose {
+    Ok(vec![Event::StreamedProse(Prose {
         role: ProseRole::Assistant,
         media: content.media,
         external_media: content.external_media,

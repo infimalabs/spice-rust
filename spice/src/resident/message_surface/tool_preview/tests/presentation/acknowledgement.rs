@@ -697,6 +697,8 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
             observed: None,
             observations: &MessageObservations::default(),
             unavailable_tool_terminals: &[],
+            prose_origin: None,
+            suppress_intent: false,
         },
         &mut CallPreviews::default(),
         Some(&directives),

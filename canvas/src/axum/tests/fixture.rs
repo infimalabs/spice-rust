@@ -1,5 +1,6 @@
 pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
     wire::AgentMessage {
+        prose_origin: None,
         lane: super::identity(0xe5),
         author: super::identity(author),
         locus: wire::MessageLocus {

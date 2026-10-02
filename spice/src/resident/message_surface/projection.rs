@@ -72,6 +72,7 @@ pub(super) fn publish_agent_record(
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
     begin_agent_record(publisher, &record, state)?;
+    prose_stream::observe(&record, state);
     let successful_terminal = record
         .context
         .prompt_outcome
@@ -80,6 +81,20 @@ pub(super) fn publish_agent_record(
             outcome.agent_invoked && outcome.status == listen::PromptStatus::Completed
         });
     for &(ordinal, decoded) in record.events {
+        if prose_stream::settled_block(&record, state, ordinal, decoded) {
+            continue;
+        }
+        let suppress_intent = prose_stream::intent_represented(&record, state, decoded);
+        let prose_origin = if suppress_intent {
+            None
+        } else {
+            prose_stream::origin(&record, state, ordinal, decoded)
+        };
+        // Older tapes without a scoped message identity cannot safely join a
+        // completed partial to its settled twin.
+        if matches!(decoded, listen::Event::StreamedProse(_)) && prose_origin.is_none() {
+            continue;
+        }
         let Some(projected) = project_agent_event(
             AgentEvent {
                 lane: record.lane,
@@ -91,6 +106,8 @@ pub(super) fn publish_agent_record(
                 observed: record.observed,
                 observations: &state.observations,
                 unavailable_tool_terminals: record.unavailable_tool_terminals,
+                prose_origin,
+                suppress_intent,
             },
             &mut state.previews,
             steering,
@@ -107,7 +124,15 @@ pub(super) fn publish_agent_record(
             publish_message(publisher, published)?;
             continue;
         }
+        if state
+            .prose
+            .get(&record.lane)
+            .is_some_and(|previous| published.prose_superseded_by(&previous.published))
+        {
+            continue;
+        }
         publish_message(publisher, published.clone())?;
+        prose_stream::remember(&record, state, decoded);
         if let Some(pending) = pending {
             state.pending.remember(pending);
         }
@@ -166,6 +191,7 @@ fn begin_agent_record(
 ) -> CommandResult<()> {
     if record.context.turn == Some(listen::TurnMoment::Started) {
         state.prose.remove(&record.lane);
+        state.messages.remove(&record.lane);
         publish_turn_boundary(publisher, record, &state.observations)?;
     } else if record
         .events
@@ -173,6 +199,7 @@ fn begin_agent_record(
         .any(|(_, event)| matches!(event, listen::Event::Session(_)))
     {
         state.prose.remove(&record.lane);
+        state.messages.remove(&record.lane);
     }
     Ok(())
 }
@@ -202,6 +229,7 @@ fn publish_turn_boundary(
                 length: record.locus.length,
                 event: TURN_BOUNDARY_EVENT,
             },
+            prose_origin: None,
             authored,
             authored_synthetic,
             observed,
@@ -283,6 +311,7 @@ fn project_agent_event(
         observed,
         observations,
         unavailable_tool_terminals,
+        prose_origin,
         ..
     } = event;
     let ProjectedEvent {
@@ -318,6 +347,7 @@ fn project_agent_event(
         lane,
         author,
         locus,
+        prose_origin,
         authored,
         authored_synthetic,
         observed,
@@ -349,7 +379,9 @@ fn project_event_body(
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<Option<ProjectedEvent>> {
-    if let Some(prose) = acknowledging_prose(event.decoded) {
+    if !event.suppress_intent
+        && let Some(prose) = acknowledging_prose(event.decoded)
+    {
         if let listen::Event::Tool(tool) = event.decoded {
             // The call still joins its later result through the preview map.
             tool_preview::activity(event.lane, tool, previews);
@@ -461,7 +493,7 @@ fn agent_quote_target(
     source: Option<CanonicalUuid>,
     locus: wire::MessageLocus,
 ) -> CommandResult<Option<wire::QuoteTarget>> {
-    let listen::Event::Prose(prose) = decoded else {
+    let Some(prose) = decoded.prose() else {
         return Ok(None);
     };
     if prose.role != listen::ProseRole::Assistant {
@@ -493,6 +525,12 @@ pub(super) fn acknowledging_prose(
 ) -> Option<std::borrow::Cow<'_, listen::Prose>> {
     match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            Some(std::borrow::Cow::Borrowed(prose))
+        }
+        listen::Event::StreamedProse(prose)
+            if prose.role == listen::ProseRole::Assistant
+                && steer::has_acknowledgement(&prose.text) =>
+        {
             Some(std::borrow::Cow::Borrowed(prose))
         }
         listen::Event::Tool(listen::Tool {
@@ -564,7 +602,7 @@ fn terminal_prose_card(
         return None;
     }
     // A tool call never ends a turn, so an intent card has no terminal twin.
-    let listen::Event::Prose(prose) = decoded else {
+    let Some(prose) = decoded.prose() else {
         return None;
     };
     let mut terminal_prose = prose.clone();

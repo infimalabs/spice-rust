@@ -197,7 +197,7 @@ fn terminal_omp_text_update_is_retained_as_non_presented_prose_evidence() {
     assert!(matches!(
         events.as_slice(),
         [listen::SourcedEvent {
-            event: listen::Event::ProseEvidence(prose),
+            event: listen::Event::StreamedProse(prose),
             ..
         }] if prose.text == "ACK 1kQnrzNZ: Applied."
     ));

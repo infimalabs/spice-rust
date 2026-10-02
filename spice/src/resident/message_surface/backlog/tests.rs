@@ -247,6 +247,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         steering: PresentationDirectives::default(),
     };
     let future = wire::AgentMessage {
+        prose_origin: None,
         lane,
         author,
         locus: wire::MessageLocus {
@@ -715,6 +716,7 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
 /// One visible card authored `second` seconds into a fixed minute.
 fn card_at(member: u64, second: usize) -> wire::AgentMessage {
     wire::AgentMessage {
+        prose_origin: None,
         lane: "018f82d4-6f59-7d06-92e3-bce9131163e5"
             .parse()
             .expect("card lane"),
@@ -1070,6 +1072,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         steering: PresentationDirectives::default(),
     };
     let future = wire::AgentMessage {
+        prose_origin: None,
         lane,
         author,
         locus: wire::MessageLocus {

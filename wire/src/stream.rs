@@ -9,6 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod prose;
+pub use prose::{MessageProseOrigin, superseded_prose};
+
 /// Canonical semantic prefix carried by every broadcast steering directive.
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
 /// Canonical semantic prefix carried by every peer-review steering directive.
@@ -604,6 +607,13 @@ pub struct AgentMessage {
     pub author: CanonicalUuid,
     /// Durable transcript record activity supplying this view.
     pub locus: MessageLocus,
+    /// Authored block identity shared by streamed and settled prose.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub prose_origin: Option<MessageProseOrigin>,
     /// Vendor record instant that authored this visible activity.
     pub authored: Instant,
     /// Whether `authored` was synthesized because the vendor record omitted time.
@@ -757,6 +767,7 @@ mod message_retention_tests {
 
     fn message(length: u64) -> AgentMessage {
         AgentMessage {
+            prose_origin: None,
             lane: "018f82d4-6f59-7d06-92e3-bce9131163e5"
                 .parse()
                 .expect("fixture lane"),

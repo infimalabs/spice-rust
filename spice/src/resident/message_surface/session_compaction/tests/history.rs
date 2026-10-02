@@ -70,6 +70,7 @@ fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
 
 fn page_boundary_marker() -> wire::AgentMessage {
     wire::AgentMessage {
+        prose_origin: None,
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         locus: wire::MessageLocus {

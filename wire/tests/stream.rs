@@ -15,6 +15,7 @@ fn seq(value: u64) -> wire::Seq {
 
 fn prose_message() -> AgentMessage {
     AgentMessage {
+        prose_origin: None,
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
         locus: MessageLocus {

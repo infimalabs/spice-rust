@@ -111,6 +111,9 @@ impl HistorySources {
         visible.sort_by_key(wire::AgentMessage::chronology_key);
         visible.dedup_by(|right, left| right.locus == left.locus);
         reconcile_boundaries(&mut visible);
+        for position in wire::superseded_prose(&visible).into_iter().rev() {
+            visible.remove(position);
+        }
         let end = before.map_or(visible.len(), |before| {
             visible.partition_point(|message| message.chronology_key() < before.chronology_key())
         });
