@@ -537,22 +537,74 @@ fn render_agent_message_card(
                         aria-hidden={inspection_open.to_string()}
                         inert={inspection_open.then_some("true")}
                     >
-                        {rendered_html}
-                        {render_agent_message_media(unlinked_media, media_description.as_deref())}
-                        {render_agent_message_footer(
-                            message,
-                            &shown_text,
-                            correspondent,
-                            message.activity == wire::AgentActivityKind::Prose,
-                            &footer_label,
-                            &attribution,
-                        )}
+                        {render_normal_face(message, correspondent, NormalFace {
+                            shown_text: &shown_text,
+                            rendered_html,
+                            unlinked_media,
+                            media_description: media_description.as_deref(),
+                            lone_tool_image,
+                            footer_label: &footer_label,
+                            attribution: &attribution,
+                        })}
                     </div>
                 </div>
                 {render_task_layer(card_inspector, inspection_open)}
                 </>
             }
         </article>
+    }
+}
+
+/// What a card's normal face shows besides its producing message.
+struct NormalFace<'a> {
+    shown_text: &'a str,
+    rendered_html: Html,
+    unlinked_media: Vec<&'a wire::Media>,
+    media_description: Option<&'a str>,
+    lone_tool_image: bool,
+    footer_label: &'a str,
+    attribution: &'a str,
+}
+
+/// The card's normal face. A lone tool image signs below its square the way
+/// prose signs its last line, and its controls act on that image.
+fn render_normal_face(
+    message: &wire::AgentMessage,
+    correspondent: &view::chrome::Correspondent,
+    face: NormalFace<'_>,
+) -> Html {
+    let lone_image = face
+        .lone_tool_image
+        .then(|| face.unlinked_media.first())
+        .flatten()
+        .map(|media| AttrValue::from(media.data_url.clone()));
+    let signed = message.activity == wire::AgentActivityKind::Prose || face.lone_tool_image;
+    let media = render_agent_message_media(face.unlinked_media, face.media_description);
+    html! {
+        <>
+            if face.lone_tool_image {
+                {media}
+                <div class="message-body markdown-body">
+                    <p class="message-signoff-line">
+                        <span class="message-signoff">
+                            {render_agent_message_signoff(message, face.footer_label, face.attribution)}
+                        </span>
+                    </p>
+                </div>
+            } else {
+                {face.rendered_html}
+                {media}
+            }
+            {render_agent_message_footer(
+                message,
+                face.shown_text,
+                correspondent,
+                signed,
+                lone_image,
+                face.footer_label,
+                face.attribution,
+            )}
+        </>
     }
 }
 
@@ -888,13 +940,15 @@ fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
     }
 }
 
-/// The card footer. A prose card's producer and age live in its signoff, so
-/// its footer keeps only badges and actions; other cards keep both here.
+/// The card footer. A prose card's or lone tool image's producer and age live
+/// in its signoff, so its footer keeps only badges and actions; other cards
+/// keep both here. A lone image's actions open and copy that image.
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     shown_text: &str,
     correspondent: &view::chrome::Correspondent,
     signed: bool,
+    lone_image: Option<AttrValue>,
     producer_label: &str,
     attribution: &str,
 ) -> Html {
@@ -913,11 +967,59 @@ fn render_agent_message_footer(
                         {render_producer_identity(message, producer_label, attribution)}
                     </span>
                 }
-                if has_actions {
+                if let Some(source) = lone_image {
+                    <ImageCardActions {source} />
+                } else if has_actions {
                     {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
             </div>
         </footer>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct ImageCardActionsProps {
+    source: AttrValue,
+}
+
+/// Round card controls for a lone image: open it full size through its own
+/// opener, or copy it as PNG with the result in the shared toast.
+#[function_component(ImageCardActions)]
+fn image_card_actions(props: &ImageCardActionsProps) -> Html {
+    let toaster = crate::browser::toast::use_toaster();
+    let open = Callback::from(|event: MouseEvent| {
+        // Yew delegates events, so the clicked control is the event target.
+        let opener = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .and_then(|control| control.closest(".mosaic-message-card").ok().flatten())
+            .and_then(|card| {
+                card.query_selector(".message-attachments button[data-image-preview]")
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|opener| opener.dyn_into::<web_sys::HtmlElement>().ok());
+        if let Some(opener) = opener {
+            opener.click();
+        }
+    });
+    let source = props.source.clone();
+    let copy = Callback::from(move |_: MouseEvent| {
+        crate::browser::image_viewer::copy_image(source.clone(), toaster.clone());
+    });
+    html! {
+        <span class="message-actions">
+            <button
+                class="card-action card-action--open" type="button"
+                title="Open image full size" aria-label="Open image full size"
+                onclick={open}
+            ><span class="card-action-icon" aria-hidden="true">{"⤢"}</span></button>
+            <button
+                class="card-action card-action--copy" type="button"
+                title="Copy image as PNG" aria-label="Copy image as PNG"
+                onclick={copy}
+            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></button>
+        </span>
     }
 }
 

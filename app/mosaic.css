@@ -248,8 +248,8 @@
 }
 /* A lone tool image keeps the standard large square it is measured at. The
    lattice may commit a card with room left over, so once committed the square
-   sits centred across the room below the controls and rests on its bottom
-   edge, never changing the card's committed size. */
+   sits centred both ways in the room between the controls and its signoff,
+   never changing the card's committed size. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .mosaic-message-layers {
@@ -258,12 +258,12 @@
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .mosaic-message-normal {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .message-attachments {
-  min-height: 0; overflow: hidden; justify-content: center; align-items: flex-end;
+  min-height: 0; overflow: hidden; justify-content: center; align-items: center;
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
   .mosaic-message-normal > .message-body:has(> p.message-image-stack + p.message-image-stack) {

@@ -19,6 +19,43 @@ pub(super) struct ActionsProps {
     pub onedit: Option<Callback<()>>,
 }
 
+/// Why `action` cannot run on this image, or `None` when it can.
+fn refusal(action: Action, exportable: bool, copy_refusal: Option<&String>) -> Option<String> {
+    if !exportable {
+        Some("This image's origin does not allow copy or download.".to_owned())
+    } else if matches!(action, Action::Copy) {
+        copy_refusal.cloned()
+    } else {
+        None
+    }
+}
+
+/// Copy `source` to the clipboard as PNG from a card's own control, reporting
+/// through `toaster`. Call it inside the trusted click.
+pub(in crate::browser) fn copy_image(source: AttrValue, toaster: toast::Toaster) {
+    let refused = refusal(
+        Action::Copy,
+        export::readable(&source),
+        clipboard::image_refusal().as_ref(),
+    );
+    if let Some(refusal) = refused {
+        toaster.settled(refusal);
+        return;
+    }
+    toaster.pending("Copying image");
+    let operation = export::copy(source);
+    spawn_local(async move {
+        let result = match operation {
+            Ok(promise) => JsFuture::from(promise).await,
+            Err(error) => Err(error),
+        };
+        toaster.settled(match result {
+            Ok(_) => "Image copied as PNG".to_owned(),
+            Err(error) => format!("Copy failed: {}", clipboard::error_text(&error)),
+        });
+    });
+}
+
 #[function_component(Actions)]
 pub(super) fn actions(props: &ActionsProps) -> Html {
     let busy = use_state_eq(|| false);
@@ -39,14 +76,7 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
         |action: Action, (source, name, busy, notify, copy_refusal, exportable)| {
             // An unavailable action stays activatable so the operator learns
             // why only when asking, rather than from a standing notice.
-            let refusal = if !**exportable {
-                Some("This image's origin does not allow copy or download.".to_owned())
-            } else if matches!(action, Action::Copy) {
-                (**copy_refusal).clone()
-            } else {
-                None
-            };
-            if let Some(refusal) = refusal {
+            if let Some(refusal) = refusal(action, **exportable, copy_refusal.as_ref().as_ref()) {
                 notify.settled(refusal);
                 return;
             }

@@ -322,10 +322,11 @@ reopening the iframe needs the local appliance.
 
 Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
 A tool card whose face is one image uses the same standard 15.75rem square as
-an operator's lone image, cover-cropped. Once its card commits, the controls hold
-the top edge and the square stays centred across the room below them, resting on
-the bottom edge, so it never resizes the committed card. Operator messages and
-quotes keep their floors.
+an operator's lone image, cover-cropped. Like prose, its round controls (open
+full size, copy as PNG) hold the top edge and a right-aligned signoff of lane
+name then age closes it; once the card commits, the square stays centred both
+ways in the room between them, so it never resizes the committed card. Operator
+messages and quotes keep their floors.
 Source/error stays in-place. All images share an inert modal over the whole
 viewport: the interface beneath shows through the shared frosted veil, the image
 sits at natural size capped to the viewport, and Escape, Close, or a click on the
