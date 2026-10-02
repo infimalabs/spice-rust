@@ -90,12 +90,12 @@ pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<Consent
         Ok(page) => page,
         Err(refusal) => return Outcome::Refusal(refusal),
     };
-    let canvas = match canvas_path() {
-        Ok(canvas) => canvas,
+    let serve = match serve_path() {
+        Ok(serve) => serve,
         Err(outcome) => return outcome,
     };
     let reply = match queue_outcome(command_client::execute(
-        &canvas,
+        &serve,
         contract,
         SelectedCommand::ConsentRead,
     )) {
@@ -128,11 +128,11 @@ pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<Consent
 }
 
 pub(crate) fn policy(contract: &Contract) -> Outcome<ConsentPolicyAnswer> {
-    let canvas = match canvas_path() {
-        Ok(canvas) => canvas,
+    let serve = match serve_path() {
+        Ok(serve) => serve,
         Err(outcome) => return outcome,
     };
-    match command_client::execute(&canvas, contract, SelectedCommand::ConsentPolicy) {
+    match command_client::execute(&serve, contract, SelectedCommand::ConsentPolicy) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::ConsentPolicy(body) => Outcome::Reply(Reply {
                 position: reply.position,
@@ -166,8 +166,8 @@ pub(crate) fn decide(
             ));
         }
     };
-    let canvas = match canvas_path() {
-        Ok(canvas) => canvas,
+    let serve = match serve_path() {
+        Ok(serve) => serve,
         Err(outcome) => return outcome,
     };
     let read_contract = crate::cli::contracts()
@@ -175,7 +175,7 @@ pub(crate) fn decide(
         .find(|candidate| candidate.path == ["consent"])
         .expect("the consent queue contract is registered");
     let queue = match queue_outcome(command_client::execute(
-        &canvas,
+        &serve,
         read_contract,
         SelectedCommand::ConsentRead,
     )) {
@@ -203,7 +203,7 @@ pub(crate) fn decide(
         Err(refusal) => return Outcome::Refusal(refusal),
     };
     match command_client::execute(
-        &canvas,
+        &serve,
         contract,
         SelectedCommand::ConsentDecide {
             request,
@@ -243,7 +243,7 @@ fn queue_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<ConsentQueueAnswer>
     }
 }
 
-fn canvas_path<B>() -> Result<PathBuf, Outcome<B>> {
+fn serve_path<B>() -> Result<PathBuf, Outcome<B>> {
     let current = std::env::current_dir().map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -260,7 +260,7 @@ fn canvas_path<B>() -> Result<PathBuf, Outcome<B>> {
     })?;
     repository
         .admit_state()
-        .map(|state| state.canvas().to_path_buf())
+        .map(|state| state.serve().to_path_buf())
         .map_err(|error| crate::state_failure(&error).outcome())
 }
 

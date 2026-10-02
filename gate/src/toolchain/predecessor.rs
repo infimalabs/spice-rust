@@ -389,7 +389,7 @@ fn predecessor_refusal(
         GateId::AppWebTypecheck => (
             "serve-web-typecheck",
             "0.31.0 checked removed serve JavaScript with an unpinned npm TypeScript package",
-            "rerun app-web-typecheck against app/canvas with cargo 1.97.1 and trunk 0.21.14",
+            "rerun app-web-typecheck against app/serve with cargo 1.97.1 and trunk 0.21.14",
         ),
         GateId::PythonTypecheck => (
             "python-typecheck",

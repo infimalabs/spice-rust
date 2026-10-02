@@ -66,8 +66,8 @@ pub struct Root {
     vendor: vendor::Config,
     listen: listen::Config,
     lock: sill::LockConfig,
-    canvas: canvas::Config,
-    say: canvas::SpeechConfig,
+    serve: serve::Config,
+    say: serve::SpeechConfig,
     proof: proof::Config,
 }
 
@@ -162,15 +162,15 @@ impl Root {
         &self.lock
     }
 
-    /// Canvas packing limits.
+    /// App-server packing limits.
     #[must_use]
-    pub const fn canvas(&self) -> &canvas::Config {
-        &self.canvas
+    pub const fn serve(&self) -> &serve::Config {
+        &self.serve
     }
 
     /// Browser-owned speech playback and its optional local renderer.
     #[must_use]
-    pub const fn say(&self) -> &canvas::SpeechConfig {
+    pub const fn say(&self) -> &serve::SpeechConfig {
         &self.say
     }
 

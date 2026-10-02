@@ -220,7 +220,7 @@ pub(crate) fn report(
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let epoch = match crate::command_client::authenticate(state.canvas(), contract) {
+    let epoch = match crate::command_client::authenticate(state.serve(), contract) {
         Ok(epoch) => epoch,
         Err(outcome) => return retag(outcome),
     };
@@ -344,7 +344,7 @@ pub(crate) fn pend(
         );
     };
     trust_answer(crate::command_client::execute(
-        state.canvas(),
+        state.serve(),
         contract,
         crate::command_client::SelectedCommand::TrustPend {
             digest: surface.digest(),
@@ -384,7 +384,7 @@ pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Ou
         crate::command_client::SelectedCommand::TrustRevoke { digest: &digest }
     };
     trust_answer(crate::command_client::execute(
-        state.canvas(),
+        state.serve(),
         contract,
         selected,
     ))

@@ -1,4 +1,4 @@
-//! Durable taste recognition and fallible Canvas views over admitted lane capture.
+//! Durable taste recognition and fallible app views over admitted lane capture.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -127,10 +127,10 @@ pub(in crate::resident) fn lock_state(
 ) -> CommandResult<MutexGuard<'_, MessageState>> {
     state
         .lock()
-        .map_err(|error| store_fault("canvas::message-state-unavailable", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-state-unavailable", &error.to_string()))
 }
 
-/// Name a card Canvas refused instead of raising it: Canvas is a projection
+/// Name a card the app server refused instead of raising it: the app is a projection
 /// of durable tapes, so its refusal is a diagnostic, never a resident fault.
 pub(in crate::resident) fn app_diagnostic(
     presented: CommandResult<()>,
@@ -260,12 +260,12 @@ pub(super) trait AgentMessagePublisher {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError>;
+    ) -> Result<bool, serve::stream::MessagePublishError>;
 
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError>;
+    ) -> Result<bool, serve::stream::MessagePublishError>;
 }
 
 pub(super) enum TasteRecognition<'a> {
@@ -274,34 +274,34 @@ pub(super) enum TasteRecognition<'a> {
     Deferred(&'a mut taste_surface::AdjudicationSubmitter),
 }
 
-impl AgentMessagePublisher for canvas::stream::MessagePublisher {
+impl AgentMessagePublisher for serve::stream::MessagePublisher {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::publish(self, message)
     }
 
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::revise_final(self, message)
     }
 }
 
-impl AgentMessagePublisher for canvas::stream::MessageBatch {
+impl AgentMessagePublisher for serve::stream::MessageBatch {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::publish(self, message)
     }
 
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::revise_final(self, message)
     }
 }
@@ -504,7 +504,7 @@ pub(super) fn steering_ledger(
     let presentations = load_steering_presentations(&bus.reader(), &keys)?;
     PresentationDirectives::from_presentations(&presentations)
         .map(Some)
-        .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-steering-invalid", &error.to_string()))
 }
 
 pub(super) fn load_steering_presentations(
@@ -518,7 +518,7 @@ pub(super) fn load_steering_presentations(
             reader
                 .steering_presentations(batch.to_vec())
                 .map_err(|error| {
-                    store_fault("canvas::message-steering-unavailable", &error.to_string())
+                    store_fault("serve::message-steering-unavailable", &error.to_string())
                 })?,
         );
     }
@@ -538,14 +538,14 @@ fn present_steering_acknowledgements(
         });
     };
     let presented = present_steering_acknowledgements_with_directives(text, steering, event)
-        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
+        .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let classifications =
         hydrate_message_classifications(&presented, message_badges(text, Some(steering), event))
             .map_err(|detail| {
-                store_fault("canvas::message-steering-presentation-invalid", &detail)
+                store_fault("serve::message-steering-presentation-invalid", &detail)
             })?;
     let directive_contexts = hydrate_directive_contexts(&presented, steering)
-        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
+        .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     Ok(PresentedMessageText {
         text: presented.text,
         classifications,

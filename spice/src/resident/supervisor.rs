@@ -571,7 +571,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         .map(|opening| {
             let driver = command::Driver::new(
                 running.take_stdin()?,
-                paths.canvas.clone(),
+                paths.serve.clone(),
                 paths.steering_media.clone(),
                 request.lane,
                 terminal,
@@ -1054,8 +1054,8 @@ mod tests {
             data: root.join("data"),
             journal: root.join("journal"),
             resident: root.join("resident"),
-            canvas: root.join("canvas"),
-            lane_canvas: root.join("lane-canvas"),
+            serve: root.join("serve"),
+            lane_serve: root.join("lane-serve"),
             degraded: root.join("degraded"),
             tape: root.join("tape"),
             supervisors: root.join("supervisors"),

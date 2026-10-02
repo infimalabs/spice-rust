@@ -81,7 +81,7 @@ fn identity(explicit: &OperatorValues, inherited: &OperatorValues) -> OperatorId
 
 fn inherited_operator(repository: &Repository) -> CommandResult<OperatorValues> {
     let git = gix::open(repository.worktree_root()).map_err(|error| {
-        super::environment_fault("canvas::operator-identity-unavailable", &error.to_string())
+        super::environment_fault("serve::operator-identity-unavailable", &error.to_string())
     })?;
     let config = git.config_snapshot();
     let read = |key| {

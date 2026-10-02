@@ -110,7 +110,7 @@ fn retained_history_request<'a>(
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         before: Some(before),
         end,
-        limit: canvas::stream::MESSAGE_CAPACITY,
+        limit: serve::stream::MESSAGE_CAPACITY,
     }
 }
 

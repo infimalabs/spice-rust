@@ -41,7 +41,7 @@ pub(super) fn capability_request(
         Ok(request) => request,
         Err(_) => {
             return Err(protocol_fault(
-                "canvas::request-invalid",
+                "serve::request-invalid",
                 "app endpoint cannot form the current socket request",
             ));
         }
@@ -54,7 +54,7 @@ pub(super) fn capability_request(
         Ok(origin) => origin,
         Err(_) => {
             return Err(protocol_fault(
-                "canvas::origin-invalid",
+                "serve::origin-invalid",
                 "app endpoint cannot form the current socket origin",
             ));
         }
@@ -96,7 +96,7 @@ pub(super) fn open_session_with(
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
-                "canvas::connect-failed",
+                "serve::connect-failed",
                 &error.to_string(),
             ));
         }
@@ -150,13 +150,13 @@ pub(super) fn open_session_with(
 pub(super) fn endpoint_authority(endpoint: &str) -> Result<&str, Fault> {
     let Some(authority) = endpoint.strip_prefix("http://") else {
         return Err(protocol_fault_value(
-            "canvas::endpoint-invalid",
+            "serve::endpoint-invalid",
             "app endpoint is not the current HTTP origin",
         ));
     };
     if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
         return Err(protocol_fault_value(
-            "canvas::endpoint-invalid",
+            "serve::endpoint-invalid",
             "app endpoint contains more than one socket authority",
         ));
     }
@@ -176,7 +176,7 @@ pub(super) fn dialable_endpoint(endpoint: &str) -> Result<(&str, SocketAddr), Fa
     match authority.parse::<SocketAddr>() {
         Ok(address) => Ok((authority, address)),
         Err(_) => Err(protocol_fault_value(
-            "canvas::endpoint-invalid",
+            "serve::endpoint-invalid",
             "resident discovery does not name one socket authority",
         )),
     }
@@ -184,7 +184,7 @@ pub(super) fn dialable_endpoint(endpoint: &str) -> Result<(&str, SocketAddr), Fa
 
 pub(super) fn decode_opening(
     bytes: &[u8],
-    discovery: &canvas::Discovery,
+    discovery: &serve::Discovery,
 ) -> ClientResult<wire::Accepted> {
     if let Ok(accepted) = wire::decode::<wire::Accepted>(bytes) {
         if accepted.wire.is_current()

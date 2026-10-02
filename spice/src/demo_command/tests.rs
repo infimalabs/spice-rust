@@ -19,13 +19,13 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 /// A staged lane app the seed copies into the demo root, so the stage
 /// itself lives only as long as the seed that reads it.
-fn fixture_app() -> (Scratch, canvas::AppSource) {
+fn fixture_app() -> (Scratch, serve::AppSource) {
     let root = Scratch::new("app");
-    let stage = root.0.join(canvas::APP_STAGE);
+    let stage = root.0.join(serve::APP_STAGE);
     let identity = "5555555555555555555555555555555555555555555555555555555555555555";
-    let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
+    let generation = stage.join(serve::APP_STAGE_GENERATIONS).join(identity);
     fs::create_dir_all(&generation).expect("demo fixture app generation");
-    for asset in canvas::APP.assets() {
+    for asset in serve::APP.assets() {
         fs::write(
             generation.join(asset.file()),
             format!("demo fixture app {}\n", asset.file()),
@@ -33,11 +33,11 @@ fn fixture_app() -> (Scratch, canvas::AppSource) {
         .expect("demo fixture app asset");
     }
     fs::write(
-        stage.join(canvas::APP_STAGE_CURRENT),
+        stage.join(serve::APP_STAGE_CURRENT),
         format!("{identity}\n"),
     )
     .expect("demo fixture app pointer");
-    let source = canvas::AppSource::resolve(&root.0).expect("demo fixture app resolves");
+    let source = serve::AppSource::resolve(&root.0).expect("demo fixture app resolves");
     (root, source)
 }
 
@@ -276,7 +276,7 @@ fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
-    let discovery_path = environment.state.canvas().to_path_buf();
+    let discovery_path = environment.state.serve().to_path_buf();
     let outcome = app_environment_with(environment, false, false, true, false, |endpoint| {
         let discovery = read_discovery(&discovery_path);
         assert_eq!(endpoint, discovery.endpoint);
@@ -297,7 +297,7 @@ fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
     let Outcome::Reply(answer) = outcome else {
         panic!("served browser demo replies: {outcome:?}");
     };
-    assert_eq!(answer.body.mode, "canvas");
+    assert_eq!(answer.body.mode, "app");
     assert_eq!(answer.body.lifecycle, "preserved");
     assert!(
         answer
@@ -349,7 +349,7 @@ fn parsed_demo_open_flag_reaches_the_canvas_gate() {
     let Outcome::Reply(answer) = outcome else {
         panic!("a plain demo run replies: {outcome:?}");
     };
-    assert_eq!(answer.body.mode, "canvas");
+    assert_eq!(answer.body.mode, "app");
     assert!(
         answer
             .body
@@ -419,7 +419,7 @@ fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     // under load one of them has; a bare left/right on the reason threw away
     // the detail naming which one.
     assert_eq!(
-        fault.reason, "canvas::launch-failed",
+        fault.reason, "serve::launch-failed",
         "a step before the launcher refused instead, and this is the whole fault: {fault:?}",
     );
     assert!(fault.detail.contains("fixture browser launcher failed"));
@@ -611,11 +611,11 @@ fn an_unwatchable_root_refuses_by_its_own_reason_before_the_browser_is_reached()
     );
 }
 
-fn read_discovery(path: &Path) -> canvas::Discovery {
+fn read_discovery(path: &Path) -> serve::Discovery {
     wire::decode(&fs::read(path).expect("demo discovery reads")).expect("demo discovery decodes")
 }
 
-fn assert_browser_seed(discovery: &canvas::Discovery) {
+fn assert_browser_seed(discovery: &serve::Discovery) {
     let (mut stream, accepted) = authenticate(discovery);
     let request = StreamRequest::Subscribe {
         v: WireVersion::CURRENT,
@@ -685,7 +685,7 @@ fn assert_lanes(lanes: &LaneAnswer) {
 }
 
 fn issue<B: Serialize>(
-    discovery: &canvas::Discovery,
+    discovery: &serve::Discovery,
     epoch: CanonicalUuid,
     kind: CommandKind,
     body: &B,
@@ -711,7 +711,7 @@ fn issue<B: Serialize>(
         .expect("reply body matches its command binding")
 }
 
-fn authenticate(discovery: &canvas::Discovery) -> (WebSocket<TcpStream>, wire::Accepted) {
+fn authenticate(discovery: &serve::Discovery) -> (WebSocket<TcpStream>, wire::Accepted) {
     let authority = discovery.endpoint.strip_prefix("http://").unwrap();
     let address: SocketAddr = authority.parse().unwrap();
     let stream = TcpStream::connect(address).unwrap();

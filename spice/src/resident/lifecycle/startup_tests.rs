@@ -10,8 +10,8 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
     let surface =
         super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: fixture.capability,
         epoch: fixture.epoch,

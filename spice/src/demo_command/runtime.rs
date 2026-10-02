@@ -104,7 +104,7 @@ where
     // run still print an endpoint an operator or agent can open deliberately,
     // and it keeps demo on the one admission path `up` already uses.
     let opened = crate::command_client::open_app_with(
-        environment.state.canvas(),
+        environment.state.serve(),
         || {},
         |endpoint| if open { browser(endpoint) } else { Ok(()) },
     );
@@ -240,14 +240,9 @@ pub(super) fn finish_canvas(
     completion: DemoResult<bool>,
 ) -> Outcome<DemoAnswer> {
     match completion {
-        Ok(true) => reply(
-            environment,
-            "canvas",
-            "interrupted-preserved",
-            Some(endpoint),
-        ),
+        Ok(true) => reply(environment, "app", "interrupted-preserved", Some(endpoint)),
         Ok(false) if cleanup => match fs::remove_dir_all(&environment.root) {
-            Ok(()) => reply(environment, "canvas", "removed", Some(endpoint)),
+            Ok(()) => reply(environment, "app", "removed", Some(endpoint)),
             Err(error) => preserve_environment_failure(
                 environment,
                 environment_fault(
@@ -256,7 +251,7 @@ pub(super) fn finish_canvas(
                 ),
             ),
         },
-        Ok(false) => reply(environment, "canvas", "preserved", Some(endpoint)),
+        Ok(false) => reply(environment, "app", "preserved", Some(endpoint)),
         Err(failure) => preserve_environment_failure(environment, *failure),
     }
 }
@@ -267,7 +262,7 @@ pub(super) fn wait_for_discovery(
 ) -> DemoResult<bool> {
     let deadline = Monotonic::now() + READY_DEADLINE;
     loop {
-        if environment.state.canvas().is_file() {
+        if environment.state.serve().is_file() {
             return Ok(false);
         }
         let remaining = deadline.saturating_duration_since(Monotonic::now());

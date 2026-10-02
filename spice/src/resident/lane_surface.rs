@@ -121,16 +121,16 @@ fn subscription_policy(
 }
 
 pub(super) struct Runtime<'a> {
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
+    capabilities: &'a serve::axum::Capabilities,
+    discovery: &'a serve::Discovery,
     capture: Arc<dyn CaptureReporter>,
     reads: &'a CurrentReads,
 }
 
 impl<'a> Runtime<'a> {
     pub(super) fn new(
-        capabilities: &'a canvas::axum::Capabilities,
-        discovery: &'a canvas::Discovery,
+        capabilities: &'a serve::axum::Capabilities,
+        discovery: &'a serve::Discovery,
         capture: Arc<dyn CaptureReporter>,
         reads: &'a CurrentReads,
     ) -> Self {

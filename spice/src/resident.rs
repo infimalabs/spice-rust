@@ -62,7 +62,7 @@ impl InboxDelivery {
 impl InboxDeliveries {
     fn new() -> Self {
         Self::Exact(VecDeque::with_capacity(
-            canvas::axum::Control::FAIR_CYCLE_LIMIT,
+            serve::axum::Control::FAIR_CYCLE_LIMIT,
         ))
     }
 
@@ -80,7 +80,7 @@ impl InboxDeliveries {
             unreachable!("full delivery state returned above")
         };
         if !lanes.contains(&lane) {
-            if lanes.len() == canvas::axum::Control::FAIR_CYCLE_LIMIT {
+            if lanes.len() == serve::axum::Control::FAIR_CYCLE_LIMIT {
                 *self = Self::Full {
                     witness: None,
                     next: 0,

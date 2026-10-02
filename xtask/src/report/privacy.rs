@@ -45,7 +45,7 @@ pub(super) fn scan(text: &str) -> Result<()> {
         concat!("/", "Users/"),
         "/home/",
         "ssh://",
-        "canvas://",
+        "serve://",
         "Bearer ",
         "capability://",
         "access_token",

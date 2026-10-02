@@ -66,23 +66,20 @@ pub fn select_current_source_change_gates(
     source: Digest,
     changed_sources: &[String],
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
+    let authority_source = changed_sources.iter().find(|path| selector_authority(path));
+    let exhaustive = authority_source.is_some();
     let mut report = select_with(source, changed_sources, GateId::BATTERY.to_vec(), |path| {
-        if selector_authority(path) {
+        if exhaustive {
             Ok(GateId::BATTERY.to_vec())
         } else {
             gates_for_path(path)
         }
     })?;
-    if let Some(authority_source) = report
-        .changed_sources()
-        .iter()
-        .find(|path| selector_authority(path))
-        .cloned()
-    {
+    if let Some(authority_source) = authority_source {
         report = with_exhaustive_authority_reach(
             report,
             "compiled current-source selection authority changed",
-            &authority_source,
+            authority_source,
         )?;
     }
     Ok(report)
@@ -220,7 +217,7 @@ fn known_workspace_package_root(root: &str) -> bool {
             | "atomic"
             | "board"
             | "bus"
-            | "canvas"
+            | "serve"
             | "consent"
             | "dialect"
             | "dist"
@@ -281,7 +278,7 @@ pub(crate) fn selector_authority(path: &str) -> bool {
 }
 
 fn frontend_path(path: &str) -> bool {
-    path.starts_with("app/") || path.starts_with("canvas/") || path.starts_with("package")
+    path.starts_with("app/") || path.starts_with("serve/") || path.starts_with("package")
 }
 
 fn known_extensionless(path: &str) -> bool {
@@ -303,5 +300,21 @@ mod tests {
         let selected = gates_for_path("dist/VERSION").expect("product version input");
         assert!(selected.contains(&GateId::RustTypecheck));
         assert!(selected.contains(&GateId::AppWebTypecheck));
+    }
+
+    #[test]
+    fn authority_changes_select_exhaustively_before_removed_paths_are_classified() {
+        let sources = [
+            "gate/src/change_selection/current_source.rs".to_owned(),
+            "retired/Cargo.toml".to_owned(),
+        ];
+        let report = select_current_source_change_gates(
+            Digest::compute(wire::Domain::GateTree, b"fixture source"),
+            &sources,
+        )
+        .expect("authority changes admit every path into exhaustive selection");
+
+        assert_eq!(report.changed_sources(), sources);
+        assert_eq!(report.gate_ids(), GateId::BATTERY);
     }
 }

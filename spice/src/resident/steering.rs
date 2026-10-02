@@ -433,11 +433,11 @@ pub(super) fn apply_deadline(
 
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
-    operator: &canvas::Discovery,
+    operator: &serve::Discovery,
     residency: &ResidencyHead,
 ) -> CommandResult<()> {
-    fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
-        environment_fault("canvas::lane-directory-unavailable", &error.to_string())
+    fs::create_dir_all(&paths.lane_serve).map_err(|error| {
+        environment_fault("serve::lane-directory-unavailable", &error.to_string())
     })?;
     for lane in &residency.lanes {
         let capability = lane_capability(lane)?;
@@ -448,33 +448,33 @@ pub(super) fn publish_lane_discoveries(
 
 pub(super) fn publish_lane_surface(
     paths: &RuntimePaths,
-    operator: &canvas::Discovery,
+    operator: &serve::Discovery,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) -> CommandResult<()> {
-    fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
-        environment_fault("canvas::lane-directory-unavailable", &error.to_string())
+    fs::create_dir_all(&paths.lane_serve).map_err(|error| {
+        environment_fault("serve::lane-directory-unavailable", &error.to_string())
     })?;
     publish_lane_discovery(paths, operator, lane, capability)
 }
 
 pub(super) fn remove_lane_surface(paths: &RuntimePaths, lane: CanonicalUuid) {
-    let _ = fs::remove_file(paths.lane_canvas.join(lane.to_string()));
+    let _ = fs::remove_file(paths.lane_serve.join(lane.to_string()));
 }
 
 fn publish_lane_discovery(
     paths: &RuntimePaths,
-    operator: &canvas::Discovery,
+    operator: &serve::Discovery,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) -> CommandResult<()> {
-    canvas::Discovery {
+    serve::Discovery {
         endpoint: operator.endpoint.clone(),
         capability,
         epoch: operator.epoch,
     }
-    .publish(paths.lane_canvas.join(lane.to_string()))
-    .map_err(|error| environment_fault("canvas::lane-publish-failed", &error.to_string()))
+    .publish(paths.lane_serve.join(lane.to_string()))
+    .map_err(|error| environment_fault("serve::lane-publish-failed", &error.to_string()))
 }
 
 pub(super) fn notify_inboxes(paths: &RuntimePaths, residency: &ResidencyHead) {
@@ -491,7 +491,7 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
     match lane.capabilities.as_slice() {
         [capability] => Ok(*capability),
         capabilities => Err(store_fault(
-            "canvas::lane-capability-invalid",
+            "serve::lane-capability-invalid",
             &format!(
                 "lane {} carries {} capabilities instead of exactly one",
                 lane.lane,

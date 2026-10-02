@@ -141,7 +141,7 @@ fn commit_lane_stream(
                 team: lane,
                 capability,
                 name: None,
-                worktree: "/tmp/canvas-stream-lane".to_owned(),
+                worktree: "/tmp/serve-stream-lane".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "omp".parse().expect("vendor"),
                 model: None,
@@ -921,7 +921,7 @@ async fn request_with_headers(
 ) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
-        .expect("connect to canvas");
+        .expect("connect to app server");
     let mut request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n");
     for (name, value) in headers {
         request.push_str(name);
@@ -977,7 +977,7 @@ async fn speech_request_to(
 ) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
-        .expect("connect to canvas");
+        .expect("connect to app server");
     let head = format!(
         concat!(
             "POST {path} HTTP/1.1\r\n",

@@ -62,7 +62,7 @@ const REPEATED_PROSE: &str = "we will wait for the build and sleep between check
 struct Fixture {
     root: PathBuf,
     journal: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
 }
 
 impl Fixture {
@@ -79,7 +79,7 @@ impl Fixture {
         let runtime = root.join(".git/.spice-rs");
         let fixture = Self {
             journal: runtime.join("data/spicejournal.sqlite3"),
-            canvas: runtime.join("canvas"),
+            serve: runtime.join("serve"),
             root,
         };
         seed_judgments(&fixture);
@@ -134,14 +134,14 @@ impl Resident {
             .spawn()
             .expect("resident starts");
         let mut resident = Self { child: Some(child) };
-        let watched = fixture.canvas.parent().expect("canvas has runtime parent");
+        let watched = fixture.serve.parent().expect("serve has runtime parent");
         fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
             watched,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
-            || fixture.canvas.is_file(),
+            || fixture.serve.is_file(),
         ) {
             Readiness::Ready => resident,
             Readiness::Exited => {

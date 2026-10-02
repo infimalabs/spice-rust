@@ -7,8 +7,8 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     seed_vacant_lane(&bus, &fixture, "drain");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: fixture.capability,
         epoch: fixture.epoch,
@@ -68,8 +68,8 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         .expect("fixture start fact is valid");
     write.residency_head(started, move |_| occupied);
     commit(&bus, write).expect("occupied residency commits");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: fixture.capability,
         epoch: fixture.epoch,

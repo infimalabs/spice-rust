@@ -40,7 +40,7 @@ pub(crate) fn execute_typed<B: Serialize>(
         Ok(None) => Connection::Operator,
         Err(outcome) => return outcome,
     };
-    execute_mapped(state.canvas(), contract, connection, Ok(mapped))
+    execute_mapped(state.serve(), contract, connection, Ok(mapped))
 }
 
 pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {

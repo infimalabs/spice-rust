@@ -32,10 +32,10 @@ impl Fixture {
 
     fn stage(&self, label: &[u8]) -> Digest {
         let identity = Digest::compute(wire::Domain::DistInventory, label);
-        let stage = self.0.join(canvas::APP_STAGE);
+        let stage = self.0.join(serve::APP_STAGE);
         let generation = stage.join("generations").join(identity.as_str());
         fs::create_dir_all(&generation).expect("fixture generation");
-        for asset in canvas::APP.assets() {
+        for asset in serve::APP.assets() {
             fs::write(generation.join(asset.file()), asset.file()).expect("fixture app asset");
         }
         fs::write(stage.join("current"), format!("{identity}\n")).expect("fixture pointer");
@@ -150,7 +150,7 @@ fn app_history_before_work_css_refreshes_without_rewriting_old_generations() {
     let source =
         install::installed_app_source(&repository, &install::installed_binary(&repository))
             .expect("new installed app is complete");
-    let old_route = format!("{}/{previous}/style.css", canvas::APP_GENERATION_ROUTE);
+    let old_route = format!("{}/{previous}/style.css", serve::APP_GENERATION_ROUTE);
     assert_eq!(
         source
             .served(&old_route)
@@ -209,7 +209,7 @@ fn app_history_stays_bounded_and_ordered_across_refreshes() {
             install::installed_app_source(&repository, &install::installed_binary(&repository))
                 .expect("installed app is complete");
         for generation in &history {
-            let route = format!("{}/{generation}/style.css", canvas::APP_GENERATION_ROUTE);
+            let route = format!("{}/{generation}/style.css", serve::APP_GENERATION_ROUTE);
             assert_eq!(
                 matches!(source.served(&route), Ok(Some(_))),
                 retained.contains(generation),

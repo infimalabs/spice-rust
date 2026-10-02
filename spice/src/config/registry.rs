@@ -751,7 +751,7 @@ configuration_registry! {
         class: MachineLocal,
         flag: None,
     }
-    fixed "canvas.pack.rows" {
+    fixed "serve.pack.rows" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(40)),
         layers: TRACKED_LOCAL,
@@ -774,14 +774,14 @@ configuration_registry! {
     }
     fixed "say.voice" {
         kind: String,
-        builtin: Some(Builtin::String(canvas::speech::DEFAULT_VOICE)),
+        builtin: Some(Builtin::String(serve::speech::DEFAULT_VOICE)),
         layers: TRACKED_WORKTREE,
         class: WorktreeLocal,
         flag: None,
     }
     fixed "say.content_type" {
         kind: String,
-        builtin: Some(Builtin::String(canvas::speech::DEFAULT_CONTENT_TYPE)),
+        builtin: Some(Builtin::String(serve::speech::DEFAULT_CONTENT_TYPE)),
         layers: TRACKED_LOCAL,
         class: MachineLocal,
         flag: None,
@@ -789,7 +789,7 @@ configuration_registry! {
     fixed "say.words_per_minute" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(
-            canvas::speech::DEFAULT_WORDS_PER_MINUTE as u64,
+            serve::speech::DEFAULT_WORDS_PER_MINUTE as u64,
         )),
         layers: TRACKED_LOCAL,
         class: MachineLocal,

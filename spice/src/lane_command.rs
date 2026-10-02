@@ -37,26 +37,26 @@ pub(crate) fn run(
         Ok(state_paths) => state_paths,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let canvas = state_paths.canvas();
+    let serve = state_paths.serve();
 
     match contract.path {
-        ["lane"] => command_client::execute(canvas, contract, SelectedCommand::LaneRead),
+        ["lane"] => command_client::execute(serve, contract, SelectedCommand::LaneRead),
         ["lane", "list"] => list::run(&repository, matches, contract),
         ["lane", "add"] => add(
             &repository,
-            canvas,
+            serve,
             &current,
             matches,
             contract,
             configuration,
         ),
-        ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
-        ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
-        ["lane", "model"] => model(canvas, matches, contract),
-        ["lane", "effort"] => effort(canvas, matches, contract),
-        ["lane", "remove"] => state(canvas, matches, contract, LaneAction::Remove),
-        ["lane", "import"] => import(&repository, canvas, &current, matches, contract),
-        ["recall"] => recall(canvas, matches, contract),
+        ["lane", "drain"] => state(serve, matches, contract, LaneAction::Drain),
+        ["lane", "wake"] => state(serve, matches, contract, LaneAction::Wake),
+        ["lane", "model"] => model(serve, matches, contract),
+        ["lane", "effort"] => effort(serve, matches, contract),
+        ["lane", "remove"] => state(serve, matches, contract, LaneAction::Remove),
+        ["lane", "import"] => import(&repository, serve, &current, matches, contract),
+        ["recall"] => recall(serve, matches, contract),
         _ => protocol_fault(
             "lane::dispatch-gap",
             "lane command runner received a contract outside its closed family",
@@ -66,7 +66,7 @@ pub(crate) fn run(
 
 fn add(
     repository: &Repository,
-    canvas: &Path,
+    serve: &Path,
     current: &Path,
     matches: &ArgMatches,
     contract: &Contract,
@@ -137,7 +137,7 @@ fn add(
         },
         None => lane,
     };
-    let topology_revision = match observe_topology(canvas) {
+    let topology_revision = match observe_topology(serve) {
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
@@ -150,7 +150,7 @@ fn add(
         life,
         vendor,
     );
-    command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+    command_client::execute(serve, contract, SelectedCommand::LaneSeat { body: &body })
 }
 
 fn lane_seat_body(
@@ -182,15 +182,15 @@ fn lane_seat_body(
     }
 }
 
-fn observe_topology(canvas: &Path) -> Result<u64, Outcome<CommandAnswer>> {
-    read_lanes(canvas).map(|reply| reply.body.topology_revision)
+fn observe_topology(serve: &Path) -> Result<u64, Outcome<CommandAnswer>> {
+    read_lanes(serve).map(|reply| reply.body.topology_revision)
 }
 
 /// Read the resident's current lane table under the lane-read contract.
-fn read_lanes<B>(canvas: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
+fn read_lanes<B>(serve: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
     let contract = crate::cli::contract(&["lane"])
         .expect("the generated CLI registry carries the lane-read contract");
-    match command_client::execute(canvas, contract, SelectedCommand::LaneRead) {
+    match command_client::execute(serve, contract, SelectedCommand::LaneRead) {
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Lane(body),
@@ -247,7 +247,7 @@ fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<CommandAns
 }
 
 fn state(
-    canvas: &Path,
+    serve: &Path,
     matches: &ArgMatches,
     contract: &Contract,
     action: LaneAction,
@@ -267,7 +267,7 @@ fn state(
         action,
         worktree: None,
     };
-    command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
+    command_client::execute(serve, contract, SelectedCommand::LaneState { body: &body })
 }
 
 /// State the model spelling one seated lane's next launch runs.
@@ -275,7 +275,7 @@ fn state(
 /// Naming no spelling clears the seat, which is how a lane returns to the
 /// vendor's configured model: the request states the seat outright rather than
 /// describing a change to it, so absence is an instruction and not an omission.
-fn model(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+fn model(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let Some(id) = matches.get_one::<String>("ID") else {
         return protocol_fault(
             "lane::id-missing",
@@ -286,7 +286,7 @@ fn model(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
         Ok(lane) => lane,
         Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
     };
-    let topology_revision = match observe_topology(canvas) {
+    let topology_revision = match observe_topology(serve) {
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
@@ -298,14 +298,10 @@ fn model(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
             .map(|model| model.trim().to_owned())
             .filter(|model| !model.is_empty()),
     };
-    command_client::execute(
-        canvas,
-        contract,
-        SelectedCommand::LaneRetune { body: &body },
-    )
+    command_client::execute(serve, contract, SelectedCommand::LaneRetune { body: &body })
 }
 /// State the reasoning effort one seated lane's next launch runs.
-fn effort(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let Some(id) = matches.get_one::<String>("ID") else {
         return protocol_fault(
             "lane::id-missing",
@@ -316,7 +312,7 @@ fn effort(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<C
         Ok(lane) => lane,
         Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
     };
-    let topology_revision = match observe_topology(canvas) {
+    let topology_revision = match observe_topology(serve) {
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
@@ -339,7 +335,7 @@ fn effort(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<C
         effort,
     };
     command_client::execute(
-        canvas,
+        serve,
         contract,
         SelectedCommand::LaneEffortRetune { body: &body },
     )
@@ -347,7 +343,7 @@ fn effort(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<C
 
 fn import(
     repository: &Repository,
-    canvas: &Path,
+    serve: &Path,
     current: &Path,
     matches: &ArgMatches,
     contract: &Contract,
@@ -401,10 +397,10 @@ fn import(
         action: LaneAction::Wake,
         worktree: Some(requested.display().to_string()),
     };
-    command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
+    command_client::execute(serve, contract, SelectedCommand::LaneState { body: &body })
 }
 
-fn recall(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+fn recall(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let lane = match matches.get_one::<String>("LANE") {
         Some(lane) => match lane.parse::<CanonicalUuid>() {
             Ok(lane) => Some(lane),
@@ -413,11 +409,7 @@ fn recall(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<C
         None => None,
     };
     let body = LaneRecall { lane };
-    command_client::execute(
-        canvas,
-        contract,
-        SelectedCommand::LaneRecall { body: &body },
-    )
+    command_client::execute(serve, contract, SelectedCommand::LaneRecall { body: &body })
 }
 
 fn refusal(

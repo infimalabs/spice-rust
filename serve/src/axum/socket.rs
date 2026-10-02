@@ -955,7 +955,7 @@ async fn route_stream(
             let refusal =
                 crate::stream::Failure::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
                     "stream::message-history-busy",
-                    Some("canvas".to_owned()),
+                    Some("serve".to_owned()),
                     Some("capacity for another history request".to_owned()),
                     Some("every history slot awaiting an answer".to_owned()),
                 )));

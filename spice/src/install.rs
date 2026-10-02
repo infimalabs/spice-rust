@@ -495,7 +495,7 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
 pub fn installed_app_source(
     repository: &Repository,
     executable: &Path,
-) -> Result<canvas::AppSource, InstallError> {
+) -> Result<serve::AppSource, InstallError> {
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let record = loaded.record;
     match record.status {
@@ -509,10 +509,9 @@ pub fn installed_app_source(
     let expected = record.plan.app.as_ref().ok_or_else(|| {
         InstallError::InvalidRecord("installed appliance owns no app generation".to_owned())
     })?;
-    let source =
-        canvas::AppSource::resolve_installed(repository.common_dir()).map_err(|error| {
-            InstallError::InvalidRecord(format!("installed app publication: {error}"))
-        })?;
+    let source = serve::AppSource::resolve_installed(repository.common_dir()).map_err(|error| {
+        InstallError::InvalidRecord(format!("installed app publication: {error}"))
+    })?;
     let observed = source.current_generation().map_err(|error| {
         InstallError::InvalidRecord(format!("installed app publication: {error}"))
     })?;

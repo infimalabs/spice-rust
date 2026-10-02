@@ -195,7 +195,7 @@ fn the_next_start_consumes_the_pending_replacement() {
     let fixture = AdvisoryRtkFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, true)), false);
     let discovery = publish_surface(&fixture);
-    let capabilities = canvas::axum::Capabilities::default();
+    let capabilities = serve::axum::Capabilities::default();
     let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut seats = Seats::new();
     let request = LaneState {
@@ -513,8 +513,8 @@ fn seeded(
     bus
 }
 
-fn publish_surface(fixture: &AdvisoryRtkFixture) -> canvas::Discovery {
-    let discovery = canvas::Discovery {
+fn publish_surface(fixture: &AdvisoryRtkFixture) -> serve::Discovery {
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: fixture.capability,
         epoch: fixture.epoch,

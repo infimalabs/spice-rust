@@ -212,7 +212,7 @@ pub(in crate::resident) fn present_closed_transcripts(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &serve::stream::MessagePublisher,
     mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
@@ -223,7 +223,7 @@ pub(in crate::resident) fn present_closed_transcripts(
     }
     let generation = message_publisher
         .batch()
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     for (lane, occupant) in vacated {
         let surfaces = CaptureSurfaces::new(
             command_surface.paths,
@@ -250,5 +250,5 @@ pub(in crate::resident) fn present_closed_transcripts(
     generation
         .commit()
         .map(drop)
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))
 }

@@ -92,8 +92,8 @@ fn restart_under_command(
     let successor_listener = TcpListener::bind("127.0.0.1:0").expect("successor peer binds");
     let predecessor_epoch = uuid(50);
     let successor_epoch = uuid(51);
-    let canvas = fixture.lock().expect("fixture locks").canvas.clone();
-    canvas::Discovery {
+    let serve = fixture.lock().expect("fixture locks").serve.clone();
+    serve::Discovery {
         endpoint: format!(
             "http://{}",
             predecessor_listener
@@ -103,13 +103,13 @@ fn restart_under_command(
         capability: uuid(52),
         epoch: predecessor_epoch,
     }
-    .publish(&canvas)
+    .publish(&serve)
     .expect("predecessor discovery publishes");
     fixture
         .lock()
         .expect("fixture locks")
         .hold(predecessor_epoch);
-    let successor_discovery = canvas::Discovery {
+    let successor_discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             successor_listener
@@ -147,13 +147,13 @@ fn restart_under_command(
     let command_id = command.id;
     let mut transients = Vec::new();
     let mut seating = None;
-    let outcome = execute_mapped_within(&canvas, &canvas, contract, command, bound, |fault| {
+    let outcome = execute_mapped_within(&serve, &serve, contract, command, bound, |fault| {
         transients.push(fault.reason.clone());
         if fault.reason != "resident::not-admitting" {
             return;
         }
         // `spice down`: discovery is withdrawn before the lock drops.
-        fs::remove_file(&canvas).expect("predecessor withdraws discovery");
+        fs::remove_file(&serve).expect("predecessor withdraws discovery");
         fixture.lock().expect("fixture locks").release_publisher();
         if !successor {
             return;
@@ -169,7 +169,7 @@ fn restart_under_command(
             fixture.seat_successor();
             fixture.hold(successor_epoch);
             successor_discovery
-                .publish(&fixture.canvas)
+                .publish(&fixture.serve)
                 .expect("successor discovery publishes");
         }));
     });
@@ -205,7 +205,7 @@ fn a_witnessed_restart_is_outlasted_and_the_successor_serves_the_same_envelope()
     );
     assert_eq!(
         transients,
-        ["resident::not-admitting", "canvas::discovery-unavailable"],
+        ["resident::not-admitting", "serve::discovery-unavailable"],
         "an unheld lock after a witnessed restart is the handoff, not a lost publisher"
     );
 }
@@ -218,7 +218,7 @@ fn a_witnessed_restart_nobody_finishes_is_one_not_admitting_refusal_naming_the_r
     assert!(served.is_none());
     assert_eq!(
         transients,
-        ["resident::not-admitting", "canvas::discovery-unavailable"],
+        ["resident::not-admitting", "serve::discovery-unavailable"],
         "the wait names no lost publisher and no `spice up`"
     );
     let Outcome::Refusal(refusal) = outcome else {
@@ -250,8 +250,8 @@ fn a_second_refusal_from_the_successor_is_terminal() {
     let successor_listener = TcpListener::bind("127.0.0.1:0").expect("successor peer binds");
     let predecessor_epoch = uuid(54);
     let successor_epoch = uuid(55);
-    let canvas = fixture.lock().expect("fixture locks").canvas.clone();
-    canvas::Discovery {
+    let serve = fixture.lock().expect("fixture locks").serve.clone();
+    serve::Discovery {
         endpoint: format!(
             "http://{}",
             predecessor_listener
@@ -261,13 +261,13 @@ fn a_second_refusal_from_the_successor_is_terminal() {
         capability: uuid(56),
         epoch: predecessor_epoch,
     }
-    .publish(&canvas)
+    .publish(&serve)
     .expect("predecessor discovery publishes");
     fixture
         .lock()
         .expect("fixture locks")
         .hold(predecessor_epoch);
-    let successor_discovery = canvas::Discovery {
+    let successor_discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             successor_listener
@@ -294,18 +294,17 @@ fn a_second_refusal_from_the_successor_is_terminal() {
 
     let (contract, command) = task_add();
     let mut transients = Vec::new();
-    let outcome =
-        execute_mapped_within(&canvas, &canvas, contract, command, SERVED_BOUND, |fault| {
-            transients.push(fault.reason.clone());
-            let mut fixture = fixture.lock().expect("fixture locks");
-            fs::remove_file(&canvas).expect("predecessor withdraws discovery");
-            fixture.release_publisher();
-            fixture.seat_successor();
-            fixture.hold(successor_epoch);
-            successor_discovery
-                .publish(&fixture.canvas)
-                .expect("successor discovery publishes");
-        });
+    let outcome = execute_mapped_within(&serve, &serve, contract, command, SERVED_BOUND, |fault| {
+        transients.push(fault.reason.clone());
+        let mut fixture = fixture.lock().expect("fixture locks");
+        fs::remove_file(&serve).expect("predecessor withdraws discovery");
+        fixture.release_publisher();
+        fixture.seat_successor();
+        fixture.hold(successor_epoch);
+        successor_discovery
+            .publish(&fixture.serve)
+            .expect("successor discovery publishes");
+    });
 
     let [predecessor, successor] = peers.map(|peer| peer.join().expect("peer joins"));
     assert_eq!(predecessor.id, successor.id);
@@ -338,8 +337,8 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
         .expect("successor listener observes without blocking");
     let predecessor_epoch = uuid(58);
     let successor_epoch = uuid(59);
-    let canvas = fixture.lock().expect("fixture locks").canvas.clone();
-    canvas::Discovery {
+    let serve = fixture.lock().expect("fixture locks").serve.clone();
+    serve::Discovery {
         endpoint: format!(
             "http://{}",
             predecessor_listener
@@ -349,13 +348,13 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
         capability: uuid(60),
         epoch: predecessor_epoch,
     }
-    .publish(&canvas)
+    .publish(&serve)
     .expect("predecessor discovery publishes");
     fixture
         .lock()
         .expect("fixture locks")
         .hold(predecessor_epoch);
-    let successor_discovery = canvas::Discovery {
+    let successor_discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             successor_listener
@@ -370,7 +369,7 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
     // publishes before the client could possibly reach its bound: if the
     // envelope rode the handoff, this is the resident it would reach.
     let handoff = Arc::clone(&fixture);
-    let handoff_canvas = canvas.clone();
+    let handoff_canvas = serve.clone();
     let predecessor_peer = std::thread::spawn(move || {
         let mut socket = accept_fixture_session(predecessor_listener, predecessor_epoch);
         let command = read_fixture_command(&mut socket);
@@ -385,7 +384,7 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
         fixture.seat_successor();
         fixture.hold(successor_epoch);
         successor_discovery
-            .publish(&fixture.canvas)
+            .publish(&fixture.serve)
             .expect("successor discovery publishes");
         command
     });
@@ -394,8 +393,8 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
     let command_id = command.id;
     let mut transients = Vec::new();
     let outcome = execute_mapped_within(
-        &canvas,
-        &canvas,
+        &serve,
+        &serve,
         &COMMAND_CONTRACT,
         command,
         SERVED_BOUND,

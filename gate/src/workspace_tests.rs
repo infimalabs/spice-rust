@@ -1237,6 +1237,7 @@ mod partition_tests {
                 targets,
                 data_roots: Vec::new(),
             }],
+            moved_package_roots: BTreeMap::new(),
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),
             target_directory: PathBuf::from("target"),

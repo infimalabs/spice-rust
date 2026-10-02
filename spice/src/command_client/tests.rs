@@ -30,7 +30,7 @@ const COMMAND_CONTRACT: Contract = Contract {
 
 struct Fixture {
     root: PathBuf,
-    canvas: PathBuf,
+    serve: PathBuf,
     publisher: Option<Possession>,
 }
 
@@ -44,10 +44,10 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("fixture runtime directory");
-        let canvas = root.join("canvas");
+        let serve = root.join("serve");
         let lock = LockFile::new(
             LockName::new("resident").expect("resident is a non-empty lock name"),
-            resident_lock_path(&canvas),
+            resident_lock_path(&serve),
         );
         let Acquisition::Acquired(publisher) = lock.try_acquire().expect("fixture resident lock")
         else {
@@ -55,7 +55,7 @@ impl Fixture {
         };
         Self {
             root,
-            canvas,
+            serve,
             publisher: Some(publisher),
         }
     }
@@ -81,7 +81,7 @@ impl Fixture {
         );
         let lock = LockFile::new(
             LockName::new("resident").expect("resident is a non-empty lock name"),
-            resident_lock_path(&self.canvas),
+            resident_lock_path(&self.serve),
         );
         let Acquisition::Acquired(publisher) = lock.try_acquire().expect("successor resident lock")
         else {
@@ -90,14 +90,14 @@ impl Fixture {
         self.publisher = Some(publisher);
     }
 
-    fn publish(&self) -> canvas::Discovery {
-        let discovery = canvas::Discovery {
+    fn publish(&self) -> serve::Discovery {
+        let discovery = serve::Discovery {
             endpoint: "http://127.0.0.1:48123".to_owned(),
             capability: uuid(1),
             epoch: uuid(2),
         };
         discovery
-            .publish(&self.canvas)
+            .publish(&self.serve)
             .expect("fixture discovery publishes");
         self.hold(discovery.epoch);
         discovery
@@ -306,7 +306,7 @@ fn recovering_submission(
     let replacement_listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
     let initial_epoch = uuid(40);
     let replacement_epoch = uuid(41);
-    canvas::Discovery {
+    serve::Discovery {
         endpoint: format!(
             "http://{}",
             initial_listener.local_addr().expect("initial peer address")
@@ -314,10 +314,10 @@ fn recovering_submission(
         capability: uuid(42),
         epoch: initial_epoch,
     }
-    .publish(&fixture.canvas)
+    .publish(&fixture.serve)
     .expect("initial discovery publishes");
     fixture.hold(initial_epoch);
-    let replacement = canvas::Discovery {
+    let replacement = serve::Discovery {
         endpoint: format!(
             "http://{}",
             replacement_listener
@@ -362,19 +362,19 @@ fn recovering_submission(
     let command_id = command.id;
     let mut transients = Vec::new();
     let outcome = execute_mapped_with(
-        &fixture.canvas,
+        &fixture.serve,
         &COMMAND_CONTRACT,
         Connection::Operator,
         Ok(command),
         |fault| {
             transients.push(fault.reason.clone());
-            if fault.reason == "canvas::send-failed"
-                || fault.reason == "canvas::receive-failed"
-                || fault.reason == "canvas::closed-without-answer"
+            if fault.reason == "serve::send-failed"
+                || fault.reason == "serve::receive-failed"
+                || fault.reason == "serve::closed-without-answer"
             {
                 fixture.hold(replacement_epoch);
                 replacement
-                    .publish(&fixture.canvas)
+                    .publish(&fixture.serve)
                     .expect("replacement discovery publishes after reset");
             }
         },
@@ -402,7 +402,7 @@ fn a_reset_before_commit_refreshes_authority_and_submits_the_command_once() {
     assert!(transients.iter().any(|reason| {
         matches!(
             reason.as_str(),
-            "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
+            "serve::send-failed" | "serve::receive-failed" | "serve::closed-without-answer"
         )
     }));
 }
@@ -464,7 +464,7 @@ fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
     let fixture = Fixture::new("replacement-authentication");
     let listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
     let epoch = uuid(30);
-    let discovery = canvas::Discovery {
+    let discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             listener.local_addr().expect("replacement peer address")
@@ -478,20 +478,20 @@ fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
 
     let session = acquire_session_with(
         &COMMAND_CONTRACT,
-        &fixture.canvas,
-        &resident_lock_path(&fixture.canvas),
+        &fixture.serve,
+        &resident_lock_path(&fixture.serve),
         Duration::from_secs(10),
         |fault| {
             transients.push(fault.reason.clone());
             discovery
-                .publish(&fixture.canvas)
+                .publish(&fixture.serve)
                 .expect("replacement discovery publishes");
         },
     )
     .expect("authenticated read reaches replacement");
 
     assert_eq!(session.accepted.epoch, epoch);
-    assert_eq!(transients, ["canvas::discovery-unavailable"]);
+    assert_eq!(transients, ["serve::discovery-unavailable"]);
     drop(session);
     assert_eq!(peer.join().expect("replacement peer joins"), 0);
 }
@@ -515,7 +515,7 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
     let fixture = Fixture::new("replacement-command");
     let listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
     let epoch = uuid(32);
-    let discovery = canvas::Discovery {
+    let discovery = serve::Discovery {
         endpoint: format!(
             "http://{}",
             listener.local_addr().expect("replacement peer address")
@@ -529,14 +529,14 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
     let (contract, mapped) = mapped_task_status();
 
     let outcome = execute_mapped_with(
-        &fixture.canvas,
+        &fixture.serve,
         contract,
         Connection::Operator,
         Ok(mapped),
         |fault| {
             transients.push(fault.reason.clone());
             discovery
-                .publish(&fixture.canvas)
+                .publish(&fixture.serve)
                 .expect("replacement discovery publishes");
         },
     );
@@ -545,7 +545,7 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
         panic!("task status must reach the replacement response: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "fixture::task-status-reached-replacement");
-    assert_eq!(transients, ["canvas::discovery-unavailable"]);
+    assert_eq!(transients, ["serve::discovery-unavailable"]);
     assert_eq!(peer.join().expect("replacement peer joins"), 1);
 }
 
@@ -557,7 +557,7 @@ fn task_status_reports_an_absent_resident_before_command_delivery() {
     let mut transients = Vec::new();
 
     let outcome = execute_mapped_with(
-        &fixture.canvas,
+        &fixture.serve,
         contract,
         Connection::Operator,
         Ok(mapped),
@@ -567,7 +567,7 @@ fn task_status_reports_an_absent_resident_before_command_delivery() {
     let Outcome::Fault(fault) = outcome else {
         panic!("task status without a resident must fault: {outcome:?}");
     };
-    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(fault.reason, "serve::publisher-gone");
     assert!(fault.detail.contains("run `spice up`"));
     assert!(
         transients.is_empty(),
@@ -578,12 +578,12 @@ fn task_status_reports_an_absent_resident_before_command_delivery() {
 #[test]
 fn task_status_reports_a_resident_released_during_publication_handoff() {
     let mut fixture = Fixture::new("released-resident-command");
-    let canvas = fixture.canvas.clone();
+    let serve = fixture.serve.clone();
     let (contract, mapped) = mapped_task_status();
     let mut transients = Vec::new();
 
     let outcome = execute_mapped_with(
-        &canvas,
+        &serve,
         contract,
         Connection::Operator,
         Ok(mapped),
@@ -596,8 +596,8 @@ fn task_status_reports_a_resident_released_during_publication_handoff() {
     let Outcome::Fault(fault) = outcome else {
         panic!("task status must stop when the starting resident exits: {outcome:?}");
     };
-    assert_eq!(transients, ["canvas::discovery-unavailable"]);
-    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert_eq!(transients, ["serve::discovery-unavailable"]);
+    assert_eq!(fault.reason, "serve::publisher-gone");
     assert!(fault.detail.contains("run `spice up`"));
 }
 
@@ -605,13 +605,13 @@ fn task_status_reports_a_resident_released_during_publication_handoff() {
 fn task_status_keeps_an_unprobeable_resident_lock_fail_closed() {
     let mut fixture = Fixture::new("unknown-resident-command");
     fixture.release_publisher();
-    let resident = resident_lock_path(&fixture.canvas);
+    let resident = resident_lock_path(&fixture.serve);
     fs::remove_file(&resident).expect("remove fixture resident lock");
     fs::create_dir(&resident).expect("replace resident lock with a directory");
     let (contract, mapped) = mapped_task_status();
 
     let outcome = execute_mapped_with(
-        &fixture.canvas,
+        &fixture.serve,
         contract,
         Connection::Operator,
         Ok(mapped),
@@ -621,7 +621,7 @@ fn task_status_keeps_an_unprobeable_resident_lock_fail_closed() {
     let Outcome::Fault(fault) = outcome else {
         panic!("task status with an unprobeable lock must fault: {outcome:?}");
     };
-    assert_eq!(fault.reason, "canvas::publisher-unknown");
+    assert_eq!(fault.reason, "serve::publisher-unknown");
 }
 
 #[test]
@@ -816,27 +816,27 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     let mut stream = DeadlineStream::connect(&address, bound).expect("classifier peer accepts");
 
     for (recorded, assumed, reason) in [
-        (None, IoDirection::Read, "canvas::receive-failed"),
-        (None, IoDirection::Write, "canvas::send-failed"),
+        (None, IoDirection::Read, "serve::receive-failed"),
+        (None, IoDirection::Write, "serve::send-failed"),
         (
             Some((IoDirection::Read, false)),
             IoDirection::Write,
-            "canvas::receive-failed",
+            "serve::receive-failed",
         ),
         (
             Some((IoDirection::Write, false)),
             IoDirection::Read,
-            "canvas::send-failed",
+            "serve::send-failed",
         ),
         (
             Some((IoDirection::Read, true)),
             IoDirection::Read,
-            "canvas::deadline-elapsed",
+            "serve::deadline-elapsed",
         ),
         (
             Some((IoDirection::Write, true)),
             IoDirection::Read,
-            "canvas::deadline-elapsed",
+            "serve::deadline-elapsed",
         ),
     ] {
         stream.last_failure = recorded.map(|(direction, deadline_elapsed)| IoFailure {
@@ -851,7 +851,7 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
         assert!(fault.detail.contains("peer detail"), "{fault:?}");
         assert_eq!(
             fault.detail.contains("20s"),
-            reason == "canvas::deadline-elapsed",
+            reason == "serve::deadline-elapsed",
             "only an elapsed bound names itself: {fault:?}"
         );
     }
@@ -890,31 +890,31 @@ fn task_completion_position_law_admits_only_handoff_or_terminal_commit() {
 fn discovery_replacement_is_detected_by_file_identity() {
     let fixture = Fixture::new("replacement");
     let original = fixture.publish();
-    let read = DiscoveryRead::open(&fixture.canvas, &fixture.root.join("resident"))
+    let read = DiscoveryRead::open(&fixture.serve, &fixture.root.join("resident"))
         .expect("discovery opens");
-    let replacement = canvas::Discovery {
+    let replacement = serve::Discovery {
         capability: uuid(3),
         epoch: uuid(4),
         ..original
     };
     replacement
-        .publish(&fixture.canvas)
+        .publish(&fixture.serve)
         .expect("replacement publishes");
 
     let Err(Outcome::Fault(fault)) = read.verify_current() else {
         panic!("replacement must invalidate the captured discovery");
     };
-    assert_eq!(fault.reason, "canvas::discovery-replaced");
+    assert_eq!(fault.reason, "serve::discovery-replaced");
 }
 
 #[test]
-fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
-    let fixture = Fixture::new("canvas-open");
+fn app_server_opens_the_exact_origin_and_never_crosses_the_capability() {
+    let fixture = Fixture::new("serve-open");
     let discovery = fixture.publish();
     let mut launched = None;
 
     let outcome = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |endpoint| {
             launched = Some(endpoint.to_owned());
@@ -950,11 +950,11 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
 }
 
 #[test]
-fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching() {
-    let fixture = Fixture::new("canvas-refusals");
+fn app_server_refuses_missing_malformed_and_unresolved_discovery_without_launching() {
+    let fixture = Fixture::new("serve-refusals");
     let mut launches = 0_u8;
     let missing = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |_| {
             launches += 1;
@@ -964,18 +964,18 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
     let Outcome::Fault(missing) = missing else {
         panic!("missing discovery must fault");
     };
-    assert_eq!(missing.reason, "canvas::discovery-unavailable");
+    assert_eq!(missing.reason, "serve::discovery-unavailable");
 
-    fs::write(&fixture.canvas, b"not current discovery").expect("malformed fixture writes");
+    fs::write(&fixture.serve, b"not current discovery").expect("malformed fixture writes");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
 
-        fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(&fixture.serve, fs::Permissions::from_mode(0o600))
             .expect("malformed fixture becomes owner-only");
     }
     let malformed = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |_| {
             launches += 1;
@@ -985,20 +985,20 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
     let Outcome::Fault(malformed) = malformed else {
         panic!("malformed discovery must fault");
     };
-    assert_eq!(malformed.reason, "canvas::discovery-malformed");
+    assert_eq!(malformed.reason, "serve::discovery-malformed");
 
     // A name is not a socket. The address a client dials has to be the one the
     // resident published, not whatever a resolver answers with at the moment
     // the client asks, so an endpoint that needs resolving is refused unread.
-    canvas::Discovery {
-        endpoint: "http://canvas.example:48123".to_owned(),
+    serve::Discovery {
+        endpoint: "http://serve.example:48123".to_owned(),
         capability: uuid(3),
         epoch: uuid(4),
     }
-    .publish(&fixture.canvas)
+    .publish(&fixture.serve)
     .expect("unresolved fixture publishes");
     let unresolved = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |_| {
             launches += 1;
@@ -1008,7 +1008,7 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
     let Outcome::Fault(unresolved) = unresolved else {
         panic!("named-host discovery must fault");
     };
-    assert_eq!(unresolved.reason, "canvas::endpoint-invalid");
+    assert_eq!(unresolved.reason, "serve::endpoint-invalid");
     assert_eq!(launches, 0, "no refused discovery reached the launcher");
 }
 
@@ -1020,20 +1020,20 @@ fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching()
 /// endpoint has to be one literal socket, and past that the client's business
 /// is whether the discovery is current, not which interface it names.
 #[test]
-fn canvas_opens_a_discovery_naming_an_address_the_operator_bound() {
-    let fixture = Fixture::new("canvas-routable");
+fn app_server_opens_a_discovery_naming_an_address_the_operator_bound() {
+    let fixture = Fixture::new("serve-routable");
     let mut opened = None;
-    canvas::Discovery {
+    serve::Discovery {
         endpoint: "http://192.0.2.1:48123".to_owned(),
         capability: uuid(3),
         epoch: uuid(4),
     }
-    .publish(&fixture.canvas)
+    .publish(&fixture.serve)
     .expect("routable fixture publishes");
     fixture.hold(uuid(4));
 
     let outcome = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {},
         |endpoint| {
             opened = Some(endpoint.to_owned());
@@ -1049,10 +1049,10 @@ fn canvas_opens_a_discovery_naming_an_address_the_operator_bound() {
 }
 
 #[test]
-fn canvas_rechecks_discovery_identity_immediately_before_launch() {
-    let fixture = Fixture::new("canvas-stale");
+fn app_server_rechecks_discovery_identity_immediately_before_launch() {
+    let fixture = Fixture::new("serve-stale");
     let original = fixture.publish();
-    let replacement = canvas::Discovery {
+    let replacement = serve::Discovery {
         capability: uuid(5),
         epoch: uuid(6),
         ..original.clone()
@@ -1060,10 +1060,10 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
     let mut launched = false;
 
     let outcome = open_app_with(
-        &fixture.canvas,
+        &fixture.serve,
         || {
             replacement
-                .publish(&fixture.canvas)
+                .publish(&fixture.serve)
                 .expect("replacement publishes before the launch check");
         },
         |_| {
@@ -1075,7 +1075,7 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
     let Outcome::Fault(fault) = outcome else {
         panic!("replaced discovery must fault");
     };
-    assert_eq!(fault.reason, "canvas::discovery-replaced");
+    assert_eq!(fault.reason, "serve::discovery-replaced");
     assert!(!launched, "stale discovery must not reach the launcher");
     assert!(!fault.detail.contains(&original.capability.to_string()));
 }

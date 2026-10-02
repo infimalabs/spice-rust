@@ -29,7 +29,7 @@ impl Source {
         if let Some(source) = packaged(binary)? {
             return Ok(source);
         }
-        let stage = repository.worktree_root().join(canvas::APP_STAGE);
+        let stage = repository.worktree_root().join(serve::APP_STAGE);
         if cfg!(debug_assertions) && stage.is_dir() {
             return staged(repository.worktree_root());
         }
@@ -138,15 +138,14 @@ pub(super) fn operation_path(
 }
 
 fn staged(root: &Path) -> Result<Source, InstallError> {
-    let source =
-        canvas::AppSource::resolve(root).map_err(|_| InstallError::BinaryContextChanged)?;
+    let source = serve::AppSource::resolve(root).map_err(|_| InstallError::BinaryContextChanged)?;
     let generation = source
         .current_generation()
         .map_err(|_| InstallError::BinaryContextChanged)?;
     let mut files = ASSETS
         .iter()
         .map(|(asset, file)| {
-            let route = canvas::APP
+            let route = serve::APP
                 .asset_file(file)
                 .expect("the install inventory matches the app");
             generation

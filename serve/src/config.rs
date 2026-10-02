@@ -1,4 +1,4 @@
-//! Typed values owned by the canvas configuration domain.
+//! Typed values owned by the app-server configuration domain.
 
 use std::fmt;
 
@@ -6,10 +6,10 @@ use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Deserializer, Serialize};
 
-const ROWS: &str = "canvas.pack.rows";
+const ROWS: &str = "serve.pack.rows";
 const DEFAULT_ROWS: u32 = 40;
 
-/// Effective canvas configuration.
+/// Effective app-server configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Config {
     pack: Pack,
@@ -21,7 +21,7 @@ impl Config {
     /// # Errors
     ///
     /// Refuses zero or a value wider than the portable `u32` configuration
-    /// range and names `canvas.pack.rows`.
+    /// range and names `serve.pack.rows`.
     pub fn new(rows: u64) -> Result<Self, ConfigError> {
         Ok(Self {
             pack: Pack {
@@ -45,13 +45,13 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self::new(u64::from(DEFAULT_ROWS)).expect("the compiled canvas row count is positive")
+        Self::new(u64::from(DEFAULT_ROWS)).expect("the compiled server row count is positive")
     }
 }
 
 impl Serialize for Config {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("CanvasConfig", 1)?;
+        let mut state = serializer.serialize_struct("ServeConfig", 1)?;
         state.serialize_field("pack", &self.pack)?;
         state.end()
     }
@@ -69,7 +69,7 @@ impl<'de> Visitor<'de> for ConfigVisitor {
     type Value = Config;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("the canvas configuration table")
+        formatter.write_str("the serve configuration table")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
@@ -78,14 +78,14 @@ impl<'de> Visitor<'de> for ConfigVisitor {
             if field == "pack" {
                 if pack.is_some() {
                     return Err(serde::de::Error::custom(
-                        "duplicate configuration field canvas.pack",
+                        "duplicate configuration field serve.pack",
                     ));
                 }
                 pack = Some(map.next_value::<Pack>()?);
             } else {
                 map.next_value::<IgnoredAny>()?;
                 return Err(serde::de::Error::custom(format!(
-                    "unknown configuration field canvas.{field}"
+                    "unknown configuration field serve.{field}"
                 )));
             }
         }
@@ -110,7 +110,7 @@ impl Default for Pack {
 
 impl Serialize for Pack {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("CanvasPackConfig", 1)?;
+        let mut state = serializer.serialize_struct("ServePackConfig", 1)?;
         state.serialize_field("rows", &self.rows)?;
         state.end()
     }
@@ -128,7 +128,7 @@ impl<'de> Visitor<'de> for PackVisitor {
     type Value = Pack;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("the canvas.pack configuration table")
+        formatter.write_str("the serve.pack configuration table")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
@@ -147,7 +147,7 @@ impl<'de> Visitor<'de> for PackVisitor {
             } else {
                 map.next_value::<IgnoredAny>()?;
                 return Err(serde::de::Error::custom(format!(
-                    "unknown configuration field canvas.pack.{field}"
+                    "unknown configuration field serve.pack.{field}"
                 )));
             }
         }
@@ -180,7 +180,7 @@ impl Serialize for Rows {
     }
 }
 
-/// Why an effective canvas value was refused.
+/// Why an effective app-server value was refused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigError {
     /// Packing zero rows cannot make progress.
@@ -195,10 +195,10 @@ pub enum ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroRows => formatter.write_str("canvas.pack.rows must be positive"),
+            Self::ZeroRows => formatter.write_str("serve.pack.rows must be positive"),
             Self::RowsOverflow { value } => write!(
                 formatter,
-                "canvas.pack.rows exceeds the maximum {}: {value}",
+                "serve.pack.rows exceeds the maximum {}: {value}",
                 u32::MAX
             ),
         }
@@ -216,7 +216,7 @@ mod tests {
         let builtin = Config::default();
         assert_eq!(builtin.rows(), 40);
         assert_eq!(
-            wire::decode::<Config>(b"{}").expect("empty canvas"),
+            wire::decode::<Config>(b"{}").expect("empty serve config"),
             builtin
         );
         assert_eq!(
@@ -225,9 +225,9 @@ mod tests {
         );
 
         let explicit: Config =
-            wire::decode(br#"{"pack":{"rows":80}}"#).expect("decode canvas config");
+            wire::decode(br#"{"pack":{"rows":80}}"#).expect("decode serve config");
         assert_eq!(explicit.rows(), 80);
-        let bytes = wire::encode(&explicit).expect("encode canvas config");
+        let bytes = wire::encode(&explicit).expect("encode serve config");
         assert_eq!(bytes, br#"{"pack":{"rows":80}}"#);
         assert_eq!(
             wire::decode::<Config>(&bytes).expect("round trip"),
@@ -243,18 +243,18 @@ mod tests {
     #[test]
     fn zero_overflow_and_unknown_rows_name_the_full_path() {
         for (document, path) in [
-            (br#"{"pack":40}"#.as_slice(), "canvas.pack"),
+            (br#"{"pack":40}"#.as_slice(), "serve.pack"),
             (br#"{"pack":{"rows":0}}"#.as_slice(), ROWS),
             (br#"{"pack":{"rows":4294967296}}"#.as_slice(), ROWS),
             (br#"{"pack":{"rows":"40"}}"#.as_slice(), ROWS),
-            (br#"{"pack":{"other":40}}"#.as_slice(), "canvas.pack.other"),
+            (br#"{"pack":{"other":40}}"#.as_slice(), "serve.pack.other"),
         ] {
             let error = wire::decode::<Config>(document).expect_err("configuration must refuse");
             assert!(error.to_string().contains(path), "{error}");
         }
 
         let error = wire::decode::<Config>(br#"{"other":{}}"#)
-            .expect_err("unknown canvas field must refuse");
-        assert!(error.to_string().contains("canvas.other"), "{error}");
+            .expect_err("unknown serve field must refuse");
+        assert!(error.to_string().contains("serve.other"), "{error}");
     }
 }

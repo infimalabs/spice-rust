@@ -1,4 +1,4 @@
-//! Typed speech configuration shared by the resident and operator canvas.
+//! Typed speech configuration shared by the resident and operator app.
 
 use std::error::Error;
 use std::fmt;

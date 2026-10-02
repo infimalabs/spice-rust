@@ -378,7 +378,7 @@ fn read_authenticated<T, F>(
 where
     F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, Failure>,
 {
-    let epoch = crate::command_client::authenticate(state.canvas(), contract)
+    let epoch = crate::command_client::authenticate(state.serve(), contract)
         .map_err(authentication_failure)?;
     reader
         .read_with(|read| {

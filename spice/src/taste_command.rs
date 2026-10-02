@@ -618,7 +618,7 @@ fn snapshot<B>(
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
-    let epoch = crate::command_client::authenticate(state.canvas(), contract).map_err(retag)?;
+    let epoch = crate::command_client::authenticate(state.serve(), contract).map_err(retag)?;
     let surface =
         Surface::scoped(&repository, configuration).map_err(|error| load_failure(&error))?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {

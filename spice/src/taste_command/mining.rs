@@ -173,7 +173,7 @@ fn mining_snapshot(
         Ok(state) => state,
         Err(error) => return Err(crate::state_failure(&error).outcome()),
     };
-    if let Err(outcome) = crate::command_client::authenticate(state.canvas(), contract) {
+    if let Err(outcome) = crate::command_client::authenticate(state.serve(), contract) {
         return Err(retag(outcome));
     }
     let reader = match journal::JournalReader::open(state.journal()) {

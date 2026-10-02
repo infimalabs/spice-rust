@@ -229,13 +229,13 @@ pub struct DemoAnswer {
     pub root: String,
     /// Canned transcript seeded beneath the repository root.
     pub transcript: String,
-    /// Whether this invocation only seeded or also ran the canvas.
+    /// Whether this invocation only seeded or also ran the app.
     pub mode: String,
-    /// Whether the root remains available or was removed after clean canvas shutdown.
+    /// Whether the root remains available or was removed after clean app shutdown.
     pub lifecycle: String,
-    /// Exact loopback origin admitted for canvas mode.
+    /// Exact loopback origin admitted for app mode.
     ///
-    /// Present whenever the canvas ran, including the default run that opens no
+    /// Present whenever the app ran, including the default run that opens no
     /// browser, so a deliberate open is always one copy away.
     #[serde(
         default,

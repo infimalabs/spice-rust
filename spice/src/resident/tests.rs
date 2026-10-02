@@ -14,10 +14,10 @@ use sill::{
 
 use super::*;
 
-// Canvas announcement and capture fixtures live behind one named boundary so
+// App announcement and capture fixtures live behind one named boundary so
 // this resident root stays below the file-shape base, not merely its ratchet.
-#[path = "tests/canvas_announcement.rs"]
-mod canvas_announcement;
+#[path = "tests/app_announcement.rs"]
+mod app_announcement;
 #[path = "tests/closed_transcript.rs"]
 mod closed_transcript;
 #[path = "tests/lane_consent.rs"]
@@ -49,14 +49,14 @@ mod steering_vacant;
 #[path = "tests/sweep_publish.rs"]
 mod sweep_publish;
 
-use canvas_announcement::{
+use app_announcement::{
     process_spec, resident_fixture, seed_lane, seed_lane_in_team, seed_lane_in_worktree,
     seed_vacant_lane_in_worktree, seed_vendor_lane_in_worktree, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-fn quote_presenter() -> canvas::stream::QuotePresenter {
-    canvas::stream::QuotePresenter::new(|_| Vec::new())
+fn quote_presenter() -> serve::stream::QuotePresenter {
+    serve::stream::QuotePresenter::new(|_| Vec::new())
 }
 
 #[test]
@@ -262,7 +262,7 @@ fn a_post_seated_surface_failure_compensates_to_verified_dark() {
     let bus = Bus::start(journal).expect("fixture bus starts");
     let epoch = test_uuid(7);
     let startup = commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    let original = environment_fault("canvas::fixture-failed", "after UpSeated");
+    let original = environment_fault("serve::fixture-failed", "after UpSeated");
 
     let settled = settle_surface(
         &bus,
@@ -276,7 +276,7 @@ fn a_post_seated_surface_failure_compensates_to_verified_dark() {
     let Outcome::Fault(fault) = settled else {
         panic!("the original startup failure must remain visible");
     };
-    assert_eq!(fault.reason, "canvas::fixture-failed");
+    assert_eq!(fault.reason, "serve::fixture-failed");
     let head = bus
         .residency_head()
         .expect("head read")

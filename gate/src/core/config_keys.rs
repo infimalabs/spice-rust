@@ -106,7 +106,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("lock.<name>.path", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("lock.<name>.directory", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("lock.<name>.shards", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("canvas.pack.rows", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("serve.pack.rows", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.backend", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.command", LOCAL),
     ConfigKeyDeclaration::new("say.voice", TRACKED_WORKTREE),

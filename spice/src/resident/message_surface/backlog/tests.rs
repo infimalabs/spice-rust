@@ -78,7 +78,7 @@ fn a_settled_turn_materializes_history_as_one_final_card() {
     )
     .expect("final history is durable");
     let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("final history scans");
-    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
+    let messages = CollectedMessages::new(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
     publish_scan(
@@ -126,7 +126,7 @@ fn assert_replay_boundary(contents: &str) {
     tape.tee(contents.as_bytes())
         .expect("compacted turn sequence is durable");
     let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("turn sequence scans");
-    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
+    let messages = CollectedMessages::new(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
     publish_scan(
@@ -308,11 +308,11 @@ fn collect_merged_history_pages(
     let mut restored = Vec::new();
     let mut page_lengths = Vec::new();
     for _ in 0..128 {
-        let page = canvas::stream::MessageHistoryProvider::history(
+        let page = serve::stream::MessageHistoryProvider::history(
             &fixture.history,
             fixture.lane,
             Some(&before),
-            canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+            serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
         )
         .expect("merged history reads")
         .expect("fixture lane is owned");
@@ -320,7 +320,7 @@ fn collect_merged_history_pages(
             !page.messages.is_empty(),
             "history never answers an open lane with an empty page",
         );
-        assert!(page.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+        assert!(page.messages.len() <= serve::stream::MESSAGE_HISTORY_PAGE_LIMIT);
         page_lengths.push(page.messages.len());
         let oldest = page.messages[0].clone();
         restored.splice(0..0, page.messages);
@@ -344,11 +344,11 @@ fn assert_replaced_session_is_refused(
     fs::remove_file(&fixture.session_path).expect("old preserved session is removed");
     fs::write(&fixture.session_path, &fixture.session_contents)
         .expect("replacement session is written");
-    let error = canvas::stream::MessageHistoryProvider::history(
+    let error = serve::stream::MessageHistoryProvider::history(
         &fixture.history,
         fixture.lane,
         Some(initial_before),
-        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+        serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
     )
     .expect_err("a replacement preserved session is refused");
     assert!(
@@ -583,7 +583,7 @@ fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
     let root = season_tape("sparse-history", 300, SPARSE_HORIZON_RECORDS);
     let (history, lane, source_end) = season_history(&root);
     let source = history.lanes.get(&lane).expect("season lane");
-    let limit = canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT;
+    let limit = serve::stream::MESSAGE_HISTORY_PAGE_LIMIT;
 
     let newest = history
         .tape_messages(lane, source, None, &source_end, limit)
@@ -621,14 +621,14 @@ fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
             .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
     );
 
-    let page = canvas::stream::MessageHistoryProvider::history(&history, lane, None, limit)
+    let page = serve::stream::MessageHistoryProvider::history(&history, lane, None, limit)
         .expect("served history reads")
         .expect("season lane is owned");
     assert_eq!(page.messages.len(), limit);
     assert!(page.more);
     let oldest = page.messages[0].clone();
     let older =
-        canvas::stream::MessageHistoryProvider::history(&history, lane, Some(&oldest), limit)
+        serve::stream::MessageHistoryProvider::history(&history, lane, Some(&oldest), limit)
             .expect("older history reads")
             .expect("season lane is owned");
     assert_eq!(older.messages.len(), limit);
@@ -642,7 +642,7 @@ fn history_request_stops_at_the_tape_start_without_a_visible_card() {
     let root = season_tape("tool-only-history", 0, SPARSE_TOOL_RECORDS);
     let (history, lane, source_end) = season_history(&root);
     let source = history.lanes.get(&lane).expect("season lane");
-    let limit = canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT;
+    let limit = serve::stream::MESSAGE_HISTORY_PAGE_LIMIT;
 
     let newest = history
         .tape_messages(lane, source, None, &source_end, limit)
@@ -668,7 +668,7 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
     assert!(
         page_lengths
             .iter()
-            .all(|length| *length <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT),
+            .all(|length| *length <= serve::stream::MESSAGE_HISTORY_PAGE_LIMIT),
     );
     assert_eq!(
         restored.len(),
@@ -842,7 +842,7 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
     let newest_page: usize = group_contents
         .iter()
         .rev()
-        .take(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT)
+        .take(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT)
         .map(String::len)
         .sum();
     assert!(
@@ -896,11 +896,11 @@ fn session_history_chains_windows_until_one_request_fills_its_page() {
 
     let page = (0..128)
         .find_map(|_| {
-            let page = canvas::stream::MessageHistoryProvider::history(
+            let page = serve::stream::MessageHistoryProvider::history(
                 &history,
                 lane,
                 None,
-                canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+                serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
             )
             .expect("session history reads")
             .expect("fixture lane is owned");
@@ -914,7 +914,7 @@ fn session_history_chains_windows_until_one_request_fills_its_page() {
 
     assert_eq!(
         page.messages.len(),
-        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+        serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
         "one request chains older windows until the page limit is met",
     );
     assert!(page.more, "older compactions remain behind the page");
@@ -954,11 +954,11 @@ fn a_compaction_both_sources_recorded_is_one_preserved_boundary() {
     let (root, history, lane, future) = paired_boundary_fixture();
     let page = (0..128)
         .find_map(|_| {
-            let page = canvas::stream::MessageHistoryProvider::history(
+            let page = serve::stream::MessageHistoryProvider::history(
                 &history,
                 lane,
                 Some(&future),
-                canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+                serve::stream::MESSAGE_HISTORY_PAGE_LIMIT,
             )
             .expect("merged history reads")
             .expect("fixture lane is owned");

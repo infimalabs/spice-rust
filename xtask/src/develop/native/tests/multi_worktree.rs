@@ -30,7 +30,7 @@ fn publications_retain_one_shared_resident_authority() {
     let lane_c = fixture.linked_repository("lane-c");
     let lane_z = fixture.linked_repository("lane-z");
     let state = original.admit_state().expect("fixture state is admitted");
-    let discovery_path = state.canvas().to_path_buf();
+    let discovery_path = state.serve().to_path_buf();
     let stopped = fixture.0.join("original-stopped");
     let started = fixture.0.join("lane-z-started");
     let saved_discovery = fixture.0.join("saved-discovery");

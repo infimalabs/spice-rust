@@ -273,10 +273,75 @@ pub(super) struct ResolvedCompileTimeTarget {
 #[derive(Clone, Debug)]
 pub(super) struct Inventory {
     pub(super) packages: Vec<PackageInventory>,
+    pub(super) moved_package_roots: BTreeMap<PathBuf, String>,
     pub(super) resolution: CargoResolution,
     pub(super) binary_outputs: Vec<BinaryOutput>,
     pub(super) target_directory: PathBuf,
     pub(super) build_directory: PathBuf,
+}
+
+fn target_shape_matches(
+    base_package: &PackageInventory,
+    base: &TargetIdentity,
+    current_package: &PackageInventory,
+    current: &TargetIdentity,
+) -> bool {
+    let names_match = base.name == current.name
+        || (base.name == base_package.name && current.name == current_package.name);
+    names_match
+        && base.kind == current.kind
+        && base.required_features == current.required_features
+        && base.source.strip_prefix(&base_package.root).ok()
+            == current.source.strip_prefix(&current_package.root).ok()
+}
+
+fn moved_package_matches(
+    base: &PackageInventory,
+    current: &PackageInventory,
+    base_root: &Path,
+    root: &Path,
+    changed_sources: &[String],
+) -> bool {
+    let Ok(base_relative) = base.root.strip_prefix(base_root) else {
+        return false;
+    };
+    let Ok(current_relative) = current.root.strip_prefix(root) else {
+        return false;
+    };
+    if base_relative == current_relative
+        || !changed_sources
+            .iter()
+            .any(|path| Path::new(path) == base_relative.join("Cargo.toml"))
+        || !changed_sources
+            .iter()
+            .any(|path| Path::new(path) == current_relative.join("Cargo.toml"))
+        || base.dependencies.len() != current.dependencies.len()
+        || base.declared_targets.len() != current.declared_targets.len()
+    {
+        return false;
+    }
+    let dependencies_match = base.dependencies.iter().all(|dependency| {
+        dependency
+            .strip_prefix(base_root)
+            .ok()
+            .is_some_and(|relative| {
+                current
+                    .dependencies
+                    .iter()
+                    .any(|candidate| candidate.strip_prefix(root).ok() == Some(relative))
+            })
+    });
+    dependencies_match
+        && base.declared_targets.iter().all(|base_target| {
+            current
+                .declared_targets
+                .iter()
+                .filter(|current_target| {
+                    target_shape_matches(base, base_target, current, current_target)
+                })
+                .count()
+                == 1
+        })
 }
 
 impl Inventory {
@@ -329,19 +394,47 @@ impl Inventory {
                     base_root.display(),
                 ))
             })?;
-            let current_package = self
-                .packages
-                .iter_mut()
-                .find(|package| {
-                    package.name == base_package.name
-                        && package.root == root.join(relative_package)
-                })
-                .ok_or_else(|| {
-                    WorkspaceTestError::new(format!(
-                        "removed Rust source {changed:?} belonged to base-tree Cargo package {:?}, which has no matching current package",
+            let current_index = self.packages.iter().position(|package| {
+                package.name == base_package.name && package.root == root.join(relative_package)
+            });
+            let Some(current_index) = current_index else {
+                let mut successors = self.packages.iter().filter(|package| {
+                    moved_package_matches(base_package, package, &base_root, &root, changed_sources)
+                });
+                let Some(successor) = successors.next() else {
+                    return Err(WorkspaceTestError::new(format!(
+                        "removed Rust source {changed:?} belonged to base-tree Cargo package {:?}, which has no matching current package or moved successor",
                         base_package.name,
-                    ))
-                })?;
+                    )));
+                };
+                if let Some(other) = successors.next() {
+                    return Err(WorkspaceTestError::new(format!(
+                        "removed Rust source {changed:?} has ambiguous moved package successors {:?} and {:?}",
+                        successor.name, other.name,
+                    )));
+                }
+                if successor.declared_targets.iter().any(|target| {
+                    target_shape_matches(base_package, base_target, successor, target)
+                }) {
+                    let successor_id = successor.id.clone();
+                    let predecessor = root.join(relative_package);
+                    if let Some(owner) = self.moved_package_roots.get(&predecessor)
+                        && owner != &successor_id
+                    {
+                        return Err(WorkspaceTestError::new(format!(
+                            "moved package root {} has conflicting successors {owner:?} and {successor_id:?}",
+                            predecessor.display(),
+                        )));
+                    }
+                    self.moved_package_roots.insert(predecessor, successor_id);
+                    continue;
+                }
+                return Err(WorkspaceTestError::new(format!(
+                    "removed Rust source {changed:?} has no target in moved package successor {:?}",
+                    successor.name,
+                )));
+            };
+            let current_package = &mut self.packages[current_index];
             let mut target = (*base_target).clone();
             target.package.clone_from(&current_package.id);
             target.source = rebase_path(&target.source, &base_root, &root, changed)?;
@@ -452,6 +545,7 @@ impl Inventory {
             packages,
             resolution: self.resolution.clone(),
             binary_outputs,
+            moved_package_roots: self.moved_package_roots.clone(),
             target_directory: self.target_directory.clone(),
             build_directory: self.build_directory.clone(),
         })
@@ -699,6 +793,7 @@ fn inventory_from_metadata(
         packages,
         resolution,
         binary_outputs,
+        moved_package_roots: BTreeMap::new(),
         target_directory,
         build_directory,
     })
@@ -942,6 +1037,7 @@ mod declared_source_tests {
                 targets: vec![target],
                 data_roots: Vec::new(),
             }],
+            moved_package_roots: BTreeMap::new(),
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),
             target_directory: root.join("target"),
@@ -956,6 +1052,70 @@ mod declared_source_tests {
             cargo_declared_compile_time_sources_at(root.path(), &Environment::empty())
                 .expect("repository without Cargo")
                 .is_empty()
+        );
+    }
+
+    fn package(workspace: &Path, directory: &str, name: &str) -> PackageInventory {
+        let package_root = workspace.join(directory);
+        let target = TargetIdentity {
+            package: format!("{name} 0.0.0"),
+            kind: "lib".to_owned(),
+            name: name.to_owned(),
+            required_features: Vec::new(),
+            source: package_root.join("src/lib.rs"),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        };
+        PackageInventory {
+            id: format!("{name} 0.0.0"),
+            name: name.to_owned(),
+            root: package_root,
+            dependencies: vec![workspace.join("wire")],
+            namespace_context: FileMacroCrateContext::from_metadata(name, "2024", &[])
+                .expect("fixture namespace"),
+            compile_time_authority: None,
+            declared_targets: vec![target.clone()],
+            removed_targets: Vec::new(),
+            targets: vec![target],
+            data_roots: Vec::new(),
+        }
+    }
+
+    fn inventory(root: &Path, package: PackageInventory) -> Inventory {
+        Inventory {
+            packages: vec![package],
+            resolution: CargoResolution::default(),
+            moved_package_roots: BTreeMap::new(),
+            binary_outputs: Vec::new(),
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+        }
+    }
+
+    #[test]
+    fn a_moved_package_target_is_owned_by_its_unique_current_successor() {
+        let fixture = crate::test_repository::Fixture::repository("moved-package-successor");
+        let base_root = fixture.join("base");
+        let current_root = fixture.join("current");
+        let base = inventory(&base_root, package(&base_root, "canvas", "canvas"));
+        let mut current = inventory(&current_root, package(&current_root, "serve", "serve"));
+        let changes = [
+            "canvas/Cargo.toml".to_owned(),
+            "canvas/src/lib.rs".to_owned(),
+            "serve/Cargo.toml".to_owned(),
+            "serve/src/lib.rs".to_owned(),
+        ];
+
+        current
+            .retain_removed_target_ownership(&current_root, &base, &base_root, &changes)
+            .expect("one shape-preserving package move retains target ownership");
+
+        assert!(current.packages[0].removed_targets.is_empty());
+        assert_eq!(
+            current
+                .moved_package_roots
+                .get(&current_root.join("canvas")),
+            Some(&current.packages[0].id),
         );
     }
 }

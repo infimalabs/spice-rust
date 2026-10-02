@@ -26,11 +26,11 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join("dist/stage")).expect("fixture stage directory");
         let app = root
-            .join(spice::canvas::APP_STAGE)
-            .join(spice::canvas::APP_STAGE_GENERATIONS)
+            .join(spice::serve::APP_STAGE)
+            .join(spice::serve::APP_STAGE_GENERATIONS)
             .join(GENERATION);
         fs::create_dir_all(&app).expect("fixture app generation");
-        for asset in spice::canvas::APP.assets() {
+        for asset in spice::serve::APP.assets() {
             let contents = match asset.file() {
                 "app_bg.wasm" => TEST_WASM,
                 "app.html" => TEST_HTML,
@@ -39,8 +39,8 @@ impl Fixture {
             fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
         }
         fs::write(
-            root.join(spice::canvas::APP_STAGE)
-                .join(spice::canvas::APP_STAGE_CURRENT),
+            root.join(spice::serve::APP_STAGE)
+                .join(spice::serve::APP_STAGE_CURRENT),
             format!("{GENERATION}\n"),
         )
         .expect("write lane app pointer");
@@ -244,7 +244,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         assert_eq!(build_records[0].program, programs.xtask);
         assert_eq!(
             build_records[1].arguments,
-            cargo_arguments(&fixture.root, "canvas", target)
+            cargo_arguments(&fixture.root, "serve", target)
         );
         assert_eq!(build_records[1].program, programs.cargo);
         assert_eq!(

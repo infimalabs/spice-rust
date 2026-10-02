@@ -112,7 +112,7 @@ pub(in crate::resident::message_surface) fn retained_messages(
     cards: &mut SessionCards,
 ) -> CommandResult<HistoryScan> {
     admit_history_source(&request.path, request.end)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     let mut cursor = None;
     let mut work = HistoryWork::default();
     let mut reads = 0;
@@ -145,7 +145,7 @@ pub(super) fn history_window(
     end: &HistoryCheckpoint,
 ) -> CommandResult<HistoryScan> {
     let page = bootstrap_before(cursor, 0, end, HistoryRead::Page)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
     let messages = HistoryMessages::default();
     // Preserved-session loci name no tape batch, so observations never apply.
     let mut state = MessageState::default();
@@ -154,7 +154,7 @@ pub(super) fn history_window(
     }
     let messages = messages.0.into_inner().map_err(|_| {
         store_fault(
-            "canvas::message-history-unavailable",
+            "serve::message-history-unavailable",
             "history lock poisoned",
         )
     })?;
@@ -173,10 +173,10 @@ impl AgentMessagePublisher for HistoryMessages {
     fn publish(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         self.0
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?
+            .map_err(|_| serve::stream::MessagePublishError::Unavailable)?
             .push(message);
         Ok(true)
     }
@@ -184,16 +184,16 @@ impl AgentMessagePublisher for HistoryMessages {
     fn revise_final(
         &self,
         message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         let mut collected = self
             .0
             .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+            .map_err(|_| serve::stream::MessagePublishError::Unavailable)?;
         let Some(existing) = collected
             .iter_mut()
             .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
         else {
-            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+            return Err(serve::stream::MessagePublishError::IdentityConflict);
         };
         *existing = message;
         Ok(true)

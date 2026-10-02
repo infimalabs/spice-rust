@@ -1,4 +1,4 @@
-//! Zero-setup native canvas demonstration environment.
+//! Zero-setup native app demonstration environment.
 
 use std::fs;
 use std::io;
@@ -181,7 +181,7 @@ impl Drop for SignalRelay {
     }
 }
 
-/// Seed or run one isolated native canvas environment.
+/// Seed or run one isolated native app environment.
 pub(crate) fn run(matches: &ArgMatches) -> Outcome<DemoAnswer> {
     run_with(
         matches,
@@ -255,7 +255,7 @@ fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Enviro
 fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
     born_repository(root)?;
     let source_root = application_source_root()?;
-    let source = canvas::AppSource::resolve(source_root)
+    let source = serve::AppSource::resolve(source_root)
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
     finish_seed_prepared_root(root, executable, automatic, &source)
 }
@@ -277,7 +277,7 @@ fn finish_seed_prepared_root(
     root: &Path,
     executable: &Path,
     automatic: bool,
-    source: &canvas::AppSource,
+    source: &serve::AppSource,
 ) -> DemoResult<Environment> {
     seed_lane_app(root, source)?;
     let repository = spice::repository::Repository::discover(root).map_err(|error| {
@@ -322,13 +322,13 @@ fn finish_seed_prepared_root(
 }
 
 /// Copy the binary's current immutable app generation into the demo lane.
-fn seed_lane_app(root: &Path, source: &canvas::AppSource) -> DemoResult<()> {
+fn seed_lane_app(root: &Path, source: &serve::AppSource) -> DemoResult<()> {
     let generation = source
         .current_generation()
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-    let stage = root.join(canvas::APP_STAGE);
+    let stage = root.join(serve::APP_STAGE);
     let target_generation = stage
-        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(serve::APP_STAGE_GENERATIONS)
         .join(generation.identity().as_str());
     fs::create_dir_all(&target_generation).map_err(|error| {
         environment_fault(
@@ -345,7 +345,7 @@ fn seed_lane_app(root: &Path, source: &canvas::AppSource) -> DemoResult<()> {
             )
         })?;
     }
-    let pointer = stage.join(canvas::APP_STAGE_CURRENT);
+    let pointer = stage.join(serve::APP_STAGE_CURRENT);
     fs::write(&pointer, format!("{}\n", generation.identity())).map_err(|error| {
         environment_fault(
             "demo::app-stage-unwritable",

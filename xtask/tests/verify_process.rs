@@ -308,12 +308,12 @@ impl Fixture {
 
 fn seed_app_stage(worktree: &Path) {
     let generation = wire::Digest::compute(wire::Domain::DistInventory, b"xtask verifier app");
-    let stage = worktree.join(spice::canvas::APP_STAGE);
+    let stage = worktree.join(spice::serve::APP_STAGE);
     let root = stage
-        .join(spice::canvas::APP_STAGE_GENERATIONS)
+        .join(spice::serve::APP_STAGE_GENERATIONS)
         .join(generation.as_str());
     fs::create_dir_all(&root).expect("create verifier fixture app generation");
-    for asset in spice::canvas::APP.assets() {
+    for asset in spice::serve::APP.assets() {
         fs::write(
             root.join(asset.file()),
             format!("xtask verifier app asset {}\n", asset.file()),
@@ -321,7 +321,7 @@ fn seed_app_stage(worktree: &Path) {
         .expect("write verifier fixture app asset");
     }
     fs::write(
-        stage.join(spice::canvas::APP_STAGE_CURRENT),
+        stage.join(spice::serve::APP_STAGE_CURRENT),
         format!("{generation}\n"),
     )
     .expect("write verifier fixture app pointer");

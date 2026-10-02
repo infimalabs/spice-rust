@@ -26,7 +26,7 @@ impl StatePaths {
     ///
     /// Every family keys its child by the lane's canonical text, so residue
     /// for a lane the resident no longer seats is found by one directory read
-    /// per family. The canvas family holds files; the rest hold directories.
+    /// per family. The app-server family holds files; the rest hold directories.
     #[must_use]
     pub fn lane_families(&self) -> [&Path; 5] {
         [
@@ -34,7 +34,7 @@ impl StatePaths {
             self.rtk(),
             self.supervisors(),
             self.steering_media(),
-            self.lane_canvas(),
+            self.lane_serve(),
         ]
     }
 }

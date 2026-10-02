@@ -171,7 +171,7 @@ impl PreparedLaunch {
             .map_err(|error| crate::state_failure(&error).outcome())?;
         fs::create_dir_all(state.runtime())
             .map_err(|error| daemon_fault("resident::runtime-unavailable", error))?;
-        let baseline = read_optional(state.canvas())
+        let baseline = read_optional(state.serve())
             .map_err(|error| daemon_fault("resident::daemon-discovery-unavailable", error))?;
         let observer = DirectObserver::arm(state.runtime())
             .map_err(|error| daemon_fault("resident::daemon-observer-unavailable", error))?;
@@ -271,7 +271,7 @@ impl SpawnedLaunch {
             &mut self.child,
             self.observer,
             self.state.runtime(),
-            self.state.canvas(),
+            self.state.serve(),
             self.baseline.as_deref(),
             self.token.as_deref(),
             self.state.resident_log(),
@@ -386,12 +386,12 @@ fn wait_for_ready(
     child: &mut Child,
     observer: DirectObserver,
     watched: &Path,
-    canvas: &Path,
+    serve: &Path,
     baseline: Option<&[u8]>,
     token: Option<&str>,
     log_path: &Path,
     status: &mut UnixStream,
-) -> Result<canvas::Discovery, Option<Outcome<()>>> {
+) -> Result<serve::Discovery, Option<Outcome<()>>> {
     let horizon = arrival_horizon(watched);
     let started = Instant::now();
     let deadline = started + horizon;
@@ -401,7 +401,7 @@ fn wait_for_ready(
     wait_for_change(observer, sender.clone(), Signal::woke);
     wait_for_exit(child.id(), sender.clone());
 
-    if let Some(discovery) = candidate(canvas, baseline, token)? {
+    if let Some(discovery) = candidate(serve, baseline, token)? {
         return Ok(discovery);
     }
     loop {
@@ -430,13 +430,13 @@ fn wait_for_ready(
                         &error.to_string(),
                     ))
                 })?;
-                if let Some(discovery) = candidate(canvas, baseline, token)? {
+                if let Some(discovery) = candidate(serve, baseline, token)? {
                     return Ok(discovery);
                 }
                 wait_for_change(next, sender.clone(), Signal::woke);
             }
             Ok(Signal::Exited) => {
-                if let Some(discovery) = candidate(canvas, baseline, token)? {
+                if let Some(discovery) = candidate(serve, baseline, token)? {
                     return Ok(discovery);
                 }
                 let _ = child.wait();
@@ -494,11 +494,11 @@ fn arrival_horizon(runtime: &Path) -> Duration {
 
 #[cfg(unix)]
 fn candidate(
-    canvas: &Path,
+    serve: &Path,
     baseline: Option<&[u8]>,
     token: Option<&str>,
-) -> Result<Option<canvas::Discovery>, Option<Outcome<()>>> {
-    let Some(bytes) = read_optional(canvas).map_err(|error| {
+) -> Result<Option<serve::Discovery>, Option<Outcome<()>>> {
+    let Some(bytes) = read_optional(serve).map_err(|error| {
         Some(environment_fault(
             "resident::daemon-discovery-unavailable",
             &error.to_string(),
@@ -510,7 +510,7 @@ fn candidate(
     if baseline == Some(bytes.as_slice()) {
         return Ok(None);
     }
-    let discovery = wire::decode::<canvas::Discovery>(&bytes).map_err(|error| {
+    let discovery = wire::decode::<serve::Discovery>(&bytes).map_err(|error| {
         Some(environment_fault(
             "resident::daemon-discovery-invalid",
             &error.to_string(),
@@ -529,7 +529,7 @@ fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 #[cfg(unix)]
-fn probe(discovery: &canvas::Discovery, token: Option<&str>) -> CommandResult<()> {
+fn probe(discovery: &serve::Discovery, token: Option<&str>) -> CommandResult<()> {
     let authority = discovery.endpoint.strip_prefix("http://").ok_or_else(|| {
         environment_fault(
             "resident::daemon-endpoint-invalid",

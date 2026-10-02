@@ -86,10 +86,10 @@ pub(in crate::resident) trait PresentationPublisher {
         text: String,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
-    ) -> Result<bool, canvas::stream::MessagePublishError>;
+    ) -> Result<bool, serve::stream::MessagePublishError>;
 }
 
-impl PresentationPublisher for canvas::stream::MessagePublisher {
+impl PresentationPublisher for serve::stream::MessagePublisher {
     fn revise_presentation(
         &self,
         lane: CanonicalUuid,
@@ -97,12 +97,12 @@ impl PresentationPublisher for canvas::stream::MessagePublisher {
         text: String,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
     }
 }
 
-impl PresentationPublisher for canvas::stream::MessageBatch {
+impl PresentationPublisher for serve::stream::MessageBatch {
     fn revise_presentation(
         &self,
         lane: CanonicalUuid,
@@ -110,7 +110,7 @@ impl PresentationPublisher for canvas::stream::MessageBatch {
         text: String,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
+    ) -> Result<bool, serve::stream::MessagePublishError> {
         Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
     }
 }
@@ -131,7 +131,7 @@ pub(in crate::resident) fn settle_pending_presentations(
     }
     let directives = load_steering_presentations(&bus.reader(), &pending.keys()).and_then(|rows| {
         PresentationDirectives::from_presentations(&rows)
-            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))
+            .map_err(|error| store_fault("serve::message-steering-invalid", &error))
     });
     let mut state = lock_state(state)?;
     let incoming = std::mem::replace(&mut state.pending, pending);
@@ -189,7 +189,7 @@ fn present_again(
             presented.classifications.clone(),
             presented.directive_contexts.clone(),
         )
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     if let Some(prose) = state.prose.get_mut(&card.lane)
         && prose.published.locus == card.locus
     {

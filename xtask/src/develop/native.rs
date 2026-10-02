@@ -739,8 +739,8 @@ fn workspace(repository: &Repository) -> Result<PathBuf, RefreshError> {
 }
 
 /// Discovery the currently published resident names, when one is running.
-fn read_discovery(repository: &Repository) -> Option<spice::canvas::Discovery> {
-    let bytes = fs::read(repository.admit_state().ok()?.canvas()).ok()?;
+fn read_discovery(repository: &Repository) -> Option<spice::serve::Discovery> {
+    let bytes = fs::read(repository.admit_state().ok()?.serve()).ok()?;
     wire::decode(&bytes).ok()
 }
 
@@ -772,7 +772,7 @@ fn restart_state(
 /// Bind and access metadata published by the same resident generation.
 fn read_resident_launch(
     repository: &Repository,
-    discovery: &spice::canvas::Discovery,
+    discovery: &spice::serve::Discovery,
 ) -> Result<Option<ResidentLaunch>, RefreshError> {
     let state = repository
         .admit_state()
@@ -1025,7 +1025,7 @@ fn executable_digest(executable: &Path) -> Result<Digest, std::io::Error> {
 /// identity here retains the launcher's refusal rather than guessing.
 fn running_resident_version(
     repository: &Repository,
-) -> Option<(spice::canvas::Discovery, wire::Version)> {
+) -> Option<(spice::serve::Discovery, wire::Version)> {
     let discovery = read_discovery(repository)?;
     let authority = discovery.endpoint.strip_prefix("http://")?;
     let address = authority.parse::<SocketAddr>().ok()?;

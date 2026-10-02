@@ -45,8 +45,8 @@ struct NoopCaptureReporter;
 
 /// A lane runtime whose captures nobody reports.
 fn silent_runtime<'a>(
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
+    capabilities: &'a serve::axum::Capabilities,
+    discovery: &'a serve::Discovery,
     reads: &'a read_materializations::CurrentReads,
 ) -> lane_surface::Runtime<'a> {
     lane_surface::Runtime::new(
@@ -130,7 +130,7 @@ fn the_listen_address_is_what_was_asked_for_or_an_ephemeral_loopback() {
 #[test]
 fn an_unbindable_listen_request_is_refused_by_name() {
     assert_eq!(
-        listen_refusal_for(&["spice", "up", "--host", "canvas.example"]),
+        listen_refusal_for(&["spice", "up", "--host", "app.example"]),
         "resident::host-invalid"
     );
     assert_eq!(
@@ -191,7 +191,7 @@ fn remote_listening_requires_explicit_consent_and_validates_an_optional_token() 
 
 /// `::1` is loopback here and at the listener, because one predicate says so.
 ///
-/// This gate and the canvas one both ask [`std::net::IpAddr::is_loopback`]. A
+/// This gate and the app-server one both ask [`std::net::IpAddr::is_loopback`]. A
 /// narrowing on either side would split one decision in two: this side would
 /// admit `--host ::1` with no token, and the listener would refuse the address
 /// it had just admitted, telling the operator a machine-local bind is remote.
@@ -352,17 +352,17 @@ fn stale_surface_cleanup_is_idempotent() {
     let root = fixture("stale-surfaces");
     fs::create_dir_all(root.join(".git")).expect("git directory");
     let paths = RuntimePaths::discover(&root).expect("paths resolve");
-    fs::create_dir_all(&paths.lane_canvas).expect("lane discovery directory");
-    fs::write(&paths.canvas, b"stale operator discovery").expect("operator discovery");
-    fs::write(paths.lane_canvas.join("lane"), b"stale lane discovery").expect("lane discovery");
+    fs::create_dir_all(&paths.lane_serve).expect("lane discovery directory");
+    fs::write(&paths.serve, b"stale operator discovery").expect("operator discovery");
+    fs::write(paths.lane_serve.join("lane"), b"stale lane discovery").expect("lane discovery");
 
     paths.clear_stale_surfaces().expect("stale surfaces clear");
     paths
         .clear_stale_surfaces()
         .expect("repeated stale surface cleanup is ordinary");
 
-    assert!(!paths.canvas.exists());
-    assert!(!paths.lane_canvas.exists());
+    assert!(!paths.serve.exists());
+    assert!(!paths.lane_serve.exists());
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
@@ -446,8 +446,8 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     let bus = Bus::start(journal).expect("fixture bus starts");
     let epoch = test_uuid(71);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:8767".to_owned(),
         capability: test_uuid(72),
         epoch,

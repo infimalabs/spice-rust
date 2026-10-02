@@ -7,18 +7,18 @@ use std::sync::Arc;
 use super::*;
 
 struct StartedSurface<'a> {
-    capabilities: canvas::axum::Capabilities,
-    discovery: canvas::Discovery,
-    control: canvas::axum::Control,
+    capabilities: serve::axum::Capabilities,
+    discovery: serve::Discovery,
+    control: serve::axum::Control,
     publication: SurfacePublication<'a>,
     shutdown: oneshot::Sender<()>,
     server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
-    message_publisher: canvas::stream::MessagePublisher,
+    message_publisher: serve::stream::MessagePublisher,
     progress: &'a mut dyn io::Write,
 }
 
 struct SurfacePublication<'a> {
-    discovery: canvas::Discovery,
+    discovery: serve::Discovery,
     published: PublishedDiscovery,
     app_description: String,
     token: Option<String>,
@@ -75,7 +75,7 @@ impl SurfacePublication<'_> {
         steering::publish_lane_discoveries(paths, &self.discovery, residency)?;
         self.discovery
             .publish(&self.published.path)
-            .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
+            .map_err(|error| environment_fault("serve::publish-failed", &error.to_string()))?;
         if let Some(daemon) = self.daemon.take() {
             daemon.published();
         }
@@ -98,7 +98,7 @@ async fn start_surface<'a>(
     residency: &ResidencyHead,
     config: &SurfaceConfig,
     operator_identity: wire::OperatorIdentity,
-    quota: canvas::stream::QuotaFeed,
+    quota: serve::stream::QuotaFeed,
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
@@ -121,7 +121,7 @@ async fn start_surface<'a>(
         token,
     } = access;
     let speech_paths = paths.clone();
-    let generation = canvas::axum::Generation::new(
+    let generation = serve::axum::Generation::new(
         epoch,
         capabilities.clone(),
         version,
@@ -132,11 +132,11 @@ async fn start_surface<'a>(
     .with_operator_identity(operator_identity);
     let quote_presenter =
         spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
-    let (server, control) = canvas::axum::Server::bind_streaming(
-        canvas::axum::Binding::new(listen, policy),
+    let (server, control) = serve::axum::Server::bind_streaming(
+        serve::axum::Binding::new(listen, policy),
         generation,
         bus.reader(),
-        config.canvas.rows(),
+        config.serve.rows(),
         quote_presenter,
         quota,
     )
@@ -156,17 +156,17 @@ async fn start_surface<'a>(
             ));
         }
         environment_fault(
-            "canvas::bind-failed",
+            "serve::bind-failed",
             &format!("listening on {listen} failed: {error}"),
         )
     })?;
     record_bound_launch(resident_lock, epoch, &server, kind)?;
     let discovery = server
         .discovery(operator)
-        .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
+        .map_err(|error| environment_fault("serve::discovery-invalid", &error.to_string()))?;
     let message_publisher = server.message_publisher().ok_or_else(|| {
         environment_fault(
-            "canvas::message-surface-unavailable",
+            "serve::message-surface-unavailable",
             "the streaming app server has no transcript activity publisher",
         )
     })?;
@@ -181,8 +181,8 @@ async fn start_surface<'a>(
         publication: SurfacePublication {
             discovery,
             published: PublishedDiscovery {
-                path: paths.canvas.clone(),
-                lane_root: paths.lane_canvas.clone(),
+                path: paths.serve.clone(),
+                lane_root: paths.lane_serve.clone(),
             },
             app_description,
             token,
@@ -206,8 +206,8 @@ fn announce_started_surface(
     progress: &mut dyn io::Write,
 ) {
     let _ = writeln!(progress, "app source: {app_description}");
-    announce_canvas(
-        &paths.canvas,
+    announce_app(
+        &paths.serve,
         token,
         open,
         || {},
@@ -221,8 +221,8 @@ fn announce_started_surface(
 
 /// The lane and recovery runtimes commands run against, sharing one reporter.
 fn runtimes<'a>(
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
+    capabilities: &'a serve::axum::Capabilities,
+    discovery: &'a serve::Discovery,
     reporter: &std::sync::Arc<dyn lane::capture::CaptureReporter>,
     reads: &'a read_materializations::CurrentReads,
 ) -> command_surface::Runtimes<'a> {
@@ -387,7 +387,7 @@ fn launch_message_startup(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &serve::stream::MessagePublisher,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let residency = current_residency(bus, epoch)?;
     start_message_startup(paths, residency.body(), publisher, bus.reader())
@@ -396,7 +396,7 @@ fn launch_message_startup(
 fn start_message_startup(
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &serve::stream::MessagePublisher,
     bus: bus::BusReader,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let paths = paths.clone();
@@ -422,7 +422,7 @@ fn start_message_startup(
             let _ = finished.send(result);
         })
         .map_err(|error| {
-            environment_fault("canvas::message-startup-unavailable", &error.to_string())
+            environment_fault("serve::message-startup-unavailable", &error.to_string())
         })?;
     Ok(receiver)
 }
@@ -439,7 +439,7 @@ async fn await_message_startup(
     lifecycle: &mut lifecycle::Runtime,
     timers: &mut timers::Runtime,
     door: &mut capture::SupervisorReports,
-    control: &mut canvas::axum::Control,
+    control: &mut serve::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
     inbox_deliveries: &mut InboxDeliveries,
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
@@ -449,7 +449,7 @@ async fn await_message_startup(
         tokio::select! {
             result = &mut *startup => {
                 let ready = result.map_err(|_| environment_fault(
-                    "canvas::message-startup-closed",
+                    "serve::message-startup-closed",
                     "the message startup worker ended without its terminal result",
                 ))?;
                 return ready.map(Some);
@@ -501,7 +501,7 @@ async fn await_message_startup(
 /// diagnostic and goes where the other diagnostics went. A shell that reads the
 /// endpoint stream to dial it cannot tell a URL from a sentence explaining why
 /// there is not one, so it sees an empty capture instead.
-pub(in crate::resident) fn announce_canvas(
+pub(in crate::resident) fn announce_app(
     discovery_path: &Path,
     auth_token: Option<&str>,
     open: bool,
@@ -547,11 +547,11 @@ async fn drive_surface(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    mut control: canvas::axum::Control,
+    mut control: serve::axum::Control,
     publication: SurfacePublication<'_>,
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
-    message_publisher: canvas::stream::MessagePublisher,
+    message_publisher: serve::stream::MessagePublisher,
     message_state: Arc<std::sync::Mutex<message_surface::MessageState>>,
     mut session_compactions: message_surface::SessionCompactions,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
@@ -669,10 +669,10 @@ pub(in crate::resident) enum ControlDeliveryTurn {
 }
 
 pub(in crate::resident) async fn control_delivery_turn(
-    control: &mut canvas::axum::Control,
+    control: &mut serve::axum::Control,
     inbox_deliveries: &InboxDeliveries,
     control_enabled: bool,
-) -> (ControlDeliveryTurn, Option<canvas::axum::ControlRequest>) {
+) -> (ControlDeliveryTurn, Option<serve::axum::ControlRequest>) {
     if inbox_deliveries.is_empty() {
         return if control_enabled {
             (ControlDeliveryTurn::Control, control.recv().await)
@@ -694,8 +694,8 @@ async fn dispatch_control_delivery_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    control: &mut canvas::axum::Control,
-    request: Option<canvas::axum::ControlRequest>,
+    control: &mut serve::axum::Control,
+    request: Option<serve::axum::ControlRequest>,
     inbox_deliveries: &mut InboxDeliveries,
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
 ) -> CommandResult<bool> {
@@ -748,7 +748,7 @@ fn accept_supervisor_reports(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &serve::stream::MessagePublisher,
     mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
     session_compactions: &mut message_surface::SessionCompactions,
@@ -802,7 +802,7 @@ fn accept_record_turn(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &serve::stream::MessagePublisher,
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     session_compactions: &mut message_surface::SessionCompactions,
     record: Option<lane::capture::CaptureRecord>,
@@ -1089,18 +1089,18 @@ fn accept_record<P: message_surface::AgentMessagePublisher>(
 }
 
 fn begin_message_batch(
-    publisher: &canvas::stream::MessagePublisher,
-) -> CommandResult<canvas::stream::MessageBatch> {
+    publisher: &serve::stream::MessagePublisher,
+) -> CommandResult<serve::stream::MessageBatch> {
     publisher
         .batch()
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))
 }
 
-fn commit_message_batch(batch: canvas::stream::MessageBatch) -> CommandResult<()> {
+fn commit_message_batch(batch: serve::stream::MessageBatch) -> CommandResult<()> {
     batch
         .commit()
         .map(drop)
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))
 }
 
 fn accept_failure(
@@ -1177,7 +1177,7 @@ fn accept_commit_turn(
     bus: &Bus,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &serve::stream::MessagePublisher,
     lifecycle: &mut lifecycle::Runtime,
     door: &mut capture::SupervisorReports,
     message_state: &std::sync::Mutex<message_surface::MessageState>,
@@ -1271,7 +1271,7 @@ fn accept_commit(
 /// diagnostic, as it is for live publication, not a resident fault.
 fn settle_spoken_acknowledgements(
     bus: &Bus,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &serve::stream::MessagePublisher,
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
@@ -1378,12 +1378,11 @@ pub(in crate::resident) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    control: &mut canvas::axum::Control,
-    request: Option<canvas::axum::ControlRequest>,
+    control: &mut serve::axum::Control,
+    request: Option<serve::axum::ControlRequest>,
 ) -> CommandResult<ControlDispatch> {
-    let request = request.ok_or_else(|| {
-        environment_fault("canvas::control-closed", "app control receiver closed")
-    })?;
+    let request = request
+        .ok_or_else(|| environment_fault("serve::control-closed", "app control receiver closed"))?;
     let replayed = command_surface.replay(seats, request.command());
     let is_replay = replayed.is_some();
     let lifecycle_released = if is_replay {
@@ -1422,8 +1421,8 @@ pub(in crate::resident) async fn dispatch_control_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    control: &mut canvas::axum::Control,
-    request: Option<canvas::axum::ControlRequest>,
+    control: &mut serve::axum::Control,
+    request: Option<serve::axum::ControlRequest>,
     inbox_deliveries: &mut InboxDeliveries,
 ) -> CommandResult<ControlDispatch> {
     let mut request = request;
@@ -1432,7 +1431,7 @@ pub(in crate::resident) async fn dispatch_control_burst(
         lifecycle_witness: None,
         inbox_delivery: None,
     };
-    for turn in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
+    for turn in 0..serve::axum::Control::FAIR_CYCLE_LIMIT {
         let dispatched =
             dispatch_control(command_surface, seats, lifecycle, control, request.take()).await?;
         if let Some(lane) = dispatched.inbox_delivery {
@@ -1444,7 +1443,7 @@ pub(in crate::resident) async fn dispatch_control_burst(
         }
         if burst.reached_dark
             || burst.lifecycle_witness.is_some()
-            || turn + 1 == canvas::axum::Control::FAIR_CYCLE_LIMIT
+            || turn + 1 == serve::axum::Control::FAIR_CYCLE_LIMIT
         {
             break;
         }
@@ -1459,7 +1458,7 @@ pub(in crate::resident) async fn dispatch_control_burst(
     Ok(burst)
 }
 
-async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outcome<CommandAnswer>) {
+async fn complete_response(request: serve::axum::ControlRequest, outcome: Outcome<CommandAnswer>) {
     if let Ok(response) = request.respond(outcome) {
         response.wait().await;
     }

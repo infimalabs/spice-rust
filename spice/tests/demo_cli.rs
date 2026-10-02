@@ -27,9 +27,9 @@ impl SeededBuildLaneApp {
     }
 
     fn for_worktree(worktree: &Path) -> Result<Self, String> {
-        let stage = worktree.join(canvas::APP_STAGE);
+        let stage = worktree.join(serve::APP_STAGE);
         if stage.exists() {
-            canvas::AppSource::resolve(worktree).map_err(|error| {
+            serve::AppSource::resolve(worktree).map_err(|error| {
                 format!("demo_cli precondition found a stale lane app generation: {error}")
             })?;
             return Ok(Self(None));
@@ -153,11 +153,11 @@ fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
     let fixture = Fixture::new();
     let root = fixture.root("stale-app-stage");
     staged_app::seed(&root);
-    let stage = root.join(canvas::APP_STAGE);
-    let identity = fs::read_to_string(stage.join(canvas::APP_STAGE_CURRENT))
+    let stage = root.join(serve::APP_STAGE);
+    let identity = fs::read_to_string(stage.join(serve::APP_STAGE_CURRENT))
         .expect("read fixture app generation pointer");
     let missing = stage
-        .join(canvas::APP_STAGE_GENERATIONS)
+        .join(serve::APP_STAGE_GENERATIONS)
         .join(identity.trim_ascii_end())
         .join("mosaic.css");
     fs::remove_file(&missing).expect("remove one current-generation asset");
@@ -187,7 +187,7 @@ fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
 fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_guard() {
     let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
     let worktree = build_lane_worktree();
-    let stage = worktree.join(canvas::APP_STAGE);
+    let stage = worktree.join(serve::APP_STAGE);
     let before = stage_snapshot(&stage);
 
     drop(SeededBuildLaneApp::new());
@@ -231,11 +231,11 @@ fn build_lane_fixture_can_seed_a_read_only_selected_tree_root() {
 
     staged_app::seed(&root);
 
-    let app = canvas::AppSource::resolve(&root).expect("seeded selected source app resolves");
+    let app = serve::AppSource::resolve(&root).expect("seeded selected source app resolves");
     let generation = app
         .current_generation()
         .expect("selected source generation resolves");
-    for asset in canvas::APP.assets() {
+    for asset in serve::APP.assets() {
         generation.served(*asset).unwrap_or_else(|error| {
             panic!("selected source seed omitted {}: {error}", asset.file())
         });
@@ -310,7 +310,7 @@ fn wait_for_demo_discovery(launched: &mut Child, discovery: &Path) {
         "printed launch command did not publish discovery"
     );
     // The wrapper observes discovery through a polling watcher before opening
-    // the canvas. Put external shutdown on the far side of that handoff.
+    // the app. Put external shutdown on the far side of that handoff.
     std::thread::sleep(Duration::from_millis(250));
 }
 
@@ -373,11 +373,11 @@ fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
         fs::read(root.join("spice-rust.toml")).expect("read seeded config"),
         b"[tasks]\nstems = [\"rim\"]\n"
     );
-    let app = canvas::AppSource::resolve(&root).expect("demo lane app resolves");
+    let app = serve::AppSource::resolve(&root).expect("demo lane app resolves");
     let generation = app
         .current_generation()
         .expect("demo app generation resolves");
-    for asset in canvas::APP.assets() {
+    for asset in serve::APP.assets() {
         generation
             .served(*asset)
             .unwrap_or_else(|error| panic!("demo seed omitted {}: {error}", asset.file()));
@@ -473,7 +473,7 @@ fn printed_launch_command_opens_two_simulated_lanes_that_accept_direction() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("printed launch command starts");
-    wait_for_demo_discovery(&mut launched, state.canvas());
+    wait_for_demo_discovery(&mut launched, state.serve());
 
     let roster = lane_answer(&fixture.invoke_at(&root, &["--json", "lane"]));
     let directions = roster
@@ -497,7 +497,7 @@ fn printed_launch_command_opens_two_simulated_lanes_that_accept_direction() {
         .expect("demo residency remains present");
 
     assert!(
-        !state.canvas().is_file(),
+        !state.serve().is_file(),
         "demo discovery is removed after down"
     );
     assert_eq!(

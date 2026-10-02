@@ -161,15 +161,15 @@ impl Resident {
             .spawn()
             .expect("start resident");
         let mut resident = Self(Some(child));
-        let canvas = fixture.root.join(".git/.spice-rs/canvas");
-        let watched = canvas.parent().expect("canvas has runtime parent");
+        let serve = fixture.root.join(".git/.spice-rs/serve");
+        let watched = serve.parent().expect("serve has runtime parent");
         fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
             resident.0.as_mut().expect("resident child"),
             watched,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
-            || canvas.is_file(),
+            || serve.is_file(),
         ) {
             Readiness::Ready => resident,
             Readiness::Exited => panic!("resident exited before readiness"),

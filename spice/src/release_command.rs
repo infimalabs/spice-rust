@@ -187,7 +187,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
         return RunResult::Published(outcome);
     }
     let outcome = crate::command_client::execute(
-        &prepared.canvas,
+        &prepared.serve,
         contract,
         crate::command_client::SelectedCommand::ReleasePublish {
             release: &prepared.release,
@@ -200,7 +200,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
 struct Prepared {
     release: AdmittedRelease,
     state: PublicationState,
-    canvas: PathBuf,
+    serve: PathBuf,
     worktree: PathBuf,
     operation_journal: PathBuf,
     common: PathBuf,
@@ -310,7 +310,7 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
     Ok(Prepared {
         release,
         state,
-        canvas: state_paths.canvas().to_path_buf(),
+        serve: state_paths.serve().to_path_buf(),
         worktree: repository.worktree_root().to_path_buf(),
         operation_journal: state_paths.data().join("release-operations"),
         common: repository.common_dir().to_path_buf(),
@@ -390,7 +390,7 @@ mod tests {
 }
 
 pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
-    canvas::AppSource::resolve(worktree)
+    serve::AppSource::resolve(worktree)
         .and_then(|source| source.current_generation())
         .map(|generation| generation.identity().clone())
         .map_err(|error| error.to_string())
