@@ -36,6 +36,7 @@ struct FollowState {
     expires: Instant,
     wakes: usize,
     wake_limit: usize,
+    last_wake: Option<Instant>,
 }
 
 impl FollowState {
@@ -44,6 +45,7 @@ impl FollowState {
             expires: started + duration,
             wakes: 0,
             wake_limit: WAKE_LIMIT,
+            last_wake: None,
         }
     }
 
@@ -56,12 +58,20 @@ impl FollowState {
         }
     }
 
+    /// How long a pending wake waits so admitted wakes stay `WAKE_INTERVAL` apart.
+    fn rate_delay(self, now: Instant) -> Duration {
+        self.last_wake.map_or(Duration::ZERO, |last| {
+            (last + WAKE_INTERVAL).saturating_duration_since(now)
+        })
+    }
+
     fn record_wake(&mut self, now: Instant) -> Result<(), WatchEnd> {
         self.remaining(now)?;
         if self.wakes >= self.wake_limit {
             return Err(WatchEnd::WakeLimit);
         }
         self.wakes += 1;
+        self.last_wake = Some(now);
         Ok(())
     }
 }
@@ -205,13 +215,12 @@ fn follow_events(
 ) -> Result<WatchEnd, Outcome<WatchReport>> {
     use notify::{RecursiveMode, Watcher};
 
+    // One slot: a burst of native events collapses into a single pending wake,
+    // and each wake rescans every tape, so a dropped duplicate loses nothing.
     let (sender, receiver) = mpsc::sync_channel::<notify::Result<notify::Event>>(1);
-    let mut observer = notify::PollWatcher::new(
-        move |event| {
-            let _ = sender.try_send(event);
-        },
-        notify::Config::default().with_poll_interval(WAKE_INTERVAL),
-    )
+    let mut observer = notify::recommended_watcher(move |event| {
+        let _ = sender.try_send(event);
+    })
     .map_err(|error| watch_failure("create filesystem watcher", error))?;
     observer
         .watch(root, RecursiveMode::Recursive)
@@ -229,39 +238,60 @@ fn follow_events(
     }
 
     loop {
+        if let Err(end) = await_wake(&receiver, state)? {
+            return Ok(end);
+        }
         let remaining = match state.remaining(Instant::now()) {
             Ok(remaining) => remaining,
             Err(end) => return Ok(end),
         };
-        match receiver.recv_timeout(remaining) {
-            Ok(Ok(_)) => {
-                if let Err(end) = state.record_wake(Instant::now()) {
-                    return Ok(end);
-                }
-                let remaining = match state.remaining(Instant::now()) {
-                    Ok(remaining) => remaining,
-                    Err(end) => return Ok(end),
-                };
-                let delta = watch
-                    .poll_bounded(tail_budget(remaining.min(TAIL_DURATION)))
-                    .map_err(surface_failure)?;
-                if !admit_delta(admission, watch, delta, budget, root)? {
-                    return Ok(WatchEnd::OutputLimit);
-                }
-            }
-            Ok(Err(error)) => {
-                return Err(watch_failure("receive filesystem notification", error));
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => return Ok(WatchEnd::Deadline),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(Outcome::Fault(Fault {
-                    class: FaultClass::Environment,
-                    reason: "watch::notification".to_owned(),
-                    detail: "filesystem notification channel disconnected".to_owned(),
-                }));
-            }
+        let delta = watch
+            .poll_bounded(tail_budget(remaining.min(TAIL_DURATION)))
+            .map_err(surface_failure)?;
+        if !admit_delta(admission, watch, delta, budget, root)? {
+            return Ok(WatchEnd::OutputLimit);
         }
     }
+}
+
+/// Block until a filesystem notification arrives, hold it until the wake rate
+/// admits another wake, and fold every notification delivered meanwhile into
+/// that one wake. Returns the run's end instead when the deadline or the wake
+/// ceiling comes first.
+#[cfg(not(target_arch = "wasm32"))]
+fn await_wake(
+    receiver: &mpsc::Receiver<notify::Result<notify::Event>>,
+    state: &mut FollowState,
+) -> Result<Result<(), WatchEnd>, Outcome<WatchReport>> {
+    let remaining = match state.remaining(Instant::now()) {
+        Ok(remaining) => remaining,
+        Err(end) => return Ok(Err(end)),
+    };
+    match receiver.recv_timeout(remaining) {
+        Ok(event) => {
+            event.map_err(|error| watch_failure("receive filesystem notification", error))?;
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => return Ok(Err(WatchEnd::Deadline)),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "watch::notification".to_owned(),
+                detail: "filesystem notification channel disconnected".to_owned(),
+            }));
+        }
+    }
+    let now = Instant::now();
+    let delay = state.rate_delay(now);
+    if !delay.is_zero() {
+        match state.remaining(now) {
+            Ok(remaining) if delay < remaining => std::thread::sleep(delay),
+            Ok(_) | Err(_) => return Ok(Err(WatchEnd::Deadline)),
+        }
+    }
+    while let Ok(event) = receiver.try_recv() {
+        event.map_err(|error| watch_failure("receive filesystem notification", error))?;
+    }
+    Ok(state.record_wake(Instant::now()))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -541,6 +571,22 @@ mod tests {
         assert_eq!(noisy.record_wake(started), Ok(()));
         assert_eq!(noisy.record_wake(started), Err(WatchEnd::WakeLimit));
         assert_eq!(noisy.wakes, 2);
+    }
+
+    #[test]
+    fn follow_state_holds_each_wake_until_the_previous_one_is_an_interval_old() {
+        let started = Instant::now();
+        let mut state = FollowState::new(started, Duration::from_secs(1));
+        assert_eq!(state.rate_delay(started), Duration::ZERO);
+
+        assert_eq!(state.record_wake(started), Ok(()));
+        let soon = started + WAKE_INTERVAL / 4;
+        assert_eq!(state.rate_delay(soon), WAKE_INTERVAL - WAKE_INTERVAL / 4);
+        assert_eq!(state.rate_delay(started + WAKE_INTERVAL), Duration::ZERO);
+
+        let late = started + WAKE_INTERVAL * 3;
+        assert_eq!(state.record_wake(late), Ok(()));
+        assert_eq!(state.rate_delay(late), WAKE_INTERVAL);
     }
 
     #[test]

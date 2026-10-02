@@ -271,9 +271,11 @@ that file and prints only the export receipt.
 
 Bare `spice watch [ROOT]` is one bounded current snapshot and exits. Persistent
 observation is explicit: `--follow` requires a positive
-`--deadline-seconds SECONDS` no greater than 300 seconds. The run blocks on real
-filesystem notifications, coalesces them at a maximum ten-hertz watcher rate,
-and stops after at most 3000 wakes. All snapshots in the run share one aggregate
+`--deadline-seconds SECONDS` no greater than 300 seconds. The run blocks on the
+platform's native filesystem notifications (FSEvents, inotify, kqueue) rather than
+rescanning the tree, folds every notification that arrives within 100 ms of the
+previous wake into one rescan, so wakes never exceed ten per second, and stops
+after at most 3000 wakes. All snapshots in the run share one aggregate
 row and encoded-byte admission budget; every text field is clipped under the
 same text ceiling. Its opaque `watch.v1` cursor records each tape generation,
 complete-record boundary, and emitted decoder canaries. `--after CURSOR`
