@@ -1,5 +1,7 @@
 //! The result triad: one reply names the command and carries one outcome.
 
+use std::fmt;
+
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -688,6 +690,14 @@ impl TryFrom<Vec<String>> for SpiceCommand {
 impl From<SpiceCommand> for Vec<String> {
     fn from(command: SpiceCommand) -> Self {
         command.arguments
+    }
+}
+
+/// The command as one shell-quoted line led by `spice`, so it can be pasted.
+impl fmt::Display for SpiceCommand {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let words = std::iter::once("spice").chain(self.arguments.iter().map(String::as_str));
+        formatter.write_str(&shell_words::join(words))
     }
 }
 

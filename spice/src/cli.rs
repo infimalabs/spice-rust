@@ -412,9 +412,19 @@ pub fn command() -> Command {
     command_from(contracts(), &[])
 }
 
+/// The bounded-output policy every read surface follows; see `wire::output`.
+const OUTPUT_POLICY: &str = "\
+Output: reads show current, relevant state by default. History and detail are
+explicit flags, and every read stays bounded: --limit, --max-bytes, and
+--max-text raise detail only up to the surface maximum. Withheld rows or text
+are always counted, with the exact command that continues after them. Complete
+documents and evidence are exported to a named file with their digest, never
+streamed. Mutation replies are complete and concise.";
+
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
+        .after_help(OUTPUT_POLICY)
         .version(
             dist::current_product_version()
                 .expect("the tracked product version is validated by the repository gate")

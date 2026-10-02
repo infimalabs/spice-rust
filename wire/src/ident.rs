@@ -188,6 +188,8 @@ pub enum Domain {
     MediaContent,
     /// Exact UTF-8 text authenticated by one transcript quote target.
     QuoteText,
+    /// The exact bytes of one complete document a read exported to a file.
+    CliExport,
 }
 
 impl Domain {
@@ -225,7 +227,8 @@ impl Domain {
             | Self::TasteProse
             | Self::TasteBag
             | Self::MediaContent
-            | Self::QuoteText => self.product_tag(),
+            | Self::QuoteText
+            | Self::CliExport => self.product_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -290,6 +293,7 @@ impl Domain {
             Self::TasteBag => "spice.taste.bag.v1",
             Self::MediaContent => "spice.media.content.v1",
             Self::QuoteText => "spice.quote.text.v1",
+            Self::CliExport => "spice.cli.export.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

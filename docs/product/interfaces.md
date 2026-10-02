@@ -207,6 +207,38 @@ stream emits one stream document per wake because it has no finite command
 reply; finite `retro` returns its `StreamOutcome` inside the ordinary reply
 envelope.
 
+### Bounded reads
+
+**Invariant —** A read shows current, relevant state by default; history and
+detail are explicit flags, and no flag makes terminal output unbounded. Every
+output-bearing surface admits through the one contract in `wire::output`:
+
+- **Limits.** A surface declares small interactive defaults and its own
+  maxima for rows (`--limit`), aggregate encoded bytes (`--max-bytes`), and
+  per-field text (`--max-text`). Both sit under the repository `CEILING`
+  (1000 rows, 256 KiB, 16 KiB text); the shared `INTERACTIVE` surface
+  defaults to 20 rows, 8 KiB, and 240-byte text with maxima of 500 rows,
+  128 KiB, and 4 KiB. A request above the surface maximum is refused, not
+  silently clamped. Zero rows is a count-only read.
+- **Relevance-first admission.** Records are offered current/actionable first.
+  Every record is charged its encoded JSON length, the first included, so one
+  oversized record cannot bypass the byte limit. The first record that does
+  not fit closes admission; a smaller later record never leapfrogs it, so a
+  page boundary is a single cursor.
+- **No hidden omission.** A partial answer carries an `omission`: population,
+  shown, withheld, admitted bytes, the limit that closed admission, the size of
+  the next record, and the exact `continuation` command that resumes at it
+  (`--after CURSOR`). When the next record alone needs more bytes, the command
+  raises `--max-bytes` to what it needs; past the surface maximum, it names a
+  file export instead. Text form prints one line stating the same facts and
+  the shell-quoted command. Clipped text keeps a UTF-8 boundary and reports
+  its withheld bytes.
+- **Exact export.** Complete canonical documents and evidence are written to
+  an explicitly named file, atomically, with a receipt naming the resolved
+  path, byte length, and `spice.cli.export.v1` digest. `-` is refused.
+
+Mutation replies are outside this contract: they stay complete and concise.
+
 ---
 
 ## Extension surfaces
