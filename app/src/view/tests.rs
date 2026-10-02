@@ -174,7 +174,16 @@ fn direction_quote_sources_link_the_canonical_global_direction_route() {
         DirectionRef::Identity(identity),
         DirectionRef::Key("dTvP0GpW6".to_owned()),
     ] {
-        let href = quote_source_href(&direction_quote_source(&direction));
+        for actor in [
+            wire::Actor::Spice,
+            wire::Actor::Lane(uuid("01234567-89ab-cdef-0123-456789abcdef")),
+        ] {
+            assert_eq!(direction_quote_source(&actor, &direction), None, "{actor}");
+        }
+        let href = quote_source_href(
+            &direction_quote_source(&wire::Actor::Operator, &direction)
+                .expect("operator directions have global history"),
+        );
         let location = normalize_app_location("", &href);
         assert_eq!(
             location.route(),

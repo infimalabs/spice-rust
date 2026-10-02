@@ -874,12 +874,15 @@ pub(crate) fn quote_source_href(source: &str) -> String {
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 const DIRECTION_SOURCE: &str = "work/direction/";
 
-/// The source of a directive quote: its global Work direction, named by
-/// directive or fanout identity when resolved, otherwise by acknowledgment
-/// key.
+/// The global Work source of an operator direction. Resident and lane
+/// directions are absent from global direction history, so they have no
+/// canonical source link.
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-pub(crate) fn direction_quote_source(direction: &crate::runtime::DirectionRef) -> String {
-    format!("{DIRECTION_SOURCE}{direction}")
+pub(crate) fn direction_quote_source(
+    actor: &wire::Actor,
+    direction: &crate::runtime::DirectionRef,
+) -> Option<String> {
+    matches!(actor, wire::Actor::Operator).then(|| format!("{DIRECTION_SOURCE}{direction}"))
 }
 
 /// The global Work Directions card of one fanout.
