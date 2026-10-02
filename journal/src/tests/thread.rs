@@ -46,6 +46,16 @@ fn thread_pages_resume_at_the_first_withheld_member_and_decode_only_the_page() {
         metrics.rows, 2,
         "the page decodes its row plus one overflow probe, not the thread"
     );
+    assert_eq!(
+        metrics.queries, 3,
+        "membership, population, and bounded page are the only queries"
+    );
+    assert_eq!(
+        metrics.decoded_bytes,
+        u64::try_from(wire::encoded_len(&first.rows[0]).expect("returned envelope measures"))
+            .expect("fixture envelope length fits"),
+        "only the returned row is decoded; the overflow row is measured in SQLite"
+    );
 
     let last = page(first.overflow.map(|overflow| overflow.continuation), 4)
         .expect("continuation resumes");
@@ -61,4 +71,21 @@ fn thread_pages_resume_at_the_first_withheld_member_and_decode_only_the_page() {
             .map(|overflow| overflow.omitted),
         Some(198)
     );
+}
+
+#[test]
+fn an_origin_that_names_multiple_roots_is_ambiguous_in_root_order() {
+    let journal = authority_fixture();
+    journal
+        .connection
+        .execute("UPDATE thread_index SET root = 2 WHERE seq = 2", [])
+        .expect("fixture creates a second root for the same origin");
+
+    let resolved = journal
+        .read(|read| Ok(read.thread_root("task:1kKRRsDP")))
+        .expect("thread index reads");
+    assert!(matches!(
+        resolved,
+        Err(crate::ThreadError::Ambiguous { roots, .. }) if roots == vec![1, 2]
+    ));
 }
