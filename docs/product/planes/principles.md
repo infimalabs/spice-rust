@@ -16,9 +16,9 @@ The rules that generate everything else. If you keep one page, keep this.
 - **Semantic retirement.** Nothing is retired by being read. Acceptance and
    refusal are equally first-class and equally terminal.
 - **One visible path.** One tested current command and data vocabulary is visible.
-   Each durable authority gives every admitted historical shape one unambiguous
-   direct or sequential route into the current schema, and executable behavior
-   uses only that current schema.
+   Each durable authority admits only its exact current shape. A retired shape
+   refuses before mutation and names its owning release; executable behavior has
+   no historical branch.
 - **Fail loudly at authoritative boundaries.** A component reporting authority
    that read nothing must not produce the same output as one that read
    everything. Silence is confined to non-authoritative decoration and

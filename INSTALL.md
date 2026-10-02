@@ -242,25 +242,18 @@ target/debug/spice install || exit
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW || exit
 ```
 
-Do not unapply first. An intact completed receipt seeds an in-place refresh;
-receipt edits, fixed-asset drift, and interrupted operations refuse. Binary-only
-byte or mode drift beneath the recorded parent is the sole digest-bound
-reconciliation input. Refresh publishes assets, activates hooks last, and
-retains each operation's original pre-install image while binding the installed
-image it supersedes. Ordinary reversal therefore restores the filesystem
-observed by the first install and publishes the current terminal receipt. Only
-migration from the admitted version-7 receipt carries a compressed rollback
-snapshot; reversing that migration restores the exact pre-migration assets and
-version-7 receipt. Snapshot blobs remain inert unless the receipt authenticates
-them.
+Do not unapply first. An intact completed schema-17 receipt seeds an in-place
+refresh; schemas 1–16, receipt edits, fixed-asset drift, and interrupted
+operations refuse. Binary-only byte or mode drift beneath the recorded parent
+is the sole digest-bound reconciliation input. Refresh publishes assets,
+activates hooks last, and retains each operation's original pre-install image
+while binding the installed image it supersedes. Ordinary reversal restores
+those directly recorded prior images and publishes the current terminal
+receipt; no retired receipt execution path remains.
 
-Pre-App receipts may retain `canvas-app.html` only as migration evidence.
-Preview validates the recorded file in place, then derives one current plan
-that publishes the retained generation as `app.html` and retires the old path.
-Published operations and every later retained generation use only `app.html`;
-the old name remains only as retirement evidence. A retired shell name on a
-newly published current generation, or any unknown generation file, refuses.
-Preview remains non-mutating.
+Current receipt plans publish the app as `app.html`. A retired
+`canvas-app.html` shell name or any unknown generation file refuses. Preview
+remains non-mutating.
 
 The manual refresh above is complete only when no resident is published. It does
 not replace a running resident's in-memory generation. When one is running, use

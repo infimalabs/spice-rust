@@ -187,12 +187,11 @@ belong in the projection store: *where do its facts come from, what records how
 far it got, how far back can that source be replayed, what refills it, what
 can it still say when the source no longer reaches back far enough.*
 
-**Invariant —** Each durable authority declares a finite supported historical set
-and one unambiguous forward route from every admitted shape to current. A route
-may be sequential or direct; an unknown or inconsistent authority is never
-migrated or rewritten, and no historical runtime remains parallel. Independent,
-explicitly admitted pre-read maintenance is outside that authority-migration
-guarantee and may mutate only the stale temporary state it owns.
+**Invariant —** Each durable authority admits one exact current shape. A retired
+shape refuses before persistent storage configuration or authority mutation and
+names its owning release. A newer, unknown, inconsistent, or unfinalized shape
+also refuses without rewriting authority. Independent pre-read maintenance may
+mutate only the stale temporary state it explicitly owns.
 
 Journal schema 27 established `gate::findings` receipts as non-executable
 historical receipt authority. Current schema 33 preserves every historical

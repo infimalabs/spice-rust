@@ -16,7 +16,7 @@
 | landing conflicts | complete recoverable merge + recipe | stranded markers |
 | landing races | re-integrate against new baseline, bounded retries | clobber a peer |
 | projection corrupt | discard, rebuild, replay | serve silent nulls |
-| authority shape unsupported | refuse without migrating or rewriting that authority, naming the shape and supported migration range; independent admitted pre-read maintenance remains outside this guarantee | interpret or rewrite the unsupported authority |
+| authority shape unsupported | refuse before persistent storage configuration or authority mutation, naming the owning release for a retired shape; independent admitted pre-read maintenance may still mutate only the stale temporary state it owns | interpret or rewrite the unsupported authority |
 | judging disabled | publish a configured trigger hit directly | require a judge |
 | judging enabled but the process is unavailable, times out, errors, or exhausts ambiguity | abandon the candidate and emit nothing | fall back to direct publication |
 | speech backend failure is detected | show nonblocking `Speech unavailable` state | block the transcript |
