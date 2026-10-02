@@ -349,9 +349,10 @@ chip and moves the quick view or drawer to that task; any other handle, and
 anything inside code or link text, stays literal.
 
 The observation composer in both places mirrors the Chat composer: the draft on
-the left and one column of equal pills on the right, **Add** and, for an
-operator, **Close**, which submits the draft as the closure's validation. Closing
-a task a lane still holds names that holder in the button's description.
+the left and its submit controls on the right, a column of equal pills holding
+**Add** and, for an operator, **Close**, which submits the draft as the
+closure's validation. Closing a task a lane still holds names that holder in the
+button's description.
 
 In the task observation composer, Enter inserts a newline and Command or
 Control + Enter adds an observation. Holding Shift with that chord instead
@@ -565,6 +566,9 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending, also on the submit label, until the command settles.
+Beside the draft the dial and the quiet/speak/narrate speech dial stand as two
+vertical pills, minimum at the bottom and maximum at the top, above the send
+button that names the current lifetime.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.
