@@ -62,16 +62,20 @@ command for more.
 - Run shell commands normally; the worktree shell and wrapper own steering and
   appliance selection. `spice run -- CMD` is only an explicit recovery surface.
 - Handle operator direction before allocator work, and answer every pending
-  key. Acknowledging or adjusting current work may satisfy it. Create a task
-  only when the operator asks for one or its substance warrants a separate
-  deliverable: `spice task add TITLE --project PROJECT --origin ack:KEY` with
-  the exact acknowledged key. Add `--claim` only when this lane has no active
-  claim and must own the work now; creation and possession of its first
-  assignable phase then commit atomically. Without `--claim`, task add neither
-  claims nor switches work. Bare `task add` is only for work causally nested
-  under the lane's sole active claim. Synthesized guidance (taste reminders,
-  command task hints, automatic amendments, review follow-up notices) neither
-  requires nor authorizes a task.
+  key. Acknowledging or adjusting current work may satisfy it. Operator
+  steering acknowledged while holding a claim joins that task's record unless
+  another task cites it as `--origin`; when it changes the held task's scope or
+  acceptance, fold it in with `spice task modify HANDLE --description ...` or
+  `--acceptance ...` before completing, since reviewers judge the acceptance.
+  Create a task only when the operator asks for one or its substance warrants a
+  separate deliverable: `spice task add TITLE --project PROJECT --origin
+  ack:KEY` with the exact acknowledged key. Add `--claim` only when this lane
+  has no active claim and must own the work now; creation and possession of its
+  first assignable phase then commit atomically. Without `--claim`, task add
+  neither claims nor switches work. Bare `task add` is only for work causally
+  nested under the lane's sole active claim. Synthesized guidance (taste
+  reminders, command task hints, automatic amendments, review follow-up
+  notices) neither requires nor authorizes a task.
 - Drain allocator work with `spice task next` until no work or a real blocker.
   `allocator-empty` ends only that pass; it does not discharge uncaptured
   operator direction or other turn obligations. Work only the assigned phase;
@@ -108,8 +112,9 @@ command for more.
   hook-free, but its declared cheap integrated-tree admission still applies.
 - Complete implementation with `spice task done --validation TEXT`. A clean
   review (`spice task review HANDLE --finding clean --note NOTE`) inspects the
-  integrated diff and independently checks proportionate evidence. Correct a
-  review directly only when every change is tiny, deterministic, mechanical,
+  integrated diff and independently checks proportionate evidence against the
+  acceptance and the steering its claim context lists. Correct a review
+  directly only when every change is tiny, deterministic, mechanical,
   low-risk, within the reviewed ownership and acceptance, and leaves no
   independently reviewable decision: commit it separately under the active
   review claim, validate the integrated result, and record clean without

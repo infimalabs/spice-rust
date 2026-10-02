@@ -39,7 +39,7 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let mut record = task_record(&observed, &selected);
+    let mut record = task_record(observed.facts(), &selected);
     let notes = record.notes.remove(&detail.task).unwrap_or_default();
     let closure = record.closures.remove(&detail.task);
     snapshot_reply(
@@ -60,7 +60,8 @@ pub(super) struct TaskRecord {
     /// Every durable note.
     pub(super) notes:
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>>,
-    /// Every task or claim fact whose origin is an acknowledged steering key.
+    /// Every task or claim fact whose origin is an acknowledged steering key,
+    /// and every operator directive a holder acknowledged while holding it.
     pub(super) acknowledgments:
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskAcknowledgment>>,
     /// The operator's closure of each closed task; a settled task closes once.
@@ -68,14 +69,14 @@ pub(super) struct TaskRecord {
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
 }
 
-/// Read the named tasks' notes, closures, and acknowledgment origins in one
-/// pass over the snapshot's facts.
+/// Read the named tasks' notes, closures, and acknowledgments from the
+/// snapshot's facts.
 pub(super) fn task_record(
-    observed: &bus::TaskSnapshot,
+    facts: &bus::TaskFacts,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
 ) -> TaskRecord {
     let mut record = TaskRecord::default();
-    for envelope in observed.facts().iter() {
+    for envelope in facts.iter() {
         if let Some(noted) = envelope.fact.read::<body::TaskNoted>()
             && tasks.contains(&noted.task)
         {
@@ -112,13 +113,7 @@ pub(super) fn task_record(
         let Some(("task" | "claim", _)) = kind.as_str().split_once("::") else {
             continue;
         };
-        let Some(task) = envelope
-            .fact
-            .body()
-            .get("task")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|task| task.parse::<wire::TaskStamp>().ok())
-        else {
+        let Some(task) = super::fact_task(envelope) else {
             continue;
         };
         if tasks.contains(&task) {
@@ -130,6 +125,11 @@ pub(super) fn task_record(
                 },
             );
         }
+    }
+    for (task, steered) in super::steering_during_claims(facts, tasks) {
+        let rows = record.acknowledgments.entry(task).or_default();
+        rows.extend(steered);
+        rows.sort_by_key(|row| row.position);
     }
     record
 }

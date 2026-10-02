@@ -48,23 +48,145 @@ pub(super) fn steering_origins(
     origins
 }
 
+/// Operator steering each named task's holder acknowledged while it held the
+/// task, in journal order, whatever the phase.
+///
+/// A lane holds one task from a win, carry, or rebound until a release, lapse,
+/// or settling fact names that task. Peer messages and resident notices are
+/// not operator steering. A key another task cites as its origin was captured
+/// as that task's work, so it stays off the task its acknowledger then held.
+pub(super) fn steering_during_claims(
+    facts: &bus::TaskFacts,
+    tasks: &std::collections::BTreeSet<wire::TaskStamp>,
+) -> std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskAcknowledgment>> {
+    let mut held = std::collections::HashMap::<wire::CanonicalUuid, wire::TaskStamp>::new();
+    let mut operator = std::collections::HashSet::<String>::new();
+    let mut captured = std::collections::HashMap::<String, wire::TaskStamp>::new();
+    let mut steered =
+        std::collections::BTreeMap::<wire::TaskStamp, Vec<wire::intent::TaskAcknowledgment>>::new();
+    for envelope in facts.iter() {
+        let kind = envelope.fact.kind();
+        match kind {
+            wire::FactKind::SteerSent if envelope.actor == wire::Actor::Operator => {
+                if let Some(sent) = envelope.fact.read::<body::SteerSent>() {
+                    operator.insert(sent.key);
+                }
+            }
+            wire::FactKind::SteerAcked => {
+                if let Some(acked) = envelope.fact.read::<body::SteerAcked>()
+                    && operator.contains(&acked.key)
+                    && let Some(task) = held.get(&acked.lane).filter(|task| tasks.contains(*task))
+                {
+                    steered.entry(task.clone()).or_default().push(
+                        wire::intent::TaskAcknowledgment {
+                            position: envelope.seq,
+                            kind,
+                            key: acked.key,
+                        },
+                    );
+                }
+            }
+            wire::FactKind::TaskAdded => {
+                if let Some(key) = task_steering_origin_token(&envelope.origin)
+                    && let Some(task) = fact_task(envelope)
+                {
+                    captured.insert(key.to_owned(), task);
+                }
+            }
+            wire::FactKind::ClaimWon
+            | wire::FactKind::ClaimCarried
+            | wire::FactKind::ClaimRebound => {
+                if let Some((task, lane)) = claim_holder(envelope) {
+                    held.retain(|_, holding| *holding != task);
+                    held.insert(lane, task);
+                }
+            }
+            wire::FactKind::ClaimFreed
+            | wire::FactKind::ClaimLapsed
+            | wire::FactKind::TaskDone
+            | wire::FactKind::TaskReviewed
+            | wire::FactKind::TaskDeferred
+            | wire::FactKind::TaskDeleted
+            | wire::FactKind::TaskClosed => {
+                if let Some(task) = fact_task(envelope) {
+                    held.retain(|_, holding| *holding != task);
+                }
+            }
+            _ => {}
+        }
+    }
+    steered.retain(|task, rows| {
+        rows.retain(|row| captured.get(&row.key).is_none_or(|owner| owner == task));
+        !rows.is_empty()
+    });
+    steered
+}
+
+/// The lane a win, carry, or rebound binds its task to.
+fn claim_holder(
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Option<(wire::TaskStamp, wire::CanonicalUuid)> {
+    let fact = &envelope.fact;
+    fact.read::<body::ClaimWon>()
+        .map(|won| (won.task, won.lane))
+        .or_else(|| {
+            fact.read::<body::ClaimCarried>()
+                .map(|carried| (carried.task, carried.lane))
+        })
+        .or_else(|| {
+            fact.read::<body::ClaimRebound>()
+                .map(|rebound| (rebound.task, rebound.lane))
+        })
+}
+
+/// The task a task or claim fact names.
+pub(super) fn fact_task(envelope: &wire::Envelope<wire::AnyFact>) -> Option<wire::TaskStamp> {
+    envelope
+        .fact
+        .body()
+        .get("task")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|task| task.parse().ok())
+}
+
+/// Every steering key that shaped one task, resolved to its directive and the
+/// answer that retired it: the task's origin, then what its holders
+/// acknowledged while holding it.
 pub(super) fn task_steering_origin_output(
     bus: &Bus,
-    origin: &wire::Origin,
+    facts: &bus::TaskFacts,
+    entry: &Entry,
 ) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
-    let Some(key) = task_steering_origin_token(origin) else {
+    let steered = steering_during_claims(
+        facts,
+        &std::collections::BTreeSet::from([entry.born().clone()]),
+    )
+    .remove(entry.born())
+    .unwrap_or_default();
+    let keys = task_acknowledgment_keys(&entry.statement().provenance, &steered)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
         return Ok(None);
-    };
-    let lookup = key.to_owned();
-    let provenance = bus
-        .read(move |read| read_steering_provenance(read, &lookup))
+    }
+    let named = keys.join(" ");
+    let blocks = bus
+        .read(move |read| {
+            keys.iter()
+                .map(|key| {
+                    read_steering_provenance(read, key)
+                        .map(|provenance| render_task_steering_origin(key, provenance.as_ref()))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
         .map_err(|error| {
             store_fault(
                 "task::steering-index-unreadable",
-                &format!("cannot inspect steering origin {key}: {error}"),
+                &format!("cannot inspect steering origins {named}: {error}"),
             )
         })?;
-    Ok(Some(render_task_steering_origin(key, provenance.as_ref())))
+    Ok(Some(blocks.join("\n").into_boxed_str()))
 }
 
 /// One steering key's source directive and the transcript locus that answered it.

@@ -810,7 +810,7 @@ pub(super) fn read_board(
             .filter(|born| tasks.contains(born))
             .cloned()
             .collect();
-        let record = task_detail::task_record(&observed, &named);
+        let record = task_detail::task_record(observed.facts(), &named);
         snapshot.answer.notes = record.notes;
         snapshot.answer.acknowledgments = record.acknowledgments;
         snapshot.answer.closures = record.closures;

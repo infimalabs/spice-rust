@@ -978,7 +978,7 @@ pub(super) fn connect_child(
     ));
 }
 
-fn claim_free_witnesses(
+pub(super) fn claim_free_witnesses(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: &Actor,
