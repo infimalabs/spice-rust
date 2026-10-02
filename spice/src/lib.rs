@@ -18,6 +18,8 @@ pub mod cli;
 pub mod command_advice;
 pub mod commit_message;
 pub mod config;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod export;
 pub mod extension;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gate;

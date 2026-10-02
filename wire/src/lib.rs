@@ -56,6 +56,7 @@ pub mod intent;
 pub mod manifest;
 pub mod media;
 mod optional;
+pub mod output;
 pub mod packed;
 pub mod quota;
 pub mod quote;

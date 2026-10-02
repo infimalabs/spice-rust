@@ -217,15 +217,7 @@ fn refusal_text(refusal: &wire::Refusal) -> String {
         wire::Refusal::Repairable {
             command,
             diagnostic,
-        } => {
-            let command =
-                std::iter::once("spice").chain(command.arguments().iter().map(String::as_str));
-            format!(
-                "{}\n{}",
-                shell_words::join(command),
-                diagnostic_text(diagnostic)
-            )
-        }
+        } => format!("{command}\n{}", diagnostic_text(diagnostic)),
         wire::Refusal::Bare { diagnostic } => diagnostic_text(diagnostic),
         wire::Refusal::Invocation { contract, .. } => contract.clone(),
         wire::Refusal::Evidence {

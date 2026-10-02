@@ -4069,6 +4069,7 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "shell-words",
  "thiserror 2.0.19",
  "toml",
  "uuid",
