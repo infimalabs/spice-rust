@@ -93,13 +93,6 @@ boundary, and returns a bounded surrounding window. A missing, replaced,
 truncated, undecodable, or mid-record source refuses by name rather than
 searching another transcript.
 
-**Invariant —** Schema-12 migration is one-way. It derives context only from
-immutable facts ordered before each `TaskAdded`: occupant lifecycle, causal
-session declaration, and valid source-head continuations. Current heads,
-timestamps, configured windows, filesystem state, and predecessor code are not
-evidence. Operator and Spice actors receive explicit reasons; a legacy lane
-whose retained facts do not prove one boundary receives
-`legacy-evidence-missing`. Once migrated, no legacy execution arm remains.
 
 ### Task lifecycle recovery links
 

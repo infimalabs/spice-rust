@@ -2,34 +2,6 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const SCHEMA_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS taste_fires (
-    seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq),
-    taste TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK (ordinal > 0),
-    UNIQUE(taste, ordinal)
-) STRICT;
-CREATE INDEX IF NOT EXISTS taste_fires_taste_seq ON taste_fires(taste, seq DESC);
-CREATE TABLE IF NOT EXISTS taste_judgments (
-    seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq),
-    taste TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK (ordinal > 0),
-    confirmed INTEGER NOT NULL CHECK (confirmed >= 0),
-    cleared INTEGER NOT NULL CHECK (cleared >= 0),
-    UNIQUE(taste, ordinal)
-) STRICT;
-CREATE INDEX IF NOT EXISTS taste_judgments_taste_seq ON taste_judgments(taste, seq DESC);
-CREATE TABLE IF NOT EXISTS lane_seats (
-    lane TEXT PRIMARY KEY,
-    vendor TEXT NOT NULL,
-    seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
-) STRICT;
-"#;
-
-pub(crate) fn create(connection: &Connection) -> Result<(), rusqlite::Error> {
-    connection.execute_batch(SCHEMA_SQL)
-}
-
 pub(crate) fn record(
     connection: &Connection,
     fact: &wire::AnyFact,

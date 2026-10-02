@@ -3,8 +3,8 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::OpenError;
 use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
-use crate::{MigrationError, OpenError};
 
 const KIND: &str = "gate::findings";
 
@@ -29,50 +29,6 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<(), OpenError> {
     connection
         .execute_batch(TABLE_SQL)
         .map_err(OpenError::Sqlite)
-}
-
-pub(crate) fn migrate(connection: &Connection) -> Result<(), OpenError> {
-    create_schema(connection)?;
-    // Inspect discriminants without accumulating multi-megabyte request payloads.
-    let mut kinds = connection
-        .prepare("SELECT DISTINCT command_kind FROM command_receipts")
-        .map_err(OpenError::Sqlite)?;
-    for kind in kinds
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(OpenError::Sqlite)?
-    {
-        let kind = kind.map_err(OpenError::Sqlite)?;
-        if kind != KIND && kind.parse::<wire::CommandKind>().is_err() {
-            return Err(invalid(&kind, "unregistered historical command kind"));
-        }
-    }
-    let mut statement = connection
-        .prepare("SELECT command_id, actor, command_kind, request, evaluated_witnesses, response, first_seq, last_seq, snapshot_seq, epoch FROM command_receipts WHERE command_kind = ?1 ORDER BY command_id")
-        .map_err(OpenError::Sqlite)?;
-    let rows = statement
-        .query_map([KIND], ReceiptRow::read)
-        .map_err(OpenError::Sqlite)?;
-    for row in rows {
-        let row = row.map_err(OpenError::Sqlite)?;
-        let mut violations = Vec::new();
-        verify_receipt(&row, &mut violations);
-        if let Some(violation) = violations.first() {
-            return Err(invalid(&row.id, &violation.detail));
-        }
-        connection.execute(
-            "INSERT INTO historical_command_receipts SELECT * FROM command_receipts WHERE command_id = ?1",
-            [&row.id],
-        ).map_err(OpenError::Sqlite)?;
-    }
-    // Delete only after the read cursor is exhausted; the enclosing migration
-    // transaction owns both copies and both schema markers throughout.
-    connection
-        .execute(
-            "DELETE FROM command_receipts WHERE command_kind = ?1",
-            [KIND],
-        )
-        .map_err(OpenError::Sqlite)?;
-    reserve_identities(connection)
 }
 
 pub(crate) fn reserve_identities(connection: &Connection) -> Result<(), OpenError> {
@@ -149,17 +105,6 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
     }
     crate::replay::verify_receipt_witnesses(row, &command.expected, violations);
     crate::replay::verify_response(row, violations);
-}
-
-fn invalid(row: &str, detail: &str) -> OpenError {
-    MigrationError::StoredContent {
-        from: 26,
-        to: 27,
-        table: "command_receipts",
-        row: row.to_owned(),
-        detail: detail.to_owned(),
-    }
-    .into()
 }
 
 const TABLE_SQL: &str = r#"

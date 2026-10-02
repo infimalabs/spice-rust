@@ -6,47 +6,17 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
-mod creation_context;
 mod fact_bounds;
-mod generation_index;
-mod lane_predicates;
-mod renewal_organization;
-mod rtk_hook_state;
-mod speech_playback;
-mod steering_microseconds;
-mod task_creator_scope;
-mod taste_index;
-mod team;
-mod transcript_session_sources;
 
-const FINALIZED: &str = "finalized";
-const PREPARED: &str = "prepared";
-pub(crate) const INDEX_ACTIVATION_FACT_LIMIT: u64 = 4_096;
-pub(crate) const INDEX_ACTIVATION_BYTE_LIMIT: u64 = 1024 * 1024;
-const INDEX_ACTIVATION_COMMAND: &str = "spice journal reindex";
-const FACT_BOUND_VALIDATION_COMMAND: &str = "spice journal reindex";
 #[cfg(test)]
-pub(crate) use fact_bounds::{
-    FACT_BOUND_VALIDATION_BYTE_LIMIT, FACT_BOUND_VALIDATION_ROW_LIMIT, bounds_sql,
-};
+pub(crate) use fact_bounds::bounds_sql;
 pub(crate) use fact_bounds::{
     FACT_ENVELOPE_INSERT_TRIGGER, FACT_ENVELOPE_UPDATE_TRIGGER, insert_sql, update_sql,
 };
+const FINALIZED: &str = "finalized";
+const PREPARED: &str = "prepared";
 
 pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
-    baseline_with(connection, IndexActivation::Startup)
-}
-
-pub(crate) fn baseline_for_reindex(
-    connection: &mut Connection,
-) -> Result<Option<Migration>, OpenError> {
-    baseline_with(connection, IndexActivation::Maintenance)
-}
-
-fn baseline_with(
-    connection: &mut Connection,
-    activation: IndexActivation,
-) -> Result<Option<Migration>, OpenError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
@@ -71,15 +41,12 @@ fn baseline_with(
         }));
     }
 
-    let migration = match activation {
-        IndexActivation::Maintenance => advance_for_reindex(&transaction)?,
-        IndexActivation::Startup => advance(&transaction)?,
-    };
+    admit_state(&transaction, stored_state(&transaction)?)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
-    Ok(migration)
+    Ok(None)
 }
 
-/// One schema transition completed by this journal open.
+/// Current-schema initialization completed by this open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Migration {
     from: u32,
@@ -87,13 +54,13 @@ pub struct Migration {
 }
 
 impl Migration {
-    /// Schema version the open left.
+    /// Schema identity before initialization (`0`).
     #[must_use]
     pub const fn from(self) -> u32 {
         self.from
     }
 
-    /// Schema version the open finalized.
+    /// Current schema created by initialization.
     #[must_use]
     pub const fn to(self) -> u32 {
         self.to
@@ -163,36 +130,20 @@ pub(crate) fn inspect_stored_version(connection: &Connection) -> Result<u32, Ope
     finalized_stored_state(connection, stored_state(connection)?)
 }
 
-/// Admit a schema identity for a caller that will not migrate it.
-///
-/// Read-only opens and post-open verification land here, so a version behind the
-/// current one is refused two different ways on purpose. One this build could
-/// step forward names the write open that would do it; one it could not names
-/// the release that owns it. Answering both with the same text would tell a
-/// reader holding a migratable authority to go find another release.
+/// Admit a finalized authority at the sole executable schema.
 fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
     let version = admit_readable_state(connection, state)?;
     if version != SCHEMA_VERSION {
-        return Err(if migration_path(version).is_some() {
-            MigrationError::UnmigratedRead {
-                found: version,
-                current: SCHEMA_VERSION,
-            }
-        } else {
-            MigrationError::UnknownVersion { found: version }
-        }
-        .into());
+        return Err(MigrationError::UnknownVersion { found: version }.into());
     }
     Ok(version)
 }
 
-/// Admit a schema identity this build can read, migrated or not.
+/// Validate a finalized schema identity before applying the current cutoff.
 ///
-/// The version equality check is deliberately not here: a version behind the
-/// current one is a candidate for migration rather than a refusal, and it can
-/// only be judged one after the state and the two version records agree. A
-/// disagreement between the row and the pragma is corruption at any version, so
-/// it is answered before anything decides to write to the database.
+/// Version disagreement and forward authority are corruption/compatibility
+/// failures distinct from a retired predecessor. They are classified here
+/// before [`admit_state`] applies the exact-current requirement.
 fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
     let version = finalized_stored_state(connection, state)?;
     if version > SCHEMA_VERSION {
@@ -231,102 +182,44 @@ fn finalized_stored_state(connection: &Connection, state: SchemaState) -> Result
     Ok(state.version)
 }
 
-/// Step an admitted authority forward to the schema this build reads.
-///
-/// Every step runs inside the caller's exclusive transaction together with the
-/// two version records it advances, so a failure part-way leaves the authority
-/// at the version it started from rather than between two. Additive DDL and
-/// validated content rewrites therefore share one rollback boundary: a rewrite
-/// may change canonical bytes, but it cannot strand only some rows or version
-/// records in the new schema.
-///
-/// It takes the caller's transaction rather than opening its own, and is visible
-/// to the crate so a test can be that caller: the promise above is a property of
-/// this seam, and it cannot be observed through [`baseline`], which always
-/// commits. A caller that fails after this returns is the case worth pinning,
-/// because both version records are already written by then.
-pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, OpenError> {
-    advance_with(connection, IndexActivation::Startup)
-}
+const RETIRED_RELEASES: [&str; 32] = [
+    "122d2a842",
+    "IDENTIT-1kLGl2S5",
+    "IDENTIT-1kLGl2S5",
+    "b6acb226d",
+    "d0c14dcc4",
+    "SESSION-1kLLCyqw",
+    "MINING-1kLNTy1C",
+    "MINING-1kLNTy1C",
+    "87636d7af",
+    "1kRNj6X7",
+    "257200978",
+    "6ad57c713",
+    "d811711a3",
+    "ENVIRON-dRyzKgHJw",
+    "SCHEMAR-dRyzNKsdp",
+    "b9a45a6ec",
+    "37cc1297f",
+    "ALLOCAT-dS8cvNplX",
+    "BOUNDS-dSHsMK0kz",
+    "eab8365a6",
+    "d431530eb",
+    "c64c48cac",
+    "TASKS-dSPJyjNSH",
+    "TASKS-dSPW61MXd",
+    "fb96c12a7",
+    "966d33bef",
+    "916081f8a",
+    "02715f9e1",
+    "SPEECH-dTQBpHHJq",
+    "a4abe071f",
+    "55ad00080",
+    "a15ed13f4",
+];
 
-pub(crate) fn advance_for_reindex(connection: &Connection) -> Result<Option<Migration>, OpenError> {
-    advance_with(connection, IndexActivation::Maintenance)
-}
-
-fn advance_with(
-    connection: &Connection,
-    activation: IndexActivation,
-) -> Result<Option<Migration>, OpenError> {
-    let from = admit_readable_state(connection, stored_state(connection)?)?;
-    if from == SCHEMA_VERSION {
-        return Ok(None);
-    }
-
-    let path = migration_path(from).ok_or(MigrationError::UnknownVersion { found: from })?;
-    for step in path {
-        step.apply(connection, activation)?;
-    }
-    connection
-        .execute(
-            "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(OpenError::Sqlite)?;
-    connection
-        .pragma_update(None, "user_version", SCHEMA_VERSION)
-        .map_err(OpenError::Sqlite)?;
-    Ok(Some(Migration {
-        from,
-        to: SCHEMA_VERSION,
-    }))
-}
-
-/// The ordered steps from `from` up to the current schema, if all of them exist.
-///
-/// An unbroken chain is the whole question, so this answers it once and both
-/// callers ask it the same way. A version whose first step exists but whose
-/// chain breaks later is not migratable, and admitting it would refuse a
-/// read-only open with an offer to migrate that the write open cannot keep.
-fn migration_path(from: u32) -> Option<Vec<MigrationStep>> {
-    (from..SCHEMA_VERSION)
-        .map(|version| {
-            MIGRATIONS
-                .iter()
-                .find(|(leaves, _)| *leaves == version)
-                .map(|(_, step)| *step)
-        })
-        .collect()
-}
-
-/// Versions this build can step forward from, rendered for a refusal.
-///
-/// Answers the reader's actual next question -- which older authority this build
-/// does accept -- so the refusal points at a release to route through instead of
-/// at discarding the authority. A build that carries no steps at all says so
-/// rather than rendering an empty list into the sentence.
-fn migratable_versions() -> String {
-    let versions: Vec<String> = (1..SCHEMA_VERSION)
-        .filter(|version| migration_path(*version).is_some())
-        .map(|version| version.to_string())
-        .collect();
-    if versions.is_empty() {
-        "no earlier schema".to_owned()
-    } else {
-        format!("schema {}", versions.join(", "))
-    }
-}
 fn retired_release(version: u32) -> Option<&'static str> {
-    match version {
-        1 => Some("122d2a842"),
-        2 | 3 => Some("IDENTIT-1kLGl2S5"),
-        4 => Some("b6acb226d"),
-        5 => Some("d0c14dcc4"),
-        6 => Some("SESSION-1kLLCyqw"),
-        7 | 8 => Some("MINING-1kLNTy1C"),
-        9 => Some("87636d7af"),
-        10 => Some("1kRNj6X7"),
-        _ => None,
-    }
+    let index = usize::try_from(version.checked_sub(1)?).ok()?;
+    RETIRED_RELEASES.get(index).copied()
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, OpenError> {
@@ -425,63 +318,14 @@ impl From<MigrationError> for OpenError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {
     MissingSchema,
-    UnversionedAuthority {
-        object_count: u32,
-    },
-    SchemaRowCount {
-        count: u32,
-    },
+    UnversionedAuthority { object_count: u32 },
+    SchemaRowCount { count: u32 },
     MissingSingleton,
-    Unfinalized {
-        from: Option<u32>,
-        to: Option<u32>,
-    },
-    UnknownState {
-        state: String,
-    },
-    ForwardSchema {
-        found: u32,
-        current: u32,
-    },
-    UnmigratedRead {
-        found: u32,
-        current: u32,
-    },
-    UnknownVersion {
-        found: u32,
-    },
-    VersionDisagreement {
-        row: u32,
-        pragma: u32,
-    },
-    IndexActivationRequired {
-        limit: u64,
-        observed: u64,
-    },
-    IndexActivationBytesRequired {
-        limit: u64,
-        observed: u64,
-    },
-    FactBoundValidationRowsRequired {
-        limit: u64,
-        observed: u64,
-    },
-    FactBoundValidationBytesRequired {
-        limit: u64,
-        observed: u64,
-    },
-    OversizedFactEnvelope {
-        seq: i64,
-        observed: u64,
-        limit: u64,
-    },
-    StoredContent {
-        from: u32,
-        to: u32,
-        table: &'static str,
-        row: String,
-        detail: String,
-    },
+    Unfinalized { from: Option<u32>, to: Option<u32> },
+    UnknownState { state: String },
+    ForwardSchema { found: u32, current: u32 },
+    UnknownVersion { found: u32 },
+    VersionDisagreement { row: u32, pragma: u32 },
 }
 
 impl fmt::Display for MigrationError {
@@ -513,27 +357,20 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema {found} is newer than this build's schema {current}; use the release that owns schema {found}"
             ),
-            Self::UnmigratedRead { found, current } => write!(
-                formatter,
-                "journal schema {found} is behind this build's schema {current} and a \
-                 read-only open never migrates; open this authority for writing once \
-                 to step it forward"
-            ),
             Self::UnknownVersion { found } => {
                 if let Some(release) = retired_release(*found) {
                     write!(
                         formatter,
                         "journal schema {found} was last migrated by release {release}; \
-                         use that release to reach {} before opening it with this build",
-                        migratable_versions()
+                         use that release to reach schema {SCHEMA_VERSION} before opening it \
+                         with this build"
                     )
                 } else {
                     write!(
                         formatter,
                         "journal schema {found} has no migration path to schema \
-                         {SCHEMA_VERSION}; this build steps forward from {}, so use the \
-                         release that owns schema {found} to reach one of those first",
-                        migratable_versions()
+                         {SCHEMA_VERSION}; use the release that owns schema {found} to reach \
+                         schema {SCHEMA_VERSION} first"
                     )
                 }
             }
@@ -541,245 +378,11 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema row names version {row}, but SQLite user_version names {pragma}"
             ),
-            Self::IndexActivationRequired { limit, observed } => write!(
-                formatter,
-                "journal schema 19 index activation observed at least {observed} facts, exceeding the {limit}-fact startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
-            ),
-            Self::IndexActivationBytesRequired { limit, observed } => write!(
-                formatter,
-                "journal schema 19 index activation observed {observed} indexed bytes, exceeding the {limit}-byte startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
-            ),
-            Self::FactBoundValidationRowsRequired { limit, observed } => write!(
-                formatter,
-                "journal schema 20 fact-envelope validation observed at least {observed} facts, exceeding the {limit}-fact startup limit; stop the resident and run `{FACT_BOUND_VALIDATION_COMMAND}`"
-            ),
-            Self::FactBoundValidationBytesRequired { limit, observed } => write!(
-                formatter,
-                "journal schema 20 fact-envelope validation observed {observed} envelope bytes, exceeding the {limit}-byte startup limit; stop the resident and run `{FACT_BOUND_VALIDATION_COMMAND}`"
-            ),
-            Self::OversizedFactEnvelope {
-                seq,
-                observed,
-                limit,
-            } => write!(
-                formatter,
-                "journal schema 20 fact envelope at sequence {seq} has {observed} bytes, exceeding the {limit}-byte durable limit"
-            ),
-            Self::StoredContent {
-                from,
-                to,
-                table,
-                row,
-                detail,
-            } => write!(
-                formatter,
-                "journal schema {from} to {to} migration refuses {table} row {row}: {detail}"
-            ),
         }
     }
 }
 
 impl Error for MigrationError {}
-
-/// Every schema version this build steps forward from, and the step it runs.
-///
-/// Indexed by the version the step *leaves*, so `advance` can walk one entry at
-/// a time up to `SCHEMA_VERSION` instead of needing a pair for every reachable
-/// combination. A version absent from this table is refused by name.
-#[derive(Clone, Copy)]
-enum MigrationStep {
-    Sql(&'static str),
-    Rust(fn(&Connection) -> Result<(), OpenError>),
-    FactIndexes,
-    FactEnvelopeBounds,
-    FactEnvelopeTriggers,
-}
-
-impl MigrationStep {
-    fn apply(self, connection: &Connection, activation: IndexActivation) -> Result<(), OpenError> {
-        match self {
-            Self::Sql(sql) => connection.execute_batch(sql).map_err(OpenError::Sqlite),
-            Self::Rust(migrate) => migrate(connection),
-            Self::FactIndexes => migrate_schema_19(connection, activation),
-            Self::FactEnvelopeBounds => fact_bounds::migrate(connection, activation),
-            Self::FactEnvelopeTriggers => fact_bounds::refresh(connection),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum IndexActivation {
-    Startup,
-    Maintenance,
-}
-
-const MIGRATIONS: &[(u32, MigrationStep)] = &[
-    (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
-    (12, MigrationStep::Rust(creation_context::migrate)),
-    (13, MigrationStep::Rust(steering_microseconds::migrate)),
-    (14, MigrationStep::Sql(MIGRATE_14_TO_15_SQL)),
-    (15, MigrationStep::Sql(MIGRATE_15_TO_16_SQL)),
-    (16, MigrationStep::Rust(renewal_organization::migrate)),
-    (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
-    (18, MigrationStep::Rust(task_creator_scope::migrate)),
-    (19, MigrationStep::FactIndexes),
-    (20, MigrationStep::FactEnvelopeBounds),
-    (21, MigrationStep::FactEnvelopeTriggers),
-    (22, MigrationStep::Rust(lane_predicates::migrate)),
-    (23, MigrationStep::Sql(MIGRATE_23_TO_24_SQL)),
-    (24, MigrationStep::Sql(MIGRATE_24_TO_25_SQL)),
-    (25, MigrationStep::Rust(team::migrate)),
-    (26, MigrationStep::Rust(crate::historical_receipts::migrate)),
-    (27, MigrationStep::Rust(migrate_schema_27)),
-    (28, MigrationStep::Rust(generation_index::migrate)),
-    (29, MigrationStep::Rust(speech_playback::migrate)),
-    (30, MigrationStep::Rust(transcript_session_sources::migrate)),
-    (31, MigrationStep::Rust(rtk_hook_state::migrate)),
-    (32, MigrationStep::Rust(taste_index::migrate)),
-];
-
-/// Schema 27 to 28: task generations and claim acknowledgements.
-///
-/// Workflow heads gain a mutation generation and claim heads the generation
-/// they acknowledged, both stored only when nonzero. Every retained task and
-/// claim therefore crosses byte-for-byte at generation zero with zero
-/// acknowledged: coherent, and no active claim starts stale. No head or fact
-/// is rewritten.
-///
-/// A mutation that writes no workflow head advances the generation inside the
-/// stored body, keeping `head_seq` on the last workflow transition, so
-/// `revised_seq` records where that in-place revision landed for readers
-/// that follow head changes by position. Retained rows were never revised.
-/// SQLite cannot add a column conditionally, and an authority built from the
-/// current baseline already carries it, so the column is added only when
-/// absent.
-fn migrate_schema_27(connection: &Connection) -> Result<(), OpenError> {
-    let revised: bool = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workflow_heads') \
-             WHERE name = 'revised_seq')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(OpenError::Sqlite)?;
-    if !revised {
-        connection
-            .execute_batch(
-                "ALTER TABLE workflow_heads \
-                 ADD COLUMN revised_seq INTEGER REFERENCES fact_envelopes(seq);",
-            )
-            .map_err(OpenError::Sqlite)?;
-    }
-    connection
-        .execute_batch(
-            "CREATE INDEX IF NOT EXISTS workflow_heads_revised_seq \
-             ON workflow_heads(revised_seq) WHERE revised_seq IS NOT NULL;",
-        )
-        .map_err(OpenError::Sqlite)
-}
-
-/// Schema 24 to 25: exact-project current task lookup.
-const MIGRATE_24_TO_25_SQL: &str = r#"
-CREATE INDEX IF NOT EXISTS task_heads_project_stamp
-ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
-"#;
-
-/// Schema 23 to 24: indexed task projection barrier reads.
-const MIGRATE_23_TO_24_SQL: &str = r#"
-CREATE INDEX IF NOT EXISTS task_heads_head_seq ON task_heads(head_seq);
-CREATE INDEX IF NOT EXISTS workflow_heads_head_seq ON workflow_heads(head_seq);
-"#;
-
-/// Schema 19 to 20: bounded fact-kind recovery.
-///
-/// Resident startup projections select their own small authority vocabulary.
-/// Keeping the durable position behind the kind makes those reads proportional
-/// to matching authority rather than to every transcript fact ever recorded.
-const MIGRATE_19_TO_20_SQL: &str = r#"
-CREATE INDEX IF NOT EXISTS fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
-CREATE INDEX IF NOT EXISTS fact_envelopes_origin_kind_seq
-    ON fact_envelopes(origin, kind, seq);
-"#;
-
-fn migrate_schema_19(
-    connection: &Connection,
-    activation: IndexActivation,
-) -> Result<(), OpenError> {
-    if let IndexActivation::Startup = activation {
-        let limit = INDEX_ACTIVATION_FACT_LIMIT;
-        let offset = i64::try_from(limit).expect("the startup fact limit fits SQLite");
-        let exceeds = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM fact_envelopes ORDER BY seq LIMIT 1 OFFSET ?1)",
-                [offset],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(OpenError::Sqlite)?;
-        if exceeds {
-            return Err(MigrationError::IndexActivationRequired {
-                limit,
-                observed: limit.saturating_add(1),
-            }
-            .into());
-        }
-        let byte_limit = INDEX_ACTIVATION_BYTE_LIMIT;
-        // `octet_length` reads stored text sizes without materializing either
-        // value. The fact ceiling independently bounds fixed index-entry work.
-        let indexed_bytes: i64 = connection
-            .query_row(
-                "SELECT COALESCE(SUM(indexed_bytes), 0) FROM (
-                     SELECT octet_length(origin) + 2 * octet_length(kind) AS indexed_bytes
-                     FROM fact_envelopes ORDER BY seq LIMIT ?1
-                 )",
-                [offset],
-                |row| row.get(0),
-            )
-            .map_err(OpenError::Sqlite)?;
-        let indexed_bytes =
-            u64::try_from(indexed_bytes).expect("indexed byte lengths are nonnegative");
-        if indexed_bytes > byte_limit {
-            return Err(MigrationError::IndexActivationBytesRequired {
-                limit: byte_limit,
-                observed: indexed_bytes,
-            }
-            .into());
-        }
-    }
-    connection
-        .execute_batch(MIGRATE_19_TO_20_SQL)
-        .map_err(OpenError::Sqlite)
-}
-
-/// Schema 17 to 18: trust-grant environmental requirement boundary.
-///
-/// Current task facts and heads may now carry the new requirement variant.
-/// No stored row changes; the schema step makes predecessor readers refuse
-/// before decoding that expanded wire vocabulary.
-const MIGRATE_17_TO_18_SQL: &str = "SELECT 1;";
-
-/// Schema 15 to 16: environmental-requirement rollout boundary.
-///
-/// Schema 15 already stores the typed requirement wire. This no-data step is
-/// the environmental fact a task may require before a successor is installed:
-/// the task stays byte-identical while the admitted runtime observation moves.
-const MIGRATE_15_TO_16_SQL: &str = "SELECT 1;";
-
-/// Schema 14 to 15: typed environmental requirements on task authority.
-///
-/// Existing task facts and heads omit the collection and decode it as empty;
-/// their immutable bytes remain untouched. The explicit no-data step makes the
-/// expanded task wire visible at the journal boundary, so a schema-14 build
-/// refuses the authority before it can decode a requirement-bearing row as if
-/// the field did not exist.
-const MIGRATE_14_TO_15_SQL: &str = "SELECT 1;";
-
-/// Schema 11 to 12: producing-worktree identity on durable trust authority.
-///
-/// Existing trust rows omit the optional identity and decode as explicitly
-/// unbound current authority. New trust transitions always write it. The
-/// schema step prevents older releases from decoding the expanded wire shape;
-/// current rulings refuse an unbound row rather than guessing its producer.
-const MIGRATE_11_TO_12_SQL: &str = "SELECT 1;";
 
 const BASELINE_SQL: &str = r#"
 CREATE TABLE journal_schema (

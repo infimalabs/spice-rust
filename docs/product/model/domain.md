@@ -194,14 +194,14 @@ migrated or rewritten, and no historical runtime remains parallel. Independent,
 explicitly admitted pre-read maintenance is outside that authority-migration
 guarantee and may mutate only the stale temporary state it owns.
 
-The journal's schema-26-to-27 crossing retires `gate::findings` receipts into
-non-executable historical receipt authority. It preserves every receipt column
-and payload byte, leaves `gate::filed` facts and current receipts untouched, and
-reserves historical command identities against live reuse. Historical receipts
-remain part of verification counts and authenticated backup/restore: their
-closed historical kind, canonical request, identity, epoch, evaluated witnesses,
-response and fact positions must agree. Unknown kinds or malformed evidence
-refuse the transactional crossing; neither rows nor schema markers partially
-advance. This does not restore the retired command to the executable registry.
+Journal schema 27 established `gate::findings` receipts as non-executable
+historical receipt authority. Current schema 33 preserves every historical
+receipt column and payload byte, keeps `gate::filed` facts and current receipts
+separate, and reserves historical command identities against live reuse.
+Historical receipts remain part of verification counts and authenticated
+backup/restore: their closed historical kind, canonical request, identity,
+epoch, evaluated witnesses, response, and fact positions must agree. Schema 26
+is retired and names release `966d33bef`; the current runtime does not execute
+that crossing or restore the retired command to the executable registry.
 
 ---
