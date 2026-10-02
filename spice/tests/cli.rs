@@ -134,61 +134,6 @@ fn utf8(bytes: Vec<u8>) -> String {
 }
 
 #[test]
-fn finite_retro_renders_typed_text_json_and_success_exit() {
-    let scratch = Scratch::new("transcript-leaves");
-    let (path, tape) = session(scratch.path());
-    tape.tee(&record(PROSE)).expect("fixture record is durable");
-    let session = path.to_string_lossy().into_owned();
-
-    let text = invoke(&["retro", &session]);
-    assert_eq!(text.code, Some(0));
-    assert!(text.err.is_empty());
-    let text = utf8(text.out);
-    assert!(text.contains("event lane=lane-a dialect=omp"));
-    assert!(text.contains("kind=prose"));
-    assert!(
-        text.contains("working"),
-        "text renders the typed event payload"
-    );
-    assert!(!text.contains("\n\n"), "records have no blank separators");
-
-    let json = invoke(&["--json", "retro", &session]);
-    assert_eq!(json.code, Some(0));
-    assert!(json.err.is_empty());
-    assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
-    let replayed: Outcome<StreamOutcome> =
-        wire::decode(&json.out).expect("retro emits one typed reply");
-    let Outcome::Reply(replayed) = replayed else {
-        panic!("retro must succeed with a reply");
-    };
-    assert_eq!(replayed.position, ReplyPosition::Direct {});
-    assert_eq!(replayed.body.mode, Mode::Retro);
-    assert!(replayed.body.observations.iter().any(|observation| {
-        matches!(
-            observation,
-            Observation::Event { event, .. } if event.kind() == EventKind::Prose
-        )
-    }));
-
-    let missing = scratch.path().join("missing/omp");
-    let missing = missing.to_string_lossy().into_owned();
-    let missing = invoke(&["--json", "retro", &missing]);
-    assert_eq!(missing.code, Some(0));
-    let accounted: Outcome<StreamOutcome> =
-        wire::decode(&missing.out).expect("a missing path remains one typed reply");
-    let Outcome::Reply(accounted) = accounted else {
-        panic!("a missing path must remain a successful reply");
-    };
-    assert_eq!(accounted.position, ReplyPosition::Direct {});
-    assert!(matches!(
-        accounted.body.observations.as_slice(),
-        [Observation::Missing { .. }]
-    ));
-
-    scratch.remove();
-}
-
-#[test]
 fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
     let spoken = invoke(&["--json", "retro", "one:two:three"]);
 

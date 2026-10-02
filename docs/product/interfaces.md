@@ -207,8 +207,7 @@ adds its committed `seq` range. The absence of both coordinates is the one
 spelling of a daemonless reply—there is no empty `direct` marker. Refusals and
 faults use the same envelope with their respective `kind`. A long-running
 stream emits one stream document per wake because it has no finite command
-reply; finite `retro` returns its `StreamOutcome` inside the ordinary reply
-envelope.
+reply.
 
 ### Bounded reads
 
@@ -242,17 +241,32 @@ output-bearing surface admits through the one contract in `wire::output`:
 
 The transcript reader enforces the same law before a CLI chooses how to render
 it. `listen::transcript_page` scans only a caller-bounded newest window of one
-tape. Its current pending-byte and decoder-canary status enters the same row
-and encoded-byte admission as complete vendor records, then records page newest
-first without splitting a record. Older pages use a cursor that carries the
-tape generation and complete-record boundary. Event filters run before record
-admission. Per-field UTF-8 clipping reports withheld text bytes. An oversized
-record names its exact source spans for export and an authenticated cursor
-immediately before that record, so the caller can export it and continue with
-strictly older records without replaying it. History outside the decoded window
-reports the exact withheld source-byte count and its authenticated older cursor.
-A cursor from a replaced tape is refused rather than replayed against the new
-generation.
+tape. A current page's pending-byte and decoder-canary status enters the same
+row and encoded-byte admission as complete vendor records, then records page
+newest first without splitting a record; an older page carries records only,
+so a continuation that widens `--max-bytes` for one record admits it. Older
+pages use a cursor that carries the tape generation and complete-record
+boundary. Event filters run before record admission. Per-field UTF-8 clipping
+reports withheld text bytes. An oversized record names its exact source spans
+for export and an authenticated cursor immediately before that record, so the
+caller can export it and continue with strictly older records without
+replaying it. History outside the decoded window reports the exact withheld
+source-byte count and its authenticated older cursor. A cursor from a replaced
+tape is refused rather than replayed against the new generation.
+
+`spice retro [LANE|LOCUS|PATH]` is that reader's CLI. A selector that resolves
+one session tape prints one newest-first page from a 256 KiB scan window under
+the interactive limits; `--kind KIND` (repeatable) selects event kinds. Every
+withheld row, older window, and clipped field prints a line with its counts
+and the exact command that recovers it: `--after SOURCE:MEMBER:OFFSET` for
+older records, `--after SOURCE` to re-read a current page of the same tape
+generation, or `--export FILE` when only the complete document carries the
+withheld bytes. A cursor from a replaced tape is refused as
+`retro::cursor-stale`. A selector naming several sessions lists them in
+tape-path order, paged by `--after TAPE`; a locus, or a selector that resolves
+nothing, shows its observations. `--export FILE` writes the complete selected
+transcript, unpaged and unclipped (still narrowed by `--kind`), atomically to
+that file and prints only the export receipt.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,

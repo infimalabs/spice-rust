@@ -74,11 +74,7 @@ struct Cursor {
 impl Page {
     pub(crate) fn from_matches(matches: &ArgMatches, path: &[&str]) -> Result<Self, Refusal> {
         let family = path.first().copied().unwrap_or("read");
-        let request = Request {
-            rows: count(matches, family, "limit")?,
-            bytes: count(matches, family, "max-bytes")?,
-            text: count(matches, family, "max-text")?,
-        };
+        let request = request(matches, family)?;
         let export = one(matches, "export").map(PathBuf::from);
         let surface = if export.is_some() {
             EXPORT
@@ -360,6 +356,15 @@ impl Page {
     }
 }
 
+/// The caller's `--limit`, `--max-bytes`, and `--max-text`.
+pub(crate) fn request(matches: &ArgMatches, family: &str) -> Result<Request, Refusal> {
+    Ok(Request {
+        rows: count(matches, family, "limit")?,
+        bytes: count(matches, family, "max-bytes")?,
+        text: count(matches, family, "max-text")?,
+    })
+}
+
 /// Collapse whitespace runs and keep at most `max_bytes` of the result.
 pub(crate) fn clip(text: &str, max_bytes: usize) -> ClippedText {
     output::clip(
@@ -424,7 +429,12 @@ fn one<'a>(matches: &'a ArgMatches, name: &str) -> Option<&'a String> {
     matches.try_get_one::<String>(name).ok().flatten()
 }
 
-fn refusal(family: &str, reason: &str, observed: Option<String>, detail: &str) -> Refusal {
+pub(crate) fn refusal(
+    family: &str,
+    reason: &str,
+    observed: Option<String>,
+    detail: &str,
+) -> Refusal {
     Refusal::bare(
         wire::RefusalDiagnostic::new(
             format!("{family}::{reason}"),

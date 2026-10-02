@@ -34,11 +34,12 @@ pub use stream::{
     TailWork, scan, scan_before, scan_tail, search_tail,
 };
 pub use surface::{
-    Mode, Observation, RetroSelector, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
-    SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, TranscriptContinuation, TranscriptCursor,
-    TranscriptCursorError, TranscriptFilter, TranscriptHistory, TranscriptObservation,
-    TranscriptPage, TranscriptPageRequest, TranscriptPageRow, TranscriptPageStart,
-    TranscriptRecord, TranscriptStatus, TranscriptWork, Watch, retro, transcript_page,
+    Mode, Observation, RetroSelector, RetroSession, StreamOutcome, SurfaceError, SurfaceEvent,
+    SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, TranscriptContinuation,
+    TranscriptCursor, TranscriptCursorError, TranscriptFilter, TranscriptHistory,
+    TranscriptObservation, TranscriptPage, TranscriptPageRequest, TranscriptPageRow,
+    TranscriptPageStart, TranscriptRecord, TranscriptStatus, TranscriptWork, Watch, retro,
+    retro_sessions, transcript_page,
 };
 pub use tape::{Locus, SourceId};
 
