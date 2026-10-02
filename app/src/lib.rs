@@ -37,6 +37,8 @@
 #[path = "browser/action_mailbox.rs"]
 mod action_mailbox;
 #[cfg(any(target_arch = "wasm32", test))]
+mod browser_branding;
+#[cfg(any(target_arch = "wasm32", test))]
 mod client_action;
 pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]

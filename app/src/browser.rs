@@ -24,6 +24,7 @@ use wire::{
 };
 use yew::prelude::*;
 
+use crate::browser_branding::{ConnectionState, CountState, use_browser_branding};
 use crate::client_action::ClientAction;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
@@ -250,6 +251,15 @@ impl Connection {
             Self::Offline(_) => "reconnecting",
             Self::Starting => "starting",
             Self::Connecting => "connecting",
+        }
+    }
+
+    const fn branding_state(&self) -> ConnectionState {
+        match self {
+            Self::Starting => ConnectionState::Starting,
+            Self::Connecting => ConnectionState::Connecting,
+            Self::Online { .. } => ConnectionState::Online,
+            Self::Offline(_) => ConnectionState::Offline,
         }
     }
 
@@ -553,6 +563,16 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
 
 #[hook]
 fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime) {
+    let remaining = state
+        .surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::board)
+        .map(|board| board.active_public_tasks().count());
+    use_browser_branding(CountState::resolve(
+        state.connection.branding_state(),
+        remaining,
+    ));
     use_surface_connection(
         state.sender.clone(),
         SurfaceHandles {
