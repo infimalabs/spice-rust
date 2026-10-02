@@ -222,7 +222,7 @@ pub(super) fn render_directive_ledger(
                         }}
                     </p>
                 } else {
-                    <ol class="team-direction-ledger" role="feed" aria-labelledby={heading.clone()}>
+                    <team_work_mosaic::DirectionMosaic labelledby={heading.clone()}>
                         {for rows.iter().map(|row| {
                             super::super::direction_card::render(
                                 &direction_card(row, team.lane, standings, message_links),
@@ -233,7 +233,7 @@ pub(super) fn render_directive_ledger(
                                 },
                             )
                         })}
-                    </ol>
+                    </team_work_mosaic::DirectionMosaic>
                 }
             </div>
         </section>
@@ -370,9 +370,9 @@ fn render_settled_lane(
             })}
             <div class="team-entry-region">
                 if !tasks.is_empty() {
-                    <div class="team-task-card-list work-history-list">
+                    <team_work_mosaic::SettledMosaic>
                         {for tasks.iter().map(|task| work_card::render(task, cards))}
-                    </div>
+                    </team_work_mosaic::SettledMosaic>
                 } else if total == Some(0) {
                     <p class="team-task-empty">{
                         if state.is_some_and(TeamSettledState::filtered) {

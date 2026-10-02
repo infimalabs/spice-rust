@@ -1133,6 +1133,16 @@
   padding: 0;
   list-style: none;
 }
+/* Team-local card collections keep their responsive grid columns as the
+   measurement contract, then the Work mosaic bridge positions each measured
+   card independently so a tall sibling cannot reserve blank row space. */
+.team-task-workspace :is(.team-direction-ledger, .team-task-card-list)[data-mosaic-packing="ready"] {
+  position: relative;
+  align-items: initial;
+}
+.team-task-workspace :is(.team-direction-ledger, .team-task-card-list)[data-mosaic-packing="ready"] > * {
+  margin: 0;
+}
 .team-direction-ledger-row {
   --mosaic-image-size: 8.75rem;
   --mosaic-image-large-size: 15.75rem;
