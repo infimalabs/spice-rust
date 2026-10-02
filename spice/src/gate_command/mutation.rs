@@ -13,8 +13,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use gate::{
-    CampReport, CampStanding, KillProgress, KillReport, MutantDisposition, ReportAttemptKind,
-    ReportMutantDisposition, ReportMutationMovement, ReportRate, Selector,
+    CampProgress, CampReport, CampStanding, KillProgress, KillReport, MutantDisposition,
+    ReportAttemptKind, ReportMutantDisposition, ReportMutationMovement, ReportRate, Selector,
 };
 use serde::Serialize;
 use wire::output::{Export, clip};
@@ -79,7 +79,7 @@ pub(crate) fn kill(matches: &clap::ArgMatches, live: bool) -> Outcome<KillAnswer
     progress.line(format_args!("baseline and mutant inventory starting"));
     let started = Instant::now();
     let campaign = Mutex::new(Campaign::new(output::HEARTBEAT, started));
-    let run = beating(&progress, &campaign, || {
+    let run = beating(&progress, &campaign, Campaign::heartbeat, || {
         selected
             .contract
             .execute_kill_with_progress(selected.root(), &mut |observation| {
@@ -130,15 +130,27 @@ pub(crate) fn camp(matches: &clap::ArgMatches, live: bool) -> Outcome<CampAnswer
         Err(failure) => return failure.outcome(),
     };
     let progress = Progress::stderr("gate camp", live);
-    let (audit, elapsed) = progress.during("measurement and camping audit", || {
-        selected.contract.audit_camp(selected.root())
+    let started = Instant::now();
+    let campaign = Mutex::new(CampCampaign::new(output::HEARTBEAT, started));
+    let audit = beating(&progress, &campaign, CampCampaign::heartbeat, || {
+        selected
+            .contract
+            .audit_camp_with_progress(selected.root(), &mut |observation| {
+                let line = campaign
+                    .lock()
+                    .ok()
+                    .and_then(|mut campaign| campaign.observe(observation, Instant::now()));
+                if let Some(line) = line {
+                    progress.line(format_args!("{line}"));
+                }
+            })
     });
     let report = match audit {
         Ok(report) => report,
         Err(error) => return refused("gate::camp-refused", selected.captures(), &error),
     };
     let retained = output::retain(selected.captures(), report.render().as_bytes());
-    let text = camp_summary(&report, elapsed, &retained, verbose);
+    let text = camp_summary(&report, started.elapsed(), &retained, verbose);
     direct(CampAnswer { report, text })
 }
 
@@ -158,7 +170,12 @@ fn refused<B>(
 }
 
 /// Run `work` while a thread writes each heartbeat the campaign says is due.
-fn beating<T>(progress: &Progress, campaign: &Mutex<Campaign>, work: impl FnOnce() -> T) -> T {
+fn beating<T, C: Send>(
+    progress: &Progress,
+    campaign: &Mutex<C>,
+    heartbeat: fn(&mut C, Instant) -> Option<String>,
+    work: impl FnOnce() -> T,
+) -> T {
     let (stop, stopped) = mpsc::channel::<()>();
     std::thread::scope(|scope| {
         scope.spawn(move || {
@@ -166,7 +183,7 @@ fn beating<T>(progress: &Progress, campaign: &Mutex<Campaign>, work: impl FnOnce
                 let line = campaign
                     .lock()
                     .ok()
-                    .and_then(|mut campaign| campaign.heartbeat(Instant::now()));
+                    .and_then(|mut campaign| heartbeat(&mut campaign, Instant::now()));
                 if let Some(line) = line {
                     progress.line(format_args!("{line}"));
                 }
@@ -176,6 +193,76 @@ fn beating<T>(progress: &Progress, campaign: &Mutex<Campaign>, work: impl FnOnce
         drop(stop);
         value
     })
+}
+
+/// Live state of one camping campaign.
+pub(super) struct CampCampaign {
+    interval: Duration,
+    started: Instant,
+    quiet_since: Instant,
+    total: Option<usize>,
+    completed: usize,
+    running: Option<String>,
+}
+
+impl CampCampaign {
+    pub(super) const fn new(interval: Duration, now: Instant) -> Self {
+        Self {
+            interval,
+            started: now,
+            quiet_since: now,
+            total: None,
+            completed: 0,
+            running: None,
+        }
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        observation: CampProgress<'_>,
+        now: Instant,
+    ) -> Option<String> {
+        self.total = Some(observation.total);
+        let line = if let Some(metric) = observation.metric {
+            if observation.completed > self.completed {
+                self.running = None;
+            } else {
+                self.running = Some(clip(metric, NAME_BYTES).to_string());
+            }
+            self.completed = observation.completed;
+            None
+        } else {
+            self.completed = observation.completed;
+            Some(format!(
+                "campaign: {} distributions, {} loci, {} measurements",
+                observation.distributions, observation.loci, observation.total
+            ))
+        };
+        if line.is_some() {
+            self.quiet_since = now;
+        }
+        line
+    }
+
+    pub(super) fn heartbeat(&mut self, now: Instant) -> Option<String> {
+        if now.saturating_duration_since(self.quiet_since) < self.interval {
+            return None;
+        }
+        self.quiet_since = now;
+        let elapsed = Elapsed(now.saturating_duration_since(self.started));
+        Some(match (self.total, &self.running) {
+            (None, _) => format!("campaign preparation running {elapsed}"),
+            (Some(total), Some(metric)) => {
+                format!(
+                    "{}/{total} measured; {metric} running {elapsed}",
+                    self.completed
+                )
+            }
+            (Some(total), None) => {
+                format!("{}/{total} measured; auditing {elapsed}", self.completed)
+            }
+        })
+    }
 }
 
 /// Live state of one kill campaign, advanced only by observations and the

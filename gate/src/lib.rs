@@ -78,8 +78,8 @@ pub use battery::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, StateRunScope};
 pub use camp::{
-    BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
-    CampStanding, DistributionReport, LocusDistance, SharedBound,
+    BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampProgress, CampReport,
+    CampRunError, CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use change_selection::compile_language_reach;

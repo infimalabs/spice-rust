@@ -621,6 +621,21 @@ impl fmt::Display for CampError {
 
 impl std::error::Error for CampError {}
 
+/// One live observation from a shared-bound measurement campaign.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CampProgress<'a> {
+    /// Metric currently being measured, absent before measurement starts.
+    pub metric: Option<&'a str>,
+    /// Measurements that completed and passed snapshot verification.
+    pub completed: usize,
+    /// Metrics in the compiled camping policy.
+    pub total: usize,
+    /// Shared-bound distributions the completed measurements will audit.
+    pub distributions: usize,
+    /// Declared loci across those distributions.
+    pub loci: usize,
+}
+
 /// Why the compiled Camp profile did not produce a completed audit.
 #[derive(Debug)]
 pub enum CampRunError {
@@ -659,8 +674,50 @@ impl Contract {
     /// Returns the measurement or declaration failure. A partial measurement
     /// never reaches the audit.
     pub fn audit_camp(&self, root: &std::path::Path) -> Result<CampReport, CampRunError> {
-        let run = Run::adjudicate(self.camp_policy(), root, &Ratchet::default(), self.bounds())
-            .map_err(CampRunError::Run)?;
+        self.audit_camp_with_progress(root, &mut |_| {})
+    }
+
+    /// Measure and audit while observing canonical campaign progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::audit_camp`].
+    pub fn audit_camp_with_progress(
+        &self,
+        root: &std::path::Path,
+        progress: &mut dyn FnMut(CampProgress<'_>),
+    ) -> Result<CampReport, CampRunError> {
+        let distributions = self.camp().bounds().len();
+        let loci = self
+            .camp()
+            .bounds()
+            .iter()
+            .map(|bound| bound.loci().len())
+            .sum();
+        let total = self.camp_policy().metrics().len();
+        progress(CampProgress {
+            metric: None,
+            completed: 0,
+            total,
+            distributions,
+            loci,
+        });
+        let run = Run::adjudicate_with_progress(
+            self.camp_policy(),
+            root,
+            &Ratchet::default(),
+            self.bounds(),
+            &mut |metric, completed, total| {
+                progress(CampProgress {
+                    metric,
+                    completed,
+                    total,
+                    distributions,
+                    loci,
+                });
+            },
+        )
+        .map_err(CampRunError::Run)?;
         self.camp()
             .audit(run.measurements())
             .map_err(CampRunError::Audit)
