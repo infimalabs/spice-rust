@@ -154,9 +154,9 @@ pub use action_spec::{
     ActionSpecFields, ActionToolRequirement, derive_authority_bound_action_key,
 };
 pub use kill::{
-    AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
-    MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
-    MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
+    AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillProgress, KillRun,
+    MutantDisposition, MutantEvidence, MutationBattery, MutationInventory, MutationMovement,
+    MutationTool, MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
     ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
 pub use long_lines::LongLineFinding;

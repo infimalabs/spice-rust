@@ -301,7 +301,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "camp"],
-        "gate camp",
+        "gate camp [--verbose]",
         Local,
         None,
         [],
@@ -312,7 +312,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "kill"],
-        "gate kill",
+        "gate kill [--verbose]",
         Local,
         None,
         [],

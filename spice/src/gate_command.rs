@@ -4,15 +4,16 @@
 //! tracked floors, source bytes, and the root handed to every bounded process
 //! all come from one captured Git source rather than from a moving checkout.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use gate::{CampReport, KillReport, ReportMutationMovement, Selector};
+use gate::Selector;
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::repository::Repository;
 
 mod battery;
 mod commit_message;
+mod mutation;
 mod output;
 mod pre_commit;
 mod prove;
@@ -21,6 +22,7 @@ mod selection;
 mod verify_claim;
 
 pub(crate) use battery::BatteryRun;
+pub(crate) use mutation::{CampAnswer, KillAnswer, camp, kill};
 pub(crate) use prove::{ProveReport, prove};
 
 /// Run the ordinary gate against the captured index or one selected commit.
@@ -116,52 +118,6 @@ fn parser_admitted_json_reference_arguments(
     Some(normalized)
 }
 
-/// Audit the compiled shared bound without changing a tracked floor.
-pub(crate) fn camp() -> Outcome<CampReport> {
-    let selected = match SelectedContract::capture(Selector::staged()) {
-        Ok(selected) => selected,
-        Err(failure) => return failure.outcome(),
-    };
-    match selected.contract.audit_camp(selected.root()) {
-        Ok(report) => direct(report),
-        Err(error) => Failure::run("gate::camp-refused", error).outcome(),
-    }
-}
-
-/// Run the compiled mutation profile against private copies of the index.
-pub(crate) fn kill() -> Outcome<KillReport> {
-    let selected = match SelectedContract::capture(Selector::staged()) {
-        Ok(selected) => selected,
-        Err(failure) => return failure.outcome(),
-    };
-    match selected.contract.execute_kill(selected.root()) {
-        Ok(run) => kill_report(run.report()),
-        Err(error) => Failure::run("gate::kill-refused", error).outcome(),
-    }
-}
-
-fn kill_report(report: KillReport) -> Outcome<KillReport> {
-    let refusal = match report.movement() {
-        ReportMutationMovement::Regressed { .. } => Some((
-            "gate::kill-regressed",
-            "confirmed survivor debt to hold or shrink",
-            "remove every confirmed survivor; never raise the survivor floor",
-        )),
-        ReportMutationMovement::Unconfirmed { .. } => Some((
-            "gate::kill-unconfirmed",
-            "every declared attempt to confirm each mutant",
-            "make the flaky, timed-out, or incomplete attempts repeatable, then run the gate again",
-        )),
-        ReportMutationMovement::Held { .. }
-        | ReportMutationMovement::Shrank { .. }
-        | ReportMutationMovement::Unbaselined { .. } => None,
-    };
-    let Some((reason, _expected, summary)) = refusal else {
-        return direct(report);
-    };
-    Outcome::Refusal(Refusal::evidence(reason, report.render(), summary))
-}
-
 fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
     if error.is_fault() {
         return Outcome::Fault(Fault {
@@ -188,10 +144,11 @@ fn direct<B>(body: B) -> Outcome<B> {
     })
 }
 
-/// One immutable selected tree and the current contract loaded from its bytes.
+/// One immutable selected tree, its current contract, and evidence destination.
 struct SelectedContract {
     tree: gate::SelectedTree,
     contract: gate::Contract,
+    captures: PathBuf,
 }
 
 impl SelectedContract {
@@ -212,6 +169,7 @@ impl SelectedContract {
                 observed: error.to_string(),
                 detail: "resolve the named Git source before running the gate".to_owned(),
             })?;
+        let captures = output::capture_directory(repository.common_dir());
         let contract = gate::Contract::load(tree.root()).map_err(|error| Failure::Refusal {
             reason: "gate::contract-refused",
             expected: "one complete current tracked gate contract".to_owned(),
@@ -219,11 +177,19 @@ impl SelectedContract {
             detail: "repair the selected spice-rust.toml, baseline.toml, or compiled tool"
                 .to_owned(),
         })?;
-        Ok(Self { tree, contract })
+        Ok(Self {
+            tree,
+            contract,
+            captures,
+        })
     }
 
     fn root(&self) -> &Path {
         self.tree.root()
+    }
+
+    fn captures(&self) -> &Path {
+        &self.captures
     }
 }
 
@@ -241,15 +207,6 @@ enum Failure {
 }
 
 impl Failure {
-    fn run(reason: &'static str, error: impl std::fmt::Display) -> Self {
-        Self::Refusal {
-            reason,
-            expected: "one complete bounded current gate result".to_owned(),
-            observed: error.to_string(),
-            detail: "restore the declared inputs and tools, then run the gate again".to_owned(),
-        }
-    }
-
     fn outcome<B>(self) -> Outcome<B> {
         match self {
             Self::Refusal {

@@ -19,13 +19,13 @@ use sill::{
 };
 use wire::{Digest, Domain};
 
-use crate::jurisdiction::{Ignore, Jurisdiction};
+use crate::jurisdiction::{Ignore, Jurisdiction, Snapshot};
 
 mod support;
 
 pub(crate) use support::decode_attempt;
 pub use support::{KillError, RateError};
-use support::{classify, movement, process_evidence};
+use support::{classify, decide, process_evidence};
 
 /// Exact build-tool identity already carried by the distribution pin set.
 pub const PINNED_CARGO_MUTANTS: &str = "cargo-mutants 27.1.0";
@@ -446,6 +446,23 @@ impl KillRun {
     }
 }
 
+/// One live observation from an otherwise unchanged mutation campaign.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KillProgress<'a> {
+    /// Mutant currently executing, absent while campaign setup completes.
+    pub mutant: Option<&'a str>,
+    /// Mutants whose complete retry battery has finished.
+    pub completed: usize,
+    /// Mutants in the stable inventory.
+    pub total: usize,
+    /// Attempts configured for every mutant.
+    pub attempts: usize,
+    /// Seed every attempt repeats; with the inventory it names the campaign.
+    pub seed: u64,
+    /// Final disposition, present only on a mutant-completion observation.
+    pub disposition: Option<MutantDisposition>,
+}
+
 /// One pinned, bounded mutation gate.
 #[derive(Clone, Debug)]
 pub struct Kill {
@@ -495,6 +512,24 @@ impl Kill {
         ignore: &Ignore,
         floor: Option<SurvivorRate>,
     ) -> Result<KillRun, KillError> {
+        self.run_with_progress(root, ignore, floor, &mut |_| {})
+    }
+
+    /// Run the same battery while reporting bounded campaign state.
+    ///
+    /// The observer has no decision authority. It sees the stable inventory,
+    /// each mutant start, and each mutant completion in canonical order.
+    ///
+    /// # Errors
+    ///
+    /// Refuses under the same conditions as [`Self::run`].
+    pub fn run_with_progress(
+        &self,
+        root: &Path,
+        ignore: &Ignore,
+        floor: Option<SurvivorRate>,
+        progress: &mut dyn FnMut(KillProgress<'_>),
+    ) -> Result<KillRun, KillError> {
         let caller = Jurisdiction::walk(root, ignore).map_err(KillError::Walk)?;
         let caller_inventory = caller.inventory_digest();
         let caller_tree = caller.tree_digest().map_err(KillError::Walk)?;
@@ -521,27 +556,32 @@ impl Kill {
             });
         }
 
-        let mut mutants = Vec::with_capacity(after.mutants.len());
-        for (identity, source) in after.mutants.iter().zip(&after.mutant_sources) {
-            let mut attempts = Vec::with_capacity(self.battery.attempts);
-            for number in 1..=self.battery.attempts {
-                let private = selected
-                    .jurisdiction()
-                    .snapshot()
-                    .map_err(KillError::Walk)?;
-                attempts.push(self.attempt(
-                    private.jurisdiction().root(),
-                    build_root,
-                    identity,
-                    number,
-                ));
-            }
-            let disposition = classify(&attempts);
-            mutants.push(MutantEvidence {
-                identity: identity.clone(),
-                source: source.clone(),
-                attempts,
-                disposition,
+        let campaign = KillProgress {
+            mutant: None,
+            completed: 0,
+            total: after.mutants.len(),
+            attempts: self.battery.attempts,
+            seed: self.battery.seed,
+            disposition: None,
+        };
+        progress(campaign);
+        let mut mutants = Vec::with_capacity(campaign.total);
+        for (index, (identity, source)) in
+            after.mutants.iter().zip(&after.mutant_sources).enumerate()
+        {
+            progress(KillProgress {
+                mutant: Some(identity),
+                completed: index,
+                ..campaign
+            });
+            let mutant = self.mutant(&selected, build_root, identity, source)?;
+            let disposition = mutant.disposition;
+            mutants.push(mutant);
+            progress(KillProgress {
+                mutant: Some(identity),
+                completed: index + 1,
+                disposition: Some(disposition),
+                ..campaign
             });
         }
 
@@ -564,23 +604,7 @@ impl Kill {
             });
         }
 
-        let confirmed = mutants
-            .iter()
-            .filter(|mutant| mutant.disposition != MutantDisposition::Unconfirmed)
-            .count();
-        let survivors = mutants
-            .iter()
-            .filter(|mutant| mutant.disposition == MutantDisposition::ConfirmedSurvived)
-            .count();
-        let rate = if confirmed == mutants.len() {
-            Some(
-                SurvivorRate::new(survivors as u64, confirmed as u64)
-                    .expect("a non-empty confirmed inventory always forms a rate"),
-            )
-        } else {
-            None
-        };
-        let movement = movement(rate, floor, confirmed, mutants.len());
+        let (rate, movement) = decide(&mutants, floor);
 
         Ok(KillRun {
             source: caller_tree,
@@ -590,6 +614,35 @@ impl Kill {
             mutants,
             rate,
             movement,
+        })
+    }
+
+    /// Run every declared attempt of one mutant in its own private snapshot.
+    fn mutant(
+        &self,
+        selected: &Snapshot,
+        build_root: &Path,
+        identity: &str,
+        source: &str,
+    ) -> Result<MutantEvidence, KillError> {
+        let mut attempts = Vec::with_capacity(self.battery.attempts);
+        for number in 1..=self.battery.attempts {
+            let private = selected
+                .jurisdiction()
+                .snapshot()
+                .map_err(KillError::Walk)?;
+            attempts.push(self.attempt(
+                private.jurisdiction().root(),
+                build_root,
+                identity,
+                number,
+            ));
+        }
+        Ok(MutantEvidence {
+            identity: identity.to_owned(),
+            source: source.to_owned(),
+            disposition: classify(&attempts),
+            attempts,
         })
     }
 
