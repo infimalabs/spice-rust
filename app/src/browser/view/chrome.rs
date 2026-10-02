@@ -546,6 +546,11 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                     }
                 }
             }</button>
+            <CopyButton
+                class={classes!("card-action", "card-action--copy")}
+                text={AttrValue::from(text.to_owned())}
+                subject="message" title="Copy this message" label="Copy this message"
+            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></CopyButton>
             if let Some(quote) = quote {
                 <button
                     class="card-action card-action--quote" type="button" title="Quote this message"
@@ -553,11 +558,6 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                     onclick={Callback::from(move |_| quote.emit(()))}
                 ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
             }
-            <CopyButton
-                class={classes!("card-action", "card-action--copy")}
-                text={AttrValue::from(text.to_owned())}
-                subject="message" title="Copy this message" label="Copy this message"
-            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></CopyButton>
         </span>
     }
 }
