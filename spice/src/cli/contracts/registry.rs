@@ -384,7 +384,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes [--release-commit REV]",
+        "release notes [--release-commit REV] [--output FILE]",
         Local,
         None,
         [],

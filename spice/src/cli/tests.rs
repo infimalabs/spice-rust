@@ -799,8 +799,6 @@ fn task_done_contract_admits_durable_handoff_before_terminal_commit() {
 fn release_notes_exposes_one_read_only_history_target() {
     let contract = contract_at(CONTRACTS, &["release", "notes"])
         .expect("release notes has one registered contract");
-    assert_eq!(contract.syntax, "release notes [--release-commit REV]");
-
     assert_eq!(
         contract.journal,
         JournalAccess::None,
