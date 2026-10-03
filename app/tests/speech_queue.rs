@@ -1,6 +1,6 @@
 use app::speech_queue::{
-    Advance, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage,
-    SpeechQueue, SpeechRequest, SuppressAutomatic,
+    Advance, AutomaticChange, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors,
+    NarrationMessage, SpeechQueue, SpeechRequest,
 };
 
 fn playback(lane: &str) -> wire::SpeechPlayback {
@@ -38,12 +38,19 @@ fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
     match result {
         Enqueue::Start(entry) => entry,
         Enqueue::Queued => panic!("an idle queue must start its head"),
+        Enqueue::Suppressed => panic!("an enabled team must admit automatic speech"),
     }
+}
+
+fn enable(queue: &mut SpeechQueue, team: &str) {
+    assert_eq!(queue.set_automatic(team, true), AutomaticChange::Preserved);
 }
 
 #[test]
 fn one_global_head_survives_a_burst_and_each_team_keeps_one_fresh_tail() {
     let mut queue = SpeechQueue::default();
+    enable(&mut queue, "team-a");
+    enable(&mut queue, "team-b");
     let head = started(queue.enqueue(narration("team-a", "a1")));
     assert_eq!(head.message_key(), Some("a1"));
 
@@ -85,6 +92,8 @@ fn one_global_head_survives_a_burst_and_each_team_keeps_one_fresh_tail() {
 #[test]
 fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
     let mut queue = SpeechQueue::default();
+    enable(&mut queue, "removed");
+    enable(&mut queue, "survivor");
     let head = started(queue.enqueue(manual("team-head", "surface", "surface")));
     assert_eq!(
         queue.enqueue(narration("removed", "drop me")),
@@ -96,6 +105,10 @@ fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
     );
 
     queue.abandon_lane("removed");
+    assert_eq!(
+        queue.enqueue(narration("removed", "late stale work")),
+        Enqueue::Suppressed
+    );
     let survivor = match queue.finish(head.id()) {
         Advance::Start(entry) => entry,
         other => panic!("abandonment removed another team: {other:?}"),
@@ -111,6 +124,7 @@ fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
 #[test]
 fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
     let mut manual_queue = SpeechQueue::default();
+    enable(&mut manual_queue, "lineage");
     let head = started(manual_queue.enqueue(manual("lineage", "surface", "surface")));
     assert_eq!(
         manual_queue.enqueue(narration("lineage", "queued")),
@@ -124,6 +138,8 @@ fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
     assert_eq!(manual_queue.finish(head.id()), Advance::Ignored);
 
     let mut automatic = SpeechQueue::default();
+    enable(&mut automatic, "team-a");
+    enable(&mut automatic, "team-b");
     let head = started(automatic.enqueue(narration("team-a", "head")));
     assert_eq!(
         automatic.enqueue(narration("team-b", "successor")),
@@ -137,39 +153,58 @@ fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
 }
 
 #[test]
-fn quiet_stops_active_and_queued_automatic_speech_but_preserves_manual_work() {
+fn quiet_is_a_default_closed_team_policy_that_preserves_explicit_playback() {
     let mut queue = SpeechQueue::default();
-    let automatic = started(queue.enqueue(narration("team-a", "automatic head")));
     assert_eq!(
-        queue.enqueue(narration("team-b", "automatic tail")),
-        Enqueue::Queued
+        queue.enqueue(narration("team-a", "default quiet")),
+        Enqueue::Suppressed
     );
-    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Idle);
-    assert!(!queue.active());
-    assert_eq!(queue.pending(), 0);
-    assert_eq!(queue.finish(automatic.id()), Advance::Ignored);
 
-    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Preserved);
-    let manual_head = started(queue.enqueue(manual("team-a", "manual", "explicit playback")));
+    let manual_head =
+        started(queue.enqueue(manual("team-a", "manual", "explicit playback while quiet")));
+    enable(&mut queue, "team-a");
     assert_eq!(
-        queue.enqueue(narration("team-b", "discarded tail")),
+        queue.enqueue(narration("team-a", "queued automatic")),
         Enqueue::Queued
     );
-    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Preserved);
+    assert_eq!(
+        queue.set_automatic("team-a", false),
+        AutomaticChange::Preserved
+    );
     assert!(queue.is_active(manual_head.id()));
     assert_eq!(queue.pending(), 0);
+    assert_eq!(
+        queue.enqueue(narration("team-a", "late stale automatic")),
+        Enqueue::Suppressed
+    );
 
     queue.stop();
+    enable(&mut queue, "team-a");
+    enable(&mut queue, "team-b");
     let automatic = started(queue.enqueue(narration("team-a", "automatic head")));
     assert_eq!(
-        queue.enqueue(manual("team-b", "manual", "queued explicit playback")),
+        queue.enqueue(narration("team-b", "enabled team successor")),
         Enqueue::Queued
     );
-    let promoted = match queue.suppress_automatic() {
-        SuppressAutomatic::Start(entry) => entry,
-        other => panic!("quiet did not preserve the queued manual successor: {other:?}"),
+    assert_eq!(
+        queue.enqueue(manual("team-a", "manual", "queued explicit playback")),
+        Enqueue::Queued
+    );
+    let enabled_team = match queue.set_automatic("team-a", false) {
+        AutomaticChange::Start(entry) => entry,
+        other => panic!("quiet did not preserve another enabled team: {other:?}"),
     };
-    assert_eq!(promoted.message_key(), Some("manual"));
+    assert_eq!(enabled_team.lane(), Some("team-b"));
+    assert_eq!(
+        queue.enqueue(narration("team-a", "stale after suppression")),
+        Enqueue::Suppressed
+    );
+    assert_eq!(queue.pending(), 1);
+    let manual = match queue.finish(enabled_team.id()) {
+        Advance::Start(entry) => entry,
+        other => panic!("enabled team did not preserve manual successor: {other:?}"),
+    };
+    assert_eq!(manual.message_key(), Some("manual"));
     assert_eq!(queue.finish(automatic.id()), Advance::Ignored);
 }
 
@@ -247,6 +282,8 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     );
 
     let mut busy_queue = SpeechQueue::default();
+    enable(&mut busy_queue, "team-b");
+    enable(&mut busy_queue, "agent-a");
     let busy_head = started(busy_queue.enqueue(narration("team-b", "active head")));
     for line in lines.clone() {
         assert_eq!(
@@ -261,12 +298,13 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     assert_eq!(newest.text(), "newest unseen");
 
     let mut queue = SpeechQueue::default();
+    enable(&mut queue, "agent-a");
     let first = lines
         .into_iter()
         .find_map(|line| {
             match queue.enqueue(narration(&line.lane, line.narration.as_deref().unwrap())) {
                 Enqueue::Start(entry) => Some(entry),
-                Enqueue::Queued => None,
+                Enqueue::Queued | Enqueue::Suppressed => None,
             }
         })
         .expect("an idle queue commits the first narration line");

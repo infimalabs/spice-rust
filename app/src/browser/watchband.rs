@@ -290,7 +290,7 @@ fn render_compose(
                     topology_revision,
                     &control,
                     team_controls,
-                    &controls.suppress_automatic_speech,
+                    &controls.set_automatic_speech,
                     sender,
                     can_configure,
                     ready,

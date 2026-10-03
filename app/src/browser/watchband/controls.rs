@@ -556,7 +556,7 @@ pub(super) fn render_team_controls(
     topology_revision: u64,
     control: &TeamControl,
     team_controls: &UseReducerHandle<TeamControls>,
-    suppress_automatic_speech: &Callback<()>,
+    set_automatic_speech: &Callback<(String, bool)>,
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
@@ -584,7 +584,7 @@ pub(super) fn render_team_controls(
                 authoritative_life,
                 speech,
                 team_controls.clone(),
-                suppress_automatic_speech.clone(),
+                set_automatic_speech.clone(),
             )}
             {lifetime_slider(
                 selected,
@@ -612,13 +612,12 @@ fn speech_slider(
     authoritative_life: wire::intent::TeamLife,
     speech: TeamSpeech,
     controls: UseReducerHandle<TeamControls>,
-    suppress_automatic_speech: Callback<()>,
+    set_automatic_speech: Callback<(String, bool)>,
 ) -> Html {
+    let automatic_team = team.to_string();
     let select = Callback::from(move |index: usize| {
         let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
-        if speech == TeamSpeech::Quiet {
-            suppress_automatic_speech.emit(());
-        }
+        set_automatic_speech.emit((automatic_team.clone(), speech != TeamSpeech::Quiet));
         controls.dispatch(TeamControlAction::SetSpeech {
             team,
             authoritative_life,

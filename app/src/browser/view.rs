@@ -21,8 +21,8 @@ pub(super) struct AgentControls {
     pub(super) speak: Callback<SpeechRequest>,
     /// Advance durable narration cursors and admit their live prefix.
     pub(super) narrate: Callback<NarrationBatch>,
-    /// Stop and discard automatic speech while preserving explicit playback.
-    pub(super) suppress_automatic_speech: Callback<()>,
+    /// Set one team's durable automatic-speech admission policy.
+    pub(super) set_automatic_speech: Callback<(String, bool)>,
     /// Exact rendered message currently owned by the speech queue.
     pub(super) speech_message: UseStateHandle<Option<String>>,
 }
