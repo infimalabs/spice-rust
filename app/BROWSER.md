@@ -95,6 +95,12 @@ it, leaning on the center divider: speech ends and allocation starts 3px from
 it, so they read as one phrase such as "quiet drain" or "narrate steer". The
 label row comes out of the ranges' region; the composer block, the frame width
 and the send row keep their size.
+At the 10rem minimum member width, the standard draft block is 170px tall and
+reads approximately square without widening the member column.
+That shared block size also determines the speech and allocation tracks, their
+frame, and the send row; the measured overlay height remains the Chat plane's
+collapse distance and top spacer.
+
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text

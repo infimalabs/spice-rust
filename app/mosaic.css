@@ -595,7 +595,7 @@
 /* The control column sizes itself from the stack's fixed inline size, so the
    draft takes every remaining pixel at every viewport width. */
 .team-composer {
-  --team-composer-block-size: 148px;
+  --team-composer-block-size: 170px;
   --team-composer-edge-gap: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -919,10 +919,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-/* A narrow viewport shortens the team composer and slims the observation
-   composer's pills rather than letting them crowd the agent cards. */
+/* A narrow viewport trims button inline padding rather than letting controls
+   crowd the agent cards; the draft keeps its standard near-square block. */
 @media (max-width: 720px) {
-  .team-composer { --team-composer-block-size: 140px; }
   .team-send { padding: 5px 8px; }
 }
 .team-activity-grid {
