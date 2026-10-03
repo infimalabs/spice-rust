@@ -878,7 +878,7 @@ fn use_agent_controls(
         seat,
         speak: speech.speak,
         narrate: speech.narrate,
-        suppress_automatic_speech: speech.suppress_automatic,
+        set_automatic_speech: speech.set_automatic,
         speech_message: speech.message,
     }
 }

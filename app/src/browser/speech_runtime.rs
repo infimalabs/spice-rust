@@ -18,8 +18,8 @@ use super::{SurfaceData, toast};
 use crate::AppRuntime;
 use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
-    Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
-    SpeechRequest, SuppressAutomatic,
+    Advance, AutomaticChange, Enqueue, ExternalPause, NarrationCursors, NarrationMessage,
+    SpeechEntry, SpeechQueue, SpeechRequest,
 };
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
@@ -50,7 +50,7 @@ pub(super) struct NarrationBatch {
 pub(super) struct AgentSpeechControls {
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
-    pub(super) suppress_automatic: Callback<()>,
+    pub(super) set_automatic: Callback<(String, bool)>,
     pub(super) message: UseStateHandle<Option<String>>,
 }
 
@@ -290,15 +290,15 @@ impl SpeechRuntime {
         self.status.set(SpeechStatus::Idle);
     }
 
-    fn suppress_automatic(&self) {
-        match self.queue.borrow_mut().suppress_automatic() {
-            SuppressAutomatic::Preserved => {}
-            SuppressAutomatic::Idle => {
+    fn set_automatic(&self, team: &str, enabled: bool) {
+        match self.queue.borrow_mut().set_automatic(team, enabled) {
+            AutomaticChange::Preserved => {}
+            AutomaticChange::Idle => {
                 self.controller.borrow_mut().stop();
                 self.message.set(None);
                 self.status.set(SpeechStatus::Idle);
             }
-            SuppressAutomatic::Start(entry) => self.start(entry),
+            AutomaticChange::Start(entry) => self.start(entry),
         }
     }
 
@@ -335,17 +335,25 @@ pub(super) fn use_agent_speech_controls(
             Callback::from(move |request: SpeechRequest| runtime.borrow().toggle_message(request))
         })
     };
-    let suppress_automatic = use_memo((), move |_| {
-        Callback::from(move |()| runtime.borrow().suppress_automatic())
-    });
+    let set_automatic = {
+        let runtime = runtime.clone();
+        use_memo((), move |_| {
+            Callback::from(move |(team, enabled): (String, bool)| {
+                runtime.borrow().set_automatic(&team, enabled);
+            })
+        })
+    };
     let narrate = {
         let enqueue = (*enqueue).clone();
-        use_memo((), move |_| narration_callback(narration_cursors, enqueue))
+        let set_automatic = (*set_automatic).clone();
+        use_memo((), move |_| {
+            narration_callback(narration_cursors, enqueue, set_automatic)
+        })
     };
     AgentSpeechControls {
         speak: (*speak).clone(),
         narrate: (*narrate).clone(),
-        suppress_automatic: (*suppress_automatic).clone(),
+        set_automatic: (*set_automatic).clone(),
         message,
     }
 }
@@ -433,8 +441,10 @@ fn store_narration_cursors(cursors: &NarrationCursors) {
 fn narration_callback(
     cursors: Rc<RefCell<NarrationCursors>>,
     speak: Callback<SpeechRequest>,
+    set_automatic: Callback<(String, bool)>,
 ) -> Callback<NarrationBatch> {
     Callback::from(move |batch: NarrationBatch| {
+        set_automatic.emit((batch.team.clone(), batch.mode != TeamSpeech::Quiet));
         let lines = {
             let mut cursors = cursors.borrow_mut();
             let lines = cursors.observe(batch.materialization, &batch.messages);

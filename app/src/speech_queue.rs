@@ -121,6 +121,8 @@ impl SpeechEntry {
 /// Result of offering one request to the queue.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Enqueue {
+    /// Quiet is the default and refused this automatic request.
+    Suppressed,
     /// The queue was idle and this entry became its committed head.
     Start(SpeechEntry),
     /// A head already owns playback; this request remains queued.
@@ -151,14 +153,14 @@ pub enum ExternalPause {
     Start(SpeechEntry),
 }
 
-/// Result of suppressing automatic playback while preserving explicit work.
+/// Playback transition caused by changing one team's automatic-speech policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SuppressAutomatic {
-    /// No automatic head owned playback; any manual head remains current.
+pub enum AutomaticChange {
+    /// The current head remains valid.
     Preserved,
-    /// The automatic head was stopped and no manual successor remains.
+    /// This team's automatic head was stopped and no successor remains.
     Idle,
-    /// The automatic head was stopped and this manual successor became current.
+    /// This team's automatic head was stopped and this successor became current.
     Start(SpeechEntry),
 }
 
@@ -168,14 +170,24 @@ pub struct SpeechQueue {
     next_id: u64,
     active: Option<SpeechEntry>,
     pending: VecDeque<SpeechEntry>,
+    automatic_teams: BTreeSet<String>,
 }
 
 impl SpeechQueue {
-    /// Preserve the active head and queue one request behind it.
+    /// Preserve the active head and queue one admitted request behind it.
     ///
     /// Automatic bursts retain only their newest not-yet-started entry per
-    /// team. Manual requests remain explicit FIFO acts.
+    /// team. Manual requests remain explicit FIFO acts. Automatic speech is
+    /// default-closed, so a team must enable it before any request is admitted.
     pub fn enqueue(&mut self, request: SpeechRequest) -> Enqueue {
+        if request.automatic
+            && !request
+                .lane
+                .as_ref()
+                .is_some_and(|team| self.automatic_teams.contains(team))
+        {
+            return Enqueue::Suppressed;
+        }
         let entry = SpeechEntry {
             id: self.next_identity(),
             request,
@@ -234,24 +246,36 @@ impl SpeechQueue {
         self.pending.clear();
     }
 
-    /// Stop and discard automatic speech without disturbing explicit playback.
-    pub fn suppress_automatic(&mut self) -> SuppressAutomatic {
-        self.pending.retain(|entry| !entry.request.automatic);
+    /// Enable or suppress automatic playback for one team.
+    ///
+    /// Suppression discards that team's queued work, stops its automatic head,
+    /// and remains in force for later requests. Explicit playback is unaffected.
+    pub fn set_automatic(&mut self, team: &str, enabled: bool) -> AutomaticChange {
+        if enabled {
+            if !self.automatic_teams.contains(team) {
+                self.automatic_teams.insert(team.to_owned());
+            }
+            return AutomaticChange::Preserved;
+        }
+        self.automatic_teams.remove(team);
+        self.pending
+            .retain(|entry| !(entry.request.automatic && entry.lane() == Some(team)));
         if !self
             .active
             .as_ref()
-            .is_some_and(|entry| entry.request.automatic)
+            .is_some_and(|entry| entry.request.automatic && entry.lane() == Some(team))
         {
-            return SuppressAutomatic::Preserved;
+            return AutomaticChange::Preserved;
         }
         self.active = self.pending.pop_front();
         self.active
             .clone()
-            .map_or(SuppressAutomatic::Idle, SuppressAutomatic::Start)
+            .map_or(AutomaticChange::Idle, AutomaticChange::Start)
     }
 
-    /// Remove only queued work from one team, preserving the committed head.
+    /// Retire one removed team's automatic policy and queued work.
     pub fn abandon_lane(&mut self, lane: &str) {
+        self.automatic_teams.remove(lane);
         self.pending
             .retain(|entry| entry.lane().is_none_or(|candidate| candidate != lane));
     }

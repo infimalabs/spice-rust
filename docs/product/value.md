@@ -611,10 +611,14 @@ and four lanes, the difference between reading and re-deriving.
 ### Three attention channels
 
 Eye (the board), ear (speech: quiet, speak, narrate), and glance (badges and the
-live status ticker), each with different bandwidth. Card speech reads the
-selected message's full text; topbar speech reads visible main content up to 32 KiB;
-narration reads each newly cursor-admitted message. Nothing present at first
-materialization auto-plays.
+live status ticker), each with different bandwidth. Quiet is the default and
+refuses every automatic utterance for that team, including classified final
+answers and broader narration; it still permits explicit playback of a selected
+card. Speak admits resident-classified utterances, while Narrate reads each
+newly cursor-admitted message. Card speech reads the selected message's full
+text; topbar speech reads visible main content up to 32 KiB. Nothing present at
+first materialization auto-plays, and enabling speech does not replay messages
+whose cursors advanced while Quiet.
 
 **Value:** the ear works while you look elsewhere, letting one operator hold
 more lanes than they can watch. It is best-effort: audio never blocks the
