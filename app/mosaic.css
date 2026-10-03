@@ -469,8 +469,8 @@
   grid-template-columns: max-content minmax(0, 1fr) 30px;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 5px 10px;
+  min-height: 40px;
+  padding: 3px 10px;
   border-bottom: var(--app-control-edge);
   background: var(--panel);
 }
