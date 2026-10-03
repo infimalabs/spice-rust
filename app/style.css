@@ -717,7 +717,10 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   background: var(--panel);
   box-shadow: var(--shadow);
 }
-.quota-account[data-accent] { border-left: 3px solid var(--accent-slot); }
+.quota-account[data-accent] {
+  border-left: 3px solid var(--accent-slot);
+  background: color-mix(in srgb, var(--accent-slot) 8%, var(--panel));
+}
 .quota-account > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
 .quota-account > header .dash-overview-quota-age { margin-left: auto; color: var(--muted); font-size: .7rem; }
 .quota-account h4 { margin: 0; font-size: .84rem; }
