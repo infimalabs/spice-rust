@@ -383,7 +383,8 @@
   background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-annotation-controls { justify-self: stretch; justify-content: space-between; gap: 8px; }
-.image-annotation-tools > button[aria-pressed="true"], .image-annotation-tools > .image-annotation-apply {
+.image-annotation-tools > button[aria-pressed="true"],
+.image-annotation-tools.app-control-rail > .image-annotation-apply {
   background: var(--accent); color: var(--on-accent, var(--panel));
 }
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
