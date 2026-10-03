@@ -220,13 +220,13 @@ lane-status class, agent/tool/command prefix and accent, truncated detail,
 accessible label, and live-region semantics in the middle header slot; an empty
 fleet reserves that slot without inventing status.
 
-The toolbar is a fixed 44px grid of chambers whether or not the team owns work:
-square pip and hamburger chambers span a 16px task band above the status band.
-The team surface has no top border; the toolbar draws that edge, and each team
-task is a square-cornered cell flush with it, giving joined keys carved out of
-the edge, with inner walls and a floor but no outer side walls. Hover and
-keyboard focus redraw the missing edge above a cell in the accent. The ticker
-centers on the lower pip row; task overflow scrolls inside its band.
+The toolbar is a fixed-height grid whether or not the team owns work, with no
+background, border, or shadow; the team surface frames nothing around it, so
+only the pane below carries the panel. Pip and hamburger columns span a task
+band sized to the framed global pill strip above the status band. The team's
+task strip reuses the global `task-pill-strip app-control-rail` frame and pills
+unchanged. The ticker centers on the lower pip row; task overflow scrolls inside
+its band.
 
 The hamburger opens canonical global links for the team:
 `#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope

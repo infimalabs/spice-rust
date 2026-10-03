@@ -322,11 +322,10 @@ fn render_team_toolbar(
     }
 }
 
-/// The task cells in this team's header band: open tasks it created or
-/// currently claims, in the same aggregate-then-stem form as the global strip.
-/// The band is its own chamber, not the global strip, so none of that strip's
-/// placement or frame applies. Its cells open this team's Work scope; the
-/// fleet never shows over Work, so none selects.
+/// The task pills in this team's header band: open tasks it created or
+/// currently claims, in the same aggregate-then-stem form and the same pill
+/// strip as the global one. Its pills open this team's Work scope; the fleet
+/// never shows over Work, so none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
@@ -338,7 +337,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     }
     html! {
         <nav
-            class="team-tasks"
+            class="task-pill-strip app-control-rail team-tasks"
             aria-label="Open tasks this team created or claims"
         >
             {view::chrome::render_aggregate_pill(
