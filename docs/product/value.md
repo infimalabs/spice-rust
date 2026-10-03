@@ -405,9 +405,12 @@ including work held by an unteamed agent, appears in the global strip. Until
 the roster loads, potentially team-associated work waits off both strips
 instead of flashing globally.
 
-Each team rail is centered across the team's top edge directly above its status
-line. The overlay does not increase the team header or displace Chat. Its
-aggregate pill opens `#/work/team/{team}`, and each team stem pill opens
+Each team rail overflows the team's top edge a little, its pills starting where
+the global strip's do, while the team's status line sits on the lower pip row
+below it. A strip of the fleet's top edge is reserved for the rail's outside
+part, so the commandbar never paints over it; the overlay does not increase
+the team header or displace Chat. Its aggregate pill opens
+`#/work/team/{team}`, and each team stem pill opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
 that stem.
 
