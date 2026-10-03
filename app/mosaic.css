@@ -1131,41 +1131,13 @@ a.relative-age {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.team-surface .message-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
 .team-surface .message-task-chip,
 .team-surface .message-ack-pill,
 .team-surface .message-taste-pill,
 .team-surface .message-broadcast-pill,
 .team-surface .message-review-pill,
-.team-surface .message-badge {
+.team-surface .message-final-pill {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.team-surface .message-badge {
-  --message-badge-accent: var(--accent);
-  display: inline-flex;
-  min-height: 17px;
-  align-items: center;
-  gap: 4px;
-  padding: 0 4px;
-  border-radius: var(--app-radius-pill);
-  background: var(--message-badge-accent);
-  color: var(--panel);
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.team-surface .message-badge-count {
-  padding: 0 5px;
-  border-radius: var(--app-radius-pill);
-  background: var(--panel);
-  color: var(--message-badge-accent);
-  font-size: 9px;
 }
 .team-surface .message-agent-name {
   display: inline-flex; justify-content: flex-end;
@@ -1202,7 +1174,8 @@ a.relative-age {
 .team-surface .message-ack-pill,
 .team-surface .message-taste-pill,
 .team-surface .message-broadcast-pill,
-.team-surface .message-review-pill {
+.team-surface .message-review-pill,
+.team-surface .message-final-pill {
   --message-inline-pill-accent: var(--ink);
   display: inline-flex;
   min-height: 17px;
@@ -1226,6 +1199,11 @@ a.relative-age {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.team-surface .message-final-pill {
+  --message-inline-pill-accent: var(--accent-1);
+  background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
+  color: var(--message-inline-pill-accent);
 }
 /* One badge, one metric. The label cell is exactly the width ACK occupies in
    the pill's monospace face, and NAK is the same three characters, so every
