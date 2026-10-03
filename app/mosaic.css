@@ -441,12 +441,6 @@
   overflow: auto hidden;
   overscroll-behavior-inline: contain;
 }
-/* Reserve the fleet's top edge for the outside part of the team task rails,
-   below the commandbar, so no part of a rail is painted over or clipped. */
-.team-fleet:has(.team-task-rail) {
-  --team-task-rail-overhang: 13px;
-  padding-block-start: var(--team-task-rail-overhang);
-}
 
 .team-surface {
   --inactive-lane-opacity: .72;
@@ -476,35 +470,53 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The team's task rail overflows its header's top edge a little, its pills
-   lined up under the global strip's. Its offsets are from the header's padding
-   box, not the grid area chrome.css gives every task strip. */
-.team-toolbar > .team-task-rail {
-  position: absolute;
-  z-index: 2;
-  grid-area: auto;
-  inset-block-start: calc(-1 * (var(--team-task-rail-overhang) + var(--app-control-edge-width)));
-  inset-inline-start: calc(
-    var(--app-task-strip-inline-start) - var(--app-shell-edge-start) - var(--app-control-edge-width)
-  );
-  max-width: calc(100% - var(--app-task-strip-inline-start) + var(--app-shell-edge-start));
-  margin: 0;
-}
-
+/* A team's task pills sit inside its header: one recessed band in the house
+   well tone across the upper half of the status line's column, the status
+   line in the lower half. The band is the only frame, so its pills drop their
+   own surfaces and rings. Each pip row centers on its half. */
 .team-toolbar {
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
+  --team-band: 17px;
+  --team-band-gap: 4px;
+  --team-menu-size: 34px;
   position: relative;
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: max-content minmax(0, 1fr) 30px;
+  grid-template-columns: max-content minmax(0, 1fr) var(--team-menu-size);
   align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 3px 10px;
+  gap: var(--team-band-gap) 8px;
+  min-height: calc(2 * var(--team-band) + var(--team-band-gap) + 8px + var(--app-control-edge-width));
+  padding: 4px 10px;
   border-bottom: var(--app-control-edge);
   background: var(--panel);
 }
+.team-toolbar:has(> .team-task-rail) {
+  --team-pip-gap: calc(var(--team-band) + var(--team-band-gap) - var(--team-pip-size));
+  grid-template-rows: var(--team-band) var(--team-band);
+}
+.team-toolbar:has(> .team-task-rail) > :not(.team-task-rail, .ticker) { grid-row: 1 / span 2; }
+.team-toolbar:has(> .team-task-rail) > .ticker { grid-area: 2 / 2; }
+.team-toolbar > .team-task-rail {
+  grid-area: 1 / 2;
+  align-self: stretch;
+  justify-self: stretch;
+  gap: 0;
+  border: 0;
+  border-radius: var(--app-radius-compact);
+  background: var(--page);
+}
+.team-toolbar > .team-task-rail > .task-pill {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 0 8px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  line-height: 1;
+}
+.team-toolbar > .team-task-rail > .task-pill--all { padding-inline: 4px; }
+.team-toolbar > .team-task-rail > .task-pill:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 .team-lights[data-lane-drag-handle] {
   cursor: grab;
@@ -579,9 +591,9 @@
 .team-menu {
   display: grid;
   place-items: center;
-  width: 30px;
-  min-width: 30px;
-  min-height: 30px;
+  width: var(--team-menu-size);
+  min-width: var(--team-menu-size);
+  min-height: var(--team-menu-size);
   padding: 0;
   border-radius: 50%;
   border-color: var(--control-line-soft);
@@ -596,8 +608,9 @@
   background: transparent;
   font-size: .65rem;
 }
-/* Center the status line on the lower pip row rather than the whole stack. */
-.team-lights:has(.team-light[data-pip-row="2"]) ~ .ticker {
+/* Without a task band, center the status line on the lower pip row rather
+   than the whole stack. */
+.team-toolbar:not(:has(> .team-task-rail)) > .team-lights:has(.team-light[data-pip-row="2"]) ~ .ticker {
   position: relative;
   top: calc((var(--team-pip-size) + var(--team-pip-gap)) / 2);
 }
