@@ -138,8 +138,8 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The tail of quoted words: associated task badges, an explicit non-Operator
-/// author name, and the source message's live relative age.
+/// The tail of quoted words: associated task badges, the source message's live
+/// relative age, and an explicit non-Operator author name.
 ///
 /// Task provenance arrives after the card renders, so the HTML never depends
 /// on it: a steering quote's signoff names its key, and the card body fills in
@@ -168,7 +168,7 @@ pub(super) fn signoff_html(
     };
     let name = quote_author_name_html(author, agents, source);
     let age = quote_age_slot_html(author, agents, source);
-    format!("<span class=\"message-quote-signoff\"{tasks}>{name}{age}</span>")
+    format!("<span class=\"message-quote-signoff\"{tasks}>{age}{name}</span>")
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
