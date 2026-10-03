@@ -109,7 +109,7 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
     let download_unavailable = !*exportable;
     html! {
         <>
-            <div class="image-lightbox-actions">
+            <div class="image-lightbox-actions app-control-rail">
                 if props.onedit.is_some() {
                     <button ref={edit_button} type="button" data-image-edit="" aria-label="Annotate image">{"Annotate"}</button>
                 }

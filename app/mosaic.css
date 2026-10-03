@@ -361,21 +361,30 @@
   grid-area: image; place-self: center; display: block; width: auto; height: auto; min-height: 0;
   max-width: 100%; max-height: 100%; object-fit: contain;
 }
-/* Controls sit on the frost itself: each button and the status toast is one
-   pill of the same treatment, with no card around the group. */
-.image-lightbox-actions { grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.image-lightbox-actions > button, .toast {
-  border: var(--app-edge); border-radius: var(--app-radius-pill); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
+/* The lightbox's packed actions use the app-wide joined frame while retaining
+   the frosted surface treatment. Annotation tools form two spatially separate
+   joined sets: editing tools and commit actions. */
+.image-lightbox-actions {
+  grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end;
 }
-.image-lightbox-actions > button:not([aria-disabled="true"]):hover { border-color: var(--accent); }
-.image-annotation-controls { justify-self: stretch; justify-content: space-between; }
-.image-annotation-tools { display: flex; flex-wrap: wrap; gap: 6px; }
-.image-annotation-tools > button {
+.image-lightbox-actions.app-control-rail,
+.image-annotation-tools.app-control-rail {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-shadow: var(--shadow);
+}
+.image-lightbox-actions.app-control-rail > button,
+.image-annotation-tools.app-control-rail > button { background: transparent; }
+.image-lightbox-actions.app-control-rail > button:not([aria-disabled="true"], :disabled):hover,
+.image-annotation-tools.app-control-rail > button:not([aria-disabled="true"], :disabled):hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.toast {
   border: var(--app-edge); border-radius: var(--app-radius-pill);
   background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
+.image-annotation-controls { justify-self: stretch; justify-content: space-between; gap: 8px; }
 .image-annotation-tools > button[aria-pressed="true"], .image-annotation-tools > .image-annotation-apply {
-  border-color: var(--accent); background: var(--accent); color: var(--on-accent, var(--panel));
+  background: var(--accent); color: var(--on-accent, var(--panel));
 }
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
 .image-annotation-stage { grid-area: image; min-width: 0; min-height: 0; outline: none; }
