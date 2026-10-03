@@ -22,9 +22,9 @@
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  /* Chat starts closer to the viewport than the desktop commandbar. Team edge
-     controls add this difference so their outer edges still meet its circles. */
-  --app-header-edge-offset: calc(var(--app-commandbar-inline-pad) - var(--app-shell-edge-inline));
+  /* Chat runs to the viewport edge; team edge controls inset by the
+     commandbar's inline pad so their outer edges still meet its circles. */
+  --app-header-edge-offset: var(--app-commandbar-inline-pad);
   --app-commandbar-block-pad: 8px;
   /* The commandbar's height; inactive Chat sits exactly below it. */
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
@@ -39,13 +39,8 @@ body:has(.shell--mosaic),
   min-height: 0;
   overflow: hidden;
 }
-/* The agents workspace carries the Chat frame edge too, so its layout is the
-   same whether Chat is shown or retained behind another destination. */
-.shell--mosaic,
-.mosaic-workspace {
-  --app-frame-edge-block-end: 10px;
-}
 .shell--mosaic {
+  --app-frame-edge-block-end: 10px;
   position: fixed;
   inset: 0;
   height: 100vh;
