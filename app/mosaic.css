@@ -593,7 +593,7 @@
 /* The control column sizes itself from the stack's fixed inline size, so the
    draft takes every remaining pixel at every viewport width. */
 .team-composer {
-  --team-composer-block-size: 170px;
+  --team-composer-block-size: 160px;
   --team-composer-edge-gap: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -823,9 +823,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* Ranges over the full-width submit; regions round their own corners so focus
    and preview rings stay visible. The frame holds no words but the submit's: it
    starts one label row down, and the values ride above it, leaning on the
-   center seam, reading as one phrase ("quiet drain", "narrate steer"). */
+   center seam, reading as one phrase ("quiet drain", "narrate steer"). The
+   square-size correction comes entirely from the submit row so the slider
+   tracks retain their height. */
 .team-composer .team-composer-controls {
-  --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
+  --team-control-submit-trim: 10px;
+  --team-control-item-height: calc(
+    (var(--team-composer-block-size) + var(--team-control-submit-trim) - 2 * var(--team-control-gap)) / 3
+    - var(--team-control-submit-trim)
+  );
   --team-control-inner-radius: calc(var(--app-radius-compact) - 1px);
   --team-control-label-row: 14px;
   position: relative; display: grid; gap: 0; inline-size: 74px;
