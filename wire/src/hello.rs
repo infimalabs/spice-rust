@@ -32,8 +32,8 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 10 carries the operator's resolved identity in the bootstrap.
-    pub const CURRENT: Self = Self(10);
+    /// Version 11 carries each pending directive's lane-wake classification.
+    pub const CURRENT: Self = Self(11);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

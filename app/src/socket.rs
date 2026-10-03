@@ -382,3 +382,24 @@ impl Session {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_protocol_admits_only_the_current_generation() {
+        assert!(admit_app_protocol(Some(AppProtocolVersion::CURRENT)).is_ok());
+
+        for observed in [
+            None,
+            Some(AppProtocolVersion(AppProtocolVersion::CURRENT.0 - 1)),
+            Some(AppProtocolVersion(AppProtocolVersion::CURRENT.0 + 1)),
+        ] {
+            let fault = admit_app_protocol(observed)
+                .expect_err("a non-current app protocol must stop before DTO decoding");
+            assert_eq!(fault.class, FaultClass::Protocol);
+            assert_eq!(fault.reason, reason::APP_PROTOCOL);
+        }
+    }
+}
