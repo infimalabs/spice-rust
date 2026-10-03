@@ -1,11 +1,11 @@
 //! Browser callbacks, activity cards, attachments, and safe Markdown for lane messages.
 
+use wasm_bindgen::JsCast;
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
 use yew::functional::UseReducerDispatcher;
 
 use super::*;
 mod drag;
-mod task_inspector;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
 
@@ -369,9 +369,11 @@ pub(super) struct AgentMessageCardProps {
     pub(super) member: crate::runtime::LaneMember,
     pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
     pub(super) quote_sources: Rc<crate::composer_markdown::QuoteSources>,
+    pub(super) quote_tasks: Rc<crate::runtime::QuoteTasks>,
     pub(super) quote_lane: CanonicalUuid,
     pub(super) message: Rc<wire::AgentMessage>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    pub(super) open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(super) speech_queue: Callback<SpeechRequest>,
     pub(super) speech: TeamSpeech,
     pub(super) speaking: bool,
@@ -388,9 +390,11 @@ impl PartialEq for AgentMessageCardProps {
             && self.member.worktree == other.member.worktree
             && self.quote_agents == other.quote_agents
             && self.quote_sources == other.quote_sources
+            && self.quote_tasks == other.quote_tasks
             && self.quote_lane == other.quote_lane
             && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
             && self.quote_dispatcher == other.quote_dispatcher
+            && self.open_task == other.open_task
             && self.speech_queue == other.speech_queue
             && self.speech == other.speech
             && self.speaking == other.speaking
@@ -407,7 +411,7 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let card_key = agent_message_source_id(&props.message);
     let worktree = props.member.worktree.clone();
     let playback = props.member.speech.clone();
-    let speech_message_key = card_key.clone();
+    let speech_message_key = card_key;
     let speech_queue = props.speech_queue.clone();
     let response = props
         .message
@@ -435,23 +439,17 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         props.speaking,
         props.order,
     );
-    let inspector = task_inspector::use_card(card_key);
-    render_agent_message_card(props, &correspondent, &inspector)
+    render_agent_message_card(props, &correspondent)
 }
 
 fn render_agent_message_card(
     props: &AgentMessageCardProps,
     correspondent: &view::chrome::Correspondent,
-    card_inspector: &task_inspector::Card,
 ) -> Html {
-    let inspector = card_inspector.context.as_ref();
-    let inspection = card_inspector.inspection.as_ref();
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
-    let quote_tasks = Rc::new(inspector.map_or_else(Default::default, |context| {
-        context.message_quote_tasks(message)
-    }));
+    let quote_tasks = props.quote_tasks.clone();
     let layout = &props.layout;
     let AgentMessagePresentation {
         source_id,
@@ -473,9 +471,8 @@ fn render_agent_message_card(
         quote_tasks,
         correspondent,
     );
-    let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
-    let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
-    let inspection_open = inspection.is_some_and(|inspection| inspection.open);
+    let task_click = message_task_click(props.open_task.clone());
+    let task_keydown = message_task_keydown(props.open_task.clone());
     html! {
         <article
             key={source_id.clone()}
@@ -488,14 +485,12 @@ fn render_agent_message_card(
                 message.final_answer.then_some("final"),
                 correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
-                inspection.is_some().then_some("mosaic-message-card--inspecting-task"),
             )}
             aria-label={card_label}
             tabindex="-1"
             data-card-kind={if is_boundary { "compaction" } else { "agent-message" }}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
-            data-task-inspection={inspection.is_some().to_string()}
             onclick={task_click}
             onkeydown={task_keydown}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
@@ -529,31 +524,64 @@ fn render_agent_message_card(
             if is_boundary {
                 {render_agent_boundary(message, &footer_label)}
             } else {
-                <>
-                <div
-                    class="mosaic-message-layers"
-                    data-task-panel-state={if inspection_open { "open" } else { "closed" }}
-                >
-                    <div
-                        class="mosaic-message-normal"
-                        aria-hidden={inspection_open.to_string()}
-                        inert={inspection_open.then_some("true")}
-                    >
-                        {render_normal_face(message, NormalFace {
-                            rendered_html,
-                            unlinked_media,
-                            media_description: media_description.as_deref(),
-                            lone_tool_image,
-                            footer_label: &footer_label,
-                            attribution: &attribution,
-                        })}
-                    </div>
+                <div class="mosaic-message-content">
+                    {render_normal_face(message, NormalFace {
+                        rendered_html,
+                        unlinked_media,
+                        media_description: media_description.as_deref(),
+                        lone_tool_image,
+                        footer_label: &footer_label,
+                        attribution: &attribution,
+                    })}
                 </div>
-                {render_task_layer(card_inspector, inspection_open)}
-                </>
             }
         </article>
     }
+}
+
+fn message_task_click(
+    open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
+) -> Callback<MouseEvent> {
+    Callback::from(move |event: MouseEvent| {
+        let Some((chip, task)) = message_task_from_target(event.target()) else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        open_task.emit((task, chip));
+    })
+}
+
+fn message_task_keydown(
+    open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
+) -> Callback<KeyboardEvent> {
+    Callback::from(move |event: KeyboardEvent| {
+        if event.key() != "Enter" && event.key() != " " {
+            return;
+        }
+        let Some((chip, task)) = message_task_from_target(event.target()) else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        open_task.emit((task, chip));
+    })
+}
+
+fn message_task_from_target(
+    target: Option<web_sys::EventTarget>,
+) -> Option<(web_sys::Element, wire::TaskStamp)> {
+    let chip = target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())?
+        .closest(".message-task-chip")
+        .ok()??;
+    let task = chip
+        .get_attribute("data-task-handle")?
+        .parse::<wire::TaskHandle>()
+        .ok()?
+        .born()
+        .ok()?;
+    Some((chip, task))
 }
 
 /// What a card's normal face shows besides its producing message.
@@ -590,32 +618,6 @@ fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Htm
         <div class="message-flow">
             {face.rendered_html}
             {media}
-        </div>
-    }
-}
-
-/// The card's back face: the quick task view while a chip is inspected.
-fn render_task_layer(card_inspector: &task_inspector::Card, open: bool) -> Html {
-    let (Some(inspector), Some(inspection)) = (
-        card_inspector.context.as_ref(),
-        card_inspector.inspection.as_ref(),
-    ) else {
-        return Html::default();
-    };
-    let close = task_inspector::close_inspector(card_inspector.context.clone());
-    html! {
-        <div
-            ref={card_inspector.layer.clone()}
-            class="mosaic-message-task-layer"
-            aria-hidden={(!open).to_string()}
-            inert={(!open).then_some("true")}
-        >
-            {crate::browser::message_task_inspector::render(
-                inspector,
-                inspection,
-                card_inspector.root.clone(),
-                close,
-            )}
         </div>
     }
 }

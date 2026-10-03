@@ -87,6 +87,7 @@ pub(super) fn render_team(
         composer_drag,
         team_drag,
         select_task,
+        open_message_task,
         navigate,
         agents: controls,
         ..
@@ -151,6 +152,7 @@ pub(super) fn render_team(
         work,
         navigate,
         select_task,
+        open_message_task,
         runtime,
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,
@@ -219,6 +221,7 @@ fn render_compose(
     controls: &view::AgentControls,
     surface: &UseStateHandle<SurfaceData>,
     select: &Callback<wire::TaskStamp>,
+    open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
     attention: &attention::TeamAttention,
 ) -> Html {
     if team.members.is_empty() {
@@ -243,11 +246,7 @@ fn render_compose(
         });
     let cards = activity_cards(runtime, team, quote_agents);
     let member_command = member_controls::command_callback(sender, surface, team.lane);
-    let history_targets = team
-        .members
-        .iter()
-        .filter_map(|member| history_target(runtime, member.lane))
-        .collect();
+    let history_targets = team_history_targets(runtime, team);
     html! {
         <div class="team-compose" onclick={Callback::from(agent_menu::dismiss_others)}>
             <form class="team-composer" onsubmit={submit.clone()}>
@@ -307,8 +306,8 @@ fn render_compose(
                 &cards,
                 drafts,
                 controls,
-                control.speech,
-                control.life,
+                open_message_task,
+                &control,
                 HistoryPaging {
                     sender,
                     targets: history_targets,
@@ -326,6 +325,16 @@ fn history_target(
     runtime
         .message_history_target(lane)
         .map(|cursor| (lane, (cursor, runtime.message_history_completion(lane))))
+}
+
+fn team_history_targets(
+    runtime: &AppRuntime,
+    team: &crate::runtime::LaneRow,
+) -> BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)> {
+    team.members
+        .iter()
+        .filter_map(|member| history_target(runtime, member.lane))
+        .collect()
 }
 
 fn broadcast_targets(
@@ -358,12 +367,16 @@ fn activity_cards(
     team: &crate::runtime::LaneRow,
     quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
 ) -> Vec<ActivityCard> {
-    // A card carries only the agents its quotes name: the roster as a whole
-    // changes whenever any seat's occupancy does, and a card holding all of it
-    // would lose its measurement and re-lay out the whole plane each time.
+    // A card carries only the agents, sources, and tasks its quotes name:
+    // unrelated roster or board changes cannot re-render and remeasure it.
     let unquoted = Rc::new(crate::composer_markdown::QuoteAgents::new());
     let quote_sources = team_quote_sources(runtime, team);
     let unquoted_sources = Rc::new(crate::composer_markdown::QuoteSources::new());
+    let quote_tasks = runtime
+        .board()
+        .map(|board| Rc::clone(&board.quote_tasks))
+        .unwrap_or_default();
+    let unquoted_tasks = Rc::new(crate::runtime::QuoteTasks::new());
     let mut cards = runtime
         .messages()
         .iter()
@@ -394,6 +407,15 @@ fn activity_cards(
                         &message.quotes,
                         &message.directive_contexts,
                         &quote_sources,
+                    ))
+                },
+                quote_tasks: if message.quotes.is_empty() && message.directive_contexts.is_empty() {
+                    Rc::clone(&unquoted_tasks)
+                } else {
+                    Rc::new(crate::composer_markdown::referenced_quote_tasks(
+                        &message.quotes,
+                        &message.directive_contexts,
+                        &quote_tasks,
                     ))
                 },
                 quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
@@ -427,8 +449,8 @@ fn render_activity(
     cards: &[ActivityCard],
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
-    speech: TeamSpeech,
-    life: TeamLife,
+    open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
+    team_control: &controls::TeamControl,
     history: HistoryPaging<'_>,
 ) -> Html {
     let empty = cards.is_empty();
@@ -449,13 +471,14 @@ fn render_activity(
             <MosaicPlane
                 key={team.lane.to_string()}
                 lane={team.lane}
-                {life}
+                life={team_control.life}
                 members={team.members.len()}
                 cards={cards.to_vec()}
                 quote_dispatcher={drafts.dispatcher()}
+                open_message_task={open_message_task.clone()}
                 speak={controls.speak.clone()}
                 {narrate}
-                {speech}
+                speech={team_control.speech}
                 speech_message={(*controls.speech_message).clone()}
                 history_targets={history.targets}
                 history_revision={history.revision}

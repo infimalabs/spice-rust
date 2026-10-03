@@ -48,7 +48,6 @@ mod direction_card;
 mod direction_history;
 mod image_viewer;
 mod mermaid;
-mod message_task_inspector;
 mod navigation;
 mod overlay;
 mod sender;
@@ -372,7 +371,6 @@ struct AppState {
     composer_drag: watchband::PrimaryComposerDragState,
     team_drag: watchband::TeamDragState,
     work_detail: task_detail::Controls,
-    task_inspector: message_task_inspector::Controls,
     direction_history: direction_history::Controls,
     work_history: work_history::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
@@ -405,6 +403,15 @@ impl AppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
+        let select_task = self.navigate.reform(navigation::Intent::Task);
+        let open_message_task = {
+            let select_task = select_task.clone();
+            let return_focus_to = self.work_detail.return_focus_to.clone();
+            Callback::from(move |(task, target)| {
+                return_focus_to.emit(target);
+                select_task.emit(task);
+            })
+        };
         let app = render_app(
             AppRender {
                 connection: &self.connection,
@@ -436,14 +443,19 @@ impl AppState {
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
                 submit_note: self.work_detail.submit_note.clone(),
-                select_task: self.navigate.reform(navigation::Intent::Task),
+                select_task,
+                open_message_task,
                 request_task: self.work_detail.request.clone(),
                 close_task: self.work_detail.close.clone(),
                 retry_relations,
             },
             work.as_ref(),
         );
-        message_task_inspector::provide(self.task_inspector, app, self.composer_drafts)
+        html! {
+            <image_viewer::Provider drafts={self.composer_drafts}>
+                <mermaid::Provider>{app}</mermaid::Provider>
+            </image_viewer::Provider>
+        }
     }
 }
 
@@ -489,7 +501,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         },
         navigate.reform(|()| navigation::Intent::CloseTask),
     );
-    let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let direction_history = direction_history::use_controls(
         sender.clone(),
         surface.clone(),
@@ -540,7 +551,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             composer_drag,
             team_drag,
             work_detail,
-            task_inspector,
             direction_history,
             work_history,
             work_map,
@@ -602,7 +612,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     );
     use_mosaic_root_scroll(chat_visible);
     app_menu::use_dismissal(state.app_menu_open.clone());
-    message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);
     watchband::use_team_menu_escape(&state.team_controls, chat_visible);
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(

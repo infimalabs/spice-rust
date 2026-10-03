@@ -359,26 +359,25 @@ detail retains the team scope; its project action still selects the task's
 project stem.
 
 Tasks created from a retained transcript expose one creator-context link on
-their card, Chat quick view, and detail. Its visible label is the live relative
-age of the task's creation; its accessible name says it opens the creator
-context in Chat. It opens the newest retained message at or before the recorded
-creation boundary, paging older history as needed, and appears only when the
-lane proves the recorded transcript generation.
+their card and in detail. Its visible label is the live relative age of the
+task's creation; its accessible name says it opens the creator context in Chat.
+It opens the newest retained message at or before the recorded creation
+boundary, paging older history as needed, and appears only when the lane proves
+the recorded transcript generation.
 
 Descriptions, acceptance criteria, and observations render as authored Markdown
-through one sanitized task-text renderer shared by the Chat quick view
-(description and recent observations) and the detail drawer (everything);
-observation author, time, order, and the recent window are unchanged. Wide code
-and tables scroll in their own box, raw HTML stays literal, and unsafe link
-schemes lose their destination. A handle the board holds becomes the Chat task
-chip and moves the quick view or drawer to that task; any other handle, and
-anything inside code or link text, stays literal.
+through the sanitized task-text renderer in the detail drawer; observation
+author, time, order, and the recent window are unchanged. Wide code and tables
+scroll in their own box, raw HTML stays literal, and unsafe link schemes lose
+their destination. A handle the board holds becomes a Chat task chip; clicking
+or activating that chip opens the task in the shared detail drawer and returns
+focus to the chip when the drawer closes. Any other handle, and anything inside
+code or link text, stays literal.
 
-The observation composer in both places mirrors the Chat composer: the draft on
-the left and its submit controls on the right, a column of equal pills holding
-**Add** and, for an operator, **Close**, which submits the draft as the
-closure's validation. Closing a task a lane still holds names that holder in the
-button's description.
+The observation composer mirrors the Chat composer: the draft on the left and
+its submit controls on the right, a column of equal pills holding **Add** and,
+for an operator, **Close**, which submits the draft as the closure's validation.
+Closing a task a lane still holds names that holder in the button's description.
 
 In the task observation composer, Enter inserts a newline and Command or
 Control + Enter adds an observation. Holding Shift with that chord instead

@@ -82,16 +82,6 @@ pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
     let _ = remember_return(event, "a.message-quote-age[href]", ".mosaic-message-card");
 }
 
-/// Preserve the Chat card holding a task quick view before following its
-/// creator-context link.
-pub(super) fn remember_creator_return(event: &web_sys::MouseEvent) -> bool {
-    remember_return(
-        event,
-        "a.creator-context-link[href]",
-        ".mosaic-message-card",
-    )
-}
-
 /// Preserve a global Work card before following one of its Chat links.
 pub(super) fn remember_global_work_return(event: &web_sys::MouseEvent) {
     let _ = remember_return(event, WORK_RETURN_LINKS, "[data-card-return-origin]");

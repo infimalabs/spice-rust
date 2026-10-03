@@ -115,6 +115,7 @@ pub(super) struct AppRender<'a> {
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
+    pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub request_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
