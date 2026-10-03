@@ -70,6 +70,12 @@ an ellipsis, and disconnection without a retained board has an exclamation
 mark. During reconnect, the last known count stays visible in amber and the
 title marks it stale; a current snapshot restores the green badge.
 
+## Provider quota rows
+
+Each account-limit row reads from left to right as the limit name, flexible
+usage bar, amount left, and reset. The amount stays immediately beside the
+bar it describes rather than separating the name from that bar.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift

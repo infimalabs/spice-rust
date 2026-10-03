@@ -139,16 +139,16 @@ fn render_limit(limit: &wire::QuotaLimit) -> Html {
                     <span class="quota-limit-status">{status.to_owned()}</span>
                 }
             </strong>
-            <span class="quota-limit-amount">{crate::quota::amount_text(&limit.amount)}</span>
             {render_meter(remaining)}
+            <span class="quota-limit-amount">{crate::quota::amount_text(&limit.amount)}</span>
             <span class="quota-limit-reset">{render_reset(limit.window.as_ref())}</span>
         </li>
     }
 }
 
 /// Remaining share drawn as SVG geometry (the app CSP refuses inline styles),
-/// anchored at the bar's start beside its amount label, so usage empties it
-/// from the reset side.
+/// anchored at the bar's start so usage empties it from the reset side. The
+/// amount follows the bar in row order.
 fn render_meter(remaining: Option<f64>) -> Html {
     let Some(remaining) = remaining else {
         return html! { <span class="quota-meter" aria-hidden="true"></span> };
