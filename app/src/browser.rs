@@ -378,6 +378,7 @@ struct AppState {
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
     unsafe_intent: bool,
+    open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
 }
 
 impl AppState {
@@ -405,14 +406,7 @@ impl AppState {
             })
             .map(|_| "Linked card focused.".to_owned());
         let select_task = self.navigate.reform(navigation::Intent::Task);
-        let open_message_task = {
-            let select_task = select_task.clone();
-            let return_focus_to = self.work_detail.return_focus_to.clone();
-            Callback::from(move |(task, target)| {
-                return_focus_to.emit(target);
-                select_task.emit(task);
-            })
-        };
+        let open_message_task = self.open_message_task.clone();
         let app = render_app(
             AppRender {
                 connection: &self.connection,
@@ -529,6 +523,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
     let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
+    let open_message_task = use_open_message_task(&navigate, &work_detail.return_focus_to);
     (
         AppState {
             connection,
@@ -558,9 +553,30 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             speech_status,
             agents,
             unsafe_intent,
+            open_message_task,
         },
         speech_runtime,
     )
+}
+
+/// Open a task linked from an agent message through one callback that keeps its
+/// identity across renders, so every message card's props stay equal and its
+/// parsed Markdown is not rebuilt each time anything else re-renders the app.
+#[hook]
+fn use_open_message_task(
+    navigate: &Callback<navigation::Intent>,
+    return_focus_to: &Callback<web_sys::Element>,
+) -> Callback<(wire::TaskStamp, web_sys::Element)> {
+    let current = use_mut_ref(|| (navigate.clone(), return_focus_to.clone()));
+    *current.borrow_mut() = (navigate.clone(), return_focus_to.clone());
+    (*use_memo((), move |()| {
+        Callback::from(move |(task, target)| {
+            let (navigate, return_focus_to) = current.borrow().clone();
+            return_focus_to.emit(target);
+            navigate.emit(navigation::Intent::Task(task));
+        })
+    }))
+    .clone()
 }
 
 #[hook]
