@@ -129,7 +129,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
             if let Some(topology) = topology {
                 <fieldset class="work-direction-chip-filter">
                     <legend>{"Teams"}</legend>
-                    <div class="work-direction-chips">
+                    <div class="work-direction-chips app-control-rail">
                         {for topology.lanes.iter().filter(|team| !team.members.is_empty()).map(|team| {
                             let identity = team.lane;
                             let selected = controls.selected_teams.contains(&identity);
@@ -148,7 +148,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                 </fieldset>
                 <fieldset class="work-direction-chip-filter">
                     <legend>{"Agents"}</legend>
-                    <div class="work-direction-chips">
+                    <div class="work-direction-chips app-control-rail">
                         {for topology.lanes.iter().flat_map(|team| team.members.iter()).map(|agent| {
                             let identity = agent.lane;
                             let selected = controls.selected_agents.contains(&identity);
@@ -171,7 +171,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
             }
             <fieldset class="work-direction-chip-filter">
                 <legend>{"State"}</legend>
-                <div class="work-direction-chips">
+                <div class="work-direction-chips app-control-rail">
                     {for STATES.map(|(state, label)| {
                         let selected = controls.selected_states.contains(&state);
                         let toggle = controls.toggle_state.reform(move |_| state);

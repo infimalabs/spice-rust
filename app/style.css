@@ -87,7 +87,26 @@ button, select, input, textarea {
 
 select, input, textarea { border-radius: var(--app-radius-control); }
 
-.app-control-rail { border: var(--app-control-edge); border-radius: var(--app-radius-pill); background: var(--control-surface-soft); }
+/* A joined set: packed controls share one frame, the look of the team
+   composer's sliders over its send button. No space between controls, one
+   1px divider, and only the frame's outer corners rounded. Each control rings
+   itself into the 1px gap, so neighbours draw the same pixel and wrapped rows
+   stay single-ruled; the frame clips rings at its edge, so the rounding is
+   the frame's alone. Focus rings sit inside the control the frame clips. */
+.app-control-rail {
+  --app-control-rail-divider: color-mix(in srgb, var(--line) 36%, var(--control-surface-soft));
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 1px;
+  min-width: 0; padding: 0; overflow: clip;
+  border: var(--app-control-edge); border-radius: var(--app-radius-compact);
+  background: var(--control-surface-soft);
+}
+.app-control-rail > :is(button, details, input, select, span) {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  border: 0; border-radius: 0;
+  box-shadow: 0 0 0 1px var(--app-control-rail-divider);
+}
+.app-control-rail:empty { display: none; }
+.app-control-rail :is(button, input, select, summary):focus-visible { outline-offset: -2px; }
 
 /* Bare buttons take control geometry, so a button that frames content reads
    as a card. Capsule geometry belongs to the compact-control role: a control
@@ -431,8 +450,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .message-meta span { color: var(--muted); }
 .message-author { color: var(--accent-slot, var(--accent)) !important; font-weight: 700; }
-
-.message-actions { display: flex; gap: 5px; }
 
 .card-action {
   display: grid;

@@ -195,22 +195,24 @@ fn model_form(props: &ModelFormProps) -> Html {
     html! {
         <form class="member-model" data-member-control="model" onsubmit={submit}>
             <label for={id.clone()}>{"Next launch model"}</label>
-            <input
-                {id}
-                type="text"
-                spellcheck="false"
-                autocomplete="off"
-                value={(*draft).clone()}
-                placeholder={props.placeholder.clone()}
-                disabled={busy}
-                {oninput}
-            />
-            <button type="submit" class="agent-menu-action" disabled={busy}>{"Set model"}</button>
-            if let Some(reset) = reset {
-                <button type="button" class="agent-menu-action" disabled={busy} onclick={reset}>
-                    {"Use default"}
-                </button>
-            }
+            <div class="app-control-rail">
+                <input
+                    {id}
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    value={(*draft).clone()}
+                    placeholder={props.placeholder.clone()}
+                    disabled={busy}
+                    {oninput}
+                />
+                <button type="submit" class="agent-menu-action" disabled={busy}>{"Set model"}</button>
+                if let Some(reset) = reset {
+                    <button type="button" class="agent-menu-action" disabled={busy} onclick={reset}>
+                        {"Use default"}
+                    </button>
+                }
+            </div>
         </form>
     }
 }
@@ -263,18 +265,20 @@ fn effort_form(props: &EffortFormProps) -> Html {
         <form class="member-effort" data-member-control="effort" onsubmit={submit}>
             <label for={format!("member-effort-{lane}")}>{"Reasoning effort"}</label>
             <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
-            <select
-                id={format!("member-effort-{lane}")}
-                value={(*draft).clone()}
-                disabled={props.busy}
-                {onchange}
-            >
-                <option value="">{format!("default ({})", props.default_effort)}</option>
-                {for props.choices.iter().map(|effort| html! {
-                    <option value={effort.clone()}>{effort}</option>
-                })}
-            </select>
-            <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set effort"}</button>
+            <div class="app-control-rail">
+                <select
+                    id={format!("member-effort-{lane}")}
+                    value={(*draft).clone()}
+                    disabled={props.busy}
+                    {onchange}
+                >
+                    <option value="">{format!("default ({})", props.default_effort)}</option>
+                    {for props.choices.iter().map(|effort| html! {
+                        <option value={effort.clone()}>{effort}</option>
+                    })}
+                </select>
+                <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set effort"}</button>
+            </div>
         </form>
     }
 }
@@ -337,13 +341,14 @@ fn render_retune(
     }
 }
 
+/// The renewal action, and the refused launch's reason when one is pending.
 fn render_renewal(
     runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     busy: bool,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
-) -> Html {
+) -> (Html, Html) {
     let renewal = watchband::agent_renewal_control(
         &standing.label,
         runtime
@@ -351,7 +356,7 @@ fn render_renewal(
             .and_then(|lanes| lanes.renewal(standing.team, member.lane)),
     );
     // A refused launch stays retryable, and its exact reason stays in view.
-    let refusal = renewal.refusal.clone().map(|reason| {
+    let refusal = renewal.refusal.clone().map_or_else(Html::default, |reason| {
         html! {
             <p class="member-refusal" role="status">{format!("Renewal launch refused: {reason}")}</p>
         }
@@ -359,20 +364,18 @@ fn render_renewal(
     let next = MemberCommand::Renew {
         requested: renewal.next_requested,
     };
-    html! {
-        <>
-            <button
-                type="button"
-                class="agent-menu-action"
-                data-member-control="renew"
-                aria-label={renewal.label}
-                title={renewal.title}
-                disabled={busy}
-                onclick={send(command, member.lane, next)}
-            >{renewal.heading}</button>
-            {refusal}
-        </>
-    }
+    let action = html! {
+        <button
+            type="button"
+            class="agent-menu-action"
+            data-member-control="renew"
+            aria-label={renewal.label}
+            title={renewal.title}
+            disabled={busy}
+            onclick={send(command, member.lane, next)}
+        >{renewal.heading}</button>
+    };
+    (action, refusal)
 }
 
 fn render_lifecycle(
@@ -434,20 +437,24 @@ pub(super) fn render(
         .member_control(member.lane)
         .and_then(MemberControlState::pending)
         .is_some();
+    let (renewal, refusal) = if offered.renew {
+        render_renewal(runtime, member, standing, busy, command)
+    } else {
+        (Html::default(), Html::default())
+    };
     html! {
         <section
             class="member-controls"
             aria-label={format!("Controls for {}", standing.label)}
             aria-busy={busy.to_string()}
         >
-            <div class="member-control-actions">
+            <div class="app-control-rail">
                 if offered.lifecycle {
                     {render_lifecycle(member, standing, busy, command)}
                 }
-                if offered.renew {
-                    {render_renewal(runtime, member, standing, busy, command)}
-                }
+                {renewal}
             </div>
+            {refusal}
             if offered.model || offered.effort {
                 {render_retune(runtime, member, &offered, busy, command)}
             }

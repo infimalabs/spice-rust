@@ -496,7 +496,7 @@
 .team-light.bound,
 .team-light.unbound { box-shadow: none; }
 
-.app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 4px; }
+.app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 
 .app-option {
   display: inline-flex;
@@ -507,7 +507,6 @@
   min-height: 0;
   padding: 4px 8px;
   border: 0;
-  border-radius: var(--app-radius-pill);
   background: transparent;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -542,7 +541,6 @@
 .app-option--counted > .app-option-label { grid-column: 2; }
 .app-option--counted > .app-option-badge { grid-column: 3; justify-self: start; }
 @container (max-width: 20rem) {
-  .app-option-rail { gap: 0; }
   .app-option { gap: 2px; padding-inline: 3px; }
   .app-option-badge { display: none; }
 }
@@ -1176,12 +1174,7 @@ a.relative-age {
 .team-surface .message-agent-name:focus-visible .message-agent-label {
   text-decoration: underline; text-underline-offset: 2px;
 }
-.team-surface .message-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-  margin-left: 0;
-}
+.team-surface .message-actions { flex: 0 0 auto; margin-left: 0; }
 .team-surface .message-task-chip,
 .team-surface .message-ack-pill,
 .team-surface .message-taste-pill,
@@ -1271,11 +1264,6 @@ a.relative-age {
   height: 32px;
   min-height: 32px;
   margin-left: 0;
-  border-color: color-mix(
-    in srgb,
-    var(--accent-slot, var(--accent)) 24%,
-    var(--control-line-soft)
-  );
   background: var(--control-surface-soft);
   color: var(--muted);
   font-family: ui-sans-serif, system-ui, sans-serif;
@@ -1284,11 +1272,10 @@ a.relative-age {
 }
 .team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:hover,
 .team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:focus-visible {
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 6%, var(--control-surface-soft));
   color: var(--ink);
 }
 .team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:active {
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   background: color-mix(
     in srgb,
     var(--accent-slot, var(--accent)) 12%,
