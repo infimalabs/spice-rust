@@ -57,7 +57,7 @@ enum Tone {
 }
 
 impl Tone {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     const fn color(self) -> &'static str {
         match self {
             Self::Loading => "#9aa29b",
@@ -106,7 +106,7 @@ impl BrowserBranding {
     }
 
     /// Standalone SVG document for the favicon.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn icon(&self) -> String {
         let (font_size, baseline) = label_metrics(&self.badge);
@@ -148,7 +148,7 @@ fn label_metrics(label: &str) -> (usize, usize) {
     LABEL_METRICS[characters - 1]
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 #[yew::hook]
 pub(crate) fn use_browser_branding(state: CountState) {
     use yew::prelude::use_effect_with;
@@ -156,7 +156,7 @@ pub(crate) fn use_browser_branding(state: CountState) {
     use_effect_with(state, |state| apply(&BrowserBranding::for_state(*state)));
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 fn apply(branding: &BrowserBranding) {
     use base64::Engine as _;
 
