@@ -222,9 +222,12 @@ permalink and advances on its own visible-unit deadlines. Authored Markdown
 links retain the ordinary accent, and quoted-source ages keep their separate
 quote presentation.
 
-A FINAL classification sits immediately before the producer name in the same
-compact, translucent accent pill used for task origins inside quoted signoffs.
-It remains producer metadata rather than occupying the card-action island.
+A signoff keeps its relative age immediately beside the producer name; any
+badge leads that pair. A FINAL classification therefore precedes the age, in
+the same compact, translucent accent pill used for task origins inside quoted
+signoffs, which lead their age and name the same way. On a card without a
+signoff, FINAL sits immediately before the producer name. It remains producer
+metadata rather than occupying the card-action island.
 
 ## Profile app latency in Firefox
 

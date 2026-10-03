@@ -886,8 +886,9 @@ fn render_agent_message_media(
     }
 }
 
-/// A prose card signs its final line the way a quote does: the live age
-/// linking to the message source, then the producer's copyable label.
+/// A prose card signs its final line the way a quote does: its badges, then
+/// the live age linking to the message source beside the producer's copyable
+/// label, so the age always sits next to the name.
 fn render_agent_message_signoff(
     message: &wire::AgentMessage,
     producer_label: &str,
@@ -895,38 +896,43 @@ fn render_agent_message_signoff(
 ) -> Html {
     html! {
         <>
+            {render_final_pill(message)}
             {render_message_age(message, attribution)}
-            {render_producer_identity(message, producer_label, attribution)}
+            {render_producer_name(message, producer_label, attribution)}
         </>
     }
 }
 
-fn render_producer_identity(
+fn render_final_pill(message: &wire::AgentMessage) -> Html {
+    if !message.final_answer {
+        return Html::default();
+    }
+    html! {
+        <span
+            class="message-final-pill"
+            data-message-classification="final"
+            aria-label="Final answer"
+        >
+            {"FINAL"}
+        </span>
+    }
+}
+
+fn render_producer_name(
     message: &wire::AgentMessage,
     producer_label: &str,
     attribution: &str,
 ) -> Html {
     html! {
-        <>
-            if message.final_answer {
-                <span
-                    class="message-final-pill"
-                    data-message-classification="final"
-                    aria-label="Final answer"
-                >
-                    {"FINAL"}
-                </span>
-            }
-            <view::chrome::CopyButton
-                class="message-agent-name"
-                text={AttrValue::from(message.author.to_string())}
-                subject="agent id"
-                title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
-                label={AttrValue::from(format!("Copy agent id for {attribution}"))}
-            >
-                <span class="message-agent-label">{producer_label.to_owned()}</span>
-            </view::chrome::CopyButton>
-        </>
+        <view::chrome::CopyButton
+            class="message-agent-name"
+            text={AttrValue::from(message.author.to_string())}
+            subject="agent id"
+            title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
+            label={AttrValue::from(format!("Copy agent id for {attribution}"))}
+        >
+            <span class="message-agent-label">{producer_label.to_owned()}</span>
+        </view::chrome::CopyButton>
     }
 }
 
@@ -972,7 +978,8 @@ fn render_message_controls(
             <div class="message-controls-actions">
                 if !signed {
                     <span class="message-controls-identity">
-                        {render_producer_identity(message, producer_label, attribution)}
+                        {render_final_pill(message)}
+                        {render_producer_name(message, producer_label, attribution)}
                     </span>
                 }
                 if has_actions {
