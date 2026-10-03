@@ -4,10 +4,12 @@
       "settings": {
         "rust-analyzer": {
           "cargo": {
-            "extraArgs": ["--locked"]
+            "extraArgs": ["--locked"],
+            "extraEnv": { "RUSTFLAGS": "--cfg rust_analyzer" },
+            "targetDir": true
           },
           "check": {
-            "extraArgs": ["--locked"]
+            "extraEnv": { "RUSTFLAGS": "" }
           }
         }
       }

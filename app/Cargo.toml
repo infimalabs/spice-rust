@@ -14,7 +14,11 @@ serde = "1.0.229"
 thiserror = "2.0.19"
 wire = { path = "../wire" }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Browser crates are Wasm dependencies. `rust_analyzer` also admits them when
+# the editor's Cargo metadata runs with `--cfg rust_analyzer` in RUSTFLAGS
+# (.omp/lsp.json), so `html!` expands for host analysis of the browser gates.
+# Plain host builds never set that cfg and resolve exactly as before.
+[target.'cfg(any(target_arch = "wasm32", rust_analyzer))'.dependencies]
 base64 = "0.22.1"
 futures-util = "0.3.33"
 futures-channel = "0.3.33"
