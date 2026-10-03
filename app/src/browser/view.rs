@@ -48,12 +48,26 @@ pub(super) fn member_pending(
     submissions: &SubmissionStatus,
     lane: CanonicalUuid,
 ) -> usize {
-    let backend = waiting
+    submissions.pending(lane, member_backend(waiting, lane))
+}
+
+/// Pending direction that can wake the lane, the only kind that marks it queued.
+pub(super) fn member_waking(
+    waiting: &[wire::intent::LaneInbox],
+    submissions: &SubmissionStatus,
+    lane: CanonicalUuid,
+) -> usize {
+    submissions.waking(lane, member_backend(waiting, lane))
+}
+
+fn member_backend(
+    waiting: &[wire::intent::LaneInbox],
+    lane: CanonicalUuid,
+) -> &[wire::intent::PendingDirective] {
+    waiting
         .iter()
         .find(|row| row.lane == lane)
-        .map(|row| row.pending.as_slice())
-        .unwrap_or(&[]);
-    submissions.pending(lane, backend)
+        .map_or(&[], |row| row.pending.as_slice())
 }
 
 /// One shared live-state marker for global and team action menus.
@@ -459,6 +473,7 @@ fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
     let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
     for standing in &mut standings {
         standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
+        standing.waking = member_waking(waiting, &render.submissions.status, standing.lane);
     }
     let live = standings
         .iter()
@@ -686,7 +701,7 @@ fn render_topology_agent(
     linked: bool,
 ) -> Html {
     debug_assert_eq!(member.lane, standing.lane, "standings keep member order");
-    let status = member.status(standing.pending);
+    let status = member.status(standing.waking);
     let branch = crate::watchband::agent_message_label(&standing.worktree, None);
     let lane = standing.lane.to_string();
     let (tag, href, label) = if linked {

@@ -530,9 +530,9 @@ classDiagram
 A lane belongs to one team at a time and may move; `Close team` makes every
 member independent. The team owns the shared task policy: renewal keeps it, and
 a moved lane takes its destination's. An absent occupant makes the lane vacant,
-while the UI separately shows `bound` or `unbound` unless queued steering
-outranks liveness. A fused host renders one merged stream while each member
-keeps its own send address.
+while the UI separately shows `bound` or `unbound` unless queued operator
+steering outranks liveness. A fused host renders one merged stream while each
+member keeps its own send address.
 
 **Value:** the operator manipulates topology directly — drag a team onto
 another's edge to fuse — while the server owns membership, ordering, and

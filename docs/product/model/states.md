@@ -297,11 +297,14 @@ stateDiagram-v2
 ```
 
 The UI independently derives one of five lane presentations. Pending steering
-outranks liveness; these labels are not supervisor transitions:
+that can wake the lane outranks liveness. Only operator direction wakes a lane.
+Peer messages, peer replies, and resident reminders wait for its next seat, so
+they count as pending but leave the presentation at liveness. These labels are
+not supervisor transitions:
 
 ```mermaid
 flowchart TD
-  Q{"pending steering?"}
+  Q{"pending steering that wakes the lane?"}
   Q -- yes --> QUEUED["queued"]
   Q -- no --> L{"resident liveness projection"}
   L -- working --> WORKING["working"]

@@ -336,6 +336,12 @@ impl SubmissionStatus {
         backend.len() + self.uncovered(lane, backend)
     }
 
+    /// Backend direction that can wake the lane plus uncovered predictions,
+    /// which are the operator's own sends and so always wake it.
+    pub(crate) fn waking(&self, lane: CanonicalUuid, backend: &[PendingDirective]) -> usize {
+        backend.iter().filter(|directive| directive.wakes).count() + self.uncovered(lane, backend)
+    }
+
     /// Every backend row plus predictions absent from their own lane's row.
     pub(crate) fn total_pending<'a>(
         &self,
@@ -1016,6 +1022,7 @@ mod tests {
     fn pending(id: &str, key: &str) -> PendingDirective {
         PendingDirective {
             from: None,
+            wakes: true,
             fanout: None,
             directive: uuid(id),
             key: key.to_owned(),
@@ -1104,6 +1111,27 @@ mod tests {
         assert_eq!(queue.refuse(uuid(ID_B)).unwrap()[0].draft.body, "second");
         assert_eq!(queue.rollback(uuid(ID_C)).unwrap().snapshot.body, "sibling");
         assert_eq!(queue.identities.len(), 1);
+    }
+
+    #[test]
+    fn peer_direction_counts_as_pending_but_only_operator_sends_wake_the_lane() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
+        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        accept(&mut queue, ID_A, "1kKey", Disposition::Live);
+        let status = queue.status();
+        let mut peer = pending(ID_C, "1kPeer");
+        peer.wakes = false;
+        let backend = [peer, pending(ID_A, "1kKey")];
+
+        // The backend row covers the accepted send; the queued one is still
+        // the operator's own prediction and wakes the lane like its row will.
+        assert_eq!(status.pending(uuid(LANE_A), &backend), 3);
+        assert_eq!(status.waking(uuid(LANE_A), &backend), 2);
+        // A lane holding only a peer reply is pending but not queued.
+        let idle = SubmissionQueue::default().status();
+        assert_eq!(idle.pending(uuid(LANE_A), &backend[..1]), 1);
+        assert_eq!(idle.waking(uuid(LANE_A), &backend[..1]), 0);
     }
 
     #[test]

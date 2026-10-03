@@ -628,6 +628,12 @@ pub struct PendingDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
+    /// Whether this directive can wake its lane.
+    ///
+    /// Only operator direction wakes a lane. Peer messages, peer replies, and
+    /// resident reminders stay pending until the lane's next seat reads them.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wakes: bool,
     /// First line authored outside quoted context, when the producer found one.
     #[serde(
         default,

@@ -110,6 +110,7 @@ pub(super) fn render_team(
     let mut standings = watchband::standings(&lanes.lanes, waiting, tasks);
     for standing in &mut standings {
         standing.pending = view::member_pending(waiting, &submissions.status, standing.lane);
+        standing.waking = view::member_waking(waiting, &submissions.status, standing.lane);
     }
     let authority =
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
@@ -684,7 +685,7 @@ fn render_agent_composer(
         sender,
         composer_drag,
     );
-    let status = member.status(standing.pending);
+    let status = member.status(standing.waking);
     html! {
         <section
             key={lane_key.clone()}

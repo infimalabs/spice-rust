@@ -173,13 +173,7 @@ impl Projection {
             .collect::<BTreeMap<_, _>>();
         let operator_directives = delta
             .iter()
-            .filter(|envelope| envelope.actor == Actor::Operator)
-            .filter_map(|envelope| {
-                envelope
-                    .fact
-                    .read::<wire::body::SteerSent>()
-                    .map(|body| body.directive)
-            })
+            .filter_map(|envelope| crate::resident::steering::operator_sent(envelope))
             .collect();
         let ready_at = affected
             .into_iter()
