@@ -887,8 +887,8 @@ fn render_agent_message_media(
     }
 }
 
-/// A prose card signs its final line the way a quote does: the producer's
-/// copyable label, then the live age linking to the message source.
+/// A prose card signs its final line the way a quote does: the live age
+/// linking to the message source, then the producer's copyable label.
 fn render_agent_message_signoff(
     message: &wire::AgentMessage,
     producer_label: &str,
@@ -896,8 +896,8 @@ fn render_agent_message_signoff(
 ) -> Html {
     html! {
         <>
-            {render_producer_identity(message, producer_label, attribution)}
             {render_message_age(message, attribution)}
+            {render_producer_identity(message, producer_label, attribution)}
         </>
     }
 }
