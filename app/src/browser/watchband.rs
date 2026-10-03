@@ -238,9 +238,8 @@ fn render_compose(
     );
     let broadcast_targets = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
-    let idle = team_idle(team, drafts);
-    let ready = !idle
-        && control.pending_life.is_none()
+    let dormant = team_dormant(team, drafts);
+    let ready = control.pending_life.is_none()
         && team.members.iter().any(|member| {
             authority
                 .target(member.occupant, member.wakeable, epoch)
@@ -298,7 +297,8 @@ fn render_compose(
                     sender,
                     can_configure,
                     ready,
-                    idle,
+                    dormant,
+                    team.members.iter().map(|member| member.lane).collect(),
                 )}
                 <span id={broadcast_help} class="visually-hidden">
                     {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
@@ -321,12 +321,12 @@ fn render_compose(
     }
 }
 
-/// With no agent running and nothing drafted, a team's controls step back and
-/// there is nothing to send. Drafting anything lights them again.
-fn team_idle(team: &crate::runtime::LaneRow, drafts: &ComposerDrafts) -> bool {
+/// With no agent running and no quote or image drafted, a team's controls step
+/// back unless a composer holds typed text, which only the controls follow.
+fn team_dormant(team: &crate::runtime::LaneRow, drafts: &ComposerDrafts) -> bool {
     let members = || team.members.iter();
     !members().any(|member| member.liveness != wire::intent::LaneLiveness::Vacant)
-        && !members().any(|member| drafts.has_content(&member.lane.to_string()))
+        && !members().any(|member| drafts.holds_quotes_or_images(&member.lane.to_string()))
 }
 
 fn history_target(
@@ -839,7 +839,6 @@ fn render_composer_body(
                 drafts={drafts.dispatcher()}
                 label={format!("Message for agent {lane}")}
                 body={draft.body.clone()}
-                typed={drafts.typed(lane_key, None)}
                 placeholder={composer_placeholder(standing, pending)}
                 rows="4"
                 primary_target={Some(lane.to_string())}
@@ -951,6 +950,7 @@ fn clear_primary_composer(lane_key: &str) {
         .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
     {
         textarea.set_value("");
+        composer::announce_value(&textarea);
     }
 }
 

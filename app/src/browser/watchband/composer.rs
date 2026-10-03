@@ -67,8 +67,6 @@ pub(super) struct ComposerTextareaProps {
     pub(super) drafts: UseReducerDispatcher<ComposerDrafts>,
     pub(super) label: String,
     pub(super) body: String,
-    /// Whether the store already records this element's text as not blank.
-    pub(super) typed: bool,
     pub(super) placeholder: String,
     pub(super) rows: &'static str,
     pub(super) primary_target: Option<String>,
@@ -213,7 +211,6 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
         let drafts = properties.drafts.clone();
         let lane = properties.lane.clone();
         let quote = properties.quote_identity.clone();
-        let typed = properties.typed;
         // Typed text lives in the element, not the store, until it is sent. The
         // element is keyed by the body it is drawn from, so it writes that body
         // once as it mounts; a value re-applied on every render would overwrite
@@ -223,8 +220,8 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             let textarea = root.cast::<web_sys::HtmlTextAreaElement>();
             if let Some(textarea) = &textarea {
                 textarea.set_value(drawn);
+                announce_value(textarea);
             }
-            report_typed(&drafts, &lane, quote.as_ref(), typed, drawn);
             let drawn = drawn.clone();
             move || {
                 let Some(live) = textarea.map(|textarea| textarea.value()) else {
@@ -241,16 +238,6 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             }
         });
     }
-    let oninput = {
-        let drafts = properties.drafts.clone();
-        let lane = properties.lane.clone();
-        let quote = properties.quote_identity.clone();
-        let typed = properties.typed;
-        Callback::from(move |event: InputEvent| {
-            let textarea: web_sys::HtmlTextAreaElement = event.target_unchecked_into();
-            report_typed(&drafts, &lane, quote.as_ref(), typed, &textarea.value());
-        })
-    };
     html! {
         <textarea
             ref={root}
@@ -263,27 +250,17 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             rows={properties.rows}
             placeholder={properties.placeholder.clone()}
             onpaste={properties.onpaste.clone()}
-            {oninput}
         ></textarea>
     }
 }
 
-/// Tell the store when this element's text turns blank or non-blank, so the
-/// team controls follow drafting without a render on every keystroke.
-fn report_typed(
-    drafts: &UseReducerDispatcher<ComposerDrafts>,
-    lane: &str,
-    quote: Option<&String>,
-    recorded: bool,
-    live: &str,
-) {
-    let typed = !live.trim().is_empty();
-    if typed != recorded {
-        drafts.dispatch(ComposerAction::Typed {
-            lane: lane.to_owned(),
-            quote: quote.cloned(),
-            typed,
-        });
+/// Announce a value the app wrote into a composer as the `input` event typing
+/// would raise, so whatever follows drafting hears every change one way.
+pub(super) fn announce_value(textarea: &web_sys::HtmlTextAreaElement) {
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    if let Ok(event) = web_sys::Event::new_with_event_init_dict("input", &init) {
+        let _ = textarea.dispatch_event(&event);
     }
 }
 
@@ -1099,7 +1076,6 @@ pub(super) fn render_quote_shards(
                             drafts={drafts.dispatcher()}
                             label="Reply to quoted message"
                             body={quote.body.clone()}
-                            typed={drafts.typed(lane_key, Some(&quote.identity))}
                             placeholder={placeholder.to_owned()}
                             rows="2"
                             primary_target={None::<String>}
