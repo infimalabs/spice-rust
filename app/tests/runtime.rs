@@ -24,8 +24,6 @@ mod renewal;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;
-#[path = "runtime/team_settled.rs"]
-mod team_settled;
 #[path = "runtime/work_history.rs"]
 mod work_history;
 
