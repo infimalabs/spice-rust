@@ -407,13 +407,15 @@ including work held by an unteamed agent, appears in the global strip. Until
 the roster loads, potentially team-associated work waits off both strips
 instead of flashing globally.
 
-Each team rail begins flush with the team's top edge and opens that part of the
-header boundary to the surrounding app surface. Resting task labels and counts
-blend into that shared background without individual pill or badge carveouts;
-hover and keyboard focus reveal their control boundary. Presence pips keep one
-compact row gap independent of the task/status tracks. The task labels and
-status line consume only their two text bands, so the rail does not add blank
-space or displace Chat. Its aggregate pill opens
+Each team header is a compact 54px deck. A team rail sits in its upper band as
+joined inset keys, borrowing the composer's framed slider/send-control grammar
+and the cutout transport buttons of a cassette player. Resting labels and
+counts remain visible on their key faces; hover and keyboard focus light an
+accent edge, and activation visibly seats the key. The live status line rests
+in the roomier lower band without crowding, while presence pips and the menu
+remain centered across both. The rail scrolls horizontally inside its band
+when its labels outgrow the available width and never overlaps those controls.
+Its aggregate pill opens
 `#/work/team/{team}`, and each team stem pill opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
 that stem.
