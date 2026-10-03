@@ -179,12 +179,11 @@ pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProject
             <div
                 key="agents"
                 class="workspace mosaic-workspace"
-                hidden={!mosaic_active}
                 aria-hidden={(!mosaic_active).to_string()}
                 inert={(!mosaic_active).then_some("true")}
                 data-active={mosaic_active.to_string()}
             >
-                <main class={classes!("mosaic-content", mosaic_active.then_some("content"))}>
+                <main class="mosaic-content content">
                     {watchband::render_team(render, work)}
                 </main>
             </div>
