@@ -20,7 +20,7 @@ pub(super) fn toolbar(
 ) -> Html {
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
-            <span class="image-annotation-tools">
+            <span class="image-annotation-tools app-control-rail">
                 {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Arrow, "Arrow")].into_iter().map(|(value, label)| {
                     let tool = tool.clone();
                     html! { <button type="button" aria-pressed={(*tool == value).to_string()} disabled={busy} onclick={Callback::from(move |_| tool.set(value))}>{label}</button> }
@@ -29,7 +29,7 @@ pub(super) fn toolbar(
                 <button type="button" disabled={busy || !history.can_redo()} onclick={actions.redo}>{"Redo"}</button>
                 <button type="button" disabled={busy || history.selected.is_none()} onclick={actions.delete}>{"Delete"}</button>
             </span>
-            <span class="image-annotation-tools">
+            <span class="image-annotation-tools app-control-rail">
                 <button type="button" onclick={actions.cancel}>{"Cancel"}</button>
                 <button type="button" class="image-annotation-apply" disabled={busy || !ready} onclick={actions.apply}>{"Apply"}</button>
             </span>
