@@ -75,9 +75,10 @@ pub const SHORT_LEN: usize = 8;
 /// Characters of one status line's text the DOM receives.
 ///
 /// Status lines are `nowrap` and clipped by CSS `text-overflow` at whatever
-/// width they get, so this only guards against multi-kilobyte command echoes.
-/// It exceeds what any display shows on one line, so no visible line ends at it.
-pub const STATUS_LINE_DOM_LIMIT: usize = 1024;
+/// width they get. This bound matches the resident's preview bound, about
+/// 3200 CSS px of the ticker's monospace, so a visible line ends at CSS rather
+/// than at this cut; hover titles show the line up to this bound.
+pub const STATUS_LINE_DOM_LIMIT: usize = 512;
 
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";

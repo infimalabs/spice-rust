@@ -18,9 +18,10 @@ mod tests;
 /// Longest preview one status line carries before it is elided.
 ///
 /// The app renders the preview on one `nowrap` line that CSS clips at the
-/// width it actually has, so this bound only keeps a multi-kilobyte command
-/// out of the stream. It exceeds what any display shows on one line.
-pub(in crate::resident) const MAX_CHARS: usize = 1024;
+/// width it actually has. Every live tool event carries this text, so the
+/// bound is the narrowest that still fills an ultrawide status line: about
+/// 3200 CSS px of the ticker's monospace.
+pub(in crate::resident) const MAX_CHARS: usize = 512;
 const MIN_INFORMATIVE_TOKENS: usize = 2;
 const MAX_EVENT_IDENTITY_CHARS: usize = 18;
 
