@@ -101,7 +101,6 @@ That shared block size also determines the speech and allocation tracks, their
 frame, and the send row; the measured overlay height remains the Chat plane's
 collapse distance and top spacer.
 
-
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
 in either engine, and an overlay tracking the thumb would cover the track and
