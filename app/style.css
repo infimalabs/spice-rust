@@ -717,15 +717,18 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   background: var(--panel);
   box-shadow: var(--shadow);
 }
+/* The account accent identifies the account without dominating it: a soft
+   rail and tint here, a muted provider label, and neutral meter fills, so a
+   fill's colour never reads as a warning or an all-clear. */
 .quota-account[data-accent] {
-  border-left: 3px solid var(--accent-slot);
-  background: color-mix(in srgb, var(--accent-slot) 8%, var(--panel));
+  border-left: 3px solid color-mix(in srgb, var(--accent-slot) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent-slot) 4%, var(--panel));
 }
 .quota-account > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
 .quota-account > header .dash-overview-quota-age { margin-left: auto; color: var(--muted); font-size: .7rem; }
 .quota-account h4 { margin: 0; font-size: .84rem; }
 .quota-provider {
-  color: var(--accent-slot, var(--accent));
+  color: color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--muted));
   font: 650 .6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .07em;
   text-transform: uppercase;
@@ -749,7 +752,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-limit-status { margin-left: 6px; color: var(--triage); font-size: .64rem; font-weight: 650; text-transform: uppercase; }
 .quota-meter { display: block; width: 100%; height: 6px; }
 .quota-meter-track { fill: color-mix(in srgb, var(--muted) 22%, transparent); }
-.quota-meter-left { fill: var(--accent-slot, var(--accent)); }
+.quota-meter-left { fill: color-mix(in srgb, var(--ink) 40%, var(--muted)); }
 .quota-limit[data-limit-status] .quota-meter-left { fill: var(--triage); }
 .quota-limit-amount { font-variant-numeric: tabular-nums; text-align: right; }
 .quota-limit-reset { color: var(--muted); }
