@@ -5,6 +5,9 @@
   min-height: var(--app-commandbar-block-size);
   gap: 7px;
   padding-block: var(--app-commandbar-block-pad);
+  padding-inline:
+    calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-left, 0px))
+    calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -12,17 +15,19 @@
 .commandbar--mosaic .bar-meta { font-size: .6rem; }
 
 .shell {
-  /* The operator avatar and the Spice trigger are one circle size, and the
-     header band is that tall. */
+  /* The operator avatar and the Spice trigger are one circle size, share the
+     same block inset, and meet opposite chrome edges symmetrically. */
   --app-header-control: 35px;
   --app-shell-edge-inline: 10px;
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
+  /* Chat starts closer to the viewport than the desktop commandbar. Team edge
+     controls add this difference so their outer edges still meet its circles. */
+  --app-header-edge-offset: calc(var(--app-commandbar-inline-pad) - var(--app-shell-edge-inline));
   --app-commandbar-block-pad: 8px;
   /* The commandbar's height; inactive Chat sits exactly below it. */
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
-  --app-operator-link-margin-start: 2px;
   --app-operator-link-margin-end: 8px;
   --app-disclosure-gap: 7px;
 }
@@ -89,7 +94,7 @@ body:has(.shell--mosaic),
   width: var(--app-header-control);
   height: var(--app-header-control);
   min-height: 0;
-  margin-inline: var(--app-operator-link-margin-start) var(--app-operator-link-margin-end);
+  margin-inline: 0 var(--app-operator-link-margin-end);
   padding: 0;
   border: 0;
   border-radius: 50%;

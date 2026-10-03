@@ -31,6 +31,7 @@
 }
 
 @media (max-width: 900px) {
+  .shell { --app-header-edge-offset: 0px; }
   .commandbar { gap: 10px; padding: 8px 12px; }
   .commandbar--mosaic {
     gap: 7px;
