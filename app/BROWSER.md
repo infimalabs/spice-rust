@@ -202,6 +202,13 @@ lane-status class, agent/tool/command prefix and accent, truncated detail,
 accessible label, and live-region semantics in the middle header slot; an empty
 fleet reserves that slot without inventing status.
 
+When a team owns open work, its toolbar becomes a 54px two-band deck. Joined
+inset task keys occupy the upper band, above rather than around the live ticker;
+their frame matches the composer's slider/send control grammar. Resting keys
+stay legible, hover and keyboard focus light their accent edge, and pressing a
+key visibly seats it. Overflow scrolls horizontally inside the band without
+overlapping the pips, ticker, or hamburger.
+
 The hamburger opens canonical global links for the team:
 `#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope
 admits each task created by the current team or last claimed by one of its
