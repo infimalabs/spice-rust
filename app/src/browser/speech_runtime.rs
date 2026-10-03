@@ -191,8 +191,9 @@ impl SpeechRuntime {
             runtime.finish(
                 id,
                 Some(
-                    "this device's browser published no system voices; set say.backend = \
-                     \"external\" with a say.command renderer to speak from the resident"
+                    "this device's browser published no system voices; to speak from the \
+                     resident, set say.backend = \"external\" with the say.command renderer \
+                     in docs/product/interfaces.md (Speech)"
                         .to_owned(),
                 ),
             );

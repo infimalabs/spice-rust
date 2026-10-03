@@ -12,6 +12,10 @@ pub const DEFAULT_VOICE: &str = "Zoe (Premium)";
 pub const DEFAULT_CONTENT_TYPE: &str = "audio/wav";
 /// Installed base speaking rate.
 pub const DEFAULT_WORDS_PER_MINUTE: u32 = 175;
+/// Environment variable carrying the originating worktree's `say.voice` to an
+/// external renderer. The voice is tracked repository text, so it reaches the
+/// machine-local `say.command` only as data, never as argv or shell text.
+pub const VOICE_ENVIRONMENT: &str = wire::SpiceVariable::SayVoice.as_str();
 
 const MAX_WORDS_PER_MINUTE: u32 = 1_000;
 const MAX_VOICE_BYTES: usize = 256;
@@ -122,7 +126,8 @@ impl SpeechConfig {
             .then_some(self.command.as_slice())
     }
 
-    /// System voice selected for browser synthesis.
+    /// Voice for browser synthesis, or [`VOICE_ENVIRONMENT`] for an external
+    /// renderer.
     #[must_use]
     pub fn voice(&self) -> &str {
         &self.voice
@@ -140,19 +145,16 @@ impl SpeechConfig {
         self.words_per_minute
     }
 
-    /// Exact external argv with the documented `{words_per_minute}` and
-    /// `{voice}` slots resolved, so one machine-local renderer speaks each
-    /// worktree's own `say.voice`.
+    /// Exact external argv with the one documented `{words_per_minute}` slot
+    /// resolved. Every other word comes verbatim from machine-local
+    /// configuration; the voice travels in [`VOICE_ENVIRONMENT`].
     #[must_use]
     pub fn resolved_command(&self) -> Option<Vec<String>> {
         let rate = self.words_per_minute.to_string();
         self.command().map(|command| {
             command
                 .iter()
-                .map(|word| {
-                    word.replace("{words_per_minute}", &rate)
-                        .replace("{voice}", &self.voice)
-                })
+                .map(|word| word.replace("{words_per_minute}", &rate))
                 .collect()
         })
     }
@@ -350,25 +352,27 @@ mod tests {
         assert_eq!(system.voice(), "Samantha");
         assert_eq!(system.words_per_minute(), 210);
 
-        let external: SpeechConfig = toml::from_str(concat!(
-            "backend = 'external'\n",
-            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}', '-v', '{voice}']\n",
-            "voice = 'en-us {words_per_minute}'\n",
-            "content_type = 'audio/wav'\n",
-        ))
-        .expect("external backend is admitted");
-        assert_eq!(
-            external.resolved_command().expect("configured command"),
-            [
-                "espeak-ng",
-                "--stdout",
-                "-s",
-                "175",
-                "-v",
-                "en-us {words_per_minute}"
-            ],
-            "each slot resolves once from its own value"
-        );
+        for voice in [
+            "-o/tmp/x",
+            "a; touch x",
+            "a\" $(id) '",
+            "{words_per_minute}",
+        ] {
+            let external = SpeechConfig {
+                voice: voice.to_owned(),
+                ..toml::from_str(concat!(
+                    "backend = 'external'\n",
+                    "command = ['sh', '-c', 'say -v \"$1\" -r {words_per_minute}', 'say', '{voice}']\n",
+                    "content_type = 'audio/wav'\n",
+                ))
+                .expect("external backend is admitted")
+            };
+            assert_eq!(
+                external.resolved_command().expect("configured command"),
+                ["sh", "-c", "say -v \"$1\" -r 175", "say", "{voice}"],
+                "tracked voice {voice:?} never reaches the machine-local argv"
+            );
+        }
     }
 
     #[test]

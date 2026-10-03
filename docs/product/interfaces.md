@@ -567,10 +567,20 @@ as the remedy. While system synthesis plays, spice names the voice the browser
 reported and a failed utterance carries the browser's own error code.
 
 **Invariant —** External rendering writes the text to the machine-local
-`say.command` argv on stdin and plays its stdout. The argv's
-`{words_per_minute}` and `{voice}` slots resolve from the originating
-worktree's contract, so one renderer on the resident keeps per-agent voices on
-every device.
+`say.command` argv on stdin and plays its stdout. The argv's one slot,
+`{words_per_minute}`, resolves from the originating worktree's contract. That
+worktree's `say.voice` reaches the renderer only as the `SPICE_RS_SAY_VOICE`
+environment variable: it is tracked repository text, so it never becomes argv
+or shell text of the machine-local command. One renderer on the resident
+therefore keeps per-agent voices on every device. On macOS, `say` writes a
+file rather than stdout, so a working local configuration is:
+
+```toml
+[say]
+backend = "external"
+command = ["sh", "-c", 't=$(mktemp -d) && say -v "$SPICE_RS_SAY_VOICE" -r "$1" -f - -o "$t/s.wav" --file-format=WAVE --data-format=LEI16@22050 && cat "$t/s.wav"; s=$?; rm -rf "$t"; exit $s', "say", "{words_per_minute}"]
+content_type = "audio/wav"
+```
 
 **Invariant —** The clip is played back under the media type the backend
 declared, never a guessed one.
