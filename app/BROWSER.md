@@ -138,6 +138,13 @@ raise, Down and Left lower. A native vertical range in WebKit and Firefox
 raises on Left, so the app handles Left and Right itself rather than inheriting
 each engine's mapping.
 
+When no agent in the team is running and none of its composers holds text, a
+quote, or an image, the frame steps back like an inactive lane: the sliders and
+send button dim and desaturate, and send is disabled because there is nothing to
+send. The sliders stay usable. Drafting anything, or any agent running, lights
+them again. A composer reports only when its text turns blank or non-blank, so
+typing does not re-render the console on every keystroke.
+
 ## Lane menu
 
 Each Chat lane's menu button swaps that lane's composer for its seat panel

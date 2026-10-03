@@ -76,6 +76,12 @@ pub(in crate::browser) enum ComposerAction {
         drawn: String,
         live: String,
     },
+    /// A composer element's live text turned blank or non-blank.
+    Typed {
+        lane: String,
+        quote: Option<String>,
+        typed: bool,
+    },
 }
 
 impl Reducible for ComposerDrafts {
@@ -159,6 +165,7 @@ impl Reducible for ComposerDrafts {
                 drawn,
                 live,
             } => next.0.keep_detached(lane, quote.as_deref(), &drawn, live),
+            ComposerAction::Typed { lane, quote, typed } => next.0.set_typed(lane, quote, typed),
         }
         Rc::new(next)
     }
@@ -201,6 +208,14 @@ impl ComposerDrafts {
     }
     pub(super) fn get(&self, lane: &str) -> Option<&ComposerDraft> {
         self.0.get(lane)
+    }
+
+    pub(in crate::browser) fn typed(&self, lane: &str, quote: Option<&str>) -> bool {
+        self.0.typed(lane, quote)
+    }
+
+    pub(in crate::browser) fn has_content(&self, lane: &str) -> bool {
+        self.0.has_content(lane)
     }
 
     pub(in crate::browser) fn is_unsafe(&self) -> bool {

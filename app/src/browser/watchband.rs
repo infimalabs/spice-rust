@@ -238,7 +238,9 @@ fn render_compose(
     );
     let broadcast_targets = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
-    let ready = control.pending_life.is_none()
+    let idle = team_idle(team, drafts);
+    let ready = !idle
+        && control.pending_life.is_none()
         && team.members.iter().any(|member| {
             authority
                 .target(member.occupant, member.wakeable, epoch)
@@ -296,6 +298,7 @@ fn render_compose(
                     sender,
                     can_configure,
                     ready,
+                    idle,
                 )}
                 <span id={broadcast_help} class="visually-hidden">
                     {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
@@ -316,6 +319,14 @@ fn render_compose(
             )}
         </div>
     }
+}
+
+/// With no agent running and nothing drafted, a team's controls step back and
+/// there is nothing to send. Drafting anything lights them again.
+fn team_idle(team: &crate::runtime::LaneRow, drafts: &ComposerDrafts) -> bool {
+    let members = || team.members.iter();
+    !members().any(|member| member.liveness != wire::intent::LaneLiveness::Vacant)
+        && !members().any(|member| drafts.has_content(&member.lane.to_string()))
 }
 
 fn history_target(
@@ -828,6 +839,7 @@ fn render_composer_body(
                 drafts={drafts.dispatcher()}
                 label={format!("Message for agent {lane}")}
                 body={draft.body.clone()}
+                typed={drafts.typed(lane_key, None)}
                 placeholder={composer_placeholder(standing, pending)}
                 rows="4"
                 primary_target={Some(lane.to_string())}

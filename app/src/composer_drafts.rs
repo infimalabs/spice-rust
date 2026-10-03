@@ -6,7 +6,7 @@
 //! from native tests instead of testing a second, simplified implementation.
 
 use std::borrow::Borrow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wire::body::DirectiveAttachment;
@@ -81,8 +81,16 @@ pub(crate) struct PreparedSubmission {
 }
 
 /// Stable composer state keyed by the lane target rather than render order.
+///
+/// The third field names each composer element, by target and quote identity,
+/// whose live text is not blank. Typed text stays in its element until sent,
+/// so the element reports only the moment that flips, never each keystroke.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DraftStore(BTreeMap<String, ComposerDraft>, u64);
+pub(crate) struct DraftStore(
+    BTreeMap<String, ComposerDraft>,
+    u64,
+    BTreeSet<(String, Option<String>)>,
+);
 
 impl DraftStore {
     /// Not reset by clearing a draft: a late export must never own a later paste.
@@ -187,9 +195,36 @@ impl DraftStore {
     }
 
     pub(crate) fn remove_quote(&mut self, target: String, identity: &str) {
+        self.2.remove(&(target.clone(), Some(identity.to_owned())));
         self.draft_mut(target)
             .quotes
             .retain(|quote| quote.identity != identity);
+    }
+
+    /// Whether one composer element of `target` currently holds typed text.
+    /// Few elements hold text at once, so a scan beats building owned keys.
+    pub(crate) fn typed(&self, target: &str, quote: Option<&str>) -> bool {
+        self.2
+            .iter()
+            .any(|(typed, identity)| typed == target && identity.as_deref() == quote)
+    }
+
+    /// Record whether one composer element's live text is blank.
+    pub(crate) fn set_typed(&mut self, target: String, quote: Option<String>, typed: bool) {
+        if typed {
+            self.2.insert((target, quote));
+        } else {
+            self.2.remove(&(target, quote));
+        }
+    }
+
+    /// Whether `target` holds anything a send would carry: typed text in any
+    /// of its elements, a quote, or an image.
+    pub(crate) fn has_content(&self, target: &str) -> bool {
+        self.2.iter().any(|(typed, _)| typed == target)
+            || self
+                .get(target)
+                .is_some_and(|draft| !draft.quotes.is_empty() || !draft.attachments.is_empty())
     }
 
     #[cfg(test)]
@@ -204,8 +239,10 @@ impl DraftStore {
         }
     }
 
+    /// Clear a sent target. Its elements are emptied with it.
     pub(crate) fn clear(&mut self, target: &str) {
         self.0.remove(target);
+        self.2.retain(|(typed, _)| typed != target);
     }
 
     /// Keep text typed into a composer element the page is discarding.
@@ -292,6 +329,7 @@ impl DraftStore {
 
     /// Clear the primary broadcast source without disturbing its quote shards.
     pub(crate) fn clear_primary(&mut self, target: &str) {
+        self.2.remove(&(target.to_owned(), None));
         let remove = self.0.get_mut(target).is_some_and(|draft| {
             draft.body.clear();
             draft.attachments.clear();
@@ -893,6 +931,54 @@ mod tests {
             store.is_unsafe(),
             "an untouched quote is still authored intent"
         );
+    }
+
+    #[test]
+    fn sendable_content_follows_typed_elements_quotes_and_images_through_clears() {
+        let mut store = DraftStore::default();
+        assert!(!store.has_content("agent-a"));
+
+        store.set_typed("agent-a".to_owned(), None, true);
+        assert!(store.has_content("agent-a"));
+        assert!(
+            !store.has_content("agent-b"),
+            "typing marks only its own target"
+        );
+        store.clear("agent-a");
+        assert!(
+            !store.has_content("agent-a"),
+            "a sent target's element is emptied"
+        );
+
+        store.add_quote(
+            "agent-a".to_owned(),
+            target("source"),
+            source_id("source"),
+            1,
+            1_000,
+            "Quoted source".to_owned(),
+        );
+        let quote = target("source").to_string();
+        store.set_typed("agent-a".to_owned(), Some(quote.clone()), true);
+        store.set_typed("agent-a".to_owned(), None, true);
+        store.clear_primary("agent-a");
+        assert!(!store.typed("agent-a", None));
+        assert!(
+            store.typed("agent-a", Some(&quote)),
+            "broadcast keeps quote shards"
+        );
+
+        store.remove_quote("agent-a".to_owned(), &quote);
+        assert!(
+            !store.has_content("agent-a"),
+            "a removed quote takes its reply text"
+        );
+
+        store
+            .draft_mut("agent-a".to_owned())
+            .attachments
+            .push(attachment("image"));
+        assert!(store.has_content("agent-a"), "an image alone is sendable");
     }
 
     #[test]

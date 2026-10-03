@@ -987,6 +987,17 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* With no agent running and nothing drafted, the team's sliders and send step
+   back like an inactive lane; drafting anything lights them again. */
+.team-composer-controls {
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard),
+    filter var(--app-motion-settle) var(--app-ease-standard);
+}
+.team-composer-controls[data-idle="true"] {
+  opacity: var(--inactive-lane-opacity);
+  filter: saturate(.55);
+}
+.team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
 /* Holding the command modifier previews which button Enter submits next from
    a focused draft: the team send, the observation Add, or, with Shift too, the
    offered observation Close. */
