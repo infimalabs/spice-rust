@@ -648,46 +648,129 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
 }
 
 #[test]
-fn directive_context_ending_in_images_keeps_its_image_stacks_pairable() {
+fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
     let text = "phase colors please";
-    let quoted = format!("> {text}\n>\n> ![first](a.png)\n>\n> ![second](b.png)");
-    let directives = [MessageDirective {
-        start: 0,
-        end: u32::try_from(quoted.len()).expect("fixture offset fits"),
-        quote_target: steering_target("dTVQdQfLx", text),
-        actor: wire::Actor::Operator,
-        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
-    }];
+    let render = |quoted: &str| {
+        let directives = [MessageDirective {
+            start: 0,
+            end: u32::try_from(quoted.len()).expect("fixture offset fits"),
+            quote_target: steering_target("dTVQdQfLx", text),
+            actor: wire::Actor::Operator,
+            authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+        }];
+        render_received_with_quotes(
+            &format!("{quoted}\n\nACK dTVQdQfLx: on it."),
+            &[],
+            &directives,
+            &[],
+            &QuoteAgents::new(),
+            &QuoteSources::new(),
+        )
+        .html
+    };
 
-    let html = render_received_with_quotes(
-        &format!("{quoted}\n\nACK dTVQdQfLx: on it."),
-        &[],
-        &directives,
-        &[],
-        &QuoteAgents::new(),
-        &QuoteSources::new(),
-    )
-    .html;
-
-    // Adjacent image stacks are what CSS pairs onto one row; a signoff inside
-    // the last one would demote it to prose and wrap the second image.
-    let tail = html
+    let html = render(&format!(
+        "> {text}\n>\n> more words\n>\n> ![first](a.png)\n>\n> ![second](b.png)"
+    ));
+    let quote = html
         .split("<blockquote>")
         .nth(1)
+        .and_then(|tail| tail.split("</blockquote>").next())
         .expect("the directive quote renders");
-    let first = tail
-        .find("<p class=\"message-image-stack\">")
-        .expect("first image stack");
-    let second = tail[first + 1..]
-        .find("<p class=\"message-image-stack\">")
-        .map(|offset| first + 1 + offset)
-        .expect("second image paragraph stays a stack");
-    let signoff = tail
-        .find("<p class=\"message-quote-signoff-line\"><span class=\"message-quote-signoff\"")
-        .expect("the signoff takes its own line");
-    assert!(second < signoff, "{html}");
-    assert!(
-        !tail[second..signoff].contains("message-quote-signoff"),
+    assert_eq!(
+        quote.matches("class=\"message-image-flow\"").count(),
+        1,
         "{html}"
+    );
+    assert_eq!(
+        quote.matches("class=\"message-image-stack\"").count(),
+        1,
+        "{html}"
+    );
+    assert_eq!(quote.matches("src=\"a.png\"").count(), 1, "{html}");
+    assert_eq!(quote.matches("src=\"b.png\"").count(), 1, "{html}");
+    assert_eq!(
+        quote.matches("class=\"message-quote-signoff\"").count(),
+        1,
+        "{html}"
+    );
+    let stack = quote.find("message-image-stack").expect("stack");
+    let first = quote.find(text).expect("first paragraph");
+    let last = quote.find("more words").expect("last paragraph");
+    let signoff = quote.find("message-quote-signoff").expect("signoff");
+    assert!(stack < first && first < last && last < signoff, "{html}");
+    assert!(
+        !quote.contains("message-quote-signoff-line"),
+        "the signoff joins the last prose paragraph: {html}"
+    );
+
+    let images_only = render("> ![first](a.png)\n>\n> ![second](b.png)");
+    assert!(!images_only.contains("message-image-flow"), "{images_only}");
+    assert_eq!(
+        images_only.matches("class=\"message-image-stack\"").count(),
+        2
+    );
+}
+
+#[test]
+fn quote_cards_ending_in_images_sign_once_after_their_prose() {
+    let render = |text: &str| {
+        let target = steering_target("dTVQdQfLw", text);
+        let quotes = [wire::QuotePresentation::Resolved {
+            target: target.to_string(),
+            text: text.to_owned(),
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: Some(wire::Disposition::Acked),
+            quotes: Vec::new(),
+        }];
+        render_received_with_quotes(
+            &target.markdown(),
+            &[],
+            &[],
+            &quotes,
+            &QuoteAgents::new(),
+            &QuoteSources::new(),
+        )
+        .html
+    };
+
+    let html = render("see these\n\n![first](a.png)\n\n![second](b.png)");
+    assert_eq!(
+        html.matches("class=\"message-image-flow\"").count(),
+        1,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("class=\"message-quote-signoff\"").count(),
+        1,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("data-quote-disposition=\"acked\"").count(),
+        1,
+        "{html}"
+    );
+    let flow = html.find("message-image-flow").expect("flow");
+    let stack = html.find("message-image-stack").expect("stack");
+    let pill = html.find("data-quote-disposition").expect("pill");
+    let prose = html.find("see these").expect("prose");
+    let signoff = html.find("message-quote-signoff").expect("signoff");
+    let body_end = html.rfind("</div></div>").expect("flow and body close");
+    assert!(
+        flow < stack && stack < pill && pill < prose && prose < signoff && signoff < body_end,
+        "{html}"
+    );
+
+    let images_only = render("![first](a.png)\n\n![second](b.png)");
+    assert!(!images_only.contains("message-image-flow"), "{images_only}");
+    let body_end = images_only.find("</div> ").expect("body closes");
+    assert!(
+        images_only
+            .find("class=\"message-quote-signoff\"")
+            .expect("signoff")
+            > body_end,
+        "{images_only}"
     );
 }

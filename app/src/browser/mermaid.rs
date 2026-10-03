@@ -499,6 +499,21 @@ fn collect_corner_place(host: &web_sys::Element, enabled: bool) -> CornerPlace {
     }
 }
 
+/// The signoff as a portal into the body's final paragraph, or as its own line.
+fn render_signoff(signoff: Option<&Html>, place: &SignoffPlace) -> (Option<Html>, Option<Html>) {
+    match (signoff, place) {
+        (Some(signoff), SignoffPlace::Inline { target, key }) => (
+            Some(yew::create_portal(
+                html! { <span key={key.clone()} class="message-signoff">{signoff.clone()}</span> },
+                target.clone(),
+            )),
+            None,
+        ),
+        (Some(signoff), SignoffPlace::Line) => (None, Some(signoff.clone())),
+        _ => (None, None),
+    }
+}
+
 fn render_corner(corner: Option<&Html>, place: &CornerPlace) -> (Option<Html>, Option<Html>) {
     let Some(corner) = corner else {
         return (None, None);
@@ -783,6 +798,7 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
     super::watchband::use_markdown_image_resolution_events(host.clone(), props.html.clone());
+    super::quote_image_flow::use_quote_image_flow(host.clone(), props.html.clone());
     let diagram_slots = use_state(Vec::<Slot>::new);
     let math_slots = use_state(Vec::<MathSlot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
@@ -830,17 +846,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             }
         },
     );
-    let inline_signoff = match (&props.signoff, &*signoff_place) {
-        (Some(signoff), SignoffPlace::Inline { target, key }) => Some(yew::create_portal(
-            html! { <span key={key.clone()} class="message-signoff">{signoff.clone()}</span> },
-            target.clone(),
-        )),
-        _ => None,
-    };
-    let line_signoff = match (&props.signoff, &*signoff_place) {
-        (Some(signoff), SignoffPlace::Line) => Some(signoff.clone()),
-        _ => None,
-    };
+    let (inline_signoff, line_signoff) = render_signoff(props.signoff.as_ref(), &signoff_place);
     let (body_corner, quote_corner) = render_corner(props.corner.as_ref(), &corner_place);
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.

@@ -205,15 +205,25 @@ fn render(
             disposition,
             quotes,
         } => {
-            let body = super::render_received_with_quotes(text, &[], &[], quotes, agents, sources);
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let body = body_with_disposition(&body.html, &disposition);
+            let signoff = signoff_html(author, target, agents, sources);
+            let (body, signed) = super::render_quote_card_body(
+                text,
+                quotes,
+                agents,
+                sources,
+                super::image_flow::CardTail {
+                    disposition: &disposition,
+                    signoff: &signoff,
+                },
+            );
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
-                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div> \
+                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{}</div> \
                  {}</div>",
                 super::escape_html_attribute(target),
-                signoff_html(author, target, agents, sources),
+                body.html,
+                if signed { "" } else { &signoff },
             )
         }
         QuotePresentation::Unavailable { target, reason } => {
@@ -227,16 +237,6 @@ fn render(
             )
         }
     }
-}
-
-fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
-    if disposition.is_empty() {
-        return Cow::Borrowed(body);
-    }
-    body.strip_prefix("<p>").map_or_else(
-        || Cow::Owned(format!("{disposition}{body}")),
-        |prose| Cow::Owned(format!("<p>{disposition} {prose}")),
-    )
 }
 
 fn quote_author_name_html(
