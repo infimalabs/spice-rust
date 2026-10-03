@@ -2,34 +2,8 @@
 
 use super::*;
 
-/// The two one-click views of one live team.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::browser) enum TeamMode {
-    Work,
-    #[default]
-    Chat,
-}
-
-impl TeamMode {
-    pub(super) const fn key(self) -> &'static str {
-        match self {
-            Self::Work => "Work",
-            Self::Chat => "Chat",
-        }
-    }
-
-    const fn from_destination(destination: TeamDestination) -> Self {
-        match destination {
-            TeamDestination::Work => Self::Work,
-            TeamDestination::Chat => Self::Chat,
-        }
-    }
-}
-
 pub(super) struct FleetRender<'a, 'w> {
     pub(super) work: Option<&'a crate::work::WorkProjection<'w>>,
-    pub(super) team_settled: &'a super::super::team_settled::Controls,
-    pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
     pub(super) runtime: &'a AppRuntime,
     pub(super) epoch: CanonicalUuid,
@@ -55,7 +29,6 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
         subscription: wire::intent::TeamLife::Steer,
         members: Vec::new(),
     };
-    let mode = render.team_controls.empty_mode();
     let control = render
         .team_controls
         .current(empty_team.lane, empty_team.subscription);
@@ -71,36 +44,20 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
         can_arrange: false,
     };
     let dismiss = team_menu_dismissal(render.team_controls);
-    // Work stands in the populated surface's mode-pane frame, so the first
-    // team swaps contents without resizing the pane or squeezing chrome.
-    let mode_pane = |content: Html| {
-        html! {
-            <div class="team-mode-pane" data-mode={mode.key()} data-active="true" aria-hidden="false">
-                {content}
-            </div>
-        }
-    };
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams" onclick={dismiss}>
             <section class="team-surface" data-team-weight="1">
                 {render_empty_toolbar(
-                    mode,
                     render.team_controls,
                     render.epoch,
                     control.import_open,
                 )}
-                {view::chrome::render_empty_team_ticker()}
                 if control.import_open {
                     {team_menu::render_import(&empty_team, &actions)}
                 }
-                <div class="team-pane" data-team-mode={mode.key()}>
-                    {match mode {
-                        TeamMode::Chat => {
-                            empty("No teams are assigned. Open Import agent to create an agent.")
-                        }
-                        TeamMode::Work => mode_pane(render_tasks(render, &empty_team, &[], None)),
-                    }}
+                <div class="team-pane">
+                    {empty("No teams are assigned. Open Import agent to create an agent.")}
                 </div>
             </section>
         </div>
@@ -127,9 +84,6 @@ pub(super) fn render_populated_fleet(
                     .filter(|standing| standing.team == team.lane)
                     .cloned()
                     .collect::<Vec<_>>();
-                let mode = render.team_controls
-                    .current(team.lane, team.subscription)
-                    .mode;
                 let attention = attention::TeamAttention::new(
                     render.runtime,
                     &team_standings,
@@ -145,61 +99,32 @@ pub(super) fn render_populated_fleet(
                         data-team-weight={watchband::team_visual_weight(team.members.len()).to_string()}
                     >
                         {render_team_toolbar(
-                            mode,
                             team,
                             &team_standings,
                             render,
                         )}
-                        {view::chrome::render_team_ticker(
-                            render.runtime,
-                            team,
-                            &team_standings,
-                        )}
-                        <div class="team-pane" data-team-mode={mode.key()}>
-                            <div
-                                class="team-mode-pane"
-                                data-mode="Chat"
-                                data-active={(mode == TeamMode::Chat).to_string()}
-                                aria-hidden={(mode != TeamMode::Chat).to_string()}
-                                inert={(mode != TeamMode::Chat).then_some("true")}
-                            >
-                                {render_compose(
-                                    render.runtime,
-                                    team,
-                                    &render.quote_agents,
-                                    &team_standings,
-                                    render.epoch,
-                                    render.topology_revision,
-                                    &render.topology,
-                                    render.authority,
-                                    render.can_arrange_teams,
-                                    render.sender,
-                                    render.composer_drag,
-                                    render.drafts,
-                                    render.submissions,
-                                    render.team_controls,
-                                    render.can_configure,
-                                    render.controls,
-                                    &render.surface,
-                                    render.select_task,
-                                    &attention,
-                                )}
-                            </div>
-                            if mode == TeamMode::Work {
-                                <div
-                                    class="team-mode-pane"
-                                    data-mode={mode.key()}
-                                    data-active="true"
-                                    aria-hidden="false"
-                                >
-                                    {render_tasks(
-                                        render,
-                                        team,
-                                        &team_standings,
-                                        Some(render.team_settled),
-                                    )}
-                                </div>
-                            }
+                        <div class="team-pane">
+                            {render_compose(
+                                render.runtime,
+                                team,
+                                &render.quote_agents,
+                                &team_standings,
+                                render.epoch,
+                                render.topology_revision,
+                                &render.topology,
+                                render.authority,
+                                render.can_arrange_teams,
+                                render.sender,
+                                render.composer_drag,
+                                render.drafts,
+                                render.submissions,
+                                render.team_controls,
+                                render.can_configure,
+                                render.controls,
+                                &render.surface,
+                                render.select_task,
+                                &attention,
+                            )}
                         </div>
                     </section>
                 }
@@ -257,7 +182,6 @@ pub(in crate::browser) fn use_team_menu_escape(
 }
 
 fn render_empty_toolbar(
-    mode: TeamMode,
     team_controls: &UseReducerHandle<TeamControls>,
     team: CanonicalUuid,
     import_open: bool,
@@ -269,7 +193,7 @@ fn render_empty_toolbar(
                 role="group"
                 aria-label="0 admitted agents"
             ></span>
-            {render_mode_rail(mode, None, &[], team_controls)}
+            {view::chrome::render_empty_team_ticker()}
             <button
                 class="team-menu"
                 type="button"
@@ -289,7 +213,6 @@ fn render_empty_toolbar(
 }
 
 fn render_team_toolbar(
-    mode: TeamMode,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
     render: &FleetRender<'_, '_>,
@@ -387,55 +310,11 @@ fn render_team_toolbar(
                     </span>
                 })}
             </span>
-            {render_mode_rail(
-                mode,
-                Some(team.lane),
-                standings,
-                render.team_controls,
-            )}
+            {view::chrome::render_team_ticker(render.runtime, team, standings)}
             {team_menu::trigger(team.lane, &control, render.team_controls)}
         </header>
         {team_menu::render(team, &control, &actions)}
         </>
-    }
-}
-
-fn render_mode_rail(
-    mode: TeamMode,
-    team: Option<CanonicalUuid>,
-    standings: &[Standing],
-    team_controls: &UseReducerHandle<TeamControls>,
-) -> Html {
-    html! {
-        <nav class="app-control-rail team-mode-rail" role="tablist" aria-label="Live team views">
-            {for TeamDestination::ALL.map(|destination| {
-                let candidate = TeamMode::from_destination(destination);
-                let selected = candidate == mode;
-                let choose = team_controls.clone();
-                let badge = mode_badge(candidate, standings);
-                html! {
-                    <button
-                        type="button"
-                        role="tab"
-                        class={classes!("team-mode", "team-mode--counted", selected.then_some("selected"))}
-                        aria-selected={selected.to_string()}
-                        onclick={Callback::from(move |_| {
-                            choose.dispatch(TeamControlAction::SetMode {
-                                team,
-                                mode: candidate,
-                            });
-                        })}
-                    >
-                        <span class="team-mode-label" title={destination.label()}>
-                            {destination.label()}
-                        </span>
-                        if let Some(badge) = badge {
-                            <span class="team-mode-badge">{badge}</span>
-                        }
-                    </button>
-                }
-            })}
-        </nav>
     }
 }
 
@@ -467,15 +346,4 @@ fn team_arrangement_key(
         event.stop_propagation();
         controls.dispatch(TeamControlAction::ToggleArrangement { team });
     })
-}
-
-fn mode_badge(mode: TeamMode, standings: &[Standing]) -> Option<String> {
-    let count = match mode {
-        TeamMode::Chat => standings.iter().map(|standing| standing.pending).sum(),
-        TeamMode::Work => standings
-            .iter()
-            .filter(|standing| standing.handle.is_some())
-            .count(),
-    };
-    watchband::badge(count)
 }

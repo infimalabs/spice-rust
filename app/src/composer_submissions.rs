@@ -188,18 +188,6 @@ impl Submission {
     }
 }
 
-/// Browser-owned direction still bridging the composer and resident inbox.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LedgerSubmission {
-    pub(crate) fanout: CanonicalUuid,
-    pub(crate) lane: CanonicalUuid,
-    pub(crate) authored_millis: i64,
-    pub(crate) message: String,
-    pub(crate) attachments: Vec<DirectiveAttachment>,
-    pub(crate) key: Option<String>,
-    pub(crate) delivered: bool,
-}
-
 fn attachments_bytes(attachments: &Vec<DirectiveAttachment>) -> usize {
     attachments.iter().fold(
         attachments
@@ -760,27 +748,6 @@ impl SubmissionQueue {
             .collect()
     }
 
-    /// Submissions not yet covered by a causally fresh resident inbox.
-    pub(crate) fn ledger_submissions(
-        &self,
-        lanes: &BTreeSet<CanonicalUuid>,
-    ) -> Vec<LedgerSubmission> {
-        self.rows
-            .iter()
-            .filter(|(lane, _)| lanes.contains(lane))
-            .flat_map(|(_, rows)| rows)
-            .map(|submission| LedgerSubmission {
-                fanout: submission.fanout,
-                lane: submission.lane,
-                authored_millis: submission.payload.authored_millis,
-                message: submission.message().to_owned(),
-                attachments: submission.attachments().to_vec(),
-                key: submission.stage.acceptance().map(|(_, key)| key.to_owned()),
-                delivered: matches!(submission.stage, Stage::Accepted { .. }),
-            })
-            .collect()
-    }
-
     /// Causal generation that still requires a lane read to start.
     pub(crate) const fn activity_read_requirement(&self) -> Option<u64> {
         self.activity_read_required
@@ -1144,25 +1111,6 @@ mod tests {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
         queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        let lanes = BTreeSet::from([uuid(LANE_A)]);
-        let ledger = queue.ledger_submissions(&lanes);
-        assert_eq!(
-            ledger
-                .iter()
-                .map(|row| {
-                    (
-                        row.fanout,
-                        row.message.as_str(),
-                        row.key.as_deref(),
-                        row.delivered,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            vec![
-                (uuid(ID_A), "first", None, false),
-                (uuid(ID_B), "second", None, false),
-            ]
-        );
         let status = queue.status();
         assert_eq!(
             status.pending(uuid(LANE_A), &[]),
@@ -1171,13 +1119,6 @@ mod tests {
         accept(&mut queue, ID_A, "1kKey", Disposition::Live);
         assert!(queue.status().is_unsafe());
         assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");
-        assert_eq!(
-            queue
-                .ledger_submissions(&lanes)
-                .first()
-                .map(|row| (row.key.as_deref(), row.delivered)),
-            Some((Some("1kKey"), true))
-        );
         queue
             .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
             .unwrap();
@@ -1188,14 +1129,6 @@ mod tests {
         );
         assert_eq!(queue.status().len(), 1);
         assert_eq!(queue.ready()[0].id, uuid(ID_B));
-        assert_eq!(
-            queue
-                .ledger_submissions(&lanes)
-                .iter()
-                .map(|row| row.fanout)
-                .collect::<Vec<_>>(),
-            vec![uuid(ID_B)]
-        );
 
         accept(&mut queue, ID_B, "1kDone", Disposition::Acked);
         assert!(queue.identities.is_empty());

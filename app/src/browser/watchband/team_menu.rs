@@ -57,6 +57,29 @@ pub(super) fn render(
     let closable = close.is_some();
     let import = context.controls.clone();
     let topology_actions = render_topology_actions(identity, control, context);
+    let work_href = format!(
+        "#{}",
+        crate::view::AppRoute::Work {
+            scope: crate::work::WorkScope::Team(identity),
+            task: None,
+        }
+        .path()
+    );
+    let directions_href = format!(
+        "#{}",
+        crate::view::AppRoute::Directions {
+            focus: Some(crate::view::DirectionsFocus::Team(identity)),
+        }
+        .path()
+    );
+    let close_after_follow = {
+        let controls = context.controls.clone();
+        Callback::from(move |event: MouseEvent| {
+            if super::super::card_target::follows_in_tab(&event) {
+                controls.dispatch(TeamControlAction::CloseMenus);
+            }
+        })
+    };
     html! {
         <div
             class="team-action-menu team-action-panel"
@@ -68,6 +91,24 @@ pub(super) fn render(
                 <span>{members(member_count)}</span>
                 <span>{policy}</span>
             </header>
+            <a
+                class="team-action"
+                role="menuitem"
+                href={work_href}
+                onclick={close_after_follow.clone()}
+            >
+                <span class="team-action-label">{"Work"}</span>
+                <span class="team-action-detail">{"this team"}</span>
+            </a>
+            <a
+                class="team-action"
+                role="menuitem"
+                href={directions_href}
+                onclick={close_after_follow}
+            >
+                <span class="team-action-label">{"Directions"}</span>
+                <span class="team-action-detail">{"this team"}</span>
+            </a>
             <button
                 type="button"
                 class="team-action"

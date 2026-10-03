@@ -684,11 +684,10 @@ What the operator actually manipulates, stated as a component contract.
 block-beta
   columns 1
   G["VIEW RAIL, agents | flow | topology"]
-  C["AGENTS VIEW, one console per live team"]
-  R["team mode rail, work | chat, badges are live counts"]
+  C["AGENTS VIEW, one always-mounted Chat console per live team"]
+  H["HEADER, lane lights | live status | Work and Directions menu"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
-  S["status line, age + latest action"]
   M["MOSAIC, merged stream, newest first, explicit lane attribution"]
 ```
 
@@ -702,15 +701,16 @@ block-beta
    one or more member lanes. Adding an agent widens its team console through the
    six-share visual ceiling; later members retain that maximum rather than
    narrowing it. Membership never adds another peer console.
-- **The team rail's badges are the summary.** Compose shows pending direction,
-   Tasks shows active work, and Info shows member count. A badge is only present when its
-   count is non-zero, so an empty rail means a quiet team.
-- **The member shards are the identity and composer-address summary.** Across
-  Compose and Info they expose the concrete lane/worktree address, agent label,
-  vendor identity, one mutually exclusive presence state with its age, pending
-  direction, and held task as applicable; no individual pane repeats the whole
-  set. Presence is `working`, `idle in seat`, `starting`, or `vacant`; the
-  lane menu's Task row names the held claim.
+- **The team header is the summary and global navigation boundary.** The lane
+  lights expose compact membership and presence. The middle ticker announces
+  age, standing, prefix, accent, and detail as live status without consuming a
+  separate row. The hamburger links to canonical team-scoped Work and
+  Directions; neither surface is copied into the console.
+- **The member shards are the identity and composer-address summary.** They
+  expose the concrete lane/worktree address, agent label, vendor identity, one
+  mutually exclusive presence state with its age, pending direction, and held
+  task as applicable. Presence is `working`, `idle in seat`, `starting`, or
+  `vacant`; the lane menu's Task row names the held claim.
 - **The mosaic is the evidence layer.** It answers *what happened*. Every agent
    and compaction card repeats explicit short author/lane plus worktree-leaf
    attribution, including unnamed members; accent is redundant continuity rather

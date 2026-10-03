@@ -16,7 +16,7 @@ use crate::work::{
 };
 
 use super::super::clock::local_date;
-use super::super::work_card::{self, Density, MapControls};
+use super::super::work_card::{self, MapControls};
 use super::super::work_history::Controls as WorkHistoryControls;
 
 /// Board lanes in reading order: workable tasks lead, then work already held.
@@ -76,12 +76,10 @@ pub(super) fn render(
         selected,
         select: &select,
         lanes,
-        density: Density::Board,
         map: Some(MapControls {
             state: map,
             toggle_root: &toggle_map_root,
         }),
-        messages: None,
         creator_context: Some(&creator_context),
         creator_messages,
     };

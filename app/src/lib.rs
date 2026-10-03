@@ -110,9 +110,6 @@ pub(crate) enum PendingKind {
     WorkHistory {
         request: runtime::WorkHistoryRequest,
     },
-    TeamSettled {
-        request: runtime::TeamSettledRequest,
-    },
     LaneSeat,
     LaneRenewal {
         team: wire::CanonicalUuid,
@@ -161,4 +158,4 @@ pub use runtime::{
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{AppDestination, Axis, TeamDestination};
+pub use view::{AppDestination, Axis};

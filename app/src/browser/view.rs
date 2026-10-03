@@ -96,7 +96,6 @@ pub(super) struct AppRender<'a> {
     pub work_map: &'a UseStateHandle<WorkMapState>,
     pub direction_history: &'a super::direction_history::Controls,
     pub work_history: &'a work_history::Controls,
-    pub team_settled: &'a super::team_settled::Controls,
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
     pub notes: &'a NoteComposers,
@@ -398,7 +397,6 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
         scope: render.work_scope,
         lanes: runtime.and_then(AppRuntime::lanes),
         navigate: render.navigate,
-        team_controls: render.team_controls,
         creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
         selected,
         presented: render.detail_presented,
@@ -500,7 +498,7 @@ fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
                             });
                             render_topology_group(
                                 format!("{host} team"),
-                                Some((team.lane, render.team_controls)),
+                                Some(team.lane),
                                 team_agents(team, &standings).collect(),
                             )
                         })}
@@ -645,18 +643,10 @@ const TOPOLOGY_COLUMNS: usize = 4;
 /// groups share a row instead of leaving it empty.
 fn render_topology_group(
     heading: String,
-    team: Option<(CanonicalUuid, &UseReducerHandle<TeamControls>)>,
+    team: Option<CanonicalUuid>,
     agents: Vec<(&crate::runtime::LaneMember, &crate::watchband::Standing)>,
 ) -> Html {
-    // The composer lives in the team's Chat pane, which a team showing Dash or
-    // Work leaves inert, so following the link first shows that pane.
-    let show_chat = team.map(|(team, controls)| {
-        let controls = controls.clone();
-        Callback::from(move |_: MouseEvent| {
-            controls.dispatch(TeamControlAction::ShowChat { team });
-        })
-    });
-    let team = team.map(|(team, _)| team);
+    let linked = team.is_some();
     html! {
         <section
             class="dash-overview-topology-group"
@@ -670,7 +660,7 @@ fn render_topology_group(
             </h3>
             <div class="dash-overview-agent-list">
                 {for agents.into_iter().map(|(member, standing)| {
-                    render_topology_agent(member, standing, show_chat.clone())
+                    render_topology_agent(member, standing, linked)
                 })}
             </div>
         </section>
@@ -686,13 +676,13 @@ fn render_topology_group(
 fn render_topology_agent(
     member: &crate::runtime::LaneMember,
     standing: &crate::watchband::Standing,
-    show_chat: Option<Callback<MouseEvent>>,
+    linked: bool,
 ) -> Html {
     debug_assert_eq!(member.lane, standing.lane, "standings keep member order");
     let status = member.status(standing.pending);
     let branch = crate::watchband::agent_message_label(&standing.worktree, None);
     let lane = standing.lane.to_string();
-    let (tag, href, label) = if show_chat.is_some() {
+    let (tag, href, label) = if linked {
         (
             "a",
             Some(crate::view::card_href(
@@ -707,7 +697,6 @@ fn render_topology_agent(
         <@{tag}
             class="dash-overview-agent"
             href={href}
-            onclick={show_chat}
             aria-label={label}
             data-accent={standing.accent.to_string()}
             data-agent-lane={lane.clone()}

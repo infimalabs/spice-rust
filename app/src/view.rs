@@ -54,44 +54,12 @@ impl Axis {
 /// User-facing app destinations in their shared navigation order.
 ///
 /// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary for global app controls. Team controls select
-/// their closed, scoped subset through `TeamMode` in the browser shell.
+/// presentation boundary for global app controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppDestination {
     Dash,
     Work,
     Chat,
-}
-
-/// App destinations that are meaningful inside one team surface.
-///
-/// This type is intentionally distinct from [`AppDestination`]: adding a
-/// global destination cannot make it appear in a team tablist without an
-/// explicit scoped variant and mapping here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TeamDestination {
-    Work,
-    Chat,
-}
-
-impl TeamDestination {
-    /// Every team-scoped destination, left to right.
-    pub const ALL: [Self; 2] = [Self::Work, Self::Chat];
-
-    /// Corresponding destination in the global app vocabulary.
-    #[must_use]
-    pub const fn app(self) -> AppDestination {
-        match self {
-            Self::Work => AppDestination::Work,
-            Self::Chat => AppDestination::Chat,
-        }
-    }
-
-    /// Presentation label shared with the corresponding global destination.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        self.app().label()
-    }
 }
 
 impl AppDestination {

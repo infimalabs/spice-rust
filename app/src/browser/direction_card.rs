@@ -1,42 +1,12 @@
-//! One operator direction card, shared by team and global Work Directions.
+//! One operator direction card for global Work Directions.
 //!
-//! Each surface resolves its own read model (the team ledger or the resident
-//! history page) into a [`Card`]; this module alone decides the markup, so the
-//! two surfaces cannot drift apart.
+//! The global history read model resolves into a [`Card`]; this module owns
+//! its markup.
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use yew::prelude::*;
-
-/// Who authored a direction.
-pub(super) enum Author {
-    /// The operator, shown by the badge its published identity carries.
-    Operator,
-    /// A peer lane, by its label and accent slot.
-    Lane {
-        label: String,
-        accent: Option<String>,
-    },
-}
-
-impl Author {
-    fn accent(&self) -> Option<String> {
-        match self {
-            Self::Operator => None,
-            Self::Lane { accent, .. } => accent.clone(),
-        }
-    }
-
-    fn render(&self) -> Html {
-        match self {
-            Self::Operator => html! {
-                <strong class="team-direction-operator" role="img" aria-label="Operator"></strong>
-            },
-            Self::Lane { label, .. } => html! { <strong>{label.clone()}</strong> },
-        }
-    }
-}
 
 /// One recipient badge with its independently evolving state.
 pub(super) struct Recipient {
@@ -54,19 +24,12 @@ pub(super) struct Recipient {
     pub retirement: Option<wire::Seq>,
 }
 
-/// Recipients within one team, or grouped under team labels when the view
-/// spans teams.
-pub(super) enum Recipients {
-    Team(Vec<Recipient>),
-    Teams(Vec<(String, Vec<Recipient>)>),
-}
+/// Recipients grouped under team labels.
+pub(super) struct Recipients(pub Vec<(String, Vec<Recipient>)>);
 
 impl Recipients {
     fn len(&self) -> usize {
-        match self {
-            Self::Team(recipients) => recipients.len(),
-            Self::Teams(groups) => groups.iter().map(|(_, recipients)| recipients.len()).sum(),
-        }
+        self.0.iter().map(|(_, recipients)| recipients.len()).sum()
     }
 }
 
@@ -79,7 +42,6 @@ pub(super) struct Card<'a> {
     /// False when only a retained excerpt of the direction is available.
     pub complete: bool,
     pub attachments: &'a [wire::body::DirectiveAttachment],
-    pub author: Author,
     /// Steering keys whose caused tasks the card offers.
     pub keys: BTreeSet<&'a str>,
     pub recipients: Recipients,
@@ -119,7 +81,6 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
             tabindex="-1"
             data-card-return-origin="work"
             data-direction={card.identity.to_string()}
-            data-accent={card.author.accent()}
         >
             <super::mermaid::MarkdownBody
                 html={AttrValue::from(rendered.html)}
@@ -134,9 +95,9 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
             }))}
             {render_tasks(&card.keys, controls)}
             <footer class="team-direction-footer">
-                <span class="team-direction-attribution" data-accent={card.author.accent()}>
+                <span class="team-direction-attribution">
                     <span class="agent-presence" aria-hidden="true"></span>
-                    {card.author.render()}
+                    <strong class="team-direction-operator" role="img" aria-label="Operator"></strong>
                 </span>
                 if !card.complete {
                     <span class="team-direction-excerpt">{"retained excerpt"}</span>
@@ -217,21 +178,14 @@ fn render_tasks(keys: &BTreeSet<&str>, controls: &Controls<'_>) -> Html {
 }
 
 fn render_recipients(recipients: &Recipients, follow: &Callback<MouseEvent>) -> Html {
-    match recipients {
-        Recipients::Team(recipients) => html! {
-            <ul class="team-direction-recipients" aria-label="Recipients">
-                {for recipients.iter().map(|recipient| render_recipient(recipient, follow))}
-            </ul>
-        },
-        Recipients::Teams(groups) => html! {
-            <div class="team-direction-recipient-groups" aria-label="Recipients grouped by team">
-                {for groups.iter().map(|(team, recipients)| html! {
-                    <ul class="team-direction-recipients" aria-label={format!("Recipients in {team}")}>
-                        {for recipients.iter().map(|recipient| render_recipient(recipient, follow))}
-                    </ul>
-                })}
-            </div>
-        },
+    html! {
+        <div class="team-direction-recipient-groups" aria-label="Recipients grouped by team">
+            {for recipients.0.iter().map(|(team, recipients)| html! {
+                <ul class="team-direction-recipients" aria-label={format!("Recipients in {team}")}>
+                    {for recipients.iter().map(|recipient| render_recipient(recipient, follow))}
+                </ul>
+            })}
+        </div>
     }
 }
 

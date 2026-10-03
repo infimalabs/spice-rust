@@ -213,7 +213,6 @@ impl PendingKind {
             | Self::TaskRelations { .. }
             | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
-            | Self::TeamSettled { .. }
             | Self::ConsentRuling { .. }
             | Self::LaneSeat
             | Self::LaneRenewal { .. }
@@ -460,7 +459,6 @@ impl ClientAction {
             | Self::TaskRelations { .. }
             | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
-            | Self::TeamSettled { .. }
             | Self::ConsentRuling { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
@@ -476,7 +474,6 @@ impl ClientAction {
                 | Self::TaskRelations { .. }
                 | Self::DirectionHistory { .. }
                 | Self::WorkHistory { .. }
-                | Self::TeamSettled { .. }
                 | Self::MessageHistory { .. }
         )
     }

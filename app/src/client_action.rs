@@ -19,10 +19,6 @@ pub(crate) enum ClientAction {
     WorkHistory {
         request: crate::runtime::WorkHistoryRequest,
     },
-    /// Read one page of the work one team recently settled.
-    TeamSettled {
-        request: crate::runtime::TeamSettledRequest,
-    },
     /// Allow or deny one queued consent request. The witnesses are derived
     /// from the queue current when the ruling is sent, not when it was chosen.
     ConsentRuling {

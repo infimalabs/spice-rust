@@ -7,7 +7,6 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, HtmlSelectElement, PointerEvent};
 
 use super::clock::{Age, Countdown};
-use super::work_card::{self, Density};
 use super::*;
 use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing, SubmissionAuthority, SubmissionTarget};
@@ -19,13 +18,12 @@ mod composer;
 mod controls;
 mod feedback;
 mod fleet;
+mod global_jobs;
 mod member_controls;
 mod mosaic_view;
 mod state;
 mod team_drag;
 mod team_menu;
-mod team_work;
-mod team_work_mosaic;
 mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
@@ -39,16 +37,15 @@ pub(super) use composer::{
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
+pub(in crate::browser) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
-pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
+pub(super) use global_jobs::render_global_jobs;
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 pub(crate) use mosaic_view::use_markdown_image_resolution_events;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
-pub(super) use team_work::render_global_jobs;
-use team_work::render_tasks;
 pub(super) use vendor_icon::render_composer_vendor_icon;
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -89,10 +86,8 @@ pub(super) fn render_team(
         team_controls,
         composer_drag,
         team_drag,
-        agents: controls,
-        selected_task,
         select_task,
-        team_settled,
+        agents: controls,
         ..
     } = render;
     let surface_state = (*surface).clone();
@@ -152,8 +147,6 @@ pub(super) fn render_team(
         .collect::<Vec<_>>();
     let render = FleetRender {
         work,
-        team_settled,
-        selected_task,
         select_task,
         runtime,
         epoch: lanes.epoch,
@@ -176,30 +169,6 @@ pub(super) fn render_team(
         return render_empty_fleet(team_fleet, &render);
     }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
-}
-
-/// Teams whose Work pane is on screen: the fleet is shown and the team is in
-/// Work mode. Only these read their settled work.
-pub(super) fn work_shown_teams(
-    surface: &SurfaceData,
-    controls: &TeamControls,
-    fleet_shown: bool,
-) -> Vec<CanonicalUuid> {
-    if !fleet_shown {
-        return Vec::new();
-    }
-    let surface = surface.read();
-    let Some(lanes) = surface.as_ref().and_then(AppRuntime::lanes) else {
-        return Vec::new();
-    };
-    lanes
-        .lanes
-        .iter()
-        .filter(|team| {
-            team.teamed() && controls.current(team.lane, team.subscription).mode == TeamMode::Work
-        })
-        .map(|team| team.lane)
-        .collect()
 }
 
 #[hook]

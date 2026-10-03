@@ -1,7 +1,6 @@
 /* The live team is one dense surface. Its dimensions deliberately follow the
-   supplied 1000 × 568 reference: compact global chrome, one shared mode rail,
-   four simultaneous standings, one ticker, then four independently operable
-   agent columns. */
+   supplied 1000 × 568 reference: compact global chrome, one fixed team header,
+   four simultaneous standings and their always-mounted Chat columns. */
 .commandbar--mosaic {
   min-height: var(--app-header-control);
   gap: 7px;

@@ -34,7 +34,7 @@ use crate::view::{AppRoute, RouteEvidence};
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
     AppDestination, AppRuntime, Axis, Principal, Session, SteerPane, StreamDirective,
-    TaskDetailState, TeamDestination, stale_reads,
+    TaskDetailState, stale_reads,
 };
 
 mod app_menu;
@@ -56,7 +56,6 @@ mod speech_runtime;
 mod task_detail;
 mod task_feedback;
 mod task_relations;
-mod team_settled;
 mod toast;
 mod view;
 mod watchband;
@@ -376,7 +375,6 @@ struct AppState {
     task_inspector: message_task_inspector::Controls,
     direction_history: direction_history::Controls,
     work_history: work_history::Controls,
-    team_settled: team_settled::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
@@ -434,7 +432,6 @@ impl AppState {
                 direction_history: &self.direction_history,
                 work_map: &self.work_map,
                 work_history: &self.work_history,
-                team_settled: &self.team_settled,
                 detail_close: &self.work_detail.close_ref,
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
@@ -505,15 +502,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         surface.clone(),
         route.work_scope().and_then(WorkScope::team),
     );
-    let team_settled = team_settled::use_controls(
-        sender.clone(),
-        surface.clone(),
-        watchband::work_shown_teams(
-            &surface,
-            &team_controls,
-            route.app_destination() == AppDestination::Chat,
-        ),
-    );
     let work_map = use_state(view::WorkMapState::default);
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
@@ -555,7 +543,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             task_inspector,
             direction_history,
             work_history,
-            team_settled,
             work_map,
             speech_status,
             agents,
@@ -607,12 +594,10 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         &state.surface,
         &state.sender,
         state.card_target_status.clone(),
-        state.team_controls.clone(),
         chat_visible,
     );
     card_target::use_global_direction_target(
         global_direction_card(&state.route, &state.surface),
-        state.team_controls.clone(),
         state.destination == AppDestination::Work,
     );
     use_mosaic_root_scroll(chat_visible);

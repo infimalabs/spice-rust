@@ -13,7 +13,6 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub scope: &'a WorkScope,
     pub lanes: Option<&'a LaneView>,
     pub navigate: &'a Callback<navigation::Intent>,
-    pub team_controls: &'a UseReducerHandle<TeamControls>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
     pub selected: Option<&'a TaskStamp>,
     pub presented: bool,
@@ -339,7 +338,6 @@ fn creator_team_fact(team: Option<wire::CanonicalUuid>, render: &WorkDetailRende
         team.to_string(),
         String::new(),
         destination,
-        render,
     )
 }
 
@@ -349,9 +347,8 @@ fn linked_identity_fact(
     identity: String,
     suffix: String,
     destination: Option<(wire::CanonicalUuid, wire::CanonicalUuid)>,
-    render: &WorkDetailRender<'_, '_>,
 ) -> Html {
-    let Some((team, member)) = destination else {
+    let Some((_team, member)) = destination else {
         return html! {
             <div><dt>{label}</dt><dd title={identity}>{display}{suffix}</dd></div>
         };
@@ -359,13 +356,6 @@ fn linked_identity_fact(
     let href = crate::view::card_href(&super::super::watchband::primary_textarea_id(
         &member.to_string(),
     ));
-    // Following the link changes the route, which closes the detail.
-    let controls = render.team_controls.clone();
-    let follow = Callback::from(move |event: MouseEvent| {
-        if super::super::card_target::follows_in_tab(&event) {
-            controls.dispatch(TeamControlAction::ShowChat { team });
-        }
-    });
     html! {
         <div>
             <dt>{label}</dt>
@@ -375,7 +365,6 @@ fn linked_identity_fact(
                     data-task-chat-link={member.to_string()}
                     {href}
                     aria-label={format!("Open {display} in Chat")}
-                    onclick={follow}
                 >{display}</a>
                 {suffix}
             </dd>
@@ -429,7 +418,6 @@ fn actor_fact(
         actor.to_string(),
         suffix,
         destination,
-        render,
     )
 }
 

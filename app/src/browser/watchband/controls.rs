@@ -94,7 +94,6 @@ impl TeamSpeech {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TeamControl {
-    pub(super) mode: TeamMode,
     pub(super) menu_open: bool,
     pub(super) import_open: bool,
     pub(super) arrangement_open: bool,
@@ -110,7 +109,6 @@ pub(super) struct TeamControl {
 impl Default for TeamControl {
     fn default() -> Self {
         Self {
-            mode: TeamMode::Chat,
             menu_open: false,
             import_open: false,
             arrangement_open: false,
@@ -129,14 +127,9 @@ impl Default for TeamControl {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct TeamControls {
     teams: BTreeMap<CanonicalUuid, TeamControl>,
-    empty_mode: TeamMode,
 }
 
 pub(crate) enum TeamControlAction {
-    SetMode {
-        team: Option<CanonicalUuid>,
-        mode: TeamMode,
-    },
     ToggleMenu {
         team: CanonicalUuid,
     },
@@ -147,10 +140,6 @@ pub(crate) enum TeamControlAction {
         team: CanonicalUuid,
     },
     CloseMenus,
-    /// Switch a team to Chat, where its members' composers live.
-    ShowChat {
-        team: CanonicalUuid,
-    },
     SaveSplit {
         team: CanonicalUuid,
         topology: Vec<TeamArrangement>,
@@ -197,14 +186,12 @@ impl Reducible for TeamControls {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
-            TeamControlAction::SetMode { team, mode } => next.set_mode(team, mode),
             TeamControlAction::ToggleMenu { team } => next.toggle_menu(team),
             TeamControlAction::ToggleImport { team } => next.toggle_import(team),
             TeamControlAction::ToggleArrangement { team } => {
                 next.toggle_arrangement(team);
             }
             TeamControlAction::CloseMenus => next.close_menus(),
-            TeamControlAction::ShowChat { team } => next.set_mode(Some(team), TeamMode::Chat),
             TeamControlAction::SaveSplit { team, topology } => {
                 next.save_split(team, topology);
             }
@@ -281,28 +268,10 @@ impl TeamControls {
             })
     }
 
-    pub(in crate::browser) fn mode(&self, team: CanonicalUuid) -> TeamMode {
-        self.teams
-            .get(&team)
-            .map_or(TeamMode::Chat, |team| team.mode)
-    }
-
-    pub(super) const fn empty_mode(&self) -> TeamMode {
-        self.empty_mode
-    }
-
     pub(in crate::browser) fn any_menu_open(&self) -> bool {
         self.teams
             .values()
             .any(|team| team.menu_open || team.import_open || team.arrangement_open)
-    }
-
-    fn set_mode(&mut self, team: Option<CanonicalUuid>, mode: TeamMode) {
-        if let Some(team) = team {
-            self.teams.entry(team).or_default().mode = mode;
-        } else {
-            self.empty_mode = mode;
-        }
     }
 
     fn toggle_menu(&mut self, team: CanonicalUuid) {
@@ -449,8 +418,7 @@ impl TeamControls {
     ) {
         self.close_arrangements();
         // A team that left the authoritative subscription set is gone, not
-        // hidden. Drop its browser-local controls before deciding whether a
-        // newly seated first team should inherit the empty surface.
+        // hidden. Drop its browser-local controls.
         let live_teams = answer
             .subscriptions
             .iter()
@@ -458,18 +426,6 @@ impl TeamControls {
             .collect::<BTreeSet<_>>();
         self.teams.retain(|team, _| live_teams.contains(team));
 
-        // A seat submitted from the empty Work view must keep that view when
-        // its first real surface arrives. The resident's authoritative
-        // subscription order resolves the transition: its first team
-        // inherits the empty selection exactly once, and every sibling keeps
-        // the explicit Chat default.
-        if self.teams.is_empty()
-            && self.empty_mode != TeamMode::Chat
-            && let Some(subscription) = answer.subscriptions.first()
-        {
-            self.teams.entry(subscription.team).or_default().mode = self.empty_mode;
-            self.empty_mode = TeamMode::Chat;
-        }
         for subscription in &answer.subscriptions {
             let team = subscription.team;
             let life = subscription.policy.into();
