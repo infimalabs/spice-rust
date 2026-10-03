@@ -840,7 +840,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider {
   --control-state-accent: var(--accent);
   display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center;
-  min-height: 0; padding: 7px 2px 3px; overflow: hidden;
+  min-height: 0; padding: 7px 2px; overflow: hidden;
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
 .team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: 0 var(--team-control-item-height); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
