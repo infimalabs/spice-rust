@@ -127,9 +127,12 @@ candidate that is not the actor's own unassigned review outranks every such
 self-review before priority, graph weight, urgency, and locality are compared.
 Only when nothing else is eligible does self-review become selectable, so a
 quiet solo board never deadlocks; the claim reply names that last resort and
-asks for a verdict. A row the lane explicitly freed joins the same class, and
-when it returns the reply asks the lane to record what it waits on (`task
-depends`, `task require`, or `task defer`) rather than free it again.
+asks for a verdict. The allocator assignment is both the actor's sole authority
+to self-review and an obligation to finish that review: an actor never selects
+its own review, but once `spice task next` returns it, authorship is not a
+reason to free or defer it. A row the lane explicitly freed joins the same
+class; when it returns, the reply asks the lane to record what it waits on
+(`task depends`, `task require`, or `task defer`) rather than free it again.
 
 **Value:** the fleet gets independent review whenever it *can* and degrades to
 progress when it can't — prefer the good property, never let it stop the work.

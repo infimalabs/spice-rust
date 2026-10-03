@@ -151,9 +151,11 @@ pub fn deliverable(phase: &Phase) -> Option<&'static str> {
 ///
 /// Self-review is ranked last, never excluded, so a quiet board hands it out
 /// rather than stalling.
-pub const SELF_REVIEW_DELIVERABLE: &str = "a verdict is the deliverable: this is your own \
-     review, handed as the last resort because no peer work is eligible; inspect the \
-     integrated diff, check its evidence, and record a clean or finding review";
+pub const SELF_REVIEW_DELIVERABLE: &str = "a verdict is the deliverable: the allocator \
+     assigned your own review as the last resort because no peer work is eligible, so this \
+     assignment authorizes and requires you to review it now; do not free or defer it merely \
+     because you authored the implementation. Inspect the integrated diff, check its evidence, \
+     and record a clean or finding review";
 
 /// What a lane is told when it wins back a row it freed.
 ///

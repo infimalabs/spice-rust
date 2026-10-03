@@ -80,6 +80,12 @@ command for more.
   `allocator-empty` ends only that pass; it does not discharge uncaptured
   operator direction or other turn obligations. Work only the assigned phase;
   do not hunt parked rows or assume the next phase returns to this lane.
+- Self-review authority comes only from allocation. Never seek, select, or
+  manually claim your own review. When `spice task next` assigns your own
+  review, that assignment explicitly authorizes and requires you to inspect it
+  and run `spice task review` with a clean or finding verdict; do not free or
+  defer it merely because you authored the implementation. Use the ordinary
+  blocker path only for a real blocker.
 - Rehydrate assignment context that names another session before editing. A
   live session cannot replay its own context: use the conversation, briefing,
   and task state, and do not bypass `session::context-live-session-self` by
