@@ -479,6 +479,7 @@ fn a_reply_to_a_sender_that_ended_its_turn_waits_for_its_next_seat() {
         .try_into()
         .unwrap_or_else(|pending| panic!("the vacant sender holds one reply: {pending:?}"));
     assert_eq!(reply.from, Some(recipient));
+    assert!(!reply.wakes, "a peer reply never wakes its vacant sender");
     assert_eq!(reply.text, "", "a bare header relays no clause");
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
     let rendered = steer::inbox::render_pending(&seal, &[reply], |_, _| None);
@@ -564,6 +565,35 @@ fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() 
         .count();
     assert_eq!(others, 0, "a retirement belongs only to its own lane");
 
+    peers.finish();
+}
+
+#[test]
+fn only_operator_direction_in_an_inbox_can_wake_its_lane() {
+    let peers = Peers::new("steer-inbox-wakes");
+    let (outcome, _) = peers.tell(70, RECIPIENT, "the parser moved");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(told),
+        ..
+    }) = outcome
+    else {
+        panic!("a peer message is durable: {outcome:?}");
+    };
+    let sent = peers.send(72, RECIPIENT, 71, "keep the parser where it is");
+
+    let pending = peers.pending(RECIPIENT);
+    let wakes = |directive: CanonicalUuid| {
+        pending
+            .iter()
+            .find(|row| row.directive == directive)
+            .unwrap_or_else(|| panic!("{directive} is pending: {pending:?}"))
+            .wakes
+    };
+    assert!(
+        !wakes(told.directive),
+        "a peer message waits for the next seat"
+    );
+    assert!(wakes(sent.directive), "operator direction wakes the lane");
     peers.finish();
 }
 

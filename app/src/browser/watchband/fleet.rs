@@ -250,7 +250,7 @@ fn render_team_toolbar(
     let render_pip = |index: usize| {
         let standing = &standings[index];
         let member = team.member(standing.lane)?;
-        let status = member.status(standing.pending);
+        let status = member.status(standing.waking);
         let position = pip_stack
             .position(index)
             .expect("standing index belongs to the lane pip stack");

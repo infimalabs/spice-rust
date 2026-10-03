@@ -114,8 +114,10 @@ pub struct Standing {
     pub liveness: wire::intent::LaneLiveness,
     /// Commands the lane started and has yet to hear the ending of.
     pub jobs: Vec<wire::intent::LaneJob>,
-    /// Directives waiting for the lane.
+    /// Directives waiting for the lane, waking or not.
     pub pending: usize,
+    /// Waiting directives that can wake the lane; only these mark it queued.
+    pub waking: usize,
     /// Producer-supplied preview of the newest waiting directive.
     pub headline: Option<String>,
     /// Handle of the task the lane currently holds.
@@ -561,6 +563,12 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 liveness: member.liveness,
                 jobs: member.jobs.clone(),
                 pending: waiting.map_or(0, |row| row.pending.len()),
+                waking: waiting.map_or(0, |row| {
+                    row.pending
+                        .iter()
+                        .filter(|directive| directive.wakes)
+                        .count()
+                }),
                 headline: waiting
                     .and_then(|row| row.pending.last())
                     .and_then(|directive| directive.preview.clone()),

@@ -1,6 +1,7 @@
 //! Resident-owned steering reads and transitions.
 //! Transcript-backed disposition is the sole acknowledgment path.
 
+use std::collections::BTreeSet;
 use std::fs;
 
 use bus::Bus;
@@ -41,6 +42,21 @@ const LEGACY_TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
 /// Whether retained steering evidence belongs to the predecessor task notifier.
 pub(super) fn is_legacy_task_generation_control(control: Option<&str>) -> bool {
     control.is_some_and(|control| control.starts_with(LEGACY_TASK_GENERATION_CONTROL_PREFIX))
+}
+
+/// The directive an operator send opened, the only steering that wakes a lane.
+///
+/// Peer messages, peer replies, and resident reminders also stay pending, but
+/// wait for the lane's next seat. The lifecycle resolver and the inbox's
+/// `wakes` flag both answer from this one predicate.
+pub(super) fn operator_sent(envelope: &wire::Envelope<wire::AnyFact>) -> Option<CanonicalUuid> {
+    if envelope.actor != Actor::Operator {
+        return None;
+    }
+    envelope
+        .fact
+        .read::<wire::body::SteerSent>()
+        .map(|body| body.directive)
 }
 
 pub(super) struct InternalDirective {
@@ -561,7 +577,7 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let mut pending = pending_presentations(&snapshot.ledger, lane.lane);
+        let mut pending = pending_presentations(&snapshot.ledger, &snapshot.waking, lane.lane);
         for directive in &mut pending {
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
@@ -598,6 +614,8 @@ pub(super) fn inbox(
 
 struct SteeringSnapshot {
     ledger: steer::Ledger,
+    /// Pending directives an operator send opened, which alone wake a lane.
+    waking: BTreeSet<CanonicalUuid>,
     retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
@@ -662,8 +680,17 @@ fn pending_snapshot(
         }
         let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
             .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
+        let waking = heads
+            .iter()
+            .map(journal::JournalHead::body)
+            .filter(|head| {
+                authority.facts().at(head.created).and_then(operator_sent) == Some(head.directive)
+            })
+            .map(|head| head.directive)
+            .collect();
         return Ok(SteeringSnapshot {
             ledger,
+            waking,
             retired: first.into_retired(),
             position,
             authority,
@@ -732,13 +759,14 @@ fn keyspace(
     .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
 }
 
-fn pending_directive(directive: &steer::Directive) -> PendingDirective {
+fn pending_directive(directive: &steer::Directive, wakes: bool) -> PendingDirective {
     PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
         fanout: directive.fanout(),
         text: directive.text().to_owned(),
         from: directive.from(),
+        wakes,
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),
@@ -775,12 +803,13 @@ fn retired_directive(
 /// Project every pending directive onto the ordinary inline steering path.
 pub(super) fn pending_presentations(
     ledger: &steer::Ledger,
+    waking: &BTreeSet<CanonicalUuid>,
     lane: CanonicalUuid,
 ) -> Vec<PendingDirective> {
     ledger
         .pending(lane)
         .into_iter()
-        .map(pending_directive)
+        .map(|directive| pending_directive(directive, waking.contains(&directive.directive())))
         .collect()
 }
 

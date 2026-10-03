@@ -381,9 +381,8 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                 {for candidates.into_iter().map(|(candidate_team, position, member)| {
                     let sender = context.sender.clone();
                     let lane = member.lane;
-                    let pending =
-                        view::member_pending(waiting, context.submissions, member.lane);
-                    let status = member.status(pending);
+                    let waking = view::member_waking(waiting, context.submissions, member.lane);
+                    let status = member.status(waking);
                     let label = member
                         .name
                         .clone()

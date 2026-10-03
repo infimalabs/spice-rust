@@ -172,11 +172,13 @@ impl LaneStatus {
 }
 
 impl LaneMember {
-    /// This member's status, given how much direction is queued for it.
+    /// This member's status, given how much waking direction is queued for it.
     ///
-    /// Pending direction outranks liveness, exactly as the predecessor ranks
-    /// it: a lane holding unanswered steering is the one the operator has to
-    /// look at, whether or not anything is running in it. A vacant seat that
+    /// Pending direction that can wake the lane outranks liveness: a lane
+    /// holding unanswered operator steering is the one the operator has to
+    /// look at, whether or not anything is running in it. Direction that never
+    /// wakes a lane (peer messages, peer replies, resident reminders) waits for
+    /// its next seat and leaves the status at liveness. A vacant seat that
     /// still owes its next occupant a command's ending is waiting, not cold.
     #[must_use]
     pub const fn status(&self, pending: usize) -> LaneStatus {

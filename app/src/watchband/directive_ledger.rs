@@ -62,6 +62,7 @@ mod tests {
                         fanout: Some(id(9)),
                         text: "direction".to_owned(),
                         from: None,
+                        wakes: true,
                         preview: Some("direction".to_owned()),
                         control: None,
                         attachments: Vec::new(),

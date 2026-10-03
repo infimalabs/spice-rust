@@ -301,6 +301,7 @@ mod tests {
             liveness: wire::intent::LaneLiveness::Working,
             jobs: Vec::new(),
             pending: 0,
+            waking: 0,
             headline: None,
             handle: expires_at.map(|_| "alpha.core-dTaaaaaaa".to_owned()),
             task_title: None,

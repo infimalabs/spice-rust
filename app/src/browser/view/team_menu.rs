@@ -585,7 +585,8 @@ fn render_member(
     can_configure: bool,
 ) -> Html {
     let pending = super::member_pending(presence.waiting, presence.submissions, member.lane);
-    let status = member.status(pending);
+    let waking = super::member_waking(presence.waiting, presence.submissions, member.lane);
+    let status = member.status(waking);
     let label = member
         .name
         .clone()
