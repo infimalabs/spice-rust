@@ -17,7 +17,7 @@ use super::*;
 use crate::browser::clock::Age;
 use crate::task_pill::TaskPill;
 use crate::watchband;
-use crate::work::WorkProjection;
+use crate::work::{WorkCounts, WorkProjection, WorkRail};
 
 /// Characters the ticker line is allowed.
 ///
@@ -50,49 +50,23 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         runtime.is_some(),
         runtime.is_some_and(|runtime| runtime.lanes().is_some()),
     );
-    let task_pills = task_pills(render.work);
+    let on_work = render.destination == AppDestination::Work;
+    let task_pills = render
+        .work
+        .map(|work| TaskPill::for_rail(work, WorkRail::Global))
+        .unwrap_or_default();
     let all_work_pill = render
         .work
-        .filter(|_| !task_pills.is_empty())
-        .map(|work| work.counts())
+        .map(WorkProjection::counts)
+        .filter(|counts| counts.has_open())
         .map(|counts| {
-            let navigate = render.navigate.clone();
-            let selected = render.destination == AppDestination::Work
-                && matches!(render.work_scope, WorkScope::AllOpen);
-            let ready = counts.ready();
-            let active = counts.in_flight();
-            let unavailable = counts.unavailable();
-            let title = format!(
-                "All open work: {ready} ready, {active} active or in flight, \
-                 {unavailable} blocked or deferred"
-            );
-            html! {
-                <button
-                    class={classes!(
-                        "task-pill",
-                        "task-pill--all",
-                        (active > 0).then_some("active"),
-                        (ready == 0 && active == 0).then_some("dormant"),
-                        selected.then_some("selected"),
-                    )}
-                    type="button"
-                    title={title.clone()}
-                    aria-label={title}
-                    aria-pressed={selected.to_string()}
-                    aria-current={selected.then_some("page")}
-                    data-work-scope="all"
-                    data-ready={ready.to_string()}
-                    data-active={active.to_string()}
-                    data-unavailable={unavailable.to_string()}
-                    onclick={Callback::from(move |_| {
-                        navigate.emit(navigation::Intent::Work(WorkScope::AllOpen));
-                    })}
-                >
-                    <span class="task-pill-count">
-                        {format!("{ready}·{active}·{unavailable}")}
-                    </span>
-                </button>
-            }
+            render_aggregate_pill(
+                counts,
+                "All open work",
+                WorkScope::AllOpen,
+                on_work.then_some(render.work_scope),
+                render.navigate,
+            )
         });
     let operator_link = render_operator_link(&render, runtime);
     let connection_label: AttrValue = render.connection.label().into();
@@ -107,42 +81,13 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 <nav class="task-pill-strip app-control-rail" aria-label="Open task projects">
                     {all_work_pill}
                     {for task_pills.into_iter().map(|pill| {
-                        let navigate = render.navigate.clone();
-                        let identity = pill.identity.clone();
-                        let selected = render.destination == AppDestination::Work
-                            && render.work_scope.stem() == Some(&pill.identity);
-                        let key = identity.to_string();
-                        let title = pill.title();
-                        html! {
-                            <button
-                                key={key}
-                                class={classes!(
-                                    "task-pill",
-                                    pill.hidden.then_some("system"),
-                                    (pill.active > 0).then_some("active"),
-                                    (pill.ready == 0 && pill.active == 0).then_some("dormant"),
-                                    selected.then_some("selected"),
-                                )}
-                                type="button"
-                                title={title.clone()}
-                                aria-label={title}
-                                aria-pressed={selected.to_string()}
-                                aria-current={selected.then_some("page")}
-                                data-task-stem={pill.stem.clone()}
-                                data-task-visibility={if pill.hidden { "hidden" } else { "public" }}
-                                data-ready={pill.ready.to_string()}
-                                data-active={pill.active.to_string()}
-                                data-unavailable={pill.unavailable.to_string()}
-                                onclick={Callback::from(move |_| {
-                                    navigate.emit(navigation::Intent::Work(WorkScope::Stem(
-                                        identity.clone(),
-                                    )));
-                                })}
-                            >
-                                <span>{pill.stem.clone()}</span>
-                                <span class="task-pill-count">{pill.count()}</span>
-                            </button>
-                        }
+                        let scope = WorkScope::Stem(pill.identity.clone());
+                        render_stem_pill(
+                            pill,
+                            scope,
+                            on_work.then_some(render.work_scope),
+                            render.navigate,
+                        )
                     })}
                 </nav>
                 if let Some(status) = status {
@@ -380,12 +325,88 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
-fn task_pills(work: Option<&WorkProjection<'_>>) -> Vec<TaskPill> {
-    work.into_iter()
-        .flat_map(WorkProjection::stems)
-        .filter(|stem| stem.counts().has_open())
-        .map(TaskPill::from_stem)
-        .collect()
+/// One aggregate task pill opening the Work scope its counts describe.
+pub(in crate::browser) fn render_aggregate_pill(
+    counts: WorkCounts,
+    subject: &str,
+    scope: WorkScope,
+    current: Option<&WorkScope>,
+    navigate: &Callback<navigation::Intent>,
+) -> Html {
+    let selected = current == Some(&scope);
+    let ready = counts.ready();
+    let active = counts.in_flight();
+    let unavailable = counts.unavailable();
+    let title = format!(
+        "{subject}: {ready} ready, {active} active or in flight, {unavailable} blocked or deferred"
+    );
+    let kind = if scope.team().is_some() {
+        "team"
+    } else {
+        "all"
+    };
+    let navigate = navigate.clone();
+    html! {
+        <button
+            class={classes!(
+                "task-pill",
+                "task-pill--all",
+                (active > 0).then_some("active"),
+                (ready == 0 && active == 0).then_some("dormant"),
+                selected.then_some("selected"),
+            )}
+            type="button"
+            title={title.clone()}
+            aria-label={title}
+            aria-pressed={selected.to_string()}
+            aria-current={selected.then_some("page")}
+            data-work-scope={kind}
+            data-ready={ready.to_string()}
+            data-active={active.to_string()}
+            data-unavailable={unavailable.to_string()}
+            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
+        >
+            <span class="task-pill-count">{format!("{ready}·{active}·{unavailable}")}</span>
+        </button>
+    }
+}
+
+/// One stem task pill opening `scope`, the exact scope its counts describe.
+pub(in crate::browser) fn render_stem_pill(
+    pill: TaskPill,
+    scope: WorkScope,
+    current: Option<&WorkScope>,
+    navigate: &Callback<navigation::Intent>,
+) -> Html {
+    let selected = current == Some(&scope);
+    let title = pill.title();
+    let navigate = navigate.clone();
+    html! {
+        <button
+            key={pill.identity.to_string()}
+            class={classes!(
+                "task-pill",
+                pill.hidden.then_some("system"),
+                (pill.active > 0).then_some("active"),
+                (pill.ready == 0 && pill.active == 0).then_some("dormant"),
+                selected.then_some("selected"),
+            )}
+            type="button"
+            title={title.clone()}
+            aria-label={title}
+            aria-pressed={selected.to_string()}
+            aria-current={selected.then_some("page")}
+            data-task-stem={pill.stem.clone()}
+            data-task-visibility={if pill.hidden { "hidden" } else { "public" }}
+            data-ready={pill.ready.to_string()}
+            data-active={pill.active.to_string()}
+            data-unavailable={pill.unavailable.to_string()}
+            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
+        >
+            <span>{pill.stem.clone()}</span>
+            <span class="task-pill-count">{pill.count()}</span>
+        </button>
+    }
 }
 
 /// Directives waiting across every lane, which is what the feed is for.

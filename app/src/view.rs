@@ -386,17 +386,22 @@ impl AppRoute {
                     _ => {}
                 }
                 let (scope, rest) = match rest.as_slice() {
-                    [TEAM_SEGMENT, team, rest @ ..] => (WorkScope::Team(team.parse().ok()?), rest),
+                    [TEAM_SEGMENT, team, visibility, stem, rest @ ..]
+                        if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
+                    {
+                        let scope = WorkScope::Team {
+                            team: team.parse().ok()?,
+                            stem: Some(stem_identity(visibility, stem)?),
+                        };
+                        (scope, rest)
+                    }
+                    [TEAM_SEGMENT, team, rest @ ..] => {
+                        (WorkScope::team_wide(team.parse().ok()?), rest)
+                    }
                     [visibility, stem, rest @ ..]
                         if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
                     {
-                        let visibility = if *visibility == PUBLIC_SEGMENT {
-                            WorkVisibility::Public
-                        } else {
-                            WorkVisibility::Hidden
-                        };
-                        let stem = WorkStemIdentity::new(visibility, decode_segment(stem)?);
-                        (WorkScope::Stem(stem), rest)
+                        (WorkScope::Stem(stem_identity(visibility, stem)?), rest)
                     }
                     rest => (WorkScope::AllOpen, rest),
                 };
@@ -472,21 +477,15 @@ impl AppRoute {
                 let mut path = AppDestination::Work.path().to_owned();
                 match scope {
                     WorkScope::AllOpen => {}
-                    WorkScope::Stem(stem) => {
-                        path.push('/');
-                        path.push_str(if stem.hidden() {
-                            HIDDEN_SEGMENT
-                        } else {
-                            PUBLIC_SEGMENT
-                        });
-                        path.push('/');
-                        encode_segment(stem.stem(), &mut path);
-                    }
-                    WorkScope::Team(team) => {
+                    WorkScope::Stem(stem) => push_stem_segments(stem, &mut path),
+                    WorkScope::Team { team, stem } => {
                         path.push('/');
                         path.push_str(TEAM_SEGMENT);
                         path.push('/');
                         path.push_str(&team.to_string());
+                        if let Some(stem) = stem {
+                            push_stem_segments(stem, &mut path);
+                        }
                     }
                 }
                 if let Some(task) = task {
@@ -575,9 +574,15 @@ impl AppRoute {
             Self::Work { scope, .. } if evidence.scope == Some(false) => Some((
                 Self::destination(AppDestination::Work),
                 match scope {
-                    WorkScope::Team(team) => {
+                    WorkScope::Team { team, stem: None } => {
                         format!("Team {team} is not in the roster; showing All open work.")
                     }
+                    WorkScope::Team {
+                        team,
+                        stem: Some(stem),
+                    } => format!(
+                        "Team {team} work in {stem} is no longer available; showing All open work."
+                    ),
                     WorkScope::Stem(stem) => {
                         format!("Work scope {stem} is no longer available; showing All open work.")
                     }
@@ -650,6 +655,29 @@ pub(crate) fn team_stream_card_target(team: wire::CanonicalUuid) -> String {
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn team_stream_card_team(target: &str) -> Option<wire::CanonicalUuid> {
     target.strip_prefix(TEAM_STREAM_CARD_PREFIX)?.parse().ok()
+}
+
+/// One visibility-qualified stem from its two route segments.
+#[cfg(any(target_arch = "wasm32", test))]
+fn stem_identity(visibility: &str, stem: &str) -> Option<WorkStemIdentity> {
+    let visibility = match visibility {
+        PUBLIC_SEGMENT => WorkVisibility::Public,
+        HIDDEN_SEGMENT => WorkVisibility::Hidden,
+        _ => return None,
+    };
+    Some(WorkStemIdentity::new(visibility, decode_segment(stem)?))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn push_stem_segments(stem: &WorkStemIdentity, path: &mut String) {
+    path.push('/');
+    path.push_str(if stem.hidden() {
+        HIDDEN_SEGMENT
+    } else {
+        PUBLIC_SEGMENT
+    });
+    path.push('/');
+    encode_segment(stem.stem(), path);
 }
 
 /// Bytes a route segment carries literally; every other byte is `%XX`.

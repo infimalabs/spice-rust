@@ -473,6 +473,14 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
+/* The team's own task pills ride its upper rail, above its status line. */
+.team-task-rail {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  max-width: calc(100% - 20px);
+  margin: 6px 10px 0;
+}
+
 .team-toolbar {
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
