@@ -33,7 +33,7 @@ pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
             }
             {render_attempt(generation.latest_attempt.as_ref())}
             if let Some(snapshot) = snapshot {
-                {render_reports(&snapshot.reports)}
+                {render_reports(snapshot)}
                 {render_accounts_without_usage(&snapshot.accounts_without_usage)}
                 {render_disabled(&snapshot.disabled_credentials)}
             }
@@ -71,26 +71,37 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
     }
 }
 
-fn render_reports(reports: &[wire::QuotaReport]) -> Html {
+fn render_reports(snapshot: &wire::QuotaSnapshot) -> Html {
+    let accents = crate::quota::weekly_quota_stack(snapshot)
+        .map(|stack| stack.report_accents(snapshot.reports.len()));
     html! {
         <section class="quota-detail-group" aria-labelledby="quota-accounts-heading">
             <h3 id="quota-accounts-heading">{"Account limits"}</h3>
-            if reports.is_empty() {
+            if snapshot.reports.is_empty() {
                 <p class="quota-empty quota-account-empty">{"No account usage reports were returned."}</p>
             } else {
                 <div class="quota-account-list">
-                    {for reports.iter().enumerate().map(|(index, report)| render_report(index, report))}
+                    {for snapshot.reports.iter().enumerate().map(|(index, report)| {
+                        let accent = accents
+                            .as_deref()
+                            .and_then(|accents| accents[index]);
+                        render_report(index, report, accent)
+                    })}
                 </div>
             }
         </section>
     }
 }
 
-fn render_report(index: usize, report: &wire::QuotaReport) -> Html {
+fn render_report(index: usize, report: &wire::QuotaReport, accent: Option<usize>) -> Html {
     let heading = format!("quota-account-{index}");
     let label = crate::quota::account_label(&report.account);
     html! {
-        <article class="quota-account" aria-labelledby={heading.clone()}>
+        <article
+            class="quota-account"
+            aria-labelledby={heading.clone()}
+            data-accent={accent.map(|accent| (accent % crate::watchband::ACCENTS).to_string())}
+        >
             <header>
                 <span class="quota-provider">{report.provider.clone()}</span>
                 <h4 id={heading}>{label.clone()}</h4>

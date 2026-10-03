@@ -151,6 +151,7 @@ pub(crate) struct WeeklyQuotaBand<'a> {
 pub(crate) struct WeeklyQuotaAccount {
     pub capacity: f64,
     pub available: f64,
+    report_index: usize,
 }
 
 /// One account's layer in the drawn stack.
@@ -180,6 +181,21 @@ impl WeeklyQuotaStack<'_> {
         layers.sort_by(|lower, upper| upper.available.total_cmp(&lower.available));
         layers
     }
+
+    /// Stable fill accent for each source report. Accounts without a shared
+    /// weekly limit have no layer in the Spice button and remain unaccented.
+    pub(crate) fn report_accents(&self, report_count: usize) -> Vec<Option<usize>> {
+        let mut accents = vec![None; report_count];
+        for (accent, account) in self
+            .bands
+            .iter()
+            .flat_map(|band| &band.accounts)
+            .enumerate()
+        {
+            accents[account.report_index] = Some(accent);
+        }
+        accents
+    }
 }
 
 /// Build the account layers behind the global weekly-quota presentation.
@@ -187,7 +203,7 @@ pub(crate) fn weekly_quota_stack(snapshot: &wire::QuotaSnapshot) -> Option<Weekl
     let mut bands: Vec<WeeklyQuotaBand<'_>> = Vec::new();
     let mut capacity = 0.0;
     let mut weighted_remaining = 0.0;
-    for report in &snapshot.reports {
+    for (report_index, report) in snapshot.reports.iter().enumerate() {
         let Some(remaining) = binding_remaining_fraction(report) else {
             continue;
         };
@@ -204,6 +220,7 @@ pub(crate) fn weekly_quota_stack(snapshot: &wire::QuotaSnapshot) -> Option<Weekl
             band.accounts.push(WeeklyQuotaAccount {
                 capacity: account_capacity,
                 available: account_available,
+                report_index,
             });
         } else {
             bands.push(WeeklyQuotaBand {
@@ -213,6 +230,7 @@ pub(crate) fn weekly_quota_stack(snapshot: &wire::QuotaSnapshot) -> Option<Weekl
                 accounts: vec![WeeklyQuotaAccount {
                     capacity: account_capacity,
                     available: account_available,
+                    report_index,
                 }],
             });
         }
@@ -630,6 +648,13 @@ mod tests {
         assert_eq!(
             layers(&snapshot),
             vec![(0, 20.0), (3, 20.0), (2, 0.2), (1, 0.0)],
+        );
+
+        let stack = weekly_quota_stack(&snapshot).expect("weekly quota");
+        assert_eq!(
+            stack.report_accents(snapshot.reports.len()),
+            vec![Some(3), Some(2), Some(0), Some(1)],
+            "Dash cards keep the accents assigned to the same Spice-button layers"
         );
     }
 
