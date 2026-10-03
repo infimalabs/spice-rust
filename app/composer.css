@@ -273,12 +273,6 @@
 }
 .agent-menu-copy:hover code,
 .agent-menu-copy:focus-visible code { color: var(--accent-slot, var(--accent)); }
-.agent-menu-team {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.agent-menu-team > .agent-menu-action { flex: 1 1 auto; }
 .agent-menu-action {
   display: inline-flex;
   align-items: center;

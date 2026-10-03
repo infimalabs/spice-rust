@@ -104,7 +104,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-expanded={(**render.menu_open).to_string()}
             >
                 {operator_link}
-                <nav class="task-pill-strip" aria-label="Open task projects">
+                <nav class="task-pill-strip app-control-rail" aria-label="Open task projects">
                     {all_work_pill}
                     {for task_pills.into_iter().map(|pill| {
                         let navigate = render.navigate.clone();
@@ -511,7 +511,7 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
         "Speak this message"
     };
     html! {
-        <span class="message-actions">
+        <span class="message-actions app-control-rail">
             <button
                 class={classes!(
                     "card-action",

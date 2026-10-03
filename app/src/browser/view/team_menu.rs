@@ -465,13 +465,7 @@ fn render_theme_selector() -> Html {
         .and_then(|root| root.get_attribute("data-app-theme"))
         .unwrap_or_else(|| "system".to_owned());
     html! {
-        <div
-            class="app-control-rail app-theme-selector"
-            role="group"
-            aria-label="Theme"
-            data-selected-theme={selected.clone()}
-        >
-            <span class="app-theme-thumb" aria-hidden="true"></span>
+        <div class="app-control-rail app-theme-selector" role="group" aria-label="Theme">
             {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
                 .into_iter()
                 .map(|(mode, label)| {

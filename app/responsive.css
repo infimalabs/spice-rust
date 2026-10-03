@@ -112,10 +112,9 @@
   .work-detail { width: 100vw; }
   .work-detail-header,
   .work-detail-content { padding-inline: 14px; }
-  .work-detail-tabs,
+  .work-detail-tabs { margin-inline: 14px; }
   .work-map-content { padding-inline: 14px; }
-  /* The lens rail may wrap here; a wrapped rail is a frame, not a capsule. */
-  .work-map-lenses { width: 100%; border-radius: var(--app-radius-frame); }
+  .work-map-lenses { width: 100%; }
   .work-map-controls { align-items: stretch; }
   .work-map-control-group { width: 100%; }
   .work-map-control-group button { flex: 1 1 0; }

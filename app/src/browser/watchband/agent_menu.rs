@@ -359,7 +359,7 @@ fn render_team_actions(
     leave: AgentTeamControl,
 ) -> Html {
     html! {
-        <div class="agent-menu-team" role="group" aria-label="Team">
+        <div class="app-control-rail" role="group" aria-label="Team">
             <button
                 class="agent-menu-action"
                 type="button"

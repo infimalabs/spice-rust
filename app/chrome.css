@@ -91,12 +91,12 @@ body:has(.shell--mosaic),
   font-size: .7rem;
 }
 
+/* One joined strip that scrolls rather than wraps, as wide as its pills. */
 .task-pill-strip {
   grid-area: 1 / 2;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 6rem;
+  justify-self: start;
+  flex-wrap: nowrap;
+  max-width: 100%;
   overflow-x: auto;
 }
 .task-pill {
@@ -106,15 +106,14 @@ body:has(.shell--mosaic),
   gap: 4px;
   min-height: 23px;
   padding: 2px 10px;
-  border: 1px solid var(--accent);
-  border-radius: var(--app-radius-pill);
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--accent);
   font: 500 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.task-pill:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .task-pill.active { opacity: .78; }
-.task-pill.dormant { border-color: var(--muted); color: var(--muted); }
-.task-pill.system { border-style: dashed; border-color: var(--triage); color: var(--triage); }
+.task-pill.dormant { color: var(--muted); }
+.task-pill.system { color: var(--triage); }
 .task-pill--all { padding-inline: 4px; }
 .task-pill-count {
   padding: 0 5px;
@@ -379,55 +378,21 @@ body:has(.shell--mosaic),
   color: var(--muted);
   font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.app-theme-selector {
-  --app-theme-step: 28px;
-  position: relative;
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: repeat(3, var(--app-theme-step));
-  padding: 3px;
-}
-.app-theme-thumb {
-  position: absolute;
-  z-index: 0;
-  top: 3px;
-  left: 3px;
-  width: var(--app-theme-step);
-  height: var(--app-theme-step);
-  border-radius: 50%;
-  background: var(--control);
-  box-shadow: var(--app-selection-shadow);
-  pointer-events: none;
-}
-.app-theme-selector[data-selected-theme="system"] .app-theme-thumb {
-  transform: translateX(var(--app-theme-step));
-}
-.app-theme-selector[data-selected-theme="dark"] .app-theme-thumb {
-  transform: translateX(calc(var(--app-theme-step) * 2));
-}
+.app-theme-selector { flex: 0 0 auto; }
 .app-theme-option {
-  position: relative;
-  z-index: 1;
   display: grid;
-  width: var(--app-theme-step);
-  min-width: var(--app-theme-step);
-  height: var(--app-theme-step);
-  min-height: var(--app-theme-step);
+  width: 28px;
+  min-height: 28px;
   place-items: center;
   padding: 0;
-  border-color: transparent;
-  border-radius: 50%;
   background: transparent;
   color: var(--muted);
 }
-.app-theme-option:hover,
+.app-theme-option:hover { color: var(--ink); }
 .app-theme-option[aria-pressed="true"] {
-  border-color: transparent;
-  background: transparent;
+  background: var(--control);
   color: var(--ink);
-}
-.app-theme-option:focus-visible {
-  outline-offset: 1px;
+  box-shadow: var(--app-selection-shadow);
 }
 .app-theme-icon {
   width: 15px;
@@ -628,57 +593,38 @@ body:has(.shell--mosaic),
   min-block-size: calc(2 * (var(--app-team-pad) + 1px) + var(--app-team-head) + var(--app-team-gap) + var(--app-member-row));
 }
 .app-team-members > .app-menu-empty { min-block-size: var(--app-member-row); }
-/* Lane menu controls: every action is a bounded one-line button, and buttons
-   grow to share their row so no row ends in dead space. */
+/* Lane menu controls: each packed set is one joined rail whose controls grow
+   to share their row, so no row ends in dead space. */
 .member-controls {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
-.member-control-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 4px;
-}
-.member-control-actions > .agent-menu-action,
-.member-confirm { flex: 1 1 auto; }
-.member-confirm > summary { display: flex; list-style: none; }
+.member-controls[aria-busy="true"] { cursor: progress; }
+.member-confirm > summary { display: flex; border: 0; border-radius: 0; list-style: none; }
 .member-confirm > summary::-webkit-details-marker { display: none; }
 .member-confirm[open] { flex-basis: 100%; }
-.member-confirm-body {
-  display: grid;
-  gap: 4px;
-  margin-top: 4px;
-  padding: 5px 7px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: var(--app-radius-control);
-}
-.member-confirm-body p { margin: 0; overflow-wrap: anywhere; }
+/* An open prompt seats its question over its action, divided like the
+   composer's sliders over its send button. */
+.member-confirm-body { display: grid; border-top: var(--app-control-edge); }
+.member-confirm-body p { margin: 0; padding: 5px 7px; overflow-wrap: anywhere; }
+.member-confirm-body > .agent-menu-action { border: 0; border-top: var(--app-control-edge); border-radius: 0; }
 .member-refusal {
-  flex-basis: 100%;
   margin: 0;
   color: var(--danger);
   overflow-wrap: anywhere;
 }
-/* The model field takes a row of its own when its buttons do not fit beside
-   it, rather than collapsing to a sliver. */
-.member-model {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+.member-model,
+.member-effort {
+  display: grid;
   gap: 4px;
 }
-.member-model label {
-  flex: 1 1 100%;
+.member-model label,
+.member-effort label {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: .05em;
   text-transform: uppercase;
 }
-.member-model input {
-  flex: 1 1 8em;
-  min-width: 0;
-  font: inherit;
-}
-.member-model .agent-menu-action { flex: 1 1 auto; }
+/* The model field keeps a usable width; its buttons wrap beneath it first. */
+.member-model input { flex-basis: 8em; }

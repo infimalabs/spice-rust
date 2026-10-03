@@ -301,7 +301,7 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                     <p class="work-detail-kicker">{"Task detail"}</p>
                     <h2 title={title.clone()}>{title}</h2>
                 </div>
-                <span class="message-actions">
+                <span class="message-actions app-control-rail">
                     <button
                         type="button"
                         class="card-action"

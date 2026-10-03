@@ -616,14 +616,9 @@
 .work-detail-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px;
   margin: 12px 22px 0;
-  padding: 3px;
 }
 .work-detail-tabs button {
-  min-height: 36px;
-  border-color: transparent;
-  border-radius: var(--app-radius-pill);
   background: transparent;
   color: var(--muted);
 }
@@ -814,18 +809,12 @@
   gap: 7px;
 }
 .work-map-lenses {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
   width: fit-content;
   max-width: 100%;
-  padding: 3px;
 }
 .work-map-lenses button,
 .work-map-control-group button {
   min-height: 36px;
-  border-color: transparent;
-  border-radius: var(--app-radius-pill);
   background: transparent;
 }
 .work-map-lenses button { padding: 6px 11px; font-size: .72rem; }
@@ -843,16 +832,13 @@
   align-items: center;
   gap: 7px;
 }
-.work-map-control-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-}
+.work-map-control-group { display: inline-flex; }
 .work-map-direction { margin-left: auto; }
 .work-map-control-group button { padding: 5px 9px; font-size: .7rem; }
 .work-map-depth span,
 .work-map-zoom span {
+  display: grid;
+  place-items: center;
   padding-inline: 5px;
   color: var(--muted);
   font-size: .69rem;
@@ -1078,19 +1064,17 @@
   font-size: .68rem;
   font-weight: 700;
 }
+/* One joined row that scrolls rather than wraps; chips fill it when they fit. */
 .work-direction-chips {
-  display: flex;
-  gap: 5px;
-  min-width: 0;
+  flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 .work-direction-chips .app-option {
-  flex: 0 0 auto;
+  flex: 1 0 auto;
   min-height: 27px;
 }
 .work-direction-chips .app-option[aria-pressed="true"] {
-  border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--control-surface));
   color: var(--ink);
 }
