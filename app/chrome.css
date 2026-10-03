@@ -19,6 +19,16 @@
   --app-shell-edge-inline: 10px;
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
+  /* The global task strip begins after the commandbar edge, the avatar and its
+     margins, and the disclosure gap; team task rails start there too. */
+  --app-commandbar-inline-pad: 18px;
+  --app-operator-link-margin-start: 2px;
+  --app-operator-link-margin-end: 8px;
+  --app-disclosure-gap: 7px;
+  --app-task-strip-inline-start: calc(
+    var(--app-commandbar-inline-pad) + var(--app-operator-link-margin-start)
+    + var(--app-header-control) + var(--app-operator-link-margin-end) + var(--app-disclosure-gap)
+  );
 }
 
 html:has(.shell--mosaic),
@@ -46,7 +56,7 @@ body:has(.shell--mosaic),
   flex: 1 1 auto;
   grid-template-columns: auto minmax(0, 1fr) var(--app-header-control);
   align-items: center;
-  gap: 7px;
+  gap: var(--app-disclosure-gap);
   min-width: 0;
   height: var(--app-header-control);
   min-height: var(--app-header-control);
@@ -78,7 +88,7 @@ body:has(.shell--mosaic),
   width: var(--app-header-control);
   height: var(--app-header-control);
   min-height: 0;
-  margin-inline: 2px 8px;
+  margin-inline: var(--app-operator-link-margin-start) var(--app-operator-link-margin-end);
   padding: 0;
   border: 0;
   border-radius: 50%;

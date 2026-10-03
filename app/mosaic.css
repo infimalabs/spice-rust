@@ -446,11 +446,10 @@
   overflow: auto hidden;
   overscroll-behavior-inline: contain;
 }
-/* Extend the fleet's vertical clip into the commandbar without moving or
-   shrinking a team. This is the task rail's outside half. */
+/* Reserve the fleet's top edge for the outside part of the team task rails,
+   below the commandbar, so no part of a rail is painted over or clipped. */
 .team-fleet:has(.team-task-rail) {
   --team-task-rail-overhang: 13px;
-  margin-block-start: calc(-1 * var(--team-task-rail-overhang));
   padding-block-start: var(--team-task-rail-overhang);
 }
 
@@ -482,17 +481,19 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The team's task rail owns the status column and straddles the team edge. */
-.team-task-rail {
+/* The team's task rail overflows its header's top edge a little, its pills
+   lined up under the global strip's. Its offsets are from the header's padding
+   box, not the grid area chrome.css gives every task strip. */
+.team-toolbar > .team-task-rail {
   position: absolute;
   z-index: 2;
-  grid-column: 2;
-  grid-row: 1;
-  inset-block-start: -4px;
-  inset-inline-start: 0;
-  max-width: 100%;
+  grid-area: auto;
+  inset-block-start: calc(-1 * (var(--team-task-rail-overhang) + var(--app-control-edge-width)));
+  inset-inline-start: calc(
+    var(--app-task-strip-inline-start) - var(--app-shell-edge-start) - var(--app-control-edge-width)
+  );
+  max-width: calc(100% - var(--app-task-strip-inline-start) + var(--app-shell-edge-start));
   margin: 0;
-  transform: translateY(-50%);
 }
 
 .team-toolbar {
@@ -601,7 +602,7 @@
   font-size: .65rem;
 }
 /* Center the status line on the lower pip row rather than the whole stack. */
-.team-lights:has(.team-light[data-pip-row="2"]) + .ticker {
+.team-lights:has(.team-light[data-pip-row="2"]) ~ .ticker {
   position: relative;
   top: calc((var(--team-pip-size) + var(--team-pip-gap)) / 2);
 }
