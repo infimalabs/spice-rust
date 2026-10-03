@@ -2,10 +2,10 @@
    supplied 1000 × 568 reference: compact global chrome, one fixed team header,
    four simultaneous standings and their always-mounted Chat columns. */
 .commandbar--mosaic {
-  min-height: var(--app-header-control);
+  --app-commandbar-block-pad: 8px;
+  min-height: calc(var(--app-header-control) + var(--app-commandbar-block-pad) + var(--app-commandbar-block-pad));
   gap: 7px;
-  padding-block: 8px;
-  padding-inline: var(--app-shell-edge-start) var(--app-shell-edge-end);
+  padding-block: var(--app-commandbar-block-pad);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
