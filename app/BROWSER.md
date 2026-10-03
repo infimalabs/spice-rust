@@ -86,6 +86,12 @@ accepted interaction sends the complete topology at the revision currently
 drawn by the app; cancellation, a changed revision, or a removed source clears
 the lift without sending.
 
+## Team status line
+
+The activity age keeps its fixed three-character measure and meets the main
+status with only the status line's ordinary inline spacing. It adds no trailing
+margin of its own.
+
 ## Team composer controls
 
 The speech and allocation sliders share a fixed frame above the team send
