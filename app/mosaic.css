@@ -954,7 +954,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .lane-mosaic-plane {
   --mosaic-edge-gutter: 11px;
   --mosaic-gap: .75rem;
-  --mosaic-module: 1.25rem;
+  --mosaic-module: 3.75rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
      deliberately refused by the app CSP. */
@@ -963,6 +963,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   max-height: none;
   overflow-y: auto; overflow-anchor: none;
 }
+.lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
+.lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
 .lane-mosaic-track {
   position: relative; display: grid; min-width: 0;
   width: calc(100% - var(--mosaic-edge-gutter) - var(--mosaic-edge-gutter));
