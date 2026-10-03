@@ -75,25 +75,50 @@ fn team_scope_waits_for_the_roster_then_unions_creator_and_member_last_claim_onc
 }
 
 #[test]
-fn each_open_task_rides_its_live_creator_team_rail_or_else_the_global_strip() {
-    let live = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    let dissolved = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+fn each_open_task_rides_its_claimant_or_creator_team_rail_or_else_the_global_strip() {
+    let creator_team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let claimant_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let claimant = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let unteamed_claimant = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    let dissolved = uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
-    let mut live_alpha = task(1, "alpha.runtime");
-    live_alpha.creator_team = Some(live);
-    let mut live_beta = task(2, "beta.core");
-    live_beta.creator_team = Some(live);
-    let mut orphaned = task(3, "alpha.audit");
+    let mut created_alpha = task(1, "alpha.runtime");
+    created_alpha.creator_team = Some(creator_team);
+    let mut created_beta = task(2, "beta.core");
+    created_beta.creator_team = Some(creator_team);
+    let mut claimed = task(3, "claim.runtime");
+    let mut active_claim = claim(&claimed, ClaimDisposition::Active);
+    active_claim.body.lane = claimant;
+    claimed.claim = Some(active_claim);
+    let mut moved = task(4, "move.runtime");
+    moved.creator_team = Some(creator_team);
+    let mut moved_claim = claim(&moved, ClaimDisposition::Active);
+    moved_claim.body.lane = claimant;
+    moved.claim = Some(moved_claim);
+    let mut orphaned = task(5, "orphan.audit");
     orphaned.creator_team = Some(dissolved);
-    let operator = task(4, "alpha.notes");
-    let mut finished = task(5, "gamma.done");
-    finished.creator_team = Some(live);
+    let operator = task(6, "operator.notes");
+    let mut solo = task(7, "solo.runtime");
+    let mut solo_claim = claim(&solo, ClaimDisposition::Active);
+    solo_claim.body.lane = unteamed_claimant;
+    solo.claim = Some(solo_claim);
+    let mut finished = task(8, "gamma.done");
+    finished.creator_team = Some(creator_team);
     finished.workflow.body.completion = Some(
         "2026-09-23T06:00:00.000Z"
             .parse()
             .expect("fixture completion"),
     );
-    let board = board(vec![live_alpha, live_beta, orphaned, operator, finished]);
+    let board = board(vec![
+        created_alpha,
+        created_beta,
+        claimed,
+        moved,
+        orphaned,
+        operator,
+        solo,
+        finished,
+    ]);
     let rail = |projection: &WorkProjection<'_>, rail| {
         projection
             .rail_stems(rail)
@@ -105,28 +130,38 @@ fn each_open_task_rides_its_live_creator_team_rail_or_else_the_global_strip() {
     let pending = WorkProjection::from_board_and_lanes(&board, None);
     assert_eq!(
         rail(&pending, WorkRail::Global),
-        [("alpha".to_owned(), 1)],
-        "team-created work waits for the roster instead of flashing onto the global strip",
+        [("operator".to_owned(), 1)],
+        "team-associated work waits for the roster instead of flashing globally",
     );
-    assert!(rail(&pending, WorkRail::Team(live)).is_empty());
+    assert!(rail(&pending, WorkRail::Team(creator_team)).is_empty());
+    assert!(rail(&pending, WorkRail::Team(claimant_team)).is_empty());
 
     let loaded = WorkProjection::from_board_with_team_memberships(
         &board,
-        Some(BTreeSet::from([live])),
-        &BTreeMap::new(),
+        Some(BTreeSet::from([creator_team, claimant_team])),
+        &BTreeMap::from([(claimant, claimant_team)]),
     );
     assert_eq!(
-        rail(&loaded, WorkRail::Team(live)),
+        rail(&loaded, WorkRail::Team(creator_team)),
         [("alpha".to_owned(), 1), ("beta".to_owned(), 1)],
     );
-    assert_eq!(loaded.rail_counts(WorkRail::Team(live)).open(), 2);
     assert_eq!(
-        rail(&loaded, WorkRail::Global),
-        [("alpha".to_owned(), 2)],
-        "a dissolved creator team returns its work to the global strip",
+        rail(&loaded, WorkRail::Team(claimant_team)),
+        [("claim".to_owned(), 1), ("move".to_owned(), 1)],
+        "a current claimant team takes precedence over the creator team",
     );
     assert_eq!(
-        loaded.rail_counts(WorkRail::Team(live)).open()
+        rail(&loaded, WorkRail::Global),
+        [
+            ("operator".to_owned(), 1),
+            ("orphan".to_owned(), 1),
+            ("solo".to_owned(), 1),
+        ],
+        "dissolved and unteamed ownership belongs to the global strip",
+    );
+    assert_eq!(
+        loaded.rail_counts(WorkRail::Team(creator_team)).open()
+            + loaded.rail_counts(WorkRail::Team(claimant_team)).open()
             + loaded.rail_counts(WorkRail::Global).open(),
         loaded.counts().open(),
         "every open task rides exactly one strip",
