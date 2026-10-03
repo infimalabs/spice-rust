@@ -216,6 +216,10 @@ permalink and advances on its own visible-unit deadlines. Authored Markdown
 links retain the ordinary accent, and quoted-source ages keep their separate
 quote presentation.
 
+A FINAL classification sits immediately before the producer name in the same
+compact, translucent accent pill used for task origins inside quoted signoffs.
+It remains producer metadata rather than occupying the card-action island.
+
 ## Profile app latency in Firefox
 
 The app exposes opt-in User Timing diagnostics without changing route parsing.

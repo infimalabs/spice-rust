@@ -392,8 +392,6 @@ fn acknowledged_context_markers_render_static_pills_inside_the_quote() {
         1
     );
     assert!(rendered.html.contains("data-acknowledgement=\"acked\""));
-    assert!(!rendered.html.contains("message-classifiers"));
-    assert!(!rendered.html.contains("message-badge-count"));
     let pill = rendered
         .html
         .find("class=\"message-ack-pill\"")

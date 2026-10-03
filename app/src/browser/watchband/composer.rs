@@ -5,7 +5,6 @@ use yew::functional::UseReducerDispatcher;
 
 use super::*;
 mod drag;
-mod message_badges;
 mod task_inspector;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
@@ -908,15 +907,26 @@ fn render_producer_identity(
     attribution: &str,
 ) -> Html {
     html! {
-        <view::chrome::CopyButton
-            class="message-agent-name"
-            text={AttrValue::from(message.author.to_string())}
-            subject="agent id"
-            title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
-            label={AttrValue::from(format!("Copy agent id for {attribution}"))}
-        >
-            <span class="message-agent-label">{producer_label.to_owned()}</span>
-        </view::chrome::CopyButton>
+        <>
+            if message.final_answer {
+                <span
+                    class="message-final-pill"
+                    data-message-classification="final"
+                    aria-label="Final answer"
+                >
+                    {"FINAL"}
+                </span>
+            }
+            <view::chrome::CopyButton
+                class="message-agent-name"
+                text={AttrValue::from(message.author.to_string())}
+                subject="agent id"
+                title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
+                label={AttrValue::from(format!("Copy agent id for {attribution}"))}
+            >
+                <span class="message-agent-label">{producer_label.to_owned()}</span>
+            </view::chrome::CopyButton>
+        </>
     }
 }
 
@@ -958,7 +968,6 @@ fn render_message_controls(
                 if !signed {
                     {render_message_age(message, attribution)}
                 }
-                {message_badges::render(message)}
             </div>
             <div class="message-controls-actions">
                 if !signed {
