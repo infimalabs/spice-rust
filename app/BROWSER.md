@@ -177,6 +177,16 @@ Quoted image pairs retain the standard 7px image-stack gap even when their
 leading quote stays flow-root around its control island: flattened stack
 wrappers apply that shared gap at the boundary before the later image.
 
+A quote layer that ends in images after other content flows its prose around
+them. The images sit at the layer's inline start with their bottom on the
+attribution line, and the attribution stays the layer's last line at
+inline-end. When the text is shorter than the images, it sits beside their
+top and the attribution drops to their bottom. The browser measures that lift
+because the wrap depends on where the images sit. A layer that would leave
+less than a 14ch column beside the images stacks them under the prose
+instead, wrapping in pairs, with the attribution below them. Image-only
+quotes and images in the middle of a quote keep the image-row layout.
+
 ## Always-chat team console
 
 Every populated or empty team surface keeps its Chat composer and message plane

@@ -497,6 +497,32 @@
 .markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
   display: flow-root;
 }
+/* A quote layer ending in images leads with them (composer_markdown/image_flow.rs):
+   they float at the inline start beneath a zero-width anchor that the browser
+   lifts until their bottom meets the attribution (browser/quote_image_flow.rs).
+   The flow stays a plain block, so prose also wraps beside the controls island
+   floating at the quote's top. Below a 14ch prose column the browser stacks
+   the image row full width under the prose, and the attribution clears below it. */
+.markdown-body .message-image-flow::after { display: block; clear: both; content: ""; }
+.markdown-body .message-image-flow-anchor { float: inline-start; width: 0; height: 0; }
+.markdown-body .message-image-flow > p.message-image-stack {
+  float: inline-start; clear: inline-start; margin: 0 12px 0 0;
+}
+.markdown-body .message-image-flow > :last-child { margin-bottom: 0; }
+.markdown-body .message-image-flow[data-image-flow="stacked"] > p.message-image-stack {
+  flex-wrap: wrap; width: 100%; margin: .5em 0 0;
+}
+.markdown-body .message-image-flow[data-image-flow="stacked"]
+  > p.message-image-stack:has(> .message-image + .message-image) > .message-image {
+  --message-image-size: min(var(--mosaic-image-size), calc((100% - var(--message-image-gap)) / 2));
+}
+.markdown-body .message-image-flow[data-image-flow="stacked"]
+  > p.message-image-stack:has(> .message-image + .message-image) > .message-image > img {
+  max-width: 100%; max-height: 100%;
+}
+.markdown-body .message-image-flow[data-image-flow="stacked"] > p > .message-quote-signoff {
+  clear: both;
+}
 .markdown-body .message-quote-card {
   display: flow-root;
   margin: var(--mosaic-quote-pad-block) 0;
@@ -735,8 +761,9 @@
   display: flow-root;
   margin-block-start: 0;
 }
-.markdown-body > .message-quote-card:has(> .message-controls):has(.message-image)
-  > .message-quote-body {
+.markdown-body > .message-quote-card:has(> .message-controls):has(.message-image):not(:has(
+  > .message-quote-body > .message-image-flow
+)) > .message-quote-body {
   display: flex; flex-wrap: wrap; align-items: flex-end; clear: inline-end;
 }
 .markdown-body > blockquote:has(> .message-controls):has(.message-image)
