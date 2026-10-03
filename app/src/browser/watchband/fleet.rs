@@ -6,6 +6,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) work: Option<&'a crate::work::WorkProjection<'w>>,
     pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
+    pub(super) open_message_task: &'a Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(super) runtime: &'a AppRuntime,
     pub(super) epoch: CanonicalUuid,
     pub(super) topology_revision: u64,
@@ -124,6 +125,7 @@ pub(super) fn render_populated_fleet(
                                 render.controls,
                                 &render.surface,
                                 render.select_task,
+                                render.open_message_task,
                                 &attention,
                             )}
                         </div>

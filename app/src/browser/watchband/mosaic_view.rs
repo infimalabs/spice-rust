@@ -21,6 +21,7 @@ pub(super) enum ActivityCard {
         member: crate::runtime::LaneMember,
         quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
         quote_sources: Rc<crate::composer_markdown::QuoteSources>,
+        quote_tasks: Rc<crate::runtime::QuoteTasks>,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
@@ -40,6 +41,7 @@ impl PartialEq for ActivityCard {
                     member: left_member,
                     quote_agents: left_quote_agents,
                     quote_sources: left_quote_sources,
+                    quote_tasks: left_quote_tasks,
                     quote_lane: left_quote_lane,
                     message: left_message,
                 },
@@ -48,6 +50,7 @@ impl PartialEq for ActivityCard {
                     member: right_member,
                     quote_agents: right_quote_agents,
                     quote_sources: right_quote_sources,
+                    quote_tasks: right_quote_tasks,
                     quote_lane: right_quote_lane,
                     message: right_message,
                 },
@@ -58,6 +61,7 @@ impl PartialEq for ActivityCard {
                     && left_member.worktree == right_member.worktree
                     && left_quote_agents == right_quote_agents
                     && left_quote_sources == right_quote_sources
+                    && left_quote_tasks == right_quote_tasks
                     && left_quote_lane == right_quote_lane
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
             }
@@ -88,6 +92,7 @@ enum ActivityFingerprint {
         worktree: String,
         quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
         quote_sources: Rc<crate::composer_markdown::QuoteSources>,
+        quote_tasks: Rc<crate::runtime::QuoteTasks>,
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle(crate::runtime::LaneLifecycleBoundary),
@@ -101,18 +106,21 @@ impl PartialEq for ActivityFingerprint {
                     worktree: left_worktree,
                     quote_agents: left_quote_agents,
                     quote_sources: left_quote_sources,
+                    quote_tasks: left_quote_tasks,
                     message: left_message,
                 },
                 Self::Agent {
                     worktree: right_worktree,
                     quote_agents: right_quote_agents,
                     quote_sources: right_quote_sources,
+                    quote_tasks: right_quote_tasks,
                     message: right_message,
                 },
             ) => {
                 left_worktree == right_worktree
                     && left_quote_agents == right_quote_agents
                     && left_quote_sources == right_quote_sources
+                    && left_quote_tasks == right_quote_tasks
                     && (Rc::ptr_eq(left_message, right_message)
                         || same_measured_agent_content(left_message, right_message))
             }
@@ -206,12 +214,14 @@ impl ActivityCard {
                 member,
                 quote_agents,
                 quote_sources,
+                quote_tasks,
                 message,
                 ..
             } => ActivityFingerprint::Agent {
                 worktree: member.worktree.clone(),
                 quote_agents: Rc::clone(quote_agents),
                 quote_sources: Rc::clone(quote_sources),
+                quote_tasks: Rc::clone(quote_tasks),
                 message: Rc::clone(message),
             },
             Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
@@ -459,6 +469,7 @@ pub(super) struct MosaicPlaneProps {
     pub(super) members: usize,
     pub(super) cards: Vec<ActivityCard>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    pub(super) open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: TeamSpeech,
@@ -476,7 +487,6 @@ struct MosaicPlaneView<'a> {
     geometry: crate::mosaic::Geometry,
     max_row: Option<i32>,
     narration_cursor: String,
-    inspection_active: bool,
 }
 
 impl MosaicPlaneView<'_> {
@@ -533,7 +543,6 @@ impl MosaicPlaneView<'_> {
                 data-observed-width={self.measurement_width.to_string()}
                 data-committed-width={committed_width.to_string()}
                 data-narration-cursor={self.narration_cursor}
-                data-task-inspection={self.inspection_active.to_string()}
                 tabindex="0"
                 aria-label={format!(
                     "Packed team plane: {} policy, {} {}",
@@ -585,8 +594,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let track_host = use_node_ref();
     let width = use_element_width(track_host.clone());
     let measurement_width = width.round() as i32;
-    let inspection_active = use_context::<crate::browser::message_task_inspector::Context>()
-        .is_some_and(|context| context.inspection.is_some());
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
     let rendered_plane = (*committed).clone();
     // Edges exist only in a settled layout: a plane measuring its first lattice
@@ -649,12 +656,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
     let composer = composer_collapse::use_composer_collapse(host.clone());
-    use_plane_scroll(
-        host.clone(),
-        rendered_plane.clone(),
-        composer,
-        inspection_active,
-    );
+    use_plane_scroll(host.clone(), rendered_plane.clone(), composer);
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -663,7 +665,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         geometry,
         max_row,
         narration_cursor: (*narration_cursor).clone().unwrap_or_default(),
-        inspection_active,
     }
     .render(host, track_host)
 }
@@ -678,7 +679,6 @@ fn use_plane_scroll(
     host: NodeRef,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
     composer: composer_collapse::ComposerCollapse,
-    viewport_held: bool,
 ) {
     let anchor = use_mut_ref(|| None::<ScrollAnchor>);
     {
@@ -706,37 +706,31 @@ fn use_plane_scroll(
             }
         });
     }
-    use_effect_with(
-        (host, plane, viewport_held),
-        move |(host, plane, viewport_held)| {
-            if *viewport_held {
-                return;
+    use_effect_with((host, plane), move |(host, plane)| {
+        let Some(scroller) = host.cast::<web_sys::Element>() else {
+            return;
+        };
+        if plane.is_none()
+            || !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None)
+        {
+            *anchor.borrow_mut() = None;
+            return;
+        }
+        if let Some(previous) = anchor.borrow().clone()
+            && let Some(current_offset) = scroll_anchor_offset(&scroller, &previous.key)
+        {
+            let delta = current_offset - previous.offset;
+            if delta.abs() >= 0.5 {
+                // The correction keeps cards visually still, so the composer
+                // fused to them must not move either.
+                composer.correct_scroll(
+                    &scroller,
+                    (f64::from(scroller.scroll_top()) + delta).round() as i32,
+                );
             }
-            let Some(scroller) = host.cast::<web_sys::Element>() else {
-                return;
-            };
-            if plane.is_none()
-                || !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None)
-            {
-                *anchor.borrow_mut() = None;
-                return;
-            }
-            if let Some(previous) = anchor.borrow().clone()
-                && let Some(current_offset) = scroll_anchor_offset(&scroller, &previous.key)
-            {
-                let delta = current_offset - previous.offset;
-                if delta.abs() >= 0.5 {
-                    // The correction keeps cards visually still, so the composer
-                    // fused to them must not move either.
-                    composer.correct_scroll(
-                        &scroller,
-                        (f64::from(scroller.scroll_top()) + delta).round() as i32,
-                    );
-                }
-            }
-            *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
-        },
-    );
+        }
+        *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
+    });
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1190,6 +1184,7 @@ fn render_activity_cards(
                     member,
                     quote_agents,
                     quote_sources,
+                    quote_tasks,
                     quote_lane,
                     message,
                 } => html! {
@@ -1199,9 +1194,11 @@ fn render_activity_cards(
                         member={member.clone()}
                         quote_agents={quote_agents.clone()}
                         quote_sources={quote_sources.clone()}
+                        quote_tasks={quote_tasks.clone()}
                         quote_lane={*quote_lane}
                         message={message.clone()}
                         quote_dispatcher={properties.quote_dispatcher.clone()}
+                        open_task={properties.open_message_task.clone()}
                         speech_queue={properties.speak.clone()}
                         speech={properties.speech}
                         speaking={properties.speech_message.as_deref() == Some(key.as_str())}

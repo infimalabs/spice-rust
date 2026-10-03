@@ -365,7 +365,6 @@ struct Presentation {
     closed: Closure<dyn FnMut(web_sys::Event)>,
     cancelled: Closure<dyn FnMut(web_sys::Event)>,
     backdrop: Closure<dyn FnMut(web_sys::Event)>,
-    _focus_layer: overlay::FocusLayer,
     _ownership: Ownership,
 }
 
@@ -449,10 +448,6 @@ impl Presentation {
             .add_event_listener_with_callback("click", backdrop.as_ref().unchecked_ref())
             .expect("dialog backdrop listener");
         let ownership = Ownership::watch(dialog.clone(), opener.clone());
-        let focus_layer = overlay::register_focus_layer(
-            dialog.clone().unchecked_into::<web_sys::Element>(),
-            opener.clone(),
-        );
         // Focus returns only to an eligible opener, never to whatever the
         // browser remembers as focused before the modal opened.
         if let Some(active) = opener
@@ -470,7 +465,6 @@ impl Presentation {
             closed,
             cancelled,
             backdrop,
-            _focus_layer: focus_layer,
             _ownership: ownership,
         }
     }

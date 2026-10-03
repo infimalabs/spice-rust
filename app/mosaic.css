@@ -253,12 +253,7 @@
    card's committed size. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
-  .mosaic-message-layers {
-  grid-template-rows: minmax(0, 1fr);
-}
-.lane-mosaic-plane:not([data-measurement-phase="base"])
-  .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
-  .mosaic-message-normal {
+  .mosaic-message-content {
   grid-template-rows: minmax(0, 1fr) auto;
 }
 .lane-mosaic-plane:not([data-measurement-phase="base"])
@@ -1283,8 +1278,8 @@ a.relative-age {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
 }
-/* The task quick view's header actions are the same controls as a card's footer actions. */
-.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action {
+/* Card footer actions share one compact control treatment. */
+.team-surface .mosaic-message-card footer .card-action {
   width: 32px;
   min-width: 32px;
   height: 32px;
@@ -1296,12 +1291,12 @@ a.relative-age {
   font-size: 1rem;
   font-weight: 400;
 }
-.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:hover,
-.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:focus-visible {
+.team-surface .mosaic-message-card footer .card-action:hover,
+.team-surface .mosaic-message-card footer .card-action:focus-visible {
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 6%, var(--control-surface-soft));
   color: var(--ink);
 }
-.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:active {
+.team-surface .mosaic-message-card footer .card-action:active {
   background: color-mix(
     in srgb,
     var(--accent-slot, var(--accent)) 12%,
