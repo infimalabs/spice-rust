@@ -154,6 +154,8 @@ session; undoing back to the opening shape set removes the confirmation.
 Declining keeps the complete edit history, while Apply commits without a
 discard prompt. Dirty annotation work also participates in the browser's
 existing page-unload warning.
+The commit controls remain a joined pair; Apply keeps its accent fill and
+contrasting label inside their frosted frame.
 
 ## Message card control flow
 
