@@ -445,6 +445,13 @@
   overflow: auto hidden;
   overscroll-behavior-inline: contain;
 }
+/* Extend the fleet's vertical clip into the commandbar without moving or
+   shrinking a team. This is the task rail's outside half. */
+.team-fleet:has(.team-task-rail) {
+  --team-task-rail-overhang: 13px;
+  margin-block-start: calc(-1 * var(--team-task-rail-overhang));
+  padding-block-start: var(--team-task-rail-overhang);
+}
 
 .team-surface {
   --inactive-lane-opacity: .72;
@@ -452,6 +459,7 @@
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling team surfaces. */
+  position: relative;
   display: flex;
   flex: var(--team-weight, 4) 1 0;
   flex-direction: column;
@@ -460,7 +468,7 @@
   min-width: var(--team-surface-min-inline);
   max-width: 100%;
   container-type: inline-size;
-  overflow: hidden;
+  overflow: visible;
   border: var(--app-control-edge);
   border-radius: var(--app-radius-surface);
   background: var(--panel);
@@ -473,17 +481,23 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The team's own task pills ride its upper rail, above its status line. */
+/* The team's task rail owns the status column and straddles the team edge. */
 .team-task-rail {
-  flex: 0 0 auto;
-  align-self: flex-start;
-  max-width: calc(100% - 20px);
-  margin: 6px 10px 0;
+  position: absolute;
+  z-index: 2;
+  grid-column: 2;
+  grid-row: 1;
+  inset-block-start: -4px;
+  inset-inline-start: 0;
+  max-width: 100%;
+  margin: 0;
+  transform: translateY(-50%);
 }
 
 .team-toolbar {
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
+  position: relative;
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: max-content minmax(0, 1fr) 30px;

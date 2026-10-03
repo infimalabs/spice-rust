@@ -279,7 +279,6 @@ fn render_team_toolbar(
     let lost_capture = dragging.cancel.clone();
     html! {
         <>
-        {render_team_rail(team.lane, render)}
         <header class="team-toolbar">
             <span
                 class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
@@ -312,6 +311,7 @@ fn render_team_toolbar(
                     </span>
                 })}
             </span>
+            {render_team_rail(team.lane, render)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
             {team_menu::trigger(team.lane, &control, render.team_controls)}
         </header>
@@ -320,9 +320,10 @@ fn render_team_toolbar(
     }
 }
 
-/// The task pills riding this team's upper rail: the open tasks it created,
-/// in the same aggregate-then-stem form as the global strip. Its pills open
-/// this team's Work scope; the fleet never shows over Work, so none selects.
+/// The task pills riding this team's upper rail: open tasks it created or
+/// currently claims, in the same aggregate-then-stem form as the global strip.
+/// Its pills open this team's Work scope; the fleet never shows over Work, so
+/// none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
@@ -335,7 +336,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     html! {
         <nav
             class="task-pill-strip app-control-rail team-task-rail"
-            aria-label="Open tasks this team created"
+            aria-label="Open tasks this team created or claims"
         >
             {view::chrome::render_aggregate_pill(
                 counts,

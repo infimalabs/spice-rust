@@ -765,7 +765,7 @@ impl<'a> WorkProjection<'a> {
                     dependencies,
                     dependents,
                     teams: task_teams,
-                    rail: task_rail(row, teams.as_ref()),
+                    rail: task_rail(row, teams.as_ref(), member_teams),
                 }
             })
             .collect();
@@ -784,17 +784,31 @@ impl<'a> WorkProjection<'a> {
     }
 }
 
-fn task_rail(task: &BoardTask, teams: Option<&BTreeSet<wire::CanonicalUuid>>) -> Option<WorkRail> {
-    let Some(creator) = task.creator_team else {
-        return Some(WorkRail::Global);
-    };
-    teams.map(|teams| {
-        if teams.contains(&creator) {
-            WorkRail::Team(creator)
-        } else {
-            WorkRail::Global
-        }
-    })
+fn task_rail(
+    task: &BoardTask,
+    teams: Option<&BTreeSet<wire::CanonicalUuid>>,
+    member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+) -> Option<WorkRail> {
+    let active_claim = task
+        .claim
+        .as_ref()
+        .filter(|claim| claim.body.disposition == ClaimDisposition::Active);
+    if let Some(team) = active_claim
+        .and_then(|claim| member_teams.get(&claim.body.lane))
+        .filter(|team| teams.is_some_and(|teams| teams.contains(team)))
+    {
+        return Some(WorkRail::Team(*team));
+    }
+    if let Some(creator) = task
+        .creator_team
+        .filter(|creator| teams.is_some_and(|teams| teams.contains(creator)))
+    {
+        return Some(WorkRail::Team(creator));
+    }
+    if teams.is_none() && (task.creator_team.is_some() || active_claim.is_some()) {
+        return None;
+    }
+    Some(WorkRail::Global)
 }
 
 fn associated_teams(

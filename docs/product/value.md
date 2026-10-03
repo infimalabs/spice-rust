@@ -397,16 +397,19 @@ board and Chat task references share one card identity, status, ownership, and
 selection contract; either opens the one shared detail layer, whose close
 returns focus to the launching card.
 
-A task created by a team rides that team's own rail of the same pills, directly
-above its status line, rather than the global stem pills. The team's aggregate
-pill opens `#/work/team/{team}`, and each team stem pill opens
-`#/work/team/{team}/{public|hidden}/{stem}`, that team's work narrowed to the
-stem. Once its creator team leaves the roster, an open task returns to the
-global stem pills. Until the roster loads, team-created work waits off the
-global strip rather than flashing onto it. The split mirrors allocation: drive
-offers a team only the work it created, so a task on a team's rail is
-schedulable to that team under drive, while one on the global strip needs a
-draining team.
+An open task actively claimed by a member of a remaining team rides that team's
+rail; otherwise a task created by a remaining team rides its creator team's
+rail. The claimant team wins when both identities match different teams. Every
+open task appears on exactly one rail: work with neither live team association,
+including work held by an unteamed agent, appears in the global strip. Until
+the roster loads, potentially team-associated work waits off both strips
+instead of flashing globally.
+
+Each team rail is centered across the team's top edge directly above its status
+line. The overlay does not increase the team header or displace Chat. Its
+aggregate pill opens `#/work/team/{team}`, and each team stem pill opens
+`#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
+that stem.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
