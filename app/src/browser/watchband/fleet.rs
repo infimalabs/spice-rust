@@ -322,7 +322,7 @@ fn render_team_toolbar(
     }
 }
 
-/// The task pills riding this team's upper rail: open tasks it created or
+/// The task pills in this team's header band: open tasks it created or
 /// currently claims, in the same aggregate-then-stem form as the global strip.
 /// Its pills open this team's Work scope; the fleet never shows over Work, so
 /// none selects.
