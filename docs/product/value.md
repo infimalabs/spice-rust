@@ -407,11 +407,13 @@ including work held by an unteamed agent, appears in the global strip. Until
 the roster loads, potentially team-associated work waits off both strips
 instead of flashing globally.
 
-Each team rail overflows the team's top edge a little, its pills starting where
-the global strip's do, while the team's status line sits on the lower pip row
-below it. A strip of the fleet's top edge is reserved for the rail's outside
-part, so the commandbar never paints over it; the overlay does not increase
-the team header or displace Chat. Its aggregate pill opens
+Each team rail begins flush with the team's top edge and opens that part of the
+header boundary to the surrounding app surface. Resting task labels and counts
+blend into that shared background without individual pill or badge carveouts;
+hover and keyboard focus reveal their control boundary. Presence pips keep one
+compact row gap independent of the task/status tracks. The task labels and
+status line consume only their two text bands, so the rail does not add blank
+space or displace Chat. Its aggregate pill opens
 `#/work/team/{team}`, and each team stem pill opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
 that stem.
