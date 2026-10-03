@@ -1,5 +1,8 @@
 use super::*;
 
+mod frame;
+use frame::ControlsFrame;
+
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 
 /// One policy shared by every agent member in the visual lane.
@@ -560,7 +563,8 @@ pub(super) fn render_team_controls(
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
-    idle: bool,
+    dormant: bool,
+    lanes: Vec<CanonicalUuid>,
 ) -> Html {
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
@@ -574,12 +578,20 @@ pub(super) fn render_team_controls(
     );
     let cancel_life_preview = cancel_life_preview_callback(team, team_controls.clone());
     html! {
-        <aside
-            class="team-composer-controls"
-            data-speech-mode={speech.label()}
-            data-lifetime={selected.label()}
-            data-lifetime-pending={control.pending_life.is_some().to_string()}
-            data-idle={idle.to_string()}
+        <ControlsFrame
+            {dormant}
+            {ready}
+            {lanes}
+            speech={speech.label()}
+            lifetime={selected.label()}
+            lifetime_pending={control.pending_life.is_some()}
+            send_class={classes!(
+                "team-send",
+                (selected == TeamLife::Steer).then_some("armed"),
+                (selected == TeamLife::Drain).then_some("maxed"),
+            )}
+            send_title={format!("Send with {}: {}", selected.label(), selected.help())}
+            send_label={selected.label()}
         >
             {speech_slider(
                 team,
@@ -595,17 +607,7 @@ pub(super) fn render_team_controls(
                 commit_life,
                 cancel_life_preview,
             )}
-            <button
-                class={classes!(
-                    "team-send",
-                    (selected == TeamLife::Steer).then_some("armed"),
-                    (selected == TeamLife::Drain).then_some("maxed"),
-                )}
-                type="submit"
-                disabled={!ready}
-                title={format!("Send with {}: {}", selected.label(), selected.help())}
-            >{selected.label()}</button>
-        </aside>
+        </ControlsFrame>
     }
 }
 
