@@ -10,16 +10,14 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use yew::prelude::*;
 
-use super::CanonicalUuid;
-
 #[derive(Properties, PartialEq)]
 pub(in crate::browser::watchband) struct FrameProps {
     /// No agent runs and no quote or image is drafted.
     pub dormant: bool,
     /// Send is admissible apart from whether anything is drafted.
     pub ready: bool,
-    /// The team's members; a member joining or leaving changes its composers.
-    pub lanes: Vec<CanonicalUuid>,
+    /// A topology change may add or remove this team's composers.
+    pub topology_revision: u64,
     pub speech: &'static str,
     pub lifetime: &'static str,
     pub lifetime_pending: bool,
@@ -66,11 +64,11 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         });
     }
     {
-        // A member joining or leaving, or quotes and images coming or going,
-        // adds or removes composers without any of them raising input.
+        // A topology change, or quotes and images coming or going, may add or
+        // remove composers without any of them raising input.
         let root = root.clone();
         let typed = typed.clone();
-        use_effect_with((props.lanes.clone(), props.dormant), move |_| {
+        use_effect_with((props.topology_revision, props.dormant), move |_| {
             typed.set(form_of(&root).is_some_and(|form| any_holds_text(&form)));
         });
     }
