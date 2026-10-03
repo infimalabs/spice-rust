@@ -731,7 +731,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-account-metadata dd { margin: 0; }
 .quota-limit-list {
   display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(3rem, 1fr) max-content max-content;
+  grid-template-columns: minmax(0, max-content) max-content minmax(3rem, 1fr) max-content;
   align-items: center;
   gap: 5px 10px;
   margin: 8px 0 0;
