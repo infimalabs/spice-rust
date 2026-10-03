@@ -72,11 +72,12 @@ pub fn team_visual_weight(members: usize) -> usize {
 /// Characters of a lane identity the band shows.
 pub const SHORT_LEN: usize = 8;
 
-/// Characters a band card allows one field.
+/// Characters of one status line's text the DOM receives.
 ///
-/// A card is one column of a band that has to fit a full team across the
-/// screen, so the width is the band's property rather than the renderer's.
-pub const FIELD_BUDGET: usize = 22;
+/// Status lines are `nowrap` and clipped by CSS `text-overflow` at whatever
+/// width they get, so this only guards against multi-kilobyte command echoes.
+/// It exceeds what any display shows on one line, so no visible line ends at it.
+pub const STATUS_LINE_DOM_LIMIT: usize = 1024;
 
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
