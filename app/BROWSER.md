@@ -76,6 +76,10 @@ Each account-limit row reads from left to right as the limit name, flexible
 usage bar, amount left, and reset. The amount stays immediately beside the
 bar it describes rather than separating the name from that bar.
 
+An account with a shared weekly limit keeps the same capacity-order accent on
+its card edge, provider label, and usage bars as its layer in the Spice-button
+quota fill. Reports that do not contribute a weekly layer remain neutral.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift
