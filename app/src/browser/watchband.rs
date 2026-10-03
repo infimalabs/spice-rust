@@ -298,7 +298,6 @@ fn render_compose(
                     can_configure,
                     ready,
                     dormant,
-                    team.members.iter().map(|member| member.lane).collect(),
                 )}
                 <span id={broadcast_help} class="visually-hidden">
                     {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}

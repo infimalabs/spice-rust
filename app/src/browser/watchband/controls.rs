@@ -564,7 +564,6 @@ pub(super) fn render_team_controls(
     can_configure: bool,
     ready: bool,
     dormant: bool,
-    lanes: Vec<CanonicalUuid>,
 ) -> Html {
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
@@ -581,7 +580,7 @@ pub(super) fn render_team_controls(
         <ControlsFrame
             {dormant}
             {ready}
-            {lanes}
+            {topology_revision}
             speech={speech.label()}
             lifetime={selected.label()}
             lifetime_pending={control.pending_life.is_some()}
