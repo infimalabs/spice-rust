@@ -413,16 +413,16 @@
 }
 
 
+/* Chat runs to the viewport's edges: only a real device safe-area inset keeps
+   a team clear of them. */
 .mosaic-workspace .content {
   display: flex;
   align-items: stretch;
   flex: 1 1 auto;
-  gap: 8px;
   min-height: 0;
   width: 100%;
   max-width: none;
-  padding: 0 0 var(--app-frame-edge-block-end);
-  padding-inline: var(--app-shell-edge-start) var(--app-shell-edge-end);
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }
@@ -446,13 +446,14 @@
   flex-flow: row nowrap;
   align-items: stretch;
   flex: 1 1 auto;
-  gap: .5rem;
   width: 100%;
   min-height: 0;
   min-width: 0;
   overflow: auto hidden;
   overscroll-behavior-inline: contain;
 }
+/* The fleet meets the viewport edges, so its focus ring paints inside it. */
+.team-fleet:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
 /* The team frames nothing around its header: the header's content sits on the
    app surface, and only the pane below carries the panel. */
@@ -487,6 +488,8 @@
 .team-surface[data-team-weight="4"] { --team-weight: 4; }
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
+/* Sibling teams fuse into one console: a single shared rule is their seam. */
+.team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
 /* The header is one fixed grid with no chrome of its own, the same with or
    without team work so sibling teams line up: the pips and the menu span both
