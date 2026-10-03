@@ -583,7 +583,7 @@
   top: calc((var(--team-pip-size) + var(--team-pip-gap)) / 2);
 }
 .team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
-.team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }
+.team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--accent); text-align: right; }
 .team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
 .team-surface .ticker-prefix { color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink)); font-weight: 700; }
 .team-pane {
