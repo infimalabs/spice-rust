@@ -459,6 +459,8 @@
   container-type: inline-size;
   overflow: visible;
   border: var(--app-control-edge);
+  /* The header draws the team's top edge itself, so task cells can carve it. */
+  border-block-start: 0;
   border-radius: var(--app-radius-surface);
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -470,76 +472,87 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The header is one compact 54px deck. Team work occupies its upper label
-   band as joined inset keys; status remains in the roomier lower band while
-   the pips and menu stay centered across both. */
+/* The header is one fixed grid of chambers, the same with or without team
+   work: a square pip chamber and a square menu chamber span both bands; the
+   task band above and the status band below share the long middle column. It
+   draws the team's top edge as an inset line rather than a border, so a task
+   cell's page-toned face covers that line and reads as a notch carved out of
+   the edge. The lower pip row centers on the status band, so a one-row stack
+   sits there too. */
 .team-toolbar {
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
-  --team-header-size: 54px;
-  --team-label-band: 27px;
+  --team-header-size: 44px;
+  --team-task-band: 16px;
+  --team-status-band: calc(var(--team-header-size) - var(--team-task-band));
   --team-menu-size: 34px;
+  --team-chamber-inset: 8px;
   position: relative;
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: max-content minmax(0, 1fr) var(--team-menu-size);
-  align-items: center;
-  gap: 0 8px;
+  grid-template:
+    "pips tasks menu" var(--team-task-band)
+    "pips status menu" var(--team-status-band)
+    / minmax(var(--team-header-size), max-content) minmax(0, 1fr) var(--team-header-size);
   block-size: var(--team-header-size);
-  min-height: var(--team-header-size);
-  padding: 0 10px;
-  border-bottom: var(--app-control-edge);
-  background: var(--panel);
-}
-.team-toolbar:has(> .team-task-rail) {
-  grid-template-rows: var(--team-label-band) minmax(0, 1fr);
-}
-.team-toolbar:has(> .team-task-rail) > :not(.team-task-rail, .ticker) { grid-row: 1 / span 2; }
-.team-toolbar:has(> .team-task-rail) > .ticker { grid-area: 2 / 2; }
-.team-toolbar > .team-task-rail {
-  grid-area: 1 / 2;
-  align-self: stretch;
-  justify-self: stretch;
-  gap: 1px;
-  margin-block-start: 3px;
+  margin-inline: calc(-1 * var(--app-control-edge-width));
+  padding: 0;
   border: var(--app-control-edge);
-  border-radius: var(--app-radius-compact);
-  background: var(--control);
-  box-shadow: var(--app-selection-shadow);
+  border-block-start: 0;
+  border-start-start-radius: var(--app-radius-surface);
+  border-start-end-radius: var(--app-radius-surface);
+  background: var(--panel);
+  box-shadow: inset 0 var(--app-control-edge-width) var(--control-line-soft);
 }
-.team-toolbar > .team-task-rail > .task-pill {
+.team-toolbar > .team-lights {
+  grid-area: pips;
+  align-self: end;
+  justify-self: center;
+  margin-block-end: calc((var(--team-status-band) - var(--team-pip-size)) / 2);
+  padding-inline: var(--team-chamber-inset);
+}
+.team-toolbar > .team-menu { grid-area: menu; place-self: center; }
+/* Each task is its own cell, flush with the team's top edge. Joined cells form
+   one square-cornered notch, like cassette deck keys: page-toned faces, shared
+   walls, and a floor; lighting a cell restores the missing edge above it in
+   the accent. */
+.team-toolbar > .team-tasks {
+  display: flex;
+  grid-area: tasks;
+  min-width: 0;
+  padding-inline: var(--team-chamber-inset);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.team-tasks > .task-pill {
   flex: 0 0 auto;
   min-height: 0;
   padding: 0 7px;
+  border: 0;
+  border-inline-end: var(--app-control-edge);
+  border-block-end: var(--app-control-edge);
   border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 4%, var(--control));
-  box-shadow:
-    0 0 0 1px var(--app-control-rail-divider),
-    inset 0 -2px color-mix(in srgb, var(--line) 48%, transparent);
+  background: var(--page);
+  box-shadow: none;
   font-size: 11px;
   line-height: 1;
 }
-.team-toolbar > .team-task-rail > .task-pill--all { padding-inline: 2px 4px; }
-.team-toolbar > .team-task-rail .task-pill-count {
+/* Inner walls divide the keys; the notch keeps no outer side walls. */
+.team-tasks > .task-pill:last-child { border-inline-end: 0; }
+.team-tasks > .task-pill--all { padding-inline: 4px; }
+.team-tasks .task-pill-count {
   padding: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: inherit;
 }
-.team-toolbar > .team-task-rail > .task-pill:is(:hover, :focus-visible) {
-  background: color-mix(in srgb, var(--accent) 14%, var(--control));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--app-control-rail-divider)),
-    inset 0 -2px color-mix(in srgb, var(--accent) 72%, transparent);
+.team-tasks > .task-pill:is(:hover, :focus-visible) {
+  outline: 0;
+  background: color-mix(in srgb, var(--accent) 10%, var(--page));
+  box-shadow: inset 0 var(--app-control-edge-width) var(--accent);
 }
-.team-toolbar > .team-task-rail > .task-pill:active {
-  background: color-mix(in srgb, var(--accent) 20%, var(--control));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 48%, var(--app-control-rail-divider)),
-    inset 0 2px 3px color-mix(in srgb, var(--ink) 20%, transparent);
-  transform: translateY(1px);
-}
+.team-tasks > .task-pill:active { background: color-mix(in srgb, var(--accent) 18%, var(--page)); }
 
 .team-lights[data-lane-drag-handle] {
   cursor: grab;
@@ -625,17 +638,13 @@
   font-size: 1rem;
 }
 .team-toolbar > .ticker {
+  grid-area: status;
+  align-self: center;
   min-width: 0;
-  padding: 0;
+  padding: 0 var(--team-chamber-inset);
   border: 0;
   background: transparent;
   font-size: .65rem;
-}
-/* Without a task band, center the status line on the lower pip row rather
-   than the whole stack. */
-.team-toolbar:not(:has(> .team-task-rail)) > .team-lights:has(.team-light[data-pip-row="2"]) ~ .ticker {
-  position: relative;
-  top: calc((var(--team-pip-size) + var(--team-pip-gap)) / 2);
 }
 .team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--accent); text-align: right; }

@@ -53,7 +53,7 @@
   .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
   .workspace-tabs button::first-letter { font-size: .72rem; }
   .content { padding: 18px 14px 28px; }
-  .team-toolbar { padding-inline: 4px; }
+  .team-toolbar { --team-chamber-inset: 4px; }
   .app-navigation { margin-inline: 4px; }
   .app-option { padding-inline: 4px; }
   .app-option-badge { display: none; }

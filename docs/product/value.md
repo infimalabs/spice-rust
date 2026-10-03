@@ -407,18 +407,18 @@ including work held by an unteamed agent, appears in the global strip. Until
 the roster loads, potentially team-associated work waits off both strips
 instead of flashing globally.
 
-Each team header is a compact 54px deck. A team rail sits in its upper band as
-joined inset keys, borrowing the composer's framed slider/send-control grammar
-and the cutout transport buttons of a cassette player. Resting labels and
-counts remain visible on their key faces; hover and keyboard focus light an
-accent edge, and activation visibly seats the key. The live status line rests
-in the roomier lower band without crowding, while presence pips and the menu
-remain centered across both. The rail scrolls horizontally inside its band
-when its labels outgrow the available width and never overlaps those controls.
-Its aggregate pill opens
-`#/work/team/{team}`, and each team stem pill opens
-`#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
-that stem.
+Each team header is a fixed 44px grid of chambers: a square pip chamber and a
+square menu chamber span two bands, with the task band above the status band in
+the long middle column. The team surface has no top border; the header draws
+that edge itself, and each team task is a square-cornered cell flush with it, so
+the joined cells read as cassette keys carved out of the edge, with inner walls
+and a floor but no outer side walls. Resting labels and counts stay visible;
+hover and keyboard focus restore the missing edge above a cell in the accent.
+The live status line centers on the lower pip row, and the task band scrolls
+horizontally when its labels outgrow the available width, never overlapping
+the pips or menu. Its aggregate pill opens `#/work/team/{team}`, and each team
+stem pill opens `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same
+team's work to that stem.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
