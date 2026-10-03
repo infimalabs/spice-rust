@@ -1,4 +1,4 @@
-//! Shared task-card rendering for the global board and team Work panels.
+//! Shared task-card rendering for the global Work board.
 
 use super::clock::{TaskTimePresentation, task_time};
 use super::view::WorkMapState;
@@ -8,21 +8,9 @@ use crate::watchband;
 use crate::work::{self as model, WorkAvailability, WorkTask};
 use wire::ClaimDisposition;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Density {
-    Board,
-    Compact,
-}
-
 pub(super) struct MapControls<'a> {
     pub state: &'a UseStateHandle<WorkMapState>,
     pub toggle_root: &'a Callback<wire::TaskStamp>,
-}
-
-pub(super) struct MessageControls<'a> {
-    pub links: &'a watchband::WorkMessageLinks<'a>,
-    pub team: wire::CanonicalUuid,
-    pub follow: &'a Callback<MouseEvent>,
 }
 
 /// What one card reads besides its task.
@@ -30,15 +18,13 @@ pub(super) struct Controls<'a> {
     pub selected: Option<&'a wire::TaskStamp>,
     pub select: &'a Callback<wire::TaskStamp>,
     pub lanes: Option<&'a LaneView>,
-    pub density: Density,
     pub map: Option<MapControls<'a>>,
-    pub messages: Option<MessageControls<'a>>,
     pub creator_context: Option<&'a Callback<MouseEvent>>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
 }
 
 struct CellGutter<'a> {
-    reserved: bool,
+    grouped: bool,
     lead: Option<Html>,
     label: Option<&'a str>,
 }
@@ -59,31 +45,17 @@ fn render_gutter(gutter: CellGutter<'_>) -> Html {
     }
 }
 
-fn card_return_id(
-    has_chat_target: bool,
-    born: &wire::TaskStamp,
-    messages: Option<&MessageControls<'_>>,
-) -> Option<String> {
-    has_chat_target.then(|| {
-        messages.map_or_else(
-            || format!("work-task-{born}"),
-            |messages| format!("team-work-task-{}-{born}", messages.team),
-        )
-    })
-}
-
 fn open_task(select: &Callback<wire::TaskStamp>, born: &wire::TaskStamp) -> Callback<MouseEvent> {
     let select = select.clone();
     let born = born.clone();
     Callback::from(move |_| select.emit(born.clone()))
 }
-
 pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
     render_cell(
         task,
         controls,
         CellGutter {
-            reserved: false,
+            grouped: false,
             lead: None,
             label: None,
         },
@@ -104,7 +76,7 @@ pub(super) fn render_grouped(
         task,
         controls,
         CellGutter {
-            reserved: true,
+            grouped: true,
             lead,
             label: group_label,
         },
@@ -121,17 +93,12 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
     let born = statement.born.clone();
-    let message_target = controls
-        .messages
-        .as_ref()
-        .and_then(|messages| messages.links.task(&statement.handle))
-        .map(super::watchband::agent_message_source_id);
     let creator_context = crate::view::creator_context_href(
         &statement.creation,
         controls.creator_messages.iter().map(AsRef::as_ref),
     );
-    let has_chat_target = message_target.is_some() || creator_context.is_some();
-    let return_id = card_return_id(has_chat_target, &born, controls.messages.as_ref());
+    let has_chat_target = creator_context.is_some();
+    let return_id = has_chat_target.then(|| format!("work-task-{born}"));
     let is_selected = controls.selected == Some(&born);
     let is_pinned = controls
         .map
@@ -139,7 +106,7 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
         .is_some_and(|map| map.state.pinned(&born));
     let cell_class = classes!(
         "work-card-cell",
-        gutter.reserved.then_some("work-card-cell--grouped"),
+        gutter.grouped.then_some("work-card-cell--grouped"),
     );
     let gutter = render_gutter(gutter);
     let open = open_task(controls.select, &born);
@@ -154,7 +121,6 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
                 data-card-return-origin={has_chat_target.then_some("work")}
                 class={classes!(
                     "work-card",
-                    (controls.density == Density::Compact).then_some("work-card--compact"),
                     is_selected.then_some("work-card--selected"),
                     is_pinned.then_some("work-card--mapped"),
                 )}
@@ -195,17 +161,6 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
                                 statement,
                                 controls.creator_context.cloned(),
                             )}
-                        }
-                        if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
-                            <a
-                                class="work-message-link"
-                                href={crate::view::card_href(target)}
-                                aria-label={format!(
-                                    "Open newest message mentioning {} in Chat",
-                                    statement.handle,
-                                )}
-                                onclick={messages.follow.clone()}
-                            >{"Chat"}</a>
                         }
                     </span>
                 </header>

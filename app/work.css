@@ -64,15 +64,13 @@
 .work-arrangement-group > .team-mode-rail { flex: none; }
 .work-arrangement-group .team-mode { white-space: nowrap; }
 
-/* Team lanes share one label column sized to the longest lane label, so each
-   lane's state rule lands on one line. Global lanes are one full-width track:
-   their heading rides in the first card's gutter, leaving no label column. */
+/* Global lifecycle lanes are one full-width track: their heading rides in the
+   first card's gutter, leaving no label column. */
 .work-lanes {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
 }
-.work-lanes:not(.team-work-lanes) { grid-template-columns: minmax(0, 1fr); }
 
 /* Lifecycle categories are the stable cross-axis. Task churn changes only the
    inline contents and scroll extent of one row, never the board's column
@@ -131,8 +129,7 @@
   min-inline-size: calc(3ch + 12px);
   font-variant-numeric: tabular-nums;
 }
-.work-lane-heading > span[data-shown="false"],
-.team-task-section > header > span[data-shown="false"] { visibility: hidden; }
+.work-lane-heading > span[data-shown="false"] { visibility: hidden; }
 
 .work-lane[data-work-lane="in-flight"] { --work-state: var(--work-in-flight); }
 .work-lane[data-work-lane="ready"] { --work-state: var(--work-ready); }
@@ -149,16 +146,15 @@
   scroll-snap-type: inline proximity;
 }
 
-/* Global lanes reserve one gutter between their top rule and their track for
-   the lane heading, centered in it, and cluster labels, which sit just above
-   their card, so neither moves the track origin or any card vertically. */
-.work-lanes:not(.team-work-lanes) > .work-lane { padding-top: 0; }
-.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track { --work-group-label-gutter: 2.25rem; padding-top: var(--work-group-label-gutter); }
+/* Global lane headings ride in the card gutter, so neither the heading nor its
+   badge moves the track origin or any card vertically. */
+.work-lanes > .work-lane { padding-top: 0; }
+.work-lanes > .work-lane > .work-lane-track { --work-group-label-gutter: 2.25rem; padding-top: var(--work-group-label-gutter); }
 /* A global lane is one height whether empty or full: its row reserves the card
    cap, which is also every card's max-block-size, so the first task arriving,
    the last one settling, or a snapshot replacing its placeholder never moves
-   the lanes below. A team's lone In flight row hugs its cards, as Settled does. */
-.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty, .work-lane-vacancy) {
+   the lanes below. */
+.work-lanes > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty, .work-lane-vacancy) {
   min-block-size: var(--mosaic-image-large-size);
 }
 .work-lane-vacancy { position: relative; display: grid; }
@@ -1132,16 +1128,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-/* Team-local card collections keep their responsive grid columns as the
-   measurement contract, then the Work mosaic bridge positions each measured
-   card independently so a tall sibling cannot reserve blank row space. */
-.team-task-workspace :is(.team-direction-ledger, .team-task-card-list)[data-mosaic-packing="ready"] {
-  position: relative;
-  align-items: initial;
-}
-.team-task-workspace :is(.team-direction-ledger, .team-task-card-list)[data-mosaic-packing="ready"] > * {
-  margin: 0;
 }
 .team-direction-ledger-row {
   --mosaic-image-size: 8.75rem;

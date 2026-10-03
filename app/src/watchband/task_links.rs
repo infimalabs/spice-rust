@@ -48,22 +48,14 @@ pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
     mentions
 }
 
-/// Retained message cards a team's Work surface can reach without dead links.
+/// Retained authenticated direction replies reachable from global Directions.
 ///
-/// Task mentions and authenticated directive replies share one chronological
-/// projection so rendering many cards does not repeatedly scan message history.
-pub struct WorkMessageLinks<'a> {
-    tasks: BTreeMap<TaskHandle, &'a wire::AgentMessage>,
+/// The projection avoids rescanning message history for every recipient badge.
+pub struct DirectionMessageLinks<'a> {
     directives: BTreeMap<String, &'a wire::AgentMessage>,
 }
 
-impl<'a> WorkMessageLinks<'a> {
-    /// Newest retained card that mentions `task`.
-    #[must_use]
-    pub fn task(&self, task: &TaskHandle) -> Option<&'a wire::AgentMessage> {
-        self.tasks.get(task).copied()
-    }
-
+impl<'a> DirectionMessageLinks<'a> {
     /// Retained acknowledgement or decline for one recipient key.
     #[must_use]
     pub fn directive_key(&self, key: &str) -> Option<&'a wire::AgentMessage> {
@@ -71,22 +63,18 @@ impl<'a> WorkMessageLinks<'a> {
     }
 }
 
-/// Index reachable Work links for messages retained by this team's lanes.
+/// Index reachable direction replies for messages retained by these lanes.
 #[must_use]
-pub fn work_message_links<'a>(
+pub fn direction_message_links<'a>(
     member_lanes: &BTreeSet<CanonicalUuid>,
     messages: impl IntoIterator<Item = &'a wire::AgentMessage>,
-) -> WorkMessageLinks<'a> {
-    let mut links = WorkMessageLinks {
-        tasks: BTreeMap::new(),
+) -> DirectionMessageLinks<'a> {
+    let mut links = DirectionMessageLinks {
         directives: BTreeMap::new(),
     };
     for message in messages {
         if !member_lanes.contains(&message.lane) {
             continue;
-        }
-        for (_, task) in task_mentions(&message.text) {
-            replace_with_newer(&mut links.tasks, task, message);
         }
         let is_reply = message.classifications.iter().any(|classification| {
             matches!(

@@ -386,9 +386,9 @@ destination; otherwise they stay readable facts.
 
 The project pills begin with a label-less aggregate pill whose badge sums every
 stem; selecting it opens unscoped Work from any destination. The global board
-and team Work panes share one card identity, status, ownership, and selection
-contract; either opens the one shared detail layer, whose close returns focus
-to the launching card.
+and Chat task references share one card identity, status, ownership, and
+selection contract; either opens the one shared detail layer, whose close
+returns focus to the launching card.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
@@ -411,72 +411,31 @@ inbox holds it, otherwise by key. Resident- and lane-authored steering remains
 readable context without a link because it is not part of global Directions
 history.
 
-Each is the team Work ledger's direction card: the resident's first unquoted
-line in sanitized rich Markdown, marked as a retained excerpt and signed by the
-operator's badge, the initials quote bylines use, without restating its section.
-Recipient badges group by current team without a visible team label, since the
-badges already name its members; each group carries the team name only as its
-accessible name. They keep unknown recipients visible without inventing a link,
-open caused work in the shared task detail layer, and link an acknowledged or
-declined badge only when retiring history evidence and a retained authenticated
-reply resolve to that exact team-local Chat card; Back returns to that card. The
-mosaic holds three columns wide, two at intermediate width, and one on a narrow
-screen without changing newest-first order.
+Each global Directions entry is a message-familiar card: the resident's first
+unquoted line in sanitized rich Markdown, marked as a retained excerpt and
+signed by the operator's badge, the initials quote bylines use, without
+restating its section. Recipient badges group by current team without a visible
+team label, since the badges already name its members; each group carries the
+team name as its accessible name. They keep unknown recipients visible without
+inventing a link, open caused work in the shared task detail layer, and link an
+acknowledged or declined badge only when retiring history evidence and a
+retained authenticated reply resolve to that exact team-local Chat card; Back
+returns to that card. The mosaic holds three columns wide, two at intermediate
+width, and one on a narrow screen without changing newest-first order.
 
-### The team Work pane
-
-The pane opens with Kept jobs: every command a member keeps beyond its call
-until the member hears how it ended, so running or ended but unheard, the same
-set the occupant's job `list` answers; delivered jobs leave it for the job
-`history`. Team-wide and oldest first; one row per job when wide, and in lane-shaped panes
-an accented card with member, standing, two reserved command lines, and age,
-keeping headers for assistive technology. Five jobs show in full; more scroll
-inside the table under pinned headers with the sixth peeking, so the pane never
-grows past that. The full command shows on hover, standing changes update in
-place, and an empty table reserves one job's height ([a changing region holds
-its largest
-footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
-
-Each team projects open work into three stable lanes: Up next in offer order,
-In flight with the claiming member's name and accent, and Waiting for blocked,
-deferred, and review work. Like the global rows, each lane keeps the card
-cap's height even when empty ([a changing region holds its largest
-footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)),
-and keyed cards move without disturbing unchanged ones. Every lane count, and
-each section count beside Kept jobs, Settled, and Directions, keeps its slot
-while unknown or zero, and lane counts reserve three digits, so a count never
-moves a label or the card track.
-
-A directive ledger joins browser-owned submissions to the resident inbox by
-directive or fanout identity. A fanout stays one row with per-member state
-through delivery, acknowledgment, decline, lapse, cancellation, or failure, so
-retirements update in place. Work whose origin names a row's steering key
-appears on it as the Chat task reference. A task card links to the newest
-retained team message mentioning its handle, and a directive row to a retained
-acknowledgement or decline; with no retained card, no link. Following one shows
-that team's Chat and focuses the message; Back restores the Work row and scroll,
-Forward returns to the message, and modified clicks open the card route without
-changing this tab's team mode. The ledger keeps the card cap's height whether
-empty, unavailable, or holding one direction; each direction is capped there
-and scrolls its body, so the first direction moves nothing below it.
-
-A full-width Settled history shows tasks the team created or whose last winning
-claim a current member held, newest first. Search and Completed-by narrow it,
-and range and Newer/Older replace one bounded page at a time without mixing
-teams. Its controls share one row when the pane can hold them and stack without
-clipping when it cannot; its total stays beside the heading. At team-history
-widths of 40rem or less, cards form one column regardless of viewport width.
-It reads only while that pane is on screen, again when work leaves the open
-board or the connection resumes. Its entries keep the card cap's height
-whether empty, loading, or holding one card, so the first task to settle moves
-the Directions ledger below it by nothing.
 
 ### The team console
 
-Chat tiles one console per live team: identity and liveness, the Work/Chat
-rail, member standing, and the lane-attributed stream. Each member lane stays
-the concrete address of one worktree; a team is never a broadcast identity.
-Seat and import share one panel, even for an empty fleet. Moving a member to a
+Chat tiles one always-mounted console per live team: identity, liveness, member
+standing, composer, and the lane-attributed stream. Each member lane stays the
+concrete address of one worktree; a team is never a broadcast identity. The
+header orders its compact lane-light stack, live status ticker, and hamburger;
+the ticker retains age, run state, prefix, accent, and detail semantics without
+spending a separate row. The hamburger links to canonical team-scoped global
+Work and Directions. No local analytical pane duplicates them.
+
+Seat and import share one panel, even for an empty fleet. The empty header
+retains the ticker's middle slot without inventing status. Moving a member to a
 new team preserves its siblings and allocation policy; leaving all teams moves
 only that member to its lane identity, keeping its seat.
 
@@ -492,7 +451,7 @@ move — a claim iced on unmet requirements, unclaimed work blocked on them,
 finished work in review; sibling dependencies are not shown. Last, a lease
 within two minutes of expiry and direction waiting over five minutes. A ruling
 lands and its request leaves; tasks open the detail layer, and direction opens
-its oldest waiting direction in Work. With nothing due the list is absent.
+its oldest waiting direction in global Directions. With nothing due the list is absent.
 
 The lane controls follow: Wake only on a seatable vacant seat, Drain only on an
 occupied one, Remove only on a vacant seat holding no claim, plus renewal on any
@@ -515,22 +474,6 @@ button, and buttons grow to share their row; the model field takes its own row
 when its buttons cannot fit beside it. Rows stay single-line behind one key
 column sized to the longest key, truncating values that keep copy on click.
 
-### The team Work direction mosaic
-
-Directions read newest first as message-familiar cards rather than as a
-history table. Each card retains its durable fanout identity, presents the
-available authored body through the same sanitized rich Markdown surface as
-Chat, and names the operator or peer lane that authored it. A bounded retired
-record that retains only a preview says that it is an excerpt instead of
-inventing unavailable body text. Responsive columns repack the cards without
-changing their order, identity, or source data.
-
-Recipient badges keep their lane accent and independent delivery state. An
-acknowledged or declined badge links to that recipient's exact retained Chat
-card; task chips open the shared task detail. In the opposite direction, a
-retained Chat quote of an operator direction links to its global Directions
-card, not to this mosaic, and browser Back restores the Chat card and reading
-position. Resident and lane directions have no global-history link.
 
 ### Lane, team, occupant
 
@@ -602,25 +545,27 @@ draft rather than pill geometry.
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.
 
-### The team mode rail and its scroll ownership
+### The always-mounted team Chat surface
 
-Each live team's rail keeps its selected mode per team, and selection replaces
-the pane without transition. A rail tab centres its label alone and hangs its
-count badge after it, as the global view rail does, so a badge appearing,
-vanishing, or gaining a digit never moves a label. Work never mounts the
-message plane. In Chat, member columns own horizontal overflow and the
-browser keeps native ownership of every vertical gesture. The composer
-overlays the plane, whose content starts below a composer-height spacer, and
-moves exactly as far as the
-cards scroll until hidden or revealed; it never cancels an event or writes the
-scroll position. Home and End also set composer exposure. The toolbar and ticker
-stay fixed. With no team at all the surface keeps that frame — an empty ticker
-row and the same mode pane — so the first team to form, or the last to dissolve,
-moves nothing ([a changing region holds its largest
+Each live team mounts one Chat surface; there is no team-local mode or hidden
+alternate pane. Member columns own horizontal overflow and the browser keeps
+native ownership of every vertical gesture. The composer overlays the plane,
+whose content starts below a composer-height spacer, and moves exactly as far
+as the cards scroll until hidden or revealed; it never cancels an event or
+writes the plane's scroll position. Home and End also set composer exposure.
+The toolbar remains fixed, with the status ticker between the lane-light stack
+and hamburger, and the message stream owns the row the standalone ticker once
+occupied.
+
+Task-detail and global Directions links enter the exact Chat card or composer.
+Return anchors retain card identity and scroll offset only; Back and Forward do
+not restore hidden layout state. With no team at all the surface keeps the same
+toolbar and an empty middle status slot, so the first team to form, or the last
+to dissolve, moves no header control ([a changing region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
-**Value:** the console becomes a reading surface without a toggle, threshold, or
-animation, and the mounted composer keeps drafts and controls intact.
+**Value:** the console is continuously both a writing and reading surface,
+without a toggle, threshold, or remount that could lose drafts or controls.
 
 ### The reading contract
 
@@ -654,8 +599,8 @@ and four lanes, the difference between reading and re-deriving.
 ### Three attention channels
 
 Eye (the board), ear (speech: quiet, speak, narrate), and glance (badges and the
-mode rail), each with different bandwidth. Card speech reads the selected
-message's full text; topbar speech reads visible main content up to 32 KiB;
+live status ticker), each with different bandwidth. Card speech reads the
+selected message's full text; topbar speech reads visible main content up to 32 KiB;
 narration reads each newly cursor-admitted message. Nothing present at first
 materialization auto-plays.
 

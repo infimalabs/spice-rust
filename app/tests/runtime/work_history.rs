@@ -209,7 +209,7 @@ fn work_history_scope_changes_restart_requests_without_mixing_pages() {
     assert!(runtime.select_work_history_team(Some(team)));
     let scoped = runtime
         .begin_work_history()
-        .expect("team Work restarts at its newest page");
+        .expect("team-scoped Work restarts at its newest page");
     assert_eq!(scoped.team, Some(team));
     assert_ne!(scoped.revision, all.revision);
 
@@ -217,13 +217,13 @@ fn work_history_scope_changes_restart_requests_without_mixing_pages() {
     runtime.apply_work_history(&all, &stale);
     assert!(
         runtime.work_history().loading(),
-        "the prior all-Work response cannot settle the team request"
+        "the prior all-Work response cannot settle the team-scoped request"
     );
 
     assert!(runtime.select_work_history_team(None));
     let unscoped = runtime
         .begin_work_history()
-        .expect("leaving team Work restarts all history");
+        .expect("leaving team-scoped Work restarts all history");
     assert_eq!(unscoped.team, None);
     assert_ne!(unscoped.revision, scoped.revision);
     runtime.apply_work_history(&scoped, &stale);

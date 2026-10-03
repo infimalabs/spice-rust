@@ -560,8 +560,14 @@
   color: var(--muted);
   font-size: 1rem;
 }
-.team-surface > .ticker { flex: 0 0 auto; min-height: 26px; padding-block: 6px; padding-inline: 6px 10px; border-bottom: var(--app-control-edge); background: var(--panel); font-size: .65rem; }
-.team-surface > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
+.team-toolbar > .ticker {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: .65rem;
+}
+.team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }
 .team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
 .team-surface .ticker-prefix { color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink)); font-weight: 700; }
@@ -574,24 +580,6 @@
   overflow: hidden;
   background: var(--panel);
 }
-.team-mode-pane {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  overflow: auto;
-  z-index: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.team-mode-pane[data-active="true"] {
-  z-index: 1;
-  opacity: 1;
-  pointer-events: auto;
-}
-.team-mode-pane[data-mode="Chat"] { overflow: hidden; }
 .team-pane > .empty { flex: 1 1 auto; }
 
 .team-compose {
@@ -1314,166 +1302,4 @@ a.relative-age {
   font-size: .68rem;
 }
 
-.team-task-workspace {
-  display: grid;
-  align-content: start;
-  overflow: auto;
-  padding: 0 12px 14px;
-}
-.team-task-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 9px 2px;
-  border-bottom: var(--app-edge);
-}
-.team-task-summary > div:first-child,
-.team-task-policy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.team-task-eyebrow,
-.team-task-policy span {
-  color: var(--muted);
-  font-size: .6rem;
-  font-weight: 650;
-  letter-spacing: 0;
-}
-.team-task-summary strong { font-size: .8rem; }
-.team-task-policy {
-  justify-items: end;
-  flex: 0 0 auto;
-  padding-left: 14px;
-  border-left: var(--app-edge);
-}
-.team-task-policy strong {
-  color: var(--accent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .7rem;
-}
-/* Stable global-Work rows let only a changed card move; Settled follows them. */
-.team-work-flow { display: grid; gap: 8px; }
-.team-work-history { container-type: inline-size; grid-column: 1 / -1; min-width: 0; }
-@container (max-width: 40rem) {
-  .team-work-history .work-history-list { grid-template-columns: minmax(0, 1fr); }
-  .team-work-history .work-history-finder { grid-template-columns: minmax(0, 1fr); }
-  .team-work-history .work-history-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .team-work-history .work-history-page-actions { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; }
-  .team-work-history :is(.work-history-filter-actions, .work-history-page-actions) button { width: 100%; }
-  .team-work-history .work-history-pagination { align-items: stretch; flex-direction: column; }
-}
-.team-work-lanes .work-lane-track { padding-bottom: 6px; }
-.team-task-section { min-width: 0; }
-.team-task-section > header {
-  display: flex; align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 38px;
-  padding: 8px 2px 5px;
-}
-.team-work-history > header { justify-content: flex-start; }
-.team-task-section h3 {
-  margin: 0;
-  font-size: .68rem;
-  font-weight: 700;
-}
-.team-task-section > header > span {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .64rem;
-}
-.team-direction-history-link {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: .64rem;
-}
-.team-direction-history-link:hover,
-.team-direction-history-link:focus-visible { color: var(--ink); }
-.team-task-card-list {
-  display: grid;
-  gap: 8px;
-}
-/* A compact task still splits its own content independently of list packing. */
-.team-task-workspace .work-card--compact {
-  grid-template:
-    "heading facts" auto
-    "title facts" minmax(0, auto)
-    "badges facts" auto
-    / minmax(0, 1fr) minmax(13rem, .36fr);
-  align-content: start;
-  gap: 4px 12px;
-  padding: 9px 10px;
-}
-.team-task-workspace .work-card--compact .work-card-heading { grid-area: heading; }
-.team-task-workspace .work-card--compact h4 { grid-area: title; font-size: .75rem; }
-.team-task-workspace .work-card--compact .work-card-badges { grid-area: badges; }
-.team-task-workspace .work-card--compact .work-card-facts {
-  grid-area: facts;
-  align-content: center;
-  gap: 3px;
-  margin-block: -1px;
-  padding: 0 0 0 10px;
-  border-top: 0;
-  border-left: 1px solid color-mix(in srgb, var(--work-card-tone) 16%, var(--line-soft));
-  font-size: .61rem;
-}
-.team-task-workspace .work-card--compact .work-card-facts > div {
-  grid-template-columns: 4.2em minmax(0, 1fr);
-}
-.team-task-workspace .work-card--compact .task-time {
-  display: inline-block;
-  min-width: 3ch;
-  white-space: nowrap;
-}
-@container (max-width: 38rem) {
-  .team-task-workspace .work-card--compact {
-    grid-template:
-      "heading" auto
-      "title" minmax(0, auto)
-      "badges" auto
-      "facts" auto
-      / minmax(0, 1fr);
-    gap: 7px;
-  }
-  .team-task-workspace .work-card--compact .work-card-facts {
-    margin-block: 0;
-    padding: 6px 0 0;
-    border-top: 1px solid color-mix(in srgb, var(--work-card-tone) 16%, var(--line-soft));
-    border-left: 0;
-  }
-}
-.team-task-empty {
-  min-height: 46px;
-  margin: 0;
-  padding: 14px 10px;
-  border-top: var(--app-edge);
-  border-bottom: var(--app-edge);
-  color: var(--muted);
-  font-size: .67rem;
-}
-/* Directions and Settled hold one entry's footprint whether empty, loading,
-   or holding one entry. The region and its empty line reserve the card cap,
-   which is also each entry's max-block-size, so the first entry arriving or
-   the last leaving moves nothing below. A direction's body scrolls inside the
-   cap, as a work card's title row absorbs it. The capped row is a column
-   flexbox: an auto-height grid sizes its tracks at max-content before the cap
-   clamps it, so the body would spill out with the footer instead of shrinking. */
-.team-entry-region,
-.team-entry-region > .team-task-empty {
-  min-block-size: var(--mosaic-image-large-size);
-}
-.team-entry-region .team-direction-ledger-row {
-  display: flex;
-  flex-direction: column;
-  max-block-size: var(--mosaic-image-large-size);
-}
-.team-entry-region .team-direction-ledger-row > * { flex: none; }
-.team-entry-region .team-direction-ledger-row > .message-body {
-  flex: 0 1 auto;
-  min-block-size: 0;
-  overflow-y: auto;
-}
 

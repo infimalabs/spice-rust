@@ -160,33 +160,6 @@ pub(super) async fn send_work_history(
     .await
     .map(Some)
 }
-/// The newest settled page for one team, or the page behind `request.before`.
-pub(super) async fn send_team_settled(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    request: &crate::runtime::TeamSettledRequest,
-) -> Result<Option<CanonicalUuid>, String> {
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::TeamSettled {
-            request: request.clone(),
-        },
-        CommandKind::BoardRead,
-        vec![],
-        BoardRead::History {
-            query: request.query.clone(),
-            completed_before: request.completed_before,
-            before: request.before.clone(),
-            team: Some(request.team),
-            limit: 20,
-        },
-    )
-    .await
-    .map(Some)
-}
 pub(super) async fn send_task_detail(
     principal: &Principal,
     writer: &mut SocketWriter,

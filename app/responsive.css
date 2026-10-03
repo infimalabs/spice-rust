@@ -23,7 +23,6 @@
   .team-pane,
   .team-compose,
   .team-activity-grid { flex: 0 0 auto; min-height: auto; }
-  .team-mode-pane[data-active="true"] { position: relative; inset: auto; }
   .team-pane > .empty { flex: 0 0 auto; }
   .lane-mosaic-plane {
     flex: 0 1 auto;
@@ -58,7 +57,6 @@
   .app-navigation { margin-inline: 4px; }
   .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
-  .team-task-workspace { padding-inline: 8px; }
   .team-task-member { max-width: 100%; }
   .team-job-table th:nth-child(1) { width: 5.5rem; }
   .team-job-table th:nth-child(2) { width: 3.5rem; }
@@ -96,11 +94,6 @@
   .work-lane {
     gap: 8px;
     padding-block: 10px;
-  }
-  .team-work-lanes .work-lane-heading {
-    flex-direction: column;
-    justify-content: flex-start;
-    padding-right: 8px;
   }
   .work-card-list > .work-card-cell {
     flex-basis: min(16rem, calc(100vw - 7.5rem));

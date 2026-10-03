@@ -12,8 +12,6 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
-mod team;
-pub use team::team_held_work;
 #[cfg(test)]
 mod team_scope_tests;
 

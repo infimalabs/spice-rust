@@ -44,7 +44,9 @@ pub use presence::{MemberPresence, MemberPresenceState, member_presence};
 pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
-pub use task_links::{WorkMessageLinks, reported_tasks, task_mentions, work_message_links};
+pub use task_links::{
+    DirectionMessageLinks, direction_message_links, reported_tasks, task_mentions,
+};
 
 /// Accent slots the band cycles through.
 ///
@@ -1070,10 +1072,10 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        lane_accent, quote_label, swap_members, task_elapsed_label,
+        direction_message_links, lane_accent, quote_label, swap_members, task_elapsed_label,
         task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
-        ticker_chunks, tool_media_description, transfer_member, work_message_links,
+        ticker_chunks, tool_media_description, transfer_member,
     };
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
@@ -1164,13 +1166,13 @@ mod tests {
     }
 
     #[test]
-    fn work_links_choose_newest_retained_team_messages_and_no_others() {
-        let task = "WORK-dTppr6bbL"
-            .parse::<wire::TaskHandle>()
-            .expect("fixture task handle");
-        let older = message(id(1), 10, &format!("Started {task}."));
-        let newer = message(id(1), 20, &format!("Finished `{task}`."));
-        let outsider = message(id(2), 30, &format!("Mentioned {task}."));
+    fn direction_links_choose_newest_retained_team_reply_and_no_others() {
+        let outsider = directive_reply(
+            id(2),
+            60,
+            "dTworkLink",
+            wire::MessageClassificationKind::Acknowledgement,
+        );
         let acknowledged = directive_reply(
             id(1),
             40,
@@ -1183,18 +1185,9 @@ mod tests {
             "dTworkLink",
             wire::MessageClassificationKind::Decline,
         );
-        let messages = [&outsider, &declined, &older, &acknowledged, &newer];
-        let links = work_message_links(&std::collections::BTreeSet::from([id(1)]), messages);
+        let messages = [&outsider, &declined, &acknowledged];
+        let links = direction_message_links(&std::collections::BTreeSet::from([id(1)]), messages);
 
-        assert_eq!(
-            links.task(&task).map(|message| message.locus.offset),
-            Some(20)
-        );
-        assert!(
-            links
-                .task(&"WORK-dTppr2McJ".parse().expect("fixture task"))
-                .is_none()
-        );
         assert_eq!(
             links
                 .directive_key("dTworkLink")

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use super::*;
-use crate::browser::direction_card::{self, Author, Card, Recipient, Recipients};
+use crate::browser::direction_card::{self, Card, Recipient, Recipients};
 use crate::browser::direction_history::Controls;
 use crate::runtime::{DirectionHistoryState, LaneRow, LaneView};
 use wire::Disposition;
@@ -36,8 +36,10 @@ pub(super) fn render(
         .flat_map(|team| team.members.iter())
         .map(|member| member.lane)
         .collect::<BTreeSet<_>>();
-    let message_links =
-        crate::watchband::work_message_links(&member_lanes, messages.iter().map(AsRef::as_ref));
+    let message_links = crate::watchband::direction_message_links(
+        &member_lanes,
+        messages.iter().map(AsRef::as_ref),
+    );
     let follow = Callback::from(|event: MouseEvent| {
         super::super::card_target::remember_global_work_return(&event);
     });
@@ -214,7 +216,7 @@ fn team_label(team: &LaneRow) -> String {
 fn card<'a>(
     group: &'a DirectionGroup,
     topology: Option<&LaneView>,
-    message_links: &crate::watchband::WorkMessageLinks<'_>,
+    message_links: &crate::watchband::DirectionMessageLinks<'_>,
 ) -> Card<'a> {
     let mut groups = topology
         .into_iter()
@@ -246,13 +248,12 @@ fn card<'a>(
         body: group.preview.as_deref().unwrap_or("Preview unavailable"),
         complete: false,
         attachments: &[],
-        author: Author::Operator,
         keys: group
             .recipients
             .iter()
             .map(|recipient| recipient.key.as_str())
             .collect::<BTreeSet<_>>(),
-        recipients: Recipients::Teams(groups),
+        recipients: Recipients(groups),
         authored_millis: group.authored.get().as_millisecond(),
     }
 }
@@ -260,7 +261,7 @@ fn card<'a>(
 fn badge(
     recipient: &DirectionRecipient,
     team: Option<&LaneRow>,
-    message_links: &crate::watchband::WorkMessageLinks<'_>,
+    message_links: &crate::watchband::DirectionMessageLinks<'_>,
 ) -> Recipient {
     let label = team
         .and_then(|team| team.member(recipient.lane))
@@ -290,7 +291,7 @@ fn badge(
 fn recipient_message_target(
     recipient: &DirectionRecipient,
     team: Option<&LaneRow>,
-    message_links: &crate::watchband::WorkMessageLinks<'_>,
+    message_links: &crate::watchband::DirectionMessageLinks<'_>,
 ) -> Option<String> {
     team?;
     if !matches!(

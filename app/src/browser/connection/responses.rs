@@ -279,7 +279,7 @@ fn apply_command_response(
             runtime.apply_direction_history(&request, &admitted);
             CommandApplication::ordinary(false)
         }
-        kind @ (PendingKind::WorkHistory { .. } | PendingKind::TeamSettled { .. }) => {
+        kind @ PendingKind::WorkHistory { .. } => {
             apply_history_response(session, runtime, kind, bytes)?
         }
         kind => apply_mutating_response(session, handles, runtime, id, kind, bytes)?,
@@ -528,7 +528,7 @@ fn apply_scalar_response(
     Ok(CommandApplication::ordinary(false))
 }
 
-/// Board history pages: the global Work archive and one team's settled work.
+/// Board history pages for the global Work archive.
 fn apply_history_response(
     session: &Session,
     runtime: &mut AppRuntime,
@@ -539,7 +539,6 @@ fn apply_history_response(
         admit_response(session, bytes)?;
     match kind {
         PendingKind::WorkHistory { request } => runtime.apply_work_history(&request, &admitted),
-        PendingKind::TeamSettled { request } => runtime.apply_team_settled(&request, &admitted),
         _ => unreachable!("history response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))
