@@ -389,10 +389,21 @@ creator facts open the exact team member in Chat only when topology proves that
 destination; otherwise they stay readable facts.
 
 The project pills begin with a label-less aggregate pill whose badge sums every
-stem; selecting it opens unscoped Work from any destination. The global board
-and Chat task references share one card identity, status, ownership, and
+open task; selecting it opens unscoped Work from any destination. The global
+board and Chat task references share one card identity, status, ownership, and
 selection contract; either opens the one shared detail layer, whose close
 returns focus to the launching card.
+
+A task created by a team rides that team's own rail of the same pills, directly
+above its status line, rather than the global stem pills. The team's aggregate
+pill opens `#/work/team/{team}`, and each team stem pill opens
+`#/work/team/{team}/{public|hidden}/{stem}`, that team's work narrowed to the
+stem. Once its creator team leaves the roster, an open task returns to the
+global stem pills. Until the roster loads, team-created work waits off the
+global strip rather than flashing onto it. The split mirrors allocation: drive
+offers a team only the work it created, so a task on a team's rail is
+schedulable to that team under drive, while one on the global strip needs a
+draining team.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle

@@ -60,7 +60,7 @@ pub(super) fn render(
     let work_href = format!(
         "#{}",
         crate::view::AppRoute::Work {
-            scope: crate::work::WorkScope::Team(identity),
+            scope: crate::work::WorkScope::team_wide(identity),
             task: None,
         }
         .path()

@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) struct FleetRender<'a, 'w> {
     pub(super) work: Option<&'a crate::work::WorkProjection<'w>>,
+    pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
     pub(super) runtime: &'a AppRuntime,
     pub(super) epoch: CanonicalUuid,
@@ -278,6 +279,7 @@ fn render_team_toolbar(
     let lost_capture = dragging.cancel.clone();
     html! {
         <>
+        {render_team_rail(team.lane, render)}
         <header class="team-toolbar">
             <span
                 class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
@@ -315,6 +317,41 @@ fn render_team_toolbar(
         </header>
         {team_menu::render(team, &control, &actions)}
         </>
+    }
+}
+
+/// The task pills riding this team's upper rail: the open tasks it created,
+/// in the same aggregate-then-stem form as the global strip. Its pills open
+/// this team's Work scope; the fleet never shows over Work, so none selects.
+fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
+    let Some(work) = render.work else {
+        return Html::default();
+    };
+    let rail = crate::work::WorkRail::Team(team);
+    let counts = work.rail_counts(rail);
+    if !counts.has_open() {
+        return Html::default();
+    }
+    html! {
+        <nav
+            class="task-pill-strip app-control-rail team-task-rail"
+            aria-label="Open tasks this team created"
+        >
+            {view::chrome::render_aggregate_pill(
+                counts,
+                "This team's open work",
+                crate::work::WorkScope::team_wide(team),
+                None,
+                render.navigate,
+            )}
+            {for crate::task_pill::TaskPill::for_rail(work, rail).into_iter().map(|pill| {
+                let scope = crate::work::WorkScope::Team {
+                    team,
+                    stem: Some(pill.identity.clone()),
+                };
+                view::chrome::render_stem_pill(pill, scope, None, render.navigate)
+            })}
+        </nav>
     }
 }
 

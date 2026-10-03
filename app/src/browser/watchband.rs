@@ -87,6 +87,7 @@ pub(super) fn render_team(
         composer_drag,
         team_drag,
         select_task,
+        navigate,
         agents: controls,
         ..
     } = render;
@@ -147,6 +148,7 @@ pub(super) fn render_team(
         .collect::<Vec<_>>();
     let render = FleetRender {
         work,
+        navigate,
         select_task,
         runtime,
         epoch: lanes.epoch,

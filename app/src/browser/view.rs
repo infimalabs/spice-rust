@@ -219,7 +219,11 @@ fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &Work
         Axis::Topology => "Resident dashboard".to_owned(),
         Axis::Flow => match scope {
             WorkScope::AllOpen => "All open work".to_owned(),
-            WorkScope::Team(team) => format!("Team {team} work"),
+            WorkScope::Team { team, stem: None } => format!("Team {team} work"),
+            WorkScope::Team {
+                team,
+                stem: Some(stem),
+            } => format!("Team {team} {stem} work"),
             WorkScope::Stem(identity) => work
                 .and_then(|projection| projection.stem(identity))
                 .map_or_else(
@@ -327,10 +331,13 @@ pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'
         WorkScope::AllOpen => "all".to_owned(),
         WorkScope::Stem(identity) if work.stem(identity).is_some() => identity.to_string(),
         WorkScope::Stem(_) => "all".to_owned(),
-        WorkScope::Team(team) if work.contains_scope(render.work_scope) != Some(false) => {
-            format!("team:{team}")
+        WorkScope::Team { team, stem } if work.contains_scope(render.work_scope) != Some(false) => {
+            stem.as_ref().map_or_else(
+                || format!("team:{team}"),
+                |stem| format!("team:{team}:{stem}"),
+            )
         }
-        WorkScope::Team(_) => "all".to_owned(),
+        WorkScope::Team { .. } => "all".to_owned(),
     };
     // Every reconnect attempt passes back through Connecting, so the snapshot
     // stays stale until the connection is live again; the notice then toasts
