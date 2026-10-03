@@ -2,8 +2,7 @@
    supplied 1000 × 568 reference: compact global chrome, one fixed team header,
    four simultaneous standings and their always-mounted Chat columns. */
 .commandbar--mosaic {
-  --app-commandbar-block-pad: 8px;
-  min-height: calc(var(--app-header-control) + var(--app-commandbar-block-pad) + var(--app-commandbar-block-pad));
+  min-height: var(--app-commandbar-block-size);
   gap: 7px;
   padding-block: var(--app-commandbar-block-pad);
   background: var(--page);
@@ -20,6 +19,9 @@
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
+  --app-commandbar-block-pad: 8px;
+  /* The commandbar's height; inactive Chat sits exactly below it. */
+  --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-operator-link-margin-start: 2px;
   --app-operator-link-margin-end: 8px;
   --app-disclosure-gap: 7px;
@@ -32,8 +34,13 @@ body:has(.shell--mosaic),
   min-height: 0;
   overflow: hidden;
 }
-.shell--mosaic {
+/* The agents workspace carries the Chat frame edge too, so its layout is the
+   same whether Chat is shown or retained behind another destination. */
+.shell--mosaic,
+.mosaic-workspace {
   --app-frame-edge-block-end: 10px;
+}
+.shell--mosaic {
   position: fixed;
   inset: 0;
   height: 100vh;

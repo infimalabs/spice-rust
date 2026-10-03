@@ -220,6 +220,15 @@ lane-status class, agent/tool/command prefix and accent, truncated detail,
 accessible label, and live-region semantics in the middle header slot; an empty
 fleet reserves that slot without inventing status.
 
+Chat itself is never unmounted. Every other destination leaves the inactive
+agents workspace inert, `aria-hidden`, out of flow, and at
+`content-visibility: hidden` rather than `display: none`. It stays fixed below
+the commandbar with the same padding and frame edge it has when shown. It skips
+rendering but keeps that layout, so cards that arrive meanwhile are still
+measured, scroll positions hold, and returning to Chat reuses the layout without
+any plane, card, or team surface observing a resize. Browsers without
+`content-visibility` fall back to `display: none`.
+
 The toolbar is a fixed-height grid whether or not the team owns work, with no
 background, border, or shadow; the team surface frames nothing around it, so
 only the pane below carries the panel. Pip and hamburger columns span a task
