@@ -459,6 +459,14 @@
 .team-surface {
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
+  --team-pip-size: 9px;
+  --team-pip-gap: 4px;
+  --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
+  --team-status-band: 28px;
+  --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
+  /* A mirrored chamber of this size can contain all six member pips. */
+  --team-edge-control-size: 44px;
+  --team-chamber-inset: 8px;
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling team surfaces. */
@@ -486,13 +494,6 @@
    the status band below share the long middle column. The lower pip row
    centers on the status band, so a one-row stack sits there too. */
 .team-toolbar {
-  --team-pip-size: 9px;
-  --team-pip-gap: 4px;
-  --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
-  --team-status-band: 28px;
-  --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
-  --team-menu-size: 34px;
-  --team-chamber-inset: 8px;
   display: grid;
   flex: 0 0 auto;
   grid-template:
@@ -509,7 +510,12 @@
   margin-block-end: calc((var(--team-status-band) - var(--team-pip-size)) / 2);
   padding-inline: var(--team-chamber-inset);
 }
-.team-toolbar > .team-menu { grid-area: menu; place-self: center; }
+.team-toolbar > .team-menu {
+  grid-area: menu;
+  align-self: end;
+  justify-self: end;
+  margin: 0 var(--app-header-edge-offset) 0 0;
+}
 /* The team's task strip is the global strip, placed in its own band. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
@@ -590,11 +596,12 @@
 .team-menu {
   display: grid;
   place-items: center;
-  width: var(--team-menu-size);
-  min-width: var(--team-menu-size);
-  min-height: var(--team-menu-size);
+  width: var(--team-edge-control-size);
+  min-width: var(--team-edge-control-size);
+  height: var(--team-edge-control-size);
+  min-height: var(--team-edge-control-size);
   padding: 0;
-  border-radius: 50%;
+  border-radius: 50% 50% 0 0;
   border-color: var(--control-line-soft);
   background: var(--control-surface-soft);
   color: var(--muted);

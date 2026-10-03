@@ -232,10 +232,14 @@ any plane, card, or team surface observing a resize. Browsers without
 The toolbar is a fixed-height grid whether or not the team owns work, with no
 background, border, or shadow; the team surface frames nothing around it, so
 only the pane below carries the panel. Pip and hamburger columns span a task
-band sized to the framed global pill strip above the status band. The team's
-task strip reuses the global `task-pill-strip app-control-rail` frame and pills
-unchanged. The ticker centers on the lower pip row; task overflow scrolls inside
-its band.
+band sized to the framed global pill strip above the status band. The 44px
+hamburger chamber keeps its rounded crown but has square lower corners and no
+gap above the pane, fusing it to the team surface. Its outer edge follows the
+global Spice circle, and its size can be mirrored at the left while containing
+all six member pips. The global Spice and Dash-avatar circles share one diameter
+and equal top, bottom, and outer-edge insets. The team's task strip reuses the
+global `task-pill-strip app-control-rail` frame and pills unchanged. The ticker
+centers on the lower pip row; task overflow scrolls inside its band.
 
 The hamburger opens canonical global links for the team:
 `#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope

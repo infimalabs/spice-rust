@@ -1013,13 +1013,13 @@ tbody tr:last-child td { border-bottom: 0; }
     linear-gradient(currentColor, currentColor) 0 50% / 100% 1.5px no-repeat,
     linear-gradient(currentColor, currentColor) 0 100% / 100% 1.5px no-repeat;
 }
-/* A team's menus drop from its toolbar and end at their last row, so no
-   empty band covers the pane below them. */
+/* A team's menus begin exactly below its toolbar and end at their last row, so
+   no empty band covers the pane below them. */
 .team-action-menu {
   position: absolute;
   z-index: 6;
-  inset: 44px 0 auto;
-  max-block-size: calc(100% - 44px);
+  inset: var(--team-header-size) 0 auto;
+  max-block-size: calc(100% - var(--team-header-size));
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
   align-content: start;
