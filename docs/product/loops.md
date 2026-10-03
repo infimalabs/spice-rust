@@ -720,9 +720,11 @@ block-beta
    to the badges and buttons it shows and never to a hidden placeholder, so prose
    fills the lines beside them and regains the full width below. A leading quote
    keeps its full width under the island while its lines wrap beside it. Cards
-   reserve height in one-line rows, so a card's committed height exceeds its
-   content by less than one line, and that spare opens below the prose. A column
-   too narrow for the island and a readable line stacks it above the prose.
+   reserve height in rows of three type-ramp lines at three or more lanes, two
+   at two lanes and one at one lane, so neighbouring tops align often enough for
+   wide cards to find flat room. A card's spare committed height opens below the
+   prose. A column too narrow for the island and a readable line stacks it above
+   the prose.
 - **Autonomy is never implicit.** The submit control carries the lifetime's own
   name, so intent cannot be sent without its autonomy being visible in the same
   gesture.
