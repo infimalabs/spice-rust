@@ -474,6 +474,8 @@
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
 .team-toolbar {
+  --team-pip-size: 9px;
+  --team-pip-gap: 4px;
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: max-content minmax(0, 1fr) 30px;
@@ -496,8 +498,8 @@
 }
 
 .team-light {
-  width: 9px;
-  height: 9px;
+  width: var(--team-pip-size);
+  height: var(--team-pip-size);
   border-radius: 50%;
   background: var(--agent-presence-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -574,6 +576,11 @@
   border: 0;
   background: transparent;
   font-size: .65rem;
+}
+/* Center the status line on the lower pip row rather than the whole stack. */
+.team-lights:has(.team-light[data-pip-row="2"]) + .ticker {
+  position: relative;
+  top: calc((var(--team-pip-size) + var(--team-pip-gap)) / 2);
 }
 .team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }

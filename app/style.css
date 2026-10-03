@@ -978,10 +978,10 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .team-pip-column {
   display: grid;
-  gap: 4px;
-  grid-template-rows: repeat(2, 9px);
+  gap: var(--team-pip-gap);
+  grid-template-rows: repeat(2, var(--team-pip-size));
 }
-.team-lights.single .team-pip-column { grid-template-rows: 9px; }
+.team-lights.single .team-pip-column { grid-template-rows: var(--team-pip-size); }
 .team-light[data-pip-row="1"] { grid-row: 1; }
 .team-light[data-pip-row="2"] { grid-row: 2; }
 .team-surface .mosaic-message-card.final {
