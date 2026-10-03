@@ -158,19 +158,20 @@ fn render_limit(limit: &wire::QuotaLimit) -> Html {
 }
 
 /// Remaining share drawn as SVG geometry (the app CSP refuses inline styles),
-/// anchored at the bar's start so usage empties it from the reset side. The
-/// amount follows the bar in row order.
+/// anchored at the bar's end beside the amount, so usage empties it toward
+/// that end. The amount follows the bar in row order.
 fn render_meter(remaining: Option<f64>) -> Html {
     let Some(remaining) = remaining else {
         return html! { <span class="quota-meter" aria-hidden="true"></span> };
     };
+    let width = remaining * 100.0;
     html! {
         <svg class="quota-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
             <rect class="quota-meter-track" width="100" height="6" rx="3" />
             <rect
                 class="quota-meter-left"
-                x="0"
-                width={format!("{:.1}", remaining * 100.0)}
+                x={format!("{:.1}", 100.0 - width)}
+                width={format!("{width:.1}")}
                 height="6"
                 rx="3"
             />
