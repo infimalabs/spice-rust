@@ -714,7 +714,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 7px;
+  gap: var(--message-image-gap);
 }
 .markdown-body :is(blockquote, .message-quote-body):has(
   > p.message-image-stack + p.message-image-stack,
@@ -733,7 +733,7 @@
   > p.message-image-stack + p.message-image-stack,
   > p.message-image-stack > .message-image + .message-image
 ) > p.message-image-stack > .message-image {
-  --message-image-size: min(var(--mosaic-image-size), calc((100% - 7px) / 2));
+  --message-image-size: min(var(--mosaic-image-size), calc((100% - var(--message-image-gap)) / 2));
 }
 .markdown-body :is(blockquote, .message-quote-body):has(
   > p.message-image-stack + p.message-image-stack,
@@ -907,7 +907,20 @@
 }
 .markdown-body > blockquote:has(> .message-controls):has(.message-image)
   > p.message-image-stack {
-  display: flex; clear: inline-end; gap: 7px;
+  display: flex; clear: inline-end; gap: var(--message-image-gap);
+}
+/* This control-owning quote stays flow-root so prose wraps beside the control
+   island. Its paired stack wrappers flatten, so the later visual image receives
+   the shared gap as inline margin instead of relying on a nonexistent flex row. */
+.markdown-body > blockquote:has(> .message-controls):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > p.message-image-stack + p.message-image-stack > .message-image:first-child,
+.markdown-body > blockquote:has(> .message-controls):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > p.message-image-stack > .message-image + .message-image {
+  margin-inline-start: var(--message-image-gap);
 }
 @container (max-width: 18rem) {
   .team-surface .message-task-inspector-content .work-detail-facts { grid-template-columns: 1fr; }

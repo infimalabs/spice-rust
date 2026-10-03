@@ -159,6 +159,10 @@ and image rows clear them from inside the same colored surface. Cards without a
 leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
+Quoted image pairs retain the standard 7px image-stack gap even when their
+quote carries a signoff; signed quotes use flow-root only when no paired-image
+row owns their layout.
+
 ## Always-chat team console
 
 Every populated or empty team surface keeps its Chat composer and message plane

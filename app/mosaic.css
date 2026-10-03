@@ -30,6 +30,7 @@
 }
 
 .markdown-body {
+  --message-image-gap: 7px;
   --mosaic-quote-inline: 5px;
   --mosaic-quote-pad-block: 4px; --mosaic-quote-radius: 12px;
   --mosaic-quote-rail: 2px;
@@ -235,7 +236,7 @@
 }
 .markdown-body p.message-image-stack,
 .message-attachments {
-  display: flex; max-width: 100%; min-width: 0; gap: 7px;
+  display: flex; max-width: 100%; min-width: 0; gap: var(--message-image-gap, 7px);
   overflow-x: auto; scrollbar-width: thin;
 }
 .markdown-body p.message-image-stack {
