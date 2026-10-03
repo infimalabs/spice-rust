@@ -560,6 +560,7 @@ pub(super) fn render_team_controls(
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
+    idle: bool,
 ) -> Html {
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
@@ -578,6 +579,7 @@ pub(super) fn render_team_controls(
             data-speech-mode={speech.label()}
             data-lifetime={selected.label()}
             data-lifetime-pending={control.pending_life.is_some().to_string()}
+            data-idle={idle.to_string()}
         >
             {speech_slider(
                 team,
