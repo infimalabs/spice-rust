@@ -237,13 +237,17 @@ instruction.
 ### The view rail
 
 Dash, Work, and Chat are the sole global panel names, routed as `#/dash`,
-`#/work`, and `#/chat`, and a team surface offers only Work and Chat, opening on
-Chat; history, reload, and copied URLs restore the
-addressed view. Work may add a scope, `/public/{stem}` or `/hidden/{stem}`, then
-`/task/{stamp}`, or name Directions as `/directions`, `/directions/team/{team}`,
-or `/direction/{directive, fanout, or key}`; Chat may add `/card/{target}` or
-`/direction/{team}/{id}`. A
-stem or target is one segment with letters, digits, `-._~` literal and every
+`#/work`, and `#/chat`; every team console is an always-mounted Chat surface,
+not another destination or mode. Its hamburger links to the canonical global
+team views instead: `#/work/team/{team}` and
+`#/work/directions/team/{team}`. History, reload, and copied URLs restore the
+addressed global view. Work may add a scope, `/public/{stem}`,
+`/hidden/{stem}`, or `/team/{team}`, then `/task/{stamp}`, or name Directions
+as `/directions`, `/directions/team/{team}`, or
+`/direction/{directive, fanout, or key}`. Chat may add only
+`/card/{target}`.
+
+A stem or target is one segment with letters, digits, `-._~` literal and every
 other byte as uppercase `%XX`; any other spelling is refused. A missing or
 empty fragment, or stray slashes around a route, is replaced in place with the
 canonical route. An unknown route or stray query opens Chat, replaces the
@@ -252,21 +256,21 @@ remote opening first captures its one-time fragment into tab-local session
 storage, then makes the same `#/chat` replacement; bootstrap and speech reuse
 only that token, and route fragments are never credentials.
 
-Changing destination, opening a Work task, and following a card or direction
-link each push one history entry; changing scope keeps the open task and, like
-switching tasks, replaces the entry. Closing a task this page opened consumes
-its entry; closing a loaded one replaces the address with its scope. Back and
-Forward only restore. A route naming something the resident proves absent is
-replaced with its container and a toast naming it: a missing stem opens All
-open work, an unknown task closes, and a card outside retained Chat history
-opens Chat; a transient failure keeps the route and its Retry. The team
+Changing global destination, opening a Work task, and following a card or
+direction link each push one history entry; changing scope keeps the open task
+and, like switching tasks, replaces the entry. Closing a task this page opened
+consumes its entry; closing a loaded one replaces the address with its scope.
+Back and Forward only restore. A route naming something the resident proves
+absent is replaced with its container and a toast naming it: a missing stem
+opens All open work, an unknown task closes, and a card outside retained Chat
+history opens Chat; a transient failure keeps the route and its Retry. The team
 activity surface is a retained Chat card at `team-stream-{team}` while that
 team remains current and teamed; an unknown or independent lane is unavailable.
-Pane modes, team menus, Work arrangement, and a task opened over a team surface
-are browser-local; team, speech, and narration state keeps its format. Following
-a quote link is a history step, and Back returns the linking card where the
-reader left it. A fresh card link brings its card into view and focus once
-Chat hydrates, holding it as older history loads until the reader scrolls.
+Team menus, global Work arrangement, and an open task detail layer are
+browser-local; team, speech, and narration state keeps its format. Following a
+quote link is a history step, and Back returns the linking card where the
+reader left it. A fresh card link brings its card into view and focus once Chat
+hydrates, holding it as older history loads until the reader scrolls.
 
 ### The Spice menu quota well
 
@@ -429,13 +433,21 @@ width, and one on a narrow screen without changing newest-first order.
 Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
-header orders its compact lane-light stack, live status ticker, and hamburger;
-the ticker retains age, run state, prefix, accent, and detail semantics without
-spending a separate row. The hamburger links to canonical team-scoped global
-Work and Directions. No local analytical pane duplicates them.
+header orders its compact lane-light stack, the complete live status ticker,
+and the hamburger. The ticker keeps its relative age, lane standing,
+agent/tool/command prefix and accent, truncated detail, accessible label, and
+live-region behavior in that middle slot rather than consuming a separate row.
+The hamburger links to canonical team-scoped global Work and Directions; no
+local analytical pane or team-local route duplicates them.
 
-Seat and import share one panel, even for an empty fleet. The empty header
-retains the ticker's middle slot without inventing status. Moving a member to a
+The composer, speech and allocation controls, and send action retain their
+geometry and remain mounted. The former standalone ticker row becomes message
+stream height instead of resizing those controls. Empty, narrow, and
+short-height consoles keep the same usable header, composer, and stream
+boundaries; an empty fleet reserves the ticker's middle slot without inventing
+status.
+
+Seat and import share one panel, even for an empty fleet. Moving a member to a
 new team preserves its siblings and allocation policy; leaving all teams moves
 only that member to its lane identity, keeping its seat.
 
