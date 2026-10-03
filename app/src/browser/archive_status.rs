@@ -1,7 +1,7 @@
-//! The one status row a paged task archive (global Work history, a team's
-//! Settled lane) keeps mounted under its finder. A read starting, finishing,
-//! or failing only swaps text and enables controls inside this row, and a
-//! page replaces the cards below it, so no read moves the controls.
+//! The status row global Work history keeps mounted under its finder. A read
+//! starting, finishing, or failing only swaps text and enables controls inside
+//! this row, and a page replaces the cards below it, so no read moves the
+//! controls.
 
 use yew::prelude::*;
 

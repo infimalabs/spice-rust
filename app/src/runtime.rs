@@ -32,7 +32,6 @@ mod message_cards;
 mod publication;
 mod scoped;
 mod stream;
-mod team_settled;
 mod work_history;
 pub use consent::ConsentRuling;
 pub use direction_history::{
@@ -45,7 +44,6 @@ pub use member_control::{MemberCommand, MemberControlState, MemberRequest, Membe
 pub(crate) use publication::AppSurface;
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
-pub use team_settled::{TeamSettledRequest, TeamSettledState};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
@@ -474,9 +472,6 @@ pub struct AppRuntime {
     task_relations_revision: u64,
     direction_history: DirectionHistoryState,
     work_history: WorkHistoryState,
-    /// Settled-work pages per app team whose Work pane was shown.
-    team_settled: BTreeMap<CanonicalUuid, TeamSettledState>,
-    team_settled_revision: u64,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -522,8 +517,6 @@ impl AppRuntime {
             task_relations_revision: 0,
             direction_history: DirectionHistoryState::default(),
             work_history: WorkHistoryState::default(),
-            team_settled: BTreeMap::new(),
-            team_settled_revision: 0,
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -584,7 +577,6 @@ impl AppRuntime {
             if self.work_history.active() {
                 self.evict_work_history(true);
             }
-            self.stale_team_settled();
             self.reconnect_consent_rulings();
             self.abandon_member_commands();
             self.task_details.values_mut().for_each(refresh_task_detail);
@@ -869,7 +861,6 @@ impl AppRuntime {
 
     pub fn apply_board(&mut self, admitted: &Admitted<Response<BoardAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
-            runtime.settle_team_work(answer);
             runtime
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
