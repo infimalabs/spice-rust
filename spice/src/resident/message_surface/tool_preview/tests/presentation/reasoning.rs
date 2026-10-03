@@ -54,7 +54,7 @@ fn empty_thinking_is_presence_without_words() {
 
 #[test]
 fn reasoning_presence_is_elided_like_a_tool_preview() {
-    let narration = "word ".repeat(60);
+    let narration = "word ".repeat(tool_preview::MAX_CHARS);
     let record = format!(
         r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"thinking","thinking":"{narration}"}}]}}}}"#
     );

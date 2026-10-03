@@ -336,7 +336,7 @@ fn the_argument_preview_follows_the_shape_the_vendor_sent() {
 #[test]
 fn a_preview_is_flattened_onto_one_bounded_line() {
     let mut previews = CallPreviews::default();
-    let long = "x".repeat(400);
+    let long = "x".repeat(MAX_CHARS * 2);
     let arguments = format!(r#"{{"command":"echo   one\ntwo {long}"}}"#);
 
     let preview = activity(
@@ -487,7 +487,7 @@ fn harness_tools_preview_the_target_they_act_on() {
     );
     let long = format!(
         r#"{{"action":"hover","symbol":"value","file":"{}.rs","line":9}}"#,
-        "deep/".repeat(40)
+        "deep/".repeat(MAX_CHARS)
     );
     let bounded = ordinary_call_preview("lsp", &long);
     assert_eq!(bounded.chars().count(), MAX_CHARS);

@@ -9,8 +9,6 @@
 use super::*;
 use crate::runtime::MemberCommand;
 
-const ACTIVITY_BUDGET: usize = 72;
-
 /// The newest retained activity for one member.
 pub(super) struct LatestActivity {
     /// Card the row links to.
@@ -22,7 +20,7 @@ pub(super) struct LatestActivity {
 }
 
 /// The member's newest activity card, or its newest prose when no activity
-/// card is retained, cut to fit one row.
+/// card is retained, on one row that CSS clips to its width.
 pub(super) fn latest_activity(runtime: &AppRuntime, standing: &Standing) -> Option<LatestActivity> {
     let row = runtime
         .newest_lane_activity(standing.lane)
@@ -62,7 +60,8 @@ pub(super) fn latest_activity(runtime: &AppRuntime, standing: &Standing) -> Opti
                 })
         });
     row.map(|(target, authored, class, visible_prefix, source)| {
-        let (prefix, detail) = watchband::ticker_chunks(&visible_prefix, &source, ACTIVITY_BUDGET);
+        let (prefix, detail) =
+            watchband::ticker_chunks(&visible_prefix, &source, watchband::STATUS_LINE_DOM_LIMIT);
         let separator = if class == "prose" || class == "tool" || detail.is_empty() {
             ""
         } else {
@@ -85,7 +84,7 @@ pub(super) fn waiting_direction(standing: &Standing) -> Option<String> {
             .headline
             .as_deref()
             .map(watchband::one_line)
-            .map(|headline| watchband::truncate(&headline, ACTIVITY_BUDGET))
+            .map(|headline| watchband::truncate(&headline, watchband::STATUS_LINE_DOM_LIMIT))
             .unwrap_or_else(|| "Preview unavailable".to_owned())
     })
 }
@@ -254,6 +253,11 @@ fn render_activity(runtime: &AppRuntime, standing: &Standing) -> Html {
             </li>
         };
     };
+    let full = if activity.detail.is_empty() {
+        activity.prefix.clone()
+    } else {
+        format!("{} {}", activity.prefix, activity.detail)
+    };
     html! {
         <li class="agent-menu-row" data-menu-row="activity" data-activity-class={activity.class}>
             <span class="agent-menu-key">{"Latest"}</span>
@@ -261,6 +265,7 @@ fn render_activity(runtime: &AppRuntime, standing: &Standing) -> Html {
                 class="agent-menu-value agent-menu-link"
                 href={crate::view::card_href(&activity.target)}
                 aria-label={format!("Jump to latest {} activity", standing.label)}
+                title={full}
                 onclick={Callback::from(|event: MouseEvent| close(&event))}
             >
                 <strong>{activity.prefix}</strong>
@@ -292,6 +297,7 @@ fn render_direction(standing: &Standing) -> Html {
                 class="agent-menu-value agent-menu-link"
                 href={crate::view::card_href(&primary_textarea_id(&standing.lane.to_string()))}
                 aria-label={format!("Open {}'s composer", standing.label)}
+                title={preview.clone()}
                 onclick={Callback::from(|event: MouseEvent| close(&event))}
             >{preview}</a>
             <span class="agent-menu-meta">{format!("{} pending", standing.pending)}</span>

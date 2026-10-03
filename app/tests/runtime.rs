@@ -1023,9 +1023,9 @@ fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
 
 #[test]
 fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() {
-    // The chrome ticker's line budget; the composition below is the one
-    // `render_team_ticker` performs over `detail()` for a prose activity.
-    const TICKER_BUDGET: usize = 160;
+    // The composition below is the one `render_team_ticker` performs over
+    // `detail()` for a prose activity.
+    const TICKER_BUDGET: usize = app::watchband::STATUS_LINE_DOM_LIMIT;
     const STANDING_LABEL: &str = "Jeff";
 
     let session = session(OPERATOR, EPOCH);

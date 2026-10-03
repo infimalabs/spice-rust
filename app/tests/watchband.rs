@@ -1,8 +1,8 @@
 use app::Session;
 use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT,
-    TeamDrop, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
+    ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT, TeamDrop,
+    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
     elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
     latest_lane_prose, leaf, member_presence, one_line, remaining_label,
     remaining_label_deadline_millis, reported_tasks, short, split_member, split_team,
@@ -586,10 +586,6 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
     assert_eq!(rows[0].label, "spice-rust-a");
     assert_eq!(rows[1].label, "spice-rust-g");
     assert_eq!(rows[0].worktree, "/fleet/one/spice-rust-a");
-    assert!(
-        rows.iter()
-            .all(|row| row.label.chars().count() <= FIELD_BUDGET)
-    );
     assert_eq!(leaf("main-c"), "main-c");
     assert_eq!(leaf("/"), "/");
 }

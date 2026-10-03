@@ -19,12 +19,8 @@ use crate::task_pill::TaskPill;
 use crate::watchband;
 use crate::work::{WorkCounts, WorkProjection, WorkRail};
 
-/// Characters the ticker line is allowed.
-///
-/// The ticker is one line of monospace across the full width, and a command
-/// echo runs far past that; the budget cuts it here rather than letting the
-/// row grow and push the feed down.
-const TICKER_BUDGET: usize = 160;
+/// Characters the ticker's `aria-live` label announces.
+const TICKER_SPOKEN_BUDGET: usize = 160;
 
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) struct CommandBarRender<'a> {
@@ -476,7 +472,8 @@ fn ticker(
     } else {
         activity.detail()
     };
-    let (prefix, detail) = watchband::ticker_chunks(visible_prefix, source, TICKER_BUDGET);
+    let (prefix, detail) =
+        watchband::ticker_chunks(visible_prefix, source, watchband::STATUS_LINE_DOM_LIMIT);
     let separator = if activity.class() == "prose" || class == "tool" || detail.is_empty() {
         ""
     } else {
@@ -488,12 +485,13 @@ fn ticker(
         format!("{prefix}{separator} {detail}")
     };
     let accessible_label =
-        watchband::ticker_accessible_label(&standing.label, class, &line, TICKER_BUDGET);
+        watchband::ticker_accessible_label(&standing.label, class, &line, TICKER_SPOKEN_BUDGET);
     html! {
         <div
             class={classes!("ticker", activity.class())}
             aria-live="polite"
             aria-label={accessible_label}
+            title={line}
             data-agent-lane={activity.lane().to_string()}
             data-accent={standing.accent.to_string()}
             data-lane-status={status.key()}
