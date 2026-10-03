@@ -51,10 +51,12 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         .work
         .map(|work| TaskPill::for_rail(work, WorkRail::Global))
         .unwrap_or_default();
+    // The total leads the global strip only while that strip carries open
+    // work; with every task on a team rail the commandbar shows no pills.
     let all_work_pill = render
         .work
+        .filter(|work| work.rail_counts(WorkRail::Global).has_open())
         .map(WorkProjection::counts)
-        .filter(|counts| counts.has_open())
         .map(|counts| {
             render_aggregate_pill(
                 counts,

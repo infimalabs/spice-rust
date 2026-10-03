@@ -391,10 +391,11 @@ creator facts open the exact team member in Chat only when topology proves that
 destination; otherwise they stay readable facts.
 
 The project pills begin with a label-less aggregate pill whose badge sums every
-open task; selecting it opens unscoped Work from any destination. The global
-board and Chat task references share one card identity, status, ownership, and
-selection contract; either opens the one shared detail layer, whose close
-returns focus to the launching card.
+open task; selecting it opens unscoped Work from any destination. It shows only
+while the global strip carries open work, so with every task on a team rail the
+commandbar shows no task pills. The global board and Chat task references share
+one card identity, status, ownership, and selection contract; either opens the
+one shared detail layer, whose close returns focus to the launching card.
 
 An open task actively claimed by a member of a remaining team rides that team's
 rail; otherwise a task created by a remaining team rides its creator team's
