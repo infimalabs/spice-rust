@@ -470,15 +470,15 @@
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* A team's task pills sit inside its header: one recessed band in the house
-   well tone across the upper half of the status line's column, the status
-   line in the lower half. The band is the only frame, so its pills drop their
-   own surfaces and rings. Each pip row centers on its half. */
+/* Team work opens the header's top edge to the surrounding app surface. The
+   task labels blend into that shared background without resting control chrome;
+   interaction alone paints the control. Presence pips retain one uniform row
+   gap instead of stretching to the label/status tracks. */
 .team-toolbar {
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
   --team-band: 17px;
-  --team-band-gap: 4px;
+  --team-band-gap: 0px;
   --team-menu-size: 34px;
   position: relative;
   display: grid;
@@ -486,37 +486,59 @@
   grid-template-columns: max-content minmax(0, 1fr) var(--team-menu-size);
   align-items: center;
   gap: var(--team-band-gap) 8px;
-  min-height: calc(2 * var(--team-band) + var(--team-band-gap) + 8px + var(--app-control-edge-width));
-  padding: 4px 10px;
+  min-height: calc(2 * var(--team-band) + var(--team-band-gap) + var(--app-control-edge-width));
+  padding: 0 10px;
   border-bottom: var(--app-control-edge);
   background: var(--panel);
 }
 .team-toolbar:has(> .team-task-rail) {
-  --team-pip-gap: calc(var(--team-band) + var(--team-band-gap) - var(--team-pip-size));
   grid-template-rows: var(--team-band) var(--team-band);
 }
 .team-toolbar:has(> .team-task-rail) > :not(.team-task-rail, .ticker) { grid-row: 1 / span 2; }
 .team-toolbar:has(> .team-task-rail) > .ticker { grid-area: 2 / 2; }
 .team-toolbar > .team-task-rail {
+  position: relative;
   grid-area: 1 / 2;
   align-self: stretch;
   justify-self: stretch;
   gap: 0;
   border: 0;
-  border-radius: var(--app-radius-compact);
+  border-radius: 0;
   background: var(--page);
+}
+/* Continue the rail through the team's top border: there is no line or inset
+   above its text, so the app background and header carveout are one surface. */
+.team-toolbar > .team-task-rail::before {
+  position: absolute;
+  inset-block-start: calc(-1 * var(--app-control-edge-width));
+  inset-inline: 0;
+  block-size: var(--app-control-edge-width);
+  background: var(--page);
+  content: "";
+  pointer-events: none;
 }
 .team-toolbar > .team-task-rail > .task-pill {
   flex: 0 0 auto;
   min-height: 0;
-  padding: 0 8px;
+  padding: 0 6px;
   background: transparent;
   box-shadow: none;
   font-size: 11px;
   line-height: 1;
 }
-.team-toolbar > .team-task-rail > .task-pill--all { padding-inline: 4px; }
-.team-toolbar > .team-task-rail > .task-pill:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.team-toolbar > .team-task-rail > .task-pill--all { padding-inline: 2px 4px; }
+.team-toolbar > .team-task-rail .task-pill-count {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+.team-toolbar > .team-task-rail > .task-pill:is(:hover, :focus-visible) {
+  border-radius: var(--app-radius-compact);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
 
 .team-lights[data-lane-drag-handle] {
   cursor: grab;
