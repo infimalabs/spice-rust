@@ -947,8 +947,8 @@ fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
 }
 
 /// The card's controls: a corner island emitted before the prose so the prose
-/// flows around it. A prose card's producer and age live in its signoff, so its
-/// island keeps only badges and actions; other cards keep both here.
+/// flows around it. A prose card's producer metadata lives in its signoff, so
+/// its island keeps only actions; other cards keep that metadata here.
 fn render_message_controls(
     message: &wire::AgentMessage,
     shown_text: &str,
