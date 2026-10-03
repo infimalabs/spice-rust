@@ -759,6 +759,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-reset-credits { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 0; color: var(--muted); font-size: .7rem; }
 .quota-reset-credits strong { color: var(--ink); }
 .quota-reset-credit { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; height: 13px; gap: 4px; }
+.quota-reset-credits > :not(.quota-reset-credit--expiry-only) + .quota-reset-credit--expiry-only { margin-left: auto; }
 .quota-reset-credit-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quota-reset-credit-expiry { flex: none; white-space: nowrap; }
 .quota-simple-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }

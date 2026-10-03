@@ -81,6 +81,12 @@ its card surface, edge, provider label, and usage bars as its layer in the
 Spice-button quota fill. Reports that do not contribute a weekly layer remain
 neutral.
 
+Each reset credit with a valid provider expiry carries an `expires` relative
+countdown and exact-time hover detail. The expiry remains visible when a
+provider, such as OpenAI, supplies no separate credit title or remaining count.
+Expiry-only groups sit at the row's right edge, so their final countdown aligns
+with a labeled credit's expiry.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift

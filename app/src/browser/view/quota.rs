@@ -206,11 +206,12 @@ fn iso_millis(value: &str) -> Option<i64> {
 fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Option<Html> {
     let title = credit.title.as_ref().or(credit.program.as_ref());
     let text = match (title, credit.remaining_count) {
-        (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
-        (Some(title), None) => title.clone(),
-        (None, Some(count)) => format!("{count} remaining"),
-        (None, None) => return None,
+        (Some(title), Some(count)) => Some(format!("{title} ({count} remaining)")),
+        (Some(title), None) => Some(title.clone()),
+        (None, Some(count)) => Some(format!("{count} remaining")),
+        (None, None) => None,
     };
+    let expiry_only = text.is_none();
     let expiry = credit
         .expires_at
         .as_deref()
@@ -228,9 +229,20 @@ fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Option<Html> {
                 </span>
             }
         });
+    if text.is_none() && expiry.is_none() {
+        return None;
+    }
     Some(html! {
-        <span class="quota-reset-credit" title={text.clone()}>
-            <span class="quota-reset-credit-label">{text}</span>
+        <span
+            class={classes!(
+                "quota-reset-credit",
+                expiry_only.then_some("quota-reset-credit--expiry-only")
+            )}
+            title={text.clone()}
+        >
+            if let Some(text) = text {
+                <span class="quota-reset-credit-label">{text}</span>
+            }
             {expiry}
         </span>
     })
