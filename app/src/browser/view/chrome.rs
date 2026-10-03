@@ -17,7 +17,7 @@ use super::*;
 use crate::browser::clock::Age;
 use crate::task_pill::TaskPill;
 use crate::watchband;
-use crate::work::{WorkCounts, WorkProjection, WorkRail};
+use crate::work::{WorkCounts, WorkProjection};
 
 /// Characters the ticker's `aria-live` label announces.
 const TICKER_SPOKEN_BUDGET: usize = 160;
@@ -49,19 +49,20 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let on_work = render.destination == AppDestination::Work;
     let task_pills = render
         .work
-        .map(|work| TaskPill::for_rail(work, WorkRail::Global))
-        .unwrap_or_default();
-    // The total leads the global strip only while that strip carries open
-    // work; with every task on a team rail the commandbar shows no pills.
+        .into_iter()
+        .flat_map(WorkProjection::stems)
+        .filter(|stem| stem.counts().has_open())
+        .map(TaskPill::from_stem)
+        .collect::<Vec<_>>();
+    // The strip rolls up every open task, team-associated or not; the total
+    // leads it whenever any open work exists.
     let all_work_pill = render
         .work
-        .filter(|work| work.rail_counts(WorkRail::Global).has_open())
         .map(WorkProjection::counts)
+        .filter(|counts| counts.has_open())
         .map(|counts| {
             render_aggregate_pill(
                 counts,
-                "All open work",
-                WorkScope::AllOpen,
                 on_work.then_some(render.work_scope),
                 render.navigate,
             )
@@ -79,13 +80,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 <nav class="task-pill-strip app-control-rail" aria-label="Open task projects">
                     {all_work_pill}
                     {for task_pills.into_iter().map(|pill| {
-                        let scope = WorkScope::Stem(pill.identity.clone());
-                        render_stem_pill(
-                            pill,
-                            scope,
-                            on_work.then_some(render.work_scope),
-                            render.navigate,
-                        )
+                        render_stem_pill(pill, on_work.then_some(render.work_scope), render.navigate)
                     })}
                 </nav>
                 if let Some(status) = status {
@@ -323,26 +318,19 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
-/// One aggregate task pill opening the Work scope its counts describe.
-pub(in crate::browser) fn render_aggregate_pill(
+/// The label-less total leading the global strip, opening all open Work.
+fn render_aggregate_pill(
     counts: WorkCounts,
-    subject: &str,
-    scope: WorkScope,
     current: Option<&WorkScope>,
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
-    let selected = current == Some(&scope);
+    let selected = current == Some(&WorkScope::AllOpen);
     let ready = counts.ready();
     let active = counts.in_flight();
     let unavailable = counts.unavailable();
     let title = format!(
-        "{subject}: {ready} ready, {active} active or in flight, {unavailable} blocked or deferred"
+        "All open work: {ready} ready, {active} active or in flight, {unavailable} blocked or deferred"
     );
-    let kind = if scope.team().is_some() {
-        "team"
-    } else {
-        "all"
-    };
     let navigate = navigate.clone();
     html! {
         <button
@@ -358,24 +346,25 @@ pub(in crate::browser) fn render_aggregate_pill(
             aria-label={title}
             aria-pressed={selected.to_string()}
             aria-current={selected.then_some("page")}
-            data-work-scope={kind}
+            data-work-scope="all"
             data-ready={ready.to_string()}
             data-active={active.to_string()}
             data-unavailable={unavailable.to_string()}
-            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
+            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
         >
             <span class="task-pill-count">{format!("{ready}·{active}·{unavailable}")}</span>
         </button>
     }
 }
 
-/// One stem task pill opening `scope`, the exact scope its counts describe.
-pub(in crate::browser) fn render_stem_pill(
+/// One global stem pill opening that stem's Work, the scope its counts
+/// describe.
+fn render_stem_pill(
     pill: TaskPill,
-    scope: WorkScope,
     current: Option<&WorkScope>,
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
+    let scope = WorkScope::Stem(pill.identity.clone());
     let selected = current == Some(&scope);
     let title = pill.title();
     let navigate = navigate.clone();

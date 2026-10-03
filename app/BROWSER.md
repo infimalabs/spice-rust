@@ -238,8 +238,12 @@ gap above the pane, fusing it to the team surface. Its outer edge follows the
 global Spice circle, and its size can be mirrored at the left while containing
 all six member pips. The global Spice and Dash-avatar circles share one diameter
 and equal top, bottom, and outer-edge insets. The team's task strip reuses the
-global `task-pill-strip app-control-rail` frame and pills unchanged. The ticker
-centers on the lower pip row; task overflow scrolls inside its band.
+global `task-pill-strip app-control-rail` frame. Its total pill
+(`data-work-scope="team"`) carries one open-task count; each `task-pill--task`
+holds two buttons, `task-pill-project` and `task-pill-handle`, sharing the
+pill's tone through `active`, `dormant`, and `system`. The handle opens task
+detail through the same path as a Chat task chip, so focus returns to it. The
+ticker centers on the lower pip row; task overflow scrolls inside its band.
 
 The hamburger opens canonical global links for the team:
 `#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope

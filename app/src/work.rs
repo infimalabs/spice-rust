@@ -84,18 +84,6 @@ pub enum WorkScope {
     },
 }
 
-/// The pill strip an open task rides.
-///
-/// A task created by a team in the loaded roster rides that team's rail; every
-/// other task, including one whose creator team has since dissolved, rides the
-/// global strip. This mirrors drive admission, which offers a task only to its
-/// creator team.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorkRail {
-    Global,
-    Team(wire::CanonicalUuid),
-}
-
 impl WorkStemIdentity {
     #[must_use]
     pub const fn new(visibility: WorkVisibility, stem: String) -> Self {
@@ -323,9 +311,6 @@ pub struct WorkTask<'a> {
     /// Current roster teams that associate this task by immutable creator or
     /// latest winning claim lane.
     teams: Vec<wire::CanonicalUuid>,
-    /// The pill strip this task rides; `None` while a team-created task waits
-    /// for the roster that decides whether its creator team still stands.
-    rail: Option<WorkRail>,
 }
 
 impl<'a> WorkTask<'a> {
@@ -569,34 +554,26 @@ impl<'a> WorkProjection<'a> {
         }
     }
 
-    fn task_stem(&self, task: &WorkTask<'_>) -> &WorkStemIdentity {
+    /// The exact stem holding one task.
+    #[must_use]
+    pub fn task_stem(&self, task: &WorkTask<'_>) -> &WorkStemIdentity {
         &self.stems[self.projects[task.project].stem].identity
     }
 
-    /// Aggregate open counts for the tasks riding one pill strip.
+    /// One team's open tasks, exactly those its Work scope holds: in-flight
+    /// work first, then ready, blocked, and deferred, each in offer order.
     #[must_use]
-    pub fn rail_counts(&self, rail: WorkRail) -> WorkCounts {
-        let mut counts = WorkCounts::default();
-        for task in self.tasks.iter().filter(|task| task.rail == Some(rail)) {
-            counts.record(task.availability);
-        }
-        counts
-    }
-
-    /// Each stem with open work riding one pill strip, in stem order, with
-    /// the counts of only that strip's tasks.
-    #[must_use]
-    pub fn rail_stems(&self, rail: WorkRail) -> Vec<(&WorkStemIdentity, WorkCounts)> {
-        let mut counts = vec![WorkCounts::default(); self.stems.len()];
-        for task in self.tasks.iter().filter(|task| task.rail == Some(rail)) {
-            counts[self.projects[task.project].stem].record(task.availability);
-        }
-        self.stems
+    pub fn team_tasks(&self, team: wire::CanonicalUuid) -> Vec<&WorkTask<'a>> {
+        let mut tasks = self
+            .offered
             .iter()
-            .zip(counts)
-            .filter(|(_, counts)| counts.has_open())
-            .map(|(stem, counts)| (&stem.identity, counts))
-            .collect()
+            .map(|&index| &self.tasks[index])
+            .filter(|task| {
+                task.availability != WorkAvailability::Terminal && task.belongs_to_team(team)
+            })
+            .collect::<Vec<_>>();
+        tasks.sort_by_key(|task| task.availability);
+        tasks
     }
 
     /// The scope to open `task` under: `scope` itself when it already shows
@@ -765,7 +742,6 @@ impl<'a> WorkProjection<'a> {
                     dependencies,
                     dependents,
                     teams: task_teams,
-                    rail: task_rail(row, teams.as_ref(), member_teams),
                 }
             })
             .collect();
@@ -782,33 +758,6 @@ impl<'a> WorkProjection<'a> {
             newest,
         }
     }
-}
-
-fn task_rail(
-    task: &BoardTask,
-    teams: Option<&BTreeSet<wire::CanonicalUuid>>,
-    member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
-) -> Option<WorkRail> {
-    let active_claim = task
-        .claim
-        .as_ref()
-        .filter(|claim| claim.body.disposition == ClaimDisposition::Active);
-    if let Some(team) = active_claim
-        .and_then(|claim| member_teams.get(&claim.body.lane))
-        .filter(|team| teams.is_some_and(|teams| teams.contains(team)))
-    {
-        return Some(WorkRail::Team(*team));
-    }
-    if let Some(creator) = task
-        .creator_team
-        .filter(|creator| teams.is_some_and(|teams| teams.contains(creator)))
-    {
-        return Some(WorkRail::Team(creator));
-    }
-    if teams.is_none() && (task.creator_team.is_some() || active_claim.is_some()) {
-        return None;
-    }
-    Some(WorkRail::Global)
 }
 
 fn associated_teams(

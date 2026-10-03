@@ -4,7 +4,7 @@ use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
 use super::tests::{board, claim, stamp, task};
-use super::{WorkProjection, WorkRail, WorkScope, WorkStemIdentity, WorkVisibility};
+use super::{WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
 
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture uuid")
@@ -75,95 +75,89 @@ fn team_scope_waits_for_the_roster_then_unions_creator_and_member_last_claim_onc
 }
 
 #[test]
-fn each_open_task_rides_its_claimant_or_creator_team_rail_or_else_the_global_strip() {
-    let creator_team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    let claimant_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    let claimant = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    let unteamed_claimant = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
-    let dissolved = uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+fn team_header_tasks_are_its_open_scope_in_flight_first_then_offer_order() {
+    let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let other_member = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
 
-    let mut created_alpha = task(1, "alpha.runtime");
-    created_alpha.creator_team = Some(creator_team);
-    let mut created_beta = task(2, "beta.core");
-    created_beta.creator_team = Some(creator_team);
-    let mut claimed = task(3, "claim.runtime");
-    let mut active_claim = claim(&claimed, ClaimDisposition::Active);
-    active_claim.body.lane = claimant;
-    claimed.claim = Some(active_claim);
-    let mut moved = task(4, "move.runtime");
-    moved.creator_team = Some(creator_team);
-    let mut moved_claim = claim(&moved, ClaimDisposition::Active);
-    moved_claim.body.lane = claimant;
-    moved.claim = Some(moved_claim);
-    let mut orphaned = task(5, "orphan.audit");
-    orphaned.creator_team = Some(dissolved);
-    let operator = task(6, "operator.notes");
-    let mut solo = task(7, "solo.runtime");
-    let mut solo_claim = claim(&solo, ClaimDisposition::Active);
-    solo_claim.body.lane = unteamed_claimant;
-    solo.claim = Some(solo_claim);
-    let mut finished = task(8, "gamma.done");
-    finished.creator_team = Some(creator_team);
+    let created = |value, project| {
+        let mut task = task(value, project);
+        task.creator_team = Some(team);
+        task
+    };
+    let first_ready = created(1, "alpha.first");
+    let second_ready = created(2, "beta.second");
+    let mut blocked = created(3, "alpha.blocked");
+    blocked.statement.body.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
+    );
+    let mut claimed = task(4, "gamma.claimed");
+    let mut member_claim = claim(&claimed, ClaimDisposition::Active);
+    member_claim.body.lane = member;
+    claimed.claim = Some(member_claim);
+    let mut elsewhere = created(5, "delta.elsewhere");
+    let mut other_claim = claim(&elsewhere, ClaimDisposition::Active);
+    other_claim.body.lane = other_member;
+    elsewhere.claim = Some(other_claim);
+    let mut finished = created(6, "alpha.done");
     finished.workflow.body.completion = Some(
         "2026-09-23T06:00:00.000Z"
             .parse()
             .expect("fixture completion"),
     );
-    let board = board(vec![
-        created_alpha,
-        created_beta,
+    let mut unrelated = task(7, "omega.unrelated");
+    unrelated.creator_team = Some(other_team);
+
+    let mut board = board(vec![
+        first_ready,
+        second_ready,
+        blocked,
         claimed,
-        moved,
-        orphaned,
-        operator,
-        solo,
+        elsewhere,
         finished,
+        unrelated,
     ]);
-    let rail = |projection: &WorkProjection<'_>, rail| {
+    board.offer = vec![stamp(2), stamp(1)];
+    let projects = |projection: &WorkProjection<'_>, team| {
         projection
-            .rail_stems(rail)
+            .team_tasks(team)
             .into_iter()
-            .map(|(stem, counts)| (stem.stem().to_owned(), counts.open()))
+            .map(|task| task.row().statement.body.project.clone())
             .collect::<Vec<_>>()
     };
 
     let pending = WorkProjection::from_board_and_lanes(&board, None);
-    assert_eq!(
-        rail(&pending, WorkRail::Global),
-        [("operator".to_owned(), 1)],
-        "team-associated work waits for the roster instead of flashing globally",
+    assert!(
+        projects(&pending, team).is_empty(),
+        "a team's header waits for the roster",
     );
-    assert!(rail(&pending, WorkRail::Team(creator_team)).is_empty());
-    assert!(rail(&pending, WorkRail::Team(claimant_team)).is_empty());
 
     let loaded = WorkProjection::from_board_with_team_memberships(
         &board,
-        Some(BTreeSet::from([creator_team, claimant_team])),
-        &BTreeMap::from([(claimant, claimant_team)]),
+        Some(BTreeSet::from([team, other_team])),
+        &BTreeMap::from([(member, team), (other_member, other_team)]),
     );
+    let order = projects(&loaded, team);
     assert_eq!(
-        rail(&loaded, WorkRail::Team(creator_team)),
-        [("alpha".to_owned(), 1), ("beta".to_owned(), 1)],
-    );
-    assert_eq!(
-        rail(&loaded, WorkRail::Team(claimant_team)),
-        [("claim".to_owned(), 1), ("move".to_owned(), 1)],
-        "a current claimant team takes precedence over the creator team",
-    );
-    assert_eq!(
-        rail(&loaded, WorkRail::Global),
+        order,
         [
-            ("operator".to_owned(), 1),
-            ("orphan".to_owned(), 1),
-            ("solo".to_owned(), 1),
+            "gamma.claimed",
+            "delta.elsewhere",
+            "beta.second",
+            "alpha.first",
+            "alpha.blocked",
         ],
-        "dissolved and unteamed ownership belongs to the global strip",
+        "in-flight work leads, ready work follows the offer, and closed work is absent",
     );
     assert_eq!(
-        loaded.rail_counts(WorkRail::Team(creator_team)).open()
-            + loaded.rail_counts(WorkRail::Team(claimant_team)).open()
-            + loaded.rail_counts(WorkRail::Global).open(),
-        loaded.counts().open(),
-        "every open task rides exactly one strip",
+        order.len(),
+        loaded.scope_counts(&WorkScope::team_wide(team)).open(),
+        "the header holds exactly the open tasks its total opens",
+    );
+    assert_eq!(
+        projects(&loaded, other_team),
+        ["delta.elsewhere", "omega.unrelated"],
+        "a task created by one team and claimed by another shows on both",
     );
 }
