@@ -410,10 +410,7 @@
 /* Whole-team pointer movement shares the composer lift convention while
    reserving the complete source surface. */
 .team-lights[data-lane-drag-handle] { touch-action: none; }
-.team-surface[data-team-drag-source] {
-  opacity: .38;
-  border-style: dashed;
-}
+.team-surface[data-team-drag-source] { opacity: .38; }
 .team-surface[data-team-drop-target="swap"] {
   outline: 3px solid var(--accent);
   outline-offset: -3px;
