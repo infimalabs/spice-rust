@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::clock::{Age, Countdown};
+use crate::browser::clock::{Age, Countdown, local_date_millis};
 
 pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
     let Some(generation) = runtime.and_then(AppRuntime::quota) else {
@@ -203,15 +203,31 @@ fn iso_millis(value: &str) -> Option<i64> {
     milliseconds.is_finite().then_some(milliseconds as i64)
 }
 
-fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Option<Html> {
+fn reset_credit_text(credit: &wire::QuotaResetCredit) -> String {
     let title = credit.title.as_ref().or(credit.program.as_ref());
-    let text = match (title, credit.remaining_count) {
-        (Some(title), Some(count)) => Some(format!("{title} ({count} remaining)")),
-        (Some(title), None) => Some(title.clone()),
-        (None, Some(count)) => Some(format!("{count} remaining")),
-        (None, None) => None,
-    };
-    let expiry_only = text.is_none();
+    match (title, credit.remaining_count) {
+        (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
+        (Some(title), None) => title.clone(),
+        (None, remaining) => {
+            let text = credit.granted_at.as_deref().and_then(|granted| {
+                iso_millis(granted).map(|millis| {
+                    format!(
+                        "Reset credit granted {}",
+                        local_date_millis(millis, granted)
+                    )
+                })
+            });
+            let text = text.unwrap_or_else(|| "Reset credit".to_owned());
+            match remaining {
+                Some(count) => format!("{text} ({count} remaining)"),
+                None => text,
+            }
+        }
+    }
+}
+
+fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Html {
+    let text = reset_credit_text(credit);
     let expiry = credit
         .expires_at
         .as_deref()
@@ -229,38 +245,32 @@ fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Option<Html> {
                 </span>
             }
         });
-    if text.is_none() && expiry.is_none() {
-        return None;
-    }
-    Some(html! {
-        <span
-            class={classes!(
-                "quota-reset-credit",
-                expiry_only.then_some("quota-reset-credit--expiry-only")
-            )}
-            title={text.clone()}
-        >
-            if let Some(text) = text {
-                <span class="quota-reset-credit-label">{text}</span>
-            }
+    html! {
+        <span class="quota-reset-credit" title={text.clone()}>
+            <span class="quota-reset-credit-label">{text}</span>
             {expiry}
         </span>
-    })
+    }
 }
 
 fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
     let Some(credits) = credits else {
         return Html::default();
     };
+    let redeemable = credits.redeemable_count.unwrap_or(credits.available_count);
+    let detail_limit = usize::try_from(redeemable).unwrap_or(usize::MAX);
     html! {
-        <p class="quota-reset-credits">
+        <div class="quota-reset-credits">
             <strong>{"Reset credits"}</strong>
             <span>{format!("{} available", credits.available_count)}</span>
-            if let Some(redeemable) = credits.redeemable_count {
-                <span>{format!("{redeemable} redeemable")}</span>
-            }
-            {for credits.credits.iter().filter_map(render_reset_credit)}
-        </p>
+            <span>{format!("{redeemable} redeemable")}</span>
+            {for credits
+                .credits
+                .iter()
+                .filter(|credit| credit.usable != Some(false))
+                .take(detail_limit)
+                .map(render_reset_credit)}
+        </div>
     }
 }
 

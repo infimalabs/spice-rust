@@ -410,12 +410,16 @@ fn local_timestamp(instant: i64, canonical: &str, style: LocalStyle) -> AttrValu
         .into()
 }
 
-pub(super) fn local_date(instant: &wire::Instant) -> String {
-    let canonical = instant.to_string();
+pub(super) fn local_date_millis(instant: i64, canonical: &str) -> String {
     let fallback = canonical
         .split_once('T')
-        .map_or(canonical.as_str(), |(date, _)| date);
-    local_timestamp(instant.get().as_millisecond(), fallback, LocalStyle::Date).to_string()
+        .map_or(canonical, |(date, _)| date);
+    local_timestamp(instant, fallback, LocalStyle::Date).to_string()
+}
+
+pub(super) fn local_date(instant: &wire::Instant) -> String {
+    let canonical = instant.to_string();
+    local_date_millis(instant.get().as_millisecond(), &canonical)
 }
 
 /// The browser's current instant in epoch milliseconds.
