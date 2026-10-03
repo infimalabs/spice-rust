@@ -154,26 +154,38 @@ and image rows clear them from inside the same colored surface. Cards without a
 leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
-## Rich team directions
+## Always-chat team console
 
-The team-local **Work** tab renders each direction from its complete admitted
-body. Markdown links, internal app routes, quotes, diagrams, and image
-references use the same sanitized renderer and image viewer as Chat. Embedded
-images resolve from their admitted bytes, keep their authored names and
-alternatives, and are not repeated as loose attachments.
+Every populated or empty team surface keeps its Chat composer and message plane
+mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
+scroll state, or return-to-mode behavior. The toolbar orders the status-pip
+stack, complete live ticker, and hamburger. The ticker keeps its relative age,
+lane-status class, agent/tool/command prefix and accent, truncated detail,
+accessible label, and live-region semantics in the middle header slot; an empty
+fleet reserves that slot without inventing status.
 
-The recent retired-direction window carries that same body and media, so a
-recipient moving from delivered to acknowledged, declined, lapsed,
-dead-lettered, or canceled changes only its lifecycle badge. Retirement does
-not replace the card with an attachment-free preview. Direction identity,
-attribution, task chips, return links, and age remain stable.
+The hamburger opens canonical global links for the team:
+`#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope
+admits each task created by the current team or last claimed by one of its
+current member lanes, exactly once. Its global task history uses the same team
+filter and restarts at the newest page when scope changes. There is no
+team-local Settled list or Kept jobs table; Running jobs, open work, and task
+history remain the global Work surfaces.
 
-Direction and settled-task collections preserve their admitted DOM order while
-the shared Mosaic packer places each rendered card in the shortest responsive
-column. The CSS grid remains the column-width and gutter contract; a
-`ResizeObserver` remeasures cards after text, detail, media, or viewport changes.
-Narrow team panes resolve to one readable column with the same configured
-gutters instead of inheriting a taller sibling's row height.
+Directions is likewise global. Its team link selects that team's filter while
+search text, recipient, lifecycle state, and authored-before filters constrain
+the resident read before pagination. Newer and Older replace one bounded,
+newest-first page through journal cursors without splitting a fanout. A focused
+direction route clears filters and loads the page beginning at that card.
+Direction cards use the shared sanitized Markdown, image, task-detail, and Chat
+return-link surfaces; there is no team-local direction ledger or
+`#/chat/direction/...` route.
+
+The composer columns, speech and allocation sliders, and send controls retain
+their dimensions. Removing the standalone ticker row gives that block height
+to the message stream instead of resizing the controls. Wide, narrow,
+short-height, empty, one-member, and multi-member consoles keep a usable header,
+composer, and stream without a new nested vertical scroller.
 
 ## Card endings and relative ages
 
