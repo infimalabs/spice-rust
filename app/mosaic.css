@@ -496,9 +496,9 @@
 .team-light.bound,
 .team-light.unbound { box-shadow: none; }
 
-.team-mode-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 4px; }
+.app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; padding: 4px; }
 
-.team-mode {
+.app-option {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -515,14 +515,14 @@
   font-weight: 600;
   line-height: 1.45;
 }
-.team-mode:not(.selected, :disabled):hover { background: color-mix(in srgb, var(--control) 68%, transparent); color: var(--ink); }
-.team-mode.selected {
+.app-option:not(.selected, :disabled):hover { background: color-mix(in srgb, var(--control) 68%, transparent); color: var(--ink); }
+.app-option.selected {
   background: var(--control);
   color: var(--ink);
   box-shadow: var(--app-selection-shadow);
 }
-.team-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.team-mode-badge { flex: none;
+.app-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-option-badge { flex: none;
   min-width: 19px;
   padding: 0 5px;
   border-radius: var(--app-radius-pill);
@@ -532,19 +532,19 @@
   font-size: 9px;
   font-weight: 700;
 }
-/* A counted tab centres its label alone and hangs its badge in the trailing
+/* A counted option centres its label alone and hangs its badge in the trailing
    column, so a badge appearing, vanishing, or gaining a digit never moves the
-   label. The equal outer columns keep the label on the tab's centre line. */
-.team-mode--counted {
+   label. The equal outer columns keep the label on the option's centre line. */
+.app-option--counted {
   display: inline-grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
 }
-.team-mode--counted > .team-mode-label { grid-column: 2; }
-.team-mode--counted > .team-mode-badge { grid-column: 3; justify-self: start; }
+.app-option--counted > .app-option-label { grid-column: 2; }
+.app-option--counted > .app-option-badge { grid-column: 3; justify-self: start; }
 @container (max-width: 20rem) {
-  .team-mode-rail { gap: 0; }
-  .team-mode { gap: 2px; padding-inline: 3px; }
-  .team-mode-badge { display: none; }
+  .app-option-rail { gap: 0; }
+  .app-option { gap: 2px; padding-inline: 3px; }
+  .app-option-badge { display: none; }
 }
 
 .team-menu {

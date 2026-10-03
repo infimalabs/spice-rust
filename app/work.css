@@ -61,8 +61,8 @@
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-.work-arrangement-group > .team-mode-rail { flex: none; }
-.work-arrangement-group .team-mode { white-space: nowrap; }
+.work-arrangement-group > .app-option-rail { flex: none; }
+.work-arrangement-group .app-option { white-space: nowrap; }
 
 /* Global lifecycle lanes are one full-width track: their heading rides in the
    first card's gutter, leaving no label column. */
@@ -467,7 +467,7 @@
 }
 
 .work-history-filter-actions { align-self: end; }
-.work-history-pagination[aria-busy="true"] .work-history-page-actions > .team-mode { cursor: progress; }
+.work-history-pagination[aria-busy="true"] .work-history-page-actions > .app-option { cursor: progress; }
 /* Retry keeps its rail slot so a failure or its recovery never reflows the row. */
 .work-history-retry[data-shown="false"] { visibility: hidden; }
 
@@ -1085,11 +1085,11 @@
   overflow-x: auto;
   scrollbar-width: thin;
 }
-.work-direction-chips .team-mode {
+.work-direction-chips .app-option {
   flex: 0 0 auto;
   min-height: 27px;
 }
-.work-direction-chips .team-mode[aria-pressed="true"] {
+.work-direction-chips .app-option[aria-pressed="true"] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, var(--control-surface));
   color: var(--ink);

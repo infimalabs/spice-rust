@@ -89,7 +89,7 @@ pub(super) fn render(
                 if state.has_newer() {
                     <button
                         type="button"
-                        class="team-mode work-direction-newer-edge"
+                        class="app-option work-direction-newer-edge"
                         disabled={state.loading()}
                         onclick={controls.newer.clone()}
                     >{"Newer directions"}</button>
@@ -138,7 +138,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                                 <button
                                     key={identity.to_string()}
                                     type="button"
-                                    class="team-mode"
+                                    class="app-option"
                                     aria-pressed={selected.to_string()}
                                     onclick={toggle}
                                 >{team_label(team)}</button>
@@ -160,7 +160,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                                 <button
                                     key={identity.to_string()}
                                     type="button"
-                                    class="team-mode"
+                                    class="app-option"
                                     aria-pressed={selected.to_string()}
                                     onclick={toggle}
                                 >{label}</button>
@@ -178,7 +178,7 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                         html! {
                             <button
                                 type="button"
-                                class="team-mode"
+                                class="app-option"
                                 data-direction-state={state_key(state)}
                                 aria-pressed={selected.to_string()}
                                 onclick={toggle}
@@ -187,9 +187,9 @@ fn render_finder(topology: Option<&LaneView>, controls: &Controls) -> Html {
                     })}
                 </div>
             </fieldset>
-            <div class="work-history-filter-actions app-control-rail team-mode-rail">
-                <button type="button" class="team-mode" onclick={controls.apply.clone()}>{"Apply"}</button>
-                <button type="button" class="team-mode" onclick={controls.clear.clone()}>{"Clear"}</button>
+            <div class="work-history-filter-actions app-control-rail app-option-rail">
+                <button type="button" class="app-option" onclick={controls.apply.clone()}>{"Apply"}</button>
+                <button type="button" class="app-option" onclick={controls.clear.clone()}>{"Clear"}</button>
             </div>
         </div>
     }
