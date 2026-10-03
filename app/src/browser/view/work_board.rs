@@ -155,9 +155,9 @@ fn render_history_archive(
                             type="date"
                         />
                     </label>
-                    <div class="work-history-filter-actions app-control-rail team-mode-rail">
-                        <button type="button" class="team-mode" onclick={controls.apply.clone()}>{"Apply"}</button>
-                        <button type="button" class="team-mode" onclick={controls.clear.clone()}>{"Clear"}</button>
+                    <div class="work-history-filter-actions app-control-rail app-option-rail">
+                        <button type="button" class="app-option" onclick={controls.apply.clone()}>{"Apply"}</button>
+                        <button type="button" class="app-option" onclick={controls.clear.clone()}>{"Clear"}</button>
                     </div>
                 </div>
                 if let Some(issue) = controls.validation.as_ref() {
@@ -239,7 +239,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
         html! {
             <button
                 type="button"
-                class={classes!("team-mode", pressed.then_some("selected"))}
+                class={classes!("app-option", pressed.then_some("selected"))}
                 title={title}
                 aria-pressed={bool::to_string(&pressed)}
                 onclick={Callback::from(move |_| state.set(next))}
@@ -250,7 +250,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
         <div class="work-arrangement">
             <div class="work-arrangement-group" role="group" aria-label="Order cards">
                 <span aria-hidden="true">{"Order"}</span>
-                <span class="app-control-rail team-mode-rail">
+                <span class="app-control-rail app-option-rail">
                 {for ORDERS.into_iter().map(|(order, label, title)| choice(
                     label,
                     Some(title),
@@ -261,7 +261,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
             </div>
             <div class="work-arrangement-group" role="group" aria-label="Cluster cards">
                 <span aria-hidden="true">{"Cluster"}</span>
-                <span class="app-control-rail team-mode-rail">
+                <span class="app-control-rail app-option-rail">
                 {for CLUSTERINGS.into_iter().map(|(clustering, label)| choice(
                     label,
                     None,

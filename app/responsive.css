@@ -55,8 +55,8 @@
   .content { padding: 18px 14px 28px; }
   .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
   .app-navigation { margin-inline: 4px; }
-  .team-mode { padding-inline: 4px; }
-  .team-mode-badge { display: none; }
+  .app-option { padding-inline: 4px; }
+  .app-option-badge { display: none; }
   .team-task-member { max-width: 100%; }
   .team-job-table th:nth-child(1) { width: 5.5rem; }
   .team-job-table th:nth-child(2) { width: 3.5rem; }

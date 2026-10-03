@@ -61,13 +61,13 @@ pub(super) fn render(status: &ArchiveStatus<'_>) -> Html {
                 }}
             </div>
             <div
-                class="work-history-page-actions app-control-rail team-mode-rail"
+                class="work-history-page-actions app-control-rail app-option-rail"
                 role="group"
                 aria-label={status.pages_label}
             >
                 <button
                     type="button"
-                    class="team-mode work-history-retry"
+                    class="app-option work-history-retry"
                     data-shown={failed.to_string()}
                     onclick={status.retry.clone()}
                 >
@@ -75,7 +75,7 @@ pub(super) fn render(status: &ArchiveStatus<'_>) -> Html {
                 </button>
                 <button
                     type="button"
-                    class="team-mode"
+                    class="app-option"
                     disabled={status.loading || !status.has_newer}
                     onclick={status.newer.clone()}
                 >
@@ -83,7 +83,7 @@ pub(super) fn render(status: &ArchiveStatus<'_>) -> Html {
                 </button>
                 <button
                     type="button"
-                    class="team-mode"
+                    class="app-option"
                     disabled={status.loading || !status.has_older}
                     onclick={status.older.clone()}
                 >

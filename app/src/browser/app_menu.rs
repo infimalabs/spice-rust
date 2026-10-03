@@ -37,7 +37,7 @@ pub(super) fn use_dismissal(open: UseStateHandle<bool>) {
             .then(|| {
                 let document = web_sys::window()?.document()?;
                 if let Some(first_destination) = document
-                    .query_selector(".app-navigation .team-mode")
+                    .query_selector(".app-navigation .app-option")
                     .ok()
                     .flatten()
                     .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())

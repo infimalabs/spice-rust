@@ -199,10 +199,10 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRunti
 /// The destination rail atop the Spice menu.
 ///
 /// The open menu frame lies over the team surface beneath it, so this rail
-/// wears the team toolbar's own rail classes and lands on the same band.
+/// lands on the same compact control band.
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
     html! {
-        <nav class="app-navigation app-control-rail team-mode-rail" aria-label="Views">
+        <nav class="app-navigation app-control-rail app-option-rail" aria-label="Views">
             {for AppDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
                 let menu_open = render.menu_open.clone();
@@ -215,7 +215,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>
                 let badge = navigation_badge(destination, runtime, render.submissions);
                 html! {
                     <button
-                        class={classes!("team-mode", "team-mode--counted", selected.then_some("selected"))}
+                        class={classes!("app-option", "app-option--counted", selected.then_some("selected"))}
                         type="button"
                         aria-current={selected.then_some("page")}
                         title={destination.description()}
@@ -224,9 +224,9 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>
                             app_menu::close(&menu_open);
                         })}
                     >
-                        <span class="team-mode-label">{destination.label()}</span>
+                        <span class="app-option-label">{destination.label()}</span>
                         if let Some(count) = badge {
-                            <span class="team-mode-badge">{count}</span>
+                            <span class="app-option-badge">{count}</span>
                         }
                     </button>
                 }
