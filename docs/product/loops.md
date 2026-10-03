@@ -651,9 +651,9 @@ flowchart LR
    then at minute, hour, or day boundaries, and never after saturation. Every
    label renders into a padded, fixed-width single-line slot, so an update never
    changes a box.
-- **Task counts spell all three slots.** A public pill renders one unpadded
-   `ready · active · unavailable` string. Its width is content-driven, so a
-   digit-width change may resize it.
+- **Task counts spell all three slots.** A public global pill renders one
+   unpadded `ready · active · unavailable` string. Its width is content-driven,
+   so a digit-width change may resize it.
 - **Presentation changes do not directly touch card identity or style.**
    Recolouring and attribution toggles do not force a re-measure. Member count
    remains outside card identity and style, but it changes team weight; when

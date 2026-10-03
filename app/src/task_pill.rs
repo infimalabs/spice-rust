@@ -1,6 +1,6 @@
 //! Task-pill presentation derived from the shared Work projection.
 
-use crate::work::{WorkCounts, WorkProjection, WorkRail, WorkStemIdentity};
+use crate::work::{WorkStem, WorkStemIdentity};
 
 pub(crate) struct TaskPill {
     pub(crate) identity: WorkStemIdentity,
@@ -12,25 +12,18 @@ pub(crate) struct TaskPill {
 }
 
 impl TaskPill {
+    /// One stem's roll-up over every open task under it.
     #[must_use]
-    pub(crate) fn new(identity: &WorkStemIdentity, counts: WorkCounts) -> Self {
+    pub(crate) fn from_stem(stem: &WorkStem) -> Self {
+        let counts = stem.counts();
         Self {
-            identity: identity.clone(),
-            stem: identity.stem().to_owned(),
-            hidden: identity.hidden(),
+            identity: stem.identity().clone(),
+            stem: stem.identity().stem().to_owned(),
+            hidden: stem.identity().hidden(),
             ready: counts.ready(),
             active: counts.in_flight(),
             unavailable: counts.unavailable(),
         }
-    }
-
-    /// One pill per stem with open work riding `rail`, in stem order.
-    #[must_use]
-    pub(crate) fn for_rail(work: &WorkProjection<'_>, rail: WorkRail) -> Vec<Self> {
-        work.rail_stems(rail)
-            .into_iter()
-            .map(|(identity, counts)| Self::new(identity, counts))
-            .collect()
     }
 
     pub(crate) fn count(&self) -> String {

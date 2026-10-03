@@ -322,17 +322,15 @@ fn render_team_toolbar(
     }
 }
 
-/// The task pills in this team's header band: open tasks it created or
-/// currently claims, in the same aggregate-then-stem form and the same pill
-/// strip as the global one. Its pills open this team's Work scope; the fleet
-/// never shows over Work, so none selects.
+/// The task pills in this team's header band: the team's total, which opens
+/// its Work scope, then one pill per open task the team's Work scope holds.
+/// The fleet never shows over Work, so none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
     };
-    let rail = crate::work::WorkRail::Team(team);
-    let counts = work.rail_counts(rail);
-    if !counts.has_open() {
+    let tasks = work.team_tasks(team);
+    if tasks.is_empty() {
         return Html::default();
     }
     html! {
@@ -340,21 +338,115 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
             class="task-pill-strip app-control-rail team-tasks"
             aria-label="Open tasks this team created or claims"
         >
-            {view::chrome::render_aggregate_pill(
-                counts,
-                "This team's open work",
-                crate::work::WorkScope::team_wide(team),
-                None,
-                render.navigate,
-            )}
-            {for crate::task_pill::TaskPill::for_rail(work, rail).into_iter().map(|pill| {
-                let scope = crate::work::WorkScope::Team {
-                    team,
-                    stem: Some(pill.identity.clone()),
-                };
-                view::chrome::render_stem_pill(pill, scope, None, render.navigate)
-            })}
+            {render_team_total(team, &tasks, render.navigate)}
+            {for tasks.iter().map(|task| render_team_task_pill(team, work, task, render))}
         </nav>
+    }
+}
+
+/// The team's open-task count, opening `#/work/team/{team}`.
+fn render_team_total(
+    team: CanonicalUuid,
+    tasks: &[&crate::work::WorkTask<'_>],
+    navigate: &Callback<navigation::Intent>,
+) -> Html {
+    use crate::work::WorkAvailability::{InFlight, Ready};
+    let open = tasks.len();
+    let active = tasks.iter().any(|task| task.availability() == InFlight);
+    let workable = active || tasks.iter().any(|task| task.availability() == Ready);
+    let title = format!(
+        "This team's open work: {open} {}",
+        if open == 1 { "task" } else { "tasks" }
+    );
+    let navigate = navigate.clone();
+    html! {
+        <button
+            class={classes!(
+                "task-pill",
+                "task-pill--all",
+                active.then_some("active"),
+                (!workable).then_some("dormant"),
+            )}
+            type="button"
+            title={title.clone()}
+            aria-label={title}
+            data-work-scope="team"
+            onclick={Callback::from(move |_| {
+                navigate.emit(navigation::Intent::Work(crate::work::WorkScope::team_wide(team)));
+            })}
+        >
+            <span class="task-pill-count">{open.to_string()}</span>
+        </button>
+    }
+}
+
+/// One open team task: its project opens this team's Work narrowed to the
+/// project's stem, and its handle opens the task's detail.
+fn render_team_task_pill(
+    team: CanonicalUuid,
+    work: &crate::work::WorkProjection<'_>,
+    task: &crate::work::WorkTask<'_>,
+    render: &FleetRender<'_, '_>,
+) -> Html {
+    use crate::work::WorkAvailability::{InFlight, Ready};
+    let statement = &task.row().statement.body;
+    let stem = work.task_stem(task).clone();
+    let availability = task.availability();
+    let project_label = format!("Open this team's {stem} work");
+    let handle_label = format!(
+        "Open {}: {}, {}",
+        statement.handle,
+        task.row().presentation_title(),
+        availability.key(),
+    );
+    let hidden = stem.hidden();
+    let open_stem = {
+        let navigate = render.navigate.clone();
+        let scope = crate::work::WorkScope::Team {
+            team,
+            stem: Some(stem),
+        };
+        Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))
+    };
+    let open_task = {
+        let open = render.open_message_task.clone();
+        let born = statement.born.clone();
+        Callback::from(move |event: MouseEvent| {
+            if let Some(target) = event
+                .current_target()
+                .and_then(|target| target.dyn_into().ok())
+            {
+                open.emit((born.clone(), target));
+            }
+        })
+    };
+    html! {
+        <span
+            key={statement.born.to_string()}
+            class={classes!(
+                "task-pill",
+                "task-pill--task",
+                hidden.then_some("system"),
+                (availability == InFlight).then_some("active"),
+                (!matches!(availability, InFlight | Ready)).then_some("dormant"),
+            )}
+            data-availability={availability.key()}
+        >
+            <button
+                class="task-pill-project"
+                type="button"
+                title={project_label.clone()}
+                aria-label={project_label}
+                onclick={open_stem}
+            >{statement.project.clone()}</button>
+            <button
+                class="task-pill-handle"
+                type="button"
+                title={handle_label.clone()}
+                aria-label={handle_label}
+                onclick={open_task}
+            >{statement.handle.to_string()}</button>
+        </span>
     }
 }
 

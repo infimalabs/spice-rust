@@ -136,6 +136,24 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
+/* One open team task: two targets, its project and its handle, sharing the
+   pill's tone; each hovers alone. */
+.task-pill--task { gap: 0; padding: 0; }
+.task-pill--task:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.task-pill--task > button {
+  align-self: stretch;
+  min-height: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.task-pill--task > button:first-child { padding-inline-start: 10px; }
+.task-pill--task > button:last-child { padding-inline-end: 10px; }
+.task-pill--task > button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.task-pill--task > .task-pill-project { opacity: .72; }
 .app-global-status {
   grid-area: 1 / 3;
   min-width: 0;

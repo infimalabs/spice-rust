@@ -393,31 +393,32 @@ creator facts open the exact team member in Chat only when topology proves that
 destination; otherwise they stay readable facts.
 
 The project pills begin with a label-less aggregate pill whose badge sums every
-open task; selecting it opens unscoped Work from any destination. It shows only
-while the global strip carries open work, so with every task on a team rail the
-commandbar shows no task pills. The global board and Chat task references share
-one card identity, status, ownership, and selection contract; either opens the
-one shared detail layer, whose close returns focus to the launching card.
+open task; selecting it opens unscoped Work from any destination. One stem pill
+per stem with open work follows, rolling up every open task under that stem
+whether or not a team owns it, and opens `#/work/{public|hidden}/{stem}`. The
+strip shows whenever any open work exists. The global board and Chat task
+references share one card identity, status, ownership, and selection contract;
+either opens the one shared detail layer, whose close returns focus to the
+launching card.
 
-An open task actively claimed by a member of a remaining team rides that team's
-rail; otherwise a task created by a remaining team rides its creator team's
-rail. The claimant team wins when both identities match different teams. Every
-open task appears on exactly one rail: work with neither live team association,
-including work held by an unteamed agent, appears in the global strip. Until
-the roster loads, potentially team-associated work waits off both strips
-instead of flashing globally.
+A team header lists exactly the open tasks its team Work scope holds: tasks the
+team created and tasks a current member last claimed, so a task created by one
+team and claimed by another shows on both. In-flight work leads, then ready,
+blocked, and deferred work, each in the resident's offer order. Until the
+roster loads, team headers wait instead of guessing.
 
 Each team header is a fixed-height grid with no surrounding chrome of its own:
 no background, border, or shadow, so its content sits directly on the app
 surface above the team's panel. The pips and menu span two bands, with the task
-band above the status band in the long middle column. A team's task pills are
-the global strip's pills, framed the same way and with the same resting, hover,
-and keyboard-focus looks. The live status line centers on the lower pip row,
-and the pill strip scrolls horizontally when its labels outgrow the available
-width, never overlapping the pips or menu. Its aggregate pill opens
-`#/work/team/{team}`, and each team stem pill opens
-`#/work/team/{team}/{public|hidden}/{stem}`, narrowing the same team's work to
-that stem.
+band above the status band in the long middle column. The team's pills share
+the global strip's frame and resting, hover, and keyboard-focus looks. The live
+status line centers on the lower pip row, and the pill strip scrolls
+horizontally when its labels outgrow the available width, never overlapping the
+pips or menu. A badge with the team's open-task count leads and opens
+`#/work/team/{team}`. One badge-free pill per task follows, carrying two
+targets: its full project opens `#/work/team/{team}/{public|hidden}/{stem}`,
+narrowing the team's work to that project's stem, and its handle opens the
+task's detail layer in place, returning focus to the handle on close.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
@@ -616,11 +617,12 @@ product: reading many live agents is impossible if the board reflows.
 
 ### Status carries both tone and count
 
-Lane indicators use saturation for recency. Task pills spell ready, active, and
-blocked-or-deferred counts rather than asking colour to carry them; hidden
-stems sort after public ones with the same breakdown, because a stem the
+Lane indicators use saturation for recency. Global task pills spell ready,
+active, and blocked-or-deferred counts rather than asking colour to carry them;
+hidden stems sort after public ones with the same breakdown, because a stem the
 allocator skips is the one an operator triages by eye. The unpadded pill may
-resize as digit widths change.
+resize as digit widths change. A team header's per-task pills carry no counts:
+each is one task, and its tone carries in-flight or dormant state.
 
 **Value:** peripheral liveness and exact counts at once.
 

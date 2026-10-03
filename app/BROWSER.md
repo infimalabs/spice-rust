@@ -233,8 +233,12 @@ The toolbar is a fixed-height grid whether or not the team owns work, with no
 background, border, or shadow; the team surface frames nothing around it, so
 only the pane below carries the panel. Pip and hamburger columns span a task
 band sized to the framed global pill strip above the status band. The team's
-task strip reuses the global `task-pill-strip app-control-rail` frame and pills
-unchanged. The ticker centers on the lower pip row; task overflow scrolls inside
+task strip reuses the global `task-pill-strip app-control-rail` frame. Its
+total pill (`data-work-scope="team"`) carries one open-task count; each
+`task-pill--task` holds two buttons, `task-pill-project` and `task-pill-handle`,
+sharing the pill's tone through `active`, `dormant`, and `system`. The handle
+opens task detail through the same path as a Chat task chip, so focus returns
+to it. The ticker centers on the lower pip row; task overflow scrolls inside
 its band.
 
 The hamburger opens canonical global links for the team:
