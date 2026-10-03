@@ -1043,7 +1043,22 @@ async fn speech_endpoint_uses_the_request_worktree_server_owned_argv_contract() 
     )
     .with_speech_resolver(|worktree| {
         (worktree == "/worktrees/speech")
-            .then(|| external_speech(&["/bin/cat"]))
+            .then(|| {
+                crate::SpeechConfig::new(
+                    crate::SpeechBackend::External,
+                    [
+                        "/bin/sh",
+                        "-c",
+                        "printf '%s|' \"$SPICE_RS_SAY_VOICE\"; exec cat", // env-policy: allow
+                    ]
+                    .map(ToString::to_string)
+                    .to_vec(),
+                    "Zoe\"; $(echo injected) '".to_owned(),
+                    "audio/test".to_owned(),
+                    175,
+                )
+                .expect("external speech fixture")
+            })
             .ok_or_else(|| "unknown worktree".to_owned())
     });
     let (server, _control) = Server::bind(generation).await.expect("binds");
@@ -1068,7 +1083,11 @@ async fn speech_endpoint_uses_the_request_worktree_server_owned_argv_contract() 
             .windows(b"content-type: audio/test".len())
             .any(|window| window == b"content-type: audio/test")
     );
-    assert_eq!(response_body(&response), b"spoken exactly; $(not a shell)");
+    assert_eq!(
+        response_body(&response),
+        b"Zoe\"; $(echo injected) '|spoken exactly; $(not a shell)",
+        "the worktree voice arrives verbatim as renderer data, never as shell text"
+    );
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());

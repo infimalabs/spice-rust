@@ -258,7 +258,8 @@ fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> Stri
     format!(
         "system voice {voice_name:?} is not on this device; system speech uses the viewing \
          device's own voices, and this browser offers {}. To hear the resident's voices on \
-         every device, set say.backend = \"external\" with a say.command renderer",
+         every device, set say.backend = \"external\" with the say.command renderer in \
+         docs/product/interfaces.md (Speech)",
         names.join(", "),
     )
 }

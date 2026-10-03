@@ -4,7 +4,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant as Monotonic};
 
@@ -16,39 +15,13 @@ mod staged_app;
 const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-static BUILD_LANE_APP: Mutex<()> = Mutex::new(());
 
-/// A serialized, temporary source generation for real-binary demo invocations.
-struct SeededBuildLaneApp(Option<PathBuf>);
-
-impl SeededBuildLaneApp {
-    fn new() -> Self {
-        Self::for_worktree(&build_lane_worktree()).unwrap_or_else(|message| panic!("{message}"))
-    }
-
-    fn for_worktree(worktree: &Path) -> Result<Self, String> {
-        let stage = worktree.join(serve::APP_STAGE);
-        if stage.exists() {
-            serve::AppSource::resolve(worktree).map_err(|error| {
-                format!("demo_cli precondition found a stale lane app generation: {error}")
-            })?;
-            return Ok(Self(None));
-        }
-        staged_app::seed(worktree);
-        Ok(Self(Some(stage)))
-    }
-}
-
-impl Drop for SeededBuildLaneApp {
-    fn drop(&mut self) {
-        if let Some(stage) = self.0.take() {
-            fs::remove_dir_all(stage).expect("remove generated build lane app fixture");
-        }
-    }
-}
-
+/// A disposable demo invocation: an ambient `spice` sentinel that must never
+/// run, and the Git worktree the demo is invoked from, carrying the app stage it
+/// seeds new demo roots with.
 struct Fixture {
     scratch: PathBuf,
+    source: PathBuf,
     ambient_bin: PathBuf,
     ambient_spice: PathBuf,
     invocation_marker: PathBuf,
@@ -81,8 +54,12 @@ impl Fixture {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&ambient_spice, permissions).expect("make ambient sentinel executable");
+        let source = scratch.join("source");
+        gix::init(&source).expect("initialize invoking source repository in process");
+        staged_app::seed(&source);
         Self {
             scratch,
+            source,
             ambient_bin,
             ambient_spice,
             invocation_marker,
@@ -102,12 +79,10 @@ impl Fixture {
         arguments: &[&str],
         environment: &[(&str, &Path)],
     ) -> std::process::Output {
-        let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
-        let _app = SeededBuildLaneApp::new();
         let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
         command
             .args(arguments)
-            .current_dir(&self.scratch)
+            .current_dir(&self.source)
             .env("PATH", &self.ambient_bin)
             .env_remove(steer::hook::LANE);
         for (name, value) in environment {
@@ -146,71 +121,6 @@ impl Drop for Fixture {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-#[test]
-fn stale_real_stage_precondition_names_the_missing_asset_without_mutating_it() {
-    let fixture = Fixture::new();
-    let root = fixture.root("stale-app-stage");
-    staged_app::seed(&root);
-    let stage = root.join(serve::APP_STAGE);
-    let identity = fs::read_to_string(stage.join(serve::APP_STAGE_CURRENT))
-        .expect("read fixture app generation pointer");
-    let missing = stage
-        .join(serve::APP_STAGE_GENERATIONS)
-        .join(identity.trim_ascii_end())
-        .join("mosaic.css");
-    fs::remove_file(&missing).expect("remove one current-generation asset");
-    let before = stage_snapshot(&stage);
-
-    let error = match SeededBuildLaneApp::for_worktree(&root) {
-        Ok(_) => panic!("a stale real stage must fail its precondition"),
-        Err(error) => error,
-    };
-
-    for required in [
-        "demo_cli precondition",
-        "stale lane app generation",
-        "mosaic.css",
-        "dev xtask -- app",
-    ] {
-        assert!(error.contains(required), "missing {required:?}: {error}");
-    }
-    assert_eq!(
-        stage_snapshot(&stage),
-        before,
-        "refusing a stale existing stage must not seed over or remove any bytes"
-    );
-}
-
-#[test]
-fn build_lane_stage_is_byte_identical_or_still_absent_after_the_precondition_guard() {
-    let _app_lock = BUILD_LANE_APP.lock().expect("build lane app fixture lock");
-    let worktree = build_lane_worktree();
-    let stage = worktree.join(serve::APP_STAGE);
-    let before = stage_snapshot(&stage);
-
-    drop(SeededBuildLaneApp::new());
-
-    assert_eq!(
-        stage_snapshot(&stage),
-        before,
-        "the suite must preserve an existing real stage and restore an absent one to absence"
-    );
-}
-
-/// Resolve the writable build lane compiled into selected-tree tests, or the source workspace.
-fn build_lane_worktree() -> PathBuf {
-    option_env!("SPICE_WORKSPACE_TEST_WRITABLE_ROOT") // env-policy: allow
-        .map_or_else(
-            || {
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .expect("spice crate has a workspace parent")
-                    .to_path_buf()
-            },
-            PathBuf::from,
-        )
 }
 
 #[test]
@@ -262,35 +172,6 @@ fn build_lane_fixture_refuses_a_symlink_escape_without_writing_the_external_tree
         !external.join(".spice-rs").exists(),
         "refused fixture seed wrote through its symlink boundary"
     );
-}
-
-fn stage_snapshot(stage: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
-    if !stage.exists() {
-        return None;
-    }
-    let mut snapshot = Vec::new();
-    snapshot_directory(stage, stage, &mut snapshot);
-    Some(snapshot)
-}
-
-fn snapshot_directory(root: &Path, directory: &Path, snapshot: &mut Vec<(PathBuf, Vec<u8>)>) {
-    let mut entries = fs::read_dir(directory)
-        .expect("read staged app directory")
-        .map(|entry| entry.expect("read staged app entry").path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            snapshot_directory(root, &path, snapshot);
-        } else {
-            snapshot.push((
-                path.strip_prefix(root)
-                    .expect("stage entry is beneath root")
-                    .to_path_buf(),
-                fs::read(&path).expect("read staged app bytes"),
-            ));
-        }
-    }
 }
 
 fn wait_for_demo_discovery(launched: &mut Child, discovery: &Path) {

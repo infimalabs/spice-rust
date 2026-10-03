@@ -1027,6 +1027,7 @@ async fn render_external_speech(
     let mut command = tokio::process::Command::new(&argv[0]);
     command
         .args(&argv[1..])
+        .env(crate::speech::VOICE_ENVIRONMENT, speech.voice())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
