@@ -595,7 +595,10 @@
   height: var(--team-edge-control-size);
   min-height: var(--team-edge-control-size);
   padding: 0;
-  border-radius: 50% 50% 0 0;
+  /* The chamber is cut from the team's top-right corner: only its open
+     upper-left corner curves and draws an edge; the team edges bound the rest. */
+  border-width: var(--app-control-edge-width) 0 0 var(--app-control-edge-width);
+  border-radius: 50% 0 0 0;
   border-color: var(--control-line-soft);
   background: var(--control-surface-soft);
   color: var(--muted);
@@ -603,7 +606,7 @@
 }
 .team-toolbar > .ticker {
   grid-area: status;
-  align-self: end;
+  align-self: center;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
   border: 0;
@@ -944,6 +947,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--app-control-edge);
   border-radius: 0;
+  box-shadow: none;
 }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-1); }
