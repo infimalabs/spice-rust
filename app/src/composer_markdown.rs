@@ -248,13 +248,13 @@ pub(crate) fn render_prose_card(
     )
 }
 
-/// Render one resolved quote card's body, led by its attribution.
+/// Render one resolved quote card's body, trailed by its source attribution.
 fn render_quote_card_body(
     markdown: &str,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    head: image_flow::CardHead<'_>,
+    tail: image_flow::CardTail<'_>,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -263,7 +263,7 @@ fn render_quote_card_body(
         quotes,
         quote_agents,
         quote_sources,
-        Finish::QuoteCard(head),
+        Finish::QuoteCard(tail),
     )
 }
 
@@ -272,10 +272,10 @@ enum Finish<'t> {
     /// Received text as written.
     Received,
     /// Assistant prose whose terminal sentence gains its period and whose
-    /// attribution slots lead the card and each answer after a quote chain.
+    /// own attribution slots lead the card and each answer after a quote chain.
     ProseCard,
-    /// A quote card body led by its attribution and disposition.
-    QuoteCard(image_flow::CardHead<'t>),
+    /// A quote card body trailed by its source attribution and disposition.
+    QuoteCard(image_flow::CardTail<'t>),
 }
 
 fn render(
@@ -322,7 +322,7 @@ fn render(
     let (prose_card, layer) = match finish {
         Finish::Received => (false, image_flow::Layer::Body),
         Finish::ProseCard => (true, image_flow::Layer::Body),
-        Finish::QuoteCard(head) => (false, image_flow::Layer::Card(head)),
+        Finish::QuoteCard(tail) => (false, image_flow::Layer::Card(tail)),
     };
     let events = image_flow::flow(&events, &layer);
     let events = events.into_iter().flat_map(|event| match &event {
@@ -362,8 +362,8 @@ struct OuterQuote {
 }
 
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
-/// lead each directive context with its author's attribution. Also returns
-/// each outermost block quote, in order.
+/// trail each directive context with its source attribution. Also returns each
+/// outermost block quote, in order.
 fn parse_events<'m>(
     markdown: &'m str,
     options: Options,
@@ -418,7 +418,7 @@ fn parse_events<'m>(
                 if quote_depth == 0
                     && let Some((start, context)) = open_context.take()
                 {
-                    lead_directive_context(
+                    trail_directive_attribution(
                         &mut events,
                         start,
                         &context,
@@ -552,11 +552,10 @@ fn lead_signoff_slots<'a>(
     led
 }
 
-/// Lead one directive context with its author's attribution: inside its first
-/// prose paragraph, ahead of any classification pill there, or on a line of
-/// its own above a context that opens with any other block. Its task portal
-/// target trails the context independently.
-fn lead_directive_context(
+/// Trail one directive context with its source age and author. A final prose
+/// paragraph keeps the attribution inline; any other final block gets a compact
+/// line below it. The task portal target remains last at the same content tail.
+fn trail_directive_attribution(
     events: &mut Vec<MarkdownEvent<'_>>,
     start: usize,
     context: &MessageDirective,
@@ -573,32 +572,11 @@ fn lead_directive_context(
         quote_sources,
     );
     let task_tail = quotes::task_tail_html(&target);
-    if !signoff.is_empty() {
-        let paragraph = start + 1;
-        if matches!(
-            events.get(paragraph),
-            Some(MarkdownEvent::Start(Tag::Paragraph))
-        ) && !paragraph_is_image_stack(&events[paragraph + 1..])
-        {
-            events.insert(paragraph + 1, MarkdownEvent::InlineHtml(signoff.into()));
-        } else {
-            events.insert(
-                paragraph,
-                MarkdownEvent::Html(
-                    format!("{}{signoff}</p>", image_flow::SIGNOFF_LINE_OPEN).into(),
-                ),
-            );
-        }
-    }
-    trail_directive_context(events, start, task_tail);
+    append_directive_tail(events, start, format!("{signoff}{task_tail}"));
 }
 
-fn trail_directive_context<'a>(
-    events: &mut Vec<MarkdownEvent<'a>>,
-    start: usize,
-    task_tail: String,
-) {
-    if task_tail.is_empty() {
+fn append_directive_tail<'a>(events: &mut Vec<MarkdownEvent<'a>>, start: usize, tail: String) {
+    if tail.is_empty() {
         return;
     }
     let trailing_paragraph = if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph)))
@@ -612,13 +590,10 @@ fn trail_directive_context<'a>(
         false
     };
     if trailing_paragraph {
-        events.insert(
-            events.len() - 1,
-            MarkdownEvent::InlineHtml(task_tail.into()),
-        );
+        events.insert(events.len() - 1, MarkdownEvent::InlineHtml(tail.into()));
     } else {
         events.push(MarkdownEvent::Html(
-            format!("{}{task_tail}</p>", image_flow::TASK_LINE_OPEN).into(),
+            format!("{}{tail}</p>", image_flow::TAIL_LINE_OPEN).into(),
         ));
     }
 }

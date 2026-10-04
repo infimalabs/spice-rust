@@ -7,7 +7,7 @@
 //! height is measured here instead. The images' bottom meets the prose's and is
 //! never lower; prose shorter than the images sits beside their top. A layer
 //! too narrow to share a line with its images stacks them full width under the
-//! prose. The layer's attribution leads it, so it never takes part.
+//! prose. The layer's attribution trails outside the measured flow.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::closure::Closure;

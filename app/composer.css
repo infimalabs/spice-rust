@@ -575,9 +575,8 @@
   max-width: 100%;
   max-height: 100%;
 }
-/* Attribution leads what it attributes: the age and name share the first prose
-   line, ahead of any answer pill, or take a line of their own above any other
-   block. Board provenance has a separate target at the content's tail. */
+/* A quote's source attribution trails its content; the card's own attribution
+   still leads each answer. Origin-task provenance remains the final tail item. */
 .markdown-body :is(.message-quote-signoff, .message-signoff) {
   display: inline-flex;
   max-width: 100%;
@@ -585,14 +584,13 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px;
-  margin-right: 6px;
   color: var(--muted);
   font-size: .8125em;
 }
-.markdown-body :is(.message-quote-signoff-line, .message-signoff-line) {
-  margin: 0 0 .35em;
-}
-/* The leading age keeps a natural word space before the name it dates. */
+.markdown-body .message-signoff { margin-right: 6px; }
+.markdown-body .message-quote-signoff { margin-inline-start: .35em; }
+.markdown-body .message-signoff-line { margin: 0 0 .35em; }
+/* The age keeps a natural word space before the name it dates. */
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
 }
@@ -608,12 +606,21 @@
   vertical-align: baseline;
 }
 .markdown-body .message-quote-task-tail .message-task-chip { font-size: inherit; }
-.markdown-body .message-quote-task-tail:empty,
-.markdown-body .message-quote-task-line:has(> .message-quote-task-tail:empty) {
+.markdown-body .message-quote-task-tail:empty { display: none; }
+.markdown-body .message-quote-tail {
+  margin: .35em 0 0;
+}
+.markdown-body .message-quote-tail > :is(
+  .message-quote-signoff,
+  .message-quote-disposition,
+  .message-ack-pill,
+  .message-quote-task-tail
+):first-child {
+  margin-inline-start: 0;
+}
+.markdown-body .message-quote-tail:has(> .message-quote-task-tail:only-child:empty) {
   display: none;
 }
-.markdown-body .message-quote-task-line { margin: .35em 0 0; }
-.markdown-body .message-quote-task-line > .message-quote-task-tail { margin-inline-start: 0; }
 .markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
 .markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-name {
@@ -648,13 +655,16 @@
 }
 .markdown-body .message-quote-disposition {
   display: inline-flex;
-  margin-right: .35em;
+  margin-inline-start: .35em;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .75em;
   font-weight: 700;
 }
 .markdown-body .message-quote-body .message-ack-pill { margin-right: .35em; }
+.markdown-body .message-quote-body .message-ack-pill[data-quote-disposition] {
+  margin-inline: .35em 0;
+}
 .markdown-body .message-quote-body { display: contents; }
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
