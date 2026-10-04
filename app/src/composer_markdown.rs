@@ -504,7 +504,8 @@ fn lead_signoff_slots<'a>(
 
 /// Lead one directive context with its author's attribution: inside its first
 /// prose paragraph, ahead of any classification pill there, or on a line of
-/// its own above a context that opens with any other block.
+/// its own above a context that opens with any other block. Its task portal
+/// target trails the context independently.
 fn lead_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
     start: usize,
@@ -512,26 +513,63 @@ fn lead_directive_context(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
 ) {
+    let target = context.quote_target.to_string();
     let signoff = quotes::signoff_html(
         &wire::QuoteAuthor::Directive {
             actor: context.actor.clone(),
         },
-        &context.quote_target.to_string(),
+        &target,
         quote_agents,
         quote_sources,
     );
-    let paragraph = start + 1;
-    if matches!(
-        events.get(paragraph),
-        Some(MarkdownEvent::Start(Tag::Paragraph))
-    ) && !paragraph_is_image_stack(&events[paragraph + 1..])
+    let task_tail = quotes::task_tail_html(&target);
+    if !signoff.is_empty() {
+        let paragraph = start + 1;
+        if matches!(
+            events.get(paragraph),
+            Some(MarkdownEvent::Start(Tag::Paragraph))
+        ) && !paragraph_is_image_stack(&events[paragraph + 1..])
+        {
+            events.insert(paragraph + 1, MarkdownEvent::InlineHtml(signoff.into()));
+        } else {
+            events.insert(
+                paragraph,
+                MarkdownEvent::Html(
+                    format!("{}{signoff}</p>", image_flow::SIGNOFF_LINE_OPEN).into(),
+                ),
+            );
+        }
+    }
+    trail_directive_context(events, start, task_tail);
+}
+
+fn trail_directive_context<'a>(
+    events: &mut Vec<MarkdownEvent<'a>>,
+    start: usize,
+    task_tail: String,
+) {
+    if task_tail.is_empty() {
+        return;
+    }
+    let trailing_paragraph = if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph)))
     {
-        events.insert(paragraph + 1, MarkdownEvent::InlineHtml(signoff.into()));
+        events[start..]
+            .iter()
+            .rposition(|event| matches!(event, MarkdownEvent::Start(Tag::Paragraph)))
+            .map(|position| start + position)
+            .is_some_and(|paragraph| !paragraph_is_image_stack(&events[paragraph + 1..]))
     } else {
+        false
+    };
+    if trailing_paragraph {
         events.insert(
-            paragraph,
-            MarkdownEvent::Html(format!("{}{signoff}</p>", image_flow::SIGNOFF_LINE_OPEN).into()),
+            events.len() - 1,
+            MarkdownEvent::InlineHtml(task_tail.into()),
         );
+    } else {
+        events.push(MarkdownEvent::Html(
+            format!("{}{task_tail}</p>", image_flow::TASK_LINE_OPEN).into(),
+        ));
     }
 }
 

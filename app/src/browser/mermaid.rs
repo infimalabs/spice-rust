@@ -672,7 +672,7 @@ fn collect_quote_task_slots(
     previous: &[QuoteTaskSlot],
     counter: &Cell<u64>,
 ) -> Vec<QuoteTaskSlot> {
-    let Ok(nodes) = host.query_selector_all(".message-quote-signoff[data-quote-tasks]") else {
+    let Ok(nodes) = host.query_selector_all(".message-quote-task-tail[data-quote-tasks]") else {
         return Vec::new();
     };
     let mut slots = Vec::with_capacity(nodes.length() as usize);
@@ -759,8 +759,8 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
 /// Producer-authored diagram, math, quote-age, quote-task, and signoff slots inside this
 /// card are portal targets. Raw user HTML still passes through the shared
 /// Markdown sanitizer; only parser- or resident-owned nodes can name these slot
-/// kinds. Board work fills task slots in place, so a quote gaining task badges
-/// never replaces the card's raw nodes or reloads its images.
+/// kinds. Board work fills trailing task slots in place, so a quote gaining
+/// task badges never replaces the card's raw nodes or reloads its images.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();

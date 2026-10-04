@@ -138,37 +138,32 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The head of quoted words: the source message's live relative age, an
-/// explicit non-Operator author name, then associated task badges.
-///
-/// Task provenance arrives after the card renders, so the HTML never depends
-/// on it: a steering quote's signoff names its key, and the card body appends
-/// that key's badges in place. A sourceless signoff stays empty until then.
+/// The head of quoted words: the source message's live relative age, then an
+/// explicit non-Operator author name.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
 ) -> String {
-    let tasks = match target.parse() {
-        Ok(QuoteTarget::Steering { key, .. }) => {
-            format!(
-                " data-quote-tasks=\"{}\"",
-                super::escape_html_attribute(&key)
-            )
-        }
-        _ => String::new(),
-    };
     let Some(source) = sources.get(target) else {
-        return if tasks.is_empty() {
-            String::new()
-        } else {
-            format!("<span class=\"message-quote-signoff\"{tasks}></span>")
-        };
+        return String::new();
     };
     let age = quote_age_slot_html(author, agents, source);
     let name = quote_author_name_html(author, agents, source);
-    format!("<span class=\"message-quote-signoff\"{tasks}>{age}{name}</span>")
+    format!("<span class=\"message-quote-signoff\">{age}{name}</span>")
+}
+
+/// Empty portal target that board provenance fills at the quoted content's
+/// trailing edge after the card has rendered.
+pub(super) fn task_tail_html(target: &str) -> String {
+    let Ok(QuoteTarget::Steering { key, .. }) = target.parse() else {
+        return String::new();
+    };
+    format!(
+        "<span class=\"message-quote-task-tail\" data-quote-tasks=\"{}\"></span>",
+        super::escape_html_attribute(&key)
+    )
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
@@ -207,6 +202,7 @@ fn render(
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
             let signoff = signoff_html(author, target, agents, sources);
+            let task_tail = task_tail_html(target);
             let body = super::render_quote_card_body(
                 text,
                 quotes,
@@ -215,6 +211,7 @@ fn render(
                 super::image_flow::CardHead {
                     signoff: &signoff,
                     disposition: &disposition,
+                    task_tail: &task_tail,
                 },
             );
             format!(

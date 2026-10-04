@@ -574,9 +574,9 @@
   max-width: 100%;
   max-height: 100%;
 }
-/* Attribution leads what it attributes: the age, the name, then any badge.
-   It shares the first prose line, ahead of any answer pill, or takes a line of
-   its own above any other block. */
+/* Attribution leads what it attributes: the age and name share the first prose
+   line, ahead of any answer pill, or take a line of their own above any other
+   block. Board provenance has a separate target at the content's tail. */
 .markdown-body :is(.message-quote-signoff, .message-signoff) {
   display: inline-flex;
   max-width: 100%;
@@ -595,11 +595,24 @@
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
 }
-/* A sourceless quote's signoff waits empty for Work links. */
-.markdown-body .message-quote-signoff:empty,
-.markdown-body .message-quote-signoff-line:has(> .message-quote-signoff:empty) {
+.markdown-body .message-quote-task-tail {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-inline-start: .35em;
+  font-size: .8125em;
+  vertical-align: baseline;
+}
+.markdown-body .message-quote-task-tail .message-task-chip { font-size: inherit; }
+.markdown-body .message-quote-task-tail:empty,
+.markdown-body .message-quote-task-line:has(> .message-quote-task-tail:empty) {
   display: none;
 }
+.markdown-body .message-quote-task-line { margin: .35em 0 0; }
+.markdown-body .message-quote-task-line > .message-quote-task-tail { margin-inline-start: 0; }
 .markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
 .markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-name {
