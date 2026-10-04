@@ -659,6 +659,10 @@
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
 .team-compose .lane-mosaic-plane {
+  /* Cards can raise themselves for hover, focus, selection, and nested tools.
+     Contain every such layer below the composer instead of racing its equal
+     z-index while scroll motion waits for the next presentation frame. */
+  z-index: 0;
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
 }
