@@ -116,15 +116,15 @@ margin of its own.
 
 ## Team composer controls
 
-The speech and allocation sliders share a fixed region above the team send
-button. The control field owns one top edge, one center divider between the
-sliders, and one seam above Send; slider state uses fill without adding nested
-borders or inset shadows. The frame carries no words but the button's. Its top
-edge sits one label row below the composer block's, and the two current values
-ride above it, leaning on the center divider: speech ends and allocation starts
-3px from it, so they read as one phrase such as "quiet drain" or "narrate
-steer". The label row comes out of the ranges' region; the composer block, the
-frame width and the send row keep their size.
+The full-width team send button sits above the speech and allocation sliders.
+The two current values occupy the row immediately below that button, leaning
+on the center divider: speech ends and allocation starts 3px from it, so they
+read as one phrase such as "quiet drain" or "narrate steer". Their vertical
+tracks follow side by side. The control field owns one top edge, one seam below
+the send button, and one center divider between the sliders; slider state uses
+fill without adding nested borders or inset shadows. The frame carries no words
+but the button's. Swapping these two fixed units does not change the composer
+block, frame width, send row, label row, or slider-track size.
 At the 10rem minimum member width, the standard draft block is 170px tall and
 reads approximately square without widening the member column.
 That shared block size also determines the speech and allocation tracks, their

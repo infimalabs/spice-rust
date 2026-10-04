@@ -82,13 +82,13 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             data-lifetime-pending={props.lifetime_pending.to_string()}
             data-idle={idle.to_string()}
         >
-            {props.children.clone()}
             <button
                 class={props.send_class.clone()}
                 type="submit"
                 disabled={idle || !props.ready}
                 title={props.send_title.clone()}
             >{props.send_label}</button>
+            {props.children.clone()}
         </aside>
     }
 }
