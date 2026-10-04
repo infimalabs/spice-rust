@@ -205,6 +205,13 @@ and image rows clear them from inside the same colored surface. Cards without a
 leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
+Committed message cards form one gapless ledger: the lattice has no row,
+column, or decorative edge gutter. Square card edges meet directly, with one
+soft block-start rule between vertical neighbors and the owning card's
+attribution-colored inline-end edge as the single horizontal seam. Measurement
+clones use the same zero-gap geometry, while compaction and lifecycle dividers
+remain semantic full-width rows.
+
 Quoted image pairs retain the standard 7px image-stack gap even when their
 leading quote stays flow-root around its control island: flattened stack
 wrappers apply that shared gap at the boundary before the later image.
