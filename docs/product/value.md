@@ -291,6 +291,11 @@ refresh desaturates them. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
 
+Provider quota detail rows preserve each provider's authoritative remaining
+quantity. Percent limits label that capacity `N% full`; their filled segment
+starts at the left edge, so consumption exposes the track from the right.
+Counted limits retain their explicit remaining and total units.
+
 Inside the open menu, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,
 not a placeholder to hold. "No open teams" holds one team of one agent, "No

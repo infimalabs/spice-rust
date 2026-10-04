@@ -703,8 +703,8 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-limit-status { margin-left: 6px; color: var(--triage); font-size: .64rem; font-weight: 650; text-transform: uppercase; }
 .quota-meter { display: block; width: 100%; height: 6px; }
 .quota-meter-track { fill: color-mix(in srgb, var(--muted) 22%, transparent); }
-.quota-meter-left { fill: color-mix(in srgb, var(--ink) 40%, var(--muted)); }
-.quota-limit[data-limit-status] .quota-meter-left { fill: var(--triage); }
+.quota-meter-fill { fill: color-mix(in srgb, var(--ink) 40%, var(--muted)); }
+.quota-limit[data-limit-status] .quota-meter-fill { fill: var(--triage); }
 .quota-limit-amount { font-variant-numeric: tabular-nums; text-align: right; }
 .quota-limit-reset { color: var(--muted); }
 .quota-reset-credits { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 0; color: var(--muted); font-size: .7rem; }

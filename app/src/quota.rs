@@ -305,11 +305,11 @@ fn parse_quantity(value: Option<&String>) -> Option<f64> {
     value?.parse::<f64>().ok().filter(|value| value.is_finite())
 }
 
-/// The amount beside a limit's meter, leading with what is left: a percent
-/// limit is always 100, so it reads `N% left`; a counted limit reads
+/// The amount beside a limit's meter, leading with remaining capacity: a
+/// percent limit is always 100, so it reads `N% full`; a counted limit reads
 /// `R / L unit left`. A remainder the provider omits is derived from the limit
-/// and the amount used; only when neither is possible does the label fall
-/// back to the amount used.
+/// and the amount used; only when neither is possible does the label fall back
+/// to the amount used.
 pub(crate) fn amount_text(amount: &wire::QuotaAmount) -> String {
     let percent = amount.unit.eq_ignore_ascii_case("percent");
     let quantity = |value: &str| {
@@ -325,7 +325,7 @@ pub(crate) fn amount_text(amount: &wire::QuotaAmount) -> String {
         amount.used.as_deref(),
         limit,
     ) {
-        (Some(remaining), _, _) if percent => format!("{} left", quantity(remaining)),
+        (Some(remaining), _, _) if percent => format!("{} full", quantity(remaining)),
         (Some(remaining), _, Some(limit)) => format!("{remaining} / {} left", quantity(limit)),
         (Some(remaining), _, None) => format!("{} left", quantity(remaining)),
         (None, Some(used), Some(limit)) if !percent => format!("{used} / {}", quantity(limit)),

@@ -73,8 +73,11 @@ title marks it stale; a current snapshot restores the green badge.
 ## Provider quota rows
 
 Each account-limit row reads from left to right as the limit name, flexible
-usage bar, amount left, and reset. The amount stays immediately beside the
-bar it describes rather than separating the name from that bar.
+capacity bar, amount, and reset. Percent amounts describe the remaining quota
+as `N% full`; counted limits retain their explicit remaining and total units.
+The filled capacity starts at the bar's left edge, so consumption exposes the
+track from the right. The amount stays immediately beside the bar it describes
+rather than separating the name from that bar.
 
 An account with a shared weekly limit keeps the same capacity-order accent in
 its card surface, edge, provider label, and usage bars as its layer in the
