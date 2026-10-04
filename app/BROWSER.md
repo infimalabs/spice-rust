@@ -208,9 +208,11 @@ the same quote-local ownership rather than adding an external controls header.
 
 Committed message cards form one gapless ledger: the lattice has no row,
 column, or decorative edge gutter. Square card edges meet directly with no
-rule between neighbors, so stacked cards run together seamlessly. No card
-draws an accent edge on any side; each one is tinted instead, its surface the
-panel mixed 4% toward its lane accent, and that tint alone separates lanes.
+rule between neighbors, so stacked cards run together seamlessly. The team pane
+behind them is the same dark page base the header sits on, not the panel. No
+card draws an accent edge on any side; each one is tinted instead, its surface
+that page base mixed 12% toward its lane accent, and that tint alone separates
+lanes.
 A FINAL answer keeps only its pill, with no tint of its own, and hover adds a
 thin accent outline. Measurement clones use the same zero-gap geometry.
 Compaction and lifecycle dividers, such as a fresh session, remain semantic
