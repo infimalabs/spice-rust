@@ -997,8 +997,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
-  --mosaic-edge-gutter: 11px;
-  --mosaic-gap: .75rem;
+  --mosaic-edge-gutter: 0px;
+  --mosaic-gap: 0px;
   --mosaic-module: 3.75rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
@@ -1094,14 +1094,32 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin: 0;
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
-  border: var(--app-edge-soft);
-  border-right: 3px solid var(--accent-slot, var(--accent));
-  border-radius: var(--app-radius-frame);
+  border: 0;
+  border-block-start: var(--app-edge-soft);
+  border-inline-end: 3px solid var(--accent-slot, var(--accent));
+  border-radius: 0;
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
   line-height: 1.25;
   box-shadow: none;
+}
+.team-surface
+  .mosaic-message-card[data-layout-phase="committed"]:not(.mosaic-compaction-card):hover {
+  z-index: 1;
+  background-color: color-mix(
+    in srgb,
+    var(--message-card-surface) 96%,
+    var(--accent-slot, var(--accent))
+  );
+  outline: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
+  outline-offset: -1px;
+}
+.team-surface
+  .mosaic-message-card[data-layout-phase="committed"]:focus-visible:not([inert]) {
+  z-index: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .team-surface .mosaic-message-card.mosaic-compaction-card {
   display: grid;
@@ -1112,9 +1130,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: transparent;
   box-shadow: none;
 }
-.team-surface .mosaic-message-card:is(:target, [data-card-route-selected="true"]) {
+.team-surface
+  .mosaic-message-card[data-layout-phase="committed"]:is(
+    :target,
+    [data-card-route-selected="true"]
+  ):not([inert]) {
+  z-index: 1;
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
   scroll-margin-block: 8px;
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
