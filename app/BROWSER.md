@@ -116,11 +116,11 @@ margin of its own.
 
 ## Team composer controls
 
-The full-width team send button sits above the speech and allocation sliders.
-The two current values occupy the row immediately below that button, leaning
-on the center divider: speech ends and allocation starts 3px from it, so they
-read as one phrase such as "quiet drain" or "narrate steer". Their vertical
-tracks follow side by side. The control field owns one top edge, one seam below
+The full-width team send button sits above the speech and allocation sliders,
+whose vertical tracks follow side by side. The two current values occupy the
+row immediately below the tracks, leaning on the center divider: speech ends
+and allocation starts 3px from it, so they read as one phrase such as "quiet
+drain" or "narrate steer". The control field owns one top edge, one seam below
 the send button, and one center divider between the sliders; slider state uses
 fill without adding nested borders or inset shadows. The frame carries no words
 but the button's. Swapping these two fixed units does not change the composer

@@ -862,13 +862,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The full-width submit sits above the ranges and their labels. Range wrappers
-   stay frameless and state uses fill alone, leaving the control field to own
-   its outer top edge, submit seam, and center divider exactly once. The frame
-   holds no words but the submit's; the two current slider values share the row
-   immediately below it, leaning on the center seam and reading as one phrase
-   ("quiet drain", "narrate steer"). The square-size correction remains in the
-   submit row so the slider tracks retain their height. */
+/* The full-width submit sits above the ranges, and their labels sit below.
+   Range wrappers stay frameless and state uses fill alone, leaving the control
+   field to own its outer top edge, submit seam, and center divider exactly
+   once. The frame holds no words but the submit's; the two current slider
+   values share the row immediately below the tracks, leaning on the center
+   seam and reading as one phrase ("quiet drain", "narrate steer"). The
+   square-size correction remains in the submit row so the slider tracks
+   retain their height. */
 .team-composer .team-composer-controls {
   --team-control-submit-trim: 10px;
   --team-control-item-height: calc(
@@ -879,7 +880,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   position: relative; display: grid; gap: 0; inline-size: 74px;
   margin-block-start: 0;
   block-size: var(--team-composer-block-size);
-  grid-template: var(--team-control-item-height) var(--team-control-label-row) minmax(0, 1fr) / repeat(2, minmax(0, 1fr));
+  grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0; border-block-start: var(--app-control-edge);
   border-radius: 0;
   background: var(--control); box-shadow: none;
@@ -890,7 +891,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   min-height: 0; padding: 7px 2px; overflow: hidden;
   border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: ns-resize;
 }
-.team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: calc(var(--team-control-item-height) + var(--team-control-label-row)) 0; inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
+.team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: var(--team-control-item-height) var(--team-control-label-row); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
 .team-slider input {
   writing-mode: vertical-lr;
   direction: rtl;
@@ -913,11 +914,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   white-space: nowrap;
 }
 /* The frame is the labels' containing block, so slider clipping never reaches
-   them. Both labels begin two pixels below the submit row; speech ends and
-   lifetime starts 3px from the divider (its 1px sits right of 50%), while
+   them. Both labels end two pixels above the frame's bottom edge; speech ends
+   and lifetime starts 3px from the divider (its 1px sits right of 50%), while
    "narrate" overhangs the frame's left edge, short of the draft. */
-.team-composer .team-slider { grid-row: 3; }
-.team-composer .team-slider span { position: absolute; inset-block-start: calc(var(--team-control-item-height) + 2px); }
+.team-composer .team-slider { grid-row: 2; }
+.team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
 .team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
 .team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
 .team-composer .team-send {
