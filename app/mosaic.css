@@ -641,14 +641,15 @@
   overflow: hidden;
 }
 
-/* The control column sizes itself from the stack's fixed inline size, so the
-   draft takes every remaining pixel at every viewport width. */
+/* Member lanes and the control frame share boundaries as one field. The control
+   column still sizes itself from the stack's fixed inline size, so the draft
+   takes every remaining pixel at every viewport width. */
 .team-composer {
   --team-composer-block-size: 160px;
   --team-composer-edge-gap: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 0;
   padding: 8px 8px var(--team-composer-edge-gap);
 }
 /* The composer overlays a spacer of its own height atop the Chat plane and moves
@@ -674,7 +675,7 @@
   grid-template-columns: repeat(var(--team-weight, 4), minmax(10rem, 1fr));
   grid-auto-flow: column;
   grid-auto-columns: minmax(10rem, 1fr);
-  gap: 5px;
+  gap: 0;
   min-width: 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -683,6 +684,7 @@
 }
 
 .team-surface .team-agent {
+  position: relative;
   display: flex;
   min-width: 0;
   height: var(--team-composer-block-size);
@@ -692,11 +694,28 @@
   align-self: stretch;
   overflow: hidden;
   border-color: var(--control-line-soft);
-  border-radius: var(--app-radius-inset);
+  border-radius: 0;
   background: var(--control);
   box-shadow: none;
 }
-.team-surface .team-agent:focus-within { border-color: var(--control-line-soft); }
+/* The final visual lane owns the field's left outside corners. The right edge
+   continues into the shared controls, so every member-to-member and
+   member-to-controls corner stays square. */
+.team-surface .team-agent:last-child {
+  border-radius: var(--app-radius-compact) 0 0 var(--app-radius-compact);
+}
+.team-surface .team-agent::after {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+.team-surface .team-agent:focus-within::after {
+  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--line));
+}
 .team-surface .team-agent--vacant { opacity: var(--inactive-lane-opacity); }
 
 .agent-composer-stack {
@@ -719,11 +738,13 @@
   min-width: 0;
   overflow: hidden;
   border: var(--app-control-edge);
-  border-radius: var(--app-radius-compact);
+  border-radius: 0;
   background: var(--control);
-  box-shadow: var(--app-selection-shadow);
+  box-shadow: none;
 }
-.composer-shard:focus-within,
+/* DOM member zero is the field's visual right edge. Every later lane drops its
+   right border, leaving the preceding lane's left border as the sole seam. */
+.team-agent:not(:first-child) .composer-shard { border-inline-end: 0; }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .team-composer:has(
     .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
@@ -889,8 +910,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin-block-start: var(--team-control-label-row);
   block-size: calc(var(--team-composer-block-size) - var(--team-control-label-row));
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
-  border: var(--app-control-edge); border-radius: var(--app-radius-compact);
-  background: var(--control); box-shadow: var(--app-selection-shadow);
+  border: var(--app-control-edge); border-inline-start: 0;
+  border-radius: 0 var(--app-radius-compact) var(--app-radius-compact) 0;
+  background: var(--control); box-shadow: none;
 }
 .team-slider {
   --control-state-accent: var(--accent);
@@ -899,7 +921,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
 .team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: 0 var(--team-control-item-height); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
-.team-composer .team-speech { border-start-start-radius: var(--team-control-inner-radius); }
+.team-composer .team-speech { border-start-start-radius: 0; }
 .team-composer .team-lifetime { border-start-end-radius: var(--team-control-inner-radius); }
 .team-slider input {
   writing-mode: vertical-lr;
@@ -931,7 +953,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--app-control-edge);
-  border-radius: 0 0 var(--team-control-inner-radius) var(--team-control-inner-radius);
+  border-radius: 0 0 var(--team-control-inner-radius) 0;
 }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-1); }
