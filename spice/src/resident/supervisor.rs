@@ -1127,6 +1127,7 @@ mod tests {
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(4)],

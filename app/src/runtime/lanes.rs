@@ -99,8 +99,11 @@ pub struct LaneMember {
     pub effort: Option<String>,
     /// Effort this seat pins for its next launch.
     pub seat_effort: Option<String>,
-    /// Whether the running occupant was launched in fast mode.
+    /// Whether the running occupant runs in fast mode.
     pub fast_mode: bool,
+    /// Fast mode this seat pins for its next launch, absent when the seat
+    /// follows the global setting.
+    pub seat_fast_mode: Option<bool>,
     pub occupant: Option<CanonicalUuid>,
     pub session: Option<String>,
     pub disposition: String,
@@ -248,6 +251,7 @@ impl From<&LaneAnswer> for LaneView {
                 effort: lane.effort.clone(),
                 seat_effort: lane.seat_effort.clone(),
                 fast_mode: lane.fast_mode,
+                seat_fast_mode: lane.seat_fast_mode,
                 occupant: lane.occupant,
                 session: lane.session.clone(),
                 disposition: lane.disposition.clone(),
@@ -335,6 +339,7 @@ mod tests {
             effort: None,
             seat_effort: None,
             fast_mode: false,
+            seat_fast_mode: None,
             occupant: None,
             session: None,
             disposition: "ready".to_owned(),

@@ -952,6 +952,7 @@ fn residency_head() -> ResidencyHead {
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116303")),
             lineage: Vec::new(),
             capabilities: Vec::new(),

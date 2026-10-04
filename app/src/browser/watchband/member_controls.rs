@@ -57,12 +57,12 @@ fn issue(
             requested,
             member: Some(request.clone()),
         },
-        MemberCommand::Retune { .. } | MemberCommand::RetuneEffort { .. } => {
-            ClientAction::RetuneLane {
-                topology_revision,
-                request: request.clone(),
-            }
-        }
+        MemberCommand::Retune { .. }
+        | MemberCommand::RetuneEffort { .. }
+        | MemberCommand::RetuneFast { .. } => ClientAction::RetuneLane {
+            topology_revision,
+            request: request.clone(),
+        },
     };
     if !admit_action(sender, action) {
         let mut data = surface.write();
@@ -86,6 +86,7 @@ struct Offered {
     renew: bool,
     model: bool,
     effort: bool,
+    fast: bool,
 }
 
 impl Offered {
@@ -95,6 +96,7 @@ impl Offered {
             renew: runtime.offers(CommandKind::LaneRenewal),
             model: runtime.offers(CommandKind::LaneRetune),
             effort: runtime.offers(CommandKind::LaneEffortRetune),
+            fast: runtime.offers(CommandKind::LaneFastRetune),
         }
     }
 }
@@ -266,18 +268,98 @@ fn effort_form(props: &EffortFormProps) -> Html {
             <label for={format!("member-effort-{lane}")}>{"Reasoning effort"}</label>
             <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
             <div class="app-control-rail">
+                // A select's `value` lands before its options exist on the
+                // first render, so each option also states its selectedness.
                 <select
                     id={format!("member-effort-{lane}")}
                     value={(*draft).clone()}
                     disabled={props.busy}
                     {onchange}
                 >
-                    <option value="">{format!("default ({})", props.default_effort)}</option>
+                    <option value="" selected={draft.is_empty()}>{format!("default ({})", props.default_effort)}</option>
                     {for props.choices.iter().map(|effort| html! {
-                        <option value={effort.clone()}>{effort}</option>
+                        <option value={effort.clone()} selected={*draft == *effort}>{effort}</option>
                     })}
                 </select>
                 <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set effort"}</button>
+            </div>
+        </form>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct FastFormProps {
+    lane: CanonicalUuid,
+    /// Whether the running occupant runs in fast mode; absent without one.
+    current: Option<bool>,
+    /// The seat's authoritative next-launch fast mode.
+    fast_mode: Option<bool>,
+    /// The global setting a seat without its own choice follows; absent
+    /// until the settings read arrives.
+    global: Option<bool>,
+    busy: bool,
+    command: Callback<(CanonicalUuid, MemberCommand)>,
+}
+
+const fn on_off(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
+/// The per-seat fast-mode selector; its empty choice follows the global
+/// setting from the spice menu.
+#[function_component(FastForm)]
+fn fast_form(props: &FastFormProps) -> Html {
+    let spelling = |fast_mode: Option<bool>| fast_mode.map_or("", on_off).to_owned();
+    let draft = use_state(|| spelling(props.fast_mode));
+    {
+        let draft = draft.clone();
+        use_effect_with(props.fast_mode, move |fast_mode| {
+            draft.set(spelling(*fast_mode));
+        });
+    }
+    let onchange = {
+        let draft = draft.clone();
+        Callback::from(move |event: Event| {
+            let select: HtmlSelectElement = event.target_unchecked_into();
+            draft.set(select.value());
+        })
+    };
+    let lane = props.lane;
+    let submit = {
+        let command = props.command.clone();
+        let draft = draft.clone();
+        Callback::from(move |event: SubmitEvent| {
+            event.prevent_default();
+            event.stop_propagation();
+            let fast_mode = match draft.as_str() {
+                "on" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            };
+            command.emit((lane, MemberCommand::RetuneFast { fast_mode }));
+        })
+    };
+    let default = format!("default ({})", props.global.map_or("global", on_off));
+    let running = props.current.map_or("not running", on_off);
+    let next = props
+        .fast_mode
+        .map_or_else(|| default.clone(), |fast_mode| on_off(fast_mode).to_owned());
+    html! {
+        <form class="member-effort" data-member-control="fast" onsubmit={submit}>
+            <label for={format!("member-fast-{lane}")}>{"Fast mode"}</label>
+            <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
+            <div class="app-control-rail">
+                <select
+                    id={format!("member-fast-{lane}")}
+                    value={(*draft).clone()}
+                    disabled={props.busy}
+                    {onchange}
+                >
+                    {for [("", default.as_str()), ("on", "on"), ("off", "off")].into_iter().map(|(value, label)| html! {
+                        <option {value} selected={*draft == value}>{label}</option>
+                    })}
+                </select>
+                <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set fast mode"}</button>
             </div>
         </form>
     }
@@ -333,6 +415,17 @@ fn render_retune(
                     effort={member.seat_effort.clone()}
                     {default_effort}
                     {choices}
+                    {busy}
+                    command={command.clone()}
+                />
+            }
+            if offered.fast {
+                <FastForm
+                    key={format!("fast-{}", member.lane)}
+                    lane={member.lane}
+                    current={member.occupant.map(|_| member.fast_mode)}
+                    fast_mode={member.seat_fast_mode}
+                    global={runtime.settings().map(|settings| settings.fast_mode)}
                     {busy}
                     command={command.clone()}
                 />

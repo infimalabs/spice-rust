@@ -321,6 +321,7 @@ pub(super) fn occupied_seed_with_session(
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(9)],

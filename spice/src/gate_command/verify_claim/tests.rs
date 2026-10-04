@@ -95,6 +95,7 @@ impl Fixture {
                 vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
+                fast_mode: None,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: Vec::new(),

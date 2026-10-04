@@ -48,6 +48,7 @@ pub(super) fn propose_seat(
         vendor: request.vendor.clone(),
         model: request.model.clone(),
         effort: request.effort.clone(),
+        fast_mode: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],

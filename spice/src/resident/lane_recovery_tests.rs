@@ -81,6 +81,7 @@ fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: Some(fixture.ancestor),
         lineage: vec![fixture.ancestor],
         capabilities: vec![uuid(6)],

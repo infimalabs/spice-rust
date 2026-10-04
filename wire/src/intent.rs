@@ -516,6 +516,27 @@ pub struct LaneEffortRetune {
     pub effort: Option<String>,
 }
 
+/// State whether one seated lane launches in fast mode.
+///
+/// A named disposition pins the seat. Absence returns future launches to the
+/// global fast-mode setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneFastRetune {
+    /// Topology revision observed before this retune was requested.
+    pub topology_revision: u64,
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Fast-mode disposition this seat names, absent to follow the global
+    /// setting.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_mode: Option<bool>,
+}
+
 /// Select one lane's continuity account, or the operator-wide account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1054,9 +1075,19 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub seat_effort: Option<String>,
-    /// Whether the declared occupant was launched in the vendor's fast mode.
+    /// Whether the declared occupant runs in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,
+    /// Fast-mode disposition this seat pins for the launches it governs,
+    /// absent when the seat follows the global setting.
+    ///
+    /// `fast_mode` reports the running process; this reports the next launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub seat_fast_mode: Option<bool>,
     /// Observable GIT-04 outcome for the declared occupant launch.
     #[serde(
         default,

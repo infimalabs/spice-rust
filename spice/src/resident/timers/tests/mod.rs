@@ -1238,6 +1238,7 @@ fn lane_residency(authority: &Authority) -> LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: Some(authority.occupant),
         lineage: vec![authority.occupant],
         capabilities: vec![authority.occupant],

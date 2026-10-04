@@ -365,10 +365,10 @@ mod lane;
 
 pub use lane::{
     LaneArranged, LaneCancelled, LaneCompacted, LaneDegraded, LaneDrained, LaneEffortRetuned,
-    LaneExited, LaneHeld, LaneImported, LaneKilled, LaneLaunchIdentity, LaneRemoved,
-    LaneRenewalChanged, LaneRenewed, LaneResumed, LaneRetuned, LaneRuntimeRetuned, LaneSeated,
-    LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted, LaneTimedOut, RtkHealth,
-    RtkHealthState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt,
+    LaneExited, LaneFastRetuned, LaneHeld, LaneImported, LaneKilled, LaneLaunchIdentity,
+    LaneRemoved, LaneRenewalChanged, LaneRenewed, LaneResumed, LaneRetuned, LaneRuntimeRetuned,
+    LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted, LaneTimedOut,
+    RtkHealth, RtkHealthState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt,
     TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged, TeamConfigured, TeamStanding,
 };
 

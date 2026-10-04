@@ -598,6 +598,20 @@ pub fn set_model_request(id: &str, provider: &str, model: &str) -> Vec<u8> {
     }))
 }
 
+/// Turn the live session's fast mode (its priority service tier) on or off.
+///
+/// The caller owns request correlation and must not project the change until
+/// omp answers this exact `id` with a successful `set_fast_mode` response; omp
+/// refuses to enable it when the current model offers no priority tier.
+#[must_use]
+pub fn set_fast_mode_request(id: &str, enabled: bool) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "id": id,
+        "type": "set_fast_mode",
+        "enabled": enabled,
+    }))
+}
+
 /// Replace or cancel a background notice through the extension's SDK bridge.
 /// RPC has no aside command; the extension coalesces by purpose and calls
 /// `sendUserMessage(..., { deliverAs: "aside" })` at the next step boundary.

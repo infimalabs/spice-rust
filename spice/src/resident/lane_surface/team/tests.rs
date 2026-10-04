@@ -16,6 +16,7 @@ fn lane(lane: u8, team: u8) -> wire::LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),

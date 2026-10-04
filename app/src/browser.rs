@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneEffortRetune, LaneRead,
-    LaneRenewal, LaneRetune, LaneState, SteerHistory, SteerInbox, SteerSend, TaskAnswer,
+    BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneEffortRetune, LaneFastRetune,
+    LaneRead, LaneRenewal, LaneRetune, LaneState, SteerHistory, SteerInbox, SteerSend, TaskAnswer,
     TeamArrangement, TeamConfigure, TeamLife, VendorCatalog,
 };
 use wire::{

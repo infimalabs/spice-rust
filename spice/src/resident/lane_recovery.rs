@@ -223,7 +223,7 @@ fn launch_import(
             lane: context.row.lane,
             occupant,
             resume: context.resume.clone(),
-            fast_mode: super::settings_surface::fast_mode(bus)?,
+            fast_mode: super::settings_surface::lane_fast_mode(bus, &context.row)?,
             model: context.row.model.as_deref(),
             effort: context.row.effort.as_deref(),
         },

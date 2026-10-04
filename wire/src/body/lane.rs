@@ -88,6 +88,28 @@ pub struct LaneEffortRetuned {
     )]
     pub effort: Option<String>,
 }
+/// A seated lane's fast-mode disposition changed for its next launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneFastRetuned {
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Fast-mode disposition the seat carried before this transaction, absent
+    /// when it followed the global setting.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<bool>,
+    /// Fast-mode disposition the seat carries after this transaction, absent
+    /// when the seat now follows the global setting.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_mode: Option<bool>,
+}
 
 /// A running occupant confirmed a live provider retune.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +124,9 @@ pub struct LaneRuntimeRetuned {
     /// Effective effort after the response, present for an effort retune.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// Effective fast mode after the response, present for a fast-mode retune.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<bool>,
 }
 
 /// One app team adopted a task-allocation lifetime.

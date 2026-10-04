@@ -497,6 +497,7 @@ fn seeded(
             vendor,
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: occupied.then_some(occupant),
             lineage: vec![occupant],
             capabilities: vec![capability],

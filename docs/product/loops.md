@@ -409,16 +409,20 @@ flowchart LR
    lane's predecessor is neither started nor notified. While the mark stands,
    the agent's action menu carries it, so the request stays visible after the
    drawer that placed it closes.
-- Model and effort are seat authority. `lane model ID [MODEL]` and
-  `lane effort ID [EFFORT]` topology-guard and journal the value every future
-  launch reads; omission restores vendor configuration. Lane rows report the
-  running `model`/`effort` separately from `seat_model`/`seat_effort`. A
-  command-driven OMP occupant is asked only after the seat commits, and its
-  running value changes only after the exact correlated `set_model` or
-  `set_thinking_level` response succeeds, journaled against the then-current
-  head while the same occupant still runs. Live model selection requires
-  explicit `provider/model`; bare models, clears, unsupported occupants,
-  refusals, and interrupted RPC retain the running value. An OMP launch states
+- Model, effort, and fast mode are seat authority. `lane model ID [MODEL]`,
+  `lane effort ID [EFFORT]`, and `lane fast ID [on|off]` topology-guard and
+  journal the value every future launch reads; omission restores vendor
+  configuration, or for fast mode the global setting. Lane rows report the
+  running `model`/`effort`/`fast_mode` separately from
+  `seat_model`/`seat_effort`/`seat_fast_mode`. A command-driven OMP occupant
+  is asked only after the seat commits, and its running value changes only
+  after the exact correlated `set_model`, `set_thinking_level`, or
+  `set_fast_mode` response succeeds, journaled against the then-current head
+  while the same occupant still runs. Live model selection requires explicit
+  `provider/model`; bare models, model and effort clears, unsupported
+  occupants, refusals, and interrupted RPC retain the running value. A
+  cleared fast-mode seat still asks for the global setting, and omp refuses
+  to enable fast mode on a model without a priority tier. An OMP launch states
   its seat effort through that same `set_thinking_level` command at open,
   before the first turn and over the level a resumed session restores; its
   model still rides `--model`, because omp's live `set_model` admits no bare

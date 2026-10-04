@@ -261,6 +261,14 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::LaneFastRetune,
+        r#"{
+  "topology_revision": 9,
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "fast_mode": true
+}"#,
+    ),
+    (
         CommandKind::LaneArrange,
         r#"{
   "topology_revision": 9,
@@ -973,6 +981,7 @@ fn residency_row(lane: CanonicalUuid, team: CanonicalUuid) -> LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),

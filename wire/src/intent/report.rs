@@ -30,6 +30,7 @@ pub const REPORT_FACT_KINDS: &[FactKind] = &[
     FactKind::LaneArranged,
     FactKind::LaneRetuned,
     FactKind::LaneEffortRetuned,
+    FactKind::LaneFastRetuned,
     FactKind::LaneRuntimeRetuned,
     FactKind::TeamConfigured,
     FactKind::TeamArranged,

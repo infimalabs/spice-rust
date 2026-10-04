@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use clap::ArgMatches;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneEffortRetune, LaneRecall, LaneRetune, LaneSeat,
-    LaneState,
+    CommandAnswer, LaneAction, LaneAnswer, LaneEffortRetune, LaneFastRetune, LaneRecall,
+    LaneRetune, LaneSeat, LaneState,
 };
 use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
@@ -54,6 +54,7 @@ pub(crate) fn run(
         ["lane", "wake"] => state(serve, matches, contract, LaneAction::Wake),
         ["lane", "model"] => model(serve, matches, contract),
         ["lane", "effort"] => effort(serve, matches, contract),
+        ["lane", "fast"] => fast(serve, matches, contract),
         ["lane", "remove"] => state(serve, matches, contract, LaneAction::Remove),
         ["lane", "import"] => import(&repository, serve, &current, matches, contract),
         ["recall"] => recall(serve, matches, contract),
@@ -338,6 +339,35 @@ fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
         serve,
         contract,
         SelectedCommand::LaneEffortRetune { body: &body },
+    )
+}
+
+/// State whether one seated lane's next launch runs in fast mode; omission
+/// returns the seat to the global setting.
+fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+    let Some(id) = matches.get_one::<String>("ID") else {
+        return protocol_fault(
+            "lane::id-missing",
+            "generated parser omitted required lane ID",
+        );
+    };
+    let lane = match id.parse::<CanonicalUuid>() {
+        Ok(lane) => lane,
+        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+    };
+    let topology_revision = match observe_topology(serve) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
+    let body = LaneFastRetune {
+        topology_revision,
+        lane,
+        fast_mode: matches.get_one::<String>("on|off").map(|mode| mode == "on"),
+    };
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneFastRetune { body: &body },
     )
 }
 
