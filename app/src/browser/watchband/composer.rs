@@ -472,6 +472,7 @@ fn render_agent_message_card(
         media_description,
         image_only,
         lone_tool_image,
+        single_image_cover,
         card_label,
         classifications,
     } = agent_message_presentation(
@@ -492,7 +493,7 @@ fn render_agent_message_card(
                 "mosaic-message-card",
                 is_boundary.then_some("mosaic-compaction-card"),
                 (!is_boundary && image_only).then_some("mosaic-message-card--image-only"),
-                lone_tool_image.then_some("mosaic-message-card--lone-image"),
+                single_image_cover.then_some("mosaic-message-card--image-cover"),
                 message.final_answer.then_some("final"),
                 correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
@@ -645,6 +646,8 @@ struct AgentMessagePresentation<'a> {
     image_only: bool,
     /// A tool card whose whole face is one image, which fills its committed card.
     lone_tool_image: bool,
+    /// An image-only card with exactly one non-diagram image.
+    single_image_cover: bool,
     card_label: String,
     classifications: ClassificationMetrics,
 }
@@ -756,7 +759,10 @@ fn agent_message_presentation<'a>(
         .collect::<Vec<_>>();
     let image_only = rendered_markdown.image_only
         || (!unlinked_media.is_empty() && shown_text.trim().is_empty());
-    let lone_tool_image = is_tool && image_only && unlinked_media.len() == 1;
+    let single_image_cover = image_only
+        && rendered_markdown.diagrams.is_empty()
+        && rendered_markdown.image_count + unlinked_media.len() == 1;
+    let lone_tool_image = is_tool && single_image_cover && unlinked_media.len() == 1;
     let signoff =
         is_prose.then(|| render_agent_message_signoff(message, &footer_label, &attribution));
     let corner = (!lone_tool_image).then(|| {
@@ -790,6 +796,7 @@ fn agent_message_presentation<'a>(
         lone_tool_image,
         card_label,
         classifications,
+        single_image_cover,
     }
 }
 

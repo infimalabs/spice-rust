@@ -247,20 +247,6 @@
 .mosaic-message-card--image-only .mermaid-slot {
   --message-image-size: var(--mosaic-image-large-size);
 }
-/* A lone tool image keeps the standard large square it is measured at. The
-   lattice may commit a card with room left over, so once committed the square
-   sits centred both ways in the room above its signoff, never changing the
-   card's committed size. */
-.lane-mosaic-plane:not([data-measurement-phase="base"])
-  .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
-  .mosaic-message-content {
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-.lane-mosaic-plane:not([data-measurement-phase="base"])
-  .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
-  .message-attachments {
-  min-height: 0; overflow: hidden; justify-content: center; align-items: center;
-}
 .mosaic-message-card:not(.mosaic-message-card--image-only)
   .message-flow > .message-body:has(> p.message-image-stack + p.message-image-stack) {
   display: flex;

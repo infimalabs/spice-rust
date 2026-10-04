@@ -645,6 +645,10 @@ fn noncanonical_and_block_code_handles_remain_ordinary_markdown() {
 #[test]
 fn every_image_only_markdown_shape_renders_one_card_wide_stack() {
     let image = |name: &str| format!("![{name}]({OPENABLE_PNG})");
+    let single = render_received(&image("one"));
+    assert!(single.image_only);
+    assert_eq!(single.image_count, 1);
+
     let shapes = [
         [image("one"), image("two"), image("three")].join(" "),
         [image("one"), image("two"), image("three")].join("\n"),
@@ -658,6 +662,7 @@ fn every_image_only_markdown_shape_renders_one_card_wide_stack() {
             rendered.image_only,
             "shape must receive the large tier: {markdown:?}"
         );
+        assert_eq!(rendered.image_count, 3, "{markdown:?}");
         assert_eq!(
             rendered
                 .html
@@ -715,6 +720,7 @@ fn linked_images_keep_one_image_action_without_navigation() {
     );
 
     assert!(image_only.image_only);
+    assert_eq!(image_only.image_count, 2);
     assert_eq!(
         image_only
             .html
@@ -740,6 +746,7 @@ fn linked_images_keep_one_image_action_without_navigation() {
         "See [![preview](https://images.example.test/mixed.png)](https://links.example.test/mixed) now.",
     );
     assert!(!mixed.image_only);
+    assert_eq!(mixed.image_count, 0);
     assert_eq!(mixed.html.matches("<button ").count(), 1);
     assert!(!mixed.html.contains("<a "));
     assert!(

@@ -213,6 +213,14 @@ the single seam, and no horizontal edge cuts into it. Measurement
 clones use the same zero-gap geometry, while compaction and lifecycle dividers
 remain semantic full-width rows.
 
+An image-only message with exactly one non-diagram image uses its whole
+committed card as an edge-to-edge cover viewport. Measurement clones reserve
+that cover from the card width, but the committed lattice remains the placement
+authority so no aspect-ratio correction opens a ledger gap. The producer and
+live age, plus actions when present, sit in compact frosted overlays above the
+image; multiple images, mixed prose, quotes, and diagrams keep their ordinary
+in-flow layouts.
+
 Quoted image pairs retain the standard 7px image-stack gap even when their
 leading quote stays flow-root around its control island: flattened stack
 wrappers apply that shared gap at the boundary before the later image.
