@@ -295,11 +295,16 @@ and BROADCAST remain classified at their source notice so its quote keeps the
 kind-specific accent rail, but that source badge is not repeated visibly inside
 the quote.
 Quotes at every depth carry no fill of their own; their text keeps the muted
-tone and smaller size. Every quote rail, operator-authored or agent-authored,
-takes the neutral ink tone of the operator's initials, including quotes that
-lead with images, whatever the answer's acknowledgement state. ACK/NAK is shown
-only by the answer's badge. Taste, broadcast, and review notice quotes keep
-their kind's accent rail, and an unavailable quote keeps its warning rail.
+tone and smaller size. A quote's rail shows its speaker the way a top-level card
+does: a quote attributed to an agent, or a peer lane's directive context, wears
+that lane's accent, the same slot as the lane's own cards. The neutral accent,
+the ink tone of the operator's initials, is the accent of operators and of the
+system itself, so operator, Spice, and taste, broadcast, and review notice
+quotes take the neutral rail and rely on their pills and attribution, as do
+unattributed quotes and nested quotes with no speaker of their own. This holds
+for quotes that lead with images and whatever the answer's acknowledgement
+state; ACK/NAK is shown only by the answer's badge. An unavailable quote keeps
+its warning rail.
 
 ## Always-chat team console
 

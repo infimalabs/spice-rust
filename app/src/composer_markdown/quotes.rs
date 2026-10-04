@@ -154,6 +154,36 @@ pub(super) fn signoff_html(
     format!("<span class=\"message-quote-signoff\">{age}{name}</span>")
 }
 
+/// The accent slot of the speaker a quote's attribution names: the slot that
+/// speaker's own top-level cards wear, carried on the quote's shell so its rail
+/// wears it too. Operators and Spice speak in the neutral accent and have no
+/// slot, as does a quote whose attribution is not shown.
+pub(super) fn speaker_accent(
+    author: &QuoteAuthor,
+    target: &str,
+    agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
+) -> Option<usize> {
+    author_accent(author, agents, sources.get(target)?)
+}
+
+fn author_accent(
+    author: &QuoteAuthor,
+    agents: &super::QuoteAgents,
+    source: &super::QuoteSource,
+) -> Option<usize> {
+    match author {
+        QuoteAuthor::Agent { lane, occupant } => agents
+            .get(&(*lane, Some(*occupant)))
+            .or(source.agent.as_ref())
+            .map(|agent| agent.accent),
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Lane(lane),
+        } => lane_member_agent(agents, *lane).map(|agent| agent.accent),
+        QuoteAuthor::Directive { .. } => None,
+    }
+}
+
 /// Empty portal target that board provenance fills at the quoted content's
 /// trailing edge after the card has rendered.
 pub(super) fn task_tail_html(target: &str) -> String {
@@ -214,9 +244,11 @@ fn render(
                     task_tail: &task_tail,
                 },
             );
+            let accent = speaker_accent(author, target, agents, sources)
+                .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
-                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{}</div></div>",
+                 data-quote-target=\"{}\"{accent}><div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
                 body.html,
             )
@@ -267,7 +299,7 @@ fn quote_author_name_html(
                     " data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
                      data-quote-author-state=\"{state}\""
                 ),
-                agent.map(|agent| agent.accent),
+                author_accent(author, agents, source),
             )
         }
         QuoteAuthor::Directive {
@@ -306,7 +338,7 @@ fn quote_author_name_html(
                     " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
                      data-quote-author-state=\"{state}\""
                 ),
-                member.map(|agent| agent.accent),
+                author_accent(author, agents, source),
             )
         }
     }

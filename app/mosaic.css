@@ -58,7 +58,7 @@
 .markdown-body blockquote {
   margin: var(--mosaic-quote-pad-block) 0;
   padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
-  border-left: var(--mosaic-quote-rail) solid var(--ink); border-radius: var(--mosaic-quote-radius);
+  border-left: var(--mosaic-quote-rail) solid var(--accent-neutral); border-radius: var(--mosaic-quote-radius);
   color: var(--muted);
   /* Drop the quote tier once; nested rails inherit this size without compounding it. */
   font-size: .8125rem;
@@ -68,10 +68,13 @@
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
 .markdown-body blockquote ul,
 .markdown-body blockquote ol { margin: 0 0 6px; padding-left: 18px; }
-/* Quotes carry no fill at any depth; only notice quotes change their rail. */
-.markdown-body blockquote:has(> p > .message-taste-pill) { border-left-color: var(--accent-2); }
-.markdown-body blockquote:has(> p > .message-broadcast-pill) { border-left-color: var(--accent-5); }
-.markdown-body blockquote:has(> p > .message-review-pill) { border-left-color: var(--accent-1); }
+/* Quotes carry no fill at any depth. A quote's rail wears its own speaker's
+   accent slot, as that speaker's top-level cards do; operator and system
+   quotes, notices included, keep the neutral accent and rely on their pills
+   and attribution. */
+.markdown-body :is(blockquote, .message-quote-card)[data-accent] {
+  border-left-color: var(--accent-slot);
+}
 .markdown-body .math-inline { display: inline; white-space: normal; }
 .markdown-body .math-inline > .math-render {
   display: inline-flex; max-width: 100%; overflow-x: auto; vertical-align: -.2em;
@@ -1105,7 +1108,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
   border: 0;
-  border-inline-start: 4px solid var(--accent-slot, var(--accent));
+  border-inline-start: 4px solid var(--accent-slot, var(--accent-neutral));
   border-radius: var(--mosaic-quote-radius);
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;

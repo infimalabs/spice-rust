@@ -528,7 +528,7 @@
   margin: var(--mosaic-quote-pad-block) 0;
   padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
   border: 0;
-  border-left: var(--mosaic-quote-rail) solid var(--ink);
+  border-left: var(--mosaic-quote-rail) solid var(--accent-neutral);
   border-radius: var(--mosaic-quote-radius);
   color: var(--muted);
   font-size: .8125rem;
@@ -636,7 +636,7 @@
 }
 :root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: inline-flex;
-  color: var(--ink);
+  color: var(--accent-neutral);
 }
 :root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"]::before {
   content: var(--operator-initials);

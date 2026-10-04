@@ -34,6 +34,9 @@
   --accent-3: #b3402a;
   --accent-4: #007c89;
   --accent-5: #8a4fbf;
+  /* The speaker accent of the operator and of the system itself: any card or
+     quote whose speaker holds no lane accent slot wears it. */
+  --accent-neutral: var(--ink);
   /* The one treatment for anything shown over the interface: the page
      beneath stays visible as frosted glass under a theme-weighted veil. */
   --overlay-veil: rgb(21 27 21 / 26%);
