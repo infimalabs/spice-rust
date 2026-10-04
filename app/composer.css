@@ -16,12 +16,21 @@
   line-height: 1;
 }
 .composer-shard-heading > button:hover,
-.composer-shard-heading > button:focus-visible,
-.agent-menu-button:hover,
-.agent-menu-button:focus-visible {
+.composer-shard-heading > button:focus-visible {
   border-color: var(--accent);
   background: var(--control);
   color: var(--ink);
+}
+.agent-menu-button:hover,
+.agent-menu-button:active,
+.agent-menu-button:focus-visible {
+  border-color: var(--accent-slot, var(--accent));
+  background: var(--control);
+  color: var(--accent-slot, var(--accent));
+}
+.agent-menu-button:focus-visible {
+  outline: 2px solid var(--accent-slot, var(--accent));
+  outline-offset: 1px;
 }
 /* Draft image chooser, sized as a thumbnail chip by mosaic.css. Touch screens
    only: a pointer user pastes or drops instead. The transparent input covers
@@ -84,8 +93,8 @@
   position: relative;
   z-index: 5;
   background: var(--panel);
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-slot, var(--accent));
+  color: var(--accent-slot, var(--accent));
 }
 /* The open menu replaces the composer below the shard heading rather than
    floating over the lane, and scrolls within the shard it took over. A wide

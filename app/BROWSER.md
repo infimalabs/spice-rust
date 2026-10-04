@@ -179,6 +179,10 @@ follow, beside Create new team and Leave all teams. Wide lanes lay those groups
 side by side; narrow lanes stack them and scroll within the lane. The button,
 Escape, or a click elsewhere in the team restores the composer.
 
+Each lane menu's neutral hamburger takes that member's accent for hover,
+press, keyboard focus, and open states, so neighboring lanes never share an
+unrelated highlight color.
+
 ## Composer image strip
 
 Draft images fill the composer heading's usable block height as edge-to-edge
