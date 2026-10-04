@@ -395,7 +395,9 @@ destination; otherwise they stay readable facts.
 The project pills begin with a label-less aggregate pill whose badge sums every
 open task; selecting it opens unscoped Work from any destination. One stem pill
 per stem with open work follows, rolling up every open task under that stem
-whether or not a team owns it, and opens `#/work/{public|hidden}/{stem}`. The
+whether or not a team owns it, and opens `#/work/{public|hidden}/{stem}`. Its
+stem label wears the same neutral muted tone as team-local stems while its
+badge keeps the lifecycle colour. The
 strip shows whenever any open work exists. The global board and Chat task
 references share one card identity, status, ownership, and selection contract;
 either opens the one shared detail layer, whose close returns focus to the

@@ -390,7 +390,7 @@ fn render_stem_pill(
             data-unavailable={pill.unavailable.to_string()}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
-            <span>{pill.stem.clone()}</span>
+            <span class="task-pill-stem">{pill.stem.clone()}</span>
             <span class="task-pill-count">{pill.count()}</span>
         </button>
     }
