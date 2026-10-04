@@ -4,7 +4,6 @@ use super::clock::{TaskTimePresentation, task_time};
 use super::view::WorkMapState;
 use super::*;
 use crate::runtime::LaneView;
-use crate::watchband;
 use crate::work::{self as model, WorkAvailability, WorkTask};
 use wire::ClaimDisposition;
 
@@ -89,7 +88,7 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
     let workflow = &row.workflow.body;
     let availability = task.availability();
     let label = availability_label(availability);
-    let claim_accent = claimant_accent(task, controls.lanes);
+    let claim_accent = task.working_claimant_accent(controls.lanes);
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
     let born = statement.born.clone();
@@ -238,13 +237,6 @@ fn render_map_toggle(
             onclick={toggle_pin}
         >{if is_pinned { "Mapped" } else { "+ Map" }}</button>
     }
-}
-
-fn claimant_accent(task: &WorkTask<'_>, lanes: Option<&LaneView>) -> Option<usize> {
-    let wire::Actor::Lane(lane) = task.working_claimant()? else {
-        return None;
-    };
-    watchband::lane_accent(&lanes?.lanes, *lane)
 }
 
 fn render_result(workflow: &wire::WorkflowHead) -> Html {

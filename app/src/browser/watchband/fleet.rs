@@ -392,6 +392,7 @@ fn render_team_task_pill(
     let statement = &task.row().statement.body;
     let stem = work.task_stem(task).clone();
     let availability = task.availability();
+    let owner_accent = task.working_claimant_accent(render.runtime.lanes());
     let project_label = format!("Open this team's {stem} work");
     let handle_label = format!(
         "Open {}: {}, {}",
@@ -431,6 +432,8 @@ fn render_team_task_pill(
                 (!matches!(availability, InFlight | Ready)).then_some("dormant"),
             )}
             data-availability={availability.key()}
+            data-accent={owner_accent.map(|accent| accent.to_string())}
+            data-task-owner-accent={owner_accent.map(|accent| accent.to_string())}
         >
             <button
                 class="task-pill-project"
