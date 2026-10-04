@@ -338,7 +338,7 @@ fn render_team_task_pill(
     let stem_label = stem.stem().to_owned();
     let availability = task.availability();
     let owner_accent = task.working_claimant_accent(render.runtime.lanes());
-    let stem_aria_label = format!("Open this team's {stem_label} work");
+    let stem_aria_label = format!("Open this team's {stem} work");
     let handle_label = format!(
         "Open {}: {}, {}",
         statement.handle,
