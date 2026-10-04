@@ -1114,11 +1114,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
 /* --message-card-surface is the card's own fill; everything painted opaque
-   inside the card takes it, so a tinted card has no off-tint band. Cards keep
-   the standard panel color over the darker page base and mark their lane with
-   a thick left rail. All four outer corners share the quote-rail curvature. */
+   inside the card takes it, so a tinted card has no off-tint band. Cards share
+   the page base behind them, so only the thick left lane rail, the rounded
+   corners and the gutters between cards set each one apart. All four outer
+   corners share the quote-rail curvature. */
 .team-surface .mosaic-message-card {
-  --message-card-surface: var(--panel);
+  --message-card-surface: var(--page);
   container-type: inline-size;
   gap: 0;
   margin: 0;
