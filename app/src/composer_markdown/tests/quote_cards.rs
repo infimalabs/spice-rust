@@ -142,6 +142,9 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
             .count(),
         2
     );
+    // Only the agent's quote wears its lane accent; the operator's nested quote stays neutral.
+    let shell = " data-accent=\"3\"><div class=\"message-quote-body\">";
+    assert_eq!(rendered.html.matches(shell).count(), 1);
     assert!(rendered.html.contains(&format!(
         "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"1000\" \
          data-quote-source=\"message-agent-outer-source\" data-quote-author=\"agent\" \
@@ -613,11 +616,14 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     };
     let html = render(&BTreeMap::from([agent(Some(directing))]));
 
-    let blocks = html.split("<blockquote>").skip(1).collect::<Vec<_>>();
+    let blocks = html.split("<blockquote").skip(1).collect::<Vec<_>>();
     assert_eq!(blocks.len(), 3, "{html}");
     let [operator, lane, aside] = blocks.as_slice() else {
         unreachable!()
     };
+    // Only the peer lane's context wears an accent; operator speech and the aside stay neutral.
+    assert!(lane.starts_with(" data-accent=\"1\">"), "{lane}");
+    assert_eq!(html.matches("<blockquote>").count(), 2, "{html}");
     let attributed = |block: &str, actor: &str| {
         block
             .matches(&format!("data-quote-actor=\"{actor}\""))

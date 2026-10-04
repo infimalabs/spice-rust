@@ -342,6 +342,7 @@ fn render(
         terminal::period(&mut events);
         events = lead_signoff_slots(events, &outer_quotes);
     }
+    accent_directive_contexts(&mut events, &outer_quotes);
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
     RenderedMarkdown {
@@ -352,9 +353,17 @@ fn render(
     }
 }
 
+/// One outermost block quote, in document order.
+struct OuterQuote {
+    /// Whether the quote is a directive context the resident quoted.
+    context: bool,
+    /// The accent slot of the speaker a directive context attributes.
+    accent: Option<usize>,
+}
+
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
 /// lead each directive context with its author's attribution. Also returns
-/// whether each outermost block quote, in order, is a directive context.
+/// each outermost block quote, in order.
 fn parse_events<'m>(
     markdown: &'m str,
     options: Options,
@@ -362,7 +371,7 @@ fn parse_events<'m>(
     directives: Vec<MessageDirective>,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-) -> (Vec<MarkdownEvent<'m>>, Vec<bool>) {
+) -> (Vec<MarkdownEvent<'m>>, Vec<OuterQuote>) {
     let mut remaining = classifications
         .into_iter()
         .map(|classification| (classification.start, classification))
@@ -388,7 +397,19 @@ fn parse_events<'m>(
                     open_context = contexts
                         .remove(&source.start)
                         .map(|context| (events.len(), context));
-                    outer_quotes.push(open_context.is_some());
+                    outer_quotes.push(OuterQuote {
+                        context: open_context.is_some(),
+                        accent: open_context.as_ref().and_then(|(_, context)| {
+                            quotes::speaker_accent(
+                                &wire::QuoteAuthor::Directive {
+                                    actor: context.actor.clone(),
+                                },
+                                &context.quote_target.to_string(),
+                                quote_agents,
+                                quote_sources,
+                            )
+                        }),
+                    });
                 }
                 quote_depth += 1;
             }
@@ -427,6 +448,33 @@ fn parse_events<'m>(
     (events, outer_quotes)
 }
 
+/// Open each directive context whose speaker has an accent slot with that
+/// slot, as a quote card carries it on its own shell, so the context's rail
+/// wears its speaker's accent.
+fn accent_directive_contexts(events: &mut [MarkdownEvent<'_>], outer_quotes: &[OuterQuote]) {
+    let mut outer_quotes = outer_quotes.iter();
+    let mut depth = 0usize;
+    for event in events {
+        match event {
+            MarkdownEvent::Start(Tag::BlockQuote(kind)) => {
+                let accent = if depth == 0 {
+                    outer_quotes.next().and_then(|quote| quote.accent)
+                } else {
+                    None
+                };
+                depth += 1;
+                if let (None, Some(accent)) = (kind, accent) {
+                    *event = MarkdownEvent::Html(
+                        format!("<blockquote data-accent=\"{accent}\">\n").into(),
+                    );
+                }
+            }
+            MarkdownEvent::End(TagEnd::BlockQuote(_)) => depth -= 1,
+            _ => {}
+        }
+    }
+}
+
 /// Where a prose card's own attribution mounts (`browser::mermaid`).
 const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-slot=\"\"></span>";
 
@@ -440,7 +488,7 @@ const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-sl
 /// block's layout. A card ending in a quote chain closes with the slot's line.
 fn lead_signoff_slots<'a>(
     events: Vec<MarkdownEvent<'a>>,
-    outer_quotes: &[bool],
+    outer_quotes: &[OuterQuote],
 ) -> Vec<MarkdownEvent<'a>> {
     let line = || {
         MarkdownEvent::Html(format!("<p class=\"message-signoff-line\">{SIGNOFF_SLOT}</p>").into())
@@ -454,7 +502,9 @@ fn lead_signoff_slots<'a>(
     while let Some(event) = events.next() {
         if depth == 0 && !stack {
             let opens_block = match &event {
-                MarkdownEvent::Start(Tag::BlockQuote(_)) if outer_quotes.next() == Some(&true) => {
+                MarkdownEvent::Start(Tag::BlockQuote(_))
+                    if outer_quotes.next().is_some_and(|quote| quote.context) =>
+                {
                     pending = true;
                     false
                 }
