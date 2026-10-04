@@ -597,6 +597,10 @@
 .markdown-body :is(.message-quote-signoff-line, .message-signoff-line) {
   margin: 0 0 .35em;
 }
+/* The leading age keeps a natural word space before the name it dates. */
+.markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
+  margin-right: .2em;
+}
 /* A sourceless quote's signoff waits empty for Work links. */
 .markdown-body .message-quote-signoff:empty,
 .markdown-body .message-quote-signoff-line:has(> .message-quote-signoff:empty) {
