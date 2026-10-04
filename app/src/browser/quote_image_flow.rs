@@ -38,7 +38,7 @@ struct Observation {
 
 impl Observation {
     fn new(host: &Element) -> Option<Self> {
-        let flows = flows(host);
+        let flows = collect_flows(host);
         if flows.is_empty() {
             return None;
         }
@@ -64,23 +64,57 @@ impl Drop for Observation {
 }
 
 /// Settle every image flow under `host` at its current width, innermost first
-/// because an outer flow measures prose holding inner ones. Mosaic measurement
-/// clones call this at each width they measure, so a card's measured height
-/// never depends on whether the live card's observer already ran, or at which
-/// width.
+/// because an outer flow measures prose holding inner ones.
 pub(super) fn settle_flows(host: &Element) {
-    for flow in flows(host).iter().rev() {
-        settle(flow);
+    let settled = collect_flows(host);
+    for flow in settled.iter().rev() {
+        settle_batch(std::iter::once(flow));
     }
 }
 
-fn flows(host: &Element) -> Vec<HtmlElement> {
+/// Find image flows once when a measurement clone is created. Its descendants
+/// are stable for the clone's lifetime even as the clone's span changes.
+pub(super) fn collect_flows(host: &Element) -> Vec<HtmlElement> {
     let Ok(nodes) = host.query_selector_all(&format!(".{FLOW}")) else {
         return Vec::new();
     };
     (0..nodes.length())
         .filter_map(|index| nodes.item(index)?.dyn_into::<HtmlElement>().ok())
         .collect()
+}
+/// Card keys whose rendered content contains an image flow. Discovering these
+/// once on the live host avoids a subtree query for every measurement clone.
+pub(super) fn flow_host_keys(host: &Element) -> std::collections::HashSet<String> {
+    let Ok(nodes) = host.query_selector_all(&format!(".{FLOW}")) else {
+        return std::collections::HashSet::new();
+    };
+    (0..nodes.length())
+        .filter_map(|index| {
+            nodes
+                .item(index)?
+                .dyn_into::<Element>()
+                .ok()?
+                .closest("[data-mosaic-card-key]")
+                .ok()??
+                .get_attribute("data-mosaic-card-key")
+        })
+        .collect()
+}
+
+/// Settle previously collected measurement-clone flows without forcing a
+/// separate document layout for every card. Each host is independent, so flows
+/// at the same reverse document-order tier can share each read/write pass.
+pub(super) fn settle_collected_flows<'a>(
+    flow_sets: impl Iterator<Item = &'a [HtmlElement]> + Clone,
+) {
+    let max_flows = flow_sets
+        .clone()
+        .map(<[HtmlElement]>::len)
+        .max()
+        .unwrap_or(0);
+    for index in (0..max_flows).rev() {
+        settle_batch(flow_sets.clone().filter_map(|flows| flows.get(index)));
+    }
 }
 
 fn has_class(element: &Element, class: &str) -> bool {
@@ -98,58 +132,160 @@ fn child(flow: &HtmlElement, class: &str) -> Option<HtmlElement> {
         .ok()
 }
 
-fn settle(flow: &HtmlElement) -> Option<()> {
-    let anchor = child(flow, "message-image-flow-anchor")?;
-    let stack = child(flow, "message-image-stack")?;
-    let prose = flow.last_element_child()?;
-    let lift = |height: f64| {
-        let _ = anchor
+struct FlowContext {
+    flow: HtmlElement,
+    anchor: HtmlElement,
+    stack: HtmlElement,
+    prose: Element,
+}
+
+struct PreparedFlow {
+    context: FlowContext,
+    width: f64,
+    image_width: f64,
+    image_height: f64,
+    gap: f64,
+    floor: f64,
+    narrow: bool,
+    stacked_height: Option<f64>,
+    current: f64,
+    best: f64,
+    closed: f64,
+    settled: bool,
+}
+
+fn prepared_flow(flow: &HtmlElement) -> Option<PreparedFlow> {
+    Some(PreparedFlow {
+        context: FlowContext {
+            flow: flow.clone(),
+            anchor: child(flow, "message-image-flow-anchor")?,
+            stack: child(flow, "message-image-stack")?,
+            prose: flow.last_element_child()?,
+        },
+        width: 0.0,
+        image_width: 0.0,
+        image_height: 0.0,
+        gap: 0.0,
+        floor: 0.0,
+        narrow: false,
+        stacked_height: None,
+        current: 0.0,
+        best: 0.0,
+        closed: 0.0,
+        settled: false,
+    })
+}
+
+fn lift(context: &FlowContext, height: f64) {
+    let _ = context
+        .anchor
+        .style()
+        .set_property("height", &format!("{height}px"));
+}
+
+fn end(context: &FlowContext) -> f64 {
+    context.prose.get_bounding_client_rect().bottom()
+        - context.flow.get_bounding_client_rect().top()
+}
+
+fn image_gap(stack: &HtmlElement) -> Option<f64> {
+    Some(
+        web_sys::window()?
+            .get_computed_style(stack)
+            .ok()??
+            .get_property_value("margin-right")
+            .ok()?
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .unwrap_or(0.0),
+    )
+}
+
+fn settle_batch<'a>(flows: impl IntoIterator<Item = &'a HtmlElement>) {
+    let mut prepared = flows
+        .into_iter()
+        .filter_map(prepared_flow)
+        .collect::<Vec<_>>();
+    for flow in &prepared {
+        lift(&flow.context, 0.0);
+        let _ = flow.context.flow.remove_attribute("data-image-flow");
+    }
+    prepared.retain_mut(|flow| {
+        let width = f64::from(flow.context.flow.client_width());
+        if width == 0.0 {
+            return false;
+        }
+        let images = flow.context.stack.get_bounding_client_rect();
+        let Some(gap) = image_gap(&flow.context.stack) else {
+            return false;
+        };
+        flow.width = width;
+        flow.image_width = images.width();
+        flow.image_height = images.height();
+        flow.gap = gap;
+        true
+    });
+
+    for flow in &prepared {
+        let _ = flow
+            .context
+            .anchor
             .style()
-            .set_property("height", &format!("{height}px"));
-    };
-    lift(0.0);
-    let _ = flow.remove_attribute("data-image-flow");
-    let width = f64::from(flow.client_width());
-    if width == 0.0 {
-        return None;
+            .set_property("width", PROSE_FLOOR);
     }
-    let end = |element: &Element| {
-        element.get_bounding_client_rect().bottom() - flow.get_bounding_client_rect().top()
-    };
-    let images = stack.get_bounding_client_rect();
-    let gap = web_sys::window()?
-        .get_computed_style(&stack)
-        .ok()??
-        .get_property_value("margin-right")
-        .ok()?
-        .trim_end_matches("px")
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let _ = anchor.style().set_property("width", PROSE_FLOOR);
-    let floor = anchor.get_bounding_client_rect().width();
-    let _ = anchor.style().remove_property("width");
-    if width - images.width() - gap < floor {
-        // Too narrow to share lines: the images follow the prose, measured
-        // with the anchor holding them out of its way.
-        let _ = flow.set_attribute("data-image-flow", "stacked");
-        lift(f64::from(u16::MAX));
-        lift(end(&prose).max(0.0).ceil());
-        return Some(());
+    for flow in &mut prepared {
+        flow.floor = flow.context.anchor.get_bounding_client_rect().width();
     }
-    let height = images.height();
-    let (mut current, mut best) = (0.0_f64, 0.0_f64);
+    for flow in &prepared {
+        let _ = flow.context.anchor.style().remove_property("width");
+    }
+
+    for flow in &mut prepared {
+        flow.narrow = flow.width - flow.image_width - flow.gap < flow.floor;
+        if flow.narrow {
+            let _ = flow
+                .context
+                .flow
+                .set_attribute("data-image-flow", "stacked");
+            lift(&flow.context, f64::from(u16::MAX));
+        }
+    }
+    for flow in &mut prepared {
+        if flow.narrow {
+            flow.stacked_height = Some(end(&flow.context).max(0.0).ceil());
+        }
+    }
+    for flow in &prepared {
+        if let Some(height) = flow.stacked_height {
+            lift(&flow.context, height);
+        }
+    }
+
     for _ in 0..SETTLE_PASSES {
-        let closed = end(&prose);
-        if current + height <= closed + 0.5 {
-            best = best.max(current);
+        for flow in &mut prepared {
+            if !flow.narrow && !flow.settled {
+                flow.closed = end(&flow.context);
+            }
         }
-        let next = (closed - height).max(0.0).floor();
-        if (next - current).abs() < 0.5 {
-            break;
+        for flow in &mut prepared {
+            if flow.narrow || flow.settled {
+                continue;
+            }
+            if flow.current + flow.image_height <= flow.closed + 0.5 {
+                flow.best = flow.best.max(flow.current);
+            }
+            let next = (flow.closed - flow.image_height).max(0.0).floor();
+            if (next - flow.current).abs() < 0.5 {
+                flow.settled = true;
+            } else {
+                flow.current = next;
+                lift(&flow.context, flow.current);
+            }
         }
-        current = next;
-        lift(current);
     }
-    lift(best);
-    Some(())
+    for flow in &prepared {
+        if !flow.narrow {
+            lift(&flow.context, flow.best);
+        }
+    }
 }
