@@ -28,14 +28,14 @@ fn card(index: usize, track: usize, span: usize, base: i32, rows: i32) -> Card {
 #[test]
 fn geometry_uses_the_minimum_lane_inequality_and_shared_edges() {
     let four_lanes = Geometry::new(16.0, 1440.0);
-    assert_eq!(four_lanes.gap, 0);
+    assert_eq!(four_lanes.gap, 9);
     assert_eq!(four_lanes.base_span, 3);
     assert_eq!(four_lanes.lane_count, 4);
     assert_eq!(four_lanes.module_lines, 3);
     assert_eq!(four_lanes.module, 60);
     assert_eq!(four_lanes.edges[0], 0);
-    assert_eq!(four_lanes.edges[TRACK_COUNT], 1440);
-    assert_eq!(four_lanes.card_width(0, TRACK_COUNT), 1440);
+    assert_eq!(four_lanes.edges[TRACK_COUNT], 1431);
+    assert_eq!(four_lanes.card_width(0, TRACK_COUNT), 1422);
 
     assert_eq!(Geometry::new(16.0, 1000.0).base_span, 4);
     assert_eq!(Geometry::new(16.0, 700.0).base_span, 6);
@@ -61,7 +61,7 @@ fn short_cards_keep_three_vertical_modules_without_rounding_down_long_cards() {
 
     assert_eq!(MIN_CARD_ROWS, 3);
     assert_eq!(rows_for(1.0, geometry.gap, geometry.module), 3);
-    assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 4);
+    assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 5);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn compact_boundaries_reserve_measured_height_without_the_card_minimum() {
     let narrow = Geometry::new(16.0, 300.0);
     let wide = Geometry::new(16.0, 1440.0);
 
-    assert_eq!(boundary_rows_for(14.0, narrow.gap, narrow.module), 1);
+    assert_eq!(boundary_rows_for(14.0, narrow.gap, narrow.module), 2);
     assert!(boundary_rows_for(14.0, wide.gap, wide.module) < MIN_CARD_ROWS);
     assert_eq!(rows_for(14.0, wide.gap, wide.module), MIN_CARD_ROWS);
 }
@@ -166,8 +166,8 @@ fn wide_measurement_occurs_only_for_a_tall_card_and_at_most_once() {
     assert_eq!(
         measured,
         vec![
-            Candidate { span: 3, rows: 4 },
-            Candidate { span: 6, rows: 3 }
+            Candidate { span: 3, rows: 5 },
+            Candidate { span: 6, rows: 4 }
         ]
     );
 

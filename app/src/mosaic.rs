@@ -22,7 +22,7 @@ pub const TALL_THRESHOLD_PX: f64 = 230.0;
 pub const MIN_CARD_ROWS: i32 = 3;
 
 const LEGAL_BASE_SPANS: [usize; 5] = [2, 3, 4, 6, 12];
-const GAP_PX: i32 = 0;
+const GAP_PX: i32 = 9;
 const MIN_LANE_REM: f64 = 17.0;
 const MODULE_LINE_HEIGHT_REM: f64 = 1.25;
 const WIDE_FACTOR: usize = 2;
@@ -42,7 +42,7 @@ pub fn content_box_width(client_width_px: f64, padding_left_px: f64, padding_rig
 /// Geometry resolved from the live root type size and host width.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
-    /// Integer gap shared by tracks and rows. The ledger keeps this at zero.
+    /// Integer seam shared by tracks and rows, matching the card content inset.
     pub gap: i32,
     /// Minimum usable lane width.
     pub min_lane: f64,
@@ -66,8 +66,10 @@ impl Geometry {
     #[must_use]
     pub fn new(root_font_size_px: f64, container_width_px: f64) -> Self {
         let rem = positive_or(root_font_size_px, 16.0);
-        let width = positive_or(container_width_px, 0.0);
         let gap = GAP_PX;
+        // The same seam also pads the lattice perimeter. Carve both edges from
+        // the admitted width before resolving tracks; never grow the host.
+        let width = (positive_or(container_width_px, 0.0) - 2.0 * f64::from(gap)).max(0.0);
         let min_lane = MIN_LANE_REM * rem;
         let column_width = (width - (TRACK_COUNT - 1) as f64 * f64::from(gap)) / TRACK_COUNT as f64;
         let base_span = base_span(column_width, f64::from(gap), min_lane);
