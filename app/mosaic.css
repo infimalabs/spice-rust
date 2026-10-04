@@ -1323,13 +1323,22 @@ a.relative-age {
   --message-inline-pill-accent: var(--accent);
   justify-content: flex-start;
 }
-/* Beside the speaker, outside any quote, the badge keeps the look it had
-   quoted, the same as FINAL's: a soft tint behind accent text at the signoff's
-   pill size. */
+/* Beside the speaker, outside any quote, classification badges use FINAL's
+   soft tint. ACK and NAK are siblings of the signoff, so their font reduction
+   includes the signoff's scale; role badges live inside it and inherit that
+   first reduction directly. */
 .team-surface .message-ack-pill:not(.markdown-body blockquote *) {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
   font-size: calc(.8125em * .8125);
+}
+.team-surface .message-signoff > :is(
+  .message-taste-pill,
+  .message-review-pill,
+  .message-broadcast-pill
+) {
+  background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
+  color: var(--message-inline-pill-accent);
 }
 .team-surface .message-ack-label {
   display: block;
@@ -1373,6 +1382,16 @@ a.relative-age {
 .team-surface .markdown-body blockquote .message-review-pill {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
+}
+/* Prose-card role badges move to the producing speaker. Keep the authenticated
+   source node in place so :has() above still owns the notice quote's rail. */
+.team-surface
+  .mosaic-message-card[data-agent-activity="prose"]
+  .markdown-body
+  blockquote
+  > p
+  > :is(.message-taste-pill, .message-review-pill, .message-broadcast-pill) {
+  display: none;
 }
 /* Card footer actions share one compact control treatment. */
 .team-surface .mosaic-message-card footer .card-action {
