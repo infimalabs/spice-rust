@@ -1142,12 +1142,24 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     var(--message-card-surface) 96%,
     var(--accent-slot, var(--accent))
   );
+}
+.team-surface
+  .mosaic-message-card[data-layout-phase="committed"]:not(
+    .mosaic-compaction-card,
+    .mosaic-message-card--image-cover
+  ):hover {
   outline: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
   outline-offset: -1px;
 }
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:focus-visible:not([inert]) {
   z-index: 1;
+}
+.team-surface
+  .mosaic-message-card[data-layout-phase="committed"]:focus-visible:not(
+    [inert],
+    .mosaic-message-card--image-cover
+  ) {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
