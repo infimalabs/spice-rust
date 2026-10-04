@@ -1120,7 +1120,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
   border: 0;
-  border-block-start: var(--app-edge-soft);
   border-inline-end: 3px solid var(--accent-slot, var(--accent));
   border-radius: 0;
   background: var(--message-card-surface);
