@@ -598,7 +598,7 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: var(--panel);
+  background: var(--page);
 }
 .team-pane > .empty { flex: 1 1 auto; }
 
@@ -1084,11 +1084,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* --message-card-surface is the card's own fill; everything painted opaque
    inside the card takes it, so a tinted card has no off-tint band. Every card
-   carries its lane accent as that tint and draws no accent edge. */
+   tints the dark page base the header sits on with its lane accent and draws
+   no accent edge. */
 .team-surface .mosaic-message-card {
   --message-card-surface: color-mix(
     in srgb,
-    var(--panel) 96%,
+    var(--page) 88%,
     var(--accent-slot, var(--accent))
   );
   container-type: inline-size;
