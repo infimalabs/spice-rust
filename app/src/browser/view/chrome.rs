@@ -318,18 +318,21 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
-/// The label-less total leading the global strip, opening all open Work.
+/// The label-less total leading the global strip, opening all open Work. Like
+/// the team total, its badge is one open-task count.
 fn render_aggregate_pill(
     counts: WorkCounts,
     current: Option<&WorkScope>,
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
     let selected = current == Some(&WorkScope::AllOpen);
+    let open = counts.open();
     let ready = counts.ready();
     let active = counts.in_flight();
     let unavailable = counts.unavailable();
     let title = format!(
-        "All open work: {ready} ready, {active} active or in flight, {unavailable} blocked or deferred"
+        "All open work: {open} {}; {ready} ready, {active} active or in flight, {unavailable} blocked or deferred",
+        if open == 1 { "task" } else { "tasks" }
     );
     let navigate = navigate.clone();
     html! {
@@ -347,12 +350,9 @@ fn render_aggregate_pill(
             aria-pressed={selected.to_string()}
             aria-current={selected.then_some("page")}
             data-work-scope="all"
-            data-ready={ready.to_string()}
-            data-active={active.to_string()}
-            data-unavailable={unavailable.to_string()}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
         >
-            <span class="task-pill-count">{format!("{ready}·{active}·{unavailable}")}</span>
+            <span class="task-pill-count">{open.to_string()}</span>
         </button>
     }
 }
