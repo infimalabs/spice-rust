@@ -221,20 +221,22 @@ and image rows clear them from inside the same colored surface. Cards without a
 leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
-Committed message cards sit in one gapless lattice: it has no row, column, or
-decorative edge gutter, and each card's cell is a whole number of rows. A prose
-card paints only its content height, centered vertically in that cell, so the
-cell's slack falls evenly above and below it and the visible space between
+Committed message cards sit in one lattice whose 9px perimeter and row and
+column seams equal the card's 9px content inset. The seam is one shared gap
+between neighbors, never two adjoining margins. The lattice carves its
+perimeter and every seam from the admitted rectangle; it never grows to make
+room. Every cell remains a whole number of rows. A
+prose card paints only its content height, centered vertically in that cell, so
+the cell's slack falls evenly above and below it and the visible space between
 cards follows their content while every cell still snaps to the grid. A card
-whose content fills its cell meets its neighbors directly; image covers and
-boundary rows always fill their cells. Each card keeps the standard panel color
+whose content fills its cell leaves the same seam around its neighbors; image
+covers still fill the card rectangle. Each card keeps the standard panel color
 over the slightly darker page base the header sits on, and marks its lane with
 a 4px accent rail on its inline-start edge. All four outer corners share the
 12px curvature of nested quote rails, so the rail and the opposite edge taper
 symmetrically. A FINAL answer keeps only its pill, with no tint or edge of its
-own. Hover tints the card 4% toward its lane accent and
-adds a thin accent outline. Measurement clones use the same zero-gap geometry
-and measure natural content height. Compaction and
+own. Hover tints the card 4% toward its lane accent and adds a thin accent
+outline. Measurement clones use the same guttered geometry. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
 drawn as accent rules.
 

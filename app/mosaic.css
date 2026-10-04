@@ -1004,8 +1004,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
-  --mosaic-edge-gutter: 0px;
-  --mosaic-gap: 0px;
+  --mosaic-edge-gutter: var(--mosaic-gap);
+  --mosaic-gap: 9px;
   --mosaic-module: 3.75rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are

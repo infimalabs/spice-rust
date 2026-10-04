@@ -491,6 +491,13 @@ short-height consoles keep the same usable header, composer, and stream
 boundaries; an empty fleet reserves the ticker's middle slot without inventing
 status.
 
+The stream carves its card lattice's 9px perimeter and shared row and column
+seams from the admitted console rectangle. That seam equals each card's content
+inset and appears once between neighbors, never once per card edge. Text cards
+and edge-to-edge image covers both shrink inside their existing cells; the
+lattice does not grow, reorder, overlap, or open a page-level overflow to make
+room.
+
 Seat and import share one panel, even for an empty fleet. Moving a member to a
 new team preserves its siblings and allocation policy; leaving all teams moves
 only that member to its lane identity, keeping its seat.
