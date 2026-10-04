@@ -285,19 +285,30 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     let acknowledged_prose = html
         .find("direction dTVQdQfLx")
         .expect("acknowledged prose renders");
+    let acknowledged_tail = html
+        .find("data-quote-tasks=\"dTVQdQfLx\"")
+        .expect("acknowledged task tail renders");
+    let paragraph_end = html[acknowledged_prose..]
+        .find("</p>")
+        .map(|offset| acknowledged_prose + offset)
+        .expect("acknowledged paragraph closes");
     assert!(
-        acknowledgement < acknowledged_prose,
-        "the acknowledgement precedes its directive prose"
+        acknowledgement < acknowledged_prose
+            && acknowledged_prose < acknowledged_tail
+            && acknowledged_tail < paragraph_end,
+        "the disposition leads and the task target trails its directive prose: {html}"
     );
     for key in keys {
         assert!(
             html.contains(&format!(
-                "<span class=\"message-quote-signoff\" data-quote-tasks=\"{key}\"></span>"
+                "<span class=\"message-quote-task-tail\" data-quote-tasks=\"{key}\"></span>"
             )),
-            "a sourceless Operator quote's tail holds only its task-badge slot: {html}"
+            "a sourceless Operator quote holds its task target after its words: {html}"
         );
     }
-    assert!(html.contains("<span class=\"message-quote-signoff\" data-quote-tasks=\"dTVQdQfMC\">"));
+    assert!(html.contains(
+        "<span class=\"message-quote-task-tail\" data-quote-tasks=\"dTVQdQfMC\"></span>"
+    ));
     assert_eq!(html.matches("message-quote-age-slot").count(), 1);
     assert!(html.contains(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
@@ -765,17 +776,22 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
     assert_eq!(quote.matches("src=\"b.png\"").count(), 1, "{html}");
     assert_eq!(
         quote.matches("class=\"message-quote-signoff\"").count(),
+        0,
+        "{html}"
+    );
+    assert_eq!(
+        quote.matches("class=\"message-quote-task-tail\"").count(),
         1,
         "{html}"
     );
     let stack = quote.find("message-image-stack").expect("stack");
-    let signoff = quote.find("message-quote-signoff").expect("signoff");
     let first = quote.find(text).expect("first paragraph");
     let last = quote.find("more words").expect("last paragraph");
-    assert!(stack < signoff && signoff < first && first < last, "{html}");
+    let task_line = quote.find("message-quote-task-line").expect("task line");
+    assert!(stack < first && first < last && last < task_line, "{html}");
     assert!(
         !quote.contains("message-quote-signoff-line"),
-        "the signoff leads the first prose paragraph: {html}"
+        "a sourceless prose context needs no attribution line: {html}"
     );
 
     let images_only = render("> ![first](a.png)\n>\n> ![second](b.png)");
@@ -784,18 +800,22 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
         images_only.matches("class=\"message-image-stack\"").count(),
         2
     );
-    let line = images_only
-        .find("message-quote-signoff-line")
-        .expect("attribution line");
-    let stack = images_only.find("message-image-stack").expect("stack");
     assert!(
-        line < stack,
-        "an image-only context leads with its own attribution line: {images_only}"
+        !images_only.contains("message-quote-signoff-line"),
+        "{images_only}"
+    );
+    let image = images_only.find("src=\"b.png\"").expect("last image");
+    let line = images_only
+        .find("message-quote-task-line")
+        .expect("trailing task line");
+    assert!(
+        image < line,
+        "an image-only context trails its images with the task target: {images_only}"
     );
 }
 
 #[test]
-fn quote_cards_ending_in_images_lead_with_their_attribution_once() {
+fn quote_cards_ending_in_images_keep_head_and_task_tail_once() {
     let render = |text: &str| {
         let target = steering_target("dTVQdQfLw", text);
         let quotes = [wire::QuotePresentation::Resolved {
@@ -826,6 +846,11 @@ fn quote_cards_ending_in_images_lead_with_their_attribution_once() {
     );
     assert_eq!(
         html.matches("class=\"message-quote-signoff\"").count(),
+        0,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("class=\"message-quote-task-tail\"").count(),
         1,
         "{html}"
     );
@@ -836,11 +861,11 @@ fn quote_cards_ending_in_images_lead_with_their_attribution_once() {
     );
     let flow = html.find("message-image-flow").expect("flow");
     let stack = html.find("message-image-stack").expect("stack");
-    let signoff = html.find("message-quote-signoff").expect("signoff");
     let pill = html.find("data-quote-disposition").expect("pill");
     let prose = html.find("see these").expect("prose");
+    let task_line = html.find("message-quote-task-line").expect("task line");
     assert!(
-        flow < stack && stack < signoff && signoff < pill && pill < prose,
+        flow < stack && stack < pill && pill < prose && prose < task_line,
         "{html}"
     );
 
@@ -848,14 +873,14 @@ fn quote_cards_ending_in_images_lead_with_their_attribution_once() {
     assert!(!images_only.contains("message-image-flow"), "{images_only}");
     let line = images_only
         .find("class=\"message-quote-signoff-line\"")
-        .expect("attribution line");
-    let signoff = images_only
-        .find("class=\"message-quote-signoff\"")
-        .expect("signoff");
+        .expect("disposition line");
     let pill = images_only.find("data-quote-disposition").expect("pill");
     let image = images_only.find("src=\"a.png\"").expect("image");
+    let task_line = images_only
+        .find("message-quote-task-line")
+        .expect("task line");
     assert!(
-        line < signoff && signoff < pill && pill < image,
+        line < pill && pill < image && image < task_line,
         "{images_only}"
     );
 }

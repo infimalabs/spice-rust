@@ -19,13 +19,16 @@ const FLOW_OPEN: &str = "<div class=\"message-image-flow\">\
                          <span class=\"message-image-flow-anchor\" aria-hidden=\"true\"></span>";
 const FLOW_CLOSE: &str = "</div>";
 pub(super) const SIGNOFF_LINE_OPEN: &str = "<p class=\"message-quote-signoff-line\">";
+pub(super) const TASK_LINE_OPEN: &str = "<p class=\"message-quote-task-line\">";
 
-/// What a quote card leads its body's own top-level layer with.
+/// What a quote card places around its own top-level content.
 pub(super) struct CardHead<'t> {
-    /// The card's attribution, empty when it has none.
+    /// The card's leading attribution, empty when it has none.
     pub(super) signoff: &'t str,
     /// Disposition pill following the attribution, empty when none.
     pub(super) disposition: &'t str,
+    /// Empty board-provenance portal target placed at the content's tail.
+    pub(super) task_tail: &'t str,
 }
 
 /// The layer a run of events forms.
@@ -41,6 +44,7 @@ enum Block {
     Paragraph,
     Stack,
     SignoffLine,
+    TaskLine,
     Quote,
     Other,
 }
@@ -68,6 +72,7 @@ pub(super) fn flow<'a>(events: &[MarkdownEvent<'a>], layer: &Layer<'_>) -> Vec<M
     match layer {
         Layer::Body => blocks.into_iter().flat_map(|(_, block)| block).collect(),
         Layer::Card(head) => {
+            let task_tail = head.task_tail;
             let head = format!(
                 "{}{}",
                 head.signoff,
@@ -86,8 +91,31 @@ pub(super) fn flow<'a>(events: &[MarkdownEvent<'a>], layer: &Layer<'_>) -> Vec<M
                     format!("{SIGNOFF_LINE_OPEN}{head}</p>").into(),
                 )),
             });
+            trail(&mut blocks, task_tail);
             line.flatten().into_iter().chain(hoist(blocks)).collect()
         }
+    }
+}
+
+/// Keep a prose tail inline so provenance can only add content after its final
+/// word. A non-prose tail gets its own line, which `hoist` keeps behind any
+/// trailing image flow.
+fn trail<'a>(blocks: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>, task_tail: &str) {
+    if task_tail.is_empty() {
+        return;
+    }
+    if let Some((Block::Paragraph, block)) = blocks.last_mut() {
+        block.insert(
+            block.len() - 1,
+            MarkdownEvent::InlineHtml(task_tail.to_owned().into()),
+        );
+    } else {
+        blocks.push((
+            Block::TaskLine,
+            vec![MarkdownEvent::Html(
+                format!("{TASK_LINE_OPEN}{task_tail}</p>").into(),
+            )],
+        ));
     }
 }
 
@@ -102,7 +130,7 @@ fn flow_quote<'a>(events: &[MarkdownEvent<'a>]) -> Vec<MarkdownEvent<'a>> {
 
 /// Lead with the trailing image stacks inside one flow wrapper when the layer
 /// has other blocks before them; otherwise keep the layer as it is. A leading
-/// attribution line stays above the flow.
+/// attribution line stays above the flow, and a task line stays behind it.
 fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEvent<'a>> {
     let mut events = Vec::new();
     if blocks
@@ -111,12 +139,21 @@ fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEv
     {
         events.extend(blocks.remove(0).1);
     }
+    let task_line = if blocks
+        .last()
+        .is_some_and(|(kind, _)| *kind == Block::TaskLine)
+    {
+        blocks.pop().map(|(_, block)| block)
+    } else {
+        None
+    };
     let first_stack = blocks
         .iter()
         .rposition(|(kind, _)| *kind != Block::Stack)
         .map_or(0, |index| index + 1);
     if first_stack == 0 || first_stack == blocks.len() {
         events.extend(blocks.into_iter().flat_map(|(_, block)| block));
+        events.extend(task_line.into_iter().flatten());
         return events;
     }
     let stacks = blocks.split_off(first_stack);
@@ -128,6 +165,7 @@ fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEv
     events.push(MarkdownEvent::InlineHtml(STACK_CLOSE.into()));
     events.extend(blocks.into_iter().flat_map(|(_, block)| block));
     events.push(MarkdownEvent::Html(FLOW_CLOSE.into()));
+    events.extend(task_line.into_iter().flatten());
     events
 }
 
@@ -169,6 +207,9 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
             }
             MarkdownEvent::Html(html) if html.starts_with(SIGNOFF_LINE_OPEN) => {
                 (Block::SignoffLine, index)
+            }
+            MarkdownEvent::Html(html) if html.starts_with(TASK_LINE_OPEN) => {
+                (Block::TaskLine, index)
             }
             _ => (Block::Other, index),
         };

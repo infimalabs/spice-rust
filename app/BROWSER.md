@@ -275,15 +275,20 @@ images in the middle of a quote keep the image-row layout.
 ## Attribution leads
 
 Attribution comes before the words it attributes: the relative age, then the
-name, then any badge. A quote card or quoted directive leads its first prose
-line with its source's age and author, then its task badges and disposition;
-a quote that opens with images, a list, or another block puts that attribution
-on a line of its own above it. A prose card leads its first paragraph with its
-own age, producer, and FINAL badge, and repeats that attribution at the head of
-the first paragraph after every chain of quotes, so a message answering several
-directive sets attributes each answer. The resident writes an answer's ACK, ACK
-PENDING, or NAK marker at the head of that answer, so its pill follows the
-speaking agent's name instead of sitting in the quoted directive.
+name. A quote card or quoted directive leads its first prose line with its
+source age and author; disposition stays beside that head. A quote that opens
+with images, a list, or another block puts the attribution on a line of its own
+above it. Board provenance is independent: its empty target consumes no space,
+then an origin-task badge follows the final words of a trailing prose paragraph
+when Work reports one. A quote ending in images, a list, a nested quote, code,
+or another non-prose block puts that badge on a compact line after the block.
+Task arrival therefore cannot shift words before the paragraph's final line.
+A prose card leads its first paragraph with its own age, producer, and FINAL
+badge, and repeats that attribution at the head of the first paragraph after
+every chain of quotes, so a message answering several directive sets attributes
+each answer. The resident writes an answer's ACK, ACK PENDING, or NAK marker at
+the head of that answer, so its pill follows the speaking agent's name instead
+of sitting in the quoted directive.
 Quotes at every depth carry no fill of their own; their text keeps the muted
 tone and smaller size. Every quote rail, operator-authored or agent-authored,
 takes the neutral ink tone of the operator's initials, including quotes that
