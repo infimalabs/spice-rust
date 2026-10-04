@@ -27,6 +27,7 @@ mod terminal;
 pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
     pub(crate) image_only: bool,
+    pub(crate) image_count: usize,
     pub(crate) diagrams: Vec<String>,
 }
 
@@ -359,7 +360,8 @@ fn render(
     let events = quotes::expand(events, quotes, quote_agents, quote_sources);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
-    let image_only = markdown_is_image_only(&events, has_diagrams);
+    let image_count = markdown_image_only_count(&events, has_diagrams);
+    let image_only = image_count > 0;
     // Diagram controls and nested block structure must not collapse into an image row.
     let mut task_code_block = false;
     let events = decorate_markdown_images(events, image_only && !has_diagrams);
@@ -391,6 +393,7 @@ fn render(
         RenderedMarkdown {
             html,
             image_only,
+            image_count,
             diagrams,
         },
         signed,
@@ -709,6 +712,7 @@ fn acknowledgement_pill_html_with_attributes(
 pub(crate) fn same_measured_shape(left: &RenderedMarkdown, right: &RenderedMarkdown) -> bool {
     measured_html(&left.html) == measured_html(&right.html)
         && left.image_only == right.image_only
+        && left.image_count == right.image_count
         && left.diagrams == right.diagrams
 }
 
@@ -727,7 +731,7 @@ fn measured_html(html: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(html.replace(&pending, &acknowledged))
 }
 
-fn markdown_is_image_only(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> bool {
+fn markdown_image_only_count(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> usize {
     let mut image_depth = 0usize;
     let mut images = 0usize;
     for event in events {
@@ -750,10 +754,10 @@ fn markdown_is_image_only(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> b
             | MarkdownEvent::SoftBreak
             | MarkdownEvent::HardBreak => {}
             MarkdownEvent::Text(text) if text.trim().is_empty() => {}
-            _ => return false,
+            _ => return 0,
         }
     }
-    images > 0
+    images
 }
 
 fn decorate_markdown_images(

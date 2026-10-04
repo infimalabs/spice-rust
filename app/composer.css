@@ -780,3 +780,137 @@
 ) > p.message-image-stack > .message-image + .message-image {
   margin-inline-start: var(--message-image-gap);
 }
+
+/* An exact-one-image card uses its admitted lattice rectangle as the image
+   viewport. Aspect ratio supplies the measuring clone's height; the committed
+   card keeps the lattice-owned height so a cover never creates a gap or overlap. */
+.team-surface .mosaic-message-card--image-cover {
+  padding: 0;
+  border-block-color: transparent;
+  border-inline-start-color: transparent;
+  overflow: hidden;
+}
+.lane-mosaic-plane
+  .mosaic-message-card--image-cover:is(
+    [data-layout-phase="measuring"],
+    [data-mosaic-measurement-active="true"]
+  ) {
+  aspect-ratio: 1 / 1;
+}
+.team-surface .mosaic-message-card--image-cover > .mosaic-message-content {
+  display: block;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.team-surface .mosaic-message-card--image-cover
+  :is(.message-flow, .message-body) {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.team-surface .mosaic-message-card--image-cover
+  :is(.message-attachments, p.message-image-stack) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+.team-surface .mosaic-message-card--image-cover .message-image {
+  --message-image-size: 100%;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  overflow: hidden;
+}
+.team-surface .mosaic-message-card--image-cover .message-image img {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  object-fit: cover;
+}
+.team-surface .mosaic-message-card--image-cover .message-image-status {
+  border: 0;
+  border-radius: 0;
+}
+.team-surface .mosaic-message-card--image-cover
+  .message-image--openable:focus-visible :is(img, .message-image-status) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.team-surface .mosaic-message-card--image-cover .message-signoff-line {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  margin: 0;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: var(--app-radius-control);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+}
+.team-surface .mosaic-message-card--image-cover
+  .message-signoff-line > .message-signoff {
+  position: static;
+  top: auto;
+  float: none;
+  margin: 0;
+  color: var(--ink);
+  text-shadow: none;
+}
+.team-surface .mosaic-message-card--image-cover
+  .message-signoff .relative-age {
+  color: var(--ink);
+}
+.team-surface .mosaic-message-card--image-cover .message-controls {
+  position: absolute;
+  inset: 8px 8px auto auto;
+  z-index: 2;
+  float: none;
+  min-height: 0;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--app-radius-control);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+}
+.team-surface .mosaic-message-card--image-cover.now-playing::before,
+.team-surface .mosaic-message-card--image-cover.final::after {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  content: "";
+}
+.team-surface .mosaic-message-card--image-cover.now-playing::before {
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--warning);
+}
+.team-surface .mosaic-message-card--image-cover.final::after {
+  inset: 0 0 auto;
+  height: var(--message-final-highlight-width, 3px);
+  background: var(--accent-1);
+}
