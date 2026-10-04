@@ -97,87 +97,149 @@ fn rotation_start(targets: &[HistoryTarget], last: Option<CanonicalUuid>) -> usi
     .unwrap_or(0)
 }
 
+/// Lanes whose admitted page a reconnect orphaned: the dropped socket can no
+/// longer answer it, and the lane has completed no page since. The reader's
+/// demand for that page stands, wherever sibling pages have since moved its
+/// frontier card.
+fn orphaned_lanes(
+    requested: &HashMap<HistoryRequestKey, u64>,
+    targets: &[HistoryTarget],
+) -> Vec<CanonicalUuid> {
+    targets
+        .iter()
+        .filter(|target| {
+            requested.iter().any(|(key, completion)| {
+                key.cursor.lane == target.cursor.lane
+                    && key.revision != target.request_key.revision
+                    && *completion == target.completion
+            })
+        })
+        .map(|target| target.cursor.lane)
+        .collect()
+}
+
+/// Whether a lane's placed frontier card lies within reach of the viewport.
+///
+/// A card still measuring is hidden at the plane's top edge, so only a placed
+/// frontier can show demand for older pages.
+fn frontier_is_near(observed: &web_sys::Element, viewport: &web_sys::DomRect, key: &str) -> bool {
+    let selector = format!("[data-mosaic-card-key=\"{key}\"][data-layout-phase=\"committed\"]");
+    observed
+        .query_selector(&selector)
+        .ok()
+        .flatten()
+        .is_some_and(|card| {
+            let bounds = card.get_bounding_client_rect();
+            bounds.top() <= viewport.bottom() + 400.0 && bounds.bottom() >= viewport.top() - 400.0
+        })
+}
+
+/// One registration's view of the plane and its member frontiers.
+struct HistoryPager {
+    observed: web_sys::Element,
+    targets: Vec<HistoryTarget>,
+    requested: Rc<RefCell<HashMap<HistoryRequestKey, u64>>>,
+    orphaned: Rc<RefCell<HashSet<CanonicalUuid>>>,
+    request: HistorySender,
+    last_admitted: Rc<RefCell<Option<CanonicalUuid>>>,
+}
+
+impl HistoryPager {
+    /// Admit every frontier the reader currently demands.
+    fn inspect(&self, fresh_demand: bool) {
+        // Without fresh demand, an already requested frontier stays closed, so a
+        // plane whose every frontier is requested reads no geometry at all.
+        if !fresh_demand && {
+            let requested = self.requested.borrow();
+            self.targets
+                .iter()
+                .all(|target| requested.contains_key(&target.request_key))
+        } {
+            return;
+        }
+        // A plane hidden behind another destination has no viewport: its
+        // zero extent is not a trailing edge, so it pages nothing until shown.
+        if self.observed.client_height() == 0 {
+            return;
+        }
+        let at_edge = crate::mosaic::history_edge_is_near(
+            f64::from(self.observed.scroll_top()),
+            f64::from(self.observed.client_height()),
+            f64::from(self.observed.scroll_height()),
+            None,
+        );
+        let viewport = self.observed.get_bounding_client_rect();
+        let start = rotation_start(&self.targets, *self.last_admitted.borrow());
+        for offset in 0..self.targets.len() {
+            let target = &self.targets[(start + offset) % self.targets.len()];
+            let orphaned = self.orphaned.borrow().contains(&target.cursor.lane);
+            // Page only when this lane's frontier is visible, the merged plane is
+            // near its trailing edge, or a reconnect dropped the page this lane
+            // was already owed.
+            if !at_edge && !orphaned && !frontier_is_near(&self.observed, &viewport, &target.key) {
+                continue;
+            }
+            {
+                let mut requested = self.requested.borrow_mut();
+                if requested
+                    .get(&target.request_key)
+                    .is_some_and(|completion| !fresh_demand || *completion >= target.completion)
+                {
+                    continue;
+                }
+                requested.insert(target.request_key, target.completion);
+            }
+            if self.request.request(target.cursor) {
+                *self.last_admitted.borrow_mut() = Some(target.cursor.lane);
+                self.orphaned.borrow_mut().remove(&target.cursor.lane);
+            } else {
+                self.requested.borrow_mut().remove(&target.request_key);
+            }
+        }
+    }
+}
+
 #[hook]
 pub(super) fn use_history_paging(
     host: NodeRef,
     cards: &[ActivityCard],
     targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
+    commits: u64,
     request: HistorySender,
 ) {
     let targets = history_targets(cards, targets, revision);
     let requested = use_mut_ref(HashMap::<HistoryRequestKey, u64>::new);
+    let orphaned = use_mut_ref(HashSet::<CanonicalUuid>::new);
     let last_admitted = use_mut_ref(|| None::<CanonicalUuid>);
+    let current_inspect = use_mut_ref(|| None::<Rc<dyn Fn(bool)>>);
+    let registered_inspect = current_inspect.clone();
     use_effect_with((host, targets, request), move |(host, targets, request)| {
         let registration = host.cast::<web_sys::Element>().and_then(|element| {
             let current = targets
                 .iter()
                 .map(|target| target.request_key)
                 .collect::<HashSet<_>>();
+            let lost = orphaned_lanes(&requested.borrow(), targets);
+            orphaned.borrow_mut().extend(lost);
+            orphaned
+                .borrow_mut()
+                .retain(|lane| targets.iter().any(|target| target.cursor.lane == *lane));
             requested
                 .borrow_mut()
                 .retain(|key, _| current.contains(key));
-            let observed = element.clone();
-            let observed_targets = targets.clone();
-            let observed_requested = requested.clone();
-            let observed_request = request.clone();
-            let observed_last_admitted = last_admitted.clone();
-            let inspect = Rc::new(move |fresh_demand: bool| {
-                // A plane hidden behind another destination has no viewport: its
-                // zero extent is not a trailing edge, so it pages nothing until shown.
-                if observed.client_height() == 0 {
-                    return;
-                }
-                let at_edge = crate::mosaic::history_edge_is_near(
-                    f64::from(observed.scroll_top()),
-                    f64::from(observed.client_height()),
-                    f64::from(observed.scroll_height()),
-                    None,
-                );
-                let viewport = observed.get_bounding_client_rect();
-                let start = rotation_start(&observed_targets, *observed_last_admitted.borrow());
-                for offset in 0..observed_targets.len() {
-                    let target = &observed_targets[(start + offset) % observed_targets.len()];
-                    let selector = format!("[data-mosaic-card-key=\"{}\"]", target.key);
-                    let target_is_near = observed
-                        .query_selector(&selector)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|card| {
-                            let bounds = card.get_bounding_client_rect();
-                            bounds.top() <= viewport.bottom() + 400.0
-                                && bounds.bottom() >= viewport.top() - 400.0
-                        });
-                    // Page only when this lane's frontier is visible or the merged
-                    // plane is near its trailing edge.
-                    if !at_edge && !target_is_near {
-                        continue;
-                    }
-                    let admitted = {
-                        let mut requested = observed_requested.borrow_mut();
-                        if requested
-                            .get(&target.request_key)
-                            .is_some_and(|completion| {
-                                !fresh_demand || *completion >= target.completion
-                            })
-                        {
-                            false
-                        } else {
-                            requested.insert(target.request_key, target.completion);
-                            true
-                        }
-                    };
-                    if !admitted {
-                        continue;
-                    }
-                    if observed_request.request(target.cursor) {
-                        *observed_last_admitted.borrow_mut() = Some(target.cursor.lane);
-                    } else {
-                        observed_requested.borrow_mut().remove(&target.request_key);
-                    }
-                }
-            });
+            let pager = HistoryPager {
+                observed: element.clone(),
+                targets: targets.clone(),
+                requested: requested.clone(),
+                orphaned: orphaned.clone(),
+                request: request.clone(),
+                last_admitted: last_admitted.clone(),
+            };
+            let inspect: Rc<dyn Fn(bool)> =
+                Rc::new(move |fresh_demand: bool| pager.inspect(fresh_demand));
             inspect(false);
+            *registered_inspect.borrow_mut() = Some(inspect.clone());
             let on_scroll = {
                 let inspect = Rc::clone(&inspect);
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
@@ -198,6 +260,7 @@ pub(super) fn use_history_paging(
             Some((element, on_scroll, resized, on_resize))
         });
         move || {
+            registered_inspect.borrow_mut().take();
             if let Some((element, on_scroll, resized, _on_resize)) = registration {
                 resized.disconnect();
                 let _ = element.remove_event_listener_with_callback(
@@ -205,6 +268,15 @@ pub(super) fn use_history_paging(
                     on_scroll.as_ref().unchecked_ref(),
                 );
             }
+        }
+    });
+    // Each plane commit places cards, so it is the moment a frontier can come
+    // into range. Re-inspecting the standing registration then needs no timer,
+    // no hidden geometry, and no fresh observer.
+    use_effect_with(commits, move |_| {
+        let inspect = current_inspect.borrow().clone();
+        if let Some(inspect) = inspect {
+            inspect(false);
         }
     });
 }

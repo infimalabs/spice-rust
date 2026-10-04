@@ -611,6 +611,9 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         &properties.cards,
         paging_targets,
         properties.history_revision,
+        rendered_plane
+            .as_ref()
+            .map_or(0, crate::mosaic_plane::PersistentLanePlane::commits),
         properties.history.clone(),
     );
     let card_keys = properties
