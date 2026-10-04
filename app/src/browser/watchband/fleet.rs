@@ -324,8 +324,8 @@ fn render_team_total(
     }
 }
 
-/// One open team task: its project opens this team's Work narrowed to the
-/// project's stem, and its handle opens the task's detail.
+/// One open team task: its stem opens this team's matching Work scope, and its
+/// handle opens the task's detail.
 fn render_team_task_pill(
     team: CanonicalUuid,
     work: &crate::work::WorkProjection<'_>,
@@ -335,9 +335,10 @@ fn render_team_task_pill(
     use crate::work::WorkAvailability::{InFlight, Ready};
     let statement = &task.row().statement.body;
     let stem = work.task_stem(task).clone();
+    let stem_label = stem.stem().to_owned();
     let availability = task.availability();
     let owner_accent = task.working_claimant_accent(render.runtime.lanes());
-    let project_label = format!("Open this team's {stem} work");
+    let stem_aria_label = format!("Open this team's {stem_label} work");
     let handle_label = format!(
         "Open {}: {}, {}",
         statement.handle,
@@ -379,12 +380,12 @@ fn render_team_task_pill(
             data-accent={owner_accent.map(|accent| accent.to_string())}
         >
             <button
-                class="task-pill-project"
+                class="task-pill-stem"
                 type="button"
-                title={project_label.clone()}
-                aria-label={project_label}
+                title={stem_aria_label.clone()}
+                aria-label={stem_aria_label}
                 onclick={open_stem}
-            >{statement.project.clone()}</button>
+            >{stem_label}</button>
             <button
                 class="task-pill-handle"
                 type="button"
