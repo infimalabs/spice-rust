@@ -129,11 +129,12 @@ collapse distance and top spacer.
 The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and adjacent members paint no vertical separator, shadow,
 or panel-colored gutter. The team owns the field's left outer edge and the
-controls own its right outer edge. Per-member heading accents meet without a
-panel-colored break, while placeholder and entered content identify each
-member's input area. Focus draws inside all four edges of the active member
-without changing the field's geometry; circular menu buttons, range thumbs,
-and the send action retain their own control shapes.
+controls own its right outer edge. Every member heading has a permanent
+accent-colored underline and adjacent accents meet without a panel-colored
+break. Focusing a member composer adds only the same accent underline at that
+member's block-end edge; broadcast preview projects it onto every occupied
+recipient. Neither treatment changes the field's geometry, and circular menu
+buttons, range thumbs, and the send action retain their own control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
