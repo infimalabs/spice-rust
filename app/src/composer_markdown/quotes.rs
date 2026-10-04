@@ -206,14 +206,6 @@ fn render(
             quotes,
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let operator_class = matches!(
-                author,
-                QuoteAuthor::Directive {
-                    actor: wire::Actor::Operator
-                }
-            )
-            .then_some(" message-quote-card--operator")
-            .unwrap_or_default();
             let signoff = signoff_html(author, target, agents, sources);
             let body = super::render_quote_card_body(
                 text,
@@ -226,7 +218,7 @@ fn render(
                 },
             );
             format!(
-                "<div class=\"message-quote-card{operator_class}\" data-quote-state=\"resolved\" \
+                "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
                  data-quote-target=\"{}\"><div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
                 body.html,
