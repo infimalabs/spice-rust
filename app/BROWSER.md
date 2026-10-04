@@ -126,14 +126,14 @@ That shared block size also determines the speech and allocation tracks, their
 frame, and the send row; the measured overlay height remains the Chat plane's
 collapse distance and top spacer.
 
-The member columns and that control frame are one joined field: their measured
-layout gap is zero, structural corners at every interior seam are square, and
-only one neighboring edge paints each separator. The final member owns the
-field's left outer corners and the controls own its right outer corners.
-Per-member heading accents meet without a panel-colored break. Focus draws
-inside all four edges of the active member without changing the field's
-geometry; circular menu buttons, range thumbs, and the send action retain their
-own control shapes.
+The member columns and that control frame are one joined field. Their measured
+layout gap is zero, and adjacent members paint no vertical separator, shadow,
+or panel-colored gutter. The team owns the field's left outer edge and the
+controls own its right outer edge. Per-member heading accents meet without a
+panel-colored break, while placeholder and entered content identify each
+member's input area. Focus draws inside all four edges of the active member
+without changing the field's geometry; circular menu buttons, range thumbs,
+and the send action retain their own control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
