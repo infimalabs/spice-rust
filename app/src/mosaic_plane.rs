@@ -164,6 +164,7 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
             return self.clone();
         };
         commit(next, transition)
+            .unwrap_or_else(|| Self::full_replay(geometry, measured, self.commits + 1))
     }
 
     fn full_replay(geometry: i32, measured: &[MeasuredCard<K>], commits: u64) -> Self {
@@ -210,6 +211,7 @@ impl<K: Clone + Ord> PersistentLanePlane<K> {
         let mut next = self.clone();
         next.cards = cards;
         commit(next, Transition::EpochReplay)
+            .unwrap_or_else(|| Self::full_replay(geometry, measured, self.commits + 1))
     }
 
     fn geometry_replay(&self, geometry: i32, measured: &[MeasuredCard<K>]) -> Self {
@@ -564,15 +566,23 @@ fn plane_card<K: Clone>(item: &MeasuredCard<K>, card: &Card) -> PlaneCard<K> {
     }
 }
 
-fn commit<K>(mut plane: PersistentLanePlane<K>, transition: Transition) -> PersistentLanePlane<K> {
+/// Admit one incremental result only while every retained boundary still
+/// separates its chronological epochs. A candidate that cannot honor those
+/// fixed floors belongs to the deterministic full-replay path.
+fn commit<K>(
+    mut plane: PersistentLanePlane<K>,
+    transition: Transition,
+) -> Option<PersistentLanePlane<K>> {
     freeze_completed_epochs(&mut plane.cards);
-    assert_boundary_floors(&plane.cards);
+    if !boundary_floors_hold(&plane.cards) {
+        return None;
+    }
     let (max_row, min_base) = mosaic::extent(&placed_cards(&plane.cards));
     plane.max_row = max_row;
     plane.min_base = min_base;
     plane.commits += 1;
     plane.transition = transition;
-    plane
+    Some(plane)
 }
 
 fn freeze_completed_epochs<K>(entries: &mut [PlaneCard<K>]) {
@@ -584,36 +594,32 @@ fn freeze_completed_epochs<K>(entries: &mut [PlaneCard<K>]) {
     }
 }
 
-fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {
-    for (index, boundary) in entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| entry.boundary)
-    {
-        assert_eq!(
-            (boundary.card.track, boundary.card.span),
-            (0, TRACK_COUNT),
-            "a Mosaic placement boundary occupies every track"
-        );
-        let floor = boundary.card.base;
-        assert!(
-            entries[..index]
-                .iter()
-                .all(|entry| entry.card.base + entry.card.rows <= floor),
-            "cards before a Mosaic placement boundary remain below its floor"
-        );
-        let ceiling = boundary.card.base + boundary.card.rows;
-        let epoch_end = entries[index + 1..]
-            .iter()
-            .position(|entry| entry.boundary)
-            .map_or(entries.len(), |offset| index + 1 + offset);
-        assert!(
-            entries[index + 1..epoch_end]
-                .iter()
-                .all(|entry| entry.card.base >= ceiling),
-            "cards after a Mosaic placement boundary cannot cross its floor"
-        );
+fn boundary_floors_hold<K>(entries: &[PlaneCard<K>]) -> bool {
+    let mut highest_top = None::<i32>;
+    let mut epoch_floor = None::<i32>;
+    for entry in entries {
+        if epoch_floor.is_some_and(|floor| entry.card.base < floor) {
+            return false;
+        }
+        if entry.boundary {
+            if (entry.card.track, entry.card.span) != (0, TRACK_COUNT)
+                || highest_top.is_some_and(|top| top > entry.card.base)
+            {
+                return false;
+            }
+            epoch_floor = Some(entry.card.base + entry.card.rows);
+        }
+        let top = entry.card.base + entry.card.rows;
+        highest_top = Some(highest_top.map_or(top, |highest| highest.max(top)));
     }
+    true
+}
+
+fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {
+    assert!(
+        boundary_floors_hold(entries),
+        "Mosaic placement boundaries divide chronological epochs"
+    );
 }
 
 fn assert_unique<K: Ord>(measured: &[MeasuredCard<K>]) {
