@@ -240,12 +240,11 @@ the cell's slack falls evenly above and below it and the visible space between
 cards follows their content while every cell still snaps to the grid. A card
 whose content fills its cell leaves the same seam around its neighbors; image
 covers still fill the card rectangle. Each card fills with the same page base
-the header sits on, so cards are told apart by their lane's 4px accent rail on
-the inline-start edge, their rounded corners and the gutters between them.
-All four outer corners share the
-12px curvature of nested quote rails, so the rail and the opposite edge taper
-symmetrically. A FINAL answer keeps only its pill, with no tint or edge of its
-own. Hover tints the card 4% toward its lane accent and adds a thin accent
+the header sits on, so cards are told apart by their lane's 4px accent rail,
+their square corners and the gutters between them. Nested Markdown blockquotes
+and resolved or unavailable quote cards are square at every depth as well. A
+FINAL answer keeps only its pill, with no tint or edge of its own. Hover tints
+the card 4% toward its lane accent and adds a thin accent
 outline. Measurement clones use the same guttered geometry. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
 drawn as accent rules.
@@ -254,15 +253,15 @@ An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve
 that cover from the card width, but the committed lattice remains the placement
 authority so no aspect-ratio correction opens a ledger gap. Hover and keyboard
-focus paint one card-sized 12px-rounded border above the cover. Its inline-start
-rail and remaining edge meet as one boundary, never nested outlines, while the
-image remains untinted and cannot clip or wash out that edge. The live age and
+focus paint one square card-sized border above the cover. Its inline-start rail
+and remaining edge meet as one boundary, never nested outlines, while the image
+remains untinted and cannot clip or wash out that edge. The live age and
 producer sit in a compact frosted overlay docked flush into the image card's
-top-left corner. Only its lower-right corner carries the 12px curve; the card's
-own rounded clip shapes the docked upper-left corner, so no sliver of image
-shows between two curves. The overlay pads its text 3px above, 6px below and
-9px on each side. Actions, when present, remain in their own inset overlay at
-the top right; multiple images, mixed prose, quotes, and diagrams keep their
+square top-left corner. The overlay carries no corner curve, so its edges meet
+the card without exposing a sliver of image. It pads its text 3px above, 6px
+below, and 9px on each side. Actions, when present, remain in their own inset
+overlay at the top right; multiple images, mixed prose, quotes, and diagrams
+keep their
 ordinary in-flow layouts.
 
 Quoted image pairs retain the standard 7px image-stack gap even when their
