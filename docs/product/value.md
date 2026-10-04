@@ -410,9 +410,11 @@ launching card.
 
 A team header lists exactly the open tasks its team Work scope holds: tasks the
 team created and tasks a current member last claimed, so a task created by one
-team and claimed by another shows on both. In-flight work leads, then ready,
-blocked, and deferred work, each in the resident's offer order. Until the
-roster loads, team headers wait instead of guessing.
+team and claimed by another shows on both. It starts from in-flight, ready,
+blocked, and deferred offer order, then applies Work's grouping rule: each
+visibility-qualified project stem forms one group at its first task, and every
+later matching task joins it without changing relative order. Until the roster
+loads, team headers wait instead of guessing.
 
 Each team header is a fixed-height grid with no surrounding chrome of its own:
 no background, border, or shadow, so its content sits directly on the app
@@ -421,19 +423,20 @@ band above the status band in the long middle column. The team's pills share
 the global strip's frame and resting, hover, and keyboard-focus looks. The live
 status line centers on the lower pip row, and the pill strip scrolls
 horizontally when its labels outgrow the available width, never overlapping the
-pips or menu. A badge with the team's open-task count leads and opens
-`#/work/team/{team}`. One badge-free pill per task follows, carrying two
-targets: its stem label opens `#/work/team/{team}/{public|hidden}/{stem}`,
-narrowing the team's work to that stem, and its handle opens the task's detail
-layer in place, returning focus to the handle on close. Every stem label wears
-the same neutral muted tone as blocked or deferred team-local work, whatever the
-task's lifecycle, with equal negative space on both sides of its centered hover
-target.
-For an in-flight task actively held by a current lane, only the handle takes
-that member's canonical accent. This ownership cue applies only to team-local
-task handles: the project stem, pill surface, and global strip stay unchanged.
-Operator claims and lanes absent from the admitted roster keep their lifecycle
-tone rather than guessing an owner color.
+pips or menu.
+
+A badge with the team's open-task count leads and opens
+`#/work/team/{team}`. One group per visibility-qualified stem follows. Its stem
+label appears once and opens `#/work/team/{team}/{public|hidden}/{stem}`,
+narrowing the team's work to that stem; every grouped handle then opens its
+task's detail layer in place and receives focus again on close. The stem label
+wears the same neutral muted tone as blocked or deferred team-local work, with
+equal negative space on both sides of its centered hover target. An in-flight
+handle actively held by a current lane takes that member's canonical accent.
+This ownership cue applies only to team-local task handles: the project stem,
+group surface, and global strip stay unchanged. Operator claims and lanes
+absent from the admitted roster keep their lifecycle tone rather than guessing
+an owner color.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle

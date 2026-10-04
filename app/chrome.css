@@ -137,13 +137,12 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
-/* One open team task: two targets, its project and its handle. The project
-   always wears the muted tone of blocked work, whatever the task's lifecycle,
-   with equal inline breathing room; only the handle carries lifecycle tone
-   or a current lane owner's member colour. */
-.task-pill--task { gap: 0; padding: 0; }
-.task-pill--task:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
-.task-pill--task > button {
+/* One team-local project group: its neutral stem target followed by every
+   matching task handle. The group owns one rail divider, while each target
+   retains independent hover, focus, lifecycle, and owner presentation. */
+.task-pill--project { gap: 0; padding: 0; }
+.task-pill--project:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.task-pill--project > button {
   align-self: stretch;
   min-height: 0;
   padding: 2px 4px;
@@ -159,13 +158,15 @@ body:has(.shell--mosaic),
   color: var(--muted);
   opacity: .72;
 }
-.task-pill--task > .task-pill-stem { padding-inline: 10px; }
-.task-pill--task > button:last-child { padding-inline-end: 10px; }
-.task-pill--task > button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-/* Team-local active work names its current lane owner on the task handle
-   without making the shared project stem look owned. Mixing toward ink keeps
-   all six accents readable after the active pill's retained opacity. */
-.team-tasks .task-pill--task[data-accent] > .task-pill-handle {
+.task-pill--project > .task-pill-stem { padding-inline: 10px; }
+.task-pill--project > button:last-child { padding-inline-end: 10px; }
+.task-pill--project > button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* Team-local active work names its current lane owner on its task handle.
+   Mixing toward ink keeps all six accents readable after the handle's retained
+   active opacity without making the shared project stem look owned. */
+.team-tasks .task-pill--project > .task-pill-handle[data-accent] {
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
 .app-global-status {

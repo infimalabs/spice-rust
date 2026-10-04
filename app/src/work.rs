@@ -192,6 +192,27 @@ pub struct WorkCluster<'p, 'a> {
     pub key: WorkClusterKey<'a>,
     pub tasks: Vec<&'p WorkTask<'a>>,
 }
+/// One visibility-qualified stem and the team-local tasks grouped beneath it.
+///
+/// Groups follow their first task in lifecycle and offer order, matching the
+/// Work board's clustering rule. Tasks inside a group retain that same order.
+#[derive(Debug)]
+pub struct TeamTaskGroup<'p, 'a> {
+    stem: &'p WorkStemIdentity,
+    tasks: Vec<&'p WorkTask<'a>>,
+}
+
+impl<'p, 'a> TeamTaskGroup<'p, 'a> {
+    #[must_use]
+    pub const fn stem(&self) -> &WorkStemIdentity {
+        self.stem
+    }
+
+    #[must_use]
+    pub fn tasks(&self) -> &[&'p WorkTask<'a>] {
+        &self.tasks
+    }
+}
 
 /// Exclusive lifecycle totals for one scope.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -572,20 +593,34 @@ impl<'a> WorkProjection<'a> {
         &self.stems[self.projects[task.project].stem].identity
     }
 
-    /// One team's open tasks, exactly those its Work scope holds: in-flight
-    /// work first, then ready, blocked, and deferred, each in offer order.
+    /// One team's open task rail, grouped by visibility-qualified stem.
+    ///
+    /// The source order is in-flight, ready, blocked, then deferred, with each
+    /// lifecycle retaining resident offer order. As on the project-clustered
+    /// Work board, groups follow their first task and gather every later match
+    /// without changing the tasks' relative order.
     #[must_use]
-    pub fn team_tasks(&self, team: wire::CanonicalUuid) -> Vec<&WorkTask<'a>> {
-        let mut tasks = self
-            .offered
-            .iter()
-            .map(|&index| &self.tasks[index])
-            .filter(|task| {
-                task.availability != WorkAvailability::Terminal && task.belongs_to_team(team)
-            })
-            .collect::<Vec<_>>();
-        tasks.sort_by_key(|task| task.availability);
-        tasks
+    pub fn team_task_groups<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<TeamTaskGroup<'p, 'a>> {
+        use WorkAvailability::{Blocked, Deferred, InFlight, Ready};
+
+        let mut groups = Vec::<TeamTaskGroup<'p, 'a>>::new();
+        for availability in [InFlight, Ready, Blocked, Deferred] {
+            for task in self.offered.iter().map(|&index| &self.tasks[index]) {
+                if task.availability != availability || !task.belongs_to_team(team) {
+                    continue;
+                }
+                let stem = self.task_stem(task);
+                if let Some(group) = groups.iter_mut().find(|group| group.stem == stem) {
+                    group.tasks.push(task);
+                } else {
+                    groups.push(TeamTaskGroup {
+                        stem,
+                        tasks: vec![task],
+                    });
+                }
+            }
+        }
+        groups
     }
 
     /// The scope to open `task` under: `scope` itself when it already shows
