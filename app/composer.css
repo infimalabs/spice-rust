@@ -788,10 +788,7 @@
   z-index: 2;
   max-width: calc(100% - 16px);
   margin: 0;
-  /* Left and top already read wider than their padding: the age slot
-     right-aligns short labels, and the line box sits above the cap height.
-     Right and bottom grow to match, past the rounded inline-end corner. */
-  padding: 4px 13px 8px 7px;
+  padding: 3px 9px 6px 9px;
   border: 0;
   /* The card's own rounded clip shapes the docked upper-left corner; a second
      curve here would leave a sliver of image between the two. */
