@@ -677,23 +677,34 @@
   overflow: hidden;
   border-color: var(--control-line-soft);
   border-radius: 0;
-  background: var(--control);
+  background: var(--composer-fill, var(--control));
   box-shadow: none;
 }
 /* The team owns the field's outer left edge and the form owns its bottom edge;
    member shards add neither of those structural rules. */
 .team-composer .composer-shard { border-block-end: 0; }
+.team-agent .composer-shard { background: var(--composer-fill, var(--control)); }
 .team-surface .team-agent::after {
   position: absolute;
   z-index: 6;
   inset: auto 0 0;
   height: 2px;
-  background: transparent;
+  background: var(--composer-underline, transparent);
   content: "";
   pointer-events: none;
 }
-.team-surface .team-agent:has(textarea:focus)::after {
-  background: var(--composer-underline-color);
+/* A lit member, focused or a held keyboard broadcast's target, shows its accent
+   as both the bottom underline and a 10% fill. */
+.team-surface .team-agent:has(textarea:focus),
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
+  .team-composer:has(
+    .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
+  )
+  .team-agent:has(
+    .composer-shard--primary[data-broadcast-target-eligible="true"]
+  ) {
+  --composer-underline: var(--composer-underline-color);
+  --composer-fill: color-mix(in srgb, var(--control) 90%, var(--accent-slot, var(--accent)));
 }
 .team-surface .team-agent--vacant { opacity: var(--inactive-lane-opacity); }
 
@@ -726,15 +737,6 @@
    control frame. */
 .team-agent .composer-shard { border-inline: 0; }
 .team-agent:first-child .composer-shard { border-inline-end: var(--app-control-edge); }
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
-  .team-composer:has(
-    .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
-  )
-  .team-agent:has(
-    .composer-shard--primary[data-broadcast-target-eligible="true"]
-  )::after {
-  background: var(--composer-underline-color);
-}
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
 .composer-shard--primary {
