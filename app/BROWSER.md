@@ -252,8 +252,11 @@ authority so no aspect-ratio correction opens a ledger gap. Hover repeats the
 card's thin lane-accent outline inside the cover layer, where the image cannot
 occlude it, without tinting or changing the image itself. The live age and
 producer sit in a compact frosted overlay docked flush into the image card's
-top-left corner. Its upper-left and lower-right corners carry the card's 12px
-curve; its upper-right and lower-left corners are square. Actions, when
+top-left corner. Only its lower-right corner carries the 12px curve; the card's
+own rounded clip shapes the docked upper-left corner, so no sliver of image
+shows between two curves. The text keeps its top-left inset, and the overlay's
+right and bottom padding grow to leave the same visible space after the name
+as before the age. Actions, when
 present, remain in their own inset overlay at the top right; multiple images,
 mixed prose, quotes, and diagrams keep their ordinary in-flow layouts.
 
