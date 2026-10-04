@@ -433,7 +433,6 @@ fn render_team_task_pill(
             )}
             data-availability={availability.key()}
             data-accent={owner_accent.map(|accent| accent.to_string())}
-            data-task-owner-accent={owner_accent.map(|accent| accent.to_string())}
         >
             <button
                 class="task-pill-project"

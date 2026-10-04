@@ -157,10 +157,10 @@ body:has(.shell--mosaic),
 /* Team-local active work names its current lane owner without tinting the
    shared pill surface. Mixing toward ink keeps all six accents readable after
    the active pill's retained opacity; the project no longer compounds it. */
-.team-tasks .task-pill--task[data-task-owner-accent] > button {
+.team-tasks .task-pill--task[data-accent] > button {
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
-.team-tasks .task-pill--task[data-task-owner-accent] > .task-pill-project { opacity: 1; }
+.team-tasks .task-pill--task[data-accent] > .task-pill-project { opacity: 1; }
 .app-global-status {
   grid-area: 1 / 3;
   min-width: 0;
