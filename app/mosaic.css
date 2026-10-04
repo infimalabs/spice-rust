@@ -659,6 +659,11 @@
 }
 
 .team-surface .team-agent {
+  --composer-underline-color: color-mix(
+    in srgb,
+    var(--accent-slot, var(--accent)) 64%,
+    var(--line-soft)
+  );
   position: relative;
   display: flex;
   min-width: 0;
@@ -679,14 +684,14 @@
 .team-surface .team-agent::after {
   position: absolute;
   z-index: 6;
-  inset: 0;
-  border: 2px solid transparent;
-  border-radius: inherit;
+  inset: auto 0 0;
+  height: 2px;
+  background: transparent;
   content: "";
   pointer-events: none;
 }
-.team-surface .team-agent:focus-within::after {
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--line));
+.team-surface .team-agent:has(textarea:focus)::after {
+  background: var(--composer-underline-color);
 }
 .team-surface .team-agent--vacant { opacity: var(--inactive-lane-opacity); }
 
@@ -723,8 +728,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .team-composer:has(
     .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
   )
-  .composer-shard--primary[data-broadcast-target-eligible="true"] {
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 62%, var(--line));
+  .team-agent:has(
+    .composer-shard--primary[data-broadcast-target-eligible="true"]
+  )::after {
+  background: var(--composer-underline-color);
 }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
@@ -748,11 +755,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   height: 30px;
   min-height: 30px;
   padding: 0 5px 0 8px;
-  border-bottom: 2px solid color-mix(
-    in srgb,
-    var(--accent-slot, var(--accent)) 64%,
-    var(--line-soft)
-  );
+  border-bottom: 2px solid var(--composer-underline-color);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
