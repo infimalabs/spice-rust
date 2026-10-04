@@ -897,45 +897,24 @@ fn use_activity_measurements(
     }
 }
 
-async fn measure_unknown(
-    host: NodeRef,
-    width: i32,
-    unknown: Vec<(usize, ActivityCard, Option<usize>)>,
-    canceled: Rc<Cell<bool>>,
-) -> Option<Vec<ActivityMeasurement>> {
-    TimeoutFuture::new(0).await;
-    if canceled.get() {
-        return None;
-    }
-    let _trace = crate::browser::diagnostics::span("layout.measure", || {
-        crate::browser::diagnostics::Metadata {
-            cards: Some(unknown.len()),
-            items: Some(unknown.len()),
-            width_px: Some(width),
-            ..crate::browser::diagnostics::Metadata::default()
-        }
-    });
-    let host = host.cast::<web_sys::Element>()?;
-    let track = host.query_selector(".lane-mosaic-track").ok().flatten()?;
-    let measurement_rack = host.owner_document()?.create_element("div").ok()?;
-    measurement_rack.set_class_name("lane-mosaic-measurements");
-    track.append_child(&measurement_rack).ok()?;
-    let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
-    let image_flow_cards = crate::browser::quote_image_flow::flow_host_keys(&host);
-    let mut pending = Vec::with_capacity(unknown.len());
-    for (_index, activity, latched_span) in unknown {
-        let key = activity.key();
-        let selector = format!("[data-mosaic-card-key=\"{key}\"]");
-        let Some(source) = host.query_selector(&selector).ok().flatten() else {
-            continue;
-        };
-        let Some(element) = source
+fn prepare_measurement_element(
+    document: &web_sys::Document,
+    track: &web_sys::Element,
+    measurement_rack: &mut Option<web_sys::Element>,
+    source: web_sys::Element,
+) -> Option<(web_sys::HtmlElement, bool)> {
+    let measurement_clone =
+        source.get_attribute("data-layout-phase").as_deref() != Some("measuring");
+    let element = if measurement_clone {
+        source
             .clone_node_with_deep(true)
-            .ok()
-            .and_then(|clone| clone.dyn_into::<web_sys::HtmlElement>().ok())
-        else {
-            continue;
-        };
+            .ok()?
+            .dyn_into::<web_sys::HtmlElement>()
+            .ok()?
+    } else {
+        source.dyn_into::<web_sys::HtmlElement>().ok()?
+    };
+    if measurement_clone {
         element.remove_attribute("id").ok();
         element.remove_attribute("data-mosaic-card-key").ok();
         element
@@ -960,9 +939,65 @@ async fn measure_unknown(
                 }
             }
         }
-        if !prepare_images(&element) || measurement_rack.append_child(&element).is_err() {
-            continue;
+    }
+    if !prepare_images(&element) {
+        return None;
+    }
+    if measurement_clone {
+        if measurement_rack.is_none() {
+            let rack = document.create_element("div").ok()?;
+            rack.set_class_name("lane-mosaic-measurements");
+            track.append_child(&rack).ok()?;
+            *measurement_rack = Some(rack);
         }
+        measurement_rack.as_ref()?.append_child(&element).ok()?;
+    }
+    Some((element, measurement_clone))
+}
+
+async fn measure_unknown(
+    host: NodeRef,
+    width: i32,
+    unknown: Vec<(usize, ActivityCard, Option<usize>)>,
+    canceled: Rc<Cell<bool>>,
+) -> Option<Vec<ActivityMeasurement>> {
+    TimeoutFuture::new(0).await;
+    if canceled.get() {
+        return None;
+    }
+    let _trace = crate::browser::diagnostics::span("layout.measure", || {
+        crate::browser::diagnostics::Metadata {
+            cards: Some(unknown.len()),
+            items: Some(unknown.len()),
+            width_px: Some(width),
+            ..crate::browser::diagnostics::Metadata::default()
+        }
+    });
+    let host = host.cast::<web_sys::Element>()?;
+    let track = host.query_selector(".lane-mosaic-track").ok().flatten()?;
+    let document = host.owner_document()?;
+    let mut measurement_rack = None;
+    let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
+    let image_flow_cards = crate::browser::quote_image_flow::flow_host_keys(&host);
+    let sources = host.query_selector_all("[data-mosaic-card-key]").ok()?;
+    let mut pending = Vec::with_capacity(unknown.len());
+    for (index, activity, latched_span) in unknown {
+        let key = activity.key();
+        let Some(source) = u32::try_from(index)
+            .ok()
+            .and_then(|index| sources.item(index))
+            .and_then(|source| source.dyn_into::<web_sys::Element>().ok())
+            .filter(|source| {
+                source.get_attribute("data-mosaic-card-key").as_deref() == Some(key.as_str())
+            })
+        else {
+            continue;
+        };
+        let Some((element, measurement_clone)) =
+            prepare_measurement_element(&document, &track, &mut measurement_rack, source)
+        else {
+            continue;
+        };
         let image_flows = if image_flow_cards.contains(&key) {
             crate::browser::quote_image_flow::collect_flows(&element)
         } else {
@@ -972,6 +1007,7 @@ async fn measure_unknown(
             activity,
             element,
             image_flows,
+            measurement_clone,
             latched_span,
             spans: Vec::with_capacity(3),
             widths: Vec::with_capacity(3),
@@ -991,13 +1027,23 @@ async fn measure_unknown(
         item.latched_span.filter(|span| !item.spans.contains(span))
     });
     for item in &pending {
-        set_measure_span(&item.element, item.activity.base_span(&geometry));
+        let base_span = item.activity.base_span(&geometry);
+        if item.spans.last().copied() != Some(base_span) {
+            set_measure_span(&item.element, base_span);
+        }
     }
+    crate::browser::quote_image_flow::settle_collected_flows(pending.iter().filter_map(|item| {
+        (!item.measurement_clone
+            && item.spans.last().copied() != Some(item.activity.base_span(&geometry)))
+        .then_some(item.image_flows.as_slice())
+    }));
     let measured = pending
         .into_iter()
         .map(|item| item.finish(width, &geometry))
         .collect();
-    let _ = track.remove_child(&measurement_rack);
+    if let Some(measurement_rack) = measurement_rack {
+        let _ = track.remove_child(&measurement_rack);
+    }
     Some(measured)
 }
 
@@ -1005,6 +1051,7 @@ struct PendingActivityMeasurement {
     activity: ActivityCard,
     element: web_sys::HtmlElement,
     image_flows: Vec<web_sys::HtmlElement>,
+    measurement_clone: bool,
     latched_span: Option<usize>,
     spans: Vec<usize>,
     widths: Vec<i32>,
@@ -1040,7 +1087,9 @@ impl PendingActivityMeasurement {
                 span,
                 rows: crate::mosaic::rows_for(measured_height(span), geometry.gap, geometry.module),
             });
-        if let Some(parent) = self.element.parent_node() {
+        if self.measurement_clone
+            && let Some(parent) = self.element.parent_node()
+        {
             let _ = parent.remove_child(&self.element);
         }
         ActivityMeasurement {
