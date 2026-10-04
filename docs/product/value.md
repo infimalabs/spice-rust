@@ -418,12 +418,14 @@ pips or menu. A badge with the team's open-task count leads and opens
 `#/work/team/{team}`. One badge-free pill per task follows, carrying two
 targets: its stem label opens `#/work/team/{team}/{public|hidden}/{stem}`,
 narrowing the team's work to that stem, and its handle opens the task's detail
-layer in place, returning focus to the handle on close. An in-flight task
-actively held by a current lane colors both labels with that member's canonical
-accent. This ownership cue applies only to team-local task text: the pill
-surface and global strip stay unchanged.
-Operator claims, unclaimed work, and lanes absent from the admitted roster keep
-their lifecycle tone rather than guessing an owner color.
+layer in place, returning focus to the handle on close. Every stem label keeps
+the same neutral lifecycle presentation as unclaimed or unavailable team-local
+work, with equal negative space on both sides of its centered hover target.
+For an in-flight task actively held by a current lane, only the handle takes
+that member's canonical accent. This ownership cue applies only to team-local
+task handles: the project stem, pill surface, and global strip stay unchanged.
+Operator claims and lanes absent from the admitted roster keep their lifecycle
+tone rather than guessing an owner color.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
