@@ -335,10 +335,11 @@
   opacity: .32;
   pointer-events: none;
 }
+/* Every draft's field is see-through, so its shard's fill shows when lit. */
+.composer-shard > textarea { background: transparent; }
 .composer-shard--primary > textarea {
   position: relative;
   z-index: 1;
-  background: transparent;
 }
 
 .team-surface .mosaic-composer {

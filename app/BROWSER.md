@@ -137,9 +137,11 @@ or panel-colored gutter. The team owns the field's left outer edge and the
 controls own its right outer edge. Every member heading has a permanent
 accent-colored underline and adjacent accents meet without a panel-colored
 break. A focused member composer is lit: it gains the same accent underline at
-its block-end edge and its background mixes 10% toward that accent. Keyboard
+its block-end edge, and the focused draft itself, the primary or a quote draft
+pinned to a message, mixes its background 10% toward that accent. Keyboard
 broadcast preview lights every occupied recipient through the same single lit
-state. Neither treatment changes the field's geometry, and circular menu
+state, filling each recipient's primary draft. Neither treatment changes the
+field's geometry, and circular menu
 buttons, range thumbs, and the send action retain their own control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
