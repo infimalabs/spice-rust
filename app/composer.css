@@ -752,6 +752,13 @@
   border-radius: 0;
   object-fit: cover;
 }
+/* A cover paints above its card surface, so repeat the card's hover edge on
+   the image layer itself. Keep the image untinted: it is content, not chrome. */
+.team-surface .mosaic-message-card--image-cover
+  .message-image--openable:hover :is(img, .message-image-status) {
+  outline: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
+  outline-offset: -1px;
+}
 .team-surface .mosaic-message-card--image-cover .message-image-status {
   border: 0;
   border-radius: 0;
