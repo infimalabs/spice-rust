@@ -834,6 +834,12 @@
   min-height: 0;
   aspect-ratio: auto;
   overflow: hidden;
+  /* The openable wrapper is a button; it must not bring button geometry, so
+     the card's own edge is the cover's only frame. */
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 .team-surface .mosaic-message-card--image-cover .message-image img {
   width: 100%;
