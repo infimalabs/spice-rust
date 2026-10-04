@@ -117,8 +117,8 @@ occupant author and stable lane attribution while every member remains its own
 send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
-topology revision are server truth. `Close team` removes every member from
-that team, so every browser sees them as independent agents.
+topology revision are server truth. `Leave all teams` removes one member from
+its team, so every browser sees it as an independent agent.
 
 ### Reading
 

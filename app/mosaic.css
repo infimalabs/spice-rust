@@ -449,12 +449,10 @@
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
   --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
-  /* The status band takes what the edge chamber leaves below the task band, so
-     the header is exactly as tall as its chamber. */
-  --team-status-band: calc(var(--team-edge-control-size) - var(--team-task-band));
-  --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
-  /* A mirrored chamber of this size can contain all six member pips. */
-  --team-edge-control-size: 44px;
+  /* The header is tall enough for two rows of member pips; the status band
+     takes what the task band leaves. */
+  --team-header-size: 44px;
+  --team-status-band: calc(var(--team-header-size) - var(--team-task-band));
   --team-chamber-inset: 8px;
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
@@ -480,32 +478,26 @@
 .team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
 /* The header is one fixed grid with no chrome of its own, the same with or
-   without team work so sibling teams line up: the pips and the menu span both
-   bands; the task band above, as tall as the framed global pill strip, and
-   the status band below share the long middle column. The lower pip row
+   without team work so sibling teams line up: the pips span both bands at the
+   right edge; the task band above, as tall as the framed global pill strip,
+   and the status band below share the remaining width. The lower pip row
    centers on the status band, so a one-row stack sits there too. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
   grid-template:
-    "pips tasks menu" var(--team-task-band)
-    "pips status menu" var(--team-status-band)
-    / minmax(var(--team-header-size), max-content) minmax(0, 1fr) var(--team-header-size);
+    "tasks pips" var(--team-task-band)
+    "status pips" var(--team-status-band)
+    / minmax(0, 1fr) max-content;
   block-size: var(--team-header-size);
   padding: 0;
 }
 .team-toolbar > .team-lights {
   grid-area: pips;
   align-self: end;
-  justify-self: center;
+  justify-self: end;
   margin-block-end: calc((var(--team-status-band) - var(--team-pip-size)) / 2);
   padding-inline: var(--team-chamber-inset);
-}
-.team-toolbar > .team-menu {
-  grid-area: menu;
-  align-self: end;
-  justify-self: end;
-  margin: 0;
 }
 /* The team's task strip is the global strip, placed in its own band. */
 .team-toolbar > .team-tasks {
@@ -524,7 +516,6 @@
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.team-toolbar > .team-menu:focus-visible,
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 .team-light {
@@ -587,23 +578,6 @@
   .app-option-badge { display: none; }
 }
 
-.team-menu {
-  display: grid;
-  place-items: center;
-  width: var(--team-edge-control-size);
-  min-width: var(--team-edge-control-size);
-  height: var(--team-edge-control-size);
-  min-height: var(--team-edge-control-size);
-  padding: 0;
-  /* The chamber is cut from the team's top-right corner: only its open
-     upper-left corner curves and draws an edge; the team edges bound the rest. */
-  border-width: var(--app-control-edge-width) 0 0 var(--app-control-edge-width);
-  border-radius: 50% 0 0 0;
-  border-color: var(--control-line-soft);
-  background: var(--control-surface-soft);
-  color: var(--muted);
-  font-size: 1rem;
-}
 .team-toolbar > .ticker {
   grid-area: status;
   align-self: center;

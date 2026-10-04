@@ -31,16 +31,6 @@ pub(crate) enum ClientAction {
         lane: CanonicalUuid,
         before: Option<wire::MessageLocus>,
     },
-    Seat {
-        topology_revision: u64,
-        lane: CanonicalUuid,
-        name: Option<String>,
-        worktree: String,
-        life: String,
-        vendor: wire::Name,
-        model: Option<String>,
-        effort: Option<String>,
-    },
     RenewLane {
         topology_revision: u64,
         team: CanonicalUuid,

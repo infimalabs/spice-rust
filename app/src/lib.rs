@@ -110,7 +110,6 @@ pub(crate) enum PendingKind {
     WorkHistory {
         request: runtime::WorkHistoryRequest,
     },
-    LaneSeat,
     LaneRenewal {
         team: wire::CanonicalUuid,
         lane: wire::CanonicalUuid,

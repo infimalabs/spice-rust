@@ -239,11 +239,12 @@ quotes and images in the middle of a quote keep the image-row layout.
 
 Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
-scroll state, or return-to-mode behavior. The toolbar orders the status-pip
-stack, complete live ticker, and hamburger. The ticker keeps its relative age,
+scroll state, or return-to-mode behavior. The toolbar has no hamburger: its
+task strip and complete live ticker fill the width left of the status-pip
+stack, which holds the right edge. The ticker keeps its relative age,
 lane-status class, agent/tool/command prefix and accent, truncated detail,
-accessible label, and live-region semantics in the middle header slot; an empty
-fleet reserves that slot without inventing status.
+accessible label, and live-region semantics in the status band; an empty fleet
+reserves that slot without inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -256,12 +257,10 @@ any plane, card, or team surface observing a resize. Browsers without
 
 The toolbar is a fixed-height grid whether or not the team owns work, with no
 background, border, or shadow; the team surface frames nothing around it, so
-only the pane below carries the panel. Pip and hamburger columns span a task
-band sized to the framed global pill strip above the status band. The 44px
-hamburger chamber keeps its rounded crown but has square lower corners and no
-gap above the pane, fusing it to the team surface. Its outer edge follows the
-global Spice circle, and its size can be mirrored at the left while containing
-all six member pips. The global Spice and Dash-avatar circles share one diameter
+only the pane below carries the panel. The pip column spans the task band,
+sized to the framed global pill strip, and the status band below it; the 44px
+header holds all six member pips in two rows, the main agent at the lower
+right. The global Spice and Dash-avatar circles share one diameter
 and equal top, bottom, and outer-edge insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame. Its total pill
 (`data-work-scope="team"`) carries one open-task count; each `task-pill--task`
@@ -270,15 +269,15 @@ pill's tone through `active`, `dormant`, and `system`. The handle opens task
 detail through the same path as a Chat task chip, so focus returns to it. The
 ticker centers on the lower pip row; task overflow scrolls inside its band.
 
-The hamburger opens canonical global links for the team:
-`#/work/team/{team}` and `#/work/directions/team/{team}`. The team Work scope
-admits each task created by the current team or last claimed by one of its
-current member lanes, exactly once. Its global task history uses the same team
-filter and restarts at the newest page when scope changes. There is no
+The team's total pill opens the canonical global `#/work/team/{team}` view, and
+`#/work/directions/team/{team}` addresses that team's Directions. The team Work
+scope admits each task created by the current team or last claimed by one of
+its current member lanes, exactly once. Its global task history uses the same
+team filter and restarts at the newest page when scope changes. There is no
 team-local Settled list or Kept jobs table; Running jobs, open work, and task
 history remain the global Work surfaces.
 
-Directions is likewise global. Its team link selects that team's filter while
+Directions is likewise global. Its team route selects that team's filter while
 search text, recipient, lifecycle state, and authored-before filters constrain
 the resident read before pagination. Newer and Older replace one bounded,
 newest-first page through journal cursors without splitting a fanout. A focused

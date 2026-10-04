@@ -2,12 +2,11 @@ use app::Session;
 use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT, TeamDrop,
-    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
-    elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
-    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
-    remaining_label_deadline_millis, reported_tasks, short, split_member, split_team,
-    standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks, ticker_line,
-    topology, truncate,
+    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, elapsed_label,
+    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
+    member_presence, one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
+    short, split_member, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks,
+    ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -1206,59 +1205,6 @@ fn a_join_admits_six_members_and_rejects_a_seventh() {
         ),
         None,
         "an interactive join that would create a seventh member sends nothing",
-    );
-}
-
-#[test]
-fn a_split_keeps_the_source_identity_and_makes_every_member_individual() {
-    let lanes = [
-        seated(TEAM_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
-        seated(TEAM_TWO, &[(LANE_C, "main-c")]),
-    ];
-
-    assert_eq!(
-        split_team(&topology(&lanes), uuid(TEAM_ONE)),
-        Some(vec![
-            (uuid(TEAM_ONE), vec![uuid(LANE_A)]),
-            (uuid(LANE_B), vec![uuid(LANE_B)]),
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-        ]),
-        "the source remains restorable while every member becomes one team",
-    );
-    assert_eq!(
-        split_team(&topology(&lanes), uuid(TEAM_TWO)),
-        None,
-        "an individual team has nothing to split",
-    );
-    assert_eq!(
-        split_team(&topology(&lanes), uuid(TEAM_THREE)),
-        None,
-        "a retired team cannot be split from a stale menu",
-    );
-}
-
-#[test]
-fn closing_a_team_makes_every_member_independent_and_keeps_other_teams() {
-    let lanes = [
-        seated(TEAM_TWO, &[(LANE_C, "main-c")]),
-        seated(TEAM_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
-        seated(TEAM_THREE, &[(LANE_D, "main-d")]),
-    ];
-
-    assert_eq!(
-        dissolve_team(&topology(&lanes), uuid(TEAM_ONE)),
-        Some(vec![
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-            (uuid(LANE_A), vec![uuid(LANE_A)]),
-            (uuid(LANE_B), vec![uuid(LANE_B)]),
-            (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
-        ]),
-        "no member keeps the closed team's identity, and its neighbours stay put",
-    );
-    assert_eq!(
-        dissolve_team(&topology(&lanes), uuid(TEAM_TWO)),
-        None,
-        "a team of one cannot be dissolved by arrangement",
     );
 }
 

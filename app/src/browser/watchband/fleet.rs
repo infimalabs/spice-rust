@@ -25,41 +25,21 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_drag: &'a TeamDragState,
 }
 
-pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) -> Html {
-    let empty_team = crate::runtime::LaneRow {
-        lane: render.epoch,
-        subscription: wire::intent::TeamLife::Steer,
-        members: Vec::new(),
-    };
-    let control = render
-        .team_controls
-        .current(empty_team.lane, empty_team.subscription);
-    let actions = team_menu::Context {
-        controls: render.team_controls,
-        sender: render.sender,
-        runtime: render.runtime,
-        submissions: &render.submissions.status,
-        agents: render.controls,
-        topology: &render.topology,
-        topology_revision: render.topology_revision,
-        can_configure: false,
-        can_arrange: false,
-    };
-    let dismiss = team_menu_dismissal(render.team_controls);
+pub(super) fn render_empty_fleet(fleet: &NodeRef) -> Html {
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams" onclick={dismiss}>
+            tabindex="0" aria-label="Agent teams">
             <section class="team-surface" data-team-weight="1">
-                {render_empty_toolbar(
-                    render.team_controls,
-                    render.epoch,
-                    control.import_open,
-                )}
-                if control.import_open {
-                    {team_menu::render_import(&empty_team, &actions)}
-                }
+                <header class="team-toolbar">
+                    {view::chrome::render_empty_team_ticker()}
+                    <span
+                        class="team-lights"
+                        role="group"
+                        aria-label="0 admitted agents"
+                    ></span>
+                </header>
                 <div class="team-pane">
-                    {empty("No teams are assigned. Open Import agent to create an agent.")}
+                    {empty("No teams are assigned.")}
                 </div>
             </section>
         </div>
@@ -72,7 +52,7 @@ pub(super) fn render_populated_fleet(
     fleet: &NodeRef,
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    let dismiss = team_menu_dismissal(render.team_controls);
+    let dismiss = arrangement_dismissal(render.team_controls);
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams" onclick={dismiss}>
@@ -136,7 +116,7 @@ pub(super) fn render_populated_fleet(
     }
 }
 
-fn team_menu_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<MouseEvent> {
+fn arrangement_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<MouseEvent> {
     let controls = controls.clone();
     Callback::from(move |event: MouseEvent| {
         let inside_control = event
@@ -144,20 +124,20 @@ fn team_menu_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<Mo
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|target| {
                 target
-                    .closest(".team-action-menu, .team-menu, .team-lights[data-lane-drag-handle]")
+                    .closest(".team-action-menu, .team-lights[data-lane-drag-handle]")
                     .ok()
                     .flatten()
                     .is_some()
             });
         if !inside_control {
-            controls.dispatch(TeamControlAction::CloseMenus);
+            controls.dispatch(TeamControlAction::CloseArrangement);
         }
     })
 }
 
-/// Open team menus own Escape only while Chat shows them.
+/// An open team arrangement owns Escape only while Chat shows it.
 #[hook]
-pub(in crate::browser) fn use_team_menu_escape(
+pub(in crate::browser) fn use_team_arrangement_escape(
     controls: &UseReducerHandle<TeamControls>,
     visible: bool,
 ) {
@@ -178,41 +158,10 @@ pub(in crate::browser) fn use_team_menu_escape(
             {
                 let _ = trigger.focus();
             }
-            controls.dispatch(TeamControlAction::CloseMenus);
+            controls.dispatch(TeamControlAction::CloseArrangement);
         })
     };
-    crate::browser::overlay::use_escape_owner(visible && controls.any_menu_open(), dismiss);
-}
-
-fn render_empty_toolbar(
-    team_controls: &UseReducerHandle<TeamControls>,
-    team: CanonicalUuid,
-    import_open: bool,
-) -> Html {
-    html! {
-        <header class="team-toolbar">
-            <span
-                class="team-lights"
-                role="group"
-                aria-label="0 admitted agents"
-            ></span>
-            {view::chrome::render_empty_team_ticker()}
-            <button
-                class="team-menu"
-                type="button"
-                aria-label="Import agent"
-                aria-haspopup="dialog"
-                aria-expanded={import_open.to_string()}
-                title="Import or create an agent"
-                onclick={{
-                    let choose = team_controls.clone();
-                    Callback::from(move |_| {
-                        choose.dispatch(TeamControlAction::ToggleImport { team });
-                    })
-                }}
-            ><span class="team-menu-icon" aria-hidden="true"></span></button>
-        </header>
-    }
+    crate::browser::overlay::use_escape_owner(visible && controls.any_arrangement_open(), dismiss);
 }
 
 fn render_team_toolbar(
@@ -234,21 +183,17 @@ fn render_team_toolbar(
         format!("{} admitted agents", standings.len())
     };
     let control = render.team_controls.current(team.lane, team.subscription);
-    let actions = team_menu::Context {
+    let arrangement_context = arrangement::Context {
         controls: render.team_controls,
         sender: render.sender,
-        runtime: render.runtime,
-        submissions: &render.submissions.status,
-        agents: render.controls,
         topology: &render.topology,
         topology_revision: render.topology_revision,
-        can_configure: render.can_configure,
         can_arrange: render.can_arrange_teams,
     };
     let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
     let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
     // PipStack places index 0 at the lower right, so pip index is canonical
-    // member position: the main agent sits beside the team controls.
+    // member position: the main agent sits at the team's right edge.
     let render_pip = |index: usize| {
         let standing = &standings[index];
         let member = team.member(standing.lane)?;
@@ -282,6 +227,8 @@ fn render_team_toolbar(
     html! {
         <>
         <header class="team-toolbar">
+            {render_team_rail(team.lane, render)}
+            {view::chrome::render_team_ticker(render.runtime, team, standings)}
             <span
                 class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
                 role={if can_arrange { "button" } else { "group" }}
@@ -313,11 +260,8 @@ fn render_team_toolbar(
                     </span>
                 })}
             </span>
-            {render_team_rail(team.lane, render)}
-            {view::chrome::render_team_ticker(render.runtime, team, standings)}
-            {team_menu::trigger(team.lane, &control, render.team_controls)}
         </header>
-        {team_menu::render(team, &control, &actions)}
+        {arrangement::render(team.lane, &control, &arrangement_context)}
         </>
     }
 }
