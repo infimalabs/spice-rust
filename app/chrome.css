@@ -138,8 +138,9 @@ body:has(.shell--mosaic),
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
 /* One open team task: two targets, its project and its handle. The project
-   keeps the neutral lifecycle tone and equal inline breathing room; only the
-   handle may name a current lane owner with member colour. */
+   always wears the muted tone of blocked work, whatever the task's lifecycle,
+   with equal inline breathing room; only the handle carries lifecycle tone
+   or a current lane owner's member colour. */
 .task-pill--task { gap: 0; padding: 0; }
 .task-pill--task:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .task-pill--task > button {
@@ -154,6 +155,7 @@ body:has(.shell--mosaic),
 }
 .task-pill--task > .task-pill-stem {
   padding-inline: 10px;
+  color: var(--muted);
   opacity: .72;
 }
 .task-pill--task > button:last-child { padding-inline-end: 10px; }
