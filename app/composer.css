@@ -699,7 +699,8 @@
    card keeps the lattice-owned height so a cover never creates a gap or overlap. */
 .team-surface .mosaic-message-card--image-cover {
   padding: 0;
-  border-block-color: transparent;
+  padding-inline-start: 4px;
+  border: 0;
   overflow: hidden;
 }
 .lane-mosaic-plane
@@ -765,21 +766,37 @@
   border-radius: 0;
   object-fit: cover;
 }
-/* A cover paints above its card surface, so repeat the card's hover edge on
-   the image layer itself. Keep the image untinted: it is content, not chrome. */
-.team-surface .mosaic-message-card--image-cover
-  .message-image--openable:hover :is(img, .message-image-status) {
-  outline: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
-  outline-offset: -1px;
-}
 .team-surface .mosaic-message-card--image-cover .message-image-status {
   border: 0;
   border-radius: 0;
 }
+/* One card-sized rounded overlay owns the permanent lane rail and every
+   interaction edge above the cover. A padding reserve holds the image geometry;
+   outlining the square image or repeating the card rail creates clipped,
+   washed-out layers at the curved corners. */
+.team-surface .mosaic-message-card--image-cover::after {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border-inline-start: 4px solid var(--accent-slot, var(--accent));
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+.team-surface .mosaic-message-card--image-cover:hover::after {
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
+  border-inline-start: 4px solid var(--accent-slot, var(--accent));
+}
+.team-surface .mosaic-message-card--image-cover:is(
+  :focus-visible,
+  :has(.message-image--openable:focus-visible)
+)::after {
+  border: 2px solid var(--focus);
+  border-inline-start-width: 4px;
+}
 .team-surface .mosaic-message-card--image-cover
   .message-image--openable:focus-visible :is(img, .message-image-status) {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+  outline: none;
 }
 .team-surface .mosaic-message-card--image-cover .message-signoff-line {
   position: absolute;
