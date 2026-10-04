@@ -230,9 +230,10 @@ prose card paints only its content height, centered vertically in that cell, so
 the cell's slack falls evenly above and below it and the visible space between
 cards follows their content while every cell still snaps to the grid. A card
 whose content fills its cell leaves the same seam around its neighbors; image
-covers still fill the card rectangle. Each card keeps the standard panel color
-over the slightly darker page base the header sits on, and marks its lane with
-a 4px accent rail on its inline-start edge. All four outer corners share the
+covers still fill the card rectangle. Each card fills with the same page base
+the header sits on, so cards are told apart by their lane's 4px accent rail on
+the inline-start edge, their rounded corners and the gutters between them.
+All four outer corners share the
 12px curvature of nested quote rails, so the rail and the opposite edge taper
 symmetrically. A FINAL answer keeps only its pill, with no tint or edge of its
 own. Hover tints the card 4% toward its lane accent and adds a thin accent
