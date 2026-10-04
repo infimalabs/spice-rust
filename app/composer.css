@@ -528,13 +528,15 @@
 .markdown-body .message-quote-card .message-quote-card {
   border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
-/* Operator speech stays on the neutral text ramp. ACK/NAK is an independent
+/* Operator speech stays on the neutral text ramp, its rail as bright as the
+   operator's initials at any nesting depth. ACK/NAK is an independent
    attribution badge and never recolors either current or legacy quote shells. */
-.markdown-body .message-quote-card--operator,
+.markdown-body .message-quote-card.message-quote-card--operator,
 .markdown-body blockquote:has(
-  > p > .message-quote-signoff > .message-quote-name[data-quote-actor="operator"]
+  > p > .message-quote-signoff > .message-quote-name[data-quote-actor="operator"],
+  > .message-image-flow > p > .message-quote-signoff > .message-quote-name[data-quote-actor="operator"]
 ) {
-  border-left-color: var(--muted);
+  border-left-color: var(--ink);
   background: color-mix(in srgb, var(--muted) 6%, transparent);
 }
 /* Every quote layer holding two images lays them out as one row sized from
