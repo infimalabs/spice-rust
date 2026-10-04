@@ -1015,6 +1015,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template-columns: repeat(12, minmax(0, 1fr));
   column-gap: var(--mosaic-gap); row-gap: var(--mosaic-gap);
 }
+.lane-mosaic-measurements {
+  position: absolute; top: 0; left: 0; right: 0; height: 0;
+  display: grid; min-width: 0;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--mosaic-gap);
+  contain: layout;
+  visibility: hidden; pointer-events: none;
+}
 .lane-mosaic-plane[data-measurement-phase="base"] {
   /* Measurement is an enhancement, not admission. A fresh hidden or narrow
      host cannot commit a lattice yet, but its admitted transcript must still

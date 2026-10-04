@@ -914,10 +914,15 @@ async fn measure_unknown(
     });
     let host = host.cast::<web_sys::Element>()?;
     let track = host.query_selector(".lane-mosaic-track").ok().flatten()?;
+    let measurement_rack = host.owner_document()?.create_element("div").ok()?;
+    measurement_rack.set_class_name("lane-mosaic-measurements");
+    track.append_child(&measurement_rack).ok()?;
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
+    let image_flow_cards = crate::browser::quote_image_flow::flow_host_keys(&host);
     let mut pending = Vec::with_capacity(unknown.len());
     for (_index, activity, latched_span) in unknown {
-        let selector = format!("[data-mosaic-card-key=\"{}\"]", activity.key());
+        let key = activity.key();
+        let selector = format!("[data-mosaic-card-key=\"{key}\"]");
         let Some(source) = host.query_selector(&selector).ok().flatten() else {
             continue;
         };
@@ -952,12 +957,18 @@ async fn measure_unknown(
                 }
             }
         }
-        if !prepare_images(&element) || track.append_child(&element).is_err() {
+        if !prepare_images(&element) || measurement_rack.append_child(&element).is_err() {
             continue;
         }
+        let image_flows = if image_flow_cards.contains(&key) {
+            crate::browser::quote_image_flow::collect_flows(&element)
+        } else {
+            Vec::new()
+        };
         pending.push(PendingActivityMeasurement {
             activity,
             element,
+            image_flows,
             latched_span,
             spans: Vec::with_capacity(3),
             widths: Vec::with_capacity(3),
@@ -979,17 +990,18 @@ async fn measure_unknown(
     for item in &pending {
         set_measure_span(&item.element, item.activity.base_span(&geometry));
     }
-    Some(
-        pending
-            .into_iter()
-            .map(|item| item.finish(width, &geometry))
-            .collect(),
-    )
+    let measured = pending
+        .into_iter()
+        .map(|item| item.finish(width, &geometry))
+        .collect();
+    let _ = track.remove_child(&measurement_rack);
+    Some(measured)
 }
 
 struct PendingActivityMeasurement {
     activity: ActivityCard,
     element: web_sys::HtmlElement,
+    image_flows: Vec<web_sys::HtmlElement>,
     latched_span: Option<usize>,
     spans: Vec<usize>,
     widths: Vec<i32>,
@@ -1052,12 +1064,16 @@ fn measure_pending_tier(
         }
     }
     // An image flow's layout depends on its width, so each clone settles its
-    // own at this span rather than inheriting the live card's last lift.
-    for (item, span) in pending.iter().zip(&spans) {
-        if span.is_some() {
-            crate::browser::quote_image_flow::settle_flows(&item.element);
-        }
-    }
+    // own at this span rather than inheriting the live card's last lift. The
+    // descendants were collected once at clone creation; batch independent
+    // clones so each read/write pass forces document layout once.
+    crate::browser::quote_image_flow::settle_collected_flows(
+        pending
+            .iter()
+            .zip(&spans)
+            .filter(|(_, span)| span.is_some())
+            .map(|(item, _)| item.image_flows.as_slice()),
+    );
     for (item, span) in pending.iter_mut().zip(spans) {
         let Some(span) = span else {
             continue;
