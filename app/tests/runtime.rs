@@ -415,6 +415,7 @@ fn lane_response_with_renewals(
                 effort: bound.then(|| "high".to_owned()),
                 seat_effort: None,
                 fast_mode: false,
+                seat_fast_mode: None,
                 git: bound.then(|| "current".to_owned()),
                 rtk: None,
                 occupant: occupant.map(uuid),

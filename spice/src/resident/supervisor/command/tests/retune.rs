@@ -109,3 +109,46 @@ fn live_changes_use_exact_requests_and_only_matching_provider_responses_apply() 
     drop(socket);
     fs::remove_file(reply).expect("callback door cleans up");
 }
+
+#[cfg(unix)]
+#[test]
+fn fast_mode_requests_name_the_disposition_and_a_failed_response_refuses() {
+    let scratch = Scratch::new("live-fast-retune");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    let reply = Path::new("/tmp").join(format!("spice-fast-test-{}.sock", std::process::id()));
+    let _ = fs::remove_file(&reply);
+    let socket = std::os::unix::net::UnixDatagram::bind(&reply).expect("callback door binds");
+    socket
+        .set_read_timeout(Some(ANSWER_BOUND))
+        .expect("callback deadline sets");
+
+    driver.retune(
+        "live-fast".to_owned(),
+        LiveRetune::Fast { enabled: true },
+        reply.clone(),
+    );
+    assert_eq!(
+        sink.answered(1)[0],
+        serde_json::json!({
+            "id": "live-fast",
+            "type": "set_fast_mode",
+            "enabled": true,
+        }),
+    );
+    // OMP refuses to enable fast mode on a model without a priority tier.
+    driver.observe(&decoded(
+        br#"{"id":"live-fast","type":"response","command":"set_fast_mode","success":false,"error":"Fast mode is unavailable for the current model."}"#,
+    ));
+    let mut bytes = [0u8; RETUNE_REPLY_BYTES];
+    let length = socket
+        .recv(&mut bytes)
+        .expect("the failed fast-mode response answers");
+    let answer: RetuneReply =
+        serde_json::from_slice(&bytes[..length]).expect("the fast callback is typed");
+    assert_eq!(answer.request, "live-fast");
+    assert!(matches!(answer.result, RetuneReplyResult::Refused { .. }));
+
+    drop(socket);
+    fs::remove_file(reply).expect("callback door cleans up");
+}

@@ -7,12 +7,21 @@
 //! interrupted live changes leave the running identity untouched while the
 //! durable seat selection still advances.
 
+use super::super::supervisor::command::{LiveRetune, LiveRetuneResult};
 use super::*;
 
 #[derive(Clone, Copy)]
 enum Selection<'a> {
     Model(&'a LaneRetune),
     Effort(&'a LaneEffortRetune),
+    Fast(&'a LaneFastRetune),
+}
+
+/// The seat fact one selection journals, carrying the value it replaced.
+enum SeatFact {
+    Model(wire::body::LaneRetuned),
+    Effort(wire::body::LaneEffortRetuned),
+    Fast(wire::body::LaneFastRetuned),
 }
 
 impl Selection<'_> {
@@ -20,6 +29,7 @@ impl Selection<'_> {
         match self {
             Self::Model(request) => request.lane,
             Self::Effort(request) => request.lane,
+            Self::Fast(request) => request.lane,
         }
     }
 
@@ -27,13 +37,7 @@ impl Selection<'_> {
         match self {
             Self::Model(request) => request.topology_revision,
             Self::Effort(request) => request.topology_revision,
-        }
-    }
-
-    fn value(self) -> Option<String> {
-        match self {
-            Self::Model(request) => request.model.clone(),
-            Self::Effort(request) => request.effort.clone(),
+            Self::Fast(request) => request.topology_revision,
         }
     }
 
@@ -62,17 +66,32 @@ impl Selection<'_> {
         }
     }
 
-    fn replace_seat(self, row: &mut wire::LaneResidency) -> Option<String> {
+    fn replace_seat(self, row: &mut wire::LaneResidency) -> SeatFact {
         match self {
-            Self::Model(_) => std::mem::replace(&mut row.model, self.value()),
-            Self::Effort(_) => std::mem::replace(&mut row.effort, self.value()),
+            Self::Model(request) => SeatFact::Model(wire::body::LaneRetuned {
+                lane: request.lane,
+                from: std::mem::replace(&mut row.model, request.model.clone()),
+                model: request.model.clone(),
+            }),
+            Self::Effort(request) => SeatFact::Effort(wire::body::LaneEffortRetuned {
+                lane: request.lane,
+                from: std::mem::replace(&mut row.effort, request.effort.clone()),
+                effort: request.effort.clone(),
+            }),
+            Self::Fast(request) => SeatFact::Fast(wire::body::LaneFastRetuned {
+                lane: request.lane,
+                from: std::mem::replace(&mut row.fast_mode, request.fast_mode),
+                fast_mode: request.fast_mode,
+            }),
         }
     }
 
-    fn live_request(
-        self,
-        row: &wire::LaneResidency,
-    ) -> Option<super::super::supervisor::command::LiveRetune> {
+    /// The live change this selection asks of the running occupant, if any.
+    ///
+    /// A fast-mode seat that returns to the global setting still names a
+    /// concrete disposition, so `global_fast` resolves it; model and effort
+    /// clears keep the running value.
+    fn live_request(self, row: &wire::LaneResidency, global_fast: bool) -> Option<LiveRetune> {
         if row.vendor.as_str() != "omp" || row.occupant.is_none() {
             return None;
         }
@@ -80,10 +99,8 @@ impl Selection<'_> {
         match self {
             Self::Effort(request) => {
                 let effort = request.effort.as_ref()?;
-                (launch.effort != *effort).then(|| {
-                    super::super::supervisor::command::LiveRetune::Effort {
-                        effort: effort.clone(),
-                    }
+                (launch.effort != *effort).then(|| LiveRetune::Effort {
+                    effort: effort.clone(),
                 })
             }
             Self::Model(request) => {
@@ -95,46 +112,51 @@ impl Selection<'_> {
                 if provider.is_empty() || model.is_empty() {
                     return None;
                 }
-                Some(super::super::supervisor::command::LiveRetune::Model {
+                Some(LiveRetune::Model {
                     provider: provider.to_owned(),
                     model: model.to_owned(),
                 })
             }
-        }
-    }
-
-    fn apply_runtime(self, row: &mut wire::LaneResidency) {
-        let launch = row
-            .session
-            .as_mut()
-            .and_then(|session| session.launch.as_mut())
-            .expect("a live request requires recorded launch identity");
-        match self {
-            Self::Model(request) => {
-                launch.model = request.model.clone().expect("live model is named");
-            }
-            Self::Effort(request) => {
-                launch.effort = request.effort.clone().expect("live effort is named");
+            Self::Fast(request) => {
+                let enabled = request.fast_mode.unwrap_or(global_fast);
+                (launch.fast_mode != enabled).then_some(LiveRetune::Fast { enabled })
             }
         }
     }
+}
 
-    fn runtime_fact(self, occupant: CanonicalUuid) -> wire::body::LaneRuntimeRetuned {
-        match self {
-            Self::Model(request) => wire::body::LaneRuntimeRetuned {
-                lane: request.lane,
-                occupant,
-                model: request.model.clone(),
-                effort: None,
-            },
-            Self::Effort(request) => wire::body::LaneRuntimeRetuned {
-                lane: request.lane,
-                occupant,
-                model: None,
-                effort: request.effort.clone(),
-            },
-        }
+/// Apply one confirmed live change to the running launch identity.
+fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) {
+    let launch = row
+        .session
+        .as_mut()
+        .and_then(|session| session.launch.as_mut())
+        .expect("a live request requires recorded launch identity");
+    match live {
+        LiveRetune::Model { provider, model } => launch.model = format!("{provider}/{model}"),
+        LiveRetune::Effort { effort } => launch.effort.clone_from(effort),
+        LiveRetune::Fast { enabled } => launch.fast_mode = *enabled,
     }
+}
+
+fn runtime_fact(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    live: &LiveRetune,
+) -> wire::body::LaneRuntimeRetuned {
+    let mut fact = wire::body::LaneRuntimeRetuned {
+        lane,
+        occupant,
+        model: None,
+        effort: None,
+        fast_mode: None,
+    };
+    match live {
+        LiveRetune::Model { provider, model } => fact.model = Some(format!("{provider}/{model}")),
+        LiveRetune::Effort { effort } => fact.effort = Some(effort.clone()),
+        LiveRetune::Fast { enabled } => fact.fast_mode = Some(*enabled),
+    }
+    fact
 }
 
 /// Commit one seated lane's model selection and apply an exact live OMP model
@@ -169,6 +191,19 @@ pub(in crate::resident) fn retune_effort(
     )
 }
 
+/// Commit one seated lane's fast-mode selection and apply the disposition it
+/// resolves to on a live OMP occupant.
+pub(in crate::resident) fn retune_fast(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command: &wire::AdmittedCommand,
+    request: &LaneFastRetune,
+) -> Outcome<CommandAnswer> {
+    change(bus, paths, epoch, seats, command, Selection::Fast(request))
+}
+
 fn change(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -189,6 +224,13 @@ fn change(
             Ok(revision) => revision,
             Err(outcome) => return outcome,
         };
+    let global_fast = match selection {
+        Selection::Fast(_) => match super::super::settings_surface::fast_mode(bus) {
+            Ok(fast_mode) => fast_mode,
+            Err(outcome) => return typed_outcome(outcome),
+        },
+        Selection::Model(_) | Selection::Effort(_) => false,
+    };
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
     let Some(row) = next
@@ -198,8 +240,8 @@ fn change(
     else {
         return missing_lane(selection.lane());
     };
-    let from = selection.replace_seat(row);
-    let live = selection.live_request(row).zip(row.occupant);
+    let seat_fact = selection.replace_seat(row);
+    let live = selection.live_request(row, global_fast).zip(row.occupant);
     let answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -214,23 +256,11 @@ fn change(
         Err(outcome) => return typed_outcome(outcome),
     };
     guard_residency(&mut write, &observed);
-    let seat_fact = match selection {
-        Selection::Model(request) => write.fact(
-            wire::body::LaneRetuned {
-                lane: request.lane,
-                from,
-                model: request.model.clone(),
-            },
-            FactCause::Existing(observed.position()),
-        ),
-        Selection::Effort(request) => write.fact(
-            wire::body::LaneEffortRetuned {
-                lane: request.lane,
-                from,
-                effort: request.effort.clone(),
-            },
-            FactCause::Existing(observed.position()),
-        ),
+    let cause = FactCause::Existing(observed.position());
+    let seat_fact = match seat_fact {
+        SeatFact::Model(body) => write.fact(body, cause),
+        SeatFact::Effort(body) => write.fact(body, cause),
+        SeatFact::Fast(body) => write.fact(body, cause),
     };
     let seat_fact = match seat_fact {
         Ok(fact) => fact,
@@ -242,6 +272,9 @@ fn change(
             command_result(&mut write, command, request.clone(), epoch, answer.clone())
         }
         Selection::Effort(request) => {
+            command_result(&mut write, command, request.clone(), epoch, answer.clone())
+        }
+        Selection::Fast(request) => {
             command_result(&mut write, command, request.clone(), epoch, answer.clone())
         }
     };
@@ -259,13 +292,18 @@ fn change(
     // is exactly this transaction's receipt, so a retried command replays it
     // unchanged; a confirmed runtime change is a later residency fact that
     // lane reads observe.
-    if let Some((request, occupant)) = live
+    if let Some((live, occupant)) = live
         && matches!(
-            super::super::supervisor::command::retune(paths, selection.lane(), occupant, request),
-            Ok(super::super::supervisor::command::LiveRetuneResult::Applied)
+            super::super::supervisor::command::retune(
+                paths,
+                selection.lane(),
+                occupant,
+                live.clone()
+            ),
+            Ok(LiveRetuneResult::Applied)
         )
     {
-        record_runtime(bus, epoch, command, selection, occupant);
+        record_runtime(bus, epoch, command, selection.lane(), occupant, &live);
     }
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
@@ -283,19 +321,16 @@ fn record_runtime(
     bus: &Bus,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
-    selection: Selection<'_>,
+    lane: CanonicalUuid,
     occupant: CanonicalUuid,
+    live: &LiveRetune,
 ) {
     for _ in 0..RUNTIME_RECORD_ATTEMPTS {
         let Ok(observed) = current_residency(bus, epoch) else {
             return;
         };
         let mut next = observed.body().clone();
-        let Some(row) = next
-            .lanes
-            .iter_mut()
-            .find(|row| row.lane == selection.lane())
-        else {
+        let Some(row) = next.lanes.iter_mut().find(|row| row.lane == lane) else {
             return;
         };
         let launched = row
@@ -305,7 +340,7 @@ fn record_runtime(
         if row.occupant != Some(occupant) || !launched {
             return;
         }
-        selection.apply_runtime(row);
+        apply_runtime(row, live);
         let Ok(mut write) = write(
             command.actor().clone(),
             epoch,
@@ -315,7 +350,7 @@ fn record_runtime(
         };
         guard_residency(&mut write, &observed);
         let Ok(fact) = write.fact(
-            selection.runtime_fact(occupant),
+            runtime_fact(lane, occupant, live),
             FactCause::Existing(observed.position()),
         ) else {
             return;

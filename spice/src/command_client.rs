@@ -91,6 +91,10 @@ pub(crate) enum SelectedCommand<'a> {
     LaneEffortRetune {
         body: &'a wire::intent::LaneEffortRetune,
     },
+    /// State whether one seated lane's next launch runs in fast mode.
+    LaneFastRetune {
+        body: &'a wire::intent::LaneFastRetune,
+    },
     /// Read one bounded continuity account.
     LaneRecall { body: &'a wire::intent::LaneRecall },
     /// The operator appends one durable directive to a seated lane.

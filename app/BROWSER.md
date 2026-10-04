@@ -171,13 +171,18 @@ instead of opening a floating menu. The panel carries everything one agent
 offers. It leads with what the agent needs from the operator now: consent
 requests to Allow or Deny in place, held tasks iced, blocked, or in review,
 a lease within two minutes of expiry, and direction waiting over five
-minutes. Then come the Wake, Drain, Remove, Renew, and next-launch-model
-commands and refusals; Renew submits immediately, while Drain and Remove
-confirm first. Presence and lease age, the current task, latest activity,
-waiting direction, copyable agent channel, occupant, session, and worktree
-follow, beside Create new team and Leave all teams. Wide lanes lay those groups
-side by side; narrow lanes stack them and scroll within the lane. The button,
-Escape, or a click elsewhere in the team restores the composer.
+minutes. Then come the Wake, Drain, Remove, Renew, and next-launch model,
+reasoning effort, and fast mode commands and refusals; Renew submits
+immediately, while Drain and Remove confirm first. The fast-mode selector sits
+right after effort: its default choice follows the spice menu's global Fast
+mode and names its current value, while on and off pin the seat. Effort and
+fast mode each report the running value beside the next launch, and a running
+OMP agent takes either change at once. Presence and lease age, the current
+task, latest activity, waiting direction, copyable agent channel, occupant,
+session, and worktree follow, beside Create new team and Leave all teams. Wide
+lanes lay those groups side by side; narrow lanes stack them and scroll within
+the lane. The button, Escape, or a click elsewhere in the team restores the
+composer.
 
 Each lane menu's neutral hamburger takes that member's accent for hover,
 press, keyboard focus, and open states, so neighboring lanes never share an

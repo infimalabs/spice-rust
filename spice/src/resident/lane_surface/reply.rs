@@ -93,6 +93,7 @@ fn answer_at(
                     .as_ref()
                     .and_then(|session| session.launch.as_ref())
                     .is_some_and(|launch| launch.fast_mode),
+                seat_fast_mode: row.fast_mode,
                 git: row
                     .session
                     .as_ref()
@@ -609,6 +610,7 @@ mod tests {
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(uuid(2)),
             lineage: vec![uuid(2)],
             capabilities: vec![uuid(3)],

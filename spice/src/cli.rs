@@ -215,6 +215,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::LaneRenewal
         | CommandKind::LaneRetune
         | CommandKind::LaneEffortRetune
+        | CommandKind::LaneFastRetune
         | CommandKind::LaneArrange
         | CommandKind::TeamConfigure
         | CommandKind::TeamArrange
@@ -360,6 +361,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["lane", "wake"]
             | ["lane", "model"]
             | ["lane", "effort"]
+            | ["lane", "fast"]
             | ["lane", "remove"]
             | ["lane", "import"]
             | ["lane", "purge"]

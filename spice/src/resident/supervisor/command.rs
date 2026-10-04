@@ -118,6 +118,7 @@ pub(in crate::resident) struct Ask {
 pub(in crate::resident) enum LiveRetune {
     Effort { effort: String },
     Model { provider: String, model: String },
+    Fast { enabled: bool },
 }
 
 impl LiveRetune {
@@ -125,6 +126,7 @@ impl LiveRetune {
         match self {
             Self::Effort { .. } => "set_thinking_level",
             Self::Model { .. } => "set_model",
+            Self::Fast { .. } => "set_fast_mode",
         }
     }
 
@@ -132,6 +134,7 @@ impl LiveRetune {
         match self {
             Self::Effort { effort } => vendor::omp::set_thinking_level_request(id, effort),
             Self::Model { provider, model } => vendor::omp::set_model_request(id, provider, model),
+            Self::Fast { enabled } => vendor::omp::set_fast_mode_request(id, *enabled),
         }
     }
 }

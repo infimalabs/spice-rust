@@ -75,6 +75,7 @@ fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent
         vendor,
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],

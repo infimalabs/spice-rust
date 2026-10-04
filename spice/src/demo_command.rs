@@ -799,6 +799,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                         .expect("simulated demo vendor is valid"),
                     model: None,
                     effort: None,
+                    fast_mode: None,
                     occupant: Some(uuid(seed.occupant)),
                     lineage: vec![uuid(seed.occupant)],
                     capabilities: vec![uuid(seed.capability)],

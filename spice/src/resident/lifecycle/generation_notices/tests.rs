@@ -178,6 +178,7 @@ fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
         vendor: fixture.vendor.clone(),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: Some(fixture.occupant),
         lineage: vec![fixture.occupant],
         capabilities: vec![fixture.capability],

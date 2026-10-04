@@ -473,6 +473,7 @@ impl NativeInvocation<'_> {
             | ["lane", "wake"]
             | ["lane", "model"]
             | ["lane", "effort"]
+            | ["lane", "fast"]
             | ["lane", "remove"]
             | ["lane", "import"]
             | ["recall"] => {

@@ -490,6 +490,7 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
         effort: None,
         seat_effort: None,
         fast_mode: false,
+        seat_fast_mode: None,
         occupant: None,
         session: None,
         disposition: "seated".to_owned(),

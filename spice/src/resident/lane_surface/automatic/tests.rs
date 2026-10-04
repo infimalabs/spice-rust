@@ -134,6 +134,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
             vendor,
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: None,
             lineage: Vec::new(),
             capabilities: vec![capability],

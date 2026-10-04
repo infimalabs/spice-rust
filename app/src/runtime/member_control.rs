@@ -30,6 +30,9 @@ pub enum MemberCommand {
     /// Pin the reasoning effort the next occupant launches with; absent follows
     /// the vendor's configured effort.
     RetuneEffort { effort: Option<String> },
+    /// Pin whether the next occupant launches in fast mode; absent follows the
+    /// global fast-mode setting.
+    RetuneFast { fast_mode: Option<bool> },
 }
 
 impl MemberCommand {
@@ -44,6 +47,7 @@ impl MemberCommand {
             Self::Renew { requested: false } => "Cancelling renewal…",
             Self::Retune { .. } => "Changing model…",
             Self::RetuneEffort { .. } => "Changing effort…",
+            Self::RetuneFast { .. } => "Changing fast mode…",
         }
     }
 
@@ -58,6 +62,7 @@ impl MemberCommand {
             Self::Renew { requested: false } => "Cancelled renewal",
             Self::Retune { .. } => "Changed model",
             Self::RetuneEffort { .. } => "Changed effort",
+            Self::RetuneFast { .. } => "Changed fast mode",
         }
     }
 
@@ -71,6 +76,7 @@ impl MemberCommand {
             Self::Renew { .. } => "Could not renew this agent",
             Self::Retune { .. } => "Could not change this agent's model",
             Self::RetuneEffort { .. } => "Could not change this agent's effort",
+            Self::RetuneFast { .. } => "Could not change this agent's fast mode",
         }
     }
 }

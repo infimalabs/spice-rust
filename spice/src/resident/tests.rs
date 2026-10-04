@@ -554,6 +554,7 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
+        fast_mode: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),

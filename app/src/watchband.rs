@@ -1050,6 +1050,7 @@ mod tests {
             effort: None,
             seat_effort: None,
             fast_mode: false,
+            seat_fast_mode: None,
             occupant: None,
             session: None,
             disposition: "seated".to_owned(),

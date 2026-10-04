@@ -74,6 +74,7 @@ fn every_command_names_the_witnesses_it_requires() {
                 | CommandKind::LaneRenewal
                 | CommandKind::LaneRetune
                 | CommandKind::LaneEffortRetune
+                | CommandKind::LaneFastRetune
                 | CommandKind::LaneArrange
                 | CommandKind::TeamConfigure
                 | CommandKind::TeamArrange

@@ -212,6 +212,9 @@ impl<'a> Surface<'a> {
                     self.bus, self.paths, self.epoch, seats, command, retune,
                 ))
             }
+            (CommandKind::LaneFastRetune, Intent::LaneFastRetune(retune)) => Some(
+                lane_surface::retune_fast(self.bus, self.paths, self.epoch, seats, command, retune),
+            ),
             (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
                 Some(lane_surface::arrange_teams(
                     self.bus, self.paths, self.epoch, seats, command, arrange,

@@ -1,10 +1,10 @@
-//! Retuning durable seat model and effort selections.
+//! Retuning durable seat model, effort, and fast-mode selections.
 //!
-//! Both selections are the launcher's authoritative inputs across relaunch,
+//! Every selection is the launcher's authoritative input across relaunch,
 //! recovery, and succession. A running occupant changes only after its
 //! supervisor confirms the exact live provider command; these fixture
-//! occupants have no command door, so they exercise the truthful next-launch
-//! fallback without replacing the supervised process.
+//! occupants have no command door unless a test binds one, so they exercise
+//! the truthful next-launch path without replacing the supervised process.
 
 use super::*;
 
@@ -135,6 +135,34 @@ impl Seated {
         (command, request)
     }
 
+    fn fast_command(
+        &self,
+        id: u8,
+        fast_mode: Option<bool>,
+        topology_revision: u64,
+    ) -> (wire::AdmittedCommand, wire::intent::LaneFastRetune) {
+        let request = wire::intent::LaneFastRetune {
+            topology_revision,
+            lane: self.lane,
+            fast_mode,
+        };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind: CommandKind::LaneFastRetune,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("lane fast retune encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: self.epoch,
+        })
+        .expect("operator fast retune admits");
+        (command, request)
+    }
+
     fn head(&self) -> wire::ResidencyHead {
         current_residency(&self.bus, self.epoch)
             .expect("seated residency reads")
@@ -250,13 +278,65 @@ fn rewrite_row(
 
 impl Seated {
     fn running_effort(&self) -> Option<String> {
+        self.running().map(|launch| launch.effort)
+    }
+
+    fn running(&self) -> Option<wire::body::LaneLaunchIdentity> {
         self.head()
             .lanes
             .iter()
             .find(|row| row.lane == self.lane)
             .and_then(|row| row.session.as_ref())
-            .and_then(|session| session.launch.as_ref())
-            .map(|launch| launch.effort.clone())
+            .and_then(|session| session.launch.clone())
+    }
+
+    /// Retune fast mode while a fixture OMP door answers the one kick it
+    /// receives with `disposition`, returning the command's outcome and the
+    /// live setting the kick asked for.
+    #[cfg(unix)]
+    fn retune_fast_live(
+        &self,
+        id: u8,
+        fast_mode: Option<bool>,
+        disposition: serde_json::Value,
+    ) -> (Outcome<CommandAnswer>, serde_json::Value) {
+        use std::os::unix::net::UnixDatagram;
+
+        let door = crate::resident::supervisor::command::kick_path(&self.paths, self.lane);
+        let _ = std::fs::remove_file(&door);
+        let listener = UnixDatagram::bind(&door).expect("fixture kick door binds");
+        let (command, request) = self.fast_command(id, fast_mode, self.head().topology_revision);
+        let (outcome, asked) = std::thread::scope(|scope| {
+            let door = scope.spawn(move || {
+                let mut bytes = [0u8; 4096];
+                let length = listener.recv(&mut bytes).expect("the retune kick arrives");
+                let kick: serde_json::Value =
+                    serde_json::from_slice(&bytes[..length]).expect("kick decodes");
+                let answer = serde_json::json!({
+                    "request": kick["request"],
+                    "result": disposition,
+                });
+                UnixDatagram::unbound()
+                    .expect("reply socket")
+                    .send_to(
+                        answer.to_string().as_bytes(),
+                        kick["reply"].as_str().expect("reply door"),
+                    )
+                    .expect("reply sends");
+                kick["retune"].clone()
+            });
+            let outcome = super::super::lane_surface::retune_fast(
+                &self.bus,
+                &self.paths,
+                self.epoch,
+                &self.seats,
+                &command,
+                &request,
+            );
+            (outcome, door.join().expect("fixture door answers"))
+        });
+        let _ = std::fs::remove_file(&door);
+        (outcome, asked)
     }
 }
 
@@ -474,6 +554,91 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
             .capabilities
             .contains(&test_uuid(10)),
         "the concurrent write survives"
+    );
+    fixture.release();
+}
+
+/// A fast-mode seat is next-launch authority; a cleared seat still names a
+/// concrete running disposition, the global setting, and only a confirmed
+/// provider answer moves the running value.
+#[cfg(unix)]
+#[test]
+fn fast_retune_applies_the_resolved_disposition_live_and_a_refusal_keeps_the_running_value() {
+    let fixture = Seated::new("lane-fast-live");
+    fixture.declare_launch("low");
+    assert!(
+        !fixture.running().expect("declared launch").fast_mode,
+        "the fixture launch runs without fast mode"
+    );
+
+    let (outcome, asked) =
+        fixture.retune_fast_live(4, Some(true), serde_json::json!({"disposition": "applied"}));
+    assert_eq!(
+        asked,
+        serde_json::json!({"setting": "fast", "enabled": true})
+    );
+    let rows = committed_rows(outcome);
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the retuned lane is in the answer");
+    assert_eq!(row.seat_fast_mode, Some(true));
+    assert!(
+        fixture.running().expect("declared launch").fast_mode,
+        "the confirmed change is running"
+    );
+    let seat = |fixture: &Seated| {
+        fixture
+            .head()
+            .lanes
+            .iter()
+            .find(|row| row.lane == fixture.lane)
+            .expect("the seeded lane stays seated")
+            .fast_mode
+    };
+    assert_eq!(seat(&fixture), Some(true));
+
+    // Clearing the seat follows the global setting, which is off here, so the
+    // running occupant is asked to turn fast mode off; it refuses.
+    let (outcome, asked) = fixture.retune_fast_live(
+        5,
+        None,
+        serde_json::json!({"disposition": "refused", "detail": "unavailable"}),
+    );
+    assert_eq!(
+        asked,
+        serde_json::json!({"setting": "fast", "enabled": false})
+    );
+    let rows = committed_rows(outcome);
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the cleared lane is in the answer");
+    assert_eq!(row.seat_fast_mode, None);
+    assert_eq!(
+        seat(&fixture),
+        None,
+        "the seat advances despite the refusal"
+    );
+    assert!(
+        fixture.running().expect("declared launch").fast_mode,
+        "a refused live change leaves the running value untouched"
+    );
+    let fast_facts = fixture
+        .bus
+        .fact_snapshot()
+        .expect("retuned journal reads")
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneFastRetuned)
+        .map(|fact| serde_json::Value::Object(fact.fact.body().clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fast_facts,
+        vec![
+            serde_json::json!({"lane": fixture.lane.to_string(), "fast_mode": true}),
+            serde_json::json!({"lane": fixture.lane.to_string(), "from": true}),
+        ],
     );
     fixture.release();
 }

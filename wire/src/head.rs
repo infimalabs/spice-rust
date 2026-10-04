@@ -681,6 +681,14 @@ pub struct LaneResidency {
         deserialize_with = "crate::optional::present"
     )]
     pub effort: Option<String>,
+    /// Fast-mode disposition selected for this seat, absent when the global
+    /// fast-mode setting governs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_mode: Option<bool>,
     /// Current occupant, absent between seats.
     #[serde(
         default,

@@ -64,6 +64,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
             vendor: "omp".parse().expect("reseat fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(seat.occupant),
             lineage: vec![seat.occupant],
             capabilities: vec![seat.occupant],

@@ -259,6 +259,8 @@ vocabulary! {
     LaneRetuned = "lane::retuned" by ResidentRecognition;
     /// A seated lane's effort spelling changed for its next launch.
     LaneEffortRetuned = "lane::effort" by ResidentRecognition;
+    /// A seated lane's fast-mode disposition changed for its next launch.
+    LaneFastRetuned = "lane::fast" by ResidentRecognition;
     /// A running occupant confirmed one live provider setting change.
     LaneRuntimeRetuned = "lane::runtime" by ResidentRecognition;
     /// One app team adopted a shared task-allocation lifetime.

@@ -676,6 +676,7 @@ mod tests {
                 vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
+                fast_mode: None,
                 occupant: Some(uuid(21)),
                 lineage: Vec::new(),
                 capabilities: Vec::new(),

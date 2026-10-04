@@ -462,6 +462,7 @@ mod tests {
             effort: Some("high".to_owned()),
             seat_effort: None,
             fast_mode: false,
+            seat_fast_mode: None,
             occupant: occupant.map(uuid),
             session: Some("session-fixture".to_owned()),
             disposition: "seated".to_owned(),

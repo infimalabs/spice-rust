@@ -136,6 +136,8 @@ pub enum CommandKind {
     LaneRetune,
     /// Change the effort spelling one seated lane launches with.
     LaneEffortRetune,
+    /// Change whether one seated lane launches in fast mode.
+    LaneFastRetune,
     /// Change the shared task-allocation lifetime of one app team.
     TeamConfigure,
     /// Rearrange the order of every app team and the lanes each holds.
@@ -640,6 +642,7 @@ impl CommandKind {
         Self::LaneRenewal,
         Self::LaneRetune,
         Self::LaneEffortRetune,
+        Self::LaneFastRetune,
         Self::TeamConfigure,
         Self::TeamArrange,
         Self::LaneRecall,
@@ -709,6 +712,7 @@ impl CommandKind {
             | Self::LaneRenewal
             | Self::LaneRetune
             | Self::LaneEffortRetune
+            | Self::LaneFastRetune
             | Self::TeamConfigure
             | Self::TeamArrange
             | Self::LaneRecall
@@ -788,6 +792,7 @@ impl CommandKind {
             Self::LaneRenewal => "lane::renewal",
             Self::LaneRetune => "lane::retune",
             Self::LaneEffortRetune => "lane::effort-retune",
+            Self::LaneFastRetune => "lane::fast-retune",
             Self::TeamConfigure => "team::configure",
             Self::TeamArrange => "team::arrange",
             Self::LaneRecall => "lane::recall",
@@ -969,6 +974,7 @@ impl CommandKind {
             | Self::LaneRenewal
             | Self::LaneRetune
             | Self::LaneEffortRetune
+            | Self::LaneFastRetune
             | Self::TeamConfigure
             | Self::TeamArrange => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,

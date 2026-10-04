@@ -477,6 +477,21 @@ async fn send_lane_retune(
             )
             .await
         }
+        crate::runtime::MemberCommand::RetuneFast { fast_mode } => {
+            send_untracked_as(
+                principal,
+                writer,
+                id,
+                CommandKind::LaneFastRetune,
+                vec![],
+                LaneFastRetune {
+                    topology_revision,
+                    lane: request.lane,
+                    fast_mode: *fast_mode,
+                },
+            )
+            .await
+        }
         _ => Err("a lane retune carried a non-retune member command".to_owned()),
     }
 }
@@ -831,7 +846,8 @@ async fn send_member_lane_state(
         MemberCommand::Remove => LaneAction::Remove,
         MemberCommand::Renew { .. }
         | MemberCommand::Retune { .. }
-        | MemberCommand::RetuneEffort { .. } => {
+        | MemberCommand::RetuneEffort { .. }
+        | MemberCommand::RetuneFast { .. } => {
             return Err("a lane state change carried a non-lifecycle member command".to_owned());
         }
     };

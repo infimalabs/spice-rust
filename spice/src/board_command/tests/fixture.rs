@@ -93,6 +93,7 @@ pub(super) fn fixture(
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
+            fast_mode: None,
             occupant: Some(seat.occupant),
             lineage: vec![seat.occupant],
             capabilities: vec![uuid(number * 100 + index as u64 + 50)],

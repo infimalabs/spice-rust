@@ -15,8 +15,8 @@ use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune,
-    LaneRecall, LaneRetune, LaneSeat, LaneState, RecallAnswer, RecallEntry, RecallProvenance,
-    TeamArrange, TeamConfigure, TeamLife,
+    LaneFastRetune, LaneRecall, LaneRetune, LaneSeat, LaneState, RecallAnswer, RecallEntry,
+    RecallProvenance, TeamArrange, TeamConfigure, TeamLife,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -50,7 +50,7 @@ use reply::{
     typed_environment_fault,
 };
 pub(super) use restart_claim::append_startup_claims;
-pub(super) use retune::{retune, retune_effort};
+pub(super) use retune::{retune, retune_effort, retune_fast};
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
     await_session, launch_resume, record_stream, resume_session, session_fact, session_source,

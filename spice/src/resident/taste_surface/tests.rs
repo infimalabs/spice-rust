@@ -114,6 +114,7 @@ impl Fixture {
                 vendor,
                 model: None,
                 effort: None,
+                fast_mode: None,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],
