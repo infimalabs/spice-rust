@@ -153,11 +153,13 @@ body:has(.shell--mosaic),
   color: inherit;
   font: inherit;
 }
-.task-pill--task > .task-pill-stem {
-  padding-inline: 10px;
+/* Every stem label, global or team-local, wears the muted tone of blocked work
+   whatever its lifecycle; badges and handles keep theirs. */
+.task-pill .task-pill-stem {
   color: var(--muted);
   opacity: .72;
 }
+.task-pill--task > .task-pill-stem { padding-inline: 10px; }
 .task-pill--task > button:last-child { padding-inline-end: 10px; }
 .task-pill--task > button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* Team-local active work names its current lane owner on the task handle
