@@ -136,9 +136,10 @@ layout gap is zero, and adjacent members paint no vertical separator, shadow,
 or panel-colored gutter. The team owns the field's left outer edge and the
 controls own its right outer edge. Every member heading has a permanent
 accent-colored underline and adjacent accents meet without a panel-colored
-break. Focusing a member composer adds only the same accent underline at that
-member's block-end edge; broadcast preview projects it onto every occupied
-recipient. Neither treatment changes the field's geometry, and circular menu
+break. A focused member composer is lit: it gains the same accent underline at
+its block-end edge and its background mixes 10% toward that accent. Keyboard
+broadcast preview lights every occupied recipient through the same single lit
+state. Neither treatment changes the field's geometry, and circular menu
 buttons, range thumbs, and the send action retain their own control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
