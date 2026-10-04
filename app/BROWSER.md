@@ -266,8 +266,10 @@ any plane, card, or team surface observing a resize. Browsers without
 The toolbar is a fixed-height grid whether or not the team owns work, with no
 background, border, or shadow; the team surface frames nothing around it, so
 only the pane below carries the panel. The pip column spans the task band,
-sized to the framed global pill strip, and the status band below it; the 44px
-header holds all six member pips in two rows, the main agent at the lower
+sized to the framed global pill strip, and the status band below it. The status
+band has the same height and type size as a draft composer heading, which shows
+the same agent activity. The header holds all six member pips in two rows, the
+main agent at the lower
 right. The global Spice and Dash-avatar circles share one diameter
 and equal top, bottom, and outer-edge insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame. Its total pill
