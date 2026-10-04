@@ -340,6 +340,45 @@ fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
 }
 
 #[test]
+fn batched_boundary_measurement_and_epoch_insertion_fall_back_to_full_replay() {
+    let initial = [
+        boundary("opening", 7),
+        boundary("middle", 6),
+        boundary("closing", 7),
+    ];
+    let plane = PersistentLanePlane::new(900, &initial);
+    let complete = [
+        MeasuredCard {
+            candidates: candidates(12, 1),
+            content_revision: 1,
+            ..initial[0].clone()
+        },
+        initial[1].clone(),
+        MeasuredCard {
+            key: "inserted",
+            candidates: vec![
+                Candidate { span: 3, rows: 3 },
+                Candidate { span: 12, rows: 3 },
+            ],
+            latched: None,
+            content_revision: 0,
+            boundary: false,
+        },
+        initial[2].clone(),
+    ];
+
+    let replayed = plane.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
+
+    assert_eq!(replayed.transition(), Transition::FullReplay);
+    assert_eq!(replayed.cards(), one_shot.cards());
+    assert_eq!(
+        (replayed.max_row(), replayed.rows()),
+        (one_shot.max_row(), one_shot.rows())
+    );
+}
+
+#[test]
 fn older_history_before_a_backfilled_boundary_rests_above_it() {
     let newest = measured("newest", candidates(6, 7));
     let compaction = boundary("compaction", 2);

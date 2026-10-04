@@ -43,6 +43,10 @@ stronger ownership boundary:
   revision, and width, and retained for only the current and immediately prior
   widths. A base measurement admits at most one wider candidate, so ordinary
   placement performs at most two layout reads per card.
+- Incremental reconciliation retains stable compaction and lifecycle dividers
+  only while every full-width boundary still separates the chronological epochs
+  on both sides. A batched measurement and stream-structure change that cannot
+  honor those fixed floors takes the deterministic full-replay path instead.
 - Yew renders integer layout diagnostics as attributes, then an effect copies
   changed values into CSS custom properties. This is the single CSP-safe
   geometry channel and avoids Firefox's unsupported typed `attr()` arithmetic.
