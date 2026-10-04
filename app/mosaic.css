@@ -1117,11 +1117,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 @media (prefers-reduced-motion: reduce) {
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
-/* --message-card-surface is the card's own fill; everything painted opaque
-   inside the card takes it, so a tinted card has no off-tint band. Cards keep
-   the page base, while the stream field behind them owns the midpoint tint. */
+/* Message cards paint no fill of their own: the stream field behind them shows
+   through, and the thick left lane rail, square corners and the gutters between
+   cards set each one apart. */
 .team-surface .mosaic-message-card {
-  --message-card-surface: var(--page);
   container-type: inline-size;
   gap: 0;
   margin: 0;
@@ -1130,7 +1129,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: 0;
   border-inline-start: 4px solid var(--accent-slot, var(--accent-neutral));
   border-radius: 0;
-  background: var(--message-card-surface);
+  background: transparent;
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
   line-height: 1.25;
@@ -1139,11 +1138,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:not(.mosaic-compaction-card):hover {
   z-index: 1;
-  background-color: color-mix(
-    in srgb,
-    var(--message-card-surface) 96%,
-    var(--accent-slot, var(--accent))
-  );
+  background-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 4%, transparent);
 }
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:not(
