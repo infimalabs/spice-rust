@@ -266,15 +266,15 @@ fn render_team_toolbar(
     }
 }
 
-/// The task pills in this team's header band: the team's total, which opens
-/// its Work scope, then one pill per open task the team's Work scope holds.
-/// The fleet never shows over Work, so none selects.
+/// The task groups in this team's header band: the team's total, then each
+/// visibility-qualified stem once with all of its open task handles. The fleet
+/// never shows over Work, so none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
     };
-    let tasks = work.team_tasks(team);
-    if tasks.is_empty() {
+    let groups = work.team_task_groups(team);
+    if groups.is_empty() {
         return Html::default();
     }
     html! {
@@ -282,8 +282,8 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
             class="task-pill-strip app-control-rail team-tasks"
             aria-label="Open tasks this team created or claims"
         >
-            {render_team_total(team, &tasks, render.navigate)}
-            {for tasks.iter().map(|task| render_team_task_pill(team, work, task, render))}
+            {render_team_total(team, &groups, render.navigate)}
+            {for groups.iter().map(|group| render_team_task_group(team, group, render))}
         </nav>
     }
 }
@@ -291,13 +291,27 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
 /// The team's open-task count, opening `#/work/team/{team}`.
 fn render_team_total(
     team: CanonicalUuid,
-    tasks: &[&crate::work::WorkTask<'_>],
+    groups: &[crate::work::TeamTaskGroup<'_, '_>],
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
     use crate::work::WorkAvailability::{InFlight, Ready};
-    let open = tasks.len();
-    let active = tasks.iter().any(|task| task.availability() == InFlight);
-    let workable = active || tasks.iter().any(|task| task.availability() == Ready);
+    let open = groups
+        .iter()
+        .map(|group| group.tasks().len())
+        .sum::<usize>();
+    let active = groups.iter().any(|group| {
+        group
+            .tasks()
+            .iter()
+            .any(|task| task.availability() == InFlight)
+    });
+    let workable = active
+        || groups.iter().any(|group| {
+            group
+                .tasks()
+                .iter()
+                .any(|task| task.availability() == Ready)
+        });
     let title = format!(
         "This team's open work: {open} {}",
         if open == 1 { "task" } else { "tasks" }
@@ -324,28 +338,18 @@ fn render_team_total(
     }
 }
 
-/// One open team task: its stem opens this team's matching Work scope, and its
-/// handle opens the task's detail.
-fn render_team_task_pill(
+/// One stem target followed by every team-local task handle grouped beneath it.
+fn render_team_task_group(
     team: CanonicalUuid,
-    work: &crate::work::WorkProjection<'_>,
-    task: &crate::work::WorkTask<'_>,
+    group: &crate::work::TeamTaskGroup<'_, '_>,
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    use crate::work::WorkAvailability::{InFlight, Ready};
-    let statement = &task.row().statement.body;
-    let stem = work.task_stem(task).clone();
+    let stem = group.stem().clone();
     let stem_label = stem.stem().to_owned();
-    let availability = task.availability();
-    let owner_accent = task.working_claimant_accent(render.runtime.lanes());
+    let stem_key = stem.to_string();
     let stem_aria_label = format!("Open this team's {stem} work");
-    let handle_label = format!(
-        "Open {}: {}, {}",
-        statement.handle,
-        task.row().presentation_title(),
-        availability.key(),
-    );
     let hidden = stem.hidden();
+    let visibility = if hidden { "hidden" } else { "public" };
     let open_stem = {
         let navigate = render.navigate.clone();
         let scope = crate::work::WorkScope::Team {
@@ -354,6 +358,43 @@ fn render_team_task_pill(
         };
         Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))
     };
+    html! {
+        <span
+            key={stem_key}
+            class="task-pill task-pill--project"
+            data-task-stem={stem_label.clone()}
+            data-task-visibility={visibility}
+        >
+            <button
+                class="task-pill-stem"
+                type="button"
+                title={stem_aria_label.clone()}
+                aria-label={stem_aria_label}
+                onclick={open_stem}
+            >{stem_label}</button>
+            {for group.tasks().iter().copied().map(|task| {
+                render_team_task_handle(task, hidden, render)
+            })}
+        </span>
+    }
+}
+
+/// One task-detail target inside its stem group.
+fn render_team_task_handle(
+    task: &crate::work::WorkTask<'_>,
+    hidden: bool,
+    render: &FleetRender<'_, '_>,
+) -> Html {
+    use crate::work::WorkAvailability::{InFlight, Ready};
+    let statement = &task.row().statement.body;
+    let availability = task.availability();
+    let owner_accent = task.working_claimant_accent(render.runtime.lanes());
+    let handle_label = format!(
+        "Open {}: {}, {}",
+        statement.handle,
+        task.row().presentation_title(),
+        availability.key(),
+    );
     let open_task = {
         let open = render.open_message_task.clone();
         let born = statement.born.clone();
@@ -367,33 +408,22 @@ fn render_team_task_pill(
         })
     };
     html! {
-        <span
+        <button
             key={statement.born.to_string()}
             class={classes!(
                 "task-pill",
-                "task-pill--task",
+                "task-pill-handle",
                 hidden.then_some("system"),
                 (availability == InFlight).then_some("active"),
                 (!matches!(availability, InFlight | Ready)).then_some("dormant"),
             )}
+            type="button"
+            title={handle_label.clone()}
+            aria-label={handle_label}
             data-availability={availability.key()}
             data-accent={owner_accent.map(|accent| accent.to_string())}
-        >
-            <button
-                class="task-pill-stem"
-                type="button"
-                title={stem_aria_label.clone()}
-                aria-label={stem_aria_label}
-                onclick={open_stem}
-            >{stem_label}</button>
-            <button
-                class="task-pill-handle"
-                type="button"
-                title={handle_label.clone()}
-                aria-label={handle_label}
-                onclick={open_task}
-            >{statement.handle.to_string()}</button>
-        </span>
+            onclick={open_task}
+        >{statement.handle.to_string()}</button>
     }
 }
 

@@ -75,7 +75,7 @@ fn team_scope_waits_for_the_roster_then_unions_creator_and_member_last_claim_onc
 }
 
 #[test]
-fn team_header_tasks_are_its_open_scope_in_flight_first_then_offer_order() {
+fn team_header_groups_stems_by_first_task_without_changing_source_order() {
     let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
@@ -108,6 +108,7 @@ fn team_header_tasks_are_its_open_scope_in_flight_first_then_offer_order() {
     );
     let mut unrelated = task(7, "omega.unrelated");
     unrelated.creator_team = Some(other_team);
+    let hidden_ready = created(8, ".alpha.hidden");
 
     let mut board = board(vec![
         first_ready,
@@ -117,19 +118,29 @@ fn team_header_tasks_are_its_open_scope_in_flight_first_then_offer_order() {
         elsewhere,
         finished,
         unrelated,
+        hidden_ready,
     ]);
-    board.offer = vec![stamp(2), stamp(1)];
-    let projects = |projection: &WorkProjection<'_>, team| {
+    board.offer = vec![stamp(2), stamp(1), stamp(8)];
+    let groups = |projection: &WorkProjection<'_>, team| {
         projection
-            .team_tasks(team)
+            .team_task_groups(team)
             .into_iter()
-            .map(|task| task.row().statement.body.project.clone())
+            .map(|group| {
+                (
+                    group.stem().to_string(),
+                    group
+                        .tasks()
+                        .iter()
+                        .map(|task| task.row().statement.body.project.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
             .collect::<Vec<_>>()
     };
 
     let pending = WorkProjection::from_board_and_lanes(&board, None);
     assert!(
-        projects(&pending, team).is_empty(),
+        groups(&pending, team).is_empty(),
         "a team's header waits for the roster",
     );
 
@@ -138,26 +149,32 @@ fn team_header_tasks_are_its_open_scope_in_flight_first_then_offer_order() {
         Some(BTreeSet::from([team, other_team])),
         &BTreeMap::from([(member, team), (other_member, other_team)]),
     );
-    let order = projects(&loaded, team);
+    let grouped = groups(&loaded, team);
     assert_eq!(
-        order,
+        grouped,
         [
-            "gamma.claimed",
-            "delta.elsewhere",
-            "beta.second",
-            "alpha.first",
-            "alpha.blocked",
+            ("gamma.*".to_owned(), vec!["gamma.claimed".to_owned()]),
+            ("delta.*".to_owned(), vec!["delta.elsewhere".to_owned()]),
+            ("beta.*".to_owned(), vec!["beta.second".to_owned()]),
+            (
+                "alpha.*".to_owned(),
+                vec!["alpha.first".to_owned(), "alpha.blocked".to_owned()],
+            ),
+            (".alpha.*".to_owned(), vec![".alpha.hidden".to_owned()]),
         ],
-        "in-flight work leads, ready work follows the offer, and closed work is absent",
+        "groups follow their first task and gather later stem matches in source order",
     );
     assert_eq!(
-        order.len(),
+        grouped.iter().map(|(_, tasks)| tasks.len()).sum::<usize>(),
         loaded.scope_counts(&WorkScope::team_wide(team)).open(),
         "the header holds exactly the open tasks its total opens",
     );
     assert_eq!(
-        projects(&loaded, other_team),
-        ["delta.elsewhere", "omega.unrelated"],
+        groups(&loaded, other_team),
+        [
+            ("delta.*".to_owned(), vec!["delta.elsewhere".to_owned()]),
+            ("omega.*".to_owned(), vec!["omega.unrelated".to_owned()]),
+        ],
         "a task created by one team and claimed by another shows on both",
     );
 }
