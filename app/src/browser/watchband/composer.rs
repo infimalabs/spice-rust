@@ -1354,19 +1354,47 @@ fn read_image(
         let Some(data_url) = value.as_string() else {
             return;
         };
-        match DirectiveAttachment::admit(name.clone(), content_type.clone(), data_url) {
-            Ok(attachment) => drafts.dispatch(ComposerAction::AddAttachment {
-                lane: lane_key.clone(),
-                quote: quote_identity.clone(),
-                attachment,
-            }),
-            Err(error) => drafts.dispatch(ComposerAction::Report {
-                issue: format!("Image was refused: {error}."),
-            }),
-        }
+        let attachment = DirectiveAttachment {
+            name: name.clone(),
+            content_type: content_type.clone(),
+            data_url,
+        };
+        let occupied = draft_media_data_url_bytes(&drafts, &lane_key);
+        let available = wire::media::MAX_MEDIA_DATA_URL_BYTES.saturating_sub(occupied);
+        let drafts = drafts.clone();
+        let lane = lane_key.clone();
+        let quote = quote_identity.clone();
+        spawn_local(async move {
+            match crate::browser::image_media::fit(attachment, available).await {
+                Ok(attachment) => drafts.dispatch(ComposerAction::AddAttachment {
+                    lane,
+                    quote,
+                    attachment,
+                }),
+                Err(error) => drafts.dispatch(ComposerAction::Report {
+                    issue: format!("Image was refused: {error}"),
+                }),
+            }
+        });
     });
     reader.set_onload(Some(onload.as_ref().unchecked_ref()));
     if reader.read_as_data_url(&file).is_ok() {
         onload.forget();
     }
+}
+
+fn draft_media_data_url_bytes(drafts: &UseReducerHandle<ComposerDrafts>, lane: &str) -> usize {
+    drafts
+        .0
+        .get(lane)
+        .map(|draft| {
+            draft
+                .quotes
+                .iter()
+                .flat_map(|quote| &quote.attachments)
+                .chain(&draft.attachments)
+                .map(|image| image.media.data_url.len())
+                .sum()
+        })
+        .unwrap_or(0)
 }

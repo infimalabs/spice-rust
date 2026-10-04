@@ -46,6 +46,7 @@ mod connection;
 mod diagnostics;
 mod direction_card;
 mod direction_history;
+mod image_media;
 mod image_viewer;
 mod mermaid;
 mod navigation;
