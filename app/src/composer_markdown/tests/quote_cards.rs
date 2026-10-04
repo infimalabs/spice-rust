@@ -22,6 +22,14 @@ fn directive_quote_source(display_millis: i64) -> QuoteSource {
     }
 }
 
+fn assert_attribution_trails(block: &str, words: &str, display_millis: i64) {
+    let words = block.find(words).expect("quoted words");
+    let age = block
+        .find(&format!("data-quote-age-authored=\"{display_millis}\""))
+        .expect("quoted source age");
+    assert!(words < age, "{block}");
+}
+
 fn nested_quote_sources(
     outer: &wire::QuoteTarget,
     inner: &wire::QuoteTarget,
@@ -183,8 +191,8 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .find(">spice-rust-k</span>")
         .expect("outer name renders");
     assert!(
-        outer_age < outer_name && outer_name < outer_body,
-        "the age, then the name, lead authored prose"
+        outer_body < outer_age && outer_age < outer_name,
+        "the authored prose precedes its trailing age and name"
     );
 
     assert_historical_agent_name_survives_reseating(&outer_target, &quotes, &sources, lane, source);
@@ -296,10 +304,10 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         .map(|offset| acknowledged_prose + offset)
         .expect("acknowledged paragraph closes");
     assert!(
-        acknowledgement < acknowledged_prose
-            && acknowledged_prose < acknowledged_tail
+        acknowledged_prose < acknowledgement
+            && acknowledgement < acknowledged_tail
             && acknowledged_tail < paragraph_end,
-        "the disposition leads and the task target trails its directive prose: {html}"
+        "the disposition trails the prose while the task target remains last: {html}"
     );
     for key in keys {
         assert!(
@@ -662,9 +670,9 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     )));
     assert!(!operator.contains(">Operator</span>"), "{operator}");
     assert_eq!(html.matches("data-quote-source=").count(), 0, "{html}");
-    assert!(html.contains("data-quote-age-authored=\"1000\""));
-    assert!(html.contains("data-quote-age-authored=\"2000\""));
     assert!(html.contains("data-quote-age-authored=\"3000\""));
+    assert_attribution_trails(operator, "steer from the operator", 1_000);
+    assert_attribution_trails(lane, lane_text, 2_000);
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }
 
@@ -739,7 +747,7 @@ fn prose_card_attribution_leads_each_answer_after_a_quote_chain() {
 }
 
 #[test]
-fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
+fn directive_context_ending_in_images_trails_its_flow_with_every_image_once() {
     let text = "phase colors please";
     let render = |quoted: &str| {
         let directives = [MessageDirective {
@@ -749,13 +757,17 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
             actor: wire::Actor::Operator,
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
         }];
+        let sources = BTreeMap::from([(
+            directives[0].quote_target.to_string(),
+            QuoteSource::directive(&directives[0]),
+        )]);
         render_received_with_quotes(
             &format!("{quoted}\n\nACK dTVQdQfLx: on it."),
             &[],
             &directives,
             &[],
             &QuoteAgents::new(),
-            &QuoteSources::new(),
+            &sources,
         )
         .html
     };
@@ -782,7 +794,7 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
     assert_eq!(quote.matches("src=\"b.png\"").count(), 1, "{html}");
     assert_eq!(
         quote.matches("class=\"message-quote-signoff\"").count(),
-        0,
+        1,
         "{html}"
     );
     assert_eq!(
@@ -793,11 +805,12 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
     let stack = quote.find("message-image-stack").expect("stack");
     let first = quote.find(text).expect("first paragraph");
     let last = quote.find("more words").expect("last paragraph");
-    let task_line = quote.find("message-quote-task-line").expect("task line");
-    assert!(stack < first && first < last && last < task_line, "{html}");
+    let tail = quote.find("message-quote-tail").expect("attribution tail");
+    let signoff = quote.find("message-quote-signoff").expect("signoff");
+    let task = quote.find("message-quote-task-tail").expect("task target");
     assert!(
-        !quote.contains("message-quote-signoff-line"),
-        "a sourceless prose context needs no attribution line: {html}"
+        stack < first && first < last && last < tail && tail < signoff && signoff < task,
+        "{html}"
     );
 
     let images_only = render("> ![first](a.png)\n>\n> ![second](b.png)");
@@ -806,22 +819,24 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
         images_only.matches("class=\"message-image-stack\"").count(),
         2
     );
-    assert!(
-        !images_only.contains("message-quote-signoff-line"),
-        "{images_only}"
-    );
     let image = images_only.find("src=\"b.png\"").expect("last image");
-    let line = images_only
-        .find("message-quote-task-line")
-        .expect("trailing task line");
+    let tail = images_only
+        .find("message-quote-tail")
+        .expect("trailing attribution line");
+    let signoff = images_only
+        .find("message-quote-signoff")
+        .expect("trailing signoff");
+    let task = images_only
+        .find("message-quote-task-tail")
+        .expect("trailing task target");
     assert!(
-        image < line,
-        "an image-only context trails its images with the task target: {images_only}"
+        image < tail && tail < signoff && signoff < task,
+        "an image-only context trails its images with attribution and then the task target: {images_only}"
     );
 }
 
 #[test]
-fn quote_cards_ending_in_images_keep_head_and_task_tail_once() {
+fn quote_cards_ending_in_images_keep_attribution_and_task_tail_once() {
     let render = |text: &str| {
         let target = steering_target("dTVQdQfLw", text);
         let quotes = [wire::QuotePresentation::Resolved {
@@ -833,13 +848,14 @@ fn quote_cards_ending_in_images_keep_head_and_task_tail_once() {
             disposition: Some(wire::Disposition::Acked),
             quotes: Vec::new(),
         }];
+        let sources = BTreeMap::from([(target.to_string(), directive_quote_source(1_000))]);
         render_received_with_quotes(
             &target.markdown(),
             &[],
             &[],
             &quotes,
             &QuoteAgents::new(),
-            &QuoteSources::new(),
+            &sources,
         )
         .html
     };
@@ -852,7 +868,7 @@ fn quote_cards_ending_in_images_keep_head_and_task_tail_once() {
     );
     assert_eq!(
         html.matches("class=\"message-quote-signoff\"").count(),
-        0,
+        1,
         "{html}"
     );
     assert_eq!(
@@ -867,26 +883,34 @@ fn quote_cards_ending_in_images_keep_head_and_task_tail_once() {
     );
     let flow = html.find("message-image-flow").expect("flow");
     let stack = html.find("message-image-stack").expect("stack");
-    let pill = html.find("data-quote-disposition").expect("pill");
     let prose = html.find("see these").expect("prose");
-    let task_line = html.find("message-quote-task-line").expect("task line");
+    let tail = html.find("message-quote-tail").expect("attribution tail");
+    let signoff = html.find("message-quote-signoff").expect("signoff");
+    let pill = html.find("data-quote-disposition").expect("pill");
+    let task = html.find("message-quote-task-tail").expect("task target");
     assert!(
-        flow < stack && stack < pill && pill < prose && prose < task_line,
+        flow < stack
+            && stack < prose
+            && prose < tail
+            && tail < signoff
+            && signoff < pill
+            && pill < task,
         "{html}"
     );
 
     let images_only = render("![first](a.png)\n\n![second](b.png)");
     assert!(!images_only.contains("message-image-flow"), "{images_only}");
     let line = images_only
-        .find("class=\"message-quote-signoff-line\"")
-        .expect("disposition line");
+        .find("class=\"message-quote-tail\"")
+        .expect("attribution line");
+    let image = images_only.find("src=\"b.png\"").expect("last image");
+    let signoff = images_only.find("message-quote-signoff").expect("signoff");
     let pill = images_only.find("data-quote-disposition").expect("pill");
-    let image = images_only.find("src=\"a.png\"").expect("image");
-    let task_line = images_only
-        .find("message-quote-task-line")
-        .expect("task line");
+    let task = images_only
+        .find("message-quote-task-tail")
+        .expect("task target");
     assert!(
-        line < pill && pill < image && image < task_line,
+        image < line && line < signoff && signoff < pill && pill < task,
         "{images_only}"
     );
 }

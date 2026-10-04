@@ -6,8 +6,8 @@
 //! Floats only push content that follows them, so the images lead in source;
 //! the browser then lifts the anchor until the images' bottom meets the end of
 //! the prose (`browser::quote_image_flow`), leaving the images at the bottom
-//! with prose beside and above them. A layer's attribution leads it: inside
-//! its first prose paragraph, or on a line of its own above the flow.
+//! with prose beside and above them. A layer's attribution trails it: inline
+//! after its final prose, or on a line of its own below any other final block.
 
 use std::ops::Range;
 
@@ -18,16 +18,15 @@ pub(super) const STACK_CLOSE: &str = "</p>";
 const FLOW_OPEN: &str = "<div class=\"message-image-flow\">\
                          <span class=\"message-image-flow-anchor\" aria-hidden=\"true\"></span>";
 const FLOW_CLOSE: &str = "</div>";
-pub(super) const SIGNOFF_LINE_OPEN: &str = "<p class=\"message-quote-signoff-line\">";
-pub(super) const TASK_LINE_OPEN: &str = "<p class=\"message-quote-task-line\">";
+pub(super) const TAIL_LINE_OPEN: &str = "<p class=\"message-quote-tail\">";
 
-/// What a quote card places around its own top-level content.
-pub(super) struct CardHead<'t> {
-    /// The card's leading attribution, empty when it has none.
+/// What a quote card places after its own top-level content.
+pub(super) struct CardTail<'t> {
+    /// The card's source attribution, empty when source evidence is unavailable.
     pub(super) signoff: &'t str,
     /// Disposition pill following the attribution, empty when none.
     pub(super) disposition: &'t str,
-    /// Empty board-provenance portal target placed at the content's tail.
+    /// Empty board-provenance portal target that remains last at the content tail.
     pub(super) task_tail: &'t str,
 }
 
@@ -35,16 +34,15 @@ pub(super) struct CardHead<'t> {
 pub(super) enum Layer<'t> {
     /// A message body: only its quotes flow.
     Body,
-    /// A quote card body, which flows like a quote and leads with its head.
-    Card(CardHead<'t>),
+    /// A quote card body, which flows like a quote and trails with its attribution.
+    Card(CardTail<'t>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Block {
     Paragraph,
     Stack,
-    SignoffLine,
-    TaskLine,
+    TailLine,
     Quote,
     Other,
 }
@@ -71,49 +69,30 @@ pub(super) fn flow<'a>(events: &[MarkdownEvent<'a>], layer: &Layer<'_>) -> Vec<M
         .collect::<Vec<_>>();
     match layer {
         Layer::Body => blocks.into_iter().flat_map(|(_, block)| block).collect(),
-        Layer::Card(head) => {
-            let task_tail = head.task_tail;
-            let head = format!(
-                "{}{}",
-                head.signoff,
-                if head.disposition.is_empty() {
-                    String::new()
-                } else {
-                    format!("{} ", head.disposition)
-                }
-            );
-            let line = (!head.is_empty()).then(|| match blocks.first_mut() {
-                Some((Block::Paragraph, block)) => {
-                    block.insert(1, MarkdownEvent::InlineHtml(head.into()));
-                    None
-                }
-                _ => Some(MarkdownEvent::Html(
-                    format!("{SIGNOFF_LINE_OPEN}{head}</p>").into(),
-                )),
-            });
-            trail(&mut blocks, task_tail);
-            line.flatten().into_iter().chain(hoist(blocks)).collect()
+        Layer::Card(tail) => {
+            let tail = format!("{}{}{}", tail.signoff, tail.disposition, tail.task_tail);
+            trail(&mut blocks, &tail);
+            hoist(blocks)
         }
     }
 }
 
-/// Keep a prose tail inline so provenance can only add content after its final
-/// word. A non-prose tail gets its own line, which `hoist` keeps behind any
-/// trailing image flow.
-fn trail<'a>(blocks: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>, task_tail: &str) {
-    if task_tail.is_empty() {
+/// Keep attribution inline after final prose. A non-prose ending gets one
+/// compact tail line, which `hoist` keeps behind any trailing image flow.
+fn trail<'a>(blocks: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>, tail: &str) {
+    if tail.is_empty() {
         return;
     }
     if let Some((Block::Paragraph, block)) = blocks.last_mut() {
         block.insert(
             block.len() - 1,
-            MarkdownEvent::InlineHtml(task_tail.to_owned().into()),
+            MarkdownEvent::InlineHtml(tail.to_owned().into()),
         );
     } else {
         blocks.push((
-            Block::TaskLine,
+            Block::TailLine,
             vec![MarkdownEvent::Html(
-                format!("{TASK_LINE_OPEN}{task_tail}</p>").into(),
+                format!("{TAIL_LINE_OPEN}{tail}</p>").into(),
             )],
         ));
     }
@@ -129,19 +108,13 @@ fn flow_quote<'a>(events: &[MarkdownEvent<'a>]) -> Vec<MarkdownEvent<'a>> {
 }
 
 /// Lead with the trailing image stacks inside one flow wrapper when the layer
-/// has other blocks before them; otherwise keep the layer as it is. A leading
-/// attribution line stays above the flow, and a task line stays behind it.
+/// has other blocks before them; otherwise keep the layer as it is. A tail
+/// line stays behind the flow.
 fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEvent<'a>> {
     let mut events = Vec::new();
-    if blocks
-        .first()
-        .is_some_and(|(kind, _)| *kind == Block::SignoffLine)
-    {
-        events.extend(blocks.remove(0).1);
-    }
-    let task_line = if blocks
+    let tail_line = if blocks
         .last()
-        .is_some_and(|(kind, _)| *kind == Block::TaskLine)
+        .is_some_and(|(kind, _)| *kind == Block::TailLine)
     {
         blocks.pop().map(|(_, block)| block)
     } else {
@@ -153,7 +126,7 @@ fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEv
         .map_or(0, |index| index + 1);
     if first_stack == 0 || first_stack == blocks.len() {
         events.extend(blocks.into_iter().flat_map(|(_, block)| block));
-        events.extend(task_line.into_iter().flatten());
+        events.extend(tail_line.into_iter().flatten());
         return events;
     }
     let stacks = blocks.split_off(first_stack);
@@ -165,7 +138,7 @@ fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEv
     events.push(MarkdownEvent::InlineHtml(STACK_CLOSE.into()));
     events.extend(blocks.into_iter().flat_map(|(_, block)| block));
     events.push(MarkdownEvent::Html(FLOW_CLOSE.into()));
-    events.extend(task_line.into_iter().flatten());
+    events.extend(tail_line.into_iter().flatten());
     events
 }
 
@@ -205,11 +178,8 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
                     .map_or(events.len() - 1, |offset| index + 1 + offset);
                 (Block::Stack, end)
             }
-            MarkdownEvent::Html(html) if html.starts_with(SIGNOFF_LINE_OPEN) => {
-                (Block::SignoffLine, index)
-            }
-            MarkdownEvent::Html(html) if html.starts_with(TASK_LINE_OPEN) => {
-                (Block::TaskLine, index)
+            MarkdownEvent::Html(html) if html.starts_with(TAIL_LINE_OPEN) => {
+                (Block::TailLine, index)
             }
             _ => (Block::Other, index),
         };

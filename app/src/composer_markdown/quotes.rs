@@ -138,7 +138,7 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The head of quoted words: the source message's live relative age, then an
+/// The tail of quoted words: the source message's live relative age, then an
 /// explicit non-Operator author name.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
@@ -238,7 +238,7 @@ fn render(
                 quotes,
                 agents,
                 sources,
-                super::image_flow::CardHead {
+                super::image_flow::CardTail {
                     signoff: &signoff,
                     disposition: &disposition,
                     task_tail: &task_tail,

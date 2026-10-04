@@ -287,28 +287,32 @@ images sit. A layer that would leave less than a 14ch column beside the images
 stacks them under the prose instead, wrapping in pairs. Image-only quotes and
 images in the middle of a quote keep the image-row layout.
 
-## Attribution leads
+## Attribution placement
 
-Attribution comes before the words it attributes: the relative age, then the
-name, then any badge. A quote card or quoted directive leads its first prose
-line with its source age and author; disposition stays beside that head. A quote
-that opens with images, a list, or another block puts the attribution on a line
-of its own above it. Board provenance is independent: its empty target consumes
-no space, then an origin-task badge follows the final words of a trailing prose
-paragraph when Work reports one. A quote ending in images, a list, a nested
-quote, code, or another non-prose block puts that badge on a compact line after
-the block. Task arrival therefore cannot shift words before the paragraph's
-final line. A prose card leads its first paragraph with its own age, producer,
-role badges, and FINAL badge, and repeats that attribution at the head of the
-first paragraph after every chain of quotes, so a message answering several
-directive sets attributes each answer. Every authenticated message role follows
-the producing speaker: ACK, pending ACK, NAK, TASTE, REVIEW, and BROADCAST use
-the same compact soft-tint badge position. The resident writes an answer's ACK,
-ACK PENDING, or NAK marker at the head of that answer, so its pill follows the
-speaking agent's name instead of sitting in the quoted directive. TASTE, REVIEW,
-and BROADCAST remain classified at their source notice so its quote keeps the
-kind-specific accent rail, but that source badge is not repeated visibly inside
-the quote.
+Quote-source attribution follows the words it attributes: the relative age,
+then the source name, then any disposition badge. A resolved quote card or
+quoted directive with final prose keeps that sequence inline after its final
+text. A quote ending in images, a list, a nested quote, code, or another
+non-prose block puts the sequence on one compact line after that block. The rule
+applies independently at every nesting depth and to operator, agent, and peer
+lane sources. ACK, NAK, and the other resolved-source dispositions use the same
+trailing position.
+
+Board provenance remains independent and terminal. Its empty target follows
+the moved attribution, consumes no space, and fills with origin-task badges
+when Work reports them. Moving source attribution never moves a task target
+away from the end of its quote. Task arrival therefore cannot shift words
+before the paragraph's final line.
+
+A prose card still leads its first paragraph with its own age, producer, role
+badges, and FINAL badge, and repeats that attribution at the head of the first
+paragraph after every chain of quotes, so a message answering several directive
+sets attributes each answer. Every authenticated message role follows the
+producing speaker: ACK, pending ACK, NAK, TASTE, REVIEW, and BROADCAST use the
+same compact soft-tint badge position. The resident writes an answer's ACK, ACK
+PENDING, or NAK marker at the head of that answer, so its pill follows the
+speaking agent's name instead of sitting in the quoted directive.
+
 Quotes at every depth carry no fill of their own; their text keeps the muted
 tone and smaller size. A quote's rail shows its speaker the way a top-level card
 does: a quote attributed to an agent, or a peer lane's directive context, wears
@@ -316,10 +320,8 @@ that lane's accent, the same slot as the lane's own cards. The neutral accent,
 the ink tone of the operator's initials, is the accent of operators and of the
 system itself, so operator, Spice, and taste, broadcast, and review notice
 quotes take the neutral rail and rely on their pills and attribution, as do
-unattributed quotes and nested quotes with no speaker of their own. This holds
-for quotes that lead with images and whatever the answer's acknowledgement
-state; ACK/NAK is shown only by the answer's badge. An unavailable quote keeps
-its warning rail.
+unattributed quotes and nested quotes with no speaker of their own. An
+unavailable quote keeps its warning rail.
 
 ## Always-chat team console
 
