@@ -1051,6 +1051,13 @@ fn measure_pending_tier(
             set_measure_span(&item.element, *span);
         }
     }
+    // An image flow's layout depends on its width, so each clone settles its
+    // own at this span rather than inheriting the live card's last lift.
+    for (item, span) in pending.iter().zip(&spans) {
+        if span.is_some() {
+            crate::browser::quote_image_flow::settle_flows(&item.element);
+        }
+    }
     for (item, span) in pending.iter_mut().zip(spans) {
         let Some(span) = span else {
             continue;

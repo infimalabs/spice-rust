@@ -289,6 +289,9 @@ fn replay_changed_epochs<K: Clone + Ord>(
             let replayed = replay_epoch(&reconciled, desired_epoch, entries.get(entry_end));
             replayed_keys.extend(replayed.iter().map(|entry| entry.key.clone()));
             reconciled.extend(replayed);
+            if let Some(upper) = entries.get(entry_end) {
+                rest_below(&mut reconciled, upper.card.base);
+            }
         }
         if let Some(boundary) = entries.get(entry_end) {
             reconciled.push(boundary.clone());
@@ -321,18 +324,8 @@ fn replay_epoch<K: Clone>(
         return Vec::new();
     }
     let older_cards = placed_cards(older);
-    let mut placed =
+    let placed =
         mosaic::append(&older_cards, &candidate_sets(measured), TRACK_COUNT).split_off(older.len());
-    // The leading epoch has no boundary beneath it: like backfill, it rests
-    // against the retained boundary above rather than the lattice origin.
-    if older.is_empty()
-        && let Some(upper) = upper
-    {
-        let (epoch_end, _) = mosaic::extent(&placed);
-        for card in &mut placed {
-            card.base += upper.card.base - epoch_end;
-        }
-    }
     let indexes = creation_indexes_between(
         older.last().map(|entry| entry.card.creation_index),
         upper.map(|entry| entry.card.creation_index),
@@ -347,6 +340,24 @@ fn replay_epoch<K: Clone>(
             plane_card(item, &card)
         })
         .collect()
+}
+
+/// Rest everything beneath a retained boundary against it, as backfill rests
+/// older history against the committed plane. A replayed epoch that shrank or
+/// grew then leaves the same plane a full replay of its cards would, so cards
+/// a retention horizon admitted and later evicted leave no reserved gap.
+fn rest_below<K>(entries: &mut [PlaneCard<K>], boundary_base: i32) {
+    let Some(top) = entries
+        .iter()
+        .map(|entry| entry.card.base + entry.card.rows)
+        .max()
+    else {
+        return;
+    };
+    let shift = boundary_base - top;
+    for entry in entries {
+        entry.card.base += shift;
+    }
 }
 
 fn creation_indexes_between(

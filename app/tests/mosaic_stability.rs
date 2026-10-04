@@ -280,7 +280,9 @@ fn pagination_outside_an_epoch_preserves_the_selected_committed_tuples() {
         measured("recent", 6, 3),
     ];
     let plane = PersistentLanePlane::new(900, &initial);
-    let outside = ["old", "compact-a", "compact-b", "recent"];
+    // Older history rests against the retained boundary, so only the boundary
+    // and the newer side keep their committed tuples.
+    let outside = ["compact-b", "recent"];
     let before = placements(&plane, &outside);
     let replaced = plane.reconcile(
         900,
@@ -298,7 +300,7 @@ fn pagination_outside_an_epoch_preserves_the_selected_committed_tuples() {
         &before,
         &placements(&replaced, &outside),
         &[],
-        "an epoch replay outside its affected interval",
+        "an epoch replay beneath its retained boundary",
     );
 
     let first_page = replaced.reconcile(

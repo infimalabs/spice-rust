@@ -42,11 +42,19 @@ stronger ownership boundary:
   until the host has a usable width, cached by card fingerprint, image
   revision, and width, and retained for only the current and immediately prior
   widths. A base measurement admits at most one wider candidate, so ordinary
-  placement performs at most two layout reads per card.
+  placement performs at most two layout reads per card. Each measurement clone
+  settles its own quote image flows at the span it measures, so a card's
+  height never depends on whether or at which width the live card's observer
+  last settled them.
 - Incremental reconciliation retains stable compaction and lifecycle dividers
   only while every full-width boundary still separates the chronological epochs
   on both sides. A batched measurement and stream-structure change that cannot
   honor those fixed floors takes the deterministic full-replay path instead.
+  A replayed epoch rests against the retained boundary above it, carrying all
+  older history with it, as backfill does. A card that a retention horizon
+  admitted during history paging and later evicted therefore leaves no gap:
+  the plane matches a fresh load of the same cards, whichever page batching
+  produced it.
 - Yew renders integer layout diagnostics as attributes, then an effect copies
   changed values into CSS custom properties. This is the single CSP-safe
   geometry channel and avoids Firefox's unsupported typed `attr()` arithmetic.
