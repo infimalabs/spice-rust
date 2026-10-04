@@ -449,10 +449,10 @@
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
   --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
-  /* The header is tall enough for two rows of member pips; the status band
-     takes what the task band leaves. */
-  --team-header-size: 44px;
-  --team-status-band: calc(var(--team-header-size) - var(--team-task-band));
+  /* The status band matches a draft composer heading; the header is the task
+     band plus the status band, tall enough for two rows of member pips. */
+  --team-status-band: var(--app-status-line-band);
+  --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
   --team-chamber-inset: 8px;
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
@@ -585,7 +585,7 @@
   padding: 0 var(--team-chamber-inset);
   border: 0;
   background: transparent;
-  font-size: .65rem;
+  font-size: var(--app-status-line-font-size);
 }
 .team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--accent); text-align: right; }
@@ -752,18 +752,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template-columns: auto minmax(0, 1fr) fit-content(50%) 22px;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  min-height: 30px;
+  height: var(--app-status-line-band);
+  min-height: var(--app-status-line-band);
   padding: 0 5px 0 8px;
   border-bottom: 2px solid var(--composer-underline-color);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--app-status-line-font-size);
 }
 .composer-shard-heading strong {
   overflow: hidden;
   color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink));
-  font-size: 12px;
+  font-size: var(--app-status-line-font-size);
   font-weight: 400;
   line-height: 1.2;
   text-overflow: ellipsis;

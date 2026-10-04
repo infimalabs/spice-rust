@@ -27,6 +27,10 @@
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-operator-link-margin-end: 8px;
   --app-disclosure-gap: 7px;
+  /* A team's status line and each draft composer heading show the same agent
+     activity at one type size in one band height. */
+  --app-status-line-font-size: 12px;
+  --app-status-line-band: 30px;
 }
 
 html:has(.shell--mosaic),
