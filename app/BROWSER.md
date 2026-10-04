@@ -284,11 +284,12 @@ the first paragraph after every chain of quotes, so a message answering several
 directive sets attributes each answer. The resident writes an answer's ACK, ACK
 PENDING, or NAK marker at the head of that answer, so its pill follows the
 speaking agent's name instead of sitting in the quoted directive.
-Operator-authored quote rails and surfaces always use the neutral text ramp,
-independent of acknowledgement state and nesting: the rail takes the ink tone
-of the operator's initials, including quotes that lead with images. The
-adjacent ACK/NAK badge keeps its own state styling without lending that color
-to the quoted speech.
+Quotes at every depth carry no fill of their own; their text keeps the muted
+tone and smaller size. Every quote rail, operator-authored or agent-authored,
+takes the neutral ink tone of the operator's initials, including quotes that
+lead with images, whatever the answer's acknowledgement state. ACK/NAK is shown
+only by the answer's badge. Taste, broadcast, and review notice quotes keep
+their kind's accent rail, and an unavailable quote keeps its warning rail.
 
 ## Always-chat team console
 

@@ -58,43 +58,20 @@
 .markdown-body blockquote {
   margin: var(--mosaic-quote-pad-block) 0;
   padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
-  border-left: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line)); border-radius: var(--mosaic-quote-radius);
-  background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--muted);
+  border-left: var(--mosaic-quote-rail) solid var(--ink); border-radius: var(--mosaic-quote-radius);
+  color: var(--muted);
   /* Drop the quote tier once; nested rails inherit this size without compounding it. */
   font-size: .8125rem;
 }
-.markdown-body blockquote blockquote {
-  font-size: inherit;
-  border-left-color: color-mix(in srgb, var(--accent) 88%, white);
-}
+.markdown-body blockquote blockquote { font-size: inherit; }
 .markdown-body blockquote p { margin: 0 0 6px; }
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
 .markdown-body blockquote ul,
 .markdown-body blockquote ol { margin: 0 0 6px; padding-left: 18px; }
-.markdown-body blockquote:has(> p > .message-taste-pill) {
-  border-left-color: var(--accent-2);
-  background: color-mix(in srgb, var(--accent-2) 6%, transparent);
-}
-.markdown-body blockquote:has(> p > .message-broadcast-pill) {
-  border-left-color: var(--accent-5);
-  background: color-mix(in srgb, var(--accent-5) 6%, transparent);
-}
-.markdown-body blockquote:has(> p > .message-review-pill) {
-  border-left-color: var(--accent-1);
-  background: color-mix(in srgb, var(--accent-1) 6%, transparent);
-}
-.markdown-body blockquote:has(> p > .message-ack-pill) {
-  border-left-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-}
-.markdown-body blockquote:has(> p > .message-ack-pill[data-acknowledgement="pending"]) {
-  border-left-color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 6%, transparent);
-}
-.markdown-body blockquote:has(> p > .message-ack-pill[data-acknowledgement="declined"]) {
-  border-left-color: var(--accent-3);
-  background: color-mix(in srgb, var(--accent-3) 6%, transparent);
-}
+/* Quotes carry no fill at any depth; only notice quotes change their rail. */
+.markdown-body blockquote:has(> p > .message-taste-pill) { border-left-color: var(--accent-2); }
+.markdown-body blockquote:has(> p > .message-broadcast-pill) { border-left-color: var(--accent-5); }
+.markdown-body blockquote:has(> p > .message-review-pill) { border-left-color: var(--accent-1); }
 .markdown-body .math-inline { display: inline; white-space: normal; }
 .markdown-body .math-inline > .math-render {
   display: inline-flex; max-width: 100%; overflow-x: auto; vertical-align: -.2em;

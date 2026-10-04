@@ -528,25 +528,10 @@
   margin: var(--mosaic-quote-pad-block) 0;
   padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
   border: 0;
-  border-left: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line));
+  border-left: var(--mosaic-quote-rail) solid var(--ink);
   border-radius: var(--mosaic-quote-radius);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--muted);
   font-size: .8125rem;
-}
-.markdown-body .message-quote-card .message-quote-card {
-  border-left-color: color-mix(in srgb, var(--accent) 88%, white);
-}
-/* Operator speech stays on the neutral text ramp, its rail as bright as the
-   operator's initials at any nesting depth. ACK/NAK is an independent
-   attribution badge and never recolors either current or legacy quote shells. */
-.markdown-body .message-quote-card.message-quote-card--operator,
-.markdown-body blockquote:has(
-  > p > .message-quote-signoff > .message-quote-name[data-quote-actor="operator"],
-  > .message-image-flow > p > .message-quote-signoff > .message-quote-name[data-quote-actor="operator"]
-) {
-  border-left-color: var(--ink);
-  background: color-mix(in srgb, var(--muted) 6%, transparent);
 }
 /* Every quote layer holding two images lays them out as one row sized from
    that layer's own width; its other content wraps around the row. */
@@ -660,12 +645,9 @@
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
 .markdown-body .message-quote-unavailable { color: var(--muted); }
-.markdown-body .message-quote-card--unavailable {
-  border-left-color: var(--warning);
-  background: var(--warning-soft);
-}
-/* A leading quote owns the card controls: its full colored surface starts at
-   the card edge while only its contents wrap around the inline-end island. */
+.markdown-body .message-quote-card--unavailable { border-left-color: var(--warning); }
+/* A leading quote owns the card controls: its rail starts at the card edge
+   while only its contents wrap around the inline-end island. */
 .team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > blockquote:has(> .message-controls),
 .team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > .message-quote-card:has(> .message-controls) {
   display: flow-root;
