@@ -1,17 +1,18 @@
 //! Acknowledgement headers rewritten into quoted directive context.
 //!
 //! An assistant header such as `ACK KEY: applied` presents as the directive it
-//! names, quoted above the response prose, whenever the journal allocated that
-//! key: a bare key is useless to the operator. The quote carries the plain ACK
-//! marker once the journal retired the key for this lane, including responses
-//! from later transcript sources, and says so while the key is still pending.
-//! A key this response did not answer -- another lane's, source-bound review
-//! feedback from another source, or an answer the journal recorded otherwise
-//! -- quotes its directive without a marker. Only a token no directive owns
-//! stays literal. Presentation never grants a repeated response retirement,
-//! a badge, or automatic-speech authority.
+//! names, quoted verbatim above the response prose, whenever the journal
+//! allocated that key: a bare key is useless to the operator. The response
+//! then opens with one marker for the whole header, beside the speaking agent:
+//! the plain ACK marker once the journal retired the header's ordinary keys for
+//! this lane, including responses from later transcript sources, the pending
+//! marker while one is still held, and NAK for a refusal. A key this response
+//! did not answer -- another lane's, source-bound review feedback from another
+//! source, or an answer the journal recorded otherwise -- quotes its directive
+//! without earning a marker. Only a token no directive owns stays literal.
+//! Presentation never grants a repeated response retirement, a badge, or
+//! automatic-speech authority.
 
-use std::borrow::Cow;
 use std::ops::Range;
 
 use super::*;
@@ -23,6 +24,13 @@ pub(super) struct PresentedDirectiveContext {
     pub(super) range: Range<usize>,
 }
 
+/// One answer marker the resident itself wrote at the head of a response.
+#[derive(Debug)]
+pub(super) struct PresentedMarker {
+    pub(super) start: usize,
+    pub(super) kind: wire::MessageClassificationKind,
+}
+
 /// One presented message and the quote blocks the resident itself wrote into it.
 #[derive(Debug)]
 pub(super) struct Presentation {
@@ -30,6 +38,9 @@ pub(super) struct Presentation {
     /// Exact directive contexts in source order. Quotation nested inside them
     /// is operator-authored journal text; anything outside them is agent prose.
     pub(super) contexts: Vec<PresentedDirectiveContext>,
+    /// Answer markers in source order, each opening the response after its
+    /// header's contexts. The same words the agent wrote stay literal.
+    pub(super) markers: Vec<PresentedMarker>,
 }
 
 pub(super) fn present_steering_acknowledgements_with_directives(
@@ -40,6 +51,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     let standing = EventDirectives { directives, event };
     let mut rendered = String::new();
     let mut contexts = Vec::new();
+    let mut markers = Vec::new();
     let mut cursor = 0;
     let mut changed = false;
     let mut capitalize_body = false;
@@ -59,42 +71,56 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
         append_presented_source(&mut rendered, source, capitalize_body);
         capitalize_body = false;
-        if packet.bare_acknowledgement || !packet.contexts.is_empty() {
+        if !packet.contexts.is_empty() {
             start_quote_block(&mut rendered);
-            let mut separated = false;
-            if packet.bare_acknowledgement {
-                append_acknowledgement_quote(&mut rendered, wire::stream::ACK_MARKER);
-                separated = true;
-            }
-            for (key, state) in &packet.contexts {
+            for (index, (key, _)) in packet.contexts.iter().enumerate() {
                 let directive = directives.0.get(key).ok_or_else(|| {
                     format!("canonical acknowledgment recognition lost directive {key}")
                 })?;
-                if separated {
+                if index > 0 {
                     rendered.push_str("\n\n");
                 }
                 let start = rendered.len();
-                append_acknowledgement_quote(
-                    &mut rendered,
-                    &acknowledged_context_text(directive, *state),
-                );
+                append_acknowledgement_quote(&mut rendered, &directive.text);
                 contexts.push(PresentedDirectiveContext {
                     key: key.clone(),
                     range: start..rendered.len(),
                 });
-                separated = true;
             }
             rendered.push_str("\n\n");
+        }
+        let marker = packet_marker(&packet, directives);
+        if let Some(kind) = marker {
+            markers.push(PresentedMarker {
+                start: rendered.len(),
+                kind,
+            });
+            rendered.push_str(kind.marker());
         }
         cursor = end;
         if packet.missed.is_empty() {
             cursor = skip_horizontal_space(text, cursor);
             capitalize_body = true;
+            if marker.is_some() {
+                let first = text
+                    .get(cursor..)
+                    .and_then(|tail| tail.split('\n').next())
+                    .unwrap_or_default();
+                if opens_paragraph_text(first) {
+                    rendered.push(' ');
+                } else if !first.is_empty() {
+                    rendered.push_str("\n\n");
+                }
+            }
         } else {
-            let marker = packet
-                .marker
-                .ok_or_else(|| "presented acknowledgment header lost its marker".to_owned())?;
-            rendered.push_str(acknowledgement_marker(marker)?);
+            // A marker the resident wrote already says ACK or NAK; otherwise
+            // the header's literal word stays with the tokens it failed to own.
+            if marker.is_none() {
+                let literal = packet
+                    .marker
+                    .ok_or_else(|| "presented acknowledgment header lost its marker".to_owned())?;
+                rendered.push_str(acknowledgement_marker(literal)?);
+            }
             for token in packet.missed {
                 rendered.push(' ');
                 rendered.push_str(&token);
@@ -117,6 +143,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         return Ok(Presentation {
             text: text.to_owned(),
             contexts,
+            markers,
         });
     }
     let source = text
@@ -126,6 +153,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     Ok(Presentation {
         text: rendered,
         contexts,
+        markers,
     })
 }
 
@@ -324,102 +352,35 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
     }
 }
 
-/// The quoted context text for one answered directive.
+/// The one marker a header's response opens with.
 ///
-/// An ordinary directive retired by a positive acknowledgement carries the
-/// canonical ACK marker so the app can badge it inline; while the journal still
-/// holds its key pending it carries the pending marker instead, so a spoken
-/// acknowledgment never reads as credit before steer::acked lands. A declined
-/// directive carries the NAK marker, because a refusal is an answer the
-/// operator must be able to see at a glance. A taste, broadcast, or review
-/// directive already opens with its own flavor marker, and merely historical
-/// context earns no badge.
-fn acknowledged_context_text(
-    directive: &PresentationDirective,
-    state: ContextState,
-) -> Cow<'_, str> {
-    let marker = match state {
-        ContextState::Acknowledged => wire::stream::ACK_MARKER,
-        ContextState::Pending => wire::stream::ACK_PENDING_MARKER,
-        ContextState::Declined => wire::stream::NAK_MARKER,
-        ContextState::Unmarked => return Cow::Borrowed(&directive.text),
-    };
-    if !is_ordinary(directive) {
-        return Cow::Borrowed(&directive.text);
-    }
-    mark_acknowledged_context(marker, &directive.text)
-}
-
-/// Mark one ordinary acknowledged directive where the operator's own words start.
-///
-/// A directive commonly carries quotation it is answering -- an agent card, an
-/// earlier exchange -- and the direction itself is the prose left outside those
-/// quotes. The marker therefore anchors the last run of unquoted lines:
-/// scanning back from the end, quoted and blank lines are passed over, and the
-/// run holding the first line found reaches back to the quote above it or to
-/// the start of the directive. A directive that quotes nothing anchors at its
-/// first line, which is the head the marker has always taken.
-///
-/// Quotation is either a `>` block quote or a line that is exactly one
-/// structural quote link, which the app replaces with a block quote card.
-///
-/// The marker shares that line when it reads as paragraph text, so the app
-/// pill sits inline with the words the operator wrote. A line that opens
-/// another block (list, heading, table, fence, rule, or indented code) keeps
-/// its structure beneath a marker paragraph of its own. Either way the marker
-/// stands clear of the quotation above it: a line directly below a quote would
-/// lazily continue that quote's paragraph and carry the marker one quote level
-/// deeper than the directive it answers, and a line directly below a quote
-/// card would join the card's paragraph.
-fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
-    if text.is_empty() {
-        return Cow::Owned(marker.to_owned());
-    }
-    let Some(anchor) = own_words_offset(text) else {
-        return Cow::Owned(format!("{marker}\n\n{text}"));
-    };
-    let (quoted, own) = text.split_at(anchor);
-    let clear = quoted.strip_suffix('\n').is_none_or(|above| {
-        above
-            .rsplit('\n')
-            .next()
-            .is_some_and(|line| line.trim().is_empty())
-    });
-    let separation = if clear { "" } else { "\n" };
-    let first = own.split('\n').next().unwrap_or_default();
-    if opens_paragraph_text(first) {
-        Cow::Owned(format!("{quoted}{separation}{marker} {own}"))
+/// Ordinary directives the header answered decide it: a refusal is an answer
+/// the operator must see at a glance, so NAK wins; a key the journal still
+/// holds reads pending, so a spoken acknowledgement never reads as credit
+/// before steer::acked lands; otherwise retired keys read ACK. A taste,
+/// broadcast, or review directive already opens with its own flavor marker,
+/// and merely historical context earns no marker. A bare acknowledgement of
+/// the lane seal quotes nothing and still answers.
+fn packet_marker(
+    packet: &ClassifiedPacket,
+    directives: &PresentationDirectives,
+) -> Option<wire::MessageClassificationKind> {
+    use wire::MessageClassificationKind as Kind;
+    let states = packet
+        .contexts
+        .iter()
+        .filter(|(key, _)| directives.0.get(key).is_some_and(is_ordinary))
+        .map(|(_, state)| *state)
+        .collect::<Vec<_>>();
+    if states.contains(&ContextState::Declined) {
+        Some(Kind::Decline)
+    } else if states.contains(&ContextState::Pending) {
+        Some(Kind::AcknowledgementPending)
+    } else if states.contains(&ContextState::Acknowledged) || packet.bare_acknowledgement {
+        Some(Kind::Acknowledgement)
     } else {
-        Cow::Owned(format!("{quoted}{separation}{marker}\n\n{own}"))
+        None
     }
-}
-
-/// Where the directive's last unquoted run begins.
-///
-/// `None` answers a directive that is quotation and blank lines all the way
-/// down: nothing of the operator's own is left for the marker to sit beside,
-/// so the caller gives it a paragraph above the whole quotation instead.
-fn own_words_offset(text: &str) -> Option<usize> {
-    let cards = spice::quote::QuoteMessage::parse(text);
-    let mut offset = 0;
-    let mut run = None;
-    let mut last = None;
-    for line in text.split('\n') {
-        if line.trim_start().starts_with('>') || is_quote_card(cards.quotes(), offset, line) {
-            run = None;
-        } else if !line.trim().is_empty() {
-            last = Some(*run.get_or_insert(offset));
-        }
-        offset += line.len() + 1;
-    }
-    last
-}
-
-/// Whether `line`, starting at byte `offset`, is exactly one quote link.
-fn is_quote_card(cards: &[spice::quote::MessageQuote], offset: usize, line: &str) -> bool {
-    let start = offset + (line.len() - line.trim_start().len());
-    let end = offset + line.trim_end().len();
-    cards.iter().any(|card| card.range == (start..end))
 }
 
 fn opens_paragraph_text(line: &str) -> bool {

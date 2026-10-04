@@ -171,13 +171,17 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .html
         .find("before ")
         .expect("outer authenticated prose renders");
-    let outer_signoff = rendered
+    let outer_age = rendered
         .html
-        .rfind("data-quote-age-authored=\"1000\"")
-        .expect("outer signoff renders");
+        .find("data-quote-age-authored=\"1000\"")
+        .expect("outer age renders");
+    let outer_name = rendered
+        .html
+        .find(">spice-rust-k</span>")
+        .expect("outer name renders");
     assert!(
-        outer_body < outer_signoff,
-        "the signoff trails authored prose"
+        outer_age < outer_name && outer_name < outer_body,
+        "the age, then the name, lead authored prose"
     );
 
     assert_historical_agent_name_survives_reseating(&outer_target, &quotes, &sources, lane, source);
@@ -647,6 +651,76 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }
 
+/// A prose card's attribution leads the card and each answer after a chain of
+/// quoted directives, ahead of the answer's pill; a chain answered by a block
+/// other than prose, or by nothing, still gets its attribution line.
+#[test]
+fn prose_card_attribution_leads_each_answer_after_a_quote_chain() {
+    let slot = super::SIGNOFF_SLOT;
+    let line = format!("<p class=\"message-signoff-line\">{slot}</p>");
+    let card = |markdown: &str, contexts: &[&str]| {
+        let mut directives = Vec::new();
+        let mut classifications = Vec::new();
+        for (index, context) in contexts.iter().enumerate() {
+            let start = markdown.find(context).expect("fixture context");
+            directives.push(MessageDirective {
+                start: u32::try_from(start).expect("fixture offset fits"),
+                end: u32::try_from(start + context.len()).expect("fixture offset fits"),
+                quote_target: steering_target(&format!("dTVQdQfL{index}"), context),
+                actor: wire::Actor::Operator,
+                authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+            });
+        }
+        for (start, _) in markdown.match_indices(wire::stream::ACK_MARKER) {
+            classifications.push(MessageClassification {
+                start: u32::try_from(start).expect("fixture offset fits"),
+                end: u32::try_from(start + wire::stream::ACK_MARKER.len())
+                    .expect("fixture offset fits"),
+                kind: wire::MessageClassificationKind::Acknowledgement,
+            });
+        }
+        render_prose_card(
+            markdown,
+            &classifications,
+            &directives,
+            &[],
+            &QuoteAgents::new(),
+            &QuoteSources::new(),
+        )
+        .html
+    };
+
+    let html = card(
+        "> one\n\n> two\n\n[ACK] first answer\n\n> three\n\n- listed",
+        &["> one", "> two", "> three"],
+    );
+    assert_eq!(html.matches(slot).count(), 2, "{html}");
+    let first = html.find(slot).expect("first slot");
+    let second_quote = html.find("two").expect("second quote");
+    let pill = html.find("message-ack-pill").expect("answer pill");
+    let answer = html.find("first answer").expect("answer");
+    assert!(
+        second_quote < first && first < pill && pill < answer,
+        "one attribution leads the answer after both quotes: {html}"
+    );
+    let list = html.find("<ul>").expect("list");
+    assert!(
+        html.find(&line).is_some_and(|line| line < list),
+        "a list answering the last quote gets a leading attribution line: {html}"
+    );
+
+    let plain = card("Plain words", &[]);
+    assert!(
+        plain.starts_with(&format!("<p>{slot}Plain words")),
+        "{plain}"
+    );
+    assert_eq!(plain.matches(slot).count(), 1, "{plain}");
+
+    let unanswered = card("> only", &["> only"]);
+    assert!(unanswered.ends_with(&line), "{unanswered}");
+    assert_eq!(unanswered.matches(slot).count(), 1, "{unanswered}");
+}
+
 #[test]
 fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
     let text = "phase colors please";
@@ -695,13 +769,13 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
         "{html}"
     );
     let stack = quote.find("message-image-stack").expect("stack");
+    let signoff = quote.find("message-quote-signoff").expect("signoff");
     let first = quote.find(text).expect("first paragraph");
     let last = quote.find("more words").expect("last paragraph");
-    let signoff = quote.find("message-quote-signoff").expect("signoff");
-    assert!(stack < first && first < last && last < signoff, "{html}");
+    assert!(stack < signoff && signoff < first && first < last, "{html}");
     assert!(
         !quote.contains("message-quote-signoff-line"),
-        "the signoff joins the last prose paragraph: {html}"
+        "the signoff leads the first prose paragraph: {html}"
     );
 
     let images_only = render("> ![first](a.png)\n>\n> ![second](b.png)");
@@ -710,10 +784,18 @@ fn directive_context_ending_in_images_leads_its_flow_with_every_image_once() {
         images_only.matches("class=\"message-image-stack\"").count(),
         2
     );
+    let line = images_only
+        .find("message-quote-signoff-line")
+        .expect("attribution line");
+    let stack = images_only.find("message-image-stack").expect("stack");
+    assert!(
+        line < stack,
+        "an image-only context leads with its own attribution line: {images_only}"
+    );
 }
 
 #[test]
-fn quote_cards_ending_in_images_sign_once_after_their_prose() {
+fn quote_cards_ending_in_images_lead_with_their_attribution_once() {
     let render = |text: &str| {
         let target = steering_target("dTVQdQfLw", text);
         let quotes = [wire::QuotePresentation::Resolved {
@@ -754,23 +836,26 @@ fn quote_cards_ending_in_images_sign_once_after_their_prose() {
     );
     let flow = html.find("message-image-flow").expect("flow");
     let stack = html.find("message-image-stack").expect("stack");
+    let signoff = html.find("message-quote-signoff").expect("signoff");
     let pill = html.find("data-quote-disposition").expect("pill");
     let prose = html.find("see these").expect("prose");
-    let signoff = html.find("message-quote-signoff").expect("signoff");
-    let body_end = html.rfind("</div></div>").expect("flow and body close");
     assert!(
-        flow < stack && stack < pill && pill < prose && prose < signoff && signoff < body_end,
+        flow < stack && stack < signoff && signoff < pill && pill < prose,
         "{html}"
     );
 
     let images_only = render("![first](a.png)\n\n![second](b.png)");
     assert!(!images_only.contains("message-image-flow"), "{images_only}");
-    let body_end = images_only.find("</div> ").expect("body closes");
+    let line = images_only
+        .find("class=\"message-quote-signoff-line\"")
+        .expect("attribution line");
+    let signoff = images_only
+        .find("class=\"message-quote-signoff\"")
+        .expect("signoff");
+    let pill = images_only.find("data-quote-disposition").expect("pill");
+    let image = images_only.find("src=\"a.png\"").expect("image");
     assert!(
-        images_only
-            .find("class=\"message-quote-signoff\"")
-            .expect("signoff")
-            > body_end,
+        line < signoff && signoff < pill && pill < image,
         "{images_only}"
     );
 }

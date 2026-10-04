@@ -439,24 +439,12 @@ pub(super) struct MarkdownBodyProps {
     pub(super) sources: Rc<Vec<AttrValue>>,
     pub(super) final_answer: bool,
     pub(super) quote_tasks: Rc<crate::runtime::QuoteTasks>,
-    /// The card's own signoff: it closes a final prose paragraph inline and
-    /// otherwise takes its own trailing line.
+    /// The card's own attribution, mounted in every signoff slot its body leads with.
     #[prop_or_default]
     pub(super) signoff: Option<Html>,
     /// Card controls that either lead the body or mount inside its leading quote.
     #[prop_or_default]
     pub(super) corner: Option<Html>,
-}
-
-/// Where a card's signoff mounts once its raw body is in the DOM.
-#[derive(Clone, PartialEq)]
-enum SignoffPlace {
-    Pending,
-    Inline {
-        target: web_sys::Element,
-        key: yew::virtual_dom::Key,
-    },
-    Line,
 }
 
 /// Where card controls mount once the raw body exposes its first content block.
@@ -499,21 +487,6 @@ fn collect_corner_place(host: &web_sys::Element, enabled: bool) -> CornerPlace {
     }
 }
 
-/// The signoff as a portal into the body's final paragraph, or as its own line.
-fn render_signoff(signoff: Option<&Html>, place: &SignoffPlace) -> (Option<Html>, Option<Html>) {
-    match (signoff, place) {
-        (Some(signoff), SignoffPlace::Inline { target, key }) => (
-            Some(yew::create_portal(
-                html! { <span key={key.clone()} class="message-signoff">{signoff.clone()}</span> },
-                target.clone(),
-            )),
-            None,
-        ),
-        (Some(signoff), SignoffPlace::Line) => (None, Some(signoff.clone())),
-        _ => (None, None),
-    }
-}
-
 fn render_corner(corner: Option<&Html>, place: &CornerPlace) -> (Option<Html>, Option<Html>) {
     let Some(corner) = corner else {
         return (None, None);
@@ -529,43 +502,6 @@ fn render_corner(corner: Option<&Html>, place: &CornerPlace) -> (Option<Html>, O
             ))),
         ),
     }
-}
-
-/// A signoff joins the body's last raw block when that block is a prose
-/// paragraph; an image stack, list, quote, table, or code block keeps it on a
-/// line of its own so it never breaks that block's layout.
-fn collect_signoff_place(
-    host: &web_sys::Element,
-    previous: &SignoffPlace,
-    counter: &Cell<u64>,
-) -> SignoffPlace {
-    let has_class = |element: &web_sys::Element, class: &str| {
-        element
-            .get_attribute("class")
-            .is_some_and(|classes| classes.split_whitespace().any(|name| name == class))
-    };
-    let mut last = host.last_element_child();
-    while let Some(element) = last.as_ref().filter(|element| {
-        has_class(element, MARKDOWN_BODY_PORTALS) || has_class(element, "message-signoff-line")
-    }) {
-        last = element.previous_element_sibling();
-    }
-    let Some(target) = last
-        .filter(|element| element.tag_name() == "P" && !has_class(element, "message-image-stack"))
-    else {
-        return SignoffPlace::Line;
-    };
-    let key = match previous {
-        SignoffPlace::Inline {
-            target: previous,
-            key,
-        } if *previous == target => key.clone(),
-        _ => {
-            counter.set(counter.get().wrapping_add(1));
-            counter.get().into()
-        }
-    };
-    SignoffPlace::Inline { target, key }
 }
 
 const MARKDOWN_BODY_PORTALS: &str = "markdown-body-portals";
@@ -589,12 +525,15 @@ struct QuoteAgeSlot {
     key: yew::virtual_dom::Key,
 }
 
-/// A steering quote's signoff. Its task badges lead its raw age and name, so
-/// they mount before the first raw child the signoff had when collected.
+/// A steering quote's signoff, whose task badges follow its age and name.
 struct QuoteTaskSlot {
     steering: String,
     target: web_sys::Element,
-    before: Option<web_sys::Node>,
+    key: yew::virtual_dom::Key,
+}
+
+struct SignoffSlot {
+    target: web_sys::Element,
     key: yew::virtual_dom::Key,
 }
 
@@ -757,10 +696,38 @@ fn collect_quote_task_slots(
             });
         slots.push(QuoteTaskSlot {
             steering,
-            before: target.first_child(),
             target,
             key,
         });
+    }
+    slots
+}
+
+fn collect_signoff_slots(
+    host: &web_sys::Element,
+    previous: &[SignoffSlot],
+    counter: &Cell<u64>,
+) -> Vec<SignoffSlot> {
+    let Ok(nodes) = host.query_selector_all(".message-signoff-slot[data-signoff-slot]") else {
+        return Vec::new();
+    };
+    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    for position in 0..nodes.length() {
+        let Some(target) = nodes
+            .item(position)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let key = previous
+            .iter()
+            .find(|slot| slot.target == target)
+            .map(|slot| slot.key.clone())
+            .unwrap_or_else(|| {
+                counter.set(counter.get().wrapping_add(1));
+                counter.get().into()
+            });
+        slots.push(SignoffSlot { target, key });
     }
     slots
 }
@@ -789,7 +756,7 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
         </>
     }
 }
-/// Producer-authored diagram, math, quote-age, and quote-task slots inside this
+/// Producer-authored diagram, math, quote-age, quote-task, and signoff slots inside this
 /// card are portal targets. Raw user HTML still passes through the shared
 /// Markdown sanitizer; only parser- or resident-owned nodes can name these slot
 /// kinds. Board work fills task slots in place, so a quote gaining task badges
@@ -803,7 +770,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let math_slots = use_state(Vec::<MathSlot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
     let quote_task_slots = use_state(Vec::<QuoteTaskSlot>::new);
-    let signoff_place = use_state(|| SignoffPlace::Pending);
+    let signoff_slots = use_state(Vec::<SignoffSlot>::new);
     let corner_place = use_state(|| CornerPlace::Pending);
     let counter = use_memo((), |()| Cell::new(0_u64));
     use_effect_with(
@@ -819,7 +786,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             let math_slots = math_slots.clone();
             let quote_age_slots = quote_age_slots.clone();
             let quote_task_slots = quote_task_slots.clone();
-            let signoff_place = signoff_place.clone();
+            let signoff_slots = signoff_slots.clone();
             let corner_place = corner_place.clone();
             let counter = counter.clone();
             move |(_, source_count, has_signoff, has_corner)| {
@@ -838,15 +805,25 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 math_slots.set(collect_math_slots(&host, &math_slots, &counter));
                 quote_age_slots.set(collect_quote_age_slots(&host, &quote_age_slots, &counter));
                 quote_task_slots.set(collect_quote_task_slots(&host, &quote_task_slots, &counter));
-                signoff_place.set(if *has_signoff {
-                    collect_signoff_place(&host, &signoff_place, &counter)
+                signoff_slots.set(if *has_signoff {
+                    collect_signoff_slots(&host, &signoff_slots, &counter)
                 } else {
-                    SignoffPlace::Pending
+                    Vec::new()
                 });
             }
         },
     );
-    let (inline_signoff, line_signoff) = render_signoff(props.signoff.as_ref(), &signoff_place);
+    let signoffs = props.signoff.as_ref().map(|signoff| {
+        signoff_slots
+            .iter()
+            .map(|slot| {
+                yew::create_portal(
+                    html! { <span key={slot.key.clone()} class="message-signoff">{signoff.clone()}</span> },
+                    slot.target.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
     let (body_corner, quote_corner) = render_corner(props.corner.as_ref(), &corner_place);
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
@@ -860,7 +837,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
         >
             {for body_corner}
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || inline_signoff.is_some() || quote_corner.is_some() {
+            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || !signoff_slots.is_empty() || quote_corner.is_some() {
             <span class={MARKDOWN_BODY_PORTALS} hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
@@ -890,18 +867,14 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             })}
             {for quote_task_slots.iter().filter_map(|slot| {
                 let handles = props.quote_tasks.get(&slot.steering)?.clone();
-                Some(Html::from(yew::virtual_dom::VPortal::new_before(
+                Some(yew::create_portal(
                     html! { <QuoteTaskChips key={slot.key.clone()} {handles} /> },
                     slot.target.clone(),
-                    slot.before.clone(),
-                )))
+                ))
             })}
             {for quote_corner}
-            {for inline_signoff}
+            {for signoffs.into_iter().flatten()}
             </span>
-            }
-            if let Some(signoff) = line_signoff {
-                <p class="message-signoff-line"><span class="message-signoff">{signoff}</span></p>
             }
         </div>
     }

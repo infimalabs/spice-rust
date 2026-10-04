@@ -794,14 +794,12 @@ fn is_review_feedback(control: Option<&str>) -> bool {
         .is_some()
 }
 
+/// Flavor badges an answer earned for the directives it quoted.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ClassificationCounts {
-    acknowledgements: u32,
     tastes: u32,
     broadcasts: u32,
     reviews: u32,
-    pending: u32,
-    declines: u32,
 }
 impl ClassificationCounts {
     #[cfg(test)]
@@ -819,19 +817,10 @@ fn message_badges(
         return ClassificationCounts::default();
     };
     let standing = EventDirectives { directives, event };
-    let mut acknowledged = BTreeSet::new();
-    let mut declined = BTreeSet::new();
-    for (key, disposition) in recognized_answers(text, &standing) {
-        match disposition {
-            wire::Disposition::Acked => {
-                acknowledged.insert(key);
-            }
-            wire::Disposition::Declined if directives.0.get(&key).is_some_and(is_ordinary) => {
-                declined.insert(key);
-            }
-            _ => {}
-        }
-    }
+    let acknowledged = recognized_answers(text, &standing)
+        .filter(|(_, disposition)| *disposition == wire::Disposition::Acked)
+        .map(|(key, _)| key)
+        .collect::<BTreeSet<_>>();
     let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
         let matched = acknowledged
             .iter()
@@ -839,68 +828,42 @@ fn message_badges(
             .count();
         u32::try_from(matched).unwrap_or(u32::MAX)
     };
-    let tastes = count(&|directive| directive.taste);
-    let broadcasts = count(&|directive| !directive.taste && has_broadcast_marker(&directive.text));
-    let reviews = count(&|directive| directive.review);
-    // A spoken acknowledgement the journal still holds pending is not credit
-    // yet; it counts apart until steer::acked retires the key.
-    let pending = count(&|directive| {
-        is_ordinary(directive) && directive.disposition == wire::Disposition::Live
-    });
-    // A decline is an answer, not credit: it authorizes the refusal mark on
-    // the quoted directive and never adds to the acknowledged total.
-    let declines = u32::try_from(declined.len()).unwrap_or(u32::MAX);
     ClassificationCounts {
-        acknowledgements: u32::try_from(acknowledged.len())
-            .unwrap_or(u32::MAX)
-            .saturating_sub(reviews)
-            .saturating_sub(pending),
-        tastes,
-        broadcasts,
-        reviews,
-        pending,
-        declines,
+        tastes: count(&|directive| directive.taste),
+        broadcasts: count(&|directive| !directive.taste && has_broadcast_marker(&directive.text)),
+        reviews: count(&|directive| directive.review),
     }
 }
 
 #[derive(Debug)]
 struct RemainingClassifications {
-    acknowledgements: usize,
     tastes: usize,
     broadcasts: usize,
     reviews: usize,
-    pending: usize,
-    declines: usize,
 }
 
 impl From<ClassificationCounts> for RemainingClassifications {
     fn from(counts: ClassificationCounts) -> Self {
         let count = |value| usize::try_from(value).unwrap_or(usize::MAX);
         Self {
-            acknowledgements: count(
-                counts
-                    .acknowledgements
-                    .saturating_sub(counts.tastes)
-                    .saturating_sub(counts.broadcasts),
-            ),
             tastes: count(counts.tastes),
             broadcasts: count(counts.broadcasts),
             reviews: count(counts.reviews),
-            pending: count(counts.pending),
-            declines: count(counts.declines),
         }
     }
 }
 
-/// Classify the markers a presented message carries, one quote level at a time.
+/// Classify the markers a presented message carries.
 ///
-/// The first quote level is the live answer: its markers are bounded by the
-/// counts this answer's recognized keys earned. Each level below it is the
-/// history a quoted directive carried, and within a directive context the
-/// resident inserted every level repeats the same rule on its own lines: an
-/// acknowledgement, pending, or decline marker opening a line is the pill an
-/// earlier presentation showed. Those historical pills never draw on the live
-/// counts, and the same words anywhere the agent wrote them stay literal.
+/// Each answer marker the resident wrote at the head of a response is exact by
+/// construction. Flavor markers sit one quote level down, opening the quoted
+/// directive text, and are bounded by the counts this answer's recognized keys
+/// earned. Each level below that is the history a quoted directive carried,
+/// and within a directive context the resident inserted every level repeats
+/// the same rule on its own lines: an acknowledgement, pending, or decline
+/// marker opening a line is the pill an earlier presentation showed. Those
+/// historical pills never draw on the live counts, and the same words anywhere
+/// the agent wrote them stay literal.
 fn hydrate_message_classifications(
     presented: &Presentation,
     counts: ClassificationCounts,
@@ -918,7 +881,11 @@ fn hydrate_message_classifications(
     let mut code_block = false;
     let mut image_depth = 0usize;
     let mut opens_line = false;
-    let mut classifications = Vec::new();
+    let mut classifications = presented
+        .markers
+        .iter()
+        .map(|marker| (marker.start, marker.kind))
+        .collect::<Vec<_>>();
     for (event, source) in Parser::new_ext(text, options).into_offset_iter() {
         let line_start = std::mem::replace(
             &mut opens_line,
@@ -967,18 +934,24 @@ fn hydrate_message_classifications(
         else {
             continue;
         };
-        let start = source.start;
-        let end = start
-            .checked_add(kind.marker().len())
-            .ok_or_else(|| "classification end overflowed".to_owned())?;
-        classifications.push(wire::MessageClassification {
-            start: u32::try_from(start)
-                .map_err(|_| "classification start exceeds the wire range".to_owned())?,
-            end: u32::try_from(end)
-                .map_err(|_| "classification end exceeds the wire range".to_owned())?,
-            kind,
-        });
+        classifications.push((source.start, kind));
     }
+    classifications.sort_unstable_by_key(|(start, _)| *start);
+    let classifications = classifications
+        .into_iter()
+        .map(|(start, kind)| {
+            let end = start
+                .checked_add(kind.marker().len())
+                .ok_or_else(|| "classification end overflowed".to_owned())?;
+            Ok(wire::MessageClassification {
+                start: u32::try_from(start)
+                    .map_err(|_| "classification start exceeds the wire range".to_owned())?,
+                end: u32::try_from(end)
+                    .map_err(|_| "classification end exceeds the wire range".to_owned())?,
+                kind,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     if !wire::valid_message_classifications(text, &classifications) {
         return Err("hydrated message classifications are not exact and ordered".to_owned());
     }
@@ -1011,23 +984,19 @@ fn hydrate_directive_contexts(
         .collect()
 }
 
-/// A marker on the live answer's level, drawn from what the answer earned.
-/// Taste is recognized at any depth; every other kind only on the first level.
+/// A flavor marker opening quoted directive text, drawn from what the answer
+/// earned. Taste is recognized at any depth; the others only on the first level.
 fn live_classification(
     source_tail: &str,
     quote_depth: usize,
     remaining: &mut RemainingClassifications,
 ) -> Option<wire::MessageClassificationKind> {
     use wire::MessageClassificationKind as Kind;
-    let live = [
-        (Kind::Review, &mut remaining.reviews),
-        (Kind::Broadcast, &mut remaining.broadcasts),
-        (Kind::AcknowledgementPending, &mut remaining.pending),
-        (Kind::Decline, &mut remaining.declines),
-        (Kind::Acknowledgement, &mut remaining.acknowledgements),
-    ];
     if quote_depth == 1 {
-        for (kind, remaining) in live {
+        for (kind, remaining) in [
+            (Kind::Review, &mut remaining.reviews),
+            (Kind::Broadcast, &mut remaining.broadcasts),
+        ] {
             if take_classification(source_tail, kind, remaining) {
                 return Some(kind);
             }

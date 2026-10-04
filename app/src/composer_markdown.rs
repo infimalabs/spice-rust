@@ -205,7 +205,7 @@ pub(crate) fn render_received_with_classifications(
 }
 
 /// Render received text, its resident-resolved structural quote links, and a
-/// byline closing each directive context the resident quoted into it.
+/// byline leading each directive context the resident quoted into it.
 pub(crate) fn render_received_with_quotes(
     markdown: &str,
     classifications: &[MessageClassification],
@@ -223,12 +223,12 @@ pub(crate) fn render_received_with_quotes(
         quote_sources,
         Finish::Received,
     )
-    .0
 }
 
 /// Render one assistant prose card: received text as
 /// [`render_received_with_quotes`] renders it, except that terminal prose gains
-/// a period when unpunctuated and presents a terminal colon as a period.
+/// a period when unpunctuated and presents a terminal colon as a period, and
+/// the card's attribution slots lead it and each answer after a quote chain.
 pub(crate) fn render_prose_card(
     markdown: &str,
     classifications: &[MessageClassification],
@@ -246,18 +246,16 @@ pub(crate) fn render_prose_card(
         quote_sources,
         Finish::ProseCard,
     )
-    .0
 }
 
-/// Render one resolved quote card's body. Its attribution joins the body when
-/// the body ends in images that its prose flows around; the result says so.
+/// Render one resolved quote card's body, led by its attribution.
 fn render_quote_card_body(
     markdown: &str,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    tail: image_flow::CardTail<'_>,
-) -> (RenderedMarkdown, bool) {
+    head: image_flow::CardHead<'_>,
+) -> RenderedMarkdown {
     render(
         markdown,
         &[],
@@ -265,18 +263,19 @@ fn render_quote_card_body(
         quotes,
         quote_agents,
         quote_sources,
-        Finish::QuoteCard(tail),
+        Finish::QuoteCard(head),
     )
 }
 
-/// How a rendering closes its body.
+/// How a rendering presents its body.
 enum Finish<'t> {
     /// Received text as written.
     Received,
-    /// Assistant prose whose terminal sentence gains its period.
+    /// Assistant prose whose terminal sentence gains its period and whose
+    /// attribution slots lead the card and each answer after a quote chain.
     ProseCard,
-    /// A quote card body carrying its disposition and attribution.
-    QuoteCard(image_flow::CardTail<'t>),
+    /// A quote card body led by its attribution and disposition.
+    QuoteCard(image_flow::CardHead<'t>),
 }
 
 fn render(
@@ -287,7 +286,7 @@ fn render(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     finish: Finish<'_>,
-) -> (RenderedMarkdown, bool) {
+) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -303,39 +302,108 @@ fn render(
         options,
     );
     let markdown = normalized.markdown;
-    let mut remaining = normalized
-        .classifications
+    let (events, outer_quotes) = parse_events(
+        &markdown,
+        options,
+        normalized.classifications,
+        normalized.directives,
+        quote_agents,
+        quote_sources,
+    );
+    let events = coalesce_text_events(events);
+    let events = quotes::expand(events, quotes, quote_agents, quote_sources);
+    let (events, diagrams) = diagrams::extract(events);
+    let has_diagrams = !diagrams.is_empty();
+    let image_count = markdown_image_only_count(&events, has_diagrams);
+    let image_only = image_count > 0;
+    // Diagram controls and nested block structure must not collapse into an image row.
+    let mut task_code_block = false;
+    let events = decorate_markdown_images(events, image_only && !has_diagrams);
+    let (prose_card, layer) = match finish {
+        Finish::Received => (false, image_flow::Layer::Body),
+        Finish::ProseCard => (true, image_flow::Layer::Body),
+        Finish::QuoteCard(head) => (false, image_flow::Layer::Card(head)),
+    };
+    let events = image_flow::flow(&events, &layer);
+    let events = events.into_iter().flat_map(|event| match &event {
+        MarkdownEvent::Start(Tag::CodeBlock(_)) => {
+            task_code_block = true;
+            vec![event]
+        }
+        MarkdownEvent::End(TagEnd::CodeBlock) => {
+            task_code_block = false;
+            vec![event]
+        }
+        _ if task_code_block => vec![event],
+        _ => inline_task_chips(event),
+    });
+    let mut events = events.collect::<Vec<_>>();
+    if prose_card {
+        terminal::period(&mut events);
+        events = lead_signoff_slots(events, &outer_quotes);
+    }
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
+    RenderedMarkdown {
+        html,
+        image_only,
+        image_count,
+        diagrams,
+    }
+}
+
+/// Parse sanitized Markdown, inline each exact classification as its pill, and
+/// lead each directive context with its author's attribution. Also returns
+/// whether each outermost block quote, in order, is a directive context.
+fn parse_events<'m>(
+    markdown: &'m str,
+    options: Options,
+    classifications: Vec<MessageClassification>,
+    directives: Vec<MessageDirective>,
+    quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
+) -> (Vec<MarkdownEvent<'m>>, Vec<bool>) {
+    let mut remaining = classifications
         .into_iter()
         .map(|classification| (classification.start, classification))
         .collect::<BTreeMap<_, _>>();
     // The resident writes every directive context as one outermost block
     // quote beginning exactly at the context's start.
-    let mut contexts = normalized
-        .directives
+    let mut contexts = directives
         .into_iter()
         .map(|directive| (directive.start as usize, directive))
         .collect::<BTreeMap<_, _>>();
     let mut open_context = None;
+    let mut outer_quotes = Vec::new();
     let mut quote_depth = 0usize;
     let mut skipped_marker = None;
     let mut code_block = false;
     let mut events = Vec::new();
-    for (event, source) in Parser::new_ext(&markdown, options).into_offset_iter() {
+    for (event, source) in Parser::new_ext(markdown, options).into_offset_iter() {
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
             MarkdownEvent::Start(Tag::BlockQuote(_)) => {
                 if quote_depth == 0 {
-                    open_context = contexts.remove(&source.start);
+                    open_context = contexts
+                        .remove(&source.start)
+                        .map(|context| (events.len(), context));
+                    outer_quotes.push(open_context.is_some());
                 }
                 quote_depth += 1;
             }
             MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
                 quote_depth -= 1;
                 if quote_depth == 0
-                    && let Some(context) = open_context.take()
+                    && let Some((start, context)) = open_context.take()
                 {
-                    close_directive_context(&mut events, &context, quote_agents, quote_sources);
+                    lead_directive_context(
+                        &mut events,
+                        start,
+                        &context,
+                        quote_agents,
+                        quote_sources,
+                    );
                 }
             }
             _ => {}
@@ -356,57 +424,90 @@ fn render(
         remaining.is_empty(),
         "every resident classification maps to one Markdown text event"
     );
-    let events = coalesce_text_events(events);
-    let events = quotes::expand(events, quotes, quote_agents, quote_sources);
-    let (events, diagrams) = diagrams::extract(events);
-    let has_diagrams = !diagrams.is_empty();
-    let image_count = markdown_image_only_count(&events, has_diagrams);
-    let image_only = image_count > 0;
-    // Diagram controls and nested block structure must not collapse into an image row.
-    let mut task_code_block = false;
-    let events = decorate_markdown_images(events, image_only && !has_diagrams);
-    let (terminal_period, layer) = match finish {
-        Finish::Received => (false, image_flow::Layer::Body),
-        Finish::ProseCard => (true, image_flow::Layer::Body),
-        Finish::QuoteCard(tail) => (false, image_flow::Layer::Card(tail)),
-    };
-    let (events, signed) = image_flow::flow(&events, &layer);
-    let events = events.into_iter().flat_map(|event| match &event {
-        MarkdownEvent::Start(Tag::CodeBlock(_)) => {
-            task_code_block = true;
-            vec![event]
-        }
-        MarkdownEvent::End(TagEnd::CodeBlock) => {
-            task_code_block = false;
-            vec![event]
-        }
-        _ if task_code_block => vec![event],
-        _ => inline_task_chips(event),
-    });
-    let mut events = events.collect::<Vec<_>>();
-    if terminal_period {
-        terminal::period(&mut events);
-    }
-    let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
-    (
-        RenderedMarkdown {
-            html,
-            image_only,
-            image_count,
-            diagrams,
-        },
-        signed,
-    )
+    (events, outer_quotes)
 }
 
-/// Append one directive author marker before its quote closes. CSS keeps that
-/// marker at the content tail, sharing the last line when it fits and moving
-/// it onto a final line when it does not. Trailing image paragraphs move ahead
-/// of the prose they follow (`image_flow`), so the marker joins the prose
-/// paragraph just before them; with no such paragraph it takes its own line.
-fn close_directive_context(
+/// Where a prose card's own attribution mounts (`browser::mermaid`).
+const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-slot=\"\"></span>";
+
+/// Lead the card's first block, and the first block after each chain of
+/// attributed quotes, with one attribution slot.
+///
+/// Directive contexts and quote cards carry their own attribution, so they
+/// leave the slot pending for the answer that follows them. A prose paragraph
+/// takes the slot inline before its words, ahead of any answer pill; any other
+/// block takes it on a line of its own above, so the slot never breaks that
+/// block's layout. A card ending in a quote chain closes with the slot's line.
+fn lead_signoff_slots<'a>(
+    events: Vec<MarkdownEvent<'a>>,
+    outer_quotes: &[bool],
+) -> Vec<MarkdownEvent<'a>> {
+    let line = || {
+        MarkdownEvent::Html(format!("<p class=\"message-signoff-line\">{SIGNOFF_SLOT}</p>").into())
+    };
+    let mut led = Vec::with_capacity(events.len() + 2);
+    let mut outer_quotes = outer_quotes.iter();
+    let mut pending = true;
+    let mut depth = 0usize;
+    let mut stack = false;
+    let mut events = events.into_iter().peekable();
+    while let Some(event) = events.next() {
+        if depth == 0 && !stack {
+            let opens_block = match &event {
+                MarkdownEvent::Start(Tag::BlockQuote(_)) if outer_quotes.next() == Some(&true) => {
+                    pending = true;
+                    false
+                }
+                MarkdownEvent::Start(Tag::Paragraph)
+                    if matches!(
+                        events.peek(),
+                        Some(MarkdownEvent::InlineHtml(html))
+                            if html.starts_with("<div class=\"message-quote-card")
+                    ) =>
+                {
+                    pending = true;
+                    false
+                }
+                MarkdownEvent::Start(Tag::Paragraph) if pending => {
+                    pending = false;
+                    led.push(event);
+                    led.push(MarkdownEvent::InlineHtml(SIGNOFF_SLOT.into()));
+                    depth += 1;
+                    continue;
+                }
+                MarkdownEvent::Start(_) | MarkdownEvent::Html(_) | MarkdownEvent::Rule => true,
+                MarkdownEvent::InlineHtml(html) => html.as_ref() == image_flow::STACK_OPEN,
+                _ => false,
+            };
+            if opens_block && std::mem::take(&mut pending) {
+                led.push(line());
+            }
+        }
+        match &event {
+            MarkdownEvent::Start(_) => depth += 1,
+            MarkdownEvent::End(_) => depth = depth.saturating_sub(1),
+            MarkdownEvent::InlineHtml(html) if html.as_ref() == image_flow::STACK_OPEN => {
+                stack = true;
+            }
+            MarkdownEvent::InlineHtml(html) if html.as_ref() == image_flow::STACK_CLOSE => {
+                stack = false;
+            }
+            _ => {}
+        }
+        led.push(event);
+    }
+    if pending {
+        led.push(line());
+    }
+    led
+}
+
+/// Lead one directive context with its author's attribution: inside its first
+/// prose paragraph, ahead of any classification pill there, or on a line of
+/// its own above a context that opens with any other block.
+fn lead_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
+    start: usize,
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
@@ -419,28 +520,18 @@ fn close_directive_context(
         quote_agents,
         quote_sources,
     );
-    let mut end = events.len();
-    let target = loop {
-        if !matches!(
-            end.checked_sub(1).map(|index| &events[index]),
-            Some(MarkdownEvent::End(TagEnd::Paragraph))
-        ) {
-            break None;
-        }
-        let start = events[..end]
-            .iter()
-            .rposition(|event| matches!(event, MarkdownEvent::Start(Tag::Paragraph)))
-            .expect("a closed paragraph opened");
-        if !paragraph_is_image_stack(&events[start + 1..]) {
-            break Some(end - 1);
-        }
-        end = start;
-    };
-    match target {
-        Some(end) => events.insert(end, MarkdownEvent::InlineHtml(signoff.into())),
-        None => events.push(MarkdownEvent::Html(
-            format!("{}{signoff}</p>", image_flow::SIGNOFF_LINE_OPEN).into(),
-        )),
+    let paragraph = start + 1;
+    if matches!(
+        events.get(paragraph),
+        Some(MarkdownEvent::Start(Tag::Paragraph))
+    ) && !paragraph_is_image_stack(&events[paragraph + 1..])
+    {
+        events.insert(paragraph + 1, MarkdownEvent::InlineHtml(signoff.into()));
+    } else {
+        events.insert(
+            paragraph,
+            MarkdownEvent::Html(format!("{}{signoff}</p>", image_flow::SIGNOFF_LINE_OPEN).into()),
+        );
     }
 }
 

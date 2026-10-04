@@ -359,9 +359,9 @@ reopening the iframe needs the local appliance.
 Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
 A tool card whose face is one image uses the same standard 15.75rem square as
 an operator's lone image, cover-cropped, and carries no card controls: a click
-on the image opens it. Like prose, a right-aligned signoff of badges, lane name,
-then age closes it; once the card commits, the square stays centred both ways in
-the room above that signoff, so it never resizes the committed card. A lane
+on the image opens it. Like prose, it leads with its attribution: age, lane name,
+then badges, in a frosted overlay at the image's top-left corner, so the square
+fills the committed card without resizing it. A lane
 reading back an operator's steering attachment gets no second image card: that
 image already stands with its directive, and repeating it on the leading edge
 would push the acknowledgment out of view. Operator messages and quotes keep

@@ -4,11 +4,10 @@
 //! floated beneath a zero-width anchor float (`composer_markdown::image_flow`).
 //! Where the images belong depends on how the prose wraps around them, which
 //! depends on where they are, so no stylesheet can resolve it: the anchor's
-//! height is measured here instead. The images' bottom meets the attribution's
-//! (or, without one, the prose's) and is never lower; prose shorter than the
-//! images sits beside their top and the attribution drops to their bottom. A
-//! layer too narrow to share a line with its images stacks them full width
-//! under the prose, with the attribution cleared below them by CSS.
+//! height is measured here instead. The images' bottom meets the prose's and is
+//! never lower; prose shorter than the images sits beside their top. A layer
+//! too narrow to share a line with its images stacks them full width under the
+//! prose. The layer's attribution leads it, so it never takes part.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::closure::Closure;
@@ -19,7 +18,7 @@ const FLOW: &str = "message-image-flow";
 /// The narrowest prose column worth wrapping beside the images.
 const PROSE_FLOOR: &str = "14ch";
 /// Lift passes before settling on the highest lift whose images end no lower
-/// than the attribution; wrapping beside the images rarely needs more than two.
+/// than the prose; wrapping beside the images rarely needs more than two.
 const SETTLE_PASSES: usize = 4;
 
 #[hook]
@@ -94,26 +93,13 @@ fn child(flow: &HtmlElement, class: &str) -> Option<HtmlElement> {
 fn settle(flow: &HtmlElement) -> Option<()> {
     let anchor = child(flow, "message-image-flow-anchor")?;
     let stack = child(flow, "message-image-stack")?;
-    let last = flow.last_element_child()?;
-    let prose = if has_class(&last, "message-quote-signoff-line") {
-        last.previous_element_sibling()?
-    } else {
-        last.clone()
-    };
-    let signoff = last
-        .query_selector(":scope > .message-quote-signoff")
-        .ok()
-        .flatten()
-        .and_then(|element| element.dyn_into::<HtmlElement>().ok());
+    let prose = flow.last_element_child()?;
     let lift = |height: f64| {
         let _ = anchor
             .style()
             .set_property("height", &format!("{height}px"));
     };
     lift(0.0);
-    if let Some(signoff) = &signoff {
-        let _ = signoff.style().remove_property("margin-top");
-    }
     let _ = flow.remove_attribute("data-image-flow");
     let width = f64::from(flow.client_width());
     if width == 0.0 {
@@ -136,22 +122,16 @@ fn settle(flow: &HtmlElement) -> Option<()> {
     let _ = anchor.style().remove_property("width");
     if width - images.width() - gap < floor {
         // Too narrow to share lines: the images follow the prose, measured
-        // with the anchor holding them out of its way, and the attribution
-        // clears below them.
+        // with the anchor holding them out of its way.
         let _ = flow.set_attribute("data-image-flow", "stacked");
         lift(f64::from(u16::MAX));
         lift(end(&prose).max(0.0).ceil());
         return Some(());
     }
     let height = images.height();
-    let closing = |prose: &Element| {
-        signoff
-            .as_ref()
-            .map_or_else(|| end(prose), |signoff| end(prose).max(end(signoff)))
-    };
     let (mut current, mut best) = (0.0_f64, 0.0_f64);
     for _ in 0..SETTLE_PASSES {
-        let closed = closing(&prose);
+        let closed = end(&prose);
         if current + height <= closed + 0.5 {
             best = best.max(current);
         }
@@ -163,14 +143,5 @@ fn settle(flow: &HtmlElement) -> Option<()> {
         lift(current);
     }
     lift(best);
-    if let Some(signoff) = &signoff {
-        let drop =
-            stack.get_bounding_client_rect().bottom() - signoff.get_bounding_client_rect().bottom();
-        if drop > 0.5 {
-            let _ = signoff
-                .style()
-                .set_property("margin-top", &format!("{drop}px"));
-        }
-    }
     Some(())
 }
