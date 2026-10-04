@@ -42,12 +42,9 @@ impl Observation {
         if flows.is_empty() {
             return None;
         }
-        let settled = flows.clone();
+        let host = host.clone();
         let settle = Closure::<dyn FnMut(js_sys::Array, ResizeObserver)>::new(move |_, _| {
-            // Innermost first: an outer flow measures prose holding inner ones.
-            for flow in settled.iter().rev() {
-                settle(flow);
-            }
+            settle_flows(&host);
         });
         let observer = ResizeObserver::new(settle.as_ref().unchecked_ref()).ok()?;
         for flow in &flows {
@@ -63,6 +60,17 @@ impl Observation {
 impl Drop for Observation {
     fn drop(&mut self) {
         self.observer.disconnect();
+    }
+}
+
+/// Settle every image flow under `host` at its current width, innermost first
+/// because an outer flow measures prose holding inner ones. Mosaic measurement
+/// clones call this at each width they measure, so a card's measured height
+/// never depends on whether the live card's observer already ran, or at which
+/// width.
+pub(super) fn settle_flows(host: &Element) {
+    for flow in flows(host).iter().rev() {
+        settle(flow);
     }
 }
 

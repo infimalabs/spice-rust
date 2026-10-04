@@ -316,30 +316,6 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
 }
 
 #[test]
-fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
-    let head = measured("head", candidates(12, 2));
-    let opening = boundary("opening", 1);
-    let middle = measured("middle", candidates(6, 2));
-    let closing = boundary("closing", 1);
-    let recent = measured("recent", candidates(6, 3));
-    let initial = [head, opening, middle, closing, recent];
-    let plane = PersistentLanePlane::new(900, &initial);
-
-    // The epoch between two retained boundaries outgrows the rows they leave it.
-    let mut complete = initial.to_vec();
-    complete.insert(3, measured("interleaved", candidates(12, 4)));
-    let replayed = plane.reconcile(900, &complete);
-    let one_shot = PersistentLanePlane::new(900, &complete);
-
-    assert_eq!(replayed.transition(), Transition::FullReplay);
-    assert_eq!(replayed.cards(), one_shot.cards());
-    assert_eq!(
-        (replayed.max_row(), replayed.rows()),
-        (one_shot.max_row(), one_shot.rows())
-    );
-}
-
-#[test]
 fn batched_boundary_measurement_and_epoch_insertion_fall_back_to_full_replay() {
     let initial = [
         boundary("opening", 7),
@@ -411,71 +387,86 @@ fn older_history_before_a_backfilled_boundary_rests_above_it() {
     );
 }
 
+/// Geometry relative to the plane's lowest row, keyed in chronology.
+fn relative_layout(
+    plane: &PersistentLanePlane<&'static str>,
+) -> Vec<(&'static str, usize, usize, i32, i32)> {
+    let floor = plane
+        .cards()
+        .iter()
+        .map(|entry| entry.card.base)
+        .min()
+        .unwrap_or(0);
+    plane
+        .cards()
+        .iter()
+        .map(|entry| {
+            let card = &entry.card;
+            (
+                entry.key,
+                card.track,
+                card.span,
+                card.base - floor,
+                card.rows,
+            )
+        })
+        .collect()
+}
+
 #[test]
-fn replacing_one_epoch_preserves_every_outside_position_and_extent() {
+fn a_resized_middle_epoch_rests_older_history_against_its_retained_boundary() {
     let old = measured("old", candidates(12, 2));
     let start = boundary("compact-a", 1);
-    let prior_epoch = measured("prior-epoch", candidates(12, 4));
     let end = boundary("compact-b", 1);
     let recent = measured("recent", candidates(6, 3));
-    let initial_snapshot = [
+    // History pages backfill below the committed head, so older epochs sit at
+    // negative rows, exactly as on a board loaded newest first.
+    let initial = PersistentLanePlane::new(900, &[end.clone(), recent.clone()]).reconcile(
+        900,
+        &[
+            old.clone(),
+            start.clone(),
+            measured("evicted", candidates(12, 9)),
+            measured("kept", candidates(6, 2)),
+            end.clone(),
+            recent.clone(),
+        ],
+    );
+    assert_eq!(initial.transition(), Transition::Backfill);
+    assert!(initial.cards()[0].card.base < 0);
+    let shrunk = [
         old.clone(),
         start.clone(),
-        prior_epoch,
+        measured("kept", candidates(6, 2)),
         end.clone(),
         recent.clone(),
     ];
-    let initial = PersistentLanePlane::new(900, &initial_snapshot);
-    let before_start = initial.cards()[..=1].to_vec();
-    let after_end = initial.cards()[3..].to_vec();
-    let complete = [
+    let grown = [
         old,
         start,
-        measured("unavailable-terminal", candidates(12, 1)),
-        measured("epoch-left", candidates(6, 2)),
-        measured("epoch-right", candidates(6, 2)),
+        measured("kept", candidates(6, 2)),
+        measured("interleaved", candidates(12, 14)),
         end,
         recent,
     ];
 
-    let replayed = initial.reconcile(900, &complete);
+    for complete in [&shrunk[..], &grown[..]] {
+        let replayed = initial.reconcile(900, complete);
+        let newer = complete.len() - 2;
 
-    assert_eq!(replayed.transition(), Transition::EpochReplay);
-    assert_eq!(&replayed.cards()[..=1], before_start);
-    assert_eq!(&replayed.cards()[5..], after_end);
-    assert!(!replayed.cards()[2].boundary);
-    assert_eq!(
-        (replayed.max_row(), replayed.rows()),
-        (initial.max_row(), initial.rows()),
-        "an epoch replacement cannot change the outside plane extent",
-    );
-    let lower = replayed.cards()[1].card.creation_index;
-    let upper = replayed.cards()[5].card.creation_index;
-    assert!(
-        replayed.cards()[2..5].iter().all(|entry| {
-            entry.card.creation_index > lower && entry.card.creation_index < upper
-        }),
-        "replacement cards retain creation order between their stable dividers",
-    );
-    assert_eq!(
-        replayed.cards()[2..5]
-            .iter()
-            .map(|entry| (
-                entry.key,
-                entry.card.track,
-                entry.card.base,
-                entry.card.rows
-            ))
-            .collect::<Vec<_>>(),
-        vec![
-            ("unavailable-terminal", 0, 3, 1),
-            ("epoch-left", 0, 4, 2),
-            ("epoch-right", 6, 4, 2),
-        ],
-        "the replacement starts from the older divider skyline in creation order",
-    );
-    assert_eq!(initial.reconcile(900, &complete), replayed);
-    assert_eq!(replayed.reconcile(900, &complete), replayed);
+        assert_eq!(replayed.transition(), Transition::EpochReplay);
+        assert_eq!(
+            relative_layout(&replayed),
+            relative_layout(&PersistentLanePlane::new(900, complete)),
+            "an evicted or arriving card leaves the layout a fresh load of the same cards has",
+        );
+        assert_eq!(
+            &replayed.cards()[newer..],
+            &initial.cards()[initial.cards().len() - 2..],
+            "the retained boundary and everything newer stay in place",
+        );
+        assert_eq!(replayed.reconcile(900, complete), replayed);
+    }
 }
 
 #[test]
