@@ -909,7 +909,7 @@ fn render_agent_message_media(
 
 /// A prose card leads its words the way a quote leads its own: the live age
 /// linking to the message source, the producer's copyable label, then its
-/// FINAL badge.
+/// authenticated role and FINAL badges.
 fn render_agent_message_signoff(
     message: &wire::AgentMessage,
     producer_label: &str,
@@ -919,7 +919,58 @@ fn render_agent_message_signoff(
         <>
             {render_message_age(message, attribution)}
             {render_producer_name(message, producer_label, attribution)}
+            {render_message_role_pills(message)}
             {render_final_pill(message)}
+        </>
+    }
+}
+
+/// Message roles belong to the producing speaker. Their authenticated source
+/// markers remain in the Markdown DOM for notice-rail semantics, while CSS
+/// suppresses that quoted copy on prose cards.
+fn render_message_role_pills(message: &wire::AgentMessage) -> Html {
+    let mut taste = false;
+    let mut review = false;
+    let mut broadcast = false;
+    for classification in &message.classifications {
+        match classification.kind {
+            wire::MessageClassificationKind::Taste => taste = true,
+            wire::MessageClassificationKind::Review => review = true,
+            wire::MessageClassificationKind::Broadcast => broadcast = true,
+            wire::MessageClassificationKind::Acknowledgement
+            | wire::MessageClassificationKind::AcknowledgementPending
+            | wire::MessageClassificationKind::Decline => {}
+        }
+    }
+    html! {
+        <>
+            if taste {
+                <span
+                    class="message-taste-pill"
+                    data-message-classification="taste"
+                    aria-label="Taste classification"
+                >
+                    {"TASTE"}
+                </span>
+            }
+            if review {
+                <span
+                    class="message-review-pill"
+                    data-message-classification="review"
+                    aria-label="Review classification"
+                >
+                    {"REVIEW"}
+                </span>
+            }
+            if broadcast {
+                <span
+                    class="message-broadcast-pill"
+                    data-message-classification="broadcast"
+                    aria-label="Broadcast classification"
+                >
+                    {"BROADCAST"}
+                </span>
+            }
         </>
     }
 }

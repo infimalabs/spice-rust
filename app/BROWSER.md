@@ -279,11 +279,13 @@ name, then any badge. A quote card or quoted directive leads its first prose
 line with its source's age and author, then its task badges and disposition;
 a quote that opens with images, a list, or another block puts that attribution
 on a line of its own above it. A prose card leads its first paragraph with its
-own age, producer, and FINAL badge, and repeats that attribution at the head of
-the first paragraph after every chain of quotes, so a message answering several
-directive sets attributes each answer. The resident writes an answer's ACK, ACK
-PENDING, or NAK marker at the head of that answer, so its pill follows the
-speaking agent's name instead of sitting in the quoted directive.
+own age, producer, role badges, and FINAL badge, and repeats that attribution at
+the head of the first paragraph after every chain of quotes, so a message
+answering several directive sets attributes each answer. Every authenticated
+message role follows the producing speaker: ACK, pending ACK, NAK, TASTE,
+REVIEW, and BROADCAST use the same compact soft-tint badge position. TASTE,
+REVIEW, and BROADCAST remain classified at their source notice so its quote
+rail, but that source badge is not repeated visibly inside the quote.
 Quotes at every depth carry no fill of their own; their text keeps the muted
 tone and smaller size. Every quote rail, operator-authored or agent-authored,
 takes the neutral ink tone of the operator's initials, including quotes that
