@@ -1118,11 +1118,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
 /* --message-card-surface is the card's own fill; everything painted opaque
-   inside the card takes it, so a tinted card has no off-tint band. Cards share
-   the stream field behind them, so only the thick left lane rail, square outer
-   corners and the gutters between cards set each one apart. */
+   inside the card takes it, so a tinted card has no off-tint band. Cards keep
+   the page base, while the stream field behind them owns the midpoint tint. */
 .team-surface .mosaic-message-card {
-  --message-card-surface: var(--message-stream-surface, var(--page));
+  --message-card-surface: var(--page);
   container-type: inline-size;
   gap: 0;
   margin: 0;
