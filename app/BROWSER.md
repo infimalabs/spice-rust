@@ -246,8 +246,10 @@ that cover from the card width, but the committed lattice remains the placement
 authority so no aspect-ratio correction opens a ledger gap. Hover repeats the
 card's thin lane-accent outline inside the cover layer, where the image cannot
 occlude it, without tinting or changing the image itself. The live age and
-producer sit in a compact frosted overlay at the image's top-left corner, with
-actions, when present, in their own overlay at the top right; multiple images,
+producer sit in a compact frosted overlay docked flush into the image card's
+top-left corner. Its upper-left and lower-right corners carry the card's 12px
+curve; its upper-right and lower-left corners are square. Actions, when
+present, remain in their own inset overlay at the top right; multiple images,
 mixed prose, quotes, and diagrams keep their ordinary in-flow layouts.
 
 Quoted image pairs retain the standard 7px image-stack gap even when their
