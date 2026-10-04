@@ -241,7 +241,9 @@ drawn as accent rules.
 An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve
 that cover from the card width, but the committed lattice remains the placement
-authority so no aspect-ratio correction opens a ledger gap. The live age and
+authority so no aspect-ratio correction opens a ledger gap. Hover repeats the
+card's thin lane-accent outline inside the cover layer, where the image cannot
+occlude it, without tinting or changing the image itself. The live age and
 producer sit in a compact frosted overlay at the image's top-left corner, with
 actions, when present, in their own overlay at the top right; multiple images,
 mixed prose, quotes, and diagrams keep their ordinary in-flow layouts.
