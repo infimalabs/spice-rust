@@ -208,11 +208,14 @@ the same quote-local ownership rather than adding an external controls header.
 
 Committed message cards form one gapless ledger: the lattice has no row,
 column, or decorative edge gutter. Square card edges meet directly with no
-block-start or block-end rule between vertical neighbors, so stacked cards run
-together seamlessly. The owning card's attribution-colored inline-end edge is
-the single seam, and no horizontal edge cuts into it. Measurement
-clones use the same zero-gap geometry, while compaction and lifecycle dividers
-remain semantic full-width rows.
+rule between neighbors, so stacked cards run together seamlessly. No card
+draws an accent edge on any side; each one is tinted instead, its surface the
+panel mixed 4% toward its lane accent, and that tint alone separates lanes.
+A FINAL answer keeps only its pill, with no tint of its own, and hover adds a
+thin accent outline. Measurement clones use the same zero-gap geometry.
+Compaction and lifecycle dividers, such as a fresh session, remain semantic
+full-width rows, and their accent rules are the only drawn boundaries in the
+stream.
 
 An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve

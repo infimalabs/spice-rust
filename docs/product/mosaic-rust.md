@@ -14,8 +14,8 @@ compaction-epoch replay. Mosaic layout and lineage reduction remain Rust-owned.
 
 Turn-start events remain lifecycle evidence, not Mosaic cards. The card reducer
 omits them for live delivery and retained history, so they consume no card slots
-and render no turn announcement. Final messages retain their FINAL badge and
-visual treatment; the next message makes the new turn apparent. Compaction
+and render no turn announcement. Final messages retain their FINAL badge; the
+next message makes the new turn apparent. Compaction
 events still render their context divider. Each divider keeps the relative-age
 link in its fixed-width slot and separates it from the agent/cause context with
 an explicit layout gap rather than authored whitespace or font metrics. History
