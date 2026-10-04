@@ -602,7 +602,9 @@ alternate pane. Member columns own horizontal overflow and the browser keeps
 native ownership of every vertical gesture. The composer overlays the plane,
 whose content starts below a composer-height spacer, and moves exactly as far
 as the cards scroll until hidden or revealed; it never cancels an event or
-writes the plane's scroll position. Home and End also set composer exposure.
+writes the plane's scroll position. The plane is one lower paint context, so no
+card or nested control crosses the still-visible composer while its transform
+catches up to scrolling. Home and End also set composer exposure.
 The toolbar remains fixed, with the status ticker between the lane-light stack
 and hamburger, and the message stream owns the row the standalone ticker once
 occupied.
