@@ -209,17 +209,16 @@ leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
 Committed message cards form one gapless ledger: the lattice has no row,
-column, or decorative edge gutter. Square card edges meet directly with no
-rule between neighbors, so stacked cards run together seamlessly. The team pane
-behind them is the same dark page base the header sits on, not the panel. No
-card draws an accent edge on any side; each one is tinted instead, its surface
-that page base mixed 12% toward its lane accent, and that tint alone separates
-lanes.
-A FINAL answer keeps only its pill, with no tint of its own, and hover adds a
-thin accent outline. Measurement clones use the same zero-gap geometry.
-Compaction and lifecycle dividers, such as a fresh session, remain semantic
-full-width rows, and their accent rules are the only drawn boundaries in the
-stream.
+column, or decorative edge gutter. Card edges meet directly with no rule
+between neighbors. Each card keeps the standard panel color over the slightly
+darker page base the header sits on, and marks its lane with a 4px accent rail
+on its inline-start edge. That edge's corners share the 12px curvature of
+nested quote rails, so the rail tapers at both ends; the inline-end corners
+stay square. A FINAL answer keeps only its pill, with no tint or edge of its
+own. Hover tints the card 4% toward its lane accent and adds a thin accent
+outline. Measurement clones use the same zero-gap geometry. Compaction and
+lifecycle dividers, such as a fresh session, remain semantic full-width rows
+drawn as accent rules.
 
 An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve

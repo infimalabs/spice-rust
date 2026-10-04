@@ -29,10 +29,12 @@
   border-radius: 50%;
 }
 
+/* Quote rails and the message card's lane rail share one curvature. */
+.mosaic-message-card, .markdown-body { --mosaic-quote-radius: 12px; }
 .markdown-body {
   --message-image-gap: 7px;
   --mosaic-quote-inline: 5px;
-  --mosaic-quote-pad-block: 4px; --mosaic-quote-radius: 12px;
+  --mosaic-quote-pad-block: 4px;
   --mosaic-quote-rail: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1083,22 +1085,21 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
 /* --message-card-surface is the card's own fill; everything painted opaque
-   inside the card takes it, so a tinted card has no off-tint band. Every card
-   tints the dark page base the header sits on with its lane accent and draws
-   no accent edge. */
+   inside the card takes it, so a tinted card has no off-tint band. Cards keep
+   the standard panel color over the darker page base and mark their lane with
+   a thick left rail curved like a quote block's. */
 .team-surface .mosaic-message-card {
-  --message-card-surface: color-mix(
-    in srgb,
-    var(--page) 88%,
-    var(--accent-slot, var(--accent))
-  );
+  --message-card-surface: var(--panel);
   container-type: inline-size;
   gap: 0;
   margin: 0;
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
   border: 0;
+  border-inline-start: 4px solid var(--accent-slot, var(--accent));
   border-radius: 0;
+  border-start-start-radius: var(--mosaic-quote-radius);
+  border-end-start-radius: var(--mosaic-quote-radius);
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
@@ -1108,6 +1109,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:not(.mosaic-compaction-card):hover {
   z-index: 1;
+  background-color: color-mix(
+    in srgb,
+    var(--message-card-surface) 96%,
+    var(--accent-slot, var(--accent))
+  );
   outline: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
   outline-offset: -1px;
 }
