@@ -673,10 +673,8 @@
   background: var(--control);
   box-shadow: none;
 }
-/* The field's outer edges are the team's: the sibling seam and the composer's
-   bottom rule are its only borders there, so it squares every corner and the
-   final visual lane drops its left border. */
-.team-surface .team-agent:last-child .composer-shard { border-inline-start: 0; }
+/* The team owns the field's outer left edge and the form owns its bottom edge;
+   member shards add neither of those structural rules. */
 .team-composer .composer-shard { border-block-end: 0; }
 .team-surface .team-agent::after {
   position: absolute;
@@ -716,9 +714,11 @@
   background: var(--control);
   box-shadow: none;
 }
-/* DOM member zero is the field's visual right edge. Every later lane drops its
-   right border, leaving the preceding lane's left border as the sole seam. */
-.team-agent:not(:first-child) .composer-shard { border-inline-end: 0; }
+/* Member lanes are one uninterrupted field: no shard paints an inline edge
+   between siblings. Only member zero restores the shared rule beside the
+   control frame. */
+.team-agent .composer-shard { border-inline: 0; }
+.team-agent:first-child .composer-shard { border-inline-end: var(--app-control-edge); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .team-composer:has(
     .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
