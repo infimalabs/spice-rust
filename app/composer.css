@@ -825,10 +825,6 @@
   margin: 0;
   color: var(--ink);
 }
-.team-surface .mosaic-message-card--image-cover
-  .message-signoff .relative-age {
-  color: var(--ink);
-}
 .team-surface .mosaic-message-card--image-cover .message-controls {
   position: absolute;
   inset: 8px 8px auto auto;
