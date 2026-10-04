@@ -371,7 +371,12 @@ A signed prose card keeps its agent attribution in the lane accent, but its
 linked top-level relative age is neutral. The age remains an underlined card
 permalink and advances on its own visible-unit deadlines. Authored Markdown
 links retain the ordinary accent, and quoted-source ages keep their separate
-quote presentation.
+quote presentation. Arriving at a card through its permalink outlines it in the
+accent for about a second and a half, then the outline fades out over a little
+more than a second; each new target replays it. Without motion the outline
+clears at once at the same moment. The route focuses the card without a
+visible focus ring, so nothing replaces the faded outline; keyboard navigation
+continues from the card, and hover and focus draw their own outlines as usual.
 
 FINAL is producer metadata rather than an action: it follows the producer name
 in the same compact, translucent accent pill used for task origins inside

@@ -208,6 +208,8 @@ impl Drop for Pin {
 }
 
 /// Bring a route's element into view and focus, report it reached, and pin it.
+/// Focus carries no visible ring: the arrival highlight already shows where the
+/// route landed and fades, while keyboard navigation continues from the card.
 fn reach(
     element: &web_sys::Element,
     target: &str,
@@ -215,7 +217,9 @@ fn reach(
 ) -> Option<Pin> {
     element.scroll_into_view();
     if let Some(element) = element.dyn_ref::<web_sys::HtmlElement>() {
-        let _ = element.focus();
+        let options = web_sys::FocusOptions::new();
+        options.set_focus_visible(false);
+        let _ = element.focus_with_options(&options);
     }
     status.set(Some(Status {
         target: target.to_owned(),

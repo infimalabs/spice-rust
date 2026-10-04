@@ -1151,15 +1151,32 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: transparent;
   box-shadow: none;
 }
+/* A routed card announces itself, then lets go: the highlight holds long enough
+   to find the card and fades out. It is an animation without fill, so once it
+   ends the card keeps no outline of its own and hover and focus apply as usual.
+   A new target restarts it because the selector starts matching afresh. */
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:is(
     :target,
     [data-card-route-selected="true"]
   ):not([inert]) {
   z-index: 1;
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
   scroll-margin-block: 8px;
+  animation: card-target-highlight 2.8s ease-out;
+}
+@keyframes card-target-highlight {
+  from, 57% { outline: 2px solid var(--accent); outline-offset: -2px; }
+  to { outline: 2px solid transparent; outline-offset: -2px; }
+}
+/* Without motion the highlight still clears, at once instead of fading. */
+@media (prefers-reduced-motion: reduce) {
+  .team-surface
+    .mosaic-message-card[data-layout-phase="committed"]:is(
+      :target,
+      [data-card-route-selected="true"]
+    ):not([inert]) {
+    animation-timing-function: step-end;
+  }
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
 /* The card controls are a corner island in the wall of message flow. A leading
