@@ -206,9 +206,10 @@ leading quote keep the island in the ordinary message flow. Narrow cards retain
 the same quote-local ownership rather than adding an external controls header.
 
 Committed message cards form one gapless ledger: the lattice has no row,
-column, or decorative edge gutter. Square card edges meet directly, with one
-soft block-start rule between vertical neighbors and the owning card's
-attribution-colored inline-end edge as the single horizontal seam. Measurement
+column, or decorative edge gutter. Square card edges meet directly with no
+block-start or block-end rule between vertical neighbors, so stacked cards run
+together seamlessly. The owning card's attribution-colored inline-end edge is
+the single seam, and no horizontal edge cuts into it. Measurement
 clones use the same zero-gap geometry, while compaction and lifecycle dividers
 remain semantic full-width rows.
 
