@@ -1316,6 +1316,14 @@ a.relative-age {
   --message-inline-pill-accent: var(--accent);
   justify-content: flex-start;
 }
+/* Beside the speaker, outside any quote, the badge keeps the look it had
+   quoted, the same as FINAL's: a soft tint behind accent text at the signoff's
+   pill size. */
+.team-surface .message-ack-pill:not(.markdown-body blockquote *) {
+  background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
+  color: var(--message-inline-pill-accent);
+  font-size: calc(.8125em * .8125);
+}
 .team-surface .message-ack-label {
   display: block;
   width: 3ch;
