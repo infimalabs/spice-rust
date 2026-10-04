@@ -765,10 +765,10 @@
   border: 0;
   border-radius: 0;
 }
-/* One card-sized rounded overlay owns the permanent lane rail and every
+/* One card-sized square overlay owns the permanent lane rail and every
    interaction edge above the cover. A padding reserve holds the image geometry;
    outlining the square image or repeating the card rail creates clipped,
-   washed-out layers at the curved corners. */
+   washed-out layers at the corners. */
 .team-surface .mosaic-message-card--image-cover::after {
   position: absolute;
   z-index: 4;
@@ -802,8 +802,8 @@
   margin: 0;
   padding: 3px 9px 6px 9px;
   border: 0;
-  /* The card's own rounded clip shapes the docked upper-left corner; a second
-     curve here would leave a sliver of image between the two. */
+  /* The signoff is docked flush to the square card edge; stream quote radius
+     resolves to zero here while non-stream markdown retains its own shape. */
   border-radius: 0 0 var(--mosaic-quote-radius) 0;
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   box-shadow: none;
