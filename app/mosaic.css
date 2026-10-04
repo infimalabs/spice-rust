@@ -1116,7 +1116,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* --message-card-surface is the card's own fill; everything painted opaque
    inside the card takes it, so a tinted card has no off-tint band. Cards keep
    the standard panel color over the darker page base and mark their lane with
-   a thick left rail curved like a quote block's. */
+   a thick left rail. All four outer corners share the quote-rail curvature. */
 .team-surface .mosaic-message-card {
   --message-card-surface: var(--panel);
   container-type: inline-size;
@@ -1126,9 +1126,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   padding: var(--message-card-inset);
   border: 0;
   border-inline-start: 4px solid var(--accent-slot, var(--accent));
-  border-radius: 0;
-  border-start-start-radius: var(--mosaic-quote-radius);
-  border-end-start-radius: var(--mosaic-quote-radius);
+  border-radius: var(--mosaic-quote-radius);
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;

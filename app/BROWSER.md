@@ -229,10 +229,10 @@ cards follows their content while every cell still snaps to the grid. A card
 whose content fills its cell meets its neighbors directly; image covers and
 boundary rows always fill their cells. Each card keeps the standard panel color
 over the slightly darker page base the header sits on, and marks its lane with
-a 4px accent rail on its inline-start edge. That edge's corners share the 12px
-curvature of nested quote rails, so the rail tapers at both ends; the
-inline-end corners stay square. A FINAL answer keeps only its pill, with no
-tint or edge of its own. Hover tints the card 4% toward its lane accent and
+a 4px accent rail on its inline-start edge. All four outer corners share the
+12px curvature of nested quote rails, so the rail and the opposite edge taper
+symmetrically. A FINAL answer keeps only its pill, with no tint or edge of its
+own. Hover tints the card 4% toward its lane accent and
 adds a thin accent outline. Measurement clones use the same zero-gap geometry
 and measure natural content height. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
