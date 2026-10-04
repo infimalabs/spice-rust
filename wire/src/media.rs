@@ -627,8 +627,14 @@ fn validate_name(name: &str) -> Result<(), MediaError> {
     Ok(())
 }
 
+/// Whether a content type belongs to the raster-image wire vocabulary.
+#[must_use]
+pub fn supports_content_type(content_type: &str) -> bool {
+    supported_type(content_type)
+}
+
 fn validate_type(content_type: &str) -> Result<(), MediaError> {
-    if !supported_type(content_type) {
+    if !supports_content_type(content_type) {
         return Err(MediaError::UnsupportedType(content_type.to_owned()));
     }
     Ok(())

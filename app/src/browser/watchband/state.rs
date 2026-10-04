@@ -111,8 +111,12 @@ impl Reducible for ComposerDrafts {
                         .iter()
                         .map(|quote| quote.attachments.len())
                         .sum::<usize>();
+                let media_bytes =
+                    draft_media_data_url_bytes(draft).saturating_add(attachment.data_url.len());
                 if attachment_count >= MAX_ATTACHMENTS {
                     next.report("Maximum images attached.".to_owned());
+                } else if media_bytes > wire::media::MAX_MEDIA_DATA_URL_BYTES {
+                    next.report("Attached images exceed the submission limit.".to_owned());
                 } else if let Some(attachments) = attachment_state_mut(draft, quote.as_deref()) {
                     attachments.push(DraftImage::new(id, attachment));
                 }
@@ -131,7 +135,22 @@ impl Reducible for ComposerDrafts {
                 media,
                 shapes,
             } => {
-                if !next
+                let exceeds_limit = next.0.get(&lane).is_some_and(|draft| {
+                    let previous = attachment_state(draft, quote.as_deref())
+                        .and_then(|attachments| {
+                            attachments
+                                .iter()
+                                .find(|image| image.id == id && image.revision == revision)
+                        })
+                        .map_or(0, |image| image.media.data_url.len());
+                    draft_media_data_url_bytes(draft)
+                        .saturating_sub(previous)
+                        .saturating_add(media.data_url.len())
+                        > wire::media::MAX_MEDIA_DATA_URL_BYTES
+                });
+                if exceeds_limit {
+                    next.report("Annotated image exceeds the submission limit.".to_owned());
+                } else if !next
                     .0
                     .apply_image(&lane, quote.as_deref(), id, revision, media, shapes)
                 {
@@ -161,6 +180,30 @@ impl Reducible for ComposerDrafts {
             } => next.0.keep_detached(lane, quote.as_deref(), &drawn, live),
         }
         Rc::new(next)
+    }
+}
+
+fn draft_media_data_url_bytes(draft: &ComposerDraft) -> usize {
+    draft
+        .quotes
+        .iter()
+        .flat_map(|quote| &quote.attachments)
+        .chain(&draft.attachments)
+        .map(|image| image.media.data_url.len())
+        .sum()
+}
+
+fn attachment_state<'a>(
+    draft: &'a ComposerDraft,
+    quote_identity: Option<&str>,
+) -> Option<&'a [DraftImage]> {
+    match quote_identity {
+        None => Some(&draft.attachments),
+        Some(identity) => draft
+            .quotes
+            .iter()
+            .find(|quote| quote.identity == identity)
+            .map(|quote| quote.attachments.as_slice()),
     }
 }
 

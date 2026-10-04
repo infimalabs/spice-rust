@@ -197,6 +197,14 @@ and keyboard focus draw inside the crop without moving it. The overlaid remove
 control and touch-only image chooser retain the same compact geometry in both
 primary and quoted composer shards.
 
+The chooser preserves admitted image bytes when the complete draft can fit one
+durable steering record. A larger decodable camera or gallery image is flattened
+onto white, resized, and encoded as a canonical JPEG before it enters the draft,
+using only the record budget left by existing attachments. The shared image
+count, per-image byte, content-type, and aggregate record limits remain the
+submission authority; a concurrent attachment that consumes the reserved space
+is refused in the composer rather than failing after Send.
+
 ## Composer provider watermark
 
 Each Chat lane paints its provider emblem as a small, faint watermark in the

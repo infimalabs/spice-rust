@@ -60,6 +60,12 @@ pub(super) async fn render(
         .name
         .rsplit_once('.')
         .map_or(original.name.as_str(), |(stem, _)| stem);
-    wire::Media::admit(format!("{stem}.png"), "image/png", data_url)
-        .map_err(|error| JsValue::from_str(&error.to_string()))
+    let media = wire::Media {
+        name: format!("{stem}.png"),
+        content_type: "image/png".to_owned(),
+        data_url,
+    };
+    crate::browser::image_media::fit(media, wire::media::MAX_MEDIA_DATA_URL_BYTES)
+        .await
+        .map_err(|error| JsValue::from_str(&error))
 }
