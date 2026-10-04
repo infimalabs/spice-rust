@@ -38,6 +38,15 @@ stronger ownership boundary:
   JavaScript lane store. Every card retains explicit lane and author identity,
   and each member retains an independent typed history frontier, so a delayed
   member cannot stall or overwrite its siblings.
+- Older history pages only on reader demand: a member's placed frontier card
+  within reach of the viewport, or the plane's trailing edge. A card still
+  measuring sits hidden at the plane's top edge and is not demand, so arriving
+  pages do not chain into autonomous paging. The pager re-inspects after each
+  plane commit, the moment a frontier can come into reach. A dropped socket
+  never answers the pages it carried, so a member whose admitted page went
+  unanswered across a reconnect is requested again wherever its frontier now
+  sits. An unscrolled cold load therefore retains the same history whatever
+  the socket timing or a reconnect.
 - Keyed Yew nodes replace imperative node ownership. Measurement is deferred
   until the host has a usable width, cached by card fingerprint, image
   revision, and width, and retained for only the current and immediately prior
