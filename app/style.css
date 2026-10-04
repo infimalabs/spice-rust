@@ -940,7 +940,7 @@ tbody tr:last-child td { border-bottom: 0; }
   box-shadow: inset 3px 0 0 var(--warning);
 }
 .team-surface .mosaic-message-card[data-accent-slot] {
-  border-right-color: var(--accent-slot, var(--accent));
+  border-inline-start-color: var(--accent-slot, var(--accent));
 }
 /* A team's arrangement begins exactly below its toolbar and ends at its last
    row, so no empty band covers the pane below it. */

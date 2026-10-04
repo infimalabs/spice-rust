@@ -787,7 +787,6 @@
 .team-surface .mosaic-message-card--image-cover {
   padding: 0;
   border-block-color: transparent;
-  border-inline-start-color: transparent;
   overflow: hidden;
 }
 .lane-mosaic-plane

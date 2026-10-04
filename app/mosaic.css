@@ -1089,7 +1089,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
   border: 0;
-  border-inline-end: 3px solid var(--accent-slot, var(--accent));
+  border-inline-start: 3px solid var(--accent-slot, var(--accent));
   border-radius: 0;
   background: var(--message-card-surface);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
