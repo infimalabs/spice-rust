@@ -255,6 +255,9 @@ the first paragraph after every chain of quotes, so a message answering several
 directive sets attributes each answer. The resident writes an answer's ACK, ACK
 PENDING, or NAK marker at the head of that answer, so its pill follows the
 speaking agent's name instead of sitting in the quoted directive.
+Operator-authored quote rails and surfaces always use the neutral text ramp,
+independent of acknowledgement state; the adjacent ACK/NAK badge keeps its own
+state styling without lending that color to the quoted speech.
 
 ## Always-chat team console
 
