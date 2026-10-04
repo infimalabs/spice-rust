@@ -564,6 +564,13 @@ assigns identity; the palette may repeat, so attribution is explicit and colour
 is presentation. Drag a shard to reorder, or out to move its lane; a member that
 briefly fails to resolve keeps its seat.
 
+The columns and the shared send controls form one continuous field. Adjacent
+members meet without a gutter, each interior boundary is a single square seam,
+and the heading accent changes directly at member ownership boundaries. Focus
+encloses exactly one member without moving its neighbors. This structural
+joining does not flatten self-contained buttons, pips, range thumbs, or other
+controls whose shape communicates their role.
+
 **Value:** three agents are one surface, and nothing is broadcast; the merged
 stream is a reading convenience over unchanged addressing. **Without it:** the
 operator switches between surfaces, which stops scaling, or broadcasts, which
