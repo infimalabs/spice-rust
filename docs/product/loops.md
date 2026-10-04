@@ -392,8 +392,8 @@ flowchart LR
   QM -->|"next start of this lane"| OR["occupied<br/>(successor replaces occupant)"]
   O -->|"team merged"| F["fused"]
   F -->|"team split"| OS["occupied"]
-  O -.->|"Close team"| I["independent<br/>(team removed for every browser)"]
-  F -.->|"Close team"| I
+  O -.->|"Leave all teams"| I["independent<br/>(for every browser)"]
+  F -.->|"Leave all teams"| I
 ```
 
 **Invariants**
@@ -437,10 +437,10 @@ flowchart LR
    resolve keeps its seat rather than re-entering at the tail. A member that
    joins an existing team enters at its tail, so current members keep their
    positions and accents; only an explicit arrangement reorders them.
-- `Close team` removes every member from the team through the resident, so
-   each member becomes an independent agent and the team leaves the lane table
-   in every browser. A refusal leaves the team as it was. No browser hides a
-   team locally.
+- `Leave all teams` removes one member from its team through the resident, so
+   that member becomes an independent agent in every browser; a team whose last
+   member leaves leaves the lane table. A refusal leaves the team as it was. No
+   browser hides a team locally.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
 
@@ -704,8 +704,8 @@ block-beta
 - **The team header is the summary and global navigation boundary.** The lane
   lights expose compact membership and presence. The middle ticker announces
   age, standing, prefix, accent, and detail as live status without consuming a
-  separate row. The hamburger links to canonical team-scoped Work and
-  Directions; neither surface is copied into the console.
+  separate row. The team's task pill opens canonical team-scoped Work; neither
+  Work nor Directions is copied into the console.
 - **The member shards are the identity and composer-address summary.** They
   expose the concrete lane/worktree address, agent label, vendor identity, one
   mutually exclusive presence state with its age, pending direction, and held

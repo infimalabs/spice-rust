@@ -214,7 +214,6 @@ impl PendingKind {
             | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
             | Self::ConsentRuling { .. }
-            | Self::LaneSeat
             | Self::LaneRenewal { .. }
             | Self::MemberLane { .. }
             | Self::LaneRetune { .. }
@@ -399,18 +398,6 @@ impl Drop for ActionLease {
 impl ClientAction {
     fn payload_bytes(&self) -> usize {
         match self {
-            Self::Seat {
-                name,
-                worktree,
-                life,
-                vendor,
-                ..
-            } => {
-                name.as_ref().map_or(0, String::len)
-                    + worktree.len()
-                    + life.len()
-                    + vendor.as_str().len()
-            }
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {
@@ -481,8 +468,7 @@ impl ClientAction {
     pub(super) const fn is_topology_mutation(&self) -> bool {
         matches!(
             self,
-            Self::Seat { .. }
-                | Self::RenewLane { .. }
+            Self::RenewLane { .. }
                 | Self::RetuneLane { .. }
                 | Self::ConfigureTeam { .. }
                 | Self::ArrangeTeams { .. }
@@ -513,10 +499,7 @@ impl ClientAction {
 
     fn set_topology_revision(&mut self, revision: u64) {
         match self {
-            Self::Seat {
-                topology_revision, ..
-            }
-            | Self::RenewLane {
+            Self::RenewLane {
                 topology_revision, ..
             }
             | Self::RetuneLane {

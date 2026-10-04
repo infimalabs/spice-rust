@@ -325,11 +325,6 @@ fn apply_mutating_response(
         PendingKind::Inbox { covered } => {
             apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
-        PendingKind::LaneSeat => {
-            let _admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
-                admit_response(session, bytes)?;
-            CommandApplication::ordinary(true)
-        }
         PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
             apply_wake_submission_response(session, handles, submission, lane, bytes)?,
         ),

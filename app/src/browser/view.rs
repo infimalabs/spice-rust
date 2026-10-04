@@ -15,8 +15,6 @@ pub(super) use work_map::WorkMapState;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
-    pub(super) seat: SeatDraft,
-    pub(super) submit_seat: Callback<SubmitEvent>,
     /// Admit manual speech to the one browser-global playback queue.
     pub(super) speak: Callback<SpeechRequest>,
     /// Advance durable narration cursors and admit their live prefix.
@@ -25,21 +23,6 @@ pub(super) struct AgentControls {
     pub(super) set_automatic_speech: Callback<(String, bool)>,
     /// Exact rendered message currently owned by the speech queue.
     pub(super) speech_message: UseStateHandle<Option<String>>,
-}
-
-/// Render the reason the last submission was refused, or nothing.
-///
-/// The node is absent rather than empty while a submission stands. `role`
-/// `alert` is an assertive live region, so an element that were always present
-/// would be re-announced empty on every keystroke; leaving it out until there
-/// is a sentence makes the announcement coincide with the refusal.
-pub(super) fn render_notice(notice: &Notice) -> Html {
-    if !notice.is_some() {
-        return Html::default();
-    }
-    html! {
-        <p class="form-refusal" role="alert">{notice.to_string()}</p>
-    }
 }
 
 /// Pending direction count shared by compact and expanded presence indicators.
@@ -258,75 +241,6 @@ fn flow_summary(work: &WorkProjection<'_>, scope: &WorkScope) -> String {
         counts.blocked(),
         counts.deferred(),
     )
-}
-
-/// The seat form's fields as the operator has written them so far.
-#[derive(Clone)]
-pub(super) struct SeatDraft {
-    pub(super) life: UseStateHandle<String>,
-    pub(super) effort: UseStateHandle<String>,
-    pub(super) notice: UseStateHandle<Notice>,
-}
-
-pub(super) fn render_seat_panel(runtime: Option<&AppRuntime>, controls: &AgentControls) -> Html {
-    let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
-    let draft = &controls.seat;
-    let catalog = runtime.and_then(AppRuntime::vendor_catalog);
-    let selected = catalog.and_then(crate::compose::seat_vendor);
-    let ready = can_seat && selected.is_some() && !draft.life.trim().is_empty();
-    let default_model = selected.map_or("", |vendor| vendor.default_model.as_str());
-    let default_effort = selected.map_or("", |vendor| vendor.default_effort.as_str());
-    html! {
-        <aside class="seat-panel">
-            <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
-                <button type="submit" class="app-compact-control" disabled={!ready}>{"Seat agent"}</button>
-                <label>
-                    <span title="Name">{"Name"}</span>
-                    <input id="seat-name" type="text" placeholder="Ava" />
-                </label>
-                <label>
-                    <span title="Worktree">{"Worktree"}</span>
-                    <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree" />
-                </label>
-                <label>
-                    <span title="Life">{"Life"}</span>
-                    <select value={(*draft.life).clone()}
-                        onchange={state_from_select(draft.life.clone())}>
-                        {for wire::intent::TeamLife::ALL.iter().map(|life| html! {
-                            <option
-                                value={life.as_str()}
-                                selected={life.as_str() == *draft.life}
-                            >{life.as_str()}</option>
-                        })}
-                    </select>
-                </label>
-                <label>
-                    <span title="Model">{"Model"}</span>
-                    <input id="seat-model" type="text" list="lane-models"
-                        placeholder={format!("default ({default_model})")} />
-                </label>
-                <datalist id="lane-models">
-                    <option value={default_model.to_owned()} />
-                </datalist>
-                <label>
-                    <span title="Effort">{"Effort"}</span>
-                    <select value={(*draft.effort).clone()}
-                        onchange={state_from_select(draft.effort.clone())}>
-                        <option value="" selected={draft.effort.is_empty()}>
-                            {format!("default ({default_effort})")}
-                        </option>
-                        {for catalog.into_iter().flat_map(|catalog| catalog.efforts.iter()).map(|effort| html! {
-                            <option
-                                value={effort.clone()}
-                                selected={*effort == **draft.effort}
-                            >{effort.clone()}</option>
-                        })}
-                    </select>
-                </label>
-                {render_notice(&draft.notice)}
-            </form>
-        </aside>
-    }
 }
 
 pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {

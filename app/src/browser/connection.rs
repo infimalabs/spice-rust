@@ -371,37 +371,6 @@ async fn send_topology_as(
     action: &ClientAction,
 ) -> Result<(), String> {
     match action {
-        ClientAction::Seat {
-            topology_revision,
-            lane,
-            name,
-            worktree,
-            life,
-            vendor,
-            model,
-            effort,
-        } => {
-            send_untracked_as(
-                principal,
-                writer,
-                id,
-                CommandKind::LaneSeat,
-                vec![],
-                BorrowedLaneSeat {
-                    topology_revision: *topology_revision,
-                    lane: *lane,
-                    team: *lane,
-                    name: name.as_deref(),
-                    worktree,
-                    life,
-                    vendor,
-                    model: model.as_deref(),
-                    effort: effort.as_deref(),
-                    resume: None,
-                },
-            )
-            .await
-        }
         ClientAction::RenewLane {
             topology_revision,
             team,
@@ -514,7 +483,6 @@ async fn send_lane_retune(
 
 fn topology_pending_kind(action: &ClientAction) -> PendingKind {
     match action {
-        ClientAction::Seat { .. } => PendingKind::LaneSeat,
         ClientAction::RenewLane {
             team,
             lane,
@@ -830,8 +798,7 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::Seat { .. }
-        | ClientAction::RenewLane { .. }
+        ClientAction::RenewLane { .. }
         | ClientAction::RetuneLane { .. }
         | ClientAction::ArrangeTeams { .. }
         | ClientAction::ConfigureTeam { .. } => {
@@ -1161,24 +1128,6 @@ struct BorrowedTaskClose<'a> {
     validation: &'a str,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     force_claimed: bool,
-}
-
-#[derive(Serialize)]
-struct BorrowedLaneSeat<'a> {
-    topology_revision: u64,
-    lane: CanonicalUuid,
-    team: CanonicalUuid,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<&'a str>,
-    worktree: &'a str,
-    life: &'a str,
-    vendor: &'a wire::Name,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    effort: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resume: Option<&'a str>,
 }
 
 #[derive(Serialize)]

@@ -521,7 +521,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     *speech_ref.borrow_mut() = speech_runtime.clone();
     let narration_cursors = use_mut_ref(load_narration_cursors);
     let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
-    let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
+    let agents = use_agent_controls(agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     let open_message_task = use_open_message_task(&navigate, &work_detail.return_focus_to);
     (
@@ -629,7 +629,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     );
     use_mosaic_root_scroll(chat_visible);
     app_menu::use_dismissal(state.app_menu_open.clone());
-    watchband::use_team_menu_escape(&state.team_controls, chat_visible);
+    watchband::use_team_arrangement_escape(&state.team_controls, chat_visible);
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(
         state.team_fleet.clone(),
@@ -889,84 +889,13 @@ fn use_mosaic_root_scroll(mosaic: bool) {
 }
 
 #[hook]
-fn use_agent_controls(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    speech: AgentSpeechControls,
-) -> view::AgentControls {
-    let seat = view::SeatDraft {
-        life: use_state(|| wire::intent::TeamLife::Steer.as_str().to_owned()),
-        effort: use_state(String::new),
-        notice: use_state(Notice::none),
-    };
+fn use_agent_controls(speech: AgentSpeechControls) -> view::AgentControls {
     view::AgentControls {
-        submit_seat: seat_submit(sender, surface, seat.clone()),
-        seat,
         speak: speech.speak,
         narrate: speech.narrate,
         set_automatic_speech: speech.set_automatic,
         speech_message: speech.message,
     }
-}
-
-fn seat_submit(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    draft: view::SeatDraft,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-            return;
-        };
-        let value = |id: &str| {
-            document
-                .get_element_by_id(id)
-                .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
-                .map(|input| input.value())
-                .unwrap_or_default()
-        };
-        let name = value("seat-name");
-        let worktree = value("seat-worktree");
-        let model = value("seat-model");
-        let (Some(topology_revision), Some(vendor)) =
-            surface.read().as_ref().map_or((None, None), |runtime| {
-                (
-                    runtime.lanes().map(|lanes| lanes.topology_revision),
-                    runtime
-                        .vendor_catalog()
-                        .and_then(compose::seat_vendor)
-                        .map(|vendor| vendor.name.clone()),
-                )
-            })
-        else {
-            return;
-        };
-        match compose::seat(&name, &worktree, vendor, &draft.life) {
-            Ok(seat) => {
-                let Ok(lane) = random_uuid() else {
-                    return;
-                };
-                let selection = compose::selection(&model, &draft.effort);
-                if admit_action(
-                    &sender,
-                    ClientAction::Seat {
-                        topology_revision,
-                        lane,
-                        name: seat.name,
-                        worktree: seat.worktree,
-                        life: seat.life,
-                        vendor: seat.vendor,
-                        model: selection.model,
-                        effort: selection.effort,
-                    },
-                ) {
-                    draft.notice.set(Notice::none());
-                }
-            }
-            Err(refusal) => draft.notice.set(refusal.into()),
-        }
-    })
 }
 
 fn apply_team_configuration(
@@ -1044,13 +973,6 @@ fn phase_class(status: &str) -> Classes {
     } else {
         classes!("tag", "active")
     }
-}
-
-fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
-    Callback::from(move |event: Event| {
-        let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
-        state.set(select.value());
-    })
 }
 
 #[wasm_bindgen(start)]

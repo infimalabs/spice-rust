@@ -43,47 +43,6 @@ pub enum Refusal {
     Unseated,
 }
 
-/// The seat fields a request carries once the form input is accepted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Seat {
-    /// Optional operator-facing identity, distinct from the worktree path.
-    pub name: Option<String>,
-    /// Absolute path of the worktree the agent runs in.
-    pub worktree: String,
-    /// Life the seated agent takes, spelled as the lane crate spells it.
-    pub life: String,
-    /// Vendor the resident catalogue offers.
-    pub vendor: wire::Name,
-}
-
-/// The model and effort a seat selects for its occupant, each absent when
-/// the vendor's configured value governs.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Selection {
-    /// Model spelling handed to the vendor as written.
-    pub model: Option<String>,
-    /// Effort spelling, folded to the lower-case word the closed vocabulary
-    /// spells; the resident refuses one outside it.
-    pub effort: Option<String>,
-}
-
-/// Compose a seat's model and effort selection from its two optional fields.
-///
-/// Neither field can refuse: a blank one leaves that value to the vendor
-/// configuration, and an effort outside the closed vocabulary is refused by
-/// the resident, which is the one place that vocabulary is spelled.
-#[must_use]
-pub fn selection(model: &str, effort: &str) -> Selection {
-    let present = |written: &str| match written.trim() {
-        "" => None,
-        written => Some(written.to_owned()),
-    };
-    Selection {
-        model: present(model),
-        effort: present(effort).map(|effort| effort.to_ascii_lowercase()),
-    }
-}
-
 /// One accepted task observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
@@ -91,56 +50,6 @@ pub struct Note {
     pub task: wire::TaskHandle,
     /// Trimmed observation text.
     pub text: String,
-}
-
-/// The vendor a new seat runs on: the resident catalogue's one row.
-///
-/// omp is the only harness, so the form offers no choice. A catalogue holding
-/// anything but exactly one vendor names no seat vendor, and the form stays
-/// disabled rather than guessing among rows.
-#[must_use]
-pub fn seat_vendor(
-    catalog: &wire::intent::VendorCatalogAnswer,
-) -> Option<&wire::intent::VendorChoice> {
-    match catalog.vendors.as_slice() {
-        [vendor] => Some(vendor),
-        _ => None,
-    }
-}
-
-/// Compose a seat request on `vendor`, or say why this input cannot make one.
-///
-/// Fields are checked in the order the form lists them, so an operator filling
-/// it top to bottom is never sent back up past a field they already passed.
-///
-/// # Errors
-///
-/// Returns [`Refusal::Missing`] for any blank field.
-pub fn seat(name: &str, worktree: &str, vendor: wire::Name, life: &str) -> Result<Seat, Refusal> {
-    let name = match name.trim() {
-        "" => None,
-        configured => Some(configured.to_owned()),
-    };
-    let worktree = worktree.trim().to_owned();
-    if worktree.is_empty() {
-        return Err(Refusal::Missing {
-            field: "Worktree",
-            hint: "give the absolute path of a worktree in this repository",
-        });
-    }
-    let life = life.trim().to_ascii_lowercase();
-    if life.is_empty() {
-        return Err(Refusal::Missing {
-            field: "Life",
-            hint: "steer, drive, or drain",
-        });
-    }
-    Ok(Seat {
-        name,
-        worktree,
-        life,
-        vendor,
-    })
 }
 
 /// Compose steering text for a selected agent, or say why it cannot be sent.

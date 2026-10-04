@@ -241,9 +241,9 @@ instruction.
 
 Dash, Work, and Chat are the sole global panel names, routed as `#/dash`,
 `#/work`, and `#/chat`; every team console is an always-mounted Chat surface,
-not another destination or mode. Its hamburger links to the canonical global
-team views instead: `#/work/team/{team}` and
-`#/work/directions/team/{team}`. History, reload, and copied URLs restore the
+not another destination or mode. Its task pill links to the canonical global
+team Work view, `#/work/team/{team}`, and `#/work/directions/team/{team}`
+addresses that team's Directions. History, reload, and copied URLs restore the
 addressed global view. Work may add a scope, `/public/{stem}`,
 `/hidden/{stem}`, or `/team/{team}`, then `/task/{stamp}`, or name Directions
 as `/directions`, `/directions/team/{team}`, or
@@ -269,11 +269,11 @@ opens All open work, an unknown task closes, and a card outside retained Chat
 history opens Chat; a transient failure keeps the route and its Retry. The team
 activity surface is a retained Chat card at `team-stream-{team}` while that
 team remains current and teamed; an unknown or independent lane is unavailable.
-Team menus, global Work arrangement, and an open task detail layer are
-browser-local; team, speech, and narration state keeps its format. Following a
-quote link is a history step, and Back returns the linking card where the
-reader left it. A fresh card link brings its card into view and focus once Chat
-hydrates, holding it as older history loads until the reader scrolls.
+Team arrangement menus, global Work arrangement, and an open task detail layer
+are browser-local; team, speech, and narration state keeps its format.
+Following a quote link is a history step, and Back returns the linking card
+where the reader left it. A fresh card link brings its card into view and focus
+once Chat hydrates, holding it as older history loads until the reader scrolls.
 
 ### The Spice menu quota well
 
@@ -464,12 +464,12 @@ width, and one on a narrow screen without changing newest-first order.
 Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
-header orders its compact lane-light stack, the complete live status ticker,
-and the hamburger. The ticker keeps its relative age, lane standing,
-agent/tool/command prefix and accent, truncated detail, accessible label, and
-live-region behavior in that middle slot rather than consuming a separate row.
-The hamburger links to canonical team-scoped global Work and Directions; no
-local analytical pane or team-local route duplicates them.
+header gives the complete live status ticker and task strip the width left of
+its compact lane-light stack, which holds the right edge. The ticker keeps its
+relative age, lane standing, agent/tool/command prefix and accent, truncated
+detail, accessible label, and live-region behavior in its status band rather
+than consuming a separate row. The task pill links to canonical team-scoped
+global Work; no local analytical pane or team-local route duplicates it.
 
 The composer, speech and allocation controls, and send action retain their
 geometry and remain mounted. The former standalone ticker row becomes message
@@ -541,7 +541,7 @@ classDiagram
   Lane "1" o-- "0..1" Occupant
 ```
 
-A lane belongs to one team at a time and may move; `Close team` makes every
+A lane belongs to one team at a time and may move; `Leave all teams` makes one
 member independent. The team owns the shared task policy: renewal keeps it, and
 a moved lane takes its destination's. An absent occupant makes the lane vacant,
 while the UI separately shows `bound` or `unbound` unless queued operator
@@ -605,9 +605,9 @@ as the cards scroll until hidden or revealed; it never cancels an event or
 writes the plane's scroll position. The plane is one lower paint context, so no
 card or nested control crosses the still-visible composer while its transform
 catches up to scrolling. Home and End also set composer exposure.
-The toolbar remains fixed, with the status ticker between the lane-light stack
-and hamburger, and the message stream owns the row the standalone ticker once
-occupied.
+The toolbar remains fixed, with the status ticker beside the lane-light stack
+at the right edge, and the message stream owns the row the standalone ticker
+once occupied.
 
 Task-detail and global Directions links enter the exact Chat card or composer.
 Return anchors retain card identity and scroll offset only; Back and Forward do

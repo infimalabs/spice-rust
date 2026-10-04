@@ -123,7 +123,7 @@
 | Add a seventh member | admitted; the console keeps its six-share maximum, the finite position palette may repeat, and explicit lane attribution stays unambiguous | [Palette size does not bound team membership](../invariants/lifecycle.md#topology-palette-size-does-not-bound-team-membership), [Accent derives from canonical member position](../invariants/lifecycle.md#surface-accent-derives-from-stable-lane-identity) |
 | A member momentarily fails to resolve | keeps its seat and its lane | [A member that momentarily fails to resolve keeps its seat and its lane](../invariants/lifecycle.md#topology-a-member-that-momentarily-fails-to-resolve-keeps-its-seat-and-its-lane) |
 | Two browsers open the same board | both converge on authoritative topology | [Topology is server truth](../invariants/lifecycle.md#topology-topology-is-server-truth) |
-| One browser chooses `Close team` on a grouped team | every member becomes an independent agent and the team is gone in both browsers | [Close team removes every member](../invariants/lifecycle.md#topology-close-team-removes-every-member), [Topology is server truth](../invariants/lifecycle.md#topology-topology-is-server-truth) |
+| One browser chooses `Leave all teams` for a member of a grouped team | that member becomes an independent agent in both browsers | [Leave all teams makes a member independent](../invariants/lifecycle.md#topology-leave-all-teams-makes-a-member-independent), [Topology is server truth](../invariants/lifecycle.md#topology-topology-is-server-truth) |
 | Local storage is cleared | topology returns identically from the server | [Topology is server truth](../invariants/lifecycle.md#topology-topology-is-server-truth) |
 
 ### Reading surface

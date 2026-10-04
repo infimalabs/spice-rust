@@ -354,8 +354,8 @@ flowchart LR
   QM -->|"next start of this lane"| OR["occupied<br/>(successor occupant)"]
   F -->|"split team"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
-  O -.->|"Close team"| I["independent<br/>(team removed)"]
-  F -.->|"Close team"| I
+  O -.->|"Leave all teams"| I["independent"]
+  F -.->|"Leave all teams"| I
 ```
 
 **Invariant —** Renewal marks a lane; it never starts an occupant. A live
@@ -366,9 +366,10 @@ operator withdraws it.
 **Invariant —** Fusing is a *team merge*, splitting a *team split*. There is no
 client-only grouping.
 
-**Invariant —** `Close team` removes every member from the team through the
-resident: each becomes an independent agent and the team leaves the topology
-in every browser. There is no browser-local hiding of a team.
+**Invariant —** `Leave all teams` removes one member from its team through the
+resident: that member becomes an independent agent in every browser, and a team
+whose last member leaves leaves the topology. There is no browser-local hiding
+of a team.
 
 ### Closed loop: Submission (a draft becoming evidence)
 

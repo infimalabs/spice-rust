@@ -97,10 +97,7 @@ impl TeamSpeech {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TeamControl {
-    pub(super) menu_open: bool,
-    pub(super) import_open: bool,
     pub(super) arrangement_open: bool,
-    pub(super) previous_topology: Option<Vec<TeamArrangement>>,
     pub(super) speech: TeamSpeech,
     pub(super) life: TeamLife,
     preview_life: Option<TeamLife>,
@@ -112,10 +109,7 @@ pub(super) struct TeamControl {
 impl Default for TeamControl {
     fn default() -> Self {
         Self {
-            menu_open: false,
-            import_open: false,
             arrangement_open: false,
-            previous_topology: None,
             speech: TeamSpeech::Quiet,
             life: TeamLife::Steer,
             preview_life: None,
@@ -133,23 +127,10 @@ pub(crate) struct TeamControls {
 }
 
 pub(crate) enum TeamControlAction {
-    ToggleMenu {
-        team: CanonicalUuid,
-    },
-    ToggleImport {
-        team: CanonicalUuid,
-    },
     ToggleArrangement {
         team: CanonicalUuid,
     },
-    CloseMenus,
-    SaveSplit {
-        team: CanonicalUuid,
-        topology: Vec<TeamArrangement>,
-    },
-    ClearRestore {
-        team: CanonicalUuid,
-    },
+    CloseArrangement,
     SetSpeech {
         team: CanonicalUuid,
         authoritative_life: wire::intent::TeamLife,
@@ -189,18 +170,10 @@ impl Reducible for TeamControls {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
-            TeamControlAction::ToggleMenu { team } => next.toggle_menu(team),
-            TeamControlAction::ToggleImport { team } => next.toggle_import(team),
             TeamControlAction::ToggleArrangement { team } => {
                 next.toggle_arrangement(team);
             }
-            TeamControlAction::CloseMenus => next.close_menus(),
-            TeamControlAction::SaveSplit { team, topology } => {
-                next.save_split(team, topology);
-            }
-            TeamControlAction::ClearRestore { team } => {
-                next.teams.entry(team).or_default().previous_topology = None;
-            }
+            TeamControlAction::CloseArrangement => next.close_arrangements(),
             TeamControlAction::SetSpeech {
                 team,
                 authoritative_life,
@@ -271,28 +244,8 @@ impl TeamControls {
             })
     }
 
-    pub(in crate::browser) fn any_menu_open(&self) -> bool {
-        self.teams
-            .values()
-            .any(|team| team.menu_open || team.import_open || team.arrangement_open)
-    }
-
-    fn toggle_menu(&mut self, team: CanonicalUuid) {
-        let state = self.teams.entry(team).or_default();
-        state.arrangement_open = false;
-        if state.import_open {
-            state.import_open = false;
-            state.menu_open = false;
-            return;
-        }
-        state.menu_open = !state.menu_open;
-    }
-
-    fn toggle_import(&mut self, team: CanonicalUuid) {
-        let state = self.teams.entry(team).or_default();
-        state.menu_open = false;
-        state.arrangement_open = false;
-        state.import_open = !state.import_open;
+    pub(in crate::browser) fn any_arrangement_open(&self) -> bool {
+        self.teams.values().any(|team| team.arrangement_open)
     }
 
     fn toggle_arrangement(&mut self, team: CanonicalUuid) {
@@ -300,30 +253,14 @@ impl TeamControls {
             .teams
             .get(&team)
             .is_some_and(|state| state.arrangement_open);
-        self.close_menus();
+        self.close_arrangements();
         self.teams.entry(team).or_default().arrangement_open = open;
-    }
-
-    fn close_menus(&mut self) {
-        for state in self.teams.values_mut() {
-            state.menu_open = false;
-            state.import_open = false;
-            state.arrangement_open = false;
-        }
     }
 
     fn close_arrangements(&mut self) {
         for state in self.teams.values_mut() {
             state.arrangement_open = false;
         }
-    }
-
-    fn save_split(&mut self, team: CanonicalUuid, topology: Vec<TeamArrangement>) {
-        let state = self.teams.entry(team).or_default();
-        state.menu_open = false;
-        state.import_open = false;
-        state.arrangement_open = false;
-        state.previous_topology = Some(topology);
     }
 
     fn set_speech(

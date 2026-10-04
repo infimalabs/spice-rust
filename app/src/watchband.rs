@@ -430,63 +430,6 @@ pub fn arrangement(
     (arranged != teams).then_some(arranged)
 }
 
-/// Replace one multi-agent team with one team per agent.
-///
-/// The first agent keeps the source team's identity so browser-local state can
-/// offer a one-click restore after the resident returns the split topology.
-/// Every later agent becomes an individual team under its own stable lane
-/// identity. Orgs outside the target keep both their identity and order.
-#[must_use]
-pub fn split_team(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    target: CanonicalUuid,
-) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
-    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
-    if members.len() < 2 {
-        return None;
-    }
-    let mut split = Vec::with_capacity(teams.len() + members.len() - 1);
-    for (team, lanes) in teams {
-        if *team != target {
-            split.push((*team, lanes.clone()));
-            continue;
-        }
-        split.extend(
-            lanes
-                .iter()
-                .enumerate()
-                .map(|(index, member)| (if index == 0 { target } else { *member }, vec![*member])),
-        );
-    }
-    Some(split)
-}
-
-/// Remove every member from one multi-agent team.
-///
-/// Each member becomes an independent agent under its own lane identity,
-/// standing where the team stood; unlike [`split_team`], nothing keeps the
-/// team's identity, so the team leaves the lane table. Every other team keeps
-/// its identity, members, and order.
-#[must_use]
-pub fn dissolve_team(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    target: CanonicalUuid,
-) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
-    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
-    if members.len() < 2 {
-        return None;
-    }
-    let mut dissolved = Vec::with_capacity(teams.len() + members.len() - 1);
-    for (team, lanes) in teams {
-        if *team == target {
-            dissolved.extend(lanes.iter().map(|member| (*member, vec![*member])));
-        } else {
-            dissolved.push((*team, lanes.clone()));
-        }
-    }
-    Some(dissolved)
-}
-
 /// Move one member of a multi-agent team into one fresh team.
 ///
 /// The source team keeps its identity and the relative order of every sibling.

@@ -12,6 +12,7 @@ use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing, SubmissionAuthority, SubmissionTarget};
 
 mod agent_menu;
+mod arrangement;
 mod attention;
 mod command_preview;
 mod composer;
@@ -23,7 +24,6 @@ mod member_controls;
 mod mosaic_view;
 mod state;
 mod team_drag;
-mod team_menu;
 mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
@@ -37,7 +37,7 @@ pub(super) use composer::{
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
-pub(in crate::browser) use fleet::use_team_menu_escape;
+pub(in crate::browser) use fleet::use_team_arrangement_escape;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(super) use global_jobs::render_global_jobs;
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
@@ -71,7 +71,7 @@ pub(super) fn render_feedback(runtime: Option<&AppRuntime>, controls: &TeamContr
 /// composer and activity plane, however many independently steerable members
 /// the team contains. Only a team earns a surface: an agent seated alone under
 /// its own identity is not a formation, so it draws no surface here and stays
-/// reachable through the global menu and each team's import list instead.
+/// reachable through the global menu instead.
 pub(super) fn render_team(
     render: &view::AppRender<'_>,
     work: Option<&crate::work::WorkProjection<'_>>,
@@ -148,6 +148,9 @@ pub(super) fn render_team(
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
+    if teams.is_empty() {
+        return render_empty_fleet(team_fleet);
+    }
     let render = FleetRender {
         work,
         navigate,
@@ -170,9 +173,6 @@ pub(super) fn render_team(
         composer_drag,
         team_drag,
     };
-    if teams.is_empty() {
-        return render_empty_fleet(team_fleet, &render);
-    }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
 }
 
@@ -225,7 +225,7 @@ fn render_compose(
     attention: &attention::TeamAttention,
 ) -> Html {
     if team.members.is_empty() {
-        return empty("No agents are assigned. Open Import agent to add one.");
+        return empty("No agents are assigned.");
     }
     let control = team_controls.current(team.lane, team.subscription);
     let submit = submit_team_callback(
