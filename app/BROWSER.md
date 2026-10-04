@@ -274,12 +274,12 @@ and equal top, bottom, and outer-edge insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame. Its total pill
 (`data-work-scope="team"`) carries one open-task count; each `task-pill--task`
 holds `task-pill-stem` and `task-pill-handle` buttons. The stem displays only
-the raw stem, keeps the neutral lifecycle tone used by unclaimed and unavailable
-team-local work, and centers its label in equal inline hover space. It opens
-that team's Work scope narrowed to the stem. Only the handle takes a current
-lane owner's member accent; it opens task detail through the same path as a Chat
-task chip, so focus returns to it. The ticker centers on the lower pip row; task
-overflow scrolls inside its band.
+the raw stem, always wears the muted tone of blocked or deferred team-local
+work whatever the task's lifecycle, and centers its label in equal inline hover
+space. It opens that team's Work scope narrowed to the stem. Only the handle
+takes a current lane owner's member accent; it opens task detail through the
+same path as a Chat task chip, so focus returns to it. The ticker centers on
+the lower pip row; task overflow scrolls inside its band.
 
 The team's total pill opens the canonical global `#/work/team/{team}` view, and
 `#/work/directions/team/{team}` addresses that team's Directions. The team Work
