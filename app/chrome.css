@@ -137,8 +137,9 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
-/* One open team task: two targets, its project and its handle, sharing the
-   pill's tone; each hovers alone. */
+/* One open team task: two targets, its project and its handle. The project
+   keeps the neutral lifecycle tone and equal inline breathing room; only the
+   handle may name a current lane owner with member colour. */
 .task-pill--task { gap: 0; padding: 0; }
 .task-pill--task:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .task-pill--task > button {
@@ -151,17 +152,18 @@ body:has(.shell--mosaic),
   color: inherit;
   font: inherit;
 }
-.task-pill--task > button:first-child { padding-inline-start: 10px; }
+.task-pill--task > .task-pill-stem {
+  padding-inline: 10px;
+  opacity: .72;
+}
 .task-pill--task > button:last-child { padding-inline-end: 10px; }
 .task-pill--task > button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.task-pill--task > .task-pill-stem { opacity: .72; }
-/* Team-local active work names its current lane owner without tinting the
-   shared pill surface. Mixing toward ink keeps all six accents readable after
-   the active pill's retained opacity; the stem no longer compounds it. */
-.team-tasks .task-pill--task[data-accent] > button {
+/* Team-local active work names its current lane owner on the task handle
+   without making the shared project stem look owned. Mixing toward ink keeps
+   all six accents readable after the active pill's retained opacity. */
+.team-tasks .task-pill--task[data-accent] > .task-pill-handle {
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
-.team-tasks .task-pill--task[data-accent] > .task-pill-stem { opacity: 1; }
 .app-global-status {
   grid-area: 1 / 3;
   min-width: 0;
