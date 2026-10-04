@@ -416,12 +416,12 @@ status line centers on the lower pip row, and the pill strip scrolls
 horizontally when its labels outgrow the available width, never overlapping the
 pips or menu. A badge with the team's open-task count leads and opens
 `#/work/team/{team}`. One badge-free pill per task follows, carrying two
-targets: its full project opens `#/work/team/{team}/{public|hidden}/{stem}`,
-narrowing the team's work to that project's stem, and its handle opens the
-task's detail layer in place, returning focus to the handle on close.
-An in-flight task actively held by a current lane colors both its project and
-handle text with that member's canonical accent. This ownership cue applies
-only to team-local task text: the pill surface and global strip stay unchanged.
+targets: its stem label opens `#/work/team/{team}/{public|hidden}/{stem}`,
+narrowing the team's work to that stem, and its handle opens the task's detail
+layer in place, returning focus to the handle on close. An in-flight task
+actively held by a current lane colors both labels with that member's canonical
+accent. This ownership cue applies only to team-local task text: the pill
+surface and global strip stay unchanged.
 Operator claims, unclaimed work, and lanes absent from the admitted roster keep
 their lifecycle tone rather than guessing an owner color.
 

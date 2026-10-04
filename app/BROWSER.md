@@ -265,8 +265,9 @@ right. The global Spice and Dash-avatar circles share one diameter
 and equal top, bottom, and outer-edge insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame. Its total pill
 (`data-work-scope="team"`) carries one open-task count; each `task-pill--task`
-holds two buttons, `task-pill-project` and `task-pill-handle`, sharing the
-pill's tone through `active`, `dormant`, and `system`. The handle opens task
+holds `task-pill-stem` and `task-pill-handle` buttons, sharing the pill's tone
+through `active`, `dormant`, and `system`. The stem button displays only the
+raw stem and opens that team's Work scope narrowed to it; the handle opens task
 detail through the same path as a Chat task chip, so focus returns to it. The
 ticker centers on the lower pip row; task overflow scrolls inside its band.
 
