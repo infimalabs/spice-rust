@@ -287,81 +287,60 @@ fn effort_form(props: &EffortFormProps) -> Html {
     }
 }
 
-#[derive(Properties, PartialEq)]
-struct FastFormProps {
-    lane: CanonicalUuid,
-    /// Whether the running occupant runs in fast mode; absent without one.
-    current: Option<bool>,
-    /// The seat's authoritative next-launch fast mode.
-    fast_mode: Option<bool>,
-    /// The global setting a seat without its own choice follows; absent
-    /// until the settings read arrives.
-    global: Option<bool>,
-    busy: bool,
-    command: Callback<(CanonicalUuid, MemberCommand)>,
-}
-
 const fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 
-/// The per-seat fast-mode selector; its empty choice follows the global
-/// setting from the spice menu.
-#[function_component(FastForm)]
-fn fast_form(props: &FastFormProps) -> Html {
-    let spelling = |fast_mode: Option<bool>| fast_mode.map_or("", on_off).to_owned();
-    let draft = use_state(|| spelling(props.fast_mode));
-    {
-        let draft = draft.clone();
-        use_effect_with(props.fast_mode, move |fast_mode| {
-            draft.set(spelling(*fast_mode));
-        });
-    }
-    let onchange = {
-        let draft = draft.clone();
-        Callback::from(move |event: Event| {
-            let select: HtmlSelectElement = event.target_unchecked_into();
-            draft.set(select.value());
-        })
-    };
-    let lane = props.lane;
-    let submit = {
-        let command = props.command.clone();
-        let draft = draft.clone();
-        Callback::from(move |event: SubmitEvent| {
-            event.prevent_default();
+/// The per-seat fast-mode toggle. It shows the seat's next-launch value,
+/// which follows the spice menu's global setting unless pinned. A press pins
+/// the opposite only while it differs from the global setting; landing back
+/// on the global value clears the pin, so the seat follows it again. A running
+/// OMP agent takes the change at once, and the status line keeps the running
+/// value separate in case it did not.
+fn render_fast_toggle(
+    runtime: &AppRuntime,
+    member: &crate::runtime::LaneMember,
+    busy: bool,
+    command: &Callback<(CanonicalUuid, MemberCommand)>,
+) -> Html {
+    let global = runtime.settings().map(|settings| settings.fast_mode);
+    let next = member.seat_fast_mode.or(global);
+    let lane = member.lane;
+    let onclick = next.map(|enabled| {
+        let command = command.clone();
+        let fast_mode = Some(!enabled).filter(|target| global != Some(*target));
+        Callback::from(move |event: MouseEvent| {
             event.stop_propagation();
-            let fast_mode = match draft.as_str() {
-                "on" => Some(true),
-                "off" => Some(false),
-                _ => None,
-            };
             command.emit((lane, MemberCommand::RetuneFast { fast_mode }));
         })
+    });
+    let running = member
+        .occupant
+        .map_or("not running", |_| on_off(member.fast_mode));
+    let next_label = match (member.seat_fast_mode, global) {
+        (Some(enabled), _) => on_off(enabled).to_owned(),
+        (None, Some(enabled)) => format!("{} (global)", on_off(enabled)),
+        (None, None) => "global".to_owned(),
     };
-    let default = format!("default ({})", props.global.map_or("global", on_off));
-    let running = props.current.map_or("not running", on_off);
-    let next = props
-        .fast_mode
-        .map_or_else(|| default.clone(), |fast_mode| on_off(fast_mode).to_owned());
     html! {
-        <form class="member-effort" data-member-control="fast" onsubmit={submit}>
-            <label for={format!("member-fast-{lane}")}>{"Fast mode"}</label>
-            <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
-            <div class="app-control-rail">
-                <select
-                    id={format!("member-fast-{lane}")}
-                    value={(*draft).clone()}
-                    disabled={props.busy}
-                    {onchange}
-                >
-                    {for [("", default.as_str()), ("on", "on"), ("off", "off")].into_iter().map(|(value, label)| html! {
-                        <option {value} selected={*draft == value}>{label}</option>
-                    })}
-                </select>
-                <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set fast mode"}</button>
-            </div>
-        </form>
+        <div class="member-fast" data-member-control="fast">
+            <button
+                class={classes!(
+                    "app-menu-setting",
+                    "app-menu-setting--action",
+                    "app-fast-setting",
+                    next.unwrap_or(false).then_some("app-menu-setting--checked"),
+                )}
+                type="button"
+                aria-pressed={next.unwrap_or(false).to_string()}
+                disabled={busy || next.is_none()}
+                {onclick}
+            >
+                <strong>{"Fast mode"}</strong>
+                <span>{next.map_or("loading", on_off)}</span>
+            </button>
+            <p class="member-setting-status">{format!("Running: {running}; next launch: {next_label}")}</p>
+        </div>
     }
 }
 
@@ -420,15 +399,7 @@ fn render_retune(
                 />
             }
             if offered.fast {
-                <FastForm
-                    key={format!("fast-{}", member.lane)}
-                    lane={member.lane}
-                    current={member.occupant.map(|_| member.fast_mode)}
-                    fast_mode={member.seat_fast_mode}
-                    global={runtime.settings().map(|settings| settings.fast_mode)}
-                    {busy}
-                    command={command.clone()}
-                />
+                {render_fast_toggle(runtime, member, busy, command)}
             }
         </>
     }
