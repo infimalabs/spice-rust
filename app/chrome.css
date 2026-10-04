@@ -22,9 +22,6 @@
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  /* Chat runs to the viewport edge; team edge controls inset by the
-     commandbar's inline pad so their outer edges still meet its circles. */
-  --app-header-edge-offset: var(--app-commandbar-inline-pad);
   --app-commandbar-block-pad: 8px;
   /* The commandbar's height; inactive Chat sits exactly below it. */
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));

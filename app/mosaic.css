@@ -449,7 +449,9 @@
   --team-pip-size: 9px;
   --team-pip-gap: 4px;
   --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
-  --team-status-band: 28px;
+  /* The status band takes what the edge chamber leaves below the task band, so
+     the header is exactly as tall as its chamber. */
+  --team-status-band: calc(var(--team-edge-control-size) - var(--team-task-band));
   --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
   /* A mirrored chamber of this size can contain all six member pips. */
   --team-edge-control-size: 44px;
@@ -503,7 +505,7 @@
   grid-area: menu;
   align-self: end;
   justify-self: end;
-  margin: 0 var(--app-header-edge-offset) 0 0;
+  margin: 0;
 }
 /* The team's task strip is the global strip, placed in its own band. */
 .team-toolbar > .team-tasks {
@@ -517,10 +519,13 @@
   user-select: none;
 }
 .team-lights[data-lane-drag-handle]:active { cursor: grabbing; }
+/* Edge controls meet the fleet's clipping edges, so their rings paint inside. */
 .team-lights[data-lane-drag-handle]:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline-offset: -2px;
 }
+.team-toolbar > .team-menu:focus-visible,
+.team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 .team-light {
   width: var(--team-pip-size);
@@ -598,7 +603,7 @@
 }
 .team-toolbar > .ticker {
   grid-area: status;
-  align-self: center;
+  align-self: end;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
   border: 0;
@@ -630,16 +635,16 @@
   overflow: hidden;
 }
 
-/* Member lanes and the control frame share boundaries as one field. The control
-   column still sizes itself from the stack's fixed inline size, so the draft
-   takes every remaining pixel at every viewport width. */
+/* Member lanes and the control frame share boundaries as one field that runs
+   to the team's edges. The control column still sizes itself from the stack's
+   fixed inline size, so the draft takes every remaining pixel at every
+   viewport width. */
 .team-composer {
   --team-composer-block-size: 160px;
-  --team-composer-edge-gap: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0;
-  padding: 8px 8px var(--team-composer-edge-gap);
+  padding: 0;
 }
 /* The composer overlays a spacer of its own height atop the Chat plane and moves
    exactly as far as the cards scroll, so it reads as part of the stream. Browser
@@ -687,12 +692,11 @@
   background: var(--control);
   box-shadow: none;
 }
-/* The final visual lane owns the field's left outside corners. The right edge
-   continues into the shared controls, so every member-to-member and
-   member-to-controls corner stays square. */
-.team-surface .team-agent:last-child {
-  border-radius: var(--app-radius-compact) 0 0 var(--app-radius-compact);
-}
+/* The field's outer edges are the team's: the sibling seam and the composer's
+   bottom rule are its only borders there, so it squares every corner and the
+   final visual lane drops its left border. */
+.team-surface .team-agent:last-child .composer-shard { border-inline-start: 0; }
+.team-composer .composer-shard { border-block-end: 0; }
 .team-surface .team-agent::after {
   position: absolute;
   z-index: 6;
@@ -893,14 +897,13 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     (var(--team-composer-block-size) + var(--team-control-submit-trim) - 2 * var(--team-control-gap)) / 3
     - var(--team-control-submit-trim)
   );
-  --team-control-inner-radius: calc(var(--app-radius-compact) - 1px);
   --team-control-label-row: 14px;
   position: relative; display: grid; gap: 0; inline-size: 74px;
   margin-block-start: var(--team-control-label-row);
   block-size: calc(var(--team-composer-block-size) - var(--team-control-label-row));
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
-  border: var(--app-control-edge); border-inline-start: 0;
-  border-radius: 0 var(--app-radius-compact) var(--app-radius-compact) 0;
+  border: 0; border-block-start: var(--app-control-edge);
+  border-radius: 0;
   background: var(--control); box-shadow: none;
 }
 .team-slider {
@@ -910,8 +913,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
 .team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: 0 var(--team-control-item-height); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
-.team-composer .team-speech { border-start-start-radius: 0; }
-.team-composer .team-lifetime { border-start-end-radius: var(--team-control-inner-radius); }
 .team-slider input {
   writing-mode: vertical-lr;
   direction: rtl;
@@ -942,7 +943,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send {
   grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
   border: 0; border-top: var(--app-control-edge);
-  border-radius: 0 0 var(--team-control-inner-radius) 0;
+  border-radius: 0;
 }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-1); }
