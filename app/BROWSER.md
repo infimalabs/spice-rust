@@ -223,10 +223,10 @@ drawn as accent rules.
 An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve
 that cover from the card width, but the committed lattice remains the placement
-authority so no aspect-ratio correction opens a ledger gap. The producer and
-live age, plus actions when present, sit in compact frosted overlays above the
-image; multiple images, mixed prose, quotes, and diagrams keep their ordinary
-in-flow layouts.
+authority so no aspect-ratio correction opens a ledger gap. The live age and
+producer sit in a compact frosted overlay at the image's top-left corner, with
+actions, when present, in their own overlay at the top right; multiple images,
+mixed prose, quotes, and diagrams keep their ordinary in-flow layouts.
 
 Quoted image pairs retain the standard 7px image-stack gap even when their
 leading quote stays flow-root around its control island: flattened stack
@@ -234,13 +234,24 @@ wrappers apply that shared gap at the boundary before the later image.
 
 A quote layer that ends in images after other content flows its prose around
 them. The images sit at the layer's inline start with their bottom on the
-attribution line, and the attribution stays the layer's last line at
-inline-end. When the text is shorter than the images, it sits beside their
-top and the attribution drops to their bottom. The browser measures that lift
-because the wrap depends on where the images sit. A layer that would leave
-less than a 14ch column beside the images stacks them under the prose
-instead, wrapping in pairs, with the attribution below them. Image-only
-quotes and images in the middle of a quote keep the image-row layout.
+prose's last line. When the text is shorter than the images, it sits beside
+their top. The browser measures that lift because the wrap depends on where the
+images sit. A layer that would leave less than a 14ch column beside the images
+stacks them under the prose instead, wrapping in pairs. Image-only quotes and
+images in the middle of a quote keep the image-row layout.
+
+## Attribution leads
+
+Attribution comes before the words it attributes: the relative age, then the
+name, then any badge. A quote card or quoted directive leads its first prose
+line with its source's age and author, then its task badges and disposition;
+a quote that opens with images, a list, or another block puts that attribution
+on a line of its own above it. A prose card leads its first paragraph with its
+own age, producer, and FINAL badge, and repeats that attribution at the head of
+the first paragraph after every chain of quotes, so a message answering several
+directive sets attributes each answer. The resident writes an answer's ACK, ACK
+PENDING, or NAK marker at the head of that answer, so its pill follows the
+speaking agent's name instead of sitting in the quoted directive.
 
 ## Always-chat team console
 
@@ -308,15 +319,13 @@ composer, and stream without a new nested vertical scroller.
 
 Invisible renderer portal hosts do not add trailing space. A card whose final
 visible Markdown block precedes that host therefore keeps the same visual
-bottom inset as its sides, including when its producer and age share the final
-prose line.
+bottom inset as its sides.
 
 A final line of text rests on the card's content box, like every other ending.
 The body font's descent below the baseline (about 3px at the card's 16px body)
 is the extra depth its bottom inset shows, so the line is not moved lower to
 hide it. The card's faces clip at its inner bottom edge rather than at the
-content box, so that line's descenders and a signoff's underlined age are never
-cut.
+content box, so that line's descenders are never cut.
 
 A signed prose card keeps its agent attribution in the lane accent, but its
 linked top-level relative age is neutral. The age remains an underlined card
@@ -324,12 +333,11 @@ permalink and advances on its own visible-unit deadlines. Authored Markdown
 links retain the ordinary accent, and quoted-source ages keep their separate
 quote presentation.
 
-A signoff keeps its relative age at the right edge, immediately after the
-producer name; any badge leads that pair. A FINAL classification therefore
-precedes the producer name, in the same compact, translucent accent pill used
-for task origins inside quoted signoffs, which lead their name and age the same
-way. On a card without a signoff, FINAL sits immediately before the producer
-name. It remains producer metadata rather than occupying the card-action island.
+FINAL is producer metadata rather than an action: it follows the producer name
+in the same compact, translucent accent pill used for task origins inside
+quoted attributions, which follow their author's name the same way. On a card
+without a leading attribution, FINAL sits immediately before the producer name
+in the controls island.
 
 ## Profile app latency in Firefox
 

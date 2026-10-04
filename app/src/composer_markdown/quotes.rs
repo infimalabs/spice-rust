@@ -138,11 +138,11 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The tail of quoted words: associated task badges, an explicit non-Operator
-/// author name, and the source message's live relative age at the right edge.
+/// The head of quoted words: the source message's live relative age, an
+/// explicit non-Operator author name, then associated task badges.
 ///
 /// Task provenance arrives after the card renders, so the HTML never depends
-/// on it: a steering quote's signoff names its key, and the card body fills in
+/// on it: a steering quote's signoff names its key, and the card body appends
 /// that key's badges in place. A sourceless signoff stays empty until then.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
@@ -166,9 +166,9 @@ pub(super) fn signoff_html(
             format!("<span class=\"message-quote-signoff\"{tasks}></span>")
         };
     };
-    let name = quote_author_name_html(author, agents, source);
     let age = quote_age_slot_html(author, agents, source);
-    format!("<span class=\"message-quote-signoff\"{tasks}>{name}{age}</span>")
+    let name = quote_author_name_html(author, agents, source);
+    format!("<span class=\"message-quote-signoff\"{tasks}>{age}{name}</span>")
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
@@ -207,23 +207,21 @@ fn render(
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
             let signoff = signoff_html(author, target, agents, sources);
-            let (body, signed) = super::render_quote_card_body(
+            let body = super::render_quote_card_body(
                 text,
                 quotes,
                 agents,
                 sources,
-                super::image_flow::CardTail {
-                    disposition: &disposition,
+                super::image_flow::CardHead {
                     signoff: &signoff,
+                    disposition: &disposition,
                 },
             );
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
-                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{}</div> \
-                 {}</div>",
+                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
                 body.html,
-                if signed { "" } else { &signoff },
             )
         }
         QuotePresentation::Unavailable { target, reason } => {

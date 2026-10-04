@@ -987,16 +987,16 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     tape.tee(&hidden)
         .expect("the hidden startup horizon is captured");
     let pending = concat!(
-        "> [ACK PENDING] First direction.\n\n",
-        "Nope 1kQwPZtM: One response.\n",
-        "> [NAK] Second direction.\n\n",
-        "Unsafe."
+        "> First direction.\n\n",
+        "[ACK PENDING] Nope 1kQwPZtM: One response.\n",
+        "> Second direction.\n\n",
+        "[NAK] Unsafe."
     );
     let acknowledged = concat!(
-        "> [ACK] First direction.\n\n",
-        "Nope 1kQwPZtM: One response.\n",
-        "> [NAK] Second direction.\n\n",
-        "Unsafe."
+        "> First direction.\n\n",
+        "[ACK] Nope 1kQwPZtM: One response.\n",
+        "> Second direction.\n\n",
+        "[NAK] Unsafe."
     );
 
     let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
@@ -1143,7 +1143,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
         .collect::<Vec<_>>();
     assert_eq!(
         cards,
-        ["> [ACK PENDING] First direction.\n\nApplied, checking the log"]
+        ["> First direction.\n\n[ACK PENDING] Applied, checking the log"]
     );
 
     drop(live);
@@ -1248,17 +1248,11 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(
         messages[0]
             .text
-            .matches(&format!("> {marker} First direction."))
+            .matches(&format!("{marker} Nope 1kQwPZtM"))
             .count(),
         1
     );
-    assert_eq!(
-        messages[0]
-            .text
-            .matches("> [NAK] Second direction.")
-            .count(),
-        1
-    );
+    assert_eq!(messages[0].text.matches("[NAK] Unsafe.").count(), 1);
     assert_eq!(messages[0].text.matches("[ACK").count(), 1);
     let first_kind = if marker == wire::stream::ACK_MARKER {
         wire::MessageClassificationKind::Acknowledgement

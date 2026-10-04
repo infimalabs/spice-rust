@@ -57,12 +57,14 @@ fn has_terminal_punctuation(character: char) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::{render_prose_card, render_received};
+    use super::super::{SIGNOFF_SLOT, render_prose_card, render_received};
 
     #[test]
     fn a_prose_card_presents_its_terminal_prose_with_sentence_punctuation() {
         let card = |markdown: &str| {
-            render_prose_card(markdown, &[], &[], &[], &BTreeMap::new(), &BTreeMap::new()).html
+            render_prose_card(markdown, &[], &[], &[], &BTreeMap::new(), &BTreeMap::new())
+                .html
+                .replacen(SIGNOFF_SLOT, "", 1)
         };
         let cases = [
             (

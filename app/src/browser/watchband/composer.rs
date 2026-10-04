@@ -606,8 +606,9 @@ struct NormalFace<'a> {
     attribution: &'a str,
 }
 
-/// The card's normal face. A lone tool image signs below its square the way
-/// prose signs its last line; opening the image is a click on the image itself.
+/// The card's normal face. A lone tool image carries its attribution over the
+/// image's top-left corner the way prose leads its words; opening the image is
+/// a click on the image itself.
 fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Html {
     let media = render_agent_message_media(face.unlinked_media, face.media_description);
     // A lone tool image carries no badges or card actions, so it has no
@@ -615,7 +616,6 @@ fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Htm
     if face.lone_tool_image {
         return html! {
             <>
-                {media}
                 <div class="message-body markdown-body">
                     <p class="message-signoff-line">
                         <span class="message-signoff">
@@ -623,6 +623,7 @@ fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Htm
                         </span>
                     </p>
                 </div>
+                {media}
             </>
         };
     }
@@ -720,8 +721,8 @@ fn agent_message_presentation<'a>(
         &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
-    // A prose card gives its terminal prose sentence punctuation and signs its
-    // final line; tool, reasoning, and boundary cards render verbatim.
+    // A prose card gives its terminal prose sentence punctuation and leads
+    // with its attribution; tool, reasoning, and boundary cards render verbatim.
     let is_prose = message.activity == wire::AgentActivityKind::Prose;
     let render = if is_prose {
         crate::composer_markdown::render_prose_card
@@ -906,9 +907,9 @@ fn render_agent_message_media(
     }
 }
 
-/// A prose card signs its final line the way a quote does: its badges, then
-/// the producer's copyable label, then the live age linking to the message
-/// source at the right edge.
+/// A prose card leads its words the way a quote leads its own: the live age
+/// linking to the message source, the producer's copyable label, then its
+/// FINAL badge.
 fn render_agent_message_signoff(
     message: &wire::AgentMessage,
     producer_label: &str,
@@ -916,9 +917,9 @@ fn render_agent_message_signoff(
 ) -> Html {
     html! {
         <>
-            {render_final_pill(message)}
-            {render_producer_name(message, producer_label, attribution)}
             {render_message_age(message, attribution)}
+            {render_producer_name(message, producer_label, attribution)}
+            {render_final_pill(message)}
         </>
     }
 }

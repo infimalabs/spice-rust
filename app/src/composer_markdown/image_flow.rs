@@ -2,38 +2,38 @@
 //!
 //! A quote layer whose trailing blocks are image stacks, after at least one
 //! other block, renders inside one flow wrapper: a zero-width anchor float,
-//! the layer's images merged into one stack floated beneath it, then the prose
-//! and the attribution. Floats only push content that follows them, so the
-//! images lead in source; the browser then lifts the anchor until the images'
-//! bottom meets the end of the prose (`browser::quote_image_flow`), leaving
-//! the images at the bottom with prose beside and above them and the
-//! attribution as the layer's last line.
+//! the layer's images merged into one stack floated beneath it, then the prose.
+//! Floats only push content that follows them, so the images lead in source;
+//! the browser then lifts the anchor until the images' bottom meets the end of
+//! the prose (`browser::quote_image_flow`), leaving the images at the bottom
+//! with prose beside and above them. A layer's attribution leads it: inside
+//! its first prose paragraph, or on a line of its own above the flow.
 
 use std::ops::Range;
 
 use pulldown_cmark::{Event as MarkdownEvent, Tag};
 
 pub(super) const STACK_OPEN: &str = "<p class=\"message-image-stack\">";
-const STACK_CLOSE: &str = "</p>";
+pub(super) const STACK_CLOSE: &str = "</p>";
 const FLOW_OPEN: &str = "<div class=\"message-image-flow\">\
                          <span class=\"message-image-flow-anchor\" aria-hidden=\"true\"></span>";
 const FLOW_CLOSE: &str = "</div>";
 pub(super) const SIGNOFF_LINE_OPEN: &str = "<p class=\"message-quote-signoff-line\">";
 
-/// What a quote card adds to its body's own top-level layer.
-pub(super) struct CardTail<'t> {
-    /// Disposition pill leading the first paragraph, empty when none.
-    pub(super) disposition: &'t str,
+/// What a quote card leads its body's own top-level layer with.
+pub(super) struct CardHead<'t> {
     /// The card's attribution, empty when it has none.
     pub(super) signoff: &'t str,
+    /// Disposition pill following the attribution, empty when none.
+    pub(super) disposition: &'t str,
 }
 
 /// The layer a run of events forms.
 pub(super) enum Layer<'t> {
     /// A message body: only its quotes flow.
     Body,
-    /// A quote card body, which flows like a quote and carries its tail.
-    Card(CardTail<'t>),
+    /// A quote card body, which flows like a quote and leads with its head.
+    Card(CardHead<'t>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,19 +45,15 @@ enum Block {
     Other,
 }
 
-/// Flow every quote layer in `events` that ends in images. For a card body,
-/// the result says whether its attribution moved inside the body.
-pub(super) fn flow<'a>(
-    events: &[MarkdownEvent<'a>],
-    layer: &Layer<'_>,
-) -> (Vec<MarkdownEvent<'a>>, bool) {
+/// Flow every quote layer in `events` that ends in images.
+pub(super) fn flow<'a>(events: &[MarkdownEvent<'a>], layer: &Layer<'_>) -> Vec<MarkdownEvent<'a>> {
     let mut blocks = blocks(events)
         .into_iter()
         .map(|(kind, range)| {
             let block = &events[range];
             let block = if kind == Block::Quote {
                 let inner = &block[1..block.len() - 1];
-                let (body, _) = flow_quote(inner, None);
+                let body = flow_quote(inner);
                 let mut quote = Vec::with_capacity(body.len() + 2);
                 quote.push(block[0].clone());
                 quote.extend(body);
@@ -70,90 +66,69 @@ pub(super) fn flow<'a>(
         })
         .collect::<Vec<_>>();
     match layer {
-        Layer::Body => (
-            blocks.into_iter().flat_map(|(_, block)| block).collect(),
-            false,
-        ),
-        Layer::Card(tail) => {
-            let lead = (!tail.disposition.is_empty()).then(|| match blocks.first_mut() {
+        Layer::Body => blocks.into_iter().flat_map(|(_, block)| block).collect(),
+        Layer::Card(head) => {
+            let head = format!(
+                "{}{}",
+                head.signoff,
+                if head.disposition.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} ", head.disposition)
+                }
+            );
+            let line = (!head.is_empty()).then(|| match blocks.first_mut() {
                 Some((Block::Paragraph, block)) => {
-                    block.insert(
-                        1,
-                        MarkdownEvent::InlineHtml(format!("{} ", tail.disposition).into()),
-                    );
+                    block.insert(1, MarkdownEvent::InlineHtml(head.into()));
                     None
                 }
-                _ => Some(MarkdownEvent::InlineHtml(
-                    tail.disposition.to_owned().into(),
+                _ => Some(MarkdownEvent::Html(
+                    format!("{SIGNOFF_LINE_OPEN}{head}</p>").into(),
                 )),
             });
-            let (body, signed) = hoist(blocks, Some(tail.signoff));
-            (lead.flatten().into_iter().chain(body).collect(), signed)
+            line.flatten().into_iter().chain(hoist(blocks)).collect()
         }
     }
 }
 
-fn flow_quote<'a>(
-    events: &[MarkdownEvent<'a>],
-    signoff: Option<&str>,
-) -> (Vec<MarkdownEvent<'a>>, bool) {
-    let (blocks, _) = flow(events, &Layer::Body);
+fn flow_quote<'a>(events: &[MarkdownEvent<'a>]) -> Vec<MarkdownEvent<'a>> {
+    let blocks = flow(events, &Layer::Body);
     let blocks = self::blocks(&blocks)
         .into_iter()
         .map(|(kind, range)| (kind, blocks[range].to_vec()))
         .collect();
-    hoist(blocks, signoff)
+    hoist(blocks)
 }
 
 /// Lead with the trailing image stacks inside one flow wrapper when the layer
-/// has other blocks before them; otherwise keep the layer as it is.
-fn hoist<'a>(
-    mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>,
-    signoff: Option<&str>,
-) -> (Vec<MarkdownEvent<'a>>, bool) {
-    let line = blocks
-        .last()
+/// has other blocks before them; otherwise keep the layer as it is. A leading
+/// attribution line stays above the flow.
+fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEvent<'a>> {
+    let mut events = Vec::new();
+    if blocks
+        .first()
         .is_some_and(|(kind, _)| *kind == Block::SignoffLine)
-        .then(|| blocks.pop().map(|(_, block)| block))
-        .flatten();
+    {
+        events.extend(blocks.remove(0).1);
+    }
     let first_stack = blocks
         .iter()
         .rposition(|(kind, _)| *kind != Block::Stack)
         .map_or(0, |index| index + 1);
     if first_stack == 0 || first_stack == blocks.len() {
-        let events = blocks
-            .into_iter()
-            .flat_map(|(_, block)| block)
-            .chain(line.into_iter().flatten())
-            .collect();
-        return (events, false);
+        events.extend(blocks.into_iter().flat_map(|(_, block)| block));
+        return events;
     }
     let stacks = blocks.split_off(first_stack);
-    let mut events = vec![
-        MarkdownEvent::Html(FLOW_OPEN.into()),
-        MarkdownEvent::InlineHtml(STACK_OPEN.into()),
-    ];
+    events.push(MarkdownEvent::Html(FLOW_OPEN.into()));
+    events.push(MarkdownEvent::InlineHtml(STACK_OPEN.into()));
     for (_, stack) in stacks {
         events.extend(stack[1..stack.len() - 1].iter().cloned());
     }
     events.push(MarkdownEvent::InlineHtml(STACK_CLOSE.into()));
-    let ends_in_paragraph = blocks
-        .last()
-        .is_some_and(|(kind, _)| *kind == Block::Paragraph);
     events.extend(blocks.into_iter().flat_map(|(_, block)| block));
-    match signoff.filter(|signoff| !signoff.is_empty()) {
-        Some(signoff) if ends_in_paragraph => {
-            let end = events.len() - 1;
-            events.insert(end, MarkdownEvent::InlineHtml(signoff.to_owned().into()));
-        }
-        Some(signoff) => events.push(MarkdownEvent::Html(
-            format!("{SIGNOFF_LINE_OPEN}{signoff}</p>").into(),
-        )),
-        None => {}
-    }
-    events.extend(line.into_iter().flatten());
     events.push(MarkdownEvent::Html(FLOW_CLOSE.into()));
-    (events, signoff.is_some())
+    events
 }
 
 /// The layer's direct child blocks, in order.
