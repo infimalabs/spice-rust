@@ -179,6 +179,15 @@ follow, beside Create new team and Leave all teams. Wide lanes lay those groups
 side by side; narrow lanes stack them and scroll within the lane. The button,
 Escape, or a click elsewhere in the team restores the composer.
 
+## Composer image strip
+
+Draft images fill the composer heading's usable block height as edge-to-edge
+cover crops. Thumbnail wrappers add no border, inset shadow, or vertical dead
+space; adjacent images share only a 1px seam and use 1px corner radii. Hover
+and keyboard focus draw inside the crop without moving it. The overlaid remove
+control and touch-only image chooser retain the same compact geometry in both
+primary and quoted composer shards.
+
 ## Composer provider watermark
 
 Each Chat lane paints its provider emblem as a small, faint watermark in the

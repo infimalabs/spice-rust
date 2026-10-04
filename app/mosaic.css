@@ -794,15 +794,16 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--muted);
   opacity: .7;
 }
-/* Reference-size cover crops fill from the trailing control toward the age.
-   The bounded strip scrolls, so attachments never push the prose out of the
-   row. An empty strip stays laid out at zero width rather than `display: none`:
-   it owns the third heading column, and dropping out of the grid would slide
-   the final control a whole column left until the first image arrives. */
+/* Edge-to-edge cover crops fill the heading band from the trailing control
+   toward the age. The bounded strip scrolls, so attachments never push the
+   prose out of the row. An empty strip stays laid out at zero width rather
+   than `display: none`: it owns the third heading column, and dropping out of
+   the grid would slide the final control a whole column left until the first
+   image arrives. */
 .composer-shard-image-indicators {
   display: flex;
   flex-direction: row-reverse;
-  gap: 2px;
+  gap: 1px;
   height: 28px;
   justify-content: flex-start;
   min-width: 0;
@@ -813,18 +814,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   scrollbar-width: thin;
 }
 .composer-shard-image-indicator, .composer-shard-image-attach {
+  position: relative;
   display: inline-flex;
-  flex: 0 0 26px;
-  width: 26px;
-  height: 26px;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 100%;
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  position: relative;
-  border: var(--app-control-edge);
-  border-radius: 4px;
+  border: 0;
+  border-radius: 1px;
   background: color-mix(in srgb, var(--control) 84%, var(--page));
-  box-shadow: var(--app-selection-shadow);
+  box-shadow: none;
 }
 .composer-shard-image-indicator img {
   display: block;
@@ -832,15 +833,20 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   min-width: 100%;
   height: 100%;
   border: 0;
-  border-radius: 3px;
+  border-radius: 0;
   object-fit: cover;
 }
-.composer-shard-image-indicator:hover, .composer-shard-image-attach:focus-within { border-color: var(--accent); }
+.composer-shard-image-indicator:hover,
+.composer-shard-image-indicator:has(.composer-shard-image-open:focus-visible),
+.composer-shard-image-attach:focus-within {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .composer-shard-image-remove {
   display: inline-flex;
   position: absolute;
-  top: 1px;
-  right: 1px;
+  top: 0;
+  right: 0;
   width: 12px;
   min-width: 12px;
   height: 12px;
@@ -849,7 +855,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 1px;
   background: color-mix(in srgb, var(--control) 80%, transparent);
   color: var(--ink);
   font-size: 10px;
