@@ -774,14 +774,14 @@
 }
 .team-surface .mosaic-message-card--image-cover .message-signoff-line {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 0;
+  left: 0;
   z-index: 2;
   max-width: calc(100% - 16px);
   margin: 0;
   padding: 4px 7px;
   border: 0;
-  border-radius: var(--app-radius-control);
+  border-radius: var(--mosaic-quote-radius) 0 var(--mosaic-quote-radius) 0;
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   box-shadow: none;
   backdrop-filter: blur(8px);
