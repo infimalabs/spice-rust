@@ -659,10 +659,13 @@ body:has(.shell--mosaic),
   overflow-wrap: anywhere;
 }
 .member-model,
-.member-effort {
+.member-effort,
+.member-fast {
   display: grid;
   gap: 4px;
 }
+/* The lane toggle spans the panel like the effort rail above it. */
+.member-fast .app-fast-setting { width: 100%; }
 .member-model label,
 .member-effort label {
   color: var(--muted);
