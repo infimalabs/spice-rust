@@ -873,15 +873,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    field to own its outer top edge, submit seam, and center divider exactly
    once. The frame holds no words but the submit's; the two current slider
    values share the row immediately below the tracks, leaning on the center
-   seam and reading as one phrase ("quiet drain", "narrate steer"). The
-   square-size correction remains in the submit row so the slider tracks
-   retain their height. */
+   seam and reading as one phrase ("quiet drain", "narrate steer"). The submit
+   spans exactly two member composer headers, and the slider tracks take the
+   frame's remaining height. */
 .team-composer .team-composer-controls {
-  --team-control-submit-trim: 10px;
-  --team-control-item-height: calc(
-    (var(--team-composer-block-size) + var(--team-control-submit-trim) - 2 * var(--team-control-gap)) / 3
-    - var(--team-control-submit-trim)
-  );
+  --team-control-item-height: calc(2 * var(--app-status-line-band));
   --team-control-label-row: 14px;
   position: relative; display: grid; gap: 0; inline-size: 74px;
   margin-block-start: 0;
