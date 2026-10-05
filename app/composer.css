@@ -740,17 +740,24 @@
   border: 0;
   border-radius: 0;
 }
+/* A final answer rests washed 5% toward its lane accent; hover raises any card
+   to the 10% --card-hover-wash. */
+.team-surface .mosaic-message-card.final {
+  --card-rest-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 5%, transparent);
+}
 /* One card-sized square overlay owns the permanent lane rail and every
    interaction edge above the cover. A padding reserve holds the image geometry;
    outlining the square image or repeating the card rail creates clipped,
-   washed-out layers at the corners. A cover hides any background wash, so on
-   hover the same overlay screens the image in the lane accent instead. */
+   washed-out layers at the corners. A cover hides any background wash, so the
+   same overlay screens the image in the lane accent instead: at rest with a
+   final answer's wash, and on hover with the hover wash. */
 .team-surface .mosaic-message-card--image-cover::after {
   position: absolute;
   z-index: 4;
   inset: 0;
   border-inline-start: 4px solid var(--accent-slot, var(--accent));
   border-radius: inherit;
+  background: var(--card-rest-wash, transparent);
   content: "";
   pointer-events: none;
 }
