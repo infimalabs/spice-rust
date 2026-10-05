@@ -761,30 +761,27 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
+/* The heading stays unpositioned so the open agent menu anchors to its shard.
+   Its permanent accent follows the content inset as a background stroke in the
+   transparent bottom border; active block-end accents remain full-width. */
 .composer-shard-heading {
-  --composer-heading-inline-padding: 8px 5px;
-  position: relative;
+  --composer-heading-inline-start: 8px;
+  --composer-heading-inline-end: 5px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) fit-content(50%) 22px;
   align-items: center;
   gap: 6px;
   height: var(--app-status-line-band);
   min-height: var(--app-status-line-band);
-  padding: 0 var(--composer-heading-inline-padding);
+  padding: 0 var(--composer-heading-inline-end) 0 var(--composer-heading-inline-start);
   border-bottom: 2px solid transparent;
+  background: linear-gradient(var(--composer-underline-color), var(--composer-underline-color))
+    left var(--composer-heading-inline-start) bottom 0 /
+    calc(100% - var(--composer-heading-inline-start) - var(--composer-heading-inline-end)) 2px
+    no-repeat border-box;
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--app-status-line-font-size);
-}
-/* Permanent accents follow the content inset; active block-end accents remain full-width. */
-.composer-shard-heading::after {
-  position: absolute;
-  inset-block: auto -2px;
-  inset-inline: var(--composer-heading-inline-padding);
-  height: 2px;
-  background: var(--composer-underline-color);
-  content: "";
-  pointer-events: none;
 }
 .composer-shard-heading strong {
   overflow: hidden;
