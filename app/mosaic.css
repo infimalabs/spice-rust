@@ -505,16 +505,23 @@
   background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* The team's task strip is the global strip, a size smaller and centered in
-   its own band so it floats clear of the status line beneath. */
+/* The team's tasks are tabs standing on the status line: one per stem, its
+   badged stem target followed by its handles. Each tab rounds only its top
+   corners and drops one rule width over the status line's top rule on the same
+   opaque stream surface, so the tab and the line read as one piece while the
+   rule continues between tabs. Overflow scrolls inside the band. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
-  align-self: center;
-  max-width: calc(100% - 2 * var(--team-chamber-inset));
-  margin-inline: var(--team-chamber-inset);
+  z-index: 1;
+  display: flex;
+  align-self: end;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
+  margin: 0 var(--team-chamber-inset) calc(-1 * var(--app-control-edge-width));
+  overflow: auto hidden;
+  scrollbar-width: none;
 }
-.team-tasks .task-pill { min-height: 21px; padding-block: 0; }
-.team-tasks .task-pill--project > button { padding-block: 0; }
 
 .team-lights[data-lane-drag-handle] {
   cursor: grab;

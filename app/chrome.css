@@ -139,11 +139,10 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
-/* One team-local project group: its neutral stem target followed by every
-   matching task handle. The group owns one rail divider, while each target
-   retains independent hover, focus, lifecycle, and owner presentation. */
+/* One team-local stem tab: its neutral stem target, badged with the stem's
+   open-task count, followed by every matching task handle. Each target keeps
+   independent hover, focus, lifecycle, and owner presentation. */
 .task-pill--project { gap: 0; padding: 0; }
-.task-pill--project:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .task-pill--project > button {
   align-self: stretch;
   min-height: 0;
@@ -160,7 +159,12 @@ body:has(.shell--mosaic),
   color: var(--muted);
   opacity: .72;
 }
-.task-pill--project > .task-pill-stem { padding-inline: 10px; }
+.task-pill--project > .task-pill-stem-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-inline: 10px;
+}
 .task-pill--project > button:last-child { padding-inline-end: 10px; }
 .task-pill--project > button:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -170,6 +174,20 @@ body:has(.shell--mosaic),
    active opacity without making the shared project stem look owned. */
 .team-tasks .task-pill--project > .task-pill-handle[data-accent] {
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
+}
+/* A team stem tab: a step smaller than the global pills, top corners only,
+   no bottom edge, opaque on the stream surface even when hovered so it covers
+   the status line's rule it stands on. */
+.team-tasks .task-pill { min-height: 21px; padding-block: 0; }
+.team-tasks .task-pill--project > button { padding-block: 0; }
+.team-tasks > .task-pill--project,
+.team-tasks > .task-pill--project:hover {
+  overflow: clip;
+  border: var(--app-control-edge);
+  border-block-end: 0;
+  border-start-start-radius: var(--app-radius-compact);
+  border-start-end-radius: var(--app-radius-compact);
+  background: var(--message-stream-surface);
 }
 .app-global-status {
   grid-area: 1 / 3;

@@ -167,7 +167,7 @@ fn team_header_groups_stems_by_first_task_without_changing_source_order() {
     assert_eq!(
         grouped.iter().map(|(_, tasks)| tasks.len()).sum::<usize>(),
         loaded.scope_counts(&WorkScope::team_wide(team)).open(),
-        "the header holds exactly the open tasks its total opens",
+        "the header holds exactly the open tasks of the team's Work scope",
     );
     assert_eq!(
         groups(&loaded, other_team),
