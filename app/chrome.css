@@ -212,6 +212,16 @@ body:has(.shell--mosaic),
   width: 100%; min-width: 0; height: 100%; overflow: hidden;
   border-radius: var(--app-radius-pill); background: var(--page);
 }
+/* Spent quota is the well above the account layers. A faint neutral hatch,
+   ink folded into the page, sets it apart from the page in either theme
+   without reading as a layer, even beside a desaturated stale one. */
+.app-menu-well:has(> .app-menu-quota) {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ink) 14%, var(--page)) 0 1px,
+    color-mix(in srgb, var(--ink) 6%, var(--page)) 1px 3px
+  );
+}
 .app-menu-pepper {
   --app-pepper-halo: drop-shadow(0 0 1px var(--page)) drop-shadow(0 0 1px var(--page));
   grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; filter: var(--app-pepper-halo);

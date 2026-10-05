@@ -287,7 +287,9 @@ Each account takes the next agent accent in that order, unshaded. Layers stack
 by remaining capacity: the account with the most left at the bottom and the one
 nearest to running out at the top, with equal amounts kept in capacity order.
 Usage therefore moves layer surfaces and positions, never colors; a failed
-refresh desaturates them. The
+refresh desaturates them. Spent capacity above the layers is a faint neutral
+hatch rather than bare page, so the well never reads as a hole in the button,
+and its texture stays distinct from any desaturated layer. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
 
