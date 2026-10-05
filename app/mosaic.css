@@ -74,9 +74,13 @@
 /* Quotes carry no fill at any depth. A quote's rail wears its own speaker's
    accent slot, as that speaker's top-level cards do; operator and system
    quotes, notices included, keep the neutral accent and rely on their pills
-   and attribution. */
+   and attribution. A quote's slot is its rail, so anything accented inside it,
+   such as its control rings, follows the quote rather than the outer card. */
 .markdown-body :is(blockquote, .message-quote-card)[data-accent] {
   border-left-color: var(--accent-slot);
+}
+.markdown-body :is(blockquote, .message-quote-card):not([data-accent]) {
+  --accent-slot: var(--accent-neutral);
 }
 .markdown-body .math-inline { display: inline; white-space: normal; }
 .markdown-body .math-inline > .math-render {
