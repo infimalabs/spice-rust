@@ -293,6 +293,12 @@ and its texture stays distinct from any desaturated layer. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
 
+Opening the menu states that same global figure in words: the Global row
+carries a read-only Quota chip between Fast mode and the theme switch with the
+cumulative plan-weighted weekly percentage remaining. After a failed refresh it
+mutes and says `stale`; with no retained weekly figure the chip is absent
+rather than a placeholder.
+
 Provider quota detail rows preserve each provider's authoritative remaining
 quantity. Percent limits label that capacity `N% full`; their filled segment
 starts at the left edge, so consumption exposes the track from the right.

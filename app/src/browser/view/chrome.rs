@@ -293,15 +293,11 @@ impl QuotaLevel<'_> {
     }
 }
 
-/// Only a failed refresh marks the level stale; an in-flight refresh keeps
-/// the retained level steady instead of flashing on every sample.
+/// Only a failed refresh marks the level stale.
 fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     let generation = runtime.and_then(AppRuntime::quota)?;
     let stack = crate::quota::weekly_quota_stack(generation.last_good.as_deref()?)?;
-    let stale = matches!(
-        generation.latest_attempt,
-        Some(wire::QuotaAttempt::Failed { .. })
-    );
+    let stale = crate::quota::last_good_stale(generation);
     let percentage = stack.remaining * 100.0;
     let label = if stale {
         format!(
