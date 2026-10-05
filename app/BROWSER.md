@@ -117,11 +117,13 @@ margin of its own.
 
 ## Team composer controls
 
-The 52px round team send button sits above the speech and allocation sliders,
-whose vertical tracks follow side by side. Its 64px row centers the circle with
-11px at each edge of the 74px control column and 6px above and below. The button
-is about 1.49 times the 35px global Spice and Dash controls: prominent, with
-enough negative space to avoid reading as a novelty control.
+The 56px round team send button sits above the speech and allocation sliders,
+whose vertical tracks follow side by side. The 80px control column keeps one
+12px inline rhythm: the circle leaves 12px at each edge, and each 16px slider
+track leaves 12px on each side within its 40px half. The circle's 68px row
+leaves 6px above and below. The button is 1.6 times the 35px global Spice and
+Dash controls: prominent, with enough negative space to avoid reading as a
+novelty control.
 Its accent-derived bevel, darker lower edge, and short cast shadow supply
 restrained physical depth in both themes. Hover brightens it without moving;
 pointer press moves it down one pixel, and release pops it back to rest.
@@ -391,7 +393,7 @@ Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger. Its
 task strip keeps the full first row. The second row is one full-width status
-band: the ticker leads into a fixed 74px pip segment directly above the
+band: the ticker leads into a fixed 80px pip segment directly above the
 physical-right Drive/slider column. Up to six unified 8px pips occupy that
 segment in the same rendered order as the composer columns. Both sequences use
 local RTL flow so canonical member zero remains control-adjacent; the app's
@@ -413,11 +415,11 @@ any plane, card, or team surface observing a resize. Browsers without
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
-status band, while the team surface frames nothing around them. The 52px
-circular send button remains centered in its independent 74px physical-right
+status band, while the team surface frames nothing around them. The 56px
+circular send button remains centered in its independent 80px physical-right
 composer-control column. That column matches the darker composer surface and
 continues the composers' soft top rule above the send button. The status band's
-matching 74px segment aligns directly above it, shares the ticker's
+matching 80px segment aligns directly above it, shares the ticker's
 stream-surface fill and top rule, and centers up to six 8px pips in the same
 local right-to-left order as the composer columns. Pips retain the unified
 presence palette: active, queued, waiting, and dim bound/unbound states remain
