@@ -505,11 +505,10 @@
   background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* The team's tasks are tabs attached to the status line: one per stem, its
-   badged stem target followed by its handles. Each tab rounds only its top
-   corners and ends exactly where the status row begins, leaving that row's
-   faint top rule continuous beneath every tab and between them. Overflow
-   scrolls inside the band. */
+/* One square message-card flag per task stem occupies the first row. An 8px
+   outer inset keeps the flags off the team/browser edge, and 4px separates
+   sibling stem groups. Overflow scrolls inside this band without entering the
+   status and pip row below. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
   z-index: 1;
@@ -518,7 +517,7 @@
   align-items: flex-end;
   gap: 4px;
   min-width: 0;
-  margin: 0 var(--team-chamber-inset);
+  margin: 0 8px;
   overflow: auto hidden;
   scrollbar-width: none;
 }
