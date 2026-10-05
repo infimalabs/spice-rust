@@ -329,9 +329,10 @@ pub struct WorkTask<'a> {
     offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
     dependents: Vec<WorkDependent>,
-    /// Current roster teams that associate this task by immutable creator or
-    /// latest winning claim lane.
-    teams: Vec<wire::CanonicalUuid>,
+    /// The one current roster team that homes this task, by strength: the
+    /// team of the lane actively claiming it (none when that lane is
+    /// unteamed), then its creator team, then its last claimant's team.
+    team: Option<wire::CanonicalUuid>,
 }
 
 impl<'a> WorkTask<'a> {
@@ -429,7 +430,7 @@ impl<'a> WorkTask<'a> {
 
     #[must_use]
     pub fn belongs_to_team(&self, team: wire::CanonicalUuid) -> bool {
-        self.teams.contains(&team)
+        self.team == Some(team)
     }
 }
 
@@ -774,7 +775,7 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, row)| {
                 let dependencies = work_dependencies(row, board, &by_born);
-                let task_teams = associated_teams(row, teams.as_ref(), member_teams);
+                let team = home_team(row, teams.as_ref(), member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -788,7 +789,7 @@ impl<'a> WorkProjection<'a> {
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
-                    teams: task_teams,
+                    team,
                 }
             })
             .collect();
@@ -807,28 +808,26 @@ impl<'a> WorkProjection<'a> {
     }
 }
 
-fn associated_teams(
+fn home_team(
     task: &BoardTask,
     teams: Option<&BTreeSet<wire::CanonicalUuid>>,
     member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
-) -> Vec<wire::CanonicalUuid> {
-    let mut associated = Vec::with_capacity(2);
-    if let Some(team) = task
-        .creator_team
-        .filter(|team| teams.is_some_and(|teams| teams.contains(team)))
-    {
-        associated.push(team);
-    }
-    if let Some(team) = task
+) -> Option<wire::CanonicalUuid> {
+    let claimant_team = |claim: &wire::head::ClaimHead| member_teams.get(&claim.lane).copied();
+    if let Some(claim) = task
         .claim
         .as_ref()
-        .and_then(|claim| member_teams.get(&claim.body.lane))
-        .copied()
-        && !associated.contains(&team)
+        .filter(|claim| claim.body.disposition == wire::head::ClaimDisposition::Active)
     {
-        associated.push(team);
+        return claimant_team(&claim.body);
     }
-    associated
+    task.creator_team
+        .filter(|team| teams.is_some_and(|teams| teams.contains(team)))
+        .or_else(|| {
+            task.claim
+                .as_ref()
+                .and_then(|claim| claimant_team(&claim.body))
+        })
 }
 
 fn work_dependencies<'a>(

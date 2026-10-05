@@ -364,10 +364,15 @@ footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-f
 Status is textual as well as colored, and narrow layouts keep labeled rows.
 
 The canonical team scope is `#/work/team/{team}`. Its open board admits each
-task created by that current roster team or last claimed by one of the team's
-current member lanes, exactly once and across every open lifecycle. History
-uses the resident's same team filter and restarts at the newest page whenever
-the scope changes, so pages from different teams or All open work never mix.
+open task whose single home is that current roster team, across every open
+lifecycle. A task's home follows its strongest association: the team of the
+lane actively claiming it (none, leaving it only in the global pool, when that
+lane belongs to no team), otherwise its creator team when that team is on the
+roster, otherwise its last claimant's team. A task therefore leaves its creator
+team while another team's member holds its phase and returns once that claim
+ends. History uses the resident's team filter and restarts at the newest page
+whenever the scope changes, so pages from different teams or All open work
+never mix.
 A team the loaded roster lacks is replaced by `#/work` with a notice naming
 it; until the roster loads, a cold-loaded team link keeps its scope. Task
 detail retains the team scope; its project action still selects the task's
@@ -416,9 +421,8 @@ references share one card identity, status, ownership, and selection contract;
 either opens the one shared detail layer, whose close returns focus to the
 launching card.
 
-A team header lists exactly the open tasks its team Work scope holds: tasks the
-team created and tasks a current member last claimed, so a task created by one
-team and claimed by another shows on both. It starts from in-flight, ready,
+A team header lists exactly the open tasks its team Work scope holds, so every
+task appears in at most one team header. It starts from in-flight, ready,
 blocked, and deferred offer order, then applies Work's grouping rule: each
 visibility-qualified project stem forms one group at its first task, and every
 later matching task joins it without changing relative order. Until the roster
