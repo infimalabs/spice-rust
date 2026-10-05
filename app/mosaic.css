@@ -582,14 +582,17 @@
   .app-option-badge { display: none; }
 }
 
+/* The status band's top rule is the lesser control edge the composers draw
+   along its bottom; the surface stops at the padding box so the translucent
+   stroke blends with the page exactly as the bottom one does. */
 .team-toolbar > .ticker {
   grid-area: status;
   align-self: stretch;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
   border: 0;
-  border-block-start: var(--app-edge-soft);
-  background: var(--message-stream-surface);
+  border-block-start: var(--app-control-edge);
+  background: var(--message-stream-surface) padding-box;
   font-size: var(--app-status-line-font-size);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));
 }

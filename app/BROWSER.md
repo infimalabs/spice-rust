@@ -362,11 +362,12 @@ scroll state, or return-to-mode behavior. The toolbar has no hamburger: its
 task strip and complete live ticker terminate at the topology control, whose
 fixed right-edge footprint continues the composer control rail below.
 The status band, pip enclosure, and composer control frame use the same
-theme-aware surface as the message stream. The status band and pip enclosure
-share the same soft top rule. The ticker retains relative age, lane-status
-class, agent/tool/command prefix and accent, truncated detail, accessible label,
-and live-region semantics; an empty fleet reserves the surfaced slot without
-inventing status.
+theme-aware surface as the message stream. The pip enclosure has a soft top
+rule; the status band's top rule is the lesser control edge that the composers
+draw along its bottom, so both of its rules read alike. The ticker retains
+relative age, lane-status class, agent/tool/command prefix and accent,
+truncated detail, accessible label, and live-region semantics; an empty fleet
+reserves the surfaced slot without inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -379,7 +380,7 @@ any plane, card, or team surface observing a resize. Browsers without
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the status band and pip enclosure share the stream
-surface and soft top rule, while the team surface frames nothing around them.
+surface, while the team surface frames nothing around them.
 Its neutral topology control owns the same 74px right-edge column as the
 stream-surfaced composer controls immediately below it. The 52px circular send
 button centers within that column while the topology control keeps its 60px
