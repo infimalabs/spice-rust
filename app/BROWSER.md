@@ -294,10 +294,12 @@ or speaking, the control fills at 10% and its glyph lights to neutral ink; it
 casts no shadow. Playback belongs to one exact hunk control, not every control
 in its card; the card keeps its aggregate `now-playing` state while only that
 control becomes Stop. Automatic Speak or Narrate playback owns the message's
-direct-prose control and leaves quoted source controls on Play. Only the hunk's
-associated image row clears the island, below its two lines, before floating
-inline-start. Narrow cards preserve the same ordering instead of adding a
-separate controls header.
+direct-prose control and leaves quoted source controls on Play. Each hunk also
+opens with a zero-width presentational prop two lines tall, so the hunk's
+associated image row, which clears both sides before floating inline-start,
+always starts below the first two lines whether or not the island is present
+or resized; paired images still share that row and fill it. Narrow cards
+preserve the same ordering instead of adding a separate controls header.
 
 Committed message cards sit in one lattice whose 9px perimeter and row and
 column seams equal the card's 9px content inset. The seam is one shared gap
