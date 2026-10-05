@@ -438,7 +438,7 @@
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
   --team-pip-size: 8px;
   --team-pip-gap: 0;
-  --team-control-inline-size: 74px;
+  --team-control-inline-size: 80px;
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
   /* The composer controls keep a fixed right-edge column below the full-width
      task rail and inline status band. */
@@ -914,13 +914,13 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* The round submit leads, the vertical ranges follow side by side, and their
    current values finish the frame. Range wrappers stay frameless and state
    uses fill alone, leaving the control field to own its center divider exactly
-   once. The 52px submit is 1.49 times the 35px global action and leaves 11px
-   on each side of the 74px control column. Its 64px row leaves another 6px
-   above and below. */
+   once. The 80px column keeps one 12px inline rhythm: the 56px submit, 1.6
+   times the 35px global action, leaves 12px on each side, as each 16px track
+   does within its 40px half. Its 68px row leaves 6px above and below. */
 .team-composer .team-composer-controls {
-  --team-control-item-height: 64px;
+  --team-control-item-height: 68px;
   --team-control-label-row: 14px;
-  --team-control-send-size: 52px;
+  --team-control-send-size: 56px;
   position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0;
   block-size: var(--team-composer-block-size);
@@ -966,7 +966,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
 .team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
 .team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
-/* Eleven inline and six block pixels frame a quiet bevel, border, and short
+/* Twelve inline and six block pixels frame a quiet bevel, border, and short
    cast shadow: physical depth without gloss. */
 .team-composer .team-send {
   --team-send-surface: var(--control-state-accent, var(--accent)); --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
