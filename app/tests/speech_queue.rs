@@ -311,6 +311,45 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     assert_eq!(first.text(), "newest unseen");
 }
 
+/// A turn's final answer revises the prose card already shown under the same
+/// key. Speak hears that revision once; Narrate already spoke the card.
+#[test]
+fn a_final_revision_of_a_seen_card_is_admitted_once_for_speak_only() {
+    let mut cursors = NarrationCursors::default();
+    let history = message("agent-a", "a1", "history");
+    assert!(
+        cursors
+            .observe(true, std::slice::from_ref(&history))
+            .is_empty()
+    );
+    let prose = message("agent-a", "a2", "streamed answer");
+    let first = cursors.observe(false, &[prose, history.clone()]);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].automatic_speech, None);
+
+    let terminal = automatic_message("agent-a", "a2", "streamed answer", "final edges");
+    let revised = cursors.observe(false, &[terminal.clone(), history.clone()]);
+    assert_eq!(
+        revised
+            .iter()
+            .map(|line| (
+                line.key.as_str(),
+                line.narration.as_deref(),
+                line.automatic_speech.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [("a2", None, Some("final edges"))]
+    );
+
+    assert!(
+        cursors
+            .observe(false, &[terminal.clone(), history.clone()])
+            .is_empty()
+    );
+    let mut restored = NarrationCursors::restore(cursors.rows());
+    assert!(restored.observe(false, &[terminal, history]).is_empty());
+}
+
 #[test]
 fn cursor_storage_is_bounded_and_a_missing_cursor_rebases_without_reading_history() {
     let mut cursors = NarrationCursors::default();

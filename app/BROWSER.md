@@ -160,6 +160,14 @@ raise, Down and Left lower. A native vertical range in WebKit and Firefox
 raises on Left, so the app handles Left and Right itself rather than inheriting
 each engine's mapping.
 
+The speech slider decides what live cards voice. Narrate speaks each new
+card's edge segments. Speak voices only what the resident classifies: a final
+answer's first and last visible paragraphs, and the bodies of acknowledged
+steering. A final answer usually revises the prose card already shown under
+the same identity, so the per-agent cursor remembers whether its card carried
+that speech; the revision is spoken once in Speak without repeating Narrate.
+A page load voices none of its history.
+
 When no agent in the team is running and none of its composers holds text, a
 quote, or an image, the frame steps back like an inactive lane: the sliders and
 send button dim and desaturate, and send is disabled because there is nothing to

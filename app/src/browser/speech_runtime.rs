@@ -18,8 +18,8 @@ use super::{SurfaceData, toast};
 use crate::AppRuntime;
 use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
-    Advance, AutomaticChange, Enqueue, ExternalPause, NarrationCursors, NarrationMessage,
-    SpeechEntry, SpeechQueue, SpeechRequest,
+    Advance, AutomaticChange, Enqueue, ExternalPause, NarrationCursorRow, NarrationCursors,
+    NarrationMessage, SpeechEntry, SpeechQueue, SpeechRequest,
 };
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
@@ -423,7 +423,7 @@ pub(super) fn load_narration_cursors() -> NarrationCursors {
     web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
         .and_then(|storage| storage.get_item(NARRATION_CURSOR_STORAGE).ok().flatten())
-        .and_then(|value| serde_json::from_str::<Vec<(String, String)>>(&value).ok())
+        .and_then(|value| serde_json::from_str::<Vec<NarrationCursorRow>>(&value).ok())
         .map_or_else(NarrationCursors::default, NarrationCursors::restore)
 }
 

@@ -348,61 +348,85 @@ pub struct NarrationLine {
     pub automatic_speech: Option<String>,
 }
 
+/// One persisted per-agent cursor: lane, newest observed message key, and
+/// whether that message already carried its resident-classified speech.
+pub type NarrationCursorRow = (String, String, bool);
+
+/// Rendered message identities as `(lane, key)`.
+type MessageIdentities = BTreeSet<(String, String)>;
+
 /// Bounded, recency-ordered per-agent narration cursors.
+///
+/// A card can gain automatic speech after its key passed the cursor: a turn's
+/// final answer revises the prose card already shown under the same identity.
+/// The cursor remembers whether its message carried automatic speech, so that
+/// revision is admitted once more for Speak alone, without repeating its
+/// narration.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NarrationCursors {
-    rows: VecDeque<(String, String)>,
+    rows: VecDeque<NarrationCursorRow>,
 }
 
 impl NarrationCursors {
     /// Restore browser-persisted rows, keeping one newest row per agent.
     #[must_use]
-    pub fn restore(rows: Vec<(String, String)>) -> Self {
+    pub fn restore(rows: Vec<NarrationCursorRow>) -> Self {
         let mut cursors = Self::default();
-        for (lane, key) in rows {
-            cursors.update(lane, key);
+        for row in rows {
+            cursors.update(row);
         }
         cursors
     }
 
     /// Observe one newest-first rendered team and return only messages before
-    /// every known per-agent cursor. A materialization never narrates its history.
+    /// every known per-agent cursor, plus a cursor message that has since gained
+    /// automatic speech. A materialization never narrates its history.
     pub fn observe(
         &mut self,
         materialization: bool,
         messages: &[NarrationMessage],
     ) -> Vec<NarrationLine> {
-        let unseen = self.unseen(materialization, messages);
-        let mut newest = BTreeMap::<String, String>::new();
+        let (unseen, revised) = self.unseen(materialization, messages);
+        let mut newest = BTreeMap::<&str, &NarrationMessage>::new();
         for message in messages {
-            newest
-                .entry(message.lane.clone())
-                .or_insert_with(|| message.key.clone());
+            newest.entry(&message.lane).or_insert(message);
         }
-        for (lane, key) in newest {
-            self.update(lane, key);
+        for message in newest.into_values() {
+            self.update((
+                message.lane.clone(),
+                message.key.clone(),
+                message.automatic_speech.is_some(),
+            ));
         }
         let mut admitted = BTreeSet::new();
         messages
             .iter()
-            .filter(|message| {
-                unseen.contains(&(message.lane.clone(), message.key.clone()))
-                    && admitted.insert(message.lane.clone())
-            })
-            .map(|message| NarrationLine {
-                worktree: message.worktree.clone(),
-                playback: message.playback.clone(),
-                lane: message.lane.clone(),
-                key: message.key.clone(),
-                narration: message.narration.clone(),
-                automatic_speech: message.automatic_speech.clone(),
+            .filter_map(|message| {
+                let identity = (message.lane.clone(), message.key.clone());
+                let narration = if unseen.contains(&identity) {
+                    message.narration.clone()
+                } else if revised.contains(&identity) {
+                    None
+                } else {
+                    return None;
+                };
+                admitted
+                    .insert(message.lane.clone())
+                    .then(|| NarrationLine {
+                        worktree: message.worktree.clone(),
+                        playback: message.playback.clone(),
+                        lane: message.lane.clone(),
+                        key: message.key.clone(),
+                        narration,
+                        automatic_speech: message.automatic_speech.clone(),
+                    })
             })
             .collect()
     }
 
     /// Rows suitable for bounded browser persistence, oldest first.
     #[must_use]
-    pub fn rows(&self) -> Vec<(String, String)> {
+    pub fn rows(&self) -> Vec<NarrationCursorRow> {
         self.rows.iter().cloned().collect()
     }
 
@@ -418,46 +442,51 @@ impl NarrationCursors {
         self.rows.is_empty()
     }
 
+    /// Messages newer than each lane's cursor, and each cursor message that
+    /// gained automatic speech since the cursor recorded it.
     fn unseen(
         &self,
         materialization: bool,
         messages: &[NarrationMessage],
-    ) -> BTreeSet<(String, String)> {
+    ) -> (MessageIdentities, MessageIdentities) {
         let mut by_lane = BTreeMap::<&str, Vec<&NarrationMessage>>::new();
         for message in messages {
             by_lane.entry(&message.lane).or_default().push(message);
         }
         let mut unseen = BTreeSet::new();
+        let mut revised = BTreeSet::new();
+        if materialization {
+            return (unseen, revised);
+        }
         for (lane, lane_messages) in by_lane {
-            let end = if materialization {
-                0
-            } else {
-                self.cursor(lane)
-                    .and_then(|cursor| {
-                        lane_messages
-                            .iter()
-                            .position(|message| message.key == cursor)
-                    })
-                    .unwrap_or(0)
+            let Some((key, automatic)) = self.cursor(lane) else {
+                continue;
+            };
+            let Some(end) = lane_messages.iter().position(|message| message.key == key) else {
+                continue;
             };
             unseen.extend(
                 lane_messages[..end]
                     .iter()
                     .map(|message| (message.lane.clone(), message.key.clone())),
             );
+            let cursor = lane_messages[end];
+            if !automatic && cursor.automatic_speech.is_some() {
+                revised.insert((cursor.lane.clone(), cursor.key.clone()));
+            }
         }
-        unseen
+        (unseen, revised)
     }
 
-    fn cursor(&self, lane: &str) -> Option<&str> {
-        self.rows
-            .iter()
-            .find_map(|(candidate, key)| (candidate == lane).then_some(key.as_str()))
+    fn cursor(&self, lane: &str) -> Option<(&str, bool)> {
+        self.rows.iter().find_map(|(candidate, key, automatic)| {
+            (candidate == lane).then_some((key.as_str(), *automatic))
+        })
     }
 
-    fn update(&mut self, lane: String, key: String) {
-        self.rows.retain(|(candidate, _)| candidate != &lane);
-        self.rows.push_back((lane, key));
+    fn update(&mut self, row: NarrationCursorRow) {
+        self.rows.retain(|(candidate, _, _)| candidate != &row.0);
+        self.rows.push_back(row);
         while self.rows.len() > MAX_NARRATION_CURSORS {
             self.rows.pop_front();
         }
