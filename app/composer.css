@@ -523,8 +523,8 @@
   margin: 0;
 }
 /* Message card actions are separate circles rather than one joined rail:
-   neutral glyphs inside a muted lane-accent ring, both lit to the full accent
-   while hovered, pressed, or speaking. */
+   muted neutral glyphs inside a muted lane-accent ring. Hovered, pressed, or
+   speaking, the glyph lights to neutral ink and the ring to the full accent. */
 .team-surface .mosaic-message-card .message-actions.app-control-rail {
   gap: 4px;
   overflow: visible;
@@ -541,7 +541,7 @@
 }
 .team-surface .mosaic-message-card .message-actions > .card-action:is(:hover, :active, .active) {
   border-color: var(--accent-slot, var(--accent));
-  color: var(--accent-slot, var(--accent));
+  color: var(--ink);
 }
 .team-surface .message-controls-slot .card-action {
   width: var(--message-control-size);

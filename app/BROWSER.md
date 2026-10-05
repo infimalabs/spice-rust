@@ -261,8 +261,9 @@ card's own padding, and its buttons take that rise as extra size, standing two
 and a quarter lines tall and never below the base 24px card action. The
 message content clips at the card's inner edge, not its content box, so the
 risen island is never cut. Each action is its own circle rather than a segment
-of a joined rail: a neutral glyph inside a muted lane-accent ring, with glyph
-and ring lit to the full lane accent while hovered, pressed, or speaking. Only
+of a joined rail: a muted neutral glyph inside a muted lane-accent ring. While
+hovered, pressed, or speaking, the glyph lights to neutral ink and the ring to
+the full lane accent. Only
 the hunk's associated image row clears the island, below its two lines, before
 floating
 inline-start. Narrow cards preserve the same ordering instead of adding a
