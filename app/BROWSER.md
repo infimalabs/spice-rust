@@ -423,23 +423,25 @@ local right-to-left order as the composer columns. Pips retain the unified
 presence palette: active, queued, waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
-bottom, and outer-edge insets. The team's task strip reuses the
-global `task-pill-strip app-control-rail` frame, and both strips round as
-true pills rather than at the shared rail radius. The team's pills stand a
-step smaller than the global ones, and its strip centers in its band so it
-floats clear of the status line beneath. Its total pill
-(`data-work-scope="team"`) carries one open-task count. The remaining rail uses
-Work's clustering rule: from in-flight, ready, blocked, and deferred offer
-order, each visibility-qualified stem's first task places one
-`task-pill--project`, and later matches join that group without changing their
-relative order. Its one `task-pill-stem` button displays the raw stem, opens the
-team's Work scope narrowed to it, wears the muted blocked tone, and centers its
-label in equal inline hover space. The following `task-pill-handle` buttons
-open each task's detail and retain their own lifecycle or current-owner tone;
-closing detail returns focus to that handle. Task overflow scrolls inside its
-band.
+bottom, and outer-edge insets. The global task strip uses the joined
+`task-pill-strip app-control-rail` frame and rounds as a true pill rather than
+at the shared rail radius. The team's tasks are instead tabs standing on the
+status line, a step smaller than the global pills: each tab rounds only its top
+corners, has no bottom edge, and drops one rule width over the status line's
+top rule on the same stream surface, so the tab and the line read as one piece
+while the rule continues between tabs. There is no team total; a team holds at
+most six members. Tabs follow Work's clustering rule: from in-flight, ready,
+blocked, and deferred offer order, each visibility-qualified stem's first task
+places one `task-pill--project` tab, and later matches join that tab without
+changing their relative order. Its `task-pill-stem-target` button displays the
+raw stem in the muted blocked tone with a `task-pill-count` badge of the stem's
+open tasks (muted when none is workable, triage for hidden stems), and opens
+the team's Work scope narrowed to that stem. The following `task-pill-handle`
+buttons open each task's detail and retain their own lifecycle or
+current-owner tone; closing detail returns focus to that handle. Tab overflow
+scrolls inside its band.
 
-The team's total pill opens the canonical global `#/work/team/{team}` view, and
+The canonical global `#/work/team/{team}` view lists the team's work, and
 `#/work/directions/team/{team}` addresses that team's Directions. The team Work
 scope admits each task created by the current team or last claimed by one of
 its current member lanes, exactly once. Its global task history uses the same

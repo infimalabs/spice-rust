@@ -253,9 +253,9 @@ fn render_team_toolbar(
     }
 }
 
-/// The task groups in this team's header band: the team's total, then each
-/// visibility-qualified stem once with all of its open task handles. The fleet
-/// never shows over Work, so none selects.
+/// The task tabs in this team's header band: each visibility-qualified stem
+/// once, badged with its open-task count, followed by all of its open task
+/// handles. The fleet never shows over Work, so none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
@@ -265,78 +265,34 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
         return Html::default();
     }
     html! {
-        <nav
-            class="task-pill-strip app-control-rail team-tasks"
-            aria-label="Open tasks this team created or claims"
-        >
-            {render_team_total(team, &groups, render.navigate)}
+        <nav class="team-tasks" aria-label="Open tasks this team created or claims">
             {for groups.iter().map(|group| render_team_task_group(team, group, render))}
         </nav>
     }
 }
 
-/// The team's open-task count, opening `#/work/team/{team}`.
-fn render_team_total(
-    team: CanonicalUuid,
-    groups: &[crate::work::TeamTaskGroup<'_, '_>],
-    navigate: &Callback<navigation::Intent>,
-) -> Html {
-    use crate::work::WorkAvailability::{InFlight, Ready};
-    let open = groups
-        .iter()
-        .map(|group| group.tasks().len())
-        .sum::<usize>();
-    let active = groups.iter().any(|group| {
-        group
-            .tasks()
-            .iter()
-            .any(|task| task.availability() == InFlight)
-    });
-    let workable = active
-        || groups.iter().any(|group| {
-            group
-                .tasks()
-                .iter()
-                .any(|task| task.availability() == Ready)
-        });
-    let title = format!(
-        "This team's open work: {open} {}",
-        if open == 1 { "task" } else { "tasks" }
-    );
-    let navigate = navigate.clone();
-    html! {
-        <button
-            class={classes!(
-                "task-pill",
-                "task-pill--all",
-                active.then_some("active"),
-                (!workable).then_some("dormant"),
-            )}
-            type="button"
-            title={title.clone()}
-            aria-label={title}
-            data-work-scope="team"
-            onclick={Callback::from(move |_| {
-                navigate.emit(navigation::Intent::Work(crate::work::WorkScope::team_wide(team)));
-            })}
-        >
-            <span class="task-pill-count">{open.to_string()}</span>
-        </button>
-    }
-}
-
-/// One stem target followed by every team-local task handle grouped beneath it.
+/// One stem tab: the stem target with its count badge, followed by every
+/// team-local task handle grouped beneath it.
 fn render_team_task_group(
     team: CanonicalUuid,
     group: &crate::work::TeamTaskGroup<'_, '_>,
     render: &FleetRender<'_, '_>,
 ) -> Html {
+    use crate::work::WorkAvailability::{InFlight, Ready};
     let stem = group.stem().clone();
     let stem_label = stem.stem().to_owned();
     let stem_key = stem.to_string();
-    let stem_aria_label = format!("Open this team's {stem} work");
+    let open = group.tasks().len();
+    let stem_aria_label = format!(
+        "Open this team's {stem} work: {open} {}",
+        if open == 1 { "task" } else { "tasks" }
+    );
     let hidden = stem.hidden();
     let visibility = if hidden { "hidden" } else { "public" };
+    let workable = group
+        .tasks()
+        .iter()
+        .any(|task| matches!(task.availability(), InFlight | Ready));
     let open_stem = {
         let navigate = render.navigate.clone();
         let scope = crate::work::WorkScope::Team {
@@ -348,17 +304,25 @@ fn render_team_task_group(
     html! {
         <span
             key={stem_key}
-            class="task-pill task-pill--project"
+            class={classes!(
+                "task-pill",
+                "task-pill--project",
+                hidden.then_some("system"),
+                (!workable).then_some("dormant"),
+            )}
             data-task-stem={stem_label.clone()}
             data-task-visibility={visibility}
         >
             <button
-                class="task-pill-stem"
+                class="task-pill-stem-target"
                 type="button"
                 title={stem_aria_label.clone()}
                 aria-label={stem_aria_label}
                 onclick={open_stem}
-            >{stem_label}</button>
+            >
+                <span class="task-pill-stem">{stem_label}</span>
+                <span class="task-pill-count">{open.to_string()}</span>
+            </button>
             {for group.tasks().iter().copied().map(|task| {
                 render_team_task_handle(task, hidden, render)
             })}
