@@ -132,9 +132,10 @@ frame, and the send row; the measured overlay height remains the Chat plane's
 collapse distance and top spacer.
 
 The member columns and that control frame are one joined field. Their measured
-layout gap is zero, and adjacent members paint no vertical separator, shadow,
-or panel-colored gutter. The team owns the field's left outer edge and the
-controls own its right outer edge. Every member heading has a permanent
+layout gap is zero, and neither adjacent members nor the member-to-control
+junction paint a vertical separator, shadow, or panel-colored gutter. The team
+owns the field's left outer edge and the controls own its right outer edge.
+Every member heading has a permanent
 accent-colored underline and adjacent accents meet without a panel-colored
 break. A focused member composer is lit: it gains the same accent underline at
 its block-end edge, and the focused draft itself, the primary or a quote draft

@@ -723,11 +723,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: var(--control);
   box-shadow: none;
 }
-/* Member lanes are one uninterrupted field: no shard paints an inline edge
-   between siblings. Only member zero restores the shared rule beside the
-   control frame. */
+/* Member lanes and the control frame are one uninterrupted field: shards paint
+   no inline edge between siblings or beside the controls. */
 .team-agent .composer-shard { border-inline: 0; }
-.team-agent:first-child .composer-shard { border-inline-end: var(--app-control-edge); }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
 .composer-shard--primary {
