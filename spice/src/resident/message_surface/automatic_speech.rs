@@ -3,7 +3,8 @@
 //! `spice-z` speaks a vendor-final answer or the bodies of positively parsed
 //! ACK packets. It keeps commentary, NAK-only prose, tool activity, history,
 //! and replay silent. Final answers use their first and last visible
-//! paragraphs; ACK messages use every eligible packet body. This module makes
+//! paragraphs before any list, or the opening item of a list that leads; ACK
+//! messages use every eligible packet body. This module makes
 //! that selection once at the resident boundary so the browser never guesses
 //! from presentation Markdown.
 
@@ -138,13 +139,34 @@ fn canonical_header(packet: &Acknowledgement) -> bool {
 }
 
 fn prepared_edges(raw: &str) -> Option<String> {
-    let paragraphs = speech_paragraphs(raw);
+    let (prefix, opening_item) = split_at_first_list(raw);
+    let mut paragraphs = speech_paragraphs(prefix);
+    if paragraphs.is_empty() {
+        paragraphs = speech_paragraphs(opening_item);
+    }
     let selected = match paragraphs.as_slice() {
         [] => return None,
         [only] => only.clone(),
         [first, .., last] => format!("{first} {last}"),
     };
     prepared_all(&selected)
+}
+
+/// Text before the first list-item line outside a code fence, and that line's
+/// item body.
+fn split_at_first_list(raw: &str) -> (&str, &str) {
+    let mut start = 0;
+    let mut fenced = false;
+    for line in raw.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+        } else if !fenced && let Some(item) = AutomaticSpeech::list_item(trimmed) {
+            return (&raw[..start], item);
+        }
+        start += line.len();
+    }
+    (raw, "")
 }
 
 fn prepared_all(raw: &str) -> Option<String> {
@@ -157,14 +179,21 @@ fn prepared_all(raw: &str) -> Option<String> {
     (!collapsed.is_empty()).then_some(collapsed)
 }
 
+/// Visible paragraphs in reading order. Fenced code is shown to be read, never
+/// heard: a fence ends the paragraph around it and its contents are skipped.
 fn speech_paragraphs(raw: &str) -> Vec<String> {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let mut paragraphs = Vec::new();
     let mut lines = Vec::new();
+    let mut fenced = false;
     for line in normalized.split('\n') {
-        if line.trim_matches([' ', '\t']).is_empty() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
             push_speech_paragraph(&mut paragraphs, &mut lines);
-        } else {
+        } else if !fenced && line.trim_matches([' ', '\t']).is_empty() {
+            push_speech_paragraph(&mut paragraphs, &mut lines);
+        } else if !fenced {
             lines.push(line);
         }
     }
@@ -510,6 +539,41 @@ mod tests {
                 )
                 .to_owned()
             ),
+        );
+    }
+
+    #[test]
+    fn final_edges_end_at_the_first_list() {
+        assert_eq!(
+            prepared_edges(concat!(
+                "Shipped the fix.\n\n",
+                "```\n- fenced, not a list\n```\n\n",
+                "+1 and 1.5 hours on 2026-10-05 stay prose.\n",
+                "- **Change:** one line.\n",
+                "- Checked both themes.\n\n",
+                "Closing paragraph after the list.",
+            )),
+            Some("Shipped the fix. +1 and 1.5 hours on 2026-10-05 stay prose.".to_owned()),
+        );
+        assert_eq!(
+            prepared_edges("1. First item.\n2) Second item.\n\nAfterword."),
+            Some("First item.".to_owned()),
+        );
+    }
+
+    #[test]
+    fn fenced_code_is_never_spoken() {
+        assert_eq!(
+            prepared_all("Applied the patch.\n```sh\nrm -rf target\n```\nDone."),
+            Some("Applied the patch. Done.".to_owned()),
+        );
+        assert_eq!(
+            prepared_edges("Opened the change.\n\n~~~\nlast words are code\n~~~"),
+            Some("Opened the change.".to_owned()),
+        );
+        assert_eq!(
+            prepared_all("Started.\n```\nunterminated code"),
+            Some("Started.".to_owned())
         );
     }
 
