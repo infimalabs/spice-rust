@@ -1001,7 +1001,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    Filter the slider's visual children, never its label-positioning ancestor:
    filter establishes a containing block and would rebase both labels. */
 .team-composer .team-composer-controls > .team-send {
-  transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard);
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
 .team-composer .team-composer-controls > .team-slider { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
 .team-composer .team-composer-controls > .team-slider > * { transition: filter var(--app-motion-settle) var(--app-ease-standard); }
