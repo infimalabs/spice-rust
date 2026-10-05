@@ -200,9 +200,47 @@ fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -
                         "loading"
                     }}</span>
                 </button>
+                {render_capacity(runtime)}
                 {render_theme_selector()}
             </div>
         </section>
+    }
+}
+
+/// The cumulative plan-weighted weekly quota remaining across accounts, the
+/// figure the trigger's liquid level draws. Without a retained weekly figure
+/// the row keeps only its controls rather than showing a placeholder.
+fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
+    let Some(generation) = runtime.and_then(AppRuntime::quota) else {
+        return Html::default();
+    };
+    let Some(remaining) = generation
+        .last_good
+        .as_deref()
+        .and_then(crate::quota::weekly_remaining)
+    else {
+        return Html::default();
+    };
+    let stale = crate::quota::last_good_stale(generation);
+    let percentage = format!("{:.0}%", remaining * 100.0);
+    let title = if stale {
+        format!(
+            "Weekly quota {percentage} remaining across accounts ({})",
+            crate::quota::Condition::StaleLastGood.label()
+        )
+    } else {
+        format!("Weekly quota {percentage} remaining across accounts")
+    };
+    html! {
+        <span
+            class="app-menu-setting app-menu-capacity"
+            data-quota-stale={stale.then_some("true")}
+            aria-label={title.clone()}
+            {title}
+        >
+            <strong>{"Quota"}</strong>
+            <span>{percentage}{stale.then_some(" stale")}</span>
+        </span>
     }
 }
 

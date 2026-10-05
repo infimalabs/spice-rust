@@ -130,6 +130,14 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
         |remaining| format!("{:.0}% remaining", remaining * 100.0),
     )
 }
+
+/// Whether retained quota data outlived a failed refresh. An in-flight refresh
+/// keeps the retained figure steady instead of flashing on every sample.
+pub(crate) fn last_good_stale(generation: &QuotaGeneration) -> bool {
+    generation.last_good.is_some()
+        && matches!(generation.latest_attempt, Some(QuotaAttempt::Failed { .. }))
+}
+
 /// Plan-weighted weekly quota grouped into provider and account layers.
 ///
 /// Providers and their accounts are ordered by allocated capacity, heaviest

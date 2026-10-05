@@ -441,6 +441,18 @@ body:has(.shell--mosaic),
   gap: 14px;
   padding-inline: 11px;
 }
+/* A read-only chip beside Fast mode: the cumulative weekly quota remaining.
+   It takes the row's spare width, so the controls keep their places. */
+.app-menu-capacity {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  gap: 14px;
+  padding-inline: 11px;
+  cursor: default;
+}
+.app-menu-capacity span { color: var(--ink); }
+.app-menu-capacity[data-quota-stale] span { color: var(--muted); }
 .app-menu-footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, auto);
