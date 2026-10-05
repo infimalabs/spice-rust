@@ -188,10 +188,11 @@ speech; the revision is spoken once in Speak without repeating Narrate. A page
 load voices none of its history.
 
 When no agent in the team is running and none of its composers holds text, a
-quote, or an image, the frame steps back like an inactive lane: the sliders and
-send button dim and desaturate, and send is disabled because there is nothing to
-send. The sliders stay usable. Drafting anything, or any agent running, lights
-them again. Typed text lives in each composer element, so the frame alone
+quote, or an image, the sliders and send button step back like inactive
+controls: they dim and desaturate, and send is disabled because there is nothing
+to send. Their shared composer-surface field does not dim or change colour. The
+sliders stay usable. Drafting anything, or any agent running, lights the controls
+again. Typed text lives in each composer element, so the frame alone
 follows it: every composer change, including a value the app writes on mount,
 send, or restore, raises a bubbling `input` event at the team form, and only the
 frame re-renders, only when the answer flips. A keystroke never renders the

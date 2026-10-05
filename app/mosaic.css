@@ -1000,12 +1000,13 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* With no agent running and nothing drafted, the team's sliders and send step
-   back like an inactive lane; drafting anything lights them again. */
-.team-composer-controls {
+   back like an inactive lane without compositing their shared field surface;
+   drafting anything lights them again. */
+.team-composer .team-composer-controls > * {
   transition: opacity var(--app-motion-settle) var(--app-ease-standard),
     filter var(--app-motion-settle) var(--app-ease-standard);
 }
-.team-composer-controls[data-idle="true"] {
+.team-composer .team-composer-controls[data-idle="true"] > * {
   opacity: var(--inactive-lane-opacity);
   filter: saturate(.55);
 }
