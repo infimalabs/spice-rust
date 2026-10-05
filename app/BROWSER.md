@@ -374,15 +374,16 @@ Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger. Its
 task strip keeps the full first row. The second row is one full-width status
-band: all member pips lead the ticker in a fixed 74px segment, exactly matching
-the Drive/slider column, as one 8px-high sequence ordered like the composer
-columns. Adding members through six consumes only that segment. The status row
-uses the same theme-aware surface as the message stream and one soft top rule
-throughout. The ticker retains relative age, lane-status class,
-agent/tool/command prefix and accent,
-truncated detail, accessible label, and live-region semantics; an empty fleet
-has no pip reserve and keeps the full surfaced status slot without inventing
-status.
+band: the ticker leads into a fixed 74px pip segment directly above the
+physical-right Drive/slider column. Up to six unified 8px pips occupy that
+segment in the same rendered order as the composer columns. Both sequences use
+local RTL flow so canonical member zero remains control-adjacent; the app's
+outer LTR flow is unchanged. The status row uses the same theme-aware surface
+as the message stream and one soft top rule throughout.
+The ticker retains relative age, lane-status class, agent/tool/command prefix
+and accent, truncated detail, accessible label, and live-region semantics; an
+empty fleet has no pip reserve and keeps the full surfaced status slot without
+inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -396,13 +397,10 @@ any plane, card, or team surface observing a resize. Browsers without
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
 status band, while the team surface frames nothing around them. The 52px
-circular send button remains centered in its independent 74px right-edge
-composer-control column. The status band's matching 74px leading segment
-centers up to six 8px pips in one row from main agent through later members,
-using the same canonical left-to-right order as their composer columns; every
-smaller team simply leaves more breathing room around that sequence. Every pip
-mixes its member's canonical accent prominently into its status color and ring;
-queued, waiting, active, and dim bound/unbound states remain distinguishable.
+circular send button remains centered in its independent 74px control column;
+the status band's matching 74px trailing segment aligns directly above it.
+Pips retain the unified presence palette: active, queued, waiting, and dim
+bound/unbound states remain distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame, and both strips round as

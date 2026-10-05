@@ -475,25 +475,28 @@
 .team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
 /* The header is one fixed grid with no outer chrome. Tasks use its full first
-   row; the inline pip sequence and ticker share the full-width status row. */
+   row; the ticker and right-aligned pip sequence share the status row. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
   grid-template:
     "tasks tasks" var(--team-task-band)
-    "pips status" var(--team-status-band)
-    / auto minmax(0, 1fr);
+    "status pips" var(--team-status-band)
+    / minmax(0, 1fr) auto;
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* Pips are the status row's leading inline content, on the same stream surface
-   and soft top rule as the ticker. Empty fleets surrender the whole row. */
+/* Pips are the status row's trailing inline content, on the same stream surface
+   and soft top rule as the ticker. Their local RTL flow matches the composer
+   grid's canonical right-to-left ordering, keeping member zero control-adjacent.
+   Empty fleets surrender the whole segment. */
 .team-toolbar > .team-lights {
   grid-area: pips;
   align-self: stretch;
-  justify-self: start;
+  justify-self: end;
   align-items: center;
   justify-content: space-evenly;
+  direction: rtl;
   gap: var(--team-pip-gap);
   width: var(--team-control-inline-size);
   min-width: var(--team-control-inline-size);
@@ -528,14 +531,15 @@
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 .team-light {
-  --team-pip-accent: var(--accent-slot, var(--accent));
   width: var(--team-pip-size);
   height: var(--team-pip-size);
   border-radius: 50%;
-  background: color-mix(in srgb, var(--team-pip-accent) 68%, var(--agent-presence-color));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--team-pip-accent) 82%, transparent);
+  background: var(--agent-presence-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
   opacity: var(--agent-presence-opacity);
 }
+.team-light.bound,
+.team-light.unbound { box-shadow: none; }
 
 .app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 
