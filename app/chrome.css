@@ -176,14 +176,15 @@ body:has(.shell--mosaic),
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
 /* A team stem tab: a step smaller than the global pills, top corners only,
-   no bottom edge, opaque on the stream surface even when hovered so it covers
-   the status line's rule it stands on. */
+   no bottom edge, and opaque on the stream surface even when hovered. Its
+   brighter top edge distinguishes the tab from the faint status rule below. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button { padding-block: 0; }
 .team-tasks > .task-pill--project,
 .team-tasks > .task-pill--project:hover {
   overflow: clip;
   border: var(--app-control-edge);
+  border-block-start: var(--app-edge-soft);
   border-block-end: 0;
   border-start-start-radius: var(--app-radius-compact);
   border-start-end-radius: var(--app-radius-compact);
