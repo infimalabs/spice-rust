@@ -76,14 +76,14 @@ fn a_quote_between_two_runs_keeps_them_as_separate_edges() {
 
 #[test]
 fn narration_edges_end_at_the_first_list_outside_a_fence() {
-    let listed = "Shipped the fix.\n\n```\n- fenced, not a list\n```\n\nVerified.\n- Change: one line.\n- Checked.\n\nClosing.";
+    let listed = "Shipped the fix.\n\n```\n- fenced, not a list\n```\n\nVerified.\n- **Change:** one `line`.\n- Checked.\n\nClosing.";
     assert_eq!(
         narration_utterance(AgentActivityKind::Prose, listed).as_deref(),
         Some("Shipped the fix. Verified."),
     );
     assert_eq!(
         card_utterance(AgentActivityKind::Prose, listed).as_deref(),
-        Some("Shipped the fix. Verified. - Change: one line. - Checked. Closing."),
+        Some("Shipped the fix. Verified. Change: one line. Checked. Closing."),
         "playback the operator asks for still reads every segment",
     );
     assert_eq!(

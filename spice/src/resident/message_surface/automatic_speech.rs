@@ -208,7 +208,7 @@ fn push_speech_paragraph(paragraphs: &mut Vec<String>, raw_lines: &mut Vec<&str>
             let trimmed = line.trim();
             !(trimmed.starts_with("::") && trimmed.ends_with('}')) && !trimmed.starts_with("TASK ")
         })
-        .map(str::trim)
+        .map(AutomaticSpeech::plain_line)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     if !lines.is_empty() {
