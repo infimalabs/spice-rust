@@ -522,13 +522,14 @@
   min-height: 0;
   margin: 0;
 }
-/* Message card actions are separate borderless circles rather than one joined
-   rail, holding muted neutral glyphs. Each fills with the accent of the rail
-   that contains it, the card's or a quote's, at a final answer's 5% rest wash
-   over the stream surface: on a final card a control melts into the card and
-   only its glyph shows, and a hovered card's 10% wash reveals it. Hovered,
-   pressed, or speaking, the control itself fills at the 10% hover strength,
-   its glyph lights to ink, and a tight muted shadow gives it an edge. */
+/* Message card actions are separate circles rather than one joined rail,
+   holding muted neutral glyphs. Each fills with the accent of the rail that
+   contains it, the card's or a quote's, at a final answer's 5% rest wash over
+   the stream surface: on a final card a control melts into the card and only
+   its glyph shows, and a hovered card's 10% wash reveals it. One static edge in
+   the stream surface colour punches each circle out of its card in every
+   state. Hovered, pressed, or speaking, the control fills at the 10% hover
+   strength and its glyph lights to ink; nothing else changes. */
 .team-surface .mosaic-message-card .message-actions.app-control-rail {
   gap: 4px;
   overflow: visible;
@@ -537,7 +538,7 @@
 }
 .team-surface .mosaic-message-card .message-actions > .card-action {
   --card-action-accent: var(--accent-slot, var(--accent-neutral));
-  border: 0;
+  border: var(--app-control-edge-width) solid var(--message-stream-surface);
   border-radius: 50%;
   background: color-mix(in srgb, var(--card-action-accent) 5%, var(--message-stream-surface));
   box-shadow: none;
@@ -545,9 +546,6 @@
 }
 .team-surface .mosaic-message-card .message-actions > .card-action:is(:hover, :active, .active) {
   background: color-mix(in srgb, var(--card-action-accent) 10%, var(--message-stream-surface));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--card-action-accent) 22%, transparent),
-    0 1px 2px color-mix(in srgb, #000 24%, transparent);
   color: var(--ink);
 }
 .team-surface .message-controls-slot .card-action {
