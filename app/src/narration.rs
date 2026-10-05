@@ -111,7 +111,8 @@ fn push_segment(segments: &mut Vec<String>, lines: &mut Vec<String>) {
     }
 }
 
-/// One line with its Markdown targets removed.
+/// One line as words to say: Markdown targets removed, then the shared
+/// marker cleanup.
 ///
 /// A link is its label; the destination is for clicking. An image is not words
 /// at all: the card shows it, and reading a file name aloud says nothing the
@@ -136,7 +137,7 @@ fn spoken_line(line: &str) -> String {
         rendered.push(character);
         cursor += character.len_utf8();
     }
-    rendered
+    AutomaticSpeech::plain_line(&rendered)
 }
 
 fn markdown_target(line: &str, open: usize) -> Option<(&str, usize)> {

@@ -174,8 +174,10 @@ each engine's mapping.
 The speech slider decides what live cards voice. Narrate speaks each new
 card's edge segments. Speak voices only what the resident classifies: a final
 answer's first and last visible paragraphs, and the bodies of acknowledged
-steering. Neither ever enters a fenced code block. Both edge selections end at
-the first list item outside a fence, so a list never rides along as the
+steering. Neither ever enters a fenced code block, and neither reads Markdown
+marks aloud: emphasis, strike, code, heading, and list markers drop while
+`snake_case` and spaced `2 * 3` keep their characters. Both edge selections
+end at the first list item outside a fence, so a list never rides along as the
 closing paragraph; a message that opens with a list voices its first item. A
 final answer usually revises the prose card already shown under the same
 identity, so the per-agent cursor remembers whether its card carried that
