@@ -471,8 +471,6 @@
 .team-surface[data-team-weight="4"] { --team-weight: 4; }
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
-/* Sibling teams fuse into one console: a single shared rule is their seam. */
-.team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
 /* The header is one fixed grid with no outer chrome. Tasks use its full first
    row; the ticker and right-aligned pip sequence share the status row. */
