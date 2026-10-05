@@ -1266,7 +1266,6 @@ a.relative-age {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.team-surface .message-task-chip,
 .team-surface .message-ack-pill,
 .team-surface .message-taste-pill,
 .team-surface .message-broadcast-pill,
@@ -1305,7 +1304,6 @@ a.relative-age {
   text-decoration: underline; text-underline-offset: 2px;
 }
 .team-surface .message-actions { flex: 0 0 auto; margin-left: 0; }
-.team-surface .message-task-chip,
 .team-surface .message-ack-pill,
 .team-surface .message-taste-pill,
 .team-surface .message-broadcast-pill,
@@ -1353,13 +1351,6 @@ a.relative-age {
 .team-surface .message-classification-group > :not(:first-child) {
   border-inline-start: 1px solid color-mix(in srgb, var(--panel) 24%, transparent);
 }
-.team-surface .message-task-chip {
-  --message-inline-pill-accent: var(--accent);
-  max-width: min(24ch, 100%);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .team-surface .message-final-pill {
   --message-inline-pill-accent: var(--accent-1);
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
@@ -1397,14 +1388,6 @@ a.relative-age {
 .team-surface .message-ack-pill[data-acknowledgement="declined"] {
   --message-inline-pill-accent: var(--accent-3);
 }
-.team-surface .message-task-chip-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.team-surface .markdown-body blockquote .message-task-chip { font-size: inherit; }
 .team-surface .message-taste-pill {
   --message-inline-pill-accent: var(--accent-2);
 }
@@ -1422,7 +1405,6 @@ a.relative-age {
     --message-inline-pill-accent: color-mix(in srgb, var(--accent-1) 90%, var(--ink));
   }
 }
-.team-surface .markdown-body blockquote .message-task-chip,
 .team-surface .markdown-body blockquote .message-ack-pill,
 .team-surface .markdown-body blockquote .message-taste-pill,
 .team-surface .markdown-body blockquote .message-broadcast-pill,
