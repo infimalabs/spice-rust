@@ -54,7 +54,8 @@ decided here:
   (`main-b - spice`). The shape is adopted: the changing state leads and the
   brand trails after ` - `. The speech trigger is not; the title holds the
   remaining-task count and stays stable instead of flipping with each
-  utterance, while the app marks the speaking message card `now-playing`.
+  utterance, while the app marks the speaking message card `now-playing` and
+  only its owning hunk's control as active.
 
 Titles read `5 tasks - spice`, `1 task - spice`, `7 tasks (stale) - spice`,
 `Loading - spice`, and `Disconnected - spice`; the static page title is
@@ -261,10 +262,13 @@ quarter line into the card's free top corner, never past the card's own
 padding, so it blocks exactly two lines of flow and text wraps close beside it.
 Each action is its own circle rather than a segment of a joined rail: a neutral
 glyph inside a muted lane-accent ring, with glyph and ring lit to the full lane
-accent while hovered, pressed, or speaking. Only
-the hunk's associated image row clears the island before floating
-inline-start. Narrow cards preserve the same ordering instead of adding a
-separate controls header.
+accent while hovered, pressed, or speaking. Playback belongs to one exact hunk
+control, not every control in its card; the card keeps its aggregate
+`now-playing` state while only that control becomes Stop. Automatic Speak or
+Narrate playback owns the message's direct-prose control and leaves quoted
+source controls on Play. Only the hunk's associated image row clears the island
+before floating inline-start. Narrow cards preserve the same ordering instead
+of adding a separate controls header.
 
 Committed message cards sit in one lattice whose 9px perimeter and row and
 column seams equal the card's 9px content inset. The seam is one shared gap

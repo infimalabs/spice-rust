@@ -473,7 +473,7 @@ pub(super) struct MosaicPlaneProps {
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: TeamSpeech,
-    pub(super) speech_message: Option<String>,
+    pub(super) speech_owner: Option<SpeechOwner>,
     pub(super) history_targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     pub(super) history_revision: u64,
     pub(super) history: HistorySender,
@@ -1252,7 +1252,9 @@ fn render_activity_cards(
                         open_task={properties.open_message_task.clone()}
                         speech_queue={properties.speak.clone()}
                         speech={properties.speech}
-                        speaking={properties.speech_message.as_deref() == Some(key.as_str())}
+                        speech_owner={properties.speech_owner.as_ref()
+                            .filter(|owner| owner.message_key() == key.as_str())
+                            .cloned()}
                         lane={properties.lane}
                         order={quote_order}
                         {layout}

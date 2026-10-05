@@ -1,6 +1,6 @@
 use app::speech_queue::{
     Advance, AutomaticChange, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors,
-    NarrationMessage, SpeechQueue, SpeechRequest,
+    NarrationMessage, SpeechControl, SpeechQueue, SpeechRequest,
 };
 
 fn playback(lane: &str) -> wire::SpeechPlayback {
@@ -25,11 +25,16 @@ fn narration(lane: &str, text: &str) -> SpeechRequest {
 }
 
 fn manual(lane: &str, key: &str, text: &str) -> SpeechRequest {
+    manual_control(lane, key, SpeechControl::default(), text)
+}
+
+fn manual_control(lane: &str, key: &str, control: SpeechControl, text: &str) -> SpeechRequest {
     SpeechRequest::message(
         worktree(lane),
         playback(lane),
         lane.to_owned(),
         key.to_owned(),
+        control,
         text.to_owned(),
     )
 }
@@ -44,6 +49,42 @@ fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
 
 fn enable(queue: &mut SpeechQueue, team: &str) {
     assert_eq!(queue.set_automatic(team, true), AutomaticChange::Preserved);
+}
+
+#[test]
+fn active_owner_distinguishes_control_hunks_inside_one_message() {
+    let mut queue = SpeechQueue::default();
+    let message = "shared-card";
+    let quote = SpeechControl::new(1, 0);
+    let second_answer = SpeechControl::new(0, 1);
+
+    let quoted = started(queue.enqueue(manual_control("lane", message, quote, "quoted words")));
+    let owner = queue.active_owner().expect("quoted hunk owns playback");
+    assert!(owner.is_control(message, quote));
+    assert!(!owner.is_control(message, SpeechControl::default()));
+    assert!(!owner.is_control(message, second_answer));
+    queue.stop();
+    assert_eq!(queue.finish(quoted.id()), Advance::Ignored);
+
+    started(queue.enqueue(manual_control(
+        "lane",
+        message,
+        second_answer,
+        "second answer",
+    )));
+    let owner = queue.active_owner().expect("second answer owns playback");
+    assert!(owner.is_control(message, second_answer));
+    assert!(!owner.is_control(message, quote));
+
+    queue.stop();
+    enable(&mut queue, "lane");
+    started(queue.enqueue(narration("lane", message)));
+    assert!(
+        queue
+            .active_owner()
+            .expect("automatic speech owns its message")
+            .is_control(message, SpeechControl::default())
+    );
 }
 
 #[test]

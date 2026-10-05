@@ -5,8 +5,9 @@ struct MessageControlContext<'a> {
     message: &'a wire::AgentMessage,
     quote_lane: CanonicalUuid,
     quote_dispatcher: &'a UseReducerDispatcher<ComposerDrafts>,
-    speak: &'a Callback<String>,
-    speaking: bool,
+    speak: &'a Callback<(SpeechControl, String)>,
+    speech_owner: Option<&'a SpeechOwner>,
+    message_key: &'a str,
     order: u64,
     producer_label: &'a str,
     attribution: &'a str,
@@ -110,7 +111,8 @@ fn push_quote_control(
     let correspondent = view::chrome::Correspondent {
         accent: 0,
         speak: context.speak.clone(),
-        speaking: context.speaking,
+        speech_owner: context.speech_owner.cloned(),
+        message_key: context.message_key.to_owned(),
         quote: Some(quote),
     };
     controls.push(MarkdownControl {
@@ -163,7 +165,8 @@ pub(super) fn render_message_chrome(
         quote_lane: props.quote_lane,
         quote_dispatcher: &props.quote_dispatcher,
         speak: &correspondent.speak,
-        speaking: correspondent.speaking,
+        speech_owner: correspondent.speech_owner.as_ref(),
+        message_key: &correspondent.message_key,
         order: props.order,
         producer_label,
         attribution,

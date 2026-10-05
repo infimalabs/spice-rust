@@ -506,8 +506,9 @@ fn ticker(
 #[derive(Clone, PartialEq)]
 pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) accent: usize,
-    pub(in crate::browser) speak: Callback<String>,
-    pub(in crate::browser) speaking: bool,
+    pub(in crate::browser) speak: Callback<(SpeechControl, String)>,
+    pub(in crate::browser) speech_owner: Option<SpeechOwner>,
+    pub(in crate::browser) message_key: String,
     pub(in crate::browser) quote: Option<Callback<()>>,
 }
 
@@ -539,11 +540,24 @@ fn action_speech_text(event: &MouseEvent, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_owned())
 }
 
-pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
-    let speak = correspondent.speak.clone();
-    let quote = correspondent.quote.clone();
-    let fallback = text.to_owned();
-    let speech_label = if correspondent.speaking {
+#[derive(Properties, PartialEq)]
+struct CardActionsProps {
+    text: AttrValue,
+    correspondent: Correspondent,
+}
+
+#[function_component(CardActions)]
+fn card_actions(props: &CardActionsProps) -> Html {
+    let control = use_context::<SpeechControl>().unwrap_or_default();
+    let speak = props.correspondent.speak.clone();
+    let quote = props.correspondent.quote.clone();
+    let fallback = props.text.to_string();
+    let speaking = props
+        .correspondent
+        .speech_owner
+        .as_ref()
+        .is_some_and(|owner| owner.is_control(&props.correspondent.message_key, control));
+    let speech_label = if speaking {
         "Stop playback"
     } else {
         "Speak this message"
@@ -554,15 +568,15 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                 class={classes!(
                     "card-action",
                     "card-action--speak",
-                    correspondent.speaking.then_some("active"),
+                    speaking.then_some("active"),
                 )}
                 type="button" title={speech_label}
                 aria-label={speech_label}
                 onclick={Callback::from(move |event: MouseEvent| {
-                    speak.emit(action_speech_text(&event, &fallback));
+                    speak.emit((control, action_speech_text(&event, &fallback)));
                 })}
             >{
-                if correspondent.speaking {
+                if speaking {
                     html! {
                         <svg
                             class="card-action-icon"
@@ -594,6 +608,15 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                 ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
             }
         </span>
+    }
+}
+
+pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
+    html! {
+        <CardActions
+            text={AttrValue::from(text.to_owned())}
+            correspondent={correspondent.clone()}
+        />
     }
 }
 

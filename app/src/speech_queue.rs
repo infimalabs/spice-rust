@@ -5,32 +5,72 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 /// Maximum number of per-agent narration cursors retained by one browser.
 pub const MAX_NARRATION_CURSORS: usize = 256;
 
+/// One control hunk within a rendered message.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SpeechControl {
+    index: usize,
+    occurrence: usize,
+}
+
+impl SpeechControl {
+    /// Identify one occurrence of one control model within its message.
+    #[must_use]
+    pub const fn new(index: usize, occurrence: usize) -> Self {
+        Self { index, occurrence }
+    }
+}
+
+/// Exact rendered message hunk that currently owns playback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpeechOwner {
+    message_key: String,
+    control: SpeechControl,
+}
+
+impl SpeechOwner {
+    /// Stable rendered message identity.
+    #[must_use]
+    pub fn message_key(&self) -> &str {
+        &self.message_key
+    }
+
+    /// Whether this owner names one exact control hunk.
+    #[must_use]
+    pub fn is_control(&self, message_key: &str, control: SpeechControl) -> bool {
+        self.message_key == message_key && self.control == control
+    }
+}
+
 /// One request entering the browser-global speech arbiter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpeechRequest {
     worktree: String,
     playback: wire::SpeechPlayback,
     lane: Option<String>,
-    message_key: Option<String>,
+    owner: Option<SpeechOwner>,
     text: String,
     automatic: bool,
 }
 
 impl SpeechRequest {
-    /// Operator-requested speech for one exact rendered message.
+    /// Operator-requested speech for one exact rendered message hunk.
     #[must_use]
     pub fn message(
         worktree: String,
         playback: wire::SpeechPlayback,
         lane: String,
         message_key: String,
+        control: SpeechControl,
         text: String,
     ) -> Self {
         Self {
             worktree,
             playback,
             lane: Some(lane),
-            message_key: Some(message_key),
+            owner: Some(SpeechOwner {
+                message_key,
+                control,
+            }),
             text,
             automatic: false,
         }
@@ -49,16 +89,19 @@ impl SpeechRequest {
             worktree,
             playback,
             lane: Some(lane),
-            message_key: Some(message_key),
+            owner: Some(SpeechOwner {
+                message_key,
+                control: SpeechControl::default(),
+            }),
             text,
             automatic: true,
         }
     }
 
-    /// Stable rendered message identity carried by this request.
+    /// Exact rendered hunk owned by this request.
     #[must_use]
-    pub fn message_key(&self) -> Option<&str> {
-        self.message_key.as_deref()
+    pub const fn owner(&self) -> Option<&SpeechOwner> {
+        self.owner.as_ref()
     }
 
     /// Worktree whose admitted speech configuration this request carries.
@@ -99,10 +142,16 @@ impl SpeechEntry {
         self.request.lane.as_deref()
     }
 
-    /// Rendered message that owns this entry, when speech came from a card.
+    /// Exact rendered hunk owned by this entry, when speech came from a card.
+    #[must_use]
+    pub const fn owner(&self) -> Option<&SpeechOwner> {
+        self.request.owner()
+    }
+
+    /// Rendered message containing this entry, when speech came from a card.
     #[must_use]
     pub fn message_key(&self) -> Option<&str> {
-        self.request.message_key.as_deref()
+        self.owner().map(SpeechOwner::message_key)
     }
 
     /// Worktree whose admitted speech configuration this entry carries.
@@ -292,10 +341,10 @@ impl SpeechQueue {
         self.active.is_some()
     }
 
-    /// Exact rendered message owned by the current head, when it has one.
+    /// Exact rendered hunk owned by the current head, when it has one.
     #[must_use]
-    pub fn active_message_key(&self) -> Option<&str> {
-        self.active.as_ref().and_then(SpeechEntry::message_key)
+    pub fn active_owner(&self) -> Option<&SpeechOwner> {
+        self.active.as_ref().and_then(SpeechEntry::owner)
     }
 
     /// Number of entries waiting behind the committed head.
