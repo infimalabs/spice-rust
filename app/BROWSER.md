@@ -133,11 +133,12 @@ to focus and existing modifier attributes; no observer or sampling path runs.
 The two current values occupy the row immediately below the tracks, leaning on
 the center divider: speech ends and allocation starts 3px from it, so they read
 as one phrase such as "quiet drain" or "narrate steer". The control field owns
-only the center divider between the sliders; slider state uses fill without
-adding nested borders or inset shadows. The field behind the Drive button and
-sliders uses the same darker control surface as the adjacent composer bodies,
-so all member drafts and their shared controls read as one continuous surface.
-At the 10rem minimum member width, the standard draft block remains
+only the center divider between the sliders; slider states never tint their
+transparent backgrounds or add nested borders or inset shadows. Quiet and
+Steer use the neutral muted token, Speak and Drive keep the green accent, and
+Narrate and Drain keep the yellow/gold warning accent. The shared field behind
+the Drive button and sliders uses the message-stream surface. At the 10rem
+minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
 height remains the Chat plane's collapse distance and top spacer.
 
