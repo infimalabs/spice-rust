@@ -975,13 +975,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send:not(:disabled):active { filter: brightness(.97); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 0 2px 3px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 18%), 0 1px 0 color-mix(in srgb, var(--team-send-surface) 48%, black); }
 @media (prefers-reduced-motion: reduce) { .team-composer .team-send { transition: none; } }
 .team-slider.armed,
-.team-send.armed { --control-state-accent: var(--accent-1); }
+.team-send.armed { --control-state-accent: var(--muted); }
 .team-slider.maxed,
 .team-send.maxed { --control-state-accent: var(--warning); }
-.team-slider.armed,
-.team-slider.maxed {
-  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--control));
-}
 .team-slider.armed span,
 .team-slider.maxed span { color: var(--control-state-accent); }
 .team-send {
