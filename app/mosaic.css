@@ -1121,7 +1121,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    cards set each one apart. A hovered card washes in its lane accent; the one
    --card-hover-wash strength serves prose cards and image-cover screens alike. */
 .team-surface .mosaic-message-card {
-  --card-hover-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, transparent);
+  --card-hover-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 10%, transparent);
   container-type: inline-size;
   gap: 0;
   margin: 0;

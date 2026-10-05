@@ -261,7 +261,7 @@ lane's 4px accent rail, square corners, and the gutters between them.
 Nested Markdown blockquotes and resolved or unavailable quote cards are square
 at every depth as well. A
 FINAL answer keeps only its pill, with no tint or edge of its own. Hover washes
-the card 16% toward its lane accent, the same strength as an image cover's
+the card 10% toward its lane accent, the same strength as an image cover's
 hover screen, and draws no outline or border, on every
 card type. Measurement clones use the same guttered geometry. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
@@ -274,7 +274,7 @@ authority so no aspect-ratio correction opens a ledger gap. Keyboard focus
 paints one square card-sized border above the cover; its inline-start rail and
 remaining edge meet as one boundary, never nested outlines, and the image cannot
 clip or wash out that edge. Hover draws no border: the same card-sized layer
-screens the whole cover 16% toward the lane accent instead, since the image
+screens the whole cover 10% toward the lane accent instead, since the image
 hides any background wash. The live age and
 producer sit in a compact frosted overlay docked flush into the image card's
 square top-left corner. The overlay carries no corner curve, so its edges meet
