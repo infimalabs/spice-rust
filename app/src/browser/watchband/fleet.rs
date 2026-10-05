@@ -202,7 +202,6 @@ fn render_team_toolbar(
                 role="img"
                 data-lane-light-target-id={member.lane.to_string()}
                 data-lane-status={status.key()}
-                data-accent={standing.accent.to_string()}
                 aria-label={label.clone()}
                 title={label}
             ></span>
