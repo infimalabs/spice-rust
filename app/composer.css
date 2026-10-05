@@ -580,6 +580,13 @@
   gap: var(--message-image-gap);
   margin: 0 12px .35em 0;
 }
+/* A shared row fills its hunk, so each image's pair share resolves against a
+   definite width. A shrink-to-fit float would size from the images' natural
+   widths, collapsing the row until they load after the card was measured. */
+.markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image) {
+  width: 100%;
+  margin-inline-end: 0;
+}
 .markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image)
   > .message-image {
   --message-image-size: min(var(--mosaic-image-size), calc((100% - var(--message-image-gap)) / 2));

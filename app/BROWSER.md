@@ -327,8 +327,10 @@ ordinary in-flow layouts.
 
 Each hunk consolidates its associated images into one inline-start row after
 attribution. The row alone clears inline-end controls; prose then wraps beside
-the images using ordinary CSS flow-root geometry. Multi-image rows retain the
-standard 7px gap and pair sizing at narrow widths.
+a single image using ordinary CSS flow-root geometry. A multi-image row fills
+its hunk, keeps the standard 7px gap, and shares that definite width at narrow
+widths, so its frames are the same before and after the images load and the
+card measures once at its final height.
 
 ## Attribution placement
 
