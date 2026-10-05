@@ -238,7 +238,7 @@ fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
             aria-label={title.clone()}
             {title}
         >
-            <strong>{"Quota"}</strong>
+            <strong>{"Quota left"}</strong>
             <span>{percentage}{stale.then_some(" stale")}</span>
         </span>
     }
