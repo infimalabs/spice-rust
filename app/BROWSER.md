@@ -427,24 +427,26 @@ local right-to-left order as the composer columns. Pips retain the unified
 presence palette: active, queued, waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
-bottom, and outer-edge insets. The global task strip uses the joined
-`task-pill-strip app-control-rail` frame and rounds as a true pill rather than
-at the shared rail radius. The team's tasks are instead tabs attached to the
-status line, a step smaller than the global pills: each tab rounds only its top
-corners, has no bottom edge, and ends exactly at the status row's continuous
-faint top rule. A slightly brighter top edge distinguishes the tab while its
-sides retain the faint control edge and stream-surface fill. There is no team
-total; a team holds at most six members. Tabs follow Work's clustering rule:
-from in-flight, ready,
-blocked, and deferred offer order, each visibility-qualified stem's first task
-places one `task-pill--project` tab, and later matches join that tab without
-changing their relative order. Its `task-pill-stem-target` button displays the
-raw stem in the muted blocked tone with a `task-pill-count` badge of the stem's
-open tasks (muted when none is workable, triage for hidden stems), and opens
-the team's Work scope narrowed to that stem. The following `task-pill-handle`
-buttons open each task's detail and retain their own lifecycle or
-current-owner tone; closing detail returns focus to that handle. Tab overflow
-scrolls inside its band.
+bottom, and outer-edge insets. The global task strip keeps its joined
+`task-pill-strip app-control-rail` pill treatment. Team-local work instead
+forms square message-card flags in the task band: each stem group has one 4px
+inline-start rail, no enclosing top, trailing, or bottom edge, and no rounded
+corners. Its resting 5% wash rises to 10% on hover. The rail and wash use the
+group's lifecycle colour—accent when workable, muted when dormant, and triage
+when hidden—while active task handles retain their current owner's canonical
+accent. An 8px outer inset keeps the flags off the browser edge and a 4px gap
+keeps adjacent stem groups distinct; neither joins the status rule below.
+There is no team total; a team holds at most six members.
+
+Flags follow Work's clustering rule: from in-flight, ready, blocked, and
+deferred offer order, each visibility-qualified stem's first task places one
+`task-pill--project` flag, and later matches join that flag without changing
+their relative order. Its `task-pill-stem-target` button displays the raw stem
+in the muted blocked tone with a `task-pill-count` badge of the stem's open
+tasks, and opens the team's Work scope narrowed to that stem. The following
+`task-pill-handle` buttons open each task's detail and retain their own
+lifecycle or current-owner tone; closing detail returns focus to that handle.
+Flag overflow scrolls inside its band without entering the status/pip row.
 
 The canonical global `#/work/team/{team}` view lists the team's work, and
 `#/work/directions/team/{team}` addresses that team's Directions. The team Work
