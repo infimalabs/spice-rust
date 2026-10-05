@@ -121,6 +121,13 @@ whose vertical tracks follow side by side. Its 64px row centers the circle with
 11px at each edge of the 74px control column and 6px above and below. The button
 is about 1.49 times the 35px global Spice and Dash controls: prominent, with
 enough negative space to avoid reading as a novelty control.
+Its accent-derived bevel, darker lower edge, and short cast shadow supply
+restrained physical depth in both themes. Hover lifts it by one pixel, active
+presses it by one, and reduced-motion mode keeps those states instantaneous.
+The keyboard-submit preview is a separate outer ring, so it does not erase the
+button's depth. It takes the focused agent's accent for ordinary submit and the
+purple broadcast accent for Command-Shift submit. Both are pure CSS reactions
+to focus and existing modifier attributes; no observer or sampling path runs.
 
 The two current values occupy the row immediately below the tracks, leaning on
 the center divider: speech ends and allocation starts 3px from it, so they read

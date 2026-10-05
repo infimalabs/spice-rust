@@ -953,20 +953,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
 .team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
 .team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
-/* Comfortable negative space separates the submit from the fixed control
-   column: 11px at each inline edge and 6px above and below. */
+/* Eleven inline and six block pixels frame a quiet bevel, border, and short
+   cast shadow: physical depth without gloss. */
 .team-composer .team-send {
-  grid-row: 1; grid-column: 1 / -1; place-self: center;
-  width: var(--team-control-send-size);
-  min-width: var(--team-control-send-size);
-  max-width: var(--team-control-send-size);
-  height: var(--team-control-send-size);
-  min-height: var(--team-control-send-size);
-  margin: 0; padding: 0;
-  border: 0;
-  border-radius: 50%;
-  box-shadow: none;
+  --team-send-surface: var(--control-state-accent, var(--accent)); --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
+  grid-row: 1; grid-column: 1 / -1; place-self: center; width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size); margin: 0; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--team-send-surface) 72%, black); border-radius: 50%; background: linear-gradient(145deg, color-mix(in srgb, var(--team-send-surface) 86%, white) 0%, var(--team-send-surface) 52%, color-mix(in srgb, var(--team-send-surface) 84%, black) 100%);
+  box-shadow: var(--team-send-command-ring), inset 0 1px 0 rgb(255 255 255 / 34%), inset 0 -2px 0 rgb(0 0 0 / 18%), 0 2px 0 color-mix(in srgb, var(--team-send-surface) 54%, black), 0 5px 8px -5px rgb(0 0 0 / 55%);
+  font: 700 .94rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-shadow: 0 1px 0 rgb(0 0 0 / 24%); transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
+.team-composer .team-send:not(:disabled):hover { filter: brightness(1.04) saturate(1.04); transform: translateY(-1px); }
+.team-composer .team-send:not(:disabled):active { filter: brightness(.97); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 0 2px 3px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 18%), 0 1px 0 color-mix(in srgb, var(--team-send-surface) 48%, black); }
+@media (prefers-reduced-motion: reduce) { .team-composer .team-send { transition: none; } }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-1); }
 .team-slider.maxed,
@@ -1001,22 +999,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   filter: saturate(.55);
 }
 .team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
-/* Holding the command modifier previews which button Enter submits next from
-   a focused draft. The inset ring stays legible at the composer's clipped
-   edges: team send, observation Add, or, with Shift too, observation Close. */
-html[data-command-modifier-held="true"]
-  .team-composer:has(
-    .composer-shard--primary[data-command-submit-eligible="true"] textarea:focus
-  )
-  .team-send:not(:disabled),
-html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"])
-  .work-note-composer:has(textarea:focus)
-  .team-send:not([value="close"]):not(:disabled),
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
-  .work-note-composer:has(textarea:focus)
-  .team-send[value="close"]:not(:disabled) {
-  box-shadow: inset 0 0 0 3px var(--focus);
-}
+/* Command previews ring outside the Drive button now that its row has room.
+   Ordinary submit follows the focused agent; broadcast uses its purple slot. */
+.team-composer:has(.team-agent[data-accent="0"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-0); }
+.team-composer:has(.team-agent[data-accent="1"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-1); }
+.team-composer:has(.team-agent[data-accent="2"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-2); }
+.team-composer:has(.team-agent[data-accent="3"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-3); }
+.team-composer:has(.team-agent[data-accent="4"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-4); }
+.team-composer:has(.team-agent[data-accent="5"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); --team-send-command-ring: 0 0 0 3px var(--accent-5); }
+html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
+html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-note-composer:has(textarea:focus) .team-send[value="close"]:not(:disabled) { box-shadow: inset 0 0 0 3px var(--focus); }
 /* A narrow viewport trims button inline padding rather than letting controls
    crowd the agent cards; the draft keeps its standard near-square block. */
 @media (max-width: 720px) {
