@@ -135,12 +135,14 @@ The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and neither adjacent members nor the member-to-control
 junction paint a vertical separator, shadow, or panel-colored gutter. The team
 owns the field's left outer edge and the controls own its right outer edge.
-Every member heading has a permanent accent-colored underline. Each painted
-stroke stops 2px short of its member edge, creating a 4px break between accents
-without separating the composer bodies. A focused member composer instead
-paints its block-end highlight at full member width, so adjacent broadcast
-targets merge into one continuous active signal. The focused draft itself, the
-primary or a quote draft pinned to a message, mixes its background 10% toward
+Every member heading has a permanent accent-colored underline aligned to its
+content: the stroke starts beneath the relative-time edge at the heading's 8px
+start padding and ends beneath the hamburger/menu edge at its 5px end padding.
+This leaves a 13px break between adjacent accents without separating the
+composer bodies. A focused member composer instead paints its block-end
+highlight at full member width, so adjacent broadcast targets merge into one
+continuous active signal. The focused draft itself, whether it is the primary
+or a quote draft pinned to a message, mixes its background 10% toward
 that accent. Keyboard broadcast preview lights every occupied recipient through
 the same single lit state, filling each recipient's primary draft. Neither
 treatment changes the field's geometry, and circular menu buttons, range
