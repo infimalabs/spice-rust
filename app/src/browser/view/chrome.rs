@@ -522,7 +522,7 @@ fn action_speech_text(event: &MouseEvent, fallback: &str) -> String {
         return fallback.to_owned();
     };
     if let Ok(nodes) = hunk.query_selector_all(
-        ".message-controls, .message-attribution, .message-image-status, .message-quote-task-line",
+        ".message-controls, .message-attribution, .message-image-status, .message-quote-task-tail",
     ) {
         for index in 0..nodes.length() {
             if let Some(element) = nodes

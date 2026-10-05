@@ -498,10 +498,22 @@
   min-width: 0;
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
+/* The island is a line and a half of the hunk's card prose (line-height
+   1.25), never smaller than the base 24px card action in its rail, and rises
+   into the card's free top corner until it holds exactly one line of flow.
+   The registered size resolves here, at the slot's line height, before
+   buttons with their own type inherit it. */
+@property --message-control-size {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 24px;
+}
 .team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
+  --message-control-size: max(1.5lh, calc(24px + 2 * var(--app-control-edge-width)));
   display: block;
   float: inline-end;
-  margin: 0 0 .25rem .5rem;
+  margin: calc(1lh - var(--message-control-size)) 0 0 .5rem;
+  line-height: 1.25;
 }
 .team-surface .message-controls-slot > span { display: contents; }
 .team-surface .mosaic-message-card .message-controls-slot .message-controls {
@@ -509,6 +521,15 @@
   justify-content: flex-end;
   min-height: 0;
   margin: 0;
+}
+.team-surface .message-controls-slot .card-action {
+  width: calc(var(--message-control-size) - 2 * var(--app-control-edge-width));
+  height: calc(var(--message-control-size) - 2 * var(--app-control-edge-width));
+  font-size: calc(var(--message-control-size) * .4);
+}
+.team-surface .message-controls-slot .card-action > svg.card-action-icon {
+  width: 62.5%;
+  height: 62.5%;
 }
 .markdown-body .message-attribution {
   display: inline-flex;
@@ -581,15 +602,20 @@
   vertical-align: baseline;
 }
 .markdown-body .message-quote-task-tail .message-task-chip { font-size: inherit; }
+/* Provenance follows the speaker's final word as an inline span: empty it
+   takes no room; once filled it floats to the inline end of that last line,
+   apart from the word, and the browser wraps it beneath only when the line
+   has no room. */
+.markdown-body .message-hunk-content .message-quote-task-tail {
+  float: inline-end;
+  margin-inline-start: .5em;
+}
 .markdown-body .message-quote-task-tail:empty,
 .markdown-body .message-quote-task-line:has(> .message-quote-task-tail:empty) {
   display: none;
 }
-.markdown-body .message-disposition-line,
-.markdown-body .message-quote-task-line {
-  clear: both;
-  margin: .35em 0 0;
-}
+.markdown-body .message-disposition-line { clear: both; margin: .35em 0 0; }
+.markdown-body .message-quote-task-line { margin: .35em 0 0; text-align: end; }
 .markdown-body .message-signoff .message-agent-name {
   flex: 0 1 auto;
   font-size: inherit;

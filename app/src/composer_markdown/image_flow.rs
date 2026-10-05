@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event as MarkdownEvent, Tag};
+use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
 
 pub(super) const STACK_OPEN: &str = "<p class=\"message-image-stack\">";
 pub(super) const STACK_CLOSE: &str = "</p>";
@@ -23,7 +23,7 @@ pub(super) struct Attribution {
     pub(super) signoff: String,
     /// Source disposition following its name.
     pub(super) disposition: String,
-    /// Board provenance retained once at the complete attributed layer's tail.
+    /// Board provenance following the attributed layer's final word once.
     pub(super) task_tail: String,
 }
 
@@ -122,18 +122,36 @@ fn lay_out_hunks<'a>(
     let Some(attribution) = attribution else {
         return blocks.into_iter().flat_map(|(_, block)| block).collect();
     };
+    let tail = (!attribution.task_tail.is_empty())
+        .then(|| {
+            blocks
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, (kind, block))| {
+                    matches!(kind, Block::Paragraph | Block::Other)
+                        .then(|| last_word_end(block))
+                        .flatten()
+                        .map(|end| (index, end))
+                })
+        })
+        .flatten();
     let mut events = Vec::new();
     let mut hunk = Vec::new();
-    for (kind, block) in blocks {
+    let mut hunk_tail = None;
+    for (index, (kind, block)) in blocks.into_iter().enumerate() {
         if matches!(kind, Block::Quote | Block::QuoteCard) {
-            push_hunk(&mut events, &mut hunk, attribution);
+            push_hunk(&mut events, &mut hunk, attribution, hunk_tail.take());
             events.extend(block);
         } else {
+            if let Some((_, end)) = tail.filter(|(tail_block, _)| *tail_block == index) {
+                hunk_tail = Some((hunk.len(), end));
+            }
             hunk.push((kind, block));
         }
     }
-    push_hunk(&mut events, &mut hunk, attribution);
-    if !attribution.task_tail.is_empty() {
+    push_hunk(&mut events, &mut hunk, attribution, hunk_tail);
+    if tail.is_none() && !attribution.task_tail.is_empty() {
         events.push(MarkdownEvent::Html(
             format!(
                 "<p class=\"message-quote-task-line\">{}</p>",
@@ -145,10 +163,41 @@ fn lay_out_hunks<'a>(
     events
 }
 
+/// Where board provenance follows a block's final word: after its last prose
+/// text and any inline markup closing around it, outside code blocks.
+fn last_word_end(block: &[MarkdownEvent<'_>]) -> Option<usize> {
+    let mut code = false;
+    let mut end = None;
+    for (index, event) in block.iter().enumerate() {
+        match event {
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => code = true,
+            MarkdownEvent::End(TagEnd::CodeBlock) => code = false,
+            MarkdownEvent::Text(_) | MarkdownEvent::Code(_) | MarkdownEvent::InlineMath(_)
+                if !code =>
+            {
+                end = Some(index + 1);
+            }
+            MarkdownEvent::End(
+                TagEnd::Emphasis
+                | TagEnd::Strong
+                | TagEnd::Strikethrough
+                | TagEnd::Superscript
+                | TagEnd::Subscript
+                | TagEnd::Link,
+            ) if end == Some(index) => end = Some(index + 1),
+            _ => {}
+        }
+    }
+    end
+}
+
+/// Emit one hunk. `tail` names the hunk block and event position after which
+/// the speaker's board provenance follows its final word.
 fn push_hunk<'a>(
     events: &mut Vec<MarkdownEvent<'a>>,
     hunk: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>,
     attribution: &Attribution,
+    tail: Option<(usize, usize)>,
 ) {
     if hunk.is_empty() {
         return;
@@ -157,9 +206,15 @@ fn push_hunk<'a>(
     events.push(MarkdownEvent::Html(attribution.lead_html().into()));
     let mut stacks = Vec::new();
     let mut content = Vec::new();
-    for (kind, block) in hunk.drain(..) {
+    for (index, (kind, mut block)) in hunk.drain(..).enumerate() {
         if kind == Block::Stack {
             stacks.push(block);
+        } else if let Some((_, end)) = tail.filter(|(tail_block, _)| *tail_block == index) {
+            content.extend(block.drain(..end));
+            content.push(MarkdownEvent::InlineHtml(
+                attribution.task_tail.clone().into(),
+            ));
+            content.extend(block);
         } else {
             content.extend(block);
         }
