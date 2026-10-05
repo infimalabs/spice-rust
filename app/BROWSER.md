@@ -117,16 +117,20 @@ margin of its own.
 ## Team composer controls
 
 The full-width team send button sits above the speech and allocation sliders,
-whose vertical tracks follow side by side. The button is exactly two member
-composer headers tall, and the tracks take the rest of the frame. The two
-current values occupy the
-row immediately below the tracks, leaning on the center divider: speech ends
-and allocation starts 3px from it, so they read as one phrase such as "quiet
-drain" or "narrate steer". The control field owns one top edge, one seam below
-the send button, and one center divider between the sliders; slider state uses
-fill without adding nested borders or inset shadows. The frame carries no words
-but the button's. Swapping these two fixed units does not change the composer
-block, frame width, send row, label row, or slider-track size.
+whose vertical tracks follow side by side. Its row is exactly two member
+composer headers tall, and the tracks take the rest of the frame. Inside that
+row the button floats: 4px of negative space separates it from the draft, the
+pip encasing above, and the browser edge, and 2px from the sliders, whose own
+padding already spaces them. The button and the encasing's top corners share
+the pips' 7px radius; the encasing's foot stays square where it meets the
+frame. The two current values occupy the row immediately below the tracks,
+leaning on the center divider: speech ends and allocation starts 3px from it,
+so they read as one phrase such as "quiet drain" or "narrate steer". The
+control field owns one top edge and one center divider between the sliders;
+slider state uses fill without adding nested borders or inset shadows. The
+frame carries no words but the button's. Swapping these two fixed units does
+not change the composer block, frame width, send row, label row, or
+slider-track size.
 At the 10rem minimum member width, the standard draft block is 170px tall and
 reads approximately square without widening the member column.
 That shared block size also determines the speech and allocation tracks and

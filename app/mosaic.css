@@ -478,6 +478,8 @@
   block-size: var(--team-header-size);
   padding: 0;
 }
+/* The encasing rounds only its top corners, at the pips' own radius; its foot
+   continues square into the control frame below. */
 .team-toolbar > .team-lights {
   grid-area: pips;
   align-self: stretch;
@@ -485,6 +487,8 @@
   align-items: center;
   margin: 0;
   padding: 0;
+  border-start-start-radius: var(--app-radius-compact);
+  border-start-end-radius: var(--app-radius-compact);
   background: var(--control);
 }
 /* The team's task strip is the global strip, placed in its own band. */
@@ -873,12 +877,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* The full-width submit sits above the ranges, and their labels sit below.
    Range wrappers stay frameless and state uses fill alone, leaving the control
-   field to own its outer top edge, submit seam, and center divider exactly
-   once. The frame holds no words but the submit's; the two current slider
-   values share the row immediately below the tracks, leaning on the center
-   seam and reading as one phrase ("quiet drain", "narrate steer"). The submit
-   spans exactly two member composer headers, and the slider tracks take the
-   frame's remaining height. */
+   field to own its outer top edge and center divider exactly once. The frame
+   holds no words but the submit's; the two current slider values share the row
+   immediately below the tracks, leaning on the center seam and reading as one
+   phrase ("quiet drain", "narrate steer"). The submit row spans exactly two
+   member composer headers, and the slider tracks take the frame's remaining
+   height. */
 .team-composer .team-composer-controls {
   --team-control-item-height: var(--team-control-submit-block-size);
   --team-control-label-row: 14px;
@@ -926,10 +930,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
 .team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
 .team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
+/* The submit floats inside its row: negative space separates it from the
+   draft, the encasing above, and the browser edge, with less toward the
+   sliders, whose own padding already spaces them. Its corners share the
+   pips' radius. */
 .team-composer .team-send {
-  grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
-  border: 0; border-bottom: var(--app-control-edge);
-  border-radius: 0;
+  grid-column: 1 / -1; min-width: 0; height: auto; min-height: 0;
+  margin: 4px 4px 2px; padding: 5px 4px;
+  border: 0;
+  border-radius: var(--app-radius-compact);
   box-shadow: none;
 }
 .team-slider.armed,
