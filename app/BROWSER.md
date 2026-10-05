@@ -124,12 +124,12 @@ track leaves 12px on each side within its 40px half. The circle's 68px row
 leaves 6px above and below. The button is 1.6 times the 35px global Spice and
 Dash controls: prominent, with enough negative space to avoid reading as a
 novelty control.
-Its accent-derived dark rim, inset face contour, restrained diagonal sheen,
-lower lip, and short contact shadow create physical depth in both themes
-without ornamental chrome or gloss. Hover brightens it without moving; pointer
-press moves it down one pixel, softens the face highlight, and shortens its
-shadow before release pops it back to rest. Reduced-motion mode keeps both
-state changes instantaneous.
+Its accent-derived face rolls continuously into a softly shaded edge, using
+asymmetric edge light and diffuse elevation and contact shadows instead of
+nested outline rings. Hover brightens it without moving; pointer press moves it
+down one pixel, softens the face highlight, and draws the diffuse shadow inward
+before release pops it back to rest. Reduced-motion mode keeps both state
+changes instantaneous.
 The keyboard-submit preview is a separate outer ring, so it does not erase the
 button's depth. It takes the focused agent's accent for ordinary submit and the
 purple broadcast accent for Command-Shift submit. Both are pure CSS reactions
