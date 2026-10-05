@@ -511,12 +511,18 @@
   margin: 0;
 }
 .markdown-body .message-attribution {
-  display: flex;
+  display: inline-flex;
   min-width: 0;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 0 0 .35em;
+  margin: 0 .35em 0 0;
+  vertical-align: baseline;
+}
+.markdown-body .message-hunk-content { display: contents; }
+.markdown-body .message-hunk-content > p:first-child {
+  display: inline;
+  margin-block-start: 0;
 }
 .markdown-body .message-hunk > p.message-image-stack {
   display: flex;

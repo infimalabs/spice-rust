@@ -89,7 +89,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             }
             rendered.push_str("\n\n");
         }
-        let marker = packet_marker(&packet, directives);
+        let marker = packet_marker(&packet);
         if let Some(kind) = marker {
             markers.push(PresentedMarker {
                 start: rendered.len(),
@@ -354,22 +354,17 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
 
 /// The one marker a header's response opens with.
 ///
-/// Ordinary directives the header answered decide it: a refusal is an answer
-/// the operator must see at a glance, so NAK wins; a key the journal still
-/// holds reads pending, so a spoken acknowledgement never reads as credit
-/// before steer::acked lands; otherwise retired keys read ACK. A taste,
-/// broadcast, or review directive already opens with its own flavor marker,
-/// and merely historical context earns no marker. A bare acknowledgement of
-/// the lane seal quotes nothing and still answers.
-fn packet_marker(
-    packet: &ClassifiedPacket,
-    directives: &PresentationDirectives,
-) -> Option<wire::MessageClassificationKind> {
+/// Every quoted directive decides it, regardless of flavor: a refusal is an
+/// answer the operator must see at a glance, so NAK wins; a key the journal
+/// still holds reads pending, so spoken acknowledgement never reads as credit
+/// before steer::acked lands; otherwise retired keys read ACK. Flavor badges
+/// remain independent classifications and follow this disposition in the UI.
+/// A bare acknowledgement of the lane seal quotes nothing and still answers.
+fn packet_marker(packet: &ClassifiedPacket) -> Option<wire::MessageClassificationKind> {
     use wire::MessageClassificationKind as Kind;
     let states = packet
         .contexts
         .iter()
-        .filter(|(key, _)| directives.0.get(key).is_some_and(is_ordinary))
         .map(|(_, state)| *state)
         .collect::<Vec<_>>();
     if states.contains(&ContextState::Declined) {

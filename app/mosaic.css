@@ -1300,6 +1300,31 @@ a.relative-age {
   font-weight: 700;
   white-space: nowrap;
 }
+.team-surface .message-classification-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: baseline;
+}
+.team-surface .message-classification-group > :is(
+  .message-ack-pill,
+  .message-final-pill,
+  .message-taste-pill,
+  .message-review-pill,
+  .message-broadcast-pill
+) {
+  border-radius: 0;
+}
+.team-surface .message-classification-group > :first-child {
+  border-start-start-radius: var(--app-radius-pill);
+  border-end-start-radius: var(--app-radius-pill);
+}
+.team-surface .message-classification-group > :last-child {
+  border-start-end-radius: var(--app-radius-pill);
+  border-end-end-radius: var(--app-radius-pill);
+}
+.team-surface .message-classification-group > :not(:first-child) {
+  border-inline-start: 1px solid color-mix(in srgb, var(--panel) 24%, transparent);
+}
 .team-surface .message-task-chip {
   --message-inline-pill-accent: var(--accent);
   max-width: min(24ch, 100%);
@@ -1322,16 +1347,11 @@ a.relative-age {
   --message-inline-pill-accent: var(--accent);
   justify-content: flex-start;
 }
-/* Beside the speaker, outside any quote, classification badges use FINAL's
-   soft tint. ACK and NAK are siblings of the signoff, so their font reduction
-   includes the signoff's scale; role badges live inside it and inherit that
-   first reduction directly. */
-.team-surface .message-ack-pill:not(.markdown-body blockquote *) {
-  background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
-  color: var(--message-inline-pill-accent);
-  font-size: calc(.8125em * .8125);
-}
-.team-surface .message-signoff > :is(
+/* The speaker's classifications form one segmented pill. Each segment keeps
+   its authenticated color while sharing one outer silhouette and type scale. */
+.team-surface .message-signoff .message-classification-group > :is(
+  .message-ack-pill,
+  .message-final-pill,
   .message-taste-pill,
   .message-review-pill,
   .message-broadcast-pill
@@ -1382,14 +1402,14 @@ a.relative-age {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
 }
-/* Prose-card role badges move to the producing speaker. Keep the authenticated
-   source node in place so :has() above still owns the notice quote's rail. */
+/* Prose-card classifications mount once beside the producing speaker. Keep
+   authenticated source nodes in the Markdown DOM for notice-rail semantics,
+   but do not repeat them in the hunk's words. */
 .team-surface
   .mosaic-message-card[data-agent-activity="prose"]
   .markdown-body
-  blockquote
-  > p
-  > :is(.message-taste-pill, .message-review-pill, .message-broadcast-pill) {
+  .message-hunk-content
+  :is(.message-ack-pill, .message-taste-pill, .message-review-pill, .message-broadcast-pill) {
   display: none;
 }
 /* Card footer actions share one compact control treatment. */

@@ -817,12 +817,11 @@ fn message_badges(
         return ClassificationCounts::default();
     };
     let standing = EventDirectives { directives, event };
-    let acknowledged = recognized_answers(text, &standing)
-        .filter(|(_, disposition)| *disposition == wire::Disposition::Acked)
+    let answered = recognized_answers(text, &standing)
         .map(|(key, _)| key)
         .collect::<BTreeSet<_>>();
     let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
-        let matched = acknowledged
+        let matched = answered
             .iter()
             .filter(|key| directives.0.get(*key).is_some_and(select))
             .count();
@@ -1054,12 +1053,6 @@ fn recognized_answers<'a>(
                 .presents(&key, disposition, recognition.locus)
                 .then_some((key, disposition))
         })
-}
-
-/// Whether a directive carries no flavor marker of its own, so its
-/// acknowledgement state is the only inline mark the app can show for it.
-fn is_ordinary(directive: &PresentationDirective) -> bool {
-    !directive.taste && !directive.review && !has_broadcast_marker(&directive.text)
 }
 
 fn has_broadcast_marker(text: &str) -> bool {
