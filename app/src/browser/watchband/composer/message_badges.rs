@@ -10,8 +10,8 @@ enum Acknowledgement {
 impl Acknowledgement {
     fn precedence(self) -> u8 {
         match self {
-            Self::Pending => 0,
-            Self::Ack => 1,
+            Self::Ack => 0,
+            Self::Pending => 1,
             Self::Nak => 2,
         }
     }
