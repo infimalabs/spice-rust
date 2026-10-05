@@ -137,8 +137,9 @@ only the center divider between the sliders; slider states never tint their
 transparent backgrounds or add nested borders or inset shadows. Quiet and
 Steer use the neutral muted token, Speak and Drive keep the green accent, and
 Narrate and Drain keep the yellow/gold warning accent. The shared field behind
-the Drive button and sliders uses the message-stream surface. At the 10rem
-minimum member width, the standard draft block remains
+the Drive button and sliders uses the standard composer surface, matching the
+drafts beside it, and continues their soft top rule across the control column.
+At the 10rem minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
 height remains the Chat plane's collapse distance and top spacer.
 
@@ -406,11 +407,12 @@ The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
 status band, while the team surface frames nothing around them. The 52px
 circular send button remains centered in its independent 74px physical-right
-composer-control column, which also sits on the stream surface, slightly
-brighter than the drafts beside it. The status band's matching 74px segment
-aligns directly above it and centers up to six 8px pips in the same local
-right-to-left order as the composer columns. Pips retain the unified presence
-palette: active, queued, waiting, and dim bound/unbound states remain
+composer-control column. That column matches the darker composer surface and
+continues the composers' soft top rule above the send button. The status band's
+matching 74px segment aligns directly above it, shares the ticker's
+stream-surface fill and top rule, and centers up to six 8px pips in the same
+local right-to-left order as the composer columns. Pips retain the unified
+presence palette: active, queued, waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The team's task strip reuses the
