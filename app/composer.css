@@ -499,6 +499,15 @@
   display: flow-root;
   min-width: 0;
 }
+/* A zero-width presentational prop holds the hunk's first two lines open
+   independent of the action island: the image row clears it, so the heading
+   and the start of the prose always keep the upper-left corner. */
+.markdown-body .message-hunk::before {
+  float: inline-start;
+  width: 0;
+  height: 2lh;
+  content: "";
+}
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
 /* The island's flow footprint is exactly two lines of the hunk's card prose
    (line-height 1.25), so an image row clearing it leaves the heading line and
@@ -579,7 +588,7 @@
 .markdown-body .message-hunk > p.message-image-stack {
   display: flex;
   float: inline-start;
-  clear: inline-end;
+  clear: both;
   max-width: 100%;
   align-items: flex-end;
   gap: var(--message-image-gap);
