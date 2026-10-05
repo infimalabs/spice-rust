@@ -142,9 +142,10 @@ layout gap is zero, and neither adjacent members nor the member-to-control
 junction paint a vertical separator, shadow, or panel-colored gutter. The team
 owns the field's left outer edge and the controls own its right outer edge.
 Every member heading has a permanent accent-colored underline. Each painted
-stroke stops 1px short of its member edge, creating a 2px break between accents
-without separating the composer bodies. A focused member composer uses the
-same inset for its block-end highlight, and the focused draft itself, the
+stroke stops 2px short of its member edge, creating a 4px break between accents
+without separating the composer bodies. A focused member composer instead
+paints its block-end highlight at full member width, so adjacent broadcast
+targets merge into one continuous active signal. The focused draft itself, the
 primary or a quote draft pinned to a message, mixes its background 10% toward
 that accent. Keyboard broadcast preview lights every occupied recipient through
 the same single lit state, filling each recipient's primary draft. Neither
