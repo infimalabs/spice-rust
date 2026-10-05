@@ -432,10 +432,12 @@ segment; neither row has a hamburger or aggregate team-task count.
 
 One compact square flag per visibility-qualified project stem follows in-flight,
 ready, blocked, and deferred offer order. A flag echoes the message cards: one
-4px inline-start lifecycle rail, no enclosing perimeter or rounded corners, a
-5% resting wash, and a 10% hover wash. Workable, dormant, and hidden groups use
-accent, muted, and triage rails respectively. An 8px outer inset and 4px
-inter-group gap keep flags clear of the browser edge and one another. The band
+4px inline-start lifecycle rail, no enclosing perimeter or rounded corners, and
+a 5% lifecycle-tinted resting wash. The hovered stem or handle target alone
+takes a 10% wash in its current lifecycle or owner colour. Workable, dormant,
+and hidden groups use accent, muted, and triage rails respectively. An 8px
+outer inset and 4px inter-group gap keep flags clear of the browser edge and
+one another. The band
 scrolls horizontally when its labels outgrow the available width, without
 overlapping the status row or its pips.
 

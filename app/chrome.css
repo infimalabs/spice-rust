@@ -177,7 +177,8 @@ body:has(.shell--mosaic),
 }
 /* A team stem flag echoes a message card rather than the global pill strip:
    one square 4px lifecycle rail, a 5% resting wash, and no enclosing frame.
-   The rail and wash follow the group's workable, dormant, or hidden colour. */
+   The rail and rest wash follow the group's workable, dormant, or hidden
+   colour; each hovered target gets its own exact 10% current-colour wash. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button { padding-block: 0; }
 .team-tasks > .task-pill--project {
@@ -187,8 +188,8 @@ body:has(.shell--mosaic),
   border-radius: 0;
   background: color-mix(in srgb, currentColor 5%, transparent);
 }
-.team-tasks > .task-pill--project:hover {
-  background: color-mix(in srgb, currentColor 10%, transparent);
+.team-tasks .task-pill--project > button:hover {
+  background: color-mix(in srgb, currentColor 10%, var(--page));
 }
 .team-tasks :focus-visible { outline-offset: -2px; }
 .app-global-status {
