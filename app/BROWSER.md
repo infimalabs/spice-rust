@@ -455,9 +455,11 @@ Flag overflow scrolls inside its band without entering the status/pip row.
 The canonical global `#/work/team/{team}` view lists the team's work under the
 team's Dash name, its host agent's label such as "rb team"; the route keeps the
 UUID. `#/work/directions/team/{team}` addresses that team's Directions. The team Work
-scope admits each task created by the current team or last claimed by one of
-its current member lanes, exactly once. Its global task history uses the same
-team filter and restarts at the newest page when scope changes. There is no
+scope admits each open task whose single home is that team: the team of the
+lane actively claiming it, or no team when that lane is unteamed; otherwise its
+current creator team; otherwise its last claimant's team. Its global task
+history uses the resident's team filter and restarts at the newest page when
+scope changes. There is no
 team-local Settled list or Kept jobs table; Running jobs, open work, and task
 history remain the global Work surfaces.
 

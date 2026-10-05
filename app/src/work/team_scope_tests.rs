@@ -15,7 +15,7 @@ fn public(stem: &str) -> WorkStemIdentity {
 }
 
 #[test]
-fn team_scope_waits_for_the_roster_then_unions_creator_and_member_last_claim_once() {
+fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks() {
     let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     let member = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     let other_team = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
@@ -154,7 +154,6 @@ fn team_header_groups_stems_by_first_task_without_changing_source_order() {
         grouped,
         [
             ("gamma.*".to_owned(), vec!["gamma.claimed".to_owned()]),
-            ("delta.*".to_owned(), vec!["delta.elsewhere".to_owned()]),
             ("beta.*".to_owned(), vec!["beta.second".to_owned()]),
             (
                 "alpha.*".to_owned(),
@@ -175,6 +174,71 @@ fn team_header_groups_stems_by_first_task_without_changing_source_order() {
             ("delta.*".to_owned(), vec!["delta.elsewhere".to_owned()]),
             ("omega.*".to_owned(), vec!["omega.unrelated".to_owned()]),
         ],
-        "a task created by one team and claimed by another shows on both",
+        "a task created by one team and actively claimed by another shows only on the claimant's",
+    );
+}
+
+#[test]
+fn task_home_is_the_active_claimant_team_then_creator_then_last_claimant() {
+    let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let other_member = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    let unteamed_lane = uuid("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    let homed = |value, creator: Option<CanonicalUuid>, claim_by| {
+        let mut row = task(value, "alpha.task");
+        row.creator_team = creator;
+        if let Some((lane, disposition)) = claim_by {
+            let mut head = claim(&row, disposition);
+            head.body.lane = lane;
+            row.claim = Some(head);
+        }
+        row
+    };
+    let board = board(vec![
+        homed(
+            1,
+            Some(team),
+            Some((other_member, ClaimDisposition::Active)),
+        ),
+        homed(
+            2,
+            Some(team),
+            Some((unteamed_lane, ClaimDisposition::Active)),
+        ),
+        homed(3, Some(team), Some((other_member, ClaimDisposition::Freed))),
+        homed(4, None, Some((other_member, ClaimDisposition::Lapsed))),
+        homed(
+            5,
+            Some(uuid("ffffffff-ffff-4fff-8fff-ffffffffffff")),
+            Some((member, ClaimDisposition::Freed)),
+        ),
+    ]);
+    let projection = WorkProjection::from_board_with_team_memberships(
+        &board,
+        Some(BTreeSet::from([team, other_team])),
+        &BTreeMap::from([(member, team), (other_member, other_team)]),
+    );
+    let homes = projection
+        .tasks()
+        .iter()
+        .map(|task| {
+            [team, other_team]
+                .into_iter()
+                .filter(|&candidate| task.belongs_to_team(candidate))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        homes,
+        [
+            vec![other_team],
+            vec![],
+            vec![team],
+            vec![other_team],
+            vec![team],
+        ],
+        "an active claim homes the task with the claimant's team, or no team for an \
+         unteamed claimant; otherwise the roster creator team, then the last claimant's",
     );
 }
