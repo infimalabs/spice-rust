@@ -729,7 +729,7 @@
   pointer-events: none;
 }
 .team-surface .mosaic-message-card--image-cover:hover::after {
-  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, transparent);
+  background: var(--card-hover-wash);
 }
 .team-surface .mosaic-message-card--image-cover:is(
   :focus-visible,
