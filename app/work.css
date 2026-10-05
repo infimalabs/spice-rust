@@ -679,31 +679,9 @@
 .task-text img { max-width: 100%; }
 .task-text a { color: var(--accent); }
 .work-detail-section ul > li + li { margin-top: 4px; }
-.work-detail .task-text .message-task-chip {
-  display: inline-flex;
-  max-width: min(24ch, 100%);
-  min-height: 17px;
-  align-items: center;
-  vertical-align: baseline;
-  padding: 0 4px;
-  overflow: hidden;
-  border-radius: var(--app-radius-pill);
-  background: color-mix(in srgb, color-mix(in srgb, var(--accent) 80%, var(--ink)) 80%, transparent);
-  color: var(--panel);
-  cursor: pointer;
-  font-size: .8125em;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.work-detail .task-text .message-task-chip:hover { filter: brightness(1.08); }
 .work-detail .task-text .message-task-chip:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-}
-.work-detail .task-text .message-task-chip-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .work-detail-media { --mosaic-image-size: 8.75rem; min-width: 0; }
 .work-detail-subsection { margin-top: 15px; padding-top: 1px; border-top: var(--app-edge-soft); }
@@ -1243,47 +1221,15 @@
   gap: 5px;
 }
 .team-direction-tasks:empty { display: none; }
+/* The shared task pill in style.css paints the chip; the ledger only keeps
+   its stacking layer. */
 .team-direction-task-chip {
-  --team-direction-task-accent: var(--accent);
   position: relative;
   z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  max-width: min(24ch, 100%);
-  min-width: 0;
-  min-height: 17px;
-  padding: 0 4px;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--app-radius-pill);
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--team-direction-task-accent) 80%, var(--ink)) 80%,
-    transparent
-  );
-  box-shadow: none;
-  color: var(--panel);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .6rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-.team-direction-task-chip:hover {
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--team-direction-task-accent) 88%, var(--ink)) 88%,
-    transparent
-  );
 }
 .team-direction-task-chip:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-}
-.team-direction-task-chip-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Team and global job tables show in full up to --team-job-visible rows,

@@ -328,6 +328,8 @@ origin-task badges. Empty, it takes no room; filled, it floats to the inline
 end of that final line, set apart from the word, and the browser wraps it
 beneath only when the line has no room. A layer with no words of its own keeps
 the target on a line after its content. The speak action never reads it.
+Every task pill, in prose, quotes, Work detail, and the Directions ledger, is
+that same badge: accent type on a 6% accent tint at the quote-tail scale.
 Repeating source attribution around a nested quote never repeats or relocates
 the quote layer's task provenance.
 

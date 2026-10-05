@@ -470,8 +470,6 @@
 }
 .team-surface .mosaic-message-content > :is(.message-flow, .message-body) { align-self: start; }
 .team-surface .message-flow { display: flow-root; min-width: 0; }
-.team-surface .message-task-chip[role="button"] { cursor: pointer; }
-.team-surface .message-task-chip[role="button"]:hover { filter: brightness(1.08); }
 .team-surface .message-task-chip[role="button"]:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
@@ -601,7 +599,6 @@
   font-size: .8125em;
   vertical-align: baseline;
 }
-.markdown-body .message-quote-task-tail .message-task-chip { font-size: inherit; }
 /* Provenance follows the speaker's final word as an inline span: empty it
    takes no room; once filled it floats to the inline end of that last line,
    apart from the word, and the browser wraps it beneath only when the line

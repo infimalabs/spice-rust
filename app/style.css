@@ -991,3 +991,36 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .team-arrangement-menu { align-content: start; grid-auto-rows: minmax(48px, auto); }
 
+/* Every task pill, wherever a handle appears, is one quiet variant: accent type
+   on a 6% accent tint at the quote-tail scale, so a handle never outweighs the
+   words around it. */
+.message-task-chip,
+.team-direction-task-chip {
+  display: inline-flex;
+  max-width: min(24ch, 100%);
+  min-width: 0;
+  min-height: 17px;
+  align-items: center;
+  vertical-align: baseline;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--app-radius-pill);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(.8125rem * .8125);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.message-task-chip, .team-direction-task-chip):hover { filter: brightness(1.08); }
+:is(.message-task-chip-label, .team-direction-task-chip-label) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
