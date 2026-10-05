@@ -452,8 +452,9 @@ tasks, and opens the team's Work scope narrowed to that stem. The following
 lifecycle or current-owner tone; closing detail returns focus to that handle.
 Flag overflow scrolls inside its band without entering the status/pip row.
 
-The canonical global `#/work/team/{team}` view lists the team's work, and
-`#/work/directions/team/{team}` addresses that team's Directions. The team Work
+The canonical global `#/work/team/{team}` view lists the team's work under the
+team's Dash name, its host agent's label such as "rb team"; the route keeps the
+UUID. `#/work/directions/team/{team}` addresses that team's Directions. The team Work
 scope admits each task created by the current team or last claimed by one of
 its current member lanes, exactly once. Its global task history uses the same
 team filter and restarts at the newest page when scope changes. There is no

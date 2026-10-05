@@ -193,11 +193,13 @@ fn render_analytics(
         ),
         Axis::Topology => render_topology(render),
     };
+    let surface = render.surface.read();
+    let lanes = surface.as_ref().and_then(|runtime| runtime.lanes());
     html! {
         <>
             <div class="page-heading">
                 <div>
-                    <h1>{analytics_heading(active_axis, work, render.work_scope)}</h1>
+                    <h1>{analytics_heading(active_axis, work, render.work_scope, lanes)}</h1>
                     if let Some(summary) = summary {
                         <p>{summary}</p>
                     }
@@ -211,16 +213,25 @@ fn render_analytics(
 pub(super) const fn axis_label(axis: Axis) -> &'static str {
     AppDestination::for_axis(axis).label()
 }
-fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
+fn analytics_heading(
+    axis: Axis,
+    work: Option<&WorkProjection<'_>>,
+    scope: &WorkScope,
+    lanes: Option<&crate::runtime::LaneView>,
+) -> String {
     match axis {
         Axis::Topology => "Resident dashboard".to_owned(),
         Axis::Flow => match scope {
             WorkScope::AllOpen => "All open work".to_owned(),
-            WorkScope::Team { team, stem: None } => format!("Team {team} work"),
-            WorkScope::Team {
-                team,
-                stem: Some(stem),
-            } => format!("Team {team} {stem} work"),
+            WorkScope::Team { team, stem } => {
+                let name = lanes
+                    .and_then(|lanes| lanes.lanes.iter().find(|row| row.lane == *team))
+                    .map_or_else(|| format!("Team {team}"), team_name);
+                stem.as_ref().map_or_else(
+                    || format!("{name} work"),
+                    |stem| format!("{name} {stem} work"),
+                )
+            }
             WorkScope::Stem(identity) => work
                 .and_then(|projection| projection.stem(identity))
                 .map_or_else(
@@ -429,11 +440,8 @@ fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
                 } else {
                     <div class="dash-overview-topology-groups">
                         {for teams.iter().map(|team| {
-                            let host = team.host().map_or("Empty", |member| {
-                                crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
-                            });
                             render_topology_group(
-                                format!("{host} team"),
+                                team_name(team),
                                 Some(team.lane),
                                 team_agents(team, &standings).collect(),
                             )
@@ -452,6 +460,15 @@ fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
         </>
     };
     (Some(summary), body)
+}
+
+/// A team's display name: its host's label, as Dash titles the team group, so
+/// pages addressed by the team's UUID name it the same way.
+fn team_name(team: &crate::runtime::LaneRow) -> String {
+    let host = team.host().map_or("Empty", |member| {
+        crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
+    });
+    format!("{host} team")
 }
 
 fn render_operator_and_resident(
