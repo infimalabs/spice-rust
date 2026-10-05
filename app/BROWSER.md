@@ -54,7 +54,8 @@ decided here:
   (`main-b - spice`). The shape is adopted: the changing state leads and the
   brand trails after ` - `. The speech trigger is not; the title holds the
   remaining-task count and stays stable instead of flipping with each
-  utterance, while the app marks the speaking message card `now-playing`.
+  utterance, while the app marks the speaking message card `now-playing` and
+  only its owning hunk's control as active.
 
 Titles read `5 tasks - spice`, `1 task - spice`, `7 tasks (stale) - spice`,
 `Loading - spice`, and `Disconnected - spice`; the static page title is
@@ -265,9 +266,11 @@ of a joined rail: a muted neutral glyph inside a muted ring in the accent of the
 rail that contains it, so a quote's controls follow that quote's speaker and an
 operator or system quote's controls stay neutral inside an accented card. While
 hovered, pressed, or speaking, the glyph lights to neutral ink and the ring to
-that full accent. Only
-the hunk's associated image row clears the island, below its two lines, before
-floating
+that full accent. Playback belongs to one exact hunk control, not every control
+in its card; the card keeps its aggregate `now-playing` state while only that
+control becomes Stop. Automatic Speak or Narrate playback owns the message's
+direct-prose control and leaves quoted source controls on Play. Only the hunk's
+associated image row clears the island, below its two lines, before floating
 inline-start. Narrow cards preserve the same ordering instead of adding a
 separate controls header.
 

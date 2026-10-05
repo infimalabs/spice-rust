@@ -19,7 +19,7 @@ use crate::AppRuntime;
 use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
     Advance, AutomaticChange, Enqueue, ExternalPause, NarrationCursorRow, NarrationCursors,
-    NarrationMessage, SpeechEntry, SpeechQueue, SpeechRequest,
+    NarrationMessage, SpeechEntry, SpeechOwner, SpeechQueue, SpeechRequest,
 };
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
@@ -51,7 +51,7 @@ pub(super) struct AgentSpeechControls {
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) set_automatic: Callback<(String, bool)>,
-    pub(super) message: UseStateHandle<Option<String>>,
+    pub(super) owner: UseStateHandle<Option<SpeechOwner>>,
 }
 
 #[derive(Clone)]
@@ -59,7 +59,7 @@ pub(super) struct SpeechRuntime {
     pub(super) queue: Rc<RefCell<SpeechQueue>>,
     pub(super) controller: Rc<RefCell<crate::speech::Controller>>,
     pub(super) status: UseStateHandle<SpeechStatus>,
-    pub(super) message: UseStateHandle<Option<String>>,
+    pub(super) owner: UseStateHandle<Option<SpeechOwner>>,
 }
 
 impl SpeechRuntime {
@@ -71,7 +71,7 @@ impl SpeechRuntime {
     }
 
     fn toggle_message(&self, request: SpeechRequest) {
-        let was_playing = self.queue.borrow().active_message_key() == request.message_key();
+        let was_playing = self.queue.borrow().active_owner() == request.owner();
         self.stop();
         if !was_playing {
             self.enqueue(request);
@@ -80,7 +80,7 @@ impl SpeechRuntime {
 
     fn start(&self, entry: SpeechEntry) {
         let generation = self.controller.borrow_mut().begin();
-        self.message.set(entry.message_key().map(str::to_owned));
+        self.owner.set(entry.owner().cloned());
         self.status.set(SpeechStatus::Idle);
         match entry.playback().clone() {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
@@ -258,7 +258,7 @@ impl SpeechRuntime {
             Advance::Ignored => {}
             Advance::Idle => {
                 self.controller.borrow_mut().stop();
-                self.message.set(None);
+                self.owner.set(None);
                 self.status
                     .set(failure.map_or(SpeechStatus::Idle, SpeechStatus::Failed));
             }
@@ -276,7 +276,7 @@ impl SpeechRuntime {
             ExternalPause::Ignored => {}
             ExternalPause::Stopped | ExternalPause::Idle => {
                 self.controller.borrow_mut().stop();
-                self.message.set(None);
+                self.owner.set(None);
                 self.status.set(SpeechStatus::Idle);
             }
             ExternalPause::Start(entry) => self.start(entry),
@@ -286,7 +286,7 @@ impl SpeechRuntime {
     fn stop(&self) {
         self.queue.borrow_mut().stop();
         self.controller.borrow_mut().stop();
-        self.message.set(None);
+        self.owner.set(None);
         self.status.set(SpeechStatus::Idle);
     }
 
@@ -295,7 +295,7 @@ impl SpeechRuntime {
             AutomaticChange::Preserved => {}
             AutomaticChange::Idle => {
                 self.controller.borrow_mut().stop();
-                self.message.set(None);
+                self.owner.set(None);
                 self.status.set(SpeechStatus::Idle);
             }
             AutomaticChange::Start(entry) => self.start(entry),
@@ -321,7 +321,7 @@ pub(super) fn use_speech_failure_toast(speech_status: &UseStateHandle<SpeechStat
 pub(super) fn use_agent_speech_controls(
     runtime: Rc<RefCell<SpeechRuntime>>,
     narration_cursors: Rc<RefCell<NarrationCursors>>,
-    message: UseStateHandle<Option<String>>,
+    owner: UseStateHandle<Option<SpeechOwner>>,
 ) -> AgentSpeechControls {
     let enqueue = {
         let runtime = runtime.clone();
@@ -354,7 +354,7 @@ pub(super) fn use_agent_speech_controls(
         speak: (*speak).clone(),
         narrate: (*narrate).clone(),
         set_automatic: (*set_automatic).clone(),
-        message,
+        owner,
     }
 }
 

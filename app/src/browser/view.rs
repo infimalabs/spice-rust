@@ -21,8 +21,8 @@ pub(super) struct AgentControls {
     pub(super) narrate: Callback<NarrationBatch>,
     /// Set one team's durable automatic-speech admission policy.
     pub(super) set_automatic_speech: Callback<(String, bool)>,
-    /// Exact rendered message currently owned by the speech queue.
-    pub(super) speech_message: UseStateHandle<Option<String>>,
+    /// Exact rendered message hunk currently owned by the speech queue.
+    pub(super) speech_owner: UseStateHandle<Option<SpeechOwner>>,
 }
 
 /// Pending direction count shared by compact and expanded presence indicators.

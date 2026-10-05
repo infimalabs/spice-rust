@@ -29,7 +29,9 @@ use crate::client_action::ClientAction;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{AppSurface, topology_mutation_requires_refresh};
-use crate::speech_queue::{NarrationMessage, SpeechQueue, SpeechRequest};
+use crate::speech_queue::{
+    NarrationMessage, SpeechControl, SpeechOwner, SpeechQueue, SpeechRequest,
+};
 use crate::view::{AppRoute, RouteEvidence};
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
@@ -510,17 +512,17 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     );
     let work_map = use_state(view::WorkMapState::default);
     let speech_status = use_state(SpeechStatus::default);
-    let speech_message = use_state(|| None::<String>);
+    let speech_owner = use_state(|| None::<SpeechOwner>);
     let speech_runtime = SpeechRuntime {
         queue: use_mut_ref(SpeechQueue::default),
         controller: use_mut_ref(crate::speech::Controller::default),
         status: speech_status.clone(),
-        message: speech_message.clone(),
+        owner: speech_owner.clone(),
     };
     let speech_ref = use_mut_ref(|| speech_runtime.clone());
     *speech_ref.borrow_mut() = speech_runtime.clone();
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
+    let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_owner);
     let agents = use_agent_controls(agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     let open_message_task = use_open_message_task(&navigate, &work_detail.return_focus_to);
@@ -894,7 +896,7 @@ fn use_agent_controls(speech: AgentSpeechControls) -> view::AgentControls {
         speak: speech.speak,
         narrate: speech.narrate,
         set_automatic_speech: speech.set_automatic,
-        speech_message: speech.message,
+        speech_owner: speech.owner,
     }
 }
 

@@ -489,7 +489,7 @@ fn render_activity(
                 speak={controls.speak.clone()}
                 {narrate}
                 speech={team_control.speech}
-                speech_message={(*controls.speech_message).clone()}
+                speech_owner={(*controls.speech_owner).clone()}
                 history_targets={history.targets}
                 history_revision={history.revision}
                 history={history_sender}

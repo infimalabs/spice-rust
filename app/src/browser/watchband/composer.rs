@@ -389,7 +389,7 @@ pub(super) struct AgentMessageCardProps {
     pub(super) open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(super) speech_queue: Callback<SpeechRequest>,
     pub(super) speech: TeamSpeech,
-    pub(super) speaking: bool,
+    pub(super) speech_owner: Option<SpeechOwner>,
     pub(super) lane: CanonicalUuid,
     pub(super) order: u64,
     pub(super) layout: CardLayout,
@@ -410,7 +410,7 @@ impl PartialEq for AgentMessageCardProps {
             && self.open_task == other.open_task
             && self.speech_queue == other.speech_queue
             && self.speech == other.speech
-            && self.speaking == other.speaking
+            && self.speech_owner == other.speech_owner
             && self.lane == other.lane
             && self.order == other.order
             && self.layout == other.layout
@@ -424,28 +424,21 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let card_key = agent_message_source_id(&props.message);
     let worktree = props.member.worktree.clone();
     let playback = props.member.speech.clone();
-    let speech_message_key = card_key;
+    let message_key = card_key.clone();
     let speech_queue = props.speech_queue.clone();
-    let speak = Callback::from(move |text: String| {
+    let speak = Callback::from(move |(control, text): (SpeechControl, String)| {
         if let Some(text) = crate::narration::prepared_utterance(&text) {
             speech_queue.emit(SpeechRequest::message(
                 worktree.clone(),
                 playback.clone(),
                 lane.clone(),
-                speech_message_key.clone(),
+                message_key.clone(),
+                control,
                 text,
             ));
         }
     });
-    let correspondent = agent_message_correspondent(
-        props.accent,
-        props.quote_lane,
-        &props.message,
-        &props.quote_dispatcher,
-        &speak,
-        props.speaking,
-        props.order,
-    );
+    let correspondent = agent_message_correspondent(props, card_key, &speak);
     render_agent_message_card(props, &correspondent)
 }
 
@@ -471,6 +464,7 @@ fn render_agent_message_card(
         card_label,
         classifications,
     } = agent_message_presentation(props, correspondent);
+    let speaking = props.speech_owner.is_some();
     let task_click = message_task_click(props.open_task.clone());
     let task_keydown = message_task_keydown(props.open_task.clone());
     html! {
@@ -483,7 +477,7 @@ fn render_agent_message_card(
                 (!is_boundary && image_only).then_some("mosaic-message-card--image-only"),
                 single_image_cover.then_some("mosaic-message-card--image-cover"),
                 message.final_answer.then_some("final"),
-                correspondent.speaking.then_some("now-playing"),
+                speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
@@ -502,7 +496,7 @@ fn render_agent_message_card(
             data-message-review-count={classifications.reviews.to_string()}
             data-message-pending-count={classifications.pending.to_string()}
             data-message-decline-count={classifications.declines.to_string()}
-            data-speech-active={correspondent.speaking.to_string()}
+            data-speech-active={speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
@@ -834,21 +828,19 @@ fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Htm
 }
 
 fn agent_message_correspondent(
-    accent: usize,
-    quote_lane: CanonicalUuid,
-    message: &wire::AgentMessage,
-    quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
-    speak: &Callback<String>,
-    speaking: bool,
-    order: u64,
+    props: &AgentMessageCardProps,
+    message_key: String,
+    speak: &Callback<(SpeechControl, String)>,
 ) -> view::chrome::Correspondent {
+    let message = &props.message;
+    let order = props.order;
     let quote = message.quote_target.clone().map(|target| {
-        let lane = quote_lane.to_string();
+        let lane = props.quote_lane.to_string();
         let identity = target.to_string();
         let source_id = agent_message_source_id(message);
         let focus_identity = identity.clone();
         let focus_lane = lane.clone();
-        let dispatcher = quote_dispatcher.clone();
+        let dispatcher = props.quote_dispatcher.clone();
         let display_millis = crate::runtime::agent_message_display_millis(message);
         let preview =
             watchband::quote_label(watchband::first_nonquoted_prose(&message.text).as_deref())
@@ -866,9 +858,10 @@ fn agent_message_correspondent(
         })
     });
     view::chrome::Correspondent {
-        accent,
+        accent: props.accent,
         speak: speak.clone(),
-        speaking,
+        speech_owner: props.speech_owner.clone(),
+        message_key,
         quote,
     }
 }

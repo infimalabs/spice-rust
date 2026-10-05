@@ -6,6 +6,8 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 
+use crate::speech_queue::SpeechControl;
+
 mod frame;
 mod service;
 
@@ -489,6 +491,7 @@ struct SignoffSlot {
 }
 struct ControlSlot {
     index: usize,
+    control: SpeechControl,
     target: web_sys::Element,
     key: yew::virtual_dom::Key,
 }
@@ -696,7 +699,7 @@ fn collect_control_slots(
     let Ok(nodes) = host.query_selector_all(".message-controls-slot[data-message-controls]") else {
         return Vec::new();
     };
-    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    let mut slots = Vec::<ControlSlot>::with_capacity(nodes.length() as usize);
     for position in 0..nodes.length() {
         let Some(target) = nodes
             .item(position)
@@ -718,7 +721,13 @@ fn collect_control_slots(
                 counter.set(counter.get().wrapping_add(1));
                 counter.get().into()
             });
-        slots.push(ControlSlot { index, target, key });
+        let occurrence = slots.iter().filter(|slot| slot.index == index).count();
+        slots.push(ControlSlot {
+            index,
+            control: SpeechControl::new(index, occurrence),
+            target,
+            key,
+        });
     }
     slots
 }
@@ -874,10 +883,12 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             })}
             {for control_slots.iter().filter_map(|slot| {
                 let control = props.controls.get(slot.index)?;
-                Some(yew::create_portal(
-                    html! { <span key={slot.key.clone()}>{control.content.clone()}</span> },
-                    slot.target.clone(),
-                ))
+                let context = slot.control;
+                Some(yew::create_portal(html! {
+                    <ContextProvider<SpeechControl> {context}>
+                        <span key={slot.key.clone()}>{control.content.clone()}</span>
+                    </ContextProvider<SpeechControl>>
+                }, slot.target.clone()))
             })}
             {for signoffs}
             </span>
