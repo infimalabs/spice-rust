@@ -156,9 +156,11 @@ highlight at full member width, so adjacent broadcast targets merge into one
 continuous active signal. The focused draft itself, whether it is the primary
 or a quote draft pinned to a message, mixes its background 10% toward
 that accent. Keyboard broadcast preview lights every occupied recipient through
-the same single lit state, filling each recipient's primary draft. Neither
-treatment changes the field's geometry, and circular menu buttons, range
-thumbs, and the send action retain their own control shapes.
+the same single lit state, filling each recipient's primary draft. A vacant or
+shut-down member mutes its heading and draft text without fading the composer
+surface beneath them. None of these treatments changes the field's geometry,
+and circular menu buttons, range thumbs, and the send action retain their own
+control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
@@ -388,11 +390,11 @@ physical-right Drive/slider column. Up to six unified 8px pips occupy that
 segment in the same rendered order as the composer columns. Both sequences use
 local RTL flow so canonical member zero remains control-adjacent; the app's
 outer LTR flow is unchanged. The status row uses the same theme-aware surface
-as the message stream and one soft top rule throughout.
-The ticker retains relative age, lane-status class, agent/tool/command prefix
-and accent, truncated detail, accessible label, and live-region semantics; an
-empty fleet has no pip reserve and keeps the full surfaced status slot without
-inventing status.
+as the message stream and one soft top rule throughout; bound and unbound
+status dims only its text, never that surface. The ticker retains relative age,
+lane-status class, agent/tool/command prefix and accent, truncated detail,
+accessible label, and live-region semantics; an empty fleet has no pip reserve
+and keeps the full surfaced status slot without inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
