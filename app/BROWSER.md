@@ -360,11 +360,12 @@ Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger: its
 task strip and complete live ticker terminate at the topology control, whose
-fixed right-edge footprint continues the composer control rail below. The
-status band uses the same theme-aware surface as the message stream and only a
-soft top rule. Its ticker retains relative age, lane-status class,
-agent/tool/command prefix and accent, truncated detail, accessible label, and
-live-region semantics; an empty fleet reserves the surfaced slot without
+fixed right-edge footprint continues the composer control rail below.
+The status band, pip enclosure, and composer control frame use the same
+theme-aware surface as the message stream. The status band and pip enclosure
+share the same soft top rule. The ticker retains relative age, lane-status
+class, agent/tool/command prefix and accent, truncated detail, accessible label,
+and live-region semantics; an empty fleet reserves the surfaced slot without
 inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
@@ -377,18 +378,17 @@ any plane, card, or team surface observing a resize. Browsers without
 `content-visibility` fall back to `display: none`.
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
-outer frame or shadow: only the status band's soft top rule and stream surface
-distinguish that incorporated row, while the team surface frames nothing around
-it. Its neutral topology control owns the same 74px right-edge column as the
-composer controls immediately below it. The 52px circular send button centers
-within that column while the topology control keeps its 60px block size. This
-gives both the task strip and status line a natural endpoint. The topology
-control centers all six enlarged
-member pips in two rows while retaining canonical order, the main agent at the
-lower
-right, and centers every smaller team as a whole. The global Spice and
-Dash-avatar circles share one diameter and equal top, bottom, and outer-edge
-insets. The team's task strip reuses the
+outer frame or shadow: the status band and pip enclosure share the stream
+surface and soft top rule, while the team surface frames nothing around them.
+Its neutral topology control owns the same 74px right-edge column as the
+stream-surfaced composer controls immediately below it. The 52px circular send
+button centers within that column while the topology control keeps its 60px
+block size. This gives both the task strip and status line a natural endpoint.
+The topology control centers all six enlarged member pips in two rows while
+retaining canonical order, with the main agent at the lower right, and centers
+every smaller team as a whole. The global Spice and Dash-avatar circles share
+one diameter and equal top, bottom, and outer-edge insets. The team's task strip
+reuses the
 global `task-pill-strip app-control-rail` frame, and both strips round as
 true pills rather than at the shared rail radius. The team's pills stand a
 step smaller than the global ones, and its strip centers in its band so it

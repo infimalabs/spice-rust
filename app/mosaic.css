@@ -484,8 +484,9 @@
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* The encasing rounds only its top corners, at the pips' own radius; its foot
-   continues square into the control frame below. */
+/* The encasing rounds only its top corners, at the pips' own radius; its soft
+   top rule matches the status line and its foot continues square into the
+   control frame below. Both use the message-stream surface. */
 .team-toolbar > .team-lights {
   grid-area: pips;
   align-self: stretch;
@@ -493,9 +494,10 @@
   align-items: center;
   margin: 0;
   padding: 0;
+  border-block-start: var(--app-edge-soft);
   border-start-start-radius: var(--app-radius-compact);
   border-start-end-radius: var(--app-radius-compact);
-  background: var(--control);
+  background: var(--message-stream-surface);
 }
 /* The team's task strip is the global strip, a size smaller and centered in
    its own band so it floats clear of the status line beneath. */
@@ -915,7 +917,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0;
   border-radius: 0;
-  background: var(--control); box-shadow: none;
+  background: var(--message-stream-surface); box-shadow: none;
 }
 .team-slider {
   --control-state-accent: var(--accent);
