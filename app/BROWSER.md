@@ -116,26 +116,20 @@ margin of its own.
 
 ## Team composer controls
 
-The full-width team send button sits above the speech and allocation sliders,
-whose vertical tracks follow side by side. Its row is exactly two member
-composer headers tall, and the tracks take the rest of the frame. Inside that
-row the button floats: 4px of negative space separates it from the draft, the
-pip encasing above, and the browser edge, and 2px from the sliders, whose own
-padding already spaces them. The button and the encasing's top corners share
-the pips' 7px radius; the encasing's foot stays square where it meets the
-frame. The two current values occupy the row immediately below the tracks,
-leaning on the center divider: speech ends and allocation starts 3px from it,
-so they read as one phrase such as "quiet drain" or "narrate steer". The
-control field leaves its top open beneath the topology control and owns only
-the center divider between the sliders; slider state uses fill without adding
-nested borders or inset shadows. The frame carries no words but the button's.
-Swapping these two fixed units does not change the composer block, frame width,
-send row, label row, or slider-track size.
-At the 10rem minimum member width, the standard draft block is 170px tall and
-reads approximately square without widening the member column.
-That shared block size also determines the speech and allocation tracks and
-their frame; the measured overlay height remains the Chat plane's collapse
-distance and top spacer.
+The 52px round team send button sits above the speech and allocation sliders,
+whose vertical tracks follow side by side. Its 64px row centers the circle with
+11px at each edge of the 74px control column and 6px above and below. The button
+is about 1.49 times the 35px global Spice and Dash controls: prominent, with
+enough negative space to avoid reading as a novelty control.
+
+The two current values occupy the row immediately below the tracks, leaning on
+the center divider: speech ends and allocation starts 3px from it, so they read
+as one phrase such as "quiet drain" or "narrate steer". The control field owns
+only the center divider between the sliders; slider state uses fill without
+adding nested borders or inset shadows. At the 10rem minimum member width, the
+standard draft block remains approximately square without widening the member
+column. Its measured overlay height remains the Chat plane's collapse distance
+and top spacer.
 
 The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and neither adjacent members nor the member-to-control
@@ -363,11 +357,11 @@ any plane, card, or team surface observing a resize. Browsers without
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: only the status band's soft top rule and stream surface
 distinguish that incorporated row, while the team surface frames nothing around
-it. Its neutral topology control has the same 74px inline size and 60px block
-size as the Drive/send control immediately below it, with no border across
-their junction. This makes one aligned right-edge control column, moves the
-composer down by the control's small added headroom, and gives both the task
-strip and status line a natural endpoint. The control centers all six enlarged
+it. Its neutral topology control owns the same 74px right-edge column as the
+composer controls immediately below it. The 52px circular send button centers
+within that column while the topology control keeps its 60px block size. This
+gives both the task strip and status line a natural endpoint. The topology
+control centers all six enlarged
 member pips in two rows while retaining canonical order, the main agent at the
 lower
 right, and centers every smaller team as a whole. The global Spice and
