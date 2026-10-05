@@ -920,7 +920,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0;
   border-radius: 0;
-  background: var(--control); box-shadow: none;
+  background: var(--message-stream-surface); box-shadow: none;
 }
 .team-slider {
   --control-state-accent: var(--accent);
