@@ -235,13 +235,11 @@ contrasting label inside their frosted frame.
 
 ## Message card control flow
 
-Card actions form a shrink-wrapped island at the content's top inline-end.
-When the first content block is a colored quote, the app portals that island
-into the quote before its content. The quote surface itself starts at the card
-edge and keeps the full content width; only its text wraps beside the controls,
-and image rows clear them from inside the same colored surface. Cards without a
-leading quote keep the island in the ordinary message flow. Narrow cards retain
-the same quote-local ownership rather than adding an external controls header.
+Every attributable hunk owns a shrink-wrapped action island at its top
+inline-end. The island floats; attribution and ordinary prose remain in the
+same inline flow beside it. Only the hunk's associated image row clears the
+island before floating inline-start. Narrow cards preserve the same ordering
+instead of adding a separate controls header.
 
 Committed message cards sit in one lattice whose 9px perimeter and row and
 column seams equal the card's 9px content inset. The seam is one shared gap
@@ -282,34 +280,30 @@ overlay at the top right; multiple images, mixed prose, quotes, and diagrams
 keep their
 ordinary in-flow layouts.
 
-Quoted image pairs retain the standard 7px image-stack gap even when their
-leading quote stays flow-root around its control island: flattened stack
-wrappers apply that shared gap at the boundary before the later image.
-
-A quote layer that ends in images after other content flows its prose around
-them. The images sit at the layer's inline start with their bottom on the
-prose's last line. When the text is shorter than the images, it sits beside
-their top. The browser measures that lift because the wrap depends on where the
-images sit. A layer that would leave less than a 14ch column beside the images
-stacks them under the prose instead, wrapping in pairs. Image-only quotes and
-images in the middle of a quote keep the image-row layout.
+Each hunk consolidates its associated images into one inline-start row after
+attribution. The row alone clears inline-end controls; prose then wraps beside
+the images using ordinary CSS flow-root geometry. Multi-image rows retain the
+standard 7px gap and pair sizing at narrow widths.
 
 ## Attribution placement
 
 Every attributable run between nested quote blocks is one speaker-owned hunk.
-The hunk starts with that source's control island, relative age, name, and any
-role or disposition badges. All images associated with the hunk are
-consolidated next, floated at the inline start, and followed by the remaining
-prose. A nested quote interrupts the hunk; direct text after it starts a new
-hunk with the surrounding source's controls and attribution again. This one
-rule applies recursively to top-level agent prose and resolved operator, agent,
-and peer-lane quotes.
+The hunk starts with that source's control island, relative age, name, and one
+segmented classification pill. The pill orders ACK or NAK first, FINAL second
+when present, then TASTE, REVIEW, and BROADCAST roles; each segment keeps its
+own authenticated color and interaction. Ordinary prose begins immediately
+after that compact attribution sequence on the same line.
+
+All images associated with the hunk are consolidated next, floated at the
+inline start, and followed by the remaining prose. A nested quote interrupts
+the hunk; direct text after it starts a new hunk with the surrounding source's
+controls and attribution again. This one rule applies recursively to top-level
+agent prose and resolved operator, agent, and peer-lane quotes.
 
 The control island floats at the inline end of the hunk. Its speak action uses
 only that hunk's rendered text, and its quote action retains that hunk's exact
-authenticated target. ACK, pending ACK, NAK, TASTE, REVIEW, BROADCAST, and
-resolved-source disposition pills follow the source name before the words they
-classify.
+authenticated target. Authenticated marker nodes remain in the Markdown DOM
+for quote semantics but do not duplicate the classification pill in prose.
 
 Board provenance remains independent and terminal. Each complete quote layer
 keeps one empty task target after all of its hunks and nested quotes; Work fills

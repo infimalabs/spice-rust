@@ -227,7 +227,69 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
             ..ClassificationCounts::default()
         },
     );
-    assert!(message_badges("NAK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
+    assert_eq!(
+        presented_kinds("ACK 1kQnrzNZ: applied.", &directives, event()),
+        [
+            wire::MessageClassificationKind::Broadcast,
+            wire::MessageClassificationKind::AcknowledgementPending,
+        ],
+    );
+    assert_eq!(
+        message_badges("NAK 1kQnrzNZ: refused.", Some(&directives), event()),
+        ClassificationCounts {
+            broadcasts: 1,
+            ..ClassificationCounts::default()
+        },
+    );
+    assert_eq!(
+        presented_kinds("NAK 1kQnrzNZ: refused.", &directives, event()),
+        [
+            wire::MessageClassificationKind::Broadcast,
+            wire::MessageClassificationKind::Decline,
+        ],
+    );
+}
+
+#[test]
+fn taste_only_acknowledgement_carries_disposition_and_flavor() {
+    let key = "dRyzkQp1P".parse::<steer::Key>().expect("taste key parses");
+    let directive_text = "[TASTE] compatibility: Keep one tested path.";
+    let directives = PresentationDirectives(BTreeMap::from([(
+        key,
+        PresentationDirective {
+            actor: wire::Actor::Operator,
+            published: published(1),
+            lane: lane(),
+            text: directive_text.to_owned(),
+            authored: true,
+            taste: true,
+            review: false,
+            disposition: wire::Disposition::Acked,
+            quote_target: quote_target("dRyzkQp1P", directive_text),
+            retirement: Some(wire::body::TranscriptLocus {
+                source: None,
+                member: 1,
+                offset: 0,
+                length: 1,
+                event: 0,
+                line: 1,
+                column: 5,
+            }),
+        },
+    )]));
+    let text = "ACK dRyzkQp1P: Applied.";
+
+    assert_eq!(
+        presented_kinds(text, &directives, event()),
+        [
+            wire::MessageClassificationKind::Taste,
+            wire::MessageClassificationKind::Acknowledgement,
+        ],
+    );
+    assert_eq!(
+        presented_text(text, &directives, event()).expect("taste acknowledgement presents"),
+        "> [TASTE] compatibility: Keep one tested path.\n\n[ACK] Applied.",
+    );
 }
 
 #[test]
@@ -284,6 +346,13 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             reviews: 1,
             ..ClassificationCounts::default()
         },
+    );
+    assert_eq!(
+        presented_kinds(text, &directives, original),
+        [
+            wire::MessageClassificationKind::Review,
+            wire::MessageClassificationKind::Acknowledgement,
+        ],
     );
     let mut other_source = original;
     other_source.source = Some(
@@ -956,74 +1025,6 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             wire::MessageClassificationKind::Taste,
             wire::MessageClassificationKind::Acknowledgement,
         ],
-    );
-}
-
-#[test]
-fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
-    let system = "dRyzkGX8b"
-        .parse::<steer::Key>()
-        .expect("current system key parses");
-    let taste = "dRyzkQp1P"
-        .parse::<steer::Key>()
-        .expect("current taste key parses");
-    let retirement = |column| wire::body::TranscriptLocus {
-        source: None,
-        member: 1,
-        offset: 0,
-        length: 1,
-        event: 0,
-        line: 1,
-        column,
-    };
-    let directives = PresentationDirectives(BTreeMap::from([
-        (
-            system,
-            PresentationDirective {
-                actor: wire::Actor::Operator,
-                published: published(1),
-                lane: lane(),
-                text: "Accepted lane renewal context.".to_owned(),
-                authored: false,
-                taste: false,
-                review: false,
-                disposition: wire::Disposition::Acked,
-                quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
-                retirement: Some(retirement(5)),
-            },
-        ),
-        (
-            taste,
-            PresentationDirective {
-                actor: wire::Actor::Operator,
-                published: published(2),
-                lane: lane(),
-                text: "[TASTE] compatibility: Keep one tested path.".to_owned(),
-                authored: true,
-                taste: true,
-                review: false,
-                disposition: wire::Disposition::Acked,
-                quote_target: quote_target(
-                    "dRyzkQp1P",
-                    "[TASTE] compatibility: Keep one tested path.",
-                ),
-                retirement: Some(retirement(15)),
-            },
-        ),
-    ]));
-    let text = "ACK dRyzkGX8b dRyzkQp1P: The current path is applied.";
-
-    assert_eq!(
-        message_badges(text, Some(&directives), event()),
-        ClassificationCounts {
-            tastes: 1,
-            ..ClassificationCounts::default()
-        },
-    );
-    assert_eq!(
-        presented_text(text, &directives, event())
-            .expect("mixed system and taste acknowledgment presents"),
-        "> [TASTE] compatibility: Keep one tested path.\n\nThe current path is applied.",
     );
 }
 

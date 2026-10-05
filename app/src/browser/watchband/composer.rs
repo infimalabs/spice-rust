@@ -6,6 +6,7 @@ use yew::functional::UseReducerDispatcher;
 
 use super::*;
 mod drag;
+mod message_badges;
 mod message_controls;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
@@ -913,9 +914,8 @@ fn render_agent_message_media(
     }
 }
 
-/// A prose card leads its words the way a quote leads its own: the live age
-/// linking to the message source, the producer's copyable label, then its
-/// authenticated role and FINAL badges.
+/// A prose card leads its words the way a quote leads its own: live age,
+/// producer, then one ordered ACK/NAK → FINAL → role classification group.
 fn render_agent_message_signoff(
     message: &wire::AgentMessage,
     producer_label: &str,
@@ -925,74 +925,8 @@ fn render_agent_message_signoff(
         <>
             {render_message_age(message, attribution)}
             {render_producer_name(message, producer_label, attribution)}
-            {render_message_role_pills(message)}
-            {render_final_pill(message)}
+            {message_badges::render(message)}
         </>
-    }
-}
-
-/// Message roles belong to the producing speaker. Their authenticated source
-/// markers remain in the Markdown DOM for notice-rail semantics, while CSS
-/// suppresses that quoted copy on prose cards.
-fn render_message_role_pills(message: &wire::AgentMessage) -> Html {
-    let mut taste = false;
-    let mut review = false;
-    let mut broadcast = false;
-    for classification in &message.classifications {
-        match classification.kind {
-            wire::MessageClassificationKind::Taste => taste = true,
-            wire::MessageClassificationKind::Review => review = true,
-            wire::MessageClassificationKind::Broadcast => broadcast = true,
-            wire::MessageClassificationKind::Acknowledgement
-            | wire::MessageClassificationKind::AcknowledgementPending
-            | wire::MessageClassificationKind::Decline => {}
-        }
-    }
-    html! {
-        <>
-            if taste {
-                <span
-                    class="message-taste-pill"
-                    data-message-classification="taste"
-                    aria-label="Taste classification"
-                >
-                    {"TASTE"}
-                </span>
-            }
-            if review {
-                <span
-                    class="message-review-pill"
-                    data-message-classification="review"
-                    aria-label="Review classification"
-                >
-                    {"REVIEW"}
-                </span>
-            }
-            if broadcast {
-                <span
-                    class="message-broadcast-pill"
-                    data-message-classification="broadcast"
-                    aria-label="Broadcast classification"
-                >
-                    {"BROADCAST"}
-                </span>
-            }
-        </>
-    }
-}
-
-fn render_final_pill(message: &wire::AgentMessage) -> Html {
-    if !message.final_answer {
-        return Html::default();
-    }
-    html! {
-        <span
-            class="message-final-pill"
-            data-message-classification="final"
-            aria-label="Final answer"
-        >
-            {"FINAL"}
-        </span>
     }
 }
 
@@ -1056,7 +990,7 @@ fn render_message_controls(
             <div class="message-controls-actions">
                 if !signed {
                     <span class="message-controls-identity">
-                        {render_final_pill(message)}
+                        {message_badges::render_final(message)}
                         {render_producer_name(message, producer_label, attribution)}
                     </span>
                 }
