@@ -685,7 +685,7 @@
 .team-surface .team-agent::after {
   position: absolute;
   z-index: 6;
-  inset: auto 1px 0;
+  inset: auto 0 0;
   height: 2px;
   background: var(--composer-underline, transparent);
   content: "";
@@ -769,11 +769,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--app-status-line-font-size);
 }
-/* Break only the painted accent at member boundaries; the shards themselves
-   remain flush, preserving the merged composer and broadcast field. */
+/* Separate the always-on header accents without opening the flush shards.
+   Active block-end highlights remain full-width so adjacent focus or broadcast
+   state merges into one continuous signal. */
 .composer-shard-heading::after {
   position: absolute;
-  inset: auto 1px -2px;
+  inset: auto 2px -2px;
   height: 2px;
   background: var(--composer-underline-color);
   content: "";
