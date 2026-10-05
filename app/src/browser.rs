@@ -51,7 +51,6 @@ mod image_viewer;
 mod mermaid;
 mod navigation;
 mod overlay;
-mod quote_image_flow;
 mod sender;
 mod speech_runtime;
 mod task_detail;

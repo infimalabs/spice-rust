@@ -53,10 +53,9 @@ stronger ownership boundary:
   widths. A base measurement admits at most one wider candidate, so ordinary
   placement performs at most two layout reads per card. Hidden first-load cards
   measure in place; committed cards that need remeasurement use isolated clones.
-  Both paths collect their quote image-flow descendants once, then settle
-  independent cards in shared read/write passes at each measured span. Each
-  card still owns its settlement, so its height never depends on whether or at
-  which width the live card's observer last settled it.
+  Attributed text and image hunks use ordinary CSS flow roots and floats, so
+  live cards and measurement clones share identical geometry without observers,
+  descendant collection, or per-width settlement passes.
 - Incremental reconciliation retains stable compaction and lifecycle dividers
   only while every full-width boundary still separates the chronological epochs
   on both sides. A batched measurement and stream-structure change that cannot

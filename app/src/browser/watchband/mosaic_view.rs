@@ -978,7 +978,6 @@ async fn measure_unknown(
     let document = host.owner_document()?;
     let mut measurement_rack = None;
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
-    let image_flow_cards = crate::browser::quote_image_flow::flow_host_keys(&host);
     let sources = host.query_selector_all("[data-mosaic-card-key]").ok()?;
     let mut pending = Vec::with_capacity(unknown.len());
     for (index, activity, latched_span) in unknown {
@@ -998,15 +997,9 @@ async fn measure_unknown(
         else {
             continue;
         };
-        let image_flows = if image_flow_cards.contains(&key) {
-            crate::browser::quote_image_flow::collect_flows(&element)
-        } else {
-            Vec::new()
-        };
         pending.push(PendingActivityMeasurement {
             activity,
             element,
-            image_flows,
             measurement_clone,
             latched_span,
             spans: Vec::with_capacity(3),
@@ -1032,11 +1025,6 @@ async fn measure_unknown(
             set_measure_span(&item.element, base_span);
         }
     }
-    crate::browser::quote_image_flow::settle_collected_flows(pending.iter().filter_map(|item| {
-        (!item.measurement_clone
-            && item.spans.last().copied() != Some(item.activity.base_span(&geometry)))
-        .then_some(item.image_flows.as_slice())
-    }));
     let measured = pending
         .into_iter()
         .map(|item| item.finish(width, &geometry))
@@ -1050,7 +1038,6 @@ async fn measure_unknown(
 struct PendingActivityMeasurement {
     activity: ActivityCard,
     element: web_sys::HtmlElement,
-    image_flows: Vec<web_sys::HtmlElement>,
     measurement_clone: bool,
     latched_span: Option<usize>,
     spans: Vec<usize>,
@@ -1115,17 +1102,6 @@ fn measure_pending_tier(
             set_measure_span(&item.element, *span);
         }
     }
-    // An image flow's layout depends on its width, so each clone settles its
-    // own at this span rather than inheriting the live card's last lift. The
-    // descendants were collected once at clone creation; batch independent
-    // clones so each read/write pass forces document layout once.
-    crate::browser::quote_image_flow::settle_collected_flows(
-        pending
-            .iter()
-            .zip(&spans)
-            .filter(|(_, span)| span.is_some())
-            .map(|(item, _)| item.image_flows.as_slice()),
-    );
     for (item, span) in pending.iter_mut().zip(spans) {
         let Some(span) = span else {
             continue;

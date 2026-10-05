@@ -6,6 +6,7 @@ use yew::functional::UseReducerDispatcher;
 
 use super::*;
 mod drag;
+mod message_controls;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
 
@@ -424,14 +425,8 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let playback = props.member.speech.clone();
     let speech_message_key = card_key;
     let speech_queue = props.speech_queue.clone();
-    let response = props
-        .message
-        .automatic_speech
-        .as_ref()
-        .and_then(|speech| crate::narration::prepared_utterance(&speech.text))
-        .or_else(|| crate::narration::card_utterance(props.message.activity, &props.message.text));
-    let speak = Callback::from(move |_: String| {
-        if let Some(text) = response.clone() {
+    let speak = Callback::from(move |text: String| {
+        if let Some(text) = crate::narration::prepared_utterance(&text) {
             speech_queue.emit(SpeechRequest::message(
                 worktree.clone(),
                 playback.clone(),
@@ -460,7 +455,6 @@ fn render_agent_message_card(
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
-    let quote_tasks = props.quote_tasks.clone();
     let layout = &props.layout;
     let AgentMessagePresentation {
         source_id,
@@ -475,14 +469,7 @@ fn render_agent_message_card(
         single_image_cover,
         card_label,
         classifications,
-    } = agent_message_presentation(
-        member,
-        message,
-        &props.quote_agents,
-        &props.quote_sources,
-        quote_tasks,
-        correspondent,
-    );
+    } = agent_message_presentation(props, correspondent);
     let task_click = message_task_click(props.open_task.clone());
     let task_keydown = message_task_keydown(props.open_task.clone());
     html! {
@@ -684,14 +671,37 @@ impl ClassificationMetrics {
     }
 }
 
+fn agent_message_card_label(
+    message: &wire::AgentMessage,
+    media_description: Option<&str>,
+    attribution: &str,
+    producer_label: &str,
+) -> String {
+    match message.activity {
+        wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
+        wire::AgentActivityKind::Failure => format!("Provider failure from {attribution}"),
+        wire::AgentActivityKind::Compaction => {
+            format!("Context compacted by {producer_label}")
+        }
+        wire::AgentActivityKind::SignOut => format!("Account signed out on {attribution}"),
+        wire::AgentActivityKind::Tool => media_description.map_or_else(
+            || format!("Tool result from {attribution}"),
+            |description| format!("Tool result from {attribution}: {description}"),
+        ),
+        wire::AgentActivityKind::Reasoning => format!("Thinking from {attribution}"),
+        wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
+    }
+}
+
 fn agent_message_presentation<'a>(
-    member: &crate::runtime::LaneMember,
-    message: &'a wire::AgentMessage,
-    quote_agents: &crate::composer_markdown::QuoteAgents,
-    quote_sources: &crate::composer_markdown::QuoteSources,
-    quote_tasks: Rc<crate::runtime::QuoteTasks>,
+    props: &'a AgentMessageCardProps,
     correspondent: &view::chrome::Correspondent,
 ) -> AgentMessagePresentation<'a> {
+    let member = &props.member;
+    let message = &props.message;
+    let quote_agents = &props.quote_agents;
+    let quote_sources = &props.quote_sources;
+    let quote_tasks = props.quote_tasks.clone();
     let attribution = watchband::agent_message_attribution(
         message.author,
         member.lane,
@@ -721,8 +731,8 @@ fn agent_message_presentation<'a>(
         &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
-    // A prose card gives its terminal prose sentence punctuation and leads
-    // with its attribution; tool, reasoning, and boundary cards render verbatim.
+    // Prose cards split into attributed hunks around every quote. Tool,
+    // reasoning, and boundary cards render verbatim.
     let is_prose = message.activity == wire::AgentActivityKind::Prose;
     let render = if is_prose {
         crate::composer_markdown::render_prose_card
@@ -737,18 +747,12 @@ fn agent_message_presentation<'a>(
         quote_agents,
         quote_sources,
     );
-    let card_label = match message.activity {
-        wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
-        wire::AgentActivityKind::Failure => format!("Provider failure from {attribution}"),
-        wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
-        wire::AgentActivityKind::SignOut => format!("Account signed out on {attribution}"),
-        wire::AgentActivityKind::Tool => media_description.as_ref().map_or_else(
-            || format!("Tool result from {attribution}"),
-            |description| format!("Tool result from {attribution}: {description}"),
-        ),
-        wire::AgentActivityKind::Reasoning => format!("Thinking from {attribution}"),
-        wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
-    };
+    let card_label = agent_message_card_label(
+        message,
+        media_description.as_deref(),
+        &attribution,
+        &footer_label,
+    );
     let unlinked_media = message
         .media
         .iter()
@@ -764,18 +768,19 @@ fn agent_message_presentation<'a>(
         && rendered_markdown.diagrams.is_empty()
         && rendered_markdown.image_count + unlinked_media.len() == 1;
     let lone_tool_image = is_tool && single_image_cover && unlinked_media.len() == 1;
-    let signoff =
-        is_prose.then(|| render_agent_message_signoff(message, &footer_label, &attribution));
-    let corner = (!lone_tool_image).then(|| {
-        render_message_controls(
-            message,
-            &shown_text,
-            correspondent,
-            is_prose,
-            &footer_label,
-            &attribution,
-        )
-    });
+    let message_controls::MessageChrome {
+        signoff,
+        controls,
+        corner,
+    } = message_controls::render_message_chrome(
+        props,
+        &shown_text,
+        is_prose,
+        lone_tool_image,
+        correspondent,
+        &footer_label,
+        &attribution,
+    );
     AgentMessagePresentation {
         source_id: agent_message_source_id(message),
         attribution,
@@ -788,6 +793,7 @@ fn agent_message_presentation<'a>(
                 final_answer={message.final_answer}
                 {quote_tasks}
                 {signoff}
+                {controls}
                 {corner}
             />
         },

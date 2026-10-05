@@ -490,40 +490,53 @@
 .markdown-table :is(th, td)[data-measure="token"] {
   min-width: 18ch; overflow-wrap: anywhere; white-space: normal;
 }
-/* Quotes that do not own the controls keep the ordinary card-level float:
-   prose wraps beside it, while image rows clear it instead of narrowing. */
-.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):not(:has(.message-image)) {
+/* Each speaker owns one flow-root hunk for every direct run between nested
+   quotes. Its action island floats right; source attribution follows in DOM
+   order, then the hunk's one consolidated image row, then prose. */
+.markdown-body .message-hunk {
+  display: flow-root;
+  min-width: 0;
+}
+.markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
+.team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
   display: block;
+  float: inline-end;
+  margin: 0 0 .25rem .5rem;
 }
-.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):not(:has(.message-image))::after {
-  display: block; clear: both; content: "";
+.team-surface .message-controls-slot > span { display: contents; }
+.team-surface .mosaic-message-card .message-controls-slot .message-controls {
+  float: none;
+  justify-content: flex-end;
+  min-height: 0;
+  margin: 0;
 }
-.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(> .message-controls)):has(.message-image) {
+.markdown-body .message-attribution {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 .35em;
+}
+.markdown-body .message-hunk > p.message-image-stack {
+  display: flex;
+  float: inline-start;
   clear: inline-end;
+  max-width: 100%;
+  align-items: flex-end;
+  gap: var(--message-image-gap);
+  margin: 0 12px .35em 0;
 }
-/* A quote layer ending in images leads with them (composer_markdown/image_flow.rs):
-   they float at the inline start beneath a zero-width anchor that the browser
-   lifts until their bottom meets the prose's (browser/quote_image_flow.rs).
-   The flow stays a plain block, so prose also wraps beside the controls island
-   floating at the quote's top. Below a 14ch prose column the browser stacks
-   the image row full width under the prose. */
-.markdown-body .message-image-flow::after { display: block; clear: both; content: ""; }
-.markdown-body .message-image-flow-anchor { float: inline-start; width: 0; height: 0; }
-.markdown-body .message-image-flow > p.message-image-stack {
-  float: inline-start; clear: inline-start; margin: 0 12px 0 0;
-}
-.markdown-body .message-image-flow > :last-child { margin-bottom: 0; }
-.markdown-body .message-image-flow[data-image-flow="stacked"] > p.message-image-stack {
-  flex-wrap: wrap; width: 100%; margin: .5em 0 0;
-}
-.markdown-body .message-image-flow[data-image-flow="stacked"]
-  > p.message-image-stack:has(> .message-image + .message-image) > .message-image {
+.markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image)
+  > .message-image {
   --message-image-size: min(var(--mosaic-image-size), calc((100% - var(--message-image-gap)) / 2));
 }
-.markdown-body .message-image-flow[data-image-flow="stacked"]
-  > p.message-image-stack:has(> .message-image + .message-image) > .message-image > img {
-  max-width: 100%; max-height: 100%;
+.markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image)
+  > .message-image > img {
+  max-width: 100%;
+  max-height: 100%;
 }
+.markdown-body .message-hunk > :last-child { margin-bottom: 0; }
 .markdown-body .message-quote-card {
   display: flow-root;
   margin: var(--mosaic-quote-pad-block) 0;
@@ -534,49 +547,6 @@
   color: var(--muted);
   font-size: .8125rem;
 }
-/* Every quote layer holding two images lays them out as one row sized from
-   that layer's own width; its other content wraps around the row. */
-.markdown-body blockquote:has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-),
-.markdown-body .message-quote-card:has(
-  > .message-quote-body > p.message-image-stack + p.message-image-stack,
-  > .message-quote-body > p.message-image-stack > .message-image + .message-image
-) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--message-image-gap);
-}
-.markdown-body :is(blockquote, .message-quote-body):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > :not(.message-image-stack) {
-  flex: 0 0 100%;
-  min-width: 0;
-}
-.markdown-body :is(blockquote, .message-quote-body):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > p.message-image-stack {
-  display: contents;
-}
-.markdown-body :is(blockquote, .message-quote-body):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > p.message-image-stack > .message-image {
-  --message-image-size: min(var(--mosaic-image-size), calc((100% - var(--message-image-gap)) / 2));
-}
-.markdown-body :is(blockquote, .message-quote-body):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > p.message-image-stack > .message-image > img {
-  max-width: 100%;
-  max-height: 100%;
-}
-/* A quote's source attribution trails its content; the card's own attribution
-   still leads each answer. Origin-task provenance remains the final tail item. */
 .markdown-body :is(.message-quote-signoff, .message-signoff) {
   display: inline-flex;
   max-width: 100%;
@@ -587,9 +557,9 @@
   color: var(--muted);
   font-size: .8125em;
 }
-.markdown-body .message-signoff { margin-right: 6px; }
-.markdown-body .message-quote-signoff { margin-inline-start: .35em; }
-.markdown-body .message-signoff-line { margin: 0 0 .35em; }
+.markdown-body .message-attribution > :is(.message-quote-signoff, .message-signoff) {
+  margin: 0;
+}
 /* The age keeps a natural word space before the name it dates. */
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
@@ -601,27 +571,25 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px;
-  margin-inline-start: .35em;
   font-size: .8125em;
   vertical-align: baseline;
 }
 .markdown-body .message-quote-task-tail .message-task-chip { font-size: inherit; }
-.markdown-body .message-quote-task-tail:empty { display: none; }
-.markdown-body .message-quote-tail {
-  margin: .35em 0 0;
-}
-.markdown-body .message-quote-tail > :is(
-  .message-quote-signoff,
-  .message-quote-disposition,
-  .message-ack-pill,
-  .message-quote-task-tail
-):first-child {
-  margin-inline-start: 0;
-}
-.markdown-body .message-quote-tail:has(> .message-quote-task-tail:only-child:empty) {
+.markdown-body .message-quote-task-tail:empty,
+.markdown-body .message-quote-task-line:has(> .message-quote-task-tail:empty) {
   display: none;
 }
-.markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
+.markdown-body .message-disposition-line,
+.markdown-body .message-quote-task-line {
+  clear: both;
+  margin: .35em 0 0;
+}
+.markdown-body .message-signoff .message-agent-name {
+  flex: 0 1 auto;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: inherit;
+}
 .markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-name {
   --message-quote-name-accent: var(--muted);
@@ -639,9 +607,7 @@
   --message-quote-name-accent: var(--accent-slot);
 }
 /* Operator quotes use the same in-flow author slot as agent names. */
-.markdown-body .message-quote-name[data-quote-actor="operator"] {
-  display: none;
-}
+.markdown-body .message-quote-name[data-quote-actor="operator"] { display: none; }
 :root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: inline-flex;
   color: var(--accent-neutral);
@@ -655,50 +621,16 @@
 }
 .markdown-body .message-quote-disposition {
   display: inline-flex;
-  margin-inline-start: .35em;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .75em;
   font-weight: 700;
-}
-.markdown-body .message-quote-body .message-ack-pill { margin-right: .35em; }
-.markdown-body .message-quote-body .message-ack-pill[data-quote-disposition] {
-  margin-inline: .35em 0;
 }
 .markdown-body .message-quote-body { display: contents; }
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
 .markdown-body .message-quote-unavailable { color: var(--muted); }
 .markdown-body .message-quote-card--unavailable { border-left-color: var(--warning); }
-/* A leading quote owns the card controls: its rail starts at the card edge
-   while only its contents wrap around the inline-end island. */
-.team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > blockquote:has(> .message-controls),
-.team-surface .mosaic-message-card .message-flow > .message-body.markdown-body > .message-quote-card:has(> .message-controls) {
-  display: flow-root;
-  margin-block-start: 0;
-}
-.markdown-body > .message-quote-card:has(> .message-controls):has(.message-image):not(:has(
-  > .message-quote-body > .message-image-flow
-)) > .message-quote-body {
-  display: flex; flex-wrap: wrap; align-items: flex-end; clear: inline-end;
-}
-.markdown-body > blockquote:has(> .message-controls):has(.message-image)
-  > p.message-image-stack {
-  display: flex; clear: inline-end; gap: var(--message-image-gap);
-}
-/* This control-owning quote stays flow-root so prose wraps beside the control
-   island. Its paired stack wrappers flatten, so the later visual image receives
-   the shared gap as inline margin instead of relying on a nonexistent flex row. */
-.markdown-body > blockquote:has(> .message-controls):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > p.message-image-stack + p.message-image-stack > .message-image:first-child,
-.markdown-body > blockquote:has(> .message-controls):has(
-  > p.message-image-stack + p.message-image-stack,
-  > p.message-image-stack > .message-image + .message-image
-) > p.message-image-stack > .message-image + .message-image {
-  margin-inline-start: var(--message-image-gap);
-}
 
 /* An exact-one-image card uses its admitted lattice rectangle as the image
    viewport. Aspect ratio supplies the measuring clone's height; the committed
@@ -804,7 +736,7 @@
   .message-image--openable:focus-visible :is(img, .message-image-status) {
   outline: none;
 }
-.team-surface .mosaic-message-card--image-cover .message-signoff-line {
+.team-surface .mosaic-message-card--image-cover :is(.message-attribution, .message-signoff-line) {
   position: absolute;
   top: 0;
   left: 0;
@@ -821,7 +753,7 @@
   backdrop-filter: blur(8px);
 }
 .team-surface .mosaic-message-card--image-cover
-  .message-signoff-line .message-signoff {
+  :is(.message-attribution, .message-signoff-line) .message-signoff {
   margin: 0;
   color: var(--ink);
 }

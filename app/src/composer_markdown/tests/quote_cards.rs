@@ -14,22 +14,6 @@ fn quote_source(card_id: &str, display_millis: i64) -> QuoteSource {
     }
 }
 
-fn directive_quote_source(display_millis: i64) -> QuoteSource {
-    QuoteSource {
-        card_id: None,
-        display_millis,
-        agent: None,
-    }
-}
-
-fn assert_attribution_trails(block: &str, words: &str, display_millis: i64) {
-    let words = block.find(words).expect("quoted words");
-    let age = block
-        .find(&format!("data-quote-age-authored=\"{display_millis}\""))
-        .expect("quoted source age");
-    assert!(words < age, "{block}");
-}
-
 fn nested_quote_sources(
     outer: &wire::QuoteTarget,
     inner: &wire::QuoteTarget,
@@ -153,28 +137,14 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     // Only the agent's quote wears its lane accent; the operator's nested quote stays neutral.
     let shell = " data-accent=\"3\"><div class=\"message-quote-body\">";
     assert_eq!(rendered.html.matches(shell).count(), 1);
-    assert!(rendered.html.contains(&format!(
-        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"1000\" \
-         data-quote-source=\"message-agent-outer-source\" data-quote-author=\"agent\" \
-         data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
-         data-quote-author-state=\"current\" data-accent=\"3\"></span>"
-    )));
-    assert!(rendered.html.contains(
-        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"2000\" \
-         data-quote-author=\"directive\" data-quote-actor=\"operator\"></span>"
-    ));
-    assert!(rendered.html.contains(&format!(
-        "<span class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
-         data-quote-agent-occupant=\"{source}\" data-quote-author-state=\"current\" \
-         data-accent=\"3\">spice-rust-k</span>"
-    )));
-    assert!(rendered.html.contains(
-        "<span class=\"message-quote-name\" data-quote-author=\"directive\" \
-         data-quote-actor=\"operator\" role=\"img\" aria-label=\"Operator\"></span>"
-    ));
-    assert_eq!(rendered.html.matches("message-quote-name").count(), 2);
+    assert_eq!(
+        rendered.html.matches("message-quote-age-slot").count(),
+        3,
+        "the outer source leads both hunks around the nested quote"
+    );
+    assert_eq!(rendered.html.matches("message-quote-name").count(), 3);
     assert!(!rendered.html.contains("history unavailable"));
-    assert_eq!(rendered.html.matches("data-quote-source=").count(), 1);
+    assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
     assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
@@ -191,8 +161,8 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .find(">spice-rust-k</span>")
         .expect("outer name renders");
     assert!(
-        outer_body < outer_age && outer_age < outer_name,
-        "the authored prose precedes its trailing age and name"
+        outer_age < outer_name && outer_name < outer_body,
+        "the outer source attribution leads its first hunk"
     );
 
     assert_historical_agent_name_survives_reseating(&outer_target, &quotes, &sources, lane, source);
@@ -299,15 +269,9 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     let acknowledged_tail = html
         .find("data-quote-tasks=\"dTVQdQfLx\"")
         .expect("acknowledged task tail renders");
-    let paragraph_end = html[acknowledged_prose..]
-        .find("</p>")
-        .map(|offset| acknowledged_prose + offset)
-        .expect("acknowledged paragraph closes");
     assert!(
-        acknowledged_prose < acknowledgement
-            && acknowledgement < acknowledged_tail
-            && acknowledged_tail < paragraph_end,
-        "the disposition trails the prose while the task target remains last: {html}"
+        acknowledgement < acknowledged_prose && acknowledged_prose < acknowledged_tail,
+        "the disposition leads its words and board provenance trails the quote: {html}"
     );
     for key in keys {
         assert!(
@@ -385,22 +349,6 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
             "each {level} occurrence names its own task badges"
         );
     }
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-quote-age-authored=\"1000\"")
-            .count(),
-        2,
-        "each repeated outer level keeps its source time"
-    );
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-quote-age-authored=\"2000\"")
-            .count(),
-        2,
-        "each nested level keeps its source time"
-    );
 }
 
 /// A card holds the Work of every direction it quotes, at any depth or as a
@@ -552,365 +500,75 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
     assert!(!ordinary.html.contains("message-quote-card"));
 }
 
-/// An acknowledgement signs each directive context it quotes once, with the
-/// directive's own author, beside any signoff of a quote nested inside it;
-/// the agent's own prose and block quotes stay unsigned.
+/// Hunk ownership is the renderer's durable layout contract: controls and
+/// attribution lead every direct run, images precede its prose, a nested quote
+/// owns its own lead, and the surrounding speaker resumes afterward.
 #[test]
-fn acknowledged_directive_contexts_sign_their_author_once() {
-    let directing: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131164ab"
-        .parse()
-        .expect("fixture identity is canonical");
-    let nested_text = "earlier direction";
-    let nested = steering_target("dTVQdQfLw", nested_text);
-    let operator_text = format!("steer from the operator {}", nested.markdown());
-    let lane_text = "steer from a lane";
-    let operator = format!("> {operator_text}");
-    let lane = format!("> {lane_text}");
+fn attribution_hunks_restart_around_quotes_and_lead_with_their_images() {
+    let quoted = "> quoted words";
     let markdown =
-        format!("{operator}\n\n{lane}\n\nACK dTVQdQfLx dTVQdQfLy: on it.\n\n> my own aside");
-    let context =
-        |start: usize, len: usize, key: &str, text: &str, actor, authored: &str| MessageDirective {
-            start: u32::try_from(start).expect("fixture offset fits"),
-            end: u32::try_from(start + len).expect("fixture offset fits"),
-            quote_target: steering_target(key, text),
-            actor,
-            authored: authored.parse().expect("fixture instant"),
-        };
-    let directives = [
-        context(
-            0,
-            operator.len(),
-            "dTVQdQfLx",
-            &operator_text,
-            wire::Actor::Operator,
-            "1970-01-01T00:00:01.000Z",
-        ),
-        context(
-            operator.len() + 2,
-            lane.len(),
-            "dTVQdQfLy",
-            lane_text,
-            wire::Actor::Lane(directing),
-            "1970-01-01T00:00:02.000Z",
-        ),
-    ];
-    let quotes = [wire::QuotePresentation::Resolved {
-        target: nested.to_string(),
-        text: nested_text.to_owned(),
-        author: wire::QuoteAuthor::Directive {
-            actor: wire::Actor::Operator,
-        },
-        disposition: None,
-        quotes: Vec::new(),
-    }];
-    let agent = |occupant| {
-        let label = "directing".to_owned();
-        ((directing, occupant), QuoteAgent { accent: 1, label })
+        format!("first answer\n\n![first](a.png)\n\n{quoted}\n\nsecond answer\n\n![second](b.png)");
+    let quote_start = markdown.find(quoted).expect("fixture quote");
+    let directive = MessageDirective {
+        start: u32::try_from(quote_start).expect("fixture offset fits"),
+        end: u32::try_from(quote_start + quoted.len()).expect("fixture offset fits"),
+        quote_target: steering_target("dTVQdQfLx", quoted),
+        actor: wire::Actor::Operator,
+        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
     };
-    let sources = BTreeMap::from([
-        (
-            directives[0].quote_target.to_string(),
-            QuoteSource::directive(&directives[0]),
-        ),
-        (
-            directives[1].quote_target.to_string(),
-            QuoteSource::directive(&directives[1]),
-        ),
-        (nested.to_string(), directive_quote_source(3_000)),
-    ]);
+    let target = directive.quote_target.to_string();
+    let sources = BTreeMap::from([(target.clone(), QuoteSource::directive(&directive))]);
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &[directive],
+        &[],
+        &QuoteAgents::new(),
+        &sources,
+    )
+    .html;
 
-    let render = |agents: &QuoteAgents| {
-        render_received_with_quotes(&markdown, &[], &directives, &quotes, agents, &sources).html
-    };
-    let html = render(&BTreeMap::from([agent(Some(directing))]));
+    assert_eq!(html.matches("class=\"message-hunk\"").count(), 3, "{html}");
+    let answer_controls = html
+        .match_indices("data-message-controls=\"\"")
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    let answer_attributions = html
+        .match_indices(SIGNOFF_SLOT)
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    assert_eq!(answer_controls.len(), 2, "{html}");
+    assert_eq!(answer_attributions.len(), 2, "{html}");
 
-    let blocks = html.split("<blockquote").skip(1).collect::<Vec<_>>();
-    assert_eq!(blocks.len(), 3, "{html}");
-    let [operator, lane, aside] = blocks.as_slice() else {
-        unreachable!()
-    };
-    // Only the peer lane's context wears an accent; operator speech and the aside stay neutral.
-    assert!(lane.starts_with(" data-accent=\"1\">"), "{lane}");
-    assert_eq!(html.matches("<blockquote>").count(), 2, "{html}");
-    let attributed = |block: &str, actor: &str| {
-        block
-            .matches(&format!("data-quote-actor=\"{actor}\""))
-            .count()
-    };
-    assert_eq!(
-        (
-            attributed(operator, "operator"),
-            operator.matches("message-quote-signoff").count()
-        ),
-        (4, 2),
-        "the nested quote and the context each sign once: {operator}"
-    );
-    assert_eq!(
-        (
-            attributed(lane, &format!("lane:{directing}")),
-            lane.matches("message-quote-signoff").count()
-        ),
-        (2, 1),
-        "{lane}"
-    );
-    assert_eq!(html.matches("message-quote-name").count(), 3, "{html}");
-    let named = format!(
-        "class=\"message-quote-name\" data-quote-author=\"directive\" \
-         data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"current\" \
-         data-accent=\"1\">directing</span>"
-    );
-    assert!(lane.contains(&named));
-    let vacant = render(&BTreeMap::from([agent(None)]));
-    assert!(vacant.contains(&named), "{vacant}");
-    let unseated = render(&QuoteAgents::new());
-    assert!(unseated.contains(&format!(
-        "class=\"message-quote-name\" data-quote-author=\"directive\" \
-         data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"lane\">lane {}</span>",
-        crate::watchband::short(directing),
-    )));
-    assert!(!operator.contains(">Operator</span>"), "{operator}");
-    assert_eq!(html.matches("data-quote-source=").count(), 0, "{html}");
-    assert!(html.contains("data-quote-age-authored=\"3000\""));
-    assert_attribution_trails(operator, "steer from the operator", 1_000);
-    assert_attribution_trails(lane, lane_text, 2_000);
-    assert!(!aside.contains("message-quote-signoff"), "{aside}");
-}
-
-/// A prose card's attribution leads the card and each answer after a chain of
-/// quoted directives, ahead of the answer's pill; a chain answered by a block
-/// other than prose, or by nothing, still gets its attribution line.
-#[test]
-fn prose_card_attribution_leads_each_answer_after_a_quote_chain() {
-    let slot = super::SIGNOFF_SLOT;
-    let line = format!("<p class=\"message-signoff-line\">{slot}</p>");
-    let card = |markdown: &str, contexts: &[&str]| {
-        let mut directives = Vec::new();
-        let mut classifications = Vec::new();
-        for (index, context) in contexts.iter().enumerate() {
-            let start = markdown.find(context).expect("fixture context");
-            directives.push(MessageDirective {
-                start: u32::try_from(start).expect("fixture offset fits"),
-                end: u32::try_from(start + context.len()).expect("fixture offset fits"),
-                quote_target: steering_target(&format!("dTVQdQfL{index}"), context),
-                actor: wire::Actor::Operator,
-                authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
-            });
-        }
-        for (start, _) in markdown.match_indices(wire::stream::ACK_MARKER) {
-            classifications.push(MessageClassification {
-                start: u32::try_from(start).expect("fixture offset fits"),
-                end: u32::try_from(start + wire::stream::ACK_MARKER.len())
-                    .expect("fixture offset fits"),
-                kind: wire::MessageClassificationKind::Acknowledgement,
-            });
-        }
-        render_prose_card(
-            markdown,
-            &classifications,
-            &directives,
-            &[],
-            &QuoteAgents::new(),
-            &QuoteSources::new(),
-        )
-        .html
-    };
-
-    let html = card(
-        "> one\n\n> two\n\n[ACK] first answer\n\n> three\n\n- listed",
-        &["> one", "> two", "> three"],
-    );
-    assert_eq!(html.matches(slot).count(), 2, "{html}");
-    let first = html.find(slot).expect("first slot");
-    let second_quote = html.find("two").expect("second quote");
-    let pill = html.find("message-ack-pill").expect("answer pill");
-    let answer = html.find("first answer").expect("answer");
+    let first_image = html.find("src=\"a.png\"").expect("first image");
+    let first_words = html.find("first answer").expect("first answer");
+    let quote_controls = html
+        .find(&format!(
+            "data-message-controls=\"{}\"",
+            escape_html_attribute(&target)
+        ))
+        .expect("quote controls");
+    let quote_age = html
+        .find("data-quote-age-authored=\"1000\"")
+        .expect("quote age");
+    let quote_words = html.find("quoted words").expect("quote words");
+    let quote_task = html
+        .find("data-quote-tasks=\"dTVQdQfLx\"")
+        .expect("quote task provenance");
+    let second_image = html.find("src=\"b.png\"").expect("second image");
+    let second_words = html.find("second answer").expect("second answer");
     assert!(
-        second_quote < first && first < pill && pill < answer,
-        "one attribution leads the answer after both quotes: {html}"
-    );
-    let list = html.find("<ul>").expect("list");
-    assert!(
-        html.find(&line).is_some_and(|line| line < list),
-        "a list answering the last quote gets a leading attribution line: {html}"
-    );
-
-    let plain = card("Plain words", &[]);
-    assert!(
-        plain.starts_with(&format!("<p>{slot}Plain words")),
-        "{plain}"
-    );
-    assert_eq!(plain.matches(slot).count(), 1, "{plain}");
-
-    let unanswered = card("> only", &["> only"]);
-    assert!(unanswered.ends_with(&line), "{unanswered}");
-    assert_eq!(unanswered.matches(slot).count(), 1, "{unanswered}");
-}
-
-#[test]
-fn directive_context_ending_in_images_trails_its_flow_with_every_image_once() {
-    let text = "phase colors please";
-    let render = |quoted: &str| {
-        let directives = [MessageDirective {
-            start: 0,
-            end: u32::try_from(quoted.len()).expect("fixture offset fits"),
-            quote_target: steering_target("dTVQdQfLx", text),
-            actor: wire::Actor::Operator,
-            authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
-        }];
-        let sources = BTreeMap::from([(
-            directives[0].quote_target.to_string(),
-            QuoteSource::directive(&directives[0]),
-        )]);
-        render_received_with_quotes(
-            &format!("{quoted}\n\nACK dTVQdQfLx: on it."),
-            &[],
-            &directives,
-            &[],
-            &QuoteAgents::new(),
-            &sources,
-        )
-        .html
-    };
-
-    let html = render(&format!(
-        "> {text}\n>\n> more words\n>\n> ![first](a.png)\n>\n> ![second](b.png)"
-    ));
-    let quote = html
-        .split("<blockquote>")
-        .nth(1)
-        .and_then(|tail| tail.split("</blockquote>").next())
-        .expect("the directive quote renders");
-    assert_eq!(
-        quote.matches("class=\"message-image-flow\"").count(),
-        1,
+        answer_controls[0] < answer_attributions[0]
+            && answer_attributions[0] < first_image
+            && first_image < first_words
+            && first_words < quote_controls
+            && quote_controls < quote_age
+            && quote_age < quote_words
+            && quote_words < quote_task
+            && quote_task < answer_controls[1]
+            && answer_controls[1] < answer_attributions[1]
+            && answer_attributions[1] < second_image
+            && second_image < second_words,
         "{html}"
-    );
-    assert_eq!(
-        quote.matches("class=\"message-image-stack\"").count(),
-        1,
-        "{html}"
-    );
-    assert_eq!(quote.matches("src=\"a.png\"").count(), 1, "{html}");
-    assert_eq!(quote.matches("src=\"b.png\"").count(), 1, "{html}");
-    assert_eq!(
-        quote.matches("class=\"message-quote-signoff\"").count(),
-        1,
-        "{html}"
-    );
-    assert_eq!(
-        quote.matches("class=\"message-quote-task-tail\"").count(),
-        1,
-        "{html}"
-    );
-    let stack = quote.find("message-image-stack").expect("stack");
-    let first = quote.find(text).expect("first paragraph");
-    let last = quote.find("more words").expect("last paragraph");
-    let tail = quote.find("message-quote-tail").expect("attribution tail");
-    let signoff = quote.find("message-quote-signoff").expect("signoff");
-    let task = quote.find("message-quote-task-tail").expect("task target");
-    assert!(
-        stack < first && first < last && last < tail && tail < signoff && signoff < task,
-        "{html}"
-    );
-
-    let images_only = render("> ![first](a.png)\n>\n> ![second](b.png)");
-    assert!(!images_only.contains("message-image-flow"), "{images_only}");
-    assert_eq!(
-        images_only.matches("class=\"message-image-stack\"").count(),
-        2
-    );
-    let image = images_only.find("src=\"b.png\"").expect("last image");
-    let tail = images_only
-        .find("message-quote-tail")
-        .expect("trailing attribution line");
-    let signoff = images_only
-        .find("message-quote-signoff")
-        .expect("trailing signoff");
-    let task = images_only
-        .find("message-quote-task-tail")
-        .expect("trailing task target");
-    assert!(
-        image < tail && tail < signoff && signoff < task,
-        "an image-only context trails its images with attribution and then the task target: {images_only}"
-    );
-}
-
-#[test]
-fn quote_cards_ending_in_images_keep_attribution_and_task_tail_once() {
-    let render = |text: &str| {
-        let target = steering_target("dTVQdQfLw", text);
-        let quotes = [wire::QuotePresentation::Resolved {
-            target: target.to_string(),
-            text: text.to_owned(),
-            author: wire::QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
-            },
-            disposition: Some(wire::Disposition::Acked),
-            quotes: Vec::new(),
-        }];
-        let sources = BTreeMap::from([(target.to_string(), directive_quote_source(1_000))]);
-        render_received_with_quotes(
-            &target.markdown(),
-            &[],
-            &[],
-            &quotes,
-            &QuoteAgents::new(),
-            &sources,
-        )
-        .html
-    };
-
-    let html = render("see these\n\n![first](a.png)\n\n![second](b.png)");
-    assert_eq!(
-        html.matches("class=\"message-image-flow\"").count(),
-        1,
-        "{html}"
-    );
-    assert_eq!(
-        html.matches("class=\"message-quote-signoff\"").count(),
-        1,
-        "{html}"
-    );
-    assert_eq!(
-        html.matches("class=\"message-quote-task-tail\"").count(),
-        1,
-        "{html}"
-    );
-    assert_eq!(
-        html.matches("data-quote-disposition=\"acked\"").count(),
-        1,
-        "{html}"
-    );
-    let flow = html.find("message-image-flow").expect("flow");
-    let stack = html.find("message-image-stack").expect("stack");
-    let prose = html.find("see these").expect("prose");
-    let tail = html.find("message-quote-tail").expect("attribution tail");
-    let signoff = html.find("message-quote-signoff").expect("signoff");
-    let pill = html.find("data-quote-disposition").expect("pill");
-    let task = html.find("message-quote-task-tail").expect("task target");
-    assert!(
-        flow < stack
-            && stack < prose
-            && prose < tail
-            && tail < signoff
-            && signoff < pill
-            && pill < task,
-        "{html}"
-    );
-
-    let images_only = render("![first](a.png)\n\n![second](b.png)");
-    assert!(!images_only.contains("message-image-flow"), "{images_only}");
-    let line = images_only
-        .find("class=\"message-quote-tail\"")
-        .expect("attribution line");
-    let image = images_only.find("src=\"b.png\"").expect("last image");
-    let signoff = images_only.find("message-quote-signoff").expect("signoff");
-    let pill = images_only.find("data-quote-disposition").expect("pill");
-    let task = images_only
-        .find("message-quote-task-tail")
-        .expect("task target");
-    assert!(
-        image < line && line < signoff && signoff < pill && pill < task,
-        "{images_only}"
     );
 }

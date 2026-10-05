@@ -248,13 +248,13 @@ pub(crate) fn render_prose_card(
     )
 }
 
-/// Render one resolved quote card's body, trailed by its source attribution.
+/// Render one resolved quote card as recursively attributed text hunks.
 fn render_quote_card_body(
     markdown: &str,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    tail: image_flow::CardTail<'_>,
+    attribution: image_flow::Attribution,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -263,19 +263,18 @@ fn render_quote_card_body(
         quotes,
         quote_agents,
         quote_sources,
-        Finish::QuoteCard(tail),
+        Finish::QuoteCard(attribution),
     )
 }
 
 /// How a rendering presents its body.
-enum Finish<'t> {
+enum Finish {
     /// Received text as written.
     Received,
-    /// Assistant prose whose terminal sentence gains its period and whose
-    /// own attribution slots lead the card and each answer after a quote chain.
+    /// Assistant prose split into attributed hunks around every quote.
     ProseCard,
-    /// A quote card body trailed by its source attribution and disposition.
-    QuoteCard(image_flow::CardTail<'t>),
+    /// A quote card split into hunks attributed to its authenticated source.
+    QuoteCard(image_flow::Attribution),
 }
 
 fn render(
@@ -285,7 +284,7 @@ fn render(
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    finish: Finish<'_>,
+    finish: Finish,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -318,13 +317,25 @@ fn render(
     let image_only = image_count > 0;
     // Diagram controls and nested block structure must not collapse into an image row.
     let mut task_code_block = false;
-    let events = decorate_markdown_images(events, image_only && !has_diagrams);
-    let (prose_card, layer) = match finish {
-        Finish::Received => (false, image_flow::Layer::Body),
-        Finish::ProseCard => (true, image_flow::Layer::Body),
-        Finish::QuoteCard(tail) => (false, image_flow::Layer::Card(tail)),
+    let mut events = decorate_markdown_images(events, image_only && !has_diagrams);
+    let attribution = match finish {
+        Finish::Received => None,
+        Finish::ProseCard => {
+            terminal::period(&mut events);
+            Some(image_flow::Attribution {
+                controls_target: String::new(),
+                signoff: SIGNOFF_SLOT.to_owned(),
+                disposition: String::new(),
+                task_tail: String::new(),
+            })
+        }
+        Finish::QuoteCard(attribution) => Some(attribution),
     };
-    let events = image_flow::flow(&events, &layer);
+    let quote_attributions = outer_quotes
+        .iter()
+        .map(|quote| quote.attribution.clone())
+        .collect::<Vec<_>>();
+    let events = image_flow::flow(&events, attribution.as_ref(), &quote_attributions);
     let events = events.into_iter().flat_map(|event| match &event {
         MarkdownEvent::Start(Tag::CodeBlock(_)) => {
             task_code_block = true;
@@ -338,10 +349,6 @@ fn render(
         _ => inline_task_chips(event),
     });
     let mut events = events.collect::<Vec<_>>();
-    if prose_card {
-        terminal::period(&mut events);
-        events = lead_signoff_slots(events, &outer_quotes);
-    }
     accent_directive_contexts(&mut events, &outer_quotes);
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
@@ -353,17 +360,16 @@ fn render(
     }
 }
 
-/// One outermost block quote, in document order.
+/// One outermost raw block quote, in document order.
 struct OuterQuote {
-    /// Whether the quote is a directive context the resident quoted.
-    context: bool,
+    /// Attribution repeated around each direct run that this directive owns.
+    attribution: Option<image_flow::Attribution>,
     /// The accent slot of the speaker a directive context attributes.
     accent: Option<usize>,
 }
 
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
-/// trail each directive context with its source attribution. Also returns each
-/// outermost block quote, in order.
+/// record every outermost directive context's hunk attribution.
 fn parse_events<'m>(
     markdown: &'m str,
     options: Options,
@@ -382,7 +388,6 @@ fn parse_events<'m>(
         .into_iter()
         .map(|directive| (directive.start as usize, directive))
         .collect::<BTreeMap<_, _>>();
-    let mut open_context = None;
     let mut outer_quotes = Vec::new();
     let mut quote_depth = 0usize;
     let mut skipped_marker = None;
@@ -394,39 +399,28 @@ fn parse_events<'m>(
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
             MarkdownEvent::Start(Tag::BlockQuote(_)) => {
                 if quote_depth == 0 {
-                    open_context = contexts
-                        .remove(&source.start)
-                        .map(|context| (events.len(), context));
+                    let context = contexts.remove(&source.start);
+                    let accent = context.as_ref().and_then(|context| {
+                        quotes::speaker_accent(
+                            &wire::QuoteAuthor::Directive {
+                                actor: context.actor.clone(),
+                            },
+                            &context.quote_target.to_string(),
+                            quote_agents,
+                            quote_sources,
+                        )
+                    });
+                    let attribution = context
+                        .as_ref()
+                        .map(|context| directive_attribution(context, quote_agents, quote_sources));
                     outer_quotes.push(OuterQuote {
-                        context: open_context.is_some(),
-                        accent: open_context.as_ref().and_then(|(_, context)| {
-                            quotes::speaker_accent(
-                                &wire::QuoteAuthor::Directive {
-                                    actor: context.actor.clone(),
-                                },
-                                &context.quote_target.to_string(),
-                                quote_agents,
-                                quote_sources,
-                            )
-                        }),
+                        attribution,
+                        accent,
                     });
                 }
                 quote_depth += 1;
             }
-            MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
-                quote_depth -= 1;
-                if quote_depth == 0
-                    && let Some((start, context)) = open_context.take()
-                {
-                    trail_directive_attribution(
-                        &mut events,
-                        start,
-                        &context,
-                        quote_agents,
-                        quote_sources,
-                    );
-                }
-            }
+            MarkdownEvent::End(TagEnd::BlockQuote(_)) => quote_depth -= 1,
             _ => {}
         }
         let event = sanitize_markdown_event(event);
@@ -478,123 +472,24 @@ fn accent_directive_contexts(events: &mut [MarkdownEvent<'_>], outer_quotes: &[O
 /// Where a prose card's own attribution mounts (`browser::mermaid`).
 const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-slot=\"\"></span>";
 
-/// Lead the card's first block, and the first block after each chain of
-/// attributed quotes, with one attribution slot.
-///
-/// Directive contexts and quote cards carry their own attribution, so they
-/// leave the slot pending for the answer that follows them. A prose paragraph
-/// takes the slot inline before its words, ahead of any answer pill; any other
-/// block takes it on a line of its own above, so the slot never breaks that
-/// block's layout. A card ending in a quote chain closes with the slot's line.
-fn lead_signoff_slots<'a>(
-    events: Vec<MarkdownEvent<'a>>,
-    outer_quotes: &[OuterQuote],
-) -> Vec<MarkdownEvent<'a>> {
-    let line = || {
-        MarkdownEvent::Html(format!("<p class=\"message-signoff-line\">{SIGNOFF_SLOT}</p>").into())
-    };
-    let mut led = Vec::with_capacity(events.len() + 2);
-    let mut outer_quotes = outer_quotes.iter();
-    let mut pending = true;
-    let mut depth = 0usize;
-    let mut stack = false;
-    let mut events = events.into_iter().peekable();
-    while let Some(event) = events.next() {
-        if depth == 0 && !stack {
-            let opens_block = match &event {
-                MarkdownEvent::Start(Tag::BlockQuote(_))
-                    if outer_quotes.next().is_some_and(|quote| quote.context) =>
-                {
-                    pending = true;
-                    false
-                }
-                MarkdownEvent::Start(Tag::Paragraph)
-                    if matches!(
-                        events.peek(),
-                        Some(MarkdownEvent::InlineHtml(html))
-                            if html.starts_with("<div class=\"message-quote-card")
-                    ) =>
-                {
-                    pending = true;
-                    false
-                }
-                MarkdownEvent::Start(Tag::Paragraph) if pending => {
-                    pending = false;
-                    led.push(event);
-                    led.push(MarkdownEvent::InlineHtml(SIGNOFF_SLOT.into()));
-                    depth += 1;
-                    continue;
-                }
-                MarkdownEvent::Start(_) | MarkdownEvent::Html(_) | MarkdownEvent::Rule => true,
-                MarkdownEvent::InlineHtml(html) => html.as_ref() == image_flow::STACK_OPEN,
-                _ => false,
-            };
-            if opens_block && std::mem::take(&mut pending) {
-                led.push(line());
-            }
-        }
-        match &event {
-            MarkdownEvent::Start(_) => depth += 1,
-            MarkdownEvent::End(_) => depth = depth.saturating_sub(1),
-            MarkdownEvent::InlineHtml(html) if html.as_ref() == image_flow::STACK_OPEN => {
-                stack = true;
-            }
-            MarkdownEvent::InlineHtml(html) if html.as_ref() == image_flow::STACK_CLOSE => {
-                stack = false;
-            }
-            _ => {}
-        }
-        led.push(event);
-    }
-    if pending {
-        led.push(line());
-    }
-    led
-}
-
-/// Trail one directive context with its source age and author. A final prose
-/// paragraph keeps the attribution inline; any other final block gets a compact
-/// line below it. The task portal target remains last at the same content tail.
-fn trail_directive_attribution(
-    events: &mut Vec<MarkdownEvent<'_>>,
-    start: usize,
+fn directive_attribution(
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-) {
+) -> image_flow::Attribution {
     let target = context.quote_target.to_string();
-    let signoff = quotes::signoff_html(
-        &wire::QuoteAuthor::Directive {
-            actor: context.actor.clone(),
-        },
-        &target,
-        quote_agents,
-        quote_sources,
-    );
-    let task_tail = quotes::task_tail_html(&target);
-    append_directive_tail(events, start, format!("{signoff}{task_tail}"));
-}
-
-fn append_directive_tail<'a>(events: &mut Vec<MarkdownEvent<'a>>, start: usize, tail: String) {
-    if tail.is_empty() {
-        return;
-    }
-    let trailing_paragraph = if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph)))
-    {
-        events[start..]
-            .iter()
-            .rposition(|event| matches!(event, MarkdownEvent::Start(Tag::Paragraph)))
-            .map(|position| start + position)
-            .is_some_and(|paragraph| !paragraph_is_image_stack(&events[paragraph + 1..]))
-    } else {
-        false
-    };
-    if trailing_paragraph {
-        events.insert(events.len() - 1, MarkdownEvent::InlineHtml(tail.into()));
-    } else {
-        events.push(MarkdownEvent::Html(
-            format!("{}{tail}</p>", image_flow::TAIL_LINE_OPEN).into(),
-        ));
+    image_flow::Attribution {
+        controls_target: target.clone(),
+        signoff: quotes::signoff_html(
+            &wire::QuoteAuthor::Directive {
+                actor: context.actor.clone(),
+            },
+            &target,
+            quote_agents,
+            quote_sources,
+        ),
+        disposition: String::new(),
+        task_tail: quotes::task_tail_html(&target),
     }
 }
 
