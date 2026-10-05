@@ -263,12 +263,15 @@ prose: it rises a quarter line into the free corner above, never past the
 card's own padding, and its buttons take that rise as extra size, standing two
 and a quarter lines tall and never below the base 24px card action. The
 message content clips at the card's inner edge, not its content box, so the
-risen island is never cut. Each action is its own circle rather than a segment
-of a joined rail: a muted neutral glyph inside a muted ring in the accent of the
+risen island is never cut. Each action is its own borderless circle rather than
+a segment of a joined rail: a muted neutral glyph on a fill of the accent of the
 rail that contains it, so a quote's controls follow that quote's speaker and an
-operator or system quote's controls stay neutral inside an accented card. While
-hovered, pressed, or speaking, the glyph lights to neutral ink and the ring to
-that full accent. Playback belongs to one exact hunk control, not every control
+operator or system quote's controls stay neutral inside an accented card. The
+fill is a final answer's 5% rest wash over the stream surface, so on a final
+card the control blends into the card and only its glyph shows, and a hovered
+card's 10% wash sets it apart. While hovered, pressed, or speaking, the control
+fills at 10%, its glyph lights to neutral ink, and a tight muted shadow gives it
+an edge. Playback belongs to one exact hunk control, not every control
 in its card; the card keeps its aggregate `now-playing` state while only that
 control becomes Stop. Automatic Speak or Narrate playback owns the message's
 direct-prose control and leaves quoted source controls on Play. Only the hunk's
