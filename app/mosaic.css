@@ -436,12 +436,12 @@
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
-  --team-pip-size: 14px;
-  --team-pip-gap: 7px;
+  --team-pip-size: 8px;
+  --team-pip-gap: 0;
   --team-control-inline-size: 74px;
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
-  /* The topology handle exactly continues the send control's footprint. Its
-     two header bands terminate both rails before that fixed control column. */
+  /* The composer controls keep a fixed right-edge column below the full-width
+     task rail and inline status band. */
   --team-status-band: var(--app-status-line-band);
   --team-task-band: calc(var(--team-control-submit-block-size) - var(--team-status-band));
   --team-header-size: var(--team-control-submit-block-size);
@@ -474,35 +474,36 @@
 /* Sibling teams fuse into one console: a single shared rule is their seam. */
 .team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
-/* The header is one fixed grid with no outer chrome. Its topology handle
-   occupies the send control's exact footprint at the right edge; the task and
-   status rails terminate beside it. Pips remain canonically ordered inside
-   that larger centered target. */
+/* The header is one fixed grid with no outer chrome. Tasks use its full first
+   row; the inline pip sequence and ticker share the full-width status row. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
   grid-template:
-    "tasks pips" var(--team-task-band)
-    "status pips" var(--team-status-band)
-    / minmax(0, 1fr) var(--team-control-inline-size);
+    "tasks tasks" var(--team-task-band)
+    "pips status" var(--team-status-band)
+    / auto minmax(0, 1fr);
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* The encasing rounds only its top corners, at the pips' own radius; its soft
-   top rule matches the status line and its foot continues square into the
-   control frame below. Both use the message-stream surface. */
+/* Pips are the status row's leading inline content, on the same stream surface
+   and soft top rule as the ticker. Empty fleets surrender the whole row. */
 .team-toolbar > .team-lights {
   grid-area: pips;
   align-self: stretch;
-  justify-self: stretch;
+  justify-self: start;
   align-items: center;
+  justify-content: space-evenly;
+  gap: var(--team-pip-gap);
+  width: var(--team-control-inline-size);
+  min-width: var(--team-control-inline-size);
+  max-width: var(--team-control-inline-size);
   margin: 0;
   padding: 0;
-  border-block-start: var(--app-edge-soft);
-  border-start-start-radius: var(--app-radius-compact);
-  border-start-end-radius: var(--app-radius-compact);
-  background: var(--message-stream-surface);
+  border-block-start: var(--app-control-edge);
+  background: var(--message-stream-surface) padding-box;
 }
+.team-toolbar > .team-lights:empty { display: none; }
 /* The team's task strip is the global strip, a size smaller and centered in
    its own band so it floats clear of the status line beneath. */
 .team-toolbar > .team-tasks {
@@ -527,15 +528,14 @@
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 .team-light {
+  --team-pip-accent: var(--accent-slot, var(--accent));
   width: var(--team-pip-size);
   height: var(--team-pip-size);
   border-radius: 50%;
-  background: var(--agent-presence-color);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--team-pip-accent) 68%, var(--agent-presence-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--team-pip-accent) 82%, transparent);
   opacity: var(--agent-presence-opacity);
 }
-.team-light.bound,
-.team-light.unbound { box-shadow: none; }
 
 .app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 
@@ -921,7 +921,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0;
   border-radius: 0;
-  background: var(--message-stream-surface); box-shadow: none;
+  background: var(--control); box-shadow: none;
 }
 .team-slider {
   --control-state-accent: var(--accent);

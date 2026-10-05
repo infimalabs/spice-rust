@@ -169,7 +169,6 @@ fn render_team_toolbar(
     standings: &[Standing],
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    let pip_stack = crate::pip_layout::PipStack::new(standings.len());
     let can_arrange = render.can_arrange_teams && watchband::teams(&render.topology).count() > 1;
     let id = team.lane;
     let arrangement_help_id = format!("team-arrangement-help-{id}");
@@ -192,15 +191,10 @@ fn render_team_toolbar(
     };
     let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
     let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
-    // PipStack places index 0 at the lower right, so pip index is canonical
-    // member position: the main agent sits at the team's right edge.
     let render_pip = |index: usize| {
         let standing = &standings[index];
         let member = team.member(standing.lane)?;
         let status = member.status(standing.waking);
-        let position = pip_stack
-            .position(index)
-            .expect("standing index belongs to the lane pip stack");
         let label = format!("{}: {}", standing.label, status.label());
         Some(html! {
             <span
@@ -208,8 +202,7 @@ fn render_team_toolbar(
                 role="img"
                 data-lane-light-target-id={member.lane.to_string()}
                 data-lane-status={status.key()}
-                data-pip-column={position.column.to_string()}
-                data-pip-row={position.row.to_string()}
+                data-accent={standing.accent.to_string()}
                 aria-label={label.clone()}
                 title={label}
             ></span>
@@ -230,7 +223,7 @@ fn render_team_toolbar(
             {render_team_rail(team.lane, render)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
             <span
-                class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
+                class="team-lights"
                 role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
                 aria-haspopup={can_arrange.then_some("menu")}
@@ -253,12 +246,7 @@ fn render_team_toolbar(
                         {"Press Enter or Space, or tap, to choose where to move or join this team."}
                     </span>
                 }
-                {for pip_stack.columns_from_left().map(|column| html! {
-                    <span class="team-pip-column" data-pip-column={column.column.to_string()}>
-                        {column.upper.and_then(&render_pip)}
-                        {render_pip(column.lower)}
-                    </span>
-                })}
+                {for standings.iter().enumerate().filter_map(|(index, _)| render_pip(index))}
             </span>
         </header>
         {arrangement::render(team.lane, &control, &arrangement_context)}

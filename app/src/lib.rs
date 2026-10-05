@@ -58,8 +58,6 @@ pub mod mosaic_plane;
 pub mod narration;
 pub mod pane;
 #[cfg(any(target_arch = "wasm32", test))]
-pub(crate) mod pip_layout;
-#[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(test, allow(dead_code))]
 mod quota;
 #[cfg(any(target_arch = "wasm32", test))]
