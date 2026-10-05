@@ -563,7 +563,7 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 0 .35em 0 0;
+  margin: 0;
   vertical-align: baseline;
 }
 .markdown-body .message-hunk-content { display: contents; }
