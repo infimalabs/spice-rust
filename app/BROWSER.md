@@ -126,11 +126,11 @@ the pips' 7px radius; the encasing's foot stays square where it meets the
 frame. The two current values occupy the row immediately below the tracks,
 leaning on the center divider: speech ends and allocation starts 3px from it,
 so they read as one phrase such as "quiet drain" or "narrate steer". The
-control field owns one top edge and one center divider between the sliders;
-slider state uses fill without adding nested borders or inset shadows. The
-frame carries no words but the button's. Swapping these two fixed units does
-not change the composer block, frame width, send row, label row, or
-slider-track size.
+control field leaves its top open beneath the topology control and owns only
+the center divider between the sliders; slider state uses fill without adding
+nested borders or inset shadows. The frame carries no words but the button's.
+Swapping these two fixed units does not change the composer block, frame width,
+send row, label row, or slider-track size.
 At the 10rem minimum member width, the standard draft block is 170px tall and
 reads approximately square without widening the member column.
 That shared block size also determines the speech and allocation tracks and
@@ -141,15 +141,15 @@ The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and neither adjacent members nor the member-to-control
 junction paint a vertical separator, shadow, or panel-colored gutter. The team
 owns the field's left outer edge and the controls own its right outer edge.
-Every member heading has a permanent
-accent-colored underline and adjacent accents meet without a panel-colored
-break. A focused member composer is lit: it gains the same accent underline at
-its block-end edge, and the focused draft itself, the primary or a quote draft
-pinned to a message, mixes its background 10% toward that accent. Keyboard
-broadcast preview lights every occupied recipient through the same single lit
-state, filling each recipient's primary draft. Neither treatment changes the
-field's geometry, and circular menu
-buttons, range thumbs, and the send action retain their own control shapes.
+Every member heading has a permanent accent-colored underline. Each painted
+stroke stops 1px short of its member edge, creating a 2px break between accents
+without separating the composer bodies. A focused member composer uses the
+same inset for its block-end highlight, and the focused draft itself, the
+primary or a quote draft pinned to a message, mixes its background 10% toward
+that accent. Keyboard broadcast preview lights every occupied recipient through
+the same single lit state, filling each recipient's primary draft. Neither
+treatment changes the field's geometry, and circular menu buttons, range
+thumbs, and the send action retain their own control shapes.
 
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
@@ -344,9 +344,11 @@ mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger: its
 task strip and complete live ticker terminate at the topology control, whose
 fixed right-edge footprint continues the composer control rail below. The
-ticker keeps its relative age, lane-status class, agent/tool/command prefix and
-accent, truncated detail, accessible label, and live-region semantics in the
-status band; an empty fleet reserves that slot without inventing status.
+status band uses the same theme-aware surface as the message stream and only a
+soft top rule. Its ticker retains relative age, lane-status class,
+agent/tool/command prefix and accent, truncated detail, accessible label, and
+live-region semantics; an empty fleet reserves the surfaced slot without
+inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -357,14 +359,16 @@ measured, scroll positions hold, and returning to Chat reuses the layout without
 any plane, card, or team surface observing a resize. Browsers without
 `content-visibility` fall back to `display: none`.
 
-The toolbar is a fixed-height grid whether or not the team owns work, with no
-outer background, border, or shadow; the team surface frames nothing around it,
-so only the pane below carries the panel. Its neutral topology control has the
-same 74px inline size and 60px block size as the Drive/send control immediately
-below it. This makes one aligned right-edge control column, moves the composer
-down by the control's small added headroom, and gives both the task strip and
-status line a natural endpoint. The control centers all six enlarged member
-pips in two rows while retaining canonical order, the main agent at the lower
+The toolbar is a fixed-height grid whether or not the team owns work. It has no
+outer frame or shadow: only the status band's soft top rule and stream surface
+distinguish that incorporated row, while the team surface frames nothing around
+it. Its neutral topology control has the same 74px inline size and 60px block
+size as the Drive/send control immediately below it, with no border across
+their junction. This makes one aligned right-edge control column, moves the
+composer down by the control's small added headroom, and gives both the task
+strip and status line a natural endpoint. The control centers all six enlarged
+member pips in two rows while retaining canonical order, the main agent at the
+lower
 right, and centers every smaller team as a whole. The global Spice and
 Dash-avatar circles share one diameter and equal top, bottom, and outer-edge
 insets. The team's task strip reuses the
