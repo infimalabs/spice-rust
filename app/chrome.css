@@ -103,13 +103,15 @@ body:has(.shell--mosaic),
   font-size: .7rem;
 }
 
-/* One joined strip that scrolls rather than wraps, as wide as its pills. */
+/* One joined strip that scrolls rather than wraps, as wide as its pills, and
+   rounded as a true pill whatever the shared rail radius. */
 .task-pill-strip {
   grid-area: 1 / 2;
   justify-self: start;
   flex-wrap: nowrap;
   max-width: 100%;
   overflow-x: auto;
+  border-radius: var(--app-radius-pill);
 }
 .task-pill {
   display: inline-flex;
