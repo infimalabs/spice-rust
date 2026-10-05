@@ -764,7 +764,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .composer-shard--quote {
   order: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
