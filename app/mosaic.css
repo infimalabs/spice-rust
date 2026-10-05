@@ -1000,16 +1000,17 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* With no agent running and nothing drafted, the team's sliders and send step
-   back like an inactive lane without compositing their shared field surface;
-   drafting anything lights them again. */
-.team-composer .team-composer-controls > * {
-  transition: opacity var(--app-motion-settle) var(--app-ease-standard),
-    filter var(--app-motion-settle) var(--app-ease-standard);
+   back like an inactive lane without compositing their shared field surface.
+   Filter the slider's visual children, never its label-positioning ancestor:
+   filter establishes a containing block and would rebase both labels. */
+.team-composer .team-composer-controls > .team-send {
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard);
 }
-.team-composer .team-composer-controls[data-idle="true"] > * {
-  opacity: var(--inactive-lane-opacity);
-  filter: saturate(.55);
-}
+.team-composer .team-composer-controls > .team-slider { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
+.team-composer .team-composer-controls > .team-slider > * { transition: filter var(--app-motion-settle) var(--app-ease-standard); }
+.team-composer .team-composer-controls[data-idle="true"] > * { opacity: var(--inactive-lane-opacity); }
+.team-composer .team-composer-controls[data-idle="true"] > .team-send,
+.team-composer .team-composer-controls[data-idle="true"] > .team-slider > * { filter: saturate(.55); }
 .team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
 /* Command previews ring outside the Drive button now that its row has room.
    Ordinary submit follows the focused agent; broadcast uses its purple slot. */
