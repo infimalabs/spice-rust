@@ -189,6 +189,7 @@ body:has(.shell--mosaic),
   border-start-end-radius: var(--app-radius-compact);
   background: var(--message-stream-surface);
 }
+.team-tasks :focus-visible { outline-offset: -2px; }
 .app-global-status {
   grid-area: 1 / 3;
   min-width: 0;
