@@ -1187,10 +1187,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   }
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
-/* The card controls are a corner island in the wall of message flow. A leading
-   quote owns the island through a portal, so its colored box stays full width
-   while only its contents wrap; otherwise the island leads the body itself.
-   Below the narrow-column threshold ordinary cards give the island its own row. */
+/* Controls float at the inline end of their containing hunk or card. Narrow
+   non-hunk cards give the island its own row. */
 .team-surface .mosaic-message-card .message-controls {
   display: flex; float: inline-end; align-items: center; gap: 6px;
   min-width: 0; max-inline-size: 100%;
@@ -1223,13 +1221,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     margin: 0 0 .5rem;
   }
   .team-surface .message-controls-actions { min-height: 32px; }
-  .team-surface .markdown-body > :is(blockquote, .message-quote-card)
-    > .message-controls {
-    float: inline-end; justify-content: flex-end; min-height: 0;
-    margin: 0; margin-block-end: .25rem; margin-inline-start: .5rem;
-  }
-  .team-surface .markdown-body > :is(blockquote, .message-quote-card)
-    > .message-controls > .message-controls-actions { min-height: 0; }
 }
 .relative-age {
   display: block;

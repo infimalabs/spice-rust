@@ -296,29 +296,25 @@ images in the middle of a quote keep the image-row layout.
 
 ## Attribution placement
 
-Quote-source attribution follows the words it attributes: the relative age,
-then the source name, then any disposition badge. A resolved quote card or
-quoted directive with final prose keeps that sequence inline after its final
-text. A quote ending in images, a list, a nested quote, code, or another
-non-prose block puts the sequence on one compact line after that block. The rule
-applies independently at every nesting depth and to operator, agent, and peer
-lane sources. ACK, NAK, and the other resolved-source dispositions use the same
-trailing position.
+Every attributable run between nested quote blocks is one speaker-owned hunk.
+The hunk starts with that source's control island, relative age, name, and any
+role or disposition badges. All images associated with the hunk are
+consolidated next, floated at the inline start, and followed by the remaining
+prose. A nested quote interrupts the hunk; direct text after it starts a new
+hunk with the surrounding source's controls and attribution again. This one
+rule applies recursively to top-level agent prose and resolved operator, agent,
+and peer-lane quotes.
 
-Board provenance remains independent and terminal. Its empty target follows
-the moved attribution, consumes no space, and fills with origin-task badges
-when Work reports them. Moving source attribution never moves a task target
-away from the end of its quote. Task arrival therefore cannot shift words
-before the paragraph's final line.
+The control island floats at the inline end of the hunk. Its speak action uses
+only that hunk's rendered text, and its quote action retains that hunk's exact
+authenticated target. ACK, pending ACK, NAK, TASTE, REVIEW, BROADCAST, and
+resolved-source disposition pills follow the source name before the words they
+classify.
 
-A prose card still leads its first paragraph with its own age, producer, role
-badges, and FINAL badge, and repeats that attribution at the head of the first
-paragraph after every chain of quotes, so a message answering several directive
-sets attributes each answer. Every authenticated message role follows the
-producing speaker: ACK, pending ACK, NAK, TASTE, REVIEW, and BROADCAST use the
-same compact soft-tint badge position. The resident writes an answer's ACK, ACK
-PENDING, or NAK marker at the head of that answer, so its pill follows the
-speaking agent's name instead of sitting in the quoted directive.
+Board provenance remains independent and terminal. Each complete quote layer
+keeps one empty task target after all of its hunks and nested quotes; Work fills
+that target with origin-task badges. Repeating source attribution around a
+nested quote never repeats or relocates the quote layer's task provenance.
 
 Quotes at every depth carry no fill of their own; their text keeps the muted
 tone and smaller size. A quote's rail shows its speaker the way a top-level card

@@ -138,8 +138,7 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The tail of quoted words: the source message's live relative age, then an
-/// explicit non-Operator author name.
+/// The lead of each hunk of quoted words: source age, then author name.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
@@ -238,10 +237,11 @@ fn render(
                 quotes,
                 agents,
                 sources,
-                super::image_flow::CardTail {
-                    signoff: &signoff,
-                    disposition: &disposition,
-                    task_tail: &task_tail,
+                super::image_flow::Attribution {
+                    controls_target: target.clone(),
+                    signoff,
+                    disposition,
+                    task_tail,
                 },
             );
             let accent = speaker_accent(author, target, agents, sources)

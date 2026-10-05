@@ -511,10 +511,38 @@ pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) quote: Option<Callback<()>>,
 }
 
+fn action_speech_text(event: &MouseEvent, fallback: &str) -> String {
+    let Some(hunk) = event
+        .current_target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(".message-hunk").ok().flatten())
+        .and_then(|hunk| hunk.clone_node_with_deep(true).ok())
+        .and_then(|hunk| hunk.dyn_into::<web_sys::Element>().ok())
+    else {
+        return fallback.to_owned();
+    };
+    if let Ok(nodes) = hunk.query_selector_all(
+        ".message-controls, .message-attribution, .message-image-status, .message-quote-task-line",
+    ) {
+        for index in 0..nodes.length() {
+            if let Some(element) = nodes
+                .item(index)
+                .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+            {
+                element.remove();
+            }
+        }
+    }
+    hunk.text_content()
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
 pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
     let speak = correspondent.speak.clone();
     let quote = correspondent.quote.clone();
-    let spoken = text.to_owned();
+    let fallback = text.to_owned();
     let speech_label = if correspondent.speaking {
         "Stop playback"
     } else {
@@ -530,7 +558,9 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                 )}
                 type="button" title={speech_label}
                 aria-label={speech_label}
-                onclick={Callback::from(move |_| speak.emit(spoken.clone()))}
+                onclick={Callback::from(move |event: MouseEvent| {
+                    speak.emit(action_speech_text(&event, &fallback));
+                })}
             >{
                 if correspondent.speaking {
                     html! {

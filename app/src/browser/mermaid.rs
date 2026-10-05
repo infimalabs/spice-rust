@@ -433,75 +433,26 @@ fn math_image(props: &MathImageProps) -> Html {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub(super) struct MarkdownControl {
+    pub(super) target: AttrValue,
+    pub(super) content: Html,
+}
+
 #[derive(Properties, PartialEq)]
 pub(super) struct MarkdownBodyProps {
     pub(super) html: AttrValue,
     pub(super) sources: Rc<Vec<AttrValue>>,
     pub(super) final_answer: bool,
     pub(super) quote_tasks: Rc<crate::runtime::QuoteTasks>,
-    /// The card's own attribution, mounted in every signoff slot its body leads with.
+    #[prop_or_default]
+    pub(super) controls: Rc<Vec<MarkdownControl>>,
+    /// The card's own attribution, mounted in every hunk it owns.
     #[prop_or_default]
     pub(super) signoff: Option<Html>,
-    /// Card controls that either lead the body or mount inside its leading quote.
+    /// Controls for non-prose cards, outside all nested quote blocks.
     #[prop_or_default]
     pub(super) corner: Option<Html>,
-}
-
-/// Where card controls mount once the raw body exposes its first content block.
-#[derive(Clone, PartialEq)]
-enum CornerPlace {
-    Pending,
-    Body,
-    Quote {
-        target: web_sys::Element,
-        before: Option<web_sys::Node>,
-    },
-}
-
-fn has_class(element: &web_sys::Element, class: &str) -> bool {
-    element
-        .get_attribute("class")
-        .is_some_and(|classes| classes.split_whitespace().any(|name| name == class))
-}
-
-fn collect_corner_place(host: &web_sys::Element, enabled: bool) -> CornerPlace {
-    if !enabled {
-        return CornerPlace::Pending;
-    }
-    let mut surface = host.first_element_child();
-    while let Some(element) = surface.as_ref().filter(|element| {
-        has_class(element, "message-controls")
-            || has_class(element, MARKDOWN_BODY_PORTALS)
-            || has_class(element, "message-signoff-line")
-    }) {
-        surface = element.next_element_sibling();
-    }
-    let Some(surface) = surface.filter(|element| {
-        element.tag_name() == "BLOCKQUOTE" || has_class(element, "message-quote-card")
-    }) else {
-        return CornerPlace::Body;
-    };
-    CornerPlace::Quote {
-        before: surface.first_child(),
-        target: surface,
-    }
-}
-
-fn render_corner(corner: Option<&Html>, place: &CornerPlace) -> (Option<Html>, Option<Html>) {
-    let Some(corner) = corner else {
-        return (None, None);
-    };
-    match place {
-        CornerPlace::Pending | CornerPlace::Body => (Some(corner.clone()), None),
-        CornerPlace::Quote { target, before } => (
-            None,
-            Some(Html::from(yew::virtual_dom::VPortal::new_before(
-                corner.clone(),
-                target.clone(),
-                before.clone(),
-            ))),
-        ),
-    }
 }
 
 const MARKDOWN_BODY_PORTALS: &str = "markdown-body-portals";
@@ -533,6 +484,11 @@ struct QuoteTaskSlot {
 }
 
 struct SignoffSlot {
+    target: web_sys::Element,
+    key: yew::virtual_dom::Key,
+}
+struct ControlSlot {
+    index: usize,
     target: web_sys::Element,
     key: yew::virtual_dom::Key,
 }
@@ -731,6 +687,41 @@ fn collect_signoff_slots(
     }
     slots
 }
+fn collect_control_slots(
+    host: &web_sys::Element,
+    controls: &[MarkdownControl],
+    previous: &[ControlSlot],
+    counter: &Cell<u64>,
+) -> Vec<ControlSlot> {
+    let Ok(nodes) = host.query_selector_all(".message-controls-slot[data-message-controls]") else {
+        return Vec::new();
+    };
+    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    for position in 0..nodes.length() {
+        let Some(target) = nodes
+            .item(position)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let Some(index) = target
+            .get_attribute("data-message-controls")
+            .and_then(|target| controls.iter().position(|control| control.target == target))
+        else {
+            continue;
+        };
+        let key = previous
+            .iter()
+            .find(|slot| slot.target == target)
+            .map(|slot| slot.key.clone())
+            .unwrap_or_else(|| {
+                counter.set(counter.get().wrapping_add(1));
+                counter.get().into()
+            });
+        slots.push(ControlSlot { index, target, key });
+    }
+    slots
+}
 
 #[derive(Properties, PartialEq)]
 struct QuoteTaskChipsProps {
@@ -756,29 +747,44 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
         </>
     }
 }
-/// Producer-authored diagram, math, quote-age, quote-task, and signoff slots inside this
-/// card are portal targets. Raw user HTML still passes through the shared
-/// Markdown sanitizer; only parser- or resident-owned nodes can name these slot
-/// kinds. Board work fills trailing task slots in place, so a quote gaining
-/// task badges never replaces the card's raw nodes or reloads its images.
+
+fn signoff_portals(signoff: Option<&Html>, slots: &[SignoffSlot]) -> Vec<Html> {
+    let Some(signoff) = signoff else {
+        return Vec::new();
+    };
+    slots
+        .iter()
+        .map(|slot| {
+            yew::create_portal(
+                html! { <span key={slot.key.clone()} class="message-signoff">{signoff.clone()}</span> },
+                slot.target.clone(),
+            )
+        })
+        .collect()
+}
+/// Producer-authored diagram, math, quote-age, quote-task, attribution, and
+/// control slots inside this card are portal targets. Raw user HTML still
+/// passes through the shared Markdown sanitizer; only parser- or resident-owned
+/// nodes can name these slot kinds. Board work fills trailing task slots in
+/// place, so a quote gaining task badges never replaces the card's raw nodes or
+/// reloads its images.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
     super::watchband::use_markdown_image_resolution_events(host.clone(), props.html.clone());
-    super::quote_image_flow::use_quote_image_flow(host.clone(), props.html.clone());
     let diagram_slots = use_state(Vec::<Slot>::new);
     let math_slots = use_state(Vec::<MathSlot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
     let quote_task_slots = use_state(Vec::<QuoteTaskSlot>::new);
     let signoff_slots = use_state(Vec::<SignoffSlot>::new);
-    let corner_place = use_state(|| CornerPlace::Pending);
+    let control_slots = use_state(Vec::<ControlSlot>::new);
     let counter = use_memo((), |()| Cell::new(0_u64));
     use_effect_with(
         (
             props.html.clone(),
             props.sources.len(),
             props.signoff.is_some(),
-            props.corner.is_some(),
+            props.controls.clone(),
         ),
         {
             let host = host.clone();
@@ -787,13 +793,12 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             let quote_age_slots = quote_age_slots.clone();
             let quote_task_slots = quote_task_slots.clone();
             let signoff_slots = signoff_slots.clone();
-            let corner_place = corner_place.clone();
+            let control_slots = control_slots.clone();
             let counter = counter.clone();
-            move |(_, source_count, has_signoff, has_corner)| {
+            move |(_, source_count, has_signoff, controls)| {
                 let Some(host) = host.cast::<web_sys::Element>() else {
                     return;
                 };
-                corner_place.set(collect_corner_place(&host, *has_corner));
                 diagram_slots.set(collect_slots(
                     &host,
                     "[data-mermaid-slot]",
@@ -810,21 +815,16 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 } else {
                     Vec::new()
                 });
+                control_slots.set(collect_control_slots(
+                    &host,
+                    controls,
+                    &control_slots,
+                    &counter,
+                ));
             }
         },
     );
-    let signoffs = props.signoff.as_ref().map(|signoff| {
-        signoff_slots
-            .iter()
-            .map(|slot| {
-                yew::create_portal(
-                    html! { <span key={slot.key.clone()} class="message-signoff">{signoff.clone()}</span> },
-                    slot.target.clone(),
-                )
-            })
-            .collect::<Vec<_>>()
-    });
-    let (body_corner, quote_corner) = render_corner(props.corner.as_ref(), &corner_place);
+    let signoffs = signoff_portals(props.signoff.as_ref(), &signoff_slots);
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
@@ -835,9 +835,9 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 super::card_target::remember_quote_return(&event);
             })}
         >
-            {for body_corner}
+            {for props.corner.clone()}
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || !signoff_slots.is_empty() || quote_corner.is_some() {
+            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || !signoff_slots.is_empty() || !control_slots.is_empty() {
             <span class={MARKDOWN_BODY_PORTALS} hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
@@ -872,8 +872,14 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                     slot.target.clone(),
                 ))
             })}
-            {for quote_corner}
-            {for signoffs.into_iter().flatten()}
+            {for control_slots.iter().filter_map(|slot| {
+                let control = props.controls.get(slot.index)?;
+                Some(yew::create_portal(
+                    html! { <span key={slot.key.clone()}>{control.content.clone()}</span> },
+                    slot.target.clone(),
+                ))
+            })}
+            {for signoffs}
             </span>
             }
         </div>

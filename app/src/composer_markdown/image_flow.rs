@@ -1,13 +1,8 @@
-//! Quote layers that end in images flow their prose around those images.
+//! Recursive attribution-hunk layout for message and quote Markdown.
 //!
-//! A quote layer whose trailing blocks are image stacks, after at least one
-//! other block, renders inside one flow wrapper: a zero-width anchor float,
-//! the layer's images merged into one stack floated beneath it, then the prose.
-//! Floats only push content that follows them, so the images lead in source;
-//! the browser then lifts the anchor until the images' bottom meets the end of
-//! the prose (`browser::quote_image_flow`), leaving the images at the bottom
-//! with prose beside and above them. A layer's attribution trails it: inline
-//! after its final prose, or on a line of its own below any other final block.
+//! A speaker owns each direct run of content between nested quote blocks. Every
+//! non-empty run leads with that speaker's controls and attribution, followed in
+//! DOM order by all image stacks in the run and then its remaining content.
 
 use std::ops::Range;
 
@@ -15,131 +10,173 @@ use pulldown_cmark::{Event as MarkdownEvent, Tag};
 
 pub(super) const STACK_OPEN: &str = "<p class=\"message-image-stack\">";
 pub(super) const STACK_CLOSE: &str = "</p>";
-const FLOW_OPEN: &str = "<div class=\"message-image-flow\">\
-                         <span class=\"message-image-flow-anchor\" aria-hidden=\"true\"></span>";
-const FLOW_CLOSE: &str = "</div>";
-pub(super) const TAIL_LINE_OPEN: &str = "<p class=\"message-quote-tail\">";
+const HUNK_OPEN: &str = "<div class=\"message-hunk\">";
+const HUNK_CONTENT_OPEN: &str = "<div class=\"message-hunk-content\">";
+const HUNK_CLOSE: &str = "</div>";
 
-/// What a quote card places after its own top-level content.
-pub(super) struct CardTail<'t> {
-    /// The card's source attribution, empty when source evidence is unavailable.
-    pub(super) signoff: &'t str,
-    /// Disposition pill following the attribution, empty when none.
-    pub(super) disposition: &'t str,
-    /// Empty board-provenance portal target that remains last at the content tail.
-    pub(super) task_tail: &'t str,
+/// Attribution repeated at the start of every hunk one speaker owns.
+#[derive(Clone)]
+pub(super) struct Attribution {
+    /// Stable browser control model key. Empty names the containing message.
+    pub(super) controls_target: String,
+    /// Source age and name, or the containing card's Yew signoff slot.
+    pub(super) signoff: String,
+    /// Source disposition following its name.
+    pub(super) disposition: String,
+    /// Board provenance retained once at the complete attributed layer's tail.
+    pub(super) task_tail: String,
 }
 
-/// The layer a run of events forms.
-pub(super) enum Layer<'t> {
-    /// A message body: only its quotes flow.
-    Body,
-    /// A quote card body, which flows like a quote and trails with its attribution.
-    Card(CardTail<'t>),
+impl Attribution {
+    fn lead_html(&self) -> String {
+        format!(
+            "<span class=\"message-controls-slot\" data-message-controls=\"{}\"></span>\
+             <p class=\"message-attribution\">{}{}</p>",
+            super::escape_html_attribute(&self.controls_target),
+            self.signoff,
+            self.disposition,
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Block {
     Paragraph,
     Stack,
-    TailLine,
     Quote,
+    QuoteCard,
     Other,
 }
 
-/// Flow every quote layer in `events` that ends in images.
-pub(super) fn flow<'a>(events: &[MarkdownEvent<'a>], layer: &Layer<'_>) -> Vec<MarkdownEvent<'a>> {
-    let mut blocks = blocks(events)
-        .into_iter()
-        .map(|(kind, range)| {
-            let block = &events[range];
-            let block = if kind == Block::Quote {
-                let inner = &block[1..block.len() - 1];
-                let body = flow_quote(inner);
-                let mut quote = Vec::with_capacity(body.len() + 2);
-                quote.push(block[0].clone());
-                quote.extend(body);
-                quote.push(block[block.len() - 1].clone());
-                quote
-            } else {
-                block.to_vec()
-            };
-            (kind, block)
-        })
-        .collect::<Vec<_>>();
-    match layer {
-        Layer::Body => blocks.into_iter().flat_map(|(_, block)| block).collect(),
-        Layer::Card(tail) => {
-            let tail = format!("{}{}{}", tail.signoff, tail.disposition, tail.task_tail);
-            trail(&mut blocks, &tail);
-            hoist(blocks)
+/// Lay out one Markdown layer and every raw block quote it directly contains.
+///
+/// `quote_attributions` follows the layer's direct raw block quotes in document
+/// order. Resolved quote cards render recursively before they become opaque HTML.
+pub(super) fn flow<'a>(
+    events: &[MarkdownEvent<'a>],
+    attribution: Option<&Attribution>,
+    quote_attributions: &[Option<Attribution>],
+) -> Vec<MarkdownEvent<'a>> {
+    let mut quote_attributions = quote_attributions.iter();
+    let blocks = prepare_blocks(events, &mut quote_attributions);
+    lay_out_hunks(blocks, attribution)
+}
+
+fn prepare_blocks<'a, 'q>(
+    events: &[MarkdownEvent<'a>],
+    quote_attributions: &mut impl Iterator<Item = &'q Option<Attribution>>,
+) -> Vec<(Block, Vec<MarkdownEvent<'a>>)> {
+    let mut prepared = Vec::new();
+    for (kind, range) in blocks(events) {
+        let block = &events[range];
+        if kind == Block::Paragraph {
+            let mut start = 1usize;
+            for (index, event) in block[1..block.len() - 1].iter().enumerate() {
+                let index = index + 1;
+                if !matches!(event, MarkdownEvent::InlineHtml(html)
+                    if html.starts_with("<div class=\"message-quote-card"))
+                {
+                    continue;
+                }
+                push_paragraph_segment(&mut prepared, block, start, index);
+                prepared.push((Block::QuoteCard, vec![event.clone()]));
+                start = index + 1;
+            }
+            push_paragraph_segment(&mut prepared, block, start, block.len() - 1);
+        } else if kind == Block::Quote {
+            let inner = &block[1..block.len() - 1];
+            let attribution = quote_attributions.next().and_then(Option::as_ref);
+            let body = lay_out_hunks(prepare_blocks(inner, &mut std::iter::empty()), attribution);
+            let mut quote = Vec::with_capacity(body.len() + 2);
+            quote.push(block[0].clone());
+            quote.extend(body);
+            quote.push(block[block.len() - 1].clone());
+            prepared.push((kind, quote));
+        } else {
+            prepared.push((kind, block.to_vec()));
         }
     }
+    prepared
 }
 
-/// Keep attribution inline after final prose. A non-prose ending gets one
-/// compact tail line, which `hoist` keeps behind any trailing image flow.
-fn trail<'a>(blocks: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>, tail: &str) {
-    if tail.is_empty() {
+fn push_paragraph_segment<'a>(
+    blocks: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>,
+    paragraph: &[MarkdownEvent<'a>],
+    start: usize,
+    end: usize,
+) {
+    if start == end {
         return;
     }
-    if let Some((Block::Paragraph, block)) = blocks.last_mut() {
-        block.insert(
-            block.len() - 1,
-            MarkdownEvent::InlineHtml(tail.to_owned().into()),
-        );
-    } else {
-        blocks.push((
-            Block::TailLine,
-            vec![MarkdownEvent::Html(
-                format!("{TAIL_LINE_OPEN}{tail}</p>").into(),
-            )],
+    let mut segment = Vec::with_capacity(end - start + 2);
+    segment.push(paragraph[0].clone());
+    segment.extend(paragraph[start..end].iter().cloned());
+    segment.push(paragraph[paragraph.len() - 1].clone());
+    blocks.push((Block::Paragraph, segment));
+}
+
+fn lay_out_hunks<'a>(
+    blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>,
+    attribution: Option<&Attribution>,
+) -> Vec<MarkdownEvent<'a>> {
+    let Some(attribution) = attribution else {
+        return blocks.into_iter().flat_map(|(_, block)| block).collect();
+    };
+    let mut events = Vec::new();
+    let mut hunk = Vec::new();
+    for (kind, block) in blocks {
+        if matches!(kind, Block::Quote | Block::QuoteCard) {
+            push_hunk(&mut events, &mut hunk, attribution);
+            events.extend(block);
+        } else {
+            hunk.push((kind, block));
+        }
+    }
+    push_hunk(&mut events, &mut hunk, attribution);
+    if !attribution.task_tail.is_empty() {
+        events.push(MarkdownEvent::Html(
+            format!(
+                "<p class=\"message-quote-task-line\">{}</p>",
+                attribution.task_tail
+            )
+            .into(),
         ));
     }
-}
-
-fn flow_quote<'a>(events: &[MarkdownEvent<'a>]) -> Vec<MarkdownEvent<'a>> {
-    let blocks = flow(events, &Layer::Body);
-    let blocks = self::blocks(&blocks)
-        .into_iter()
-        .map(|(kind, range)| (kind, blocks[range].to_vec()))
-        .collect();
-    hoist(blocks)
-}
-
-/// Lead with the trailing image stacks inside one flow wrapper when the layer
-/// has other blocks before them; otherwise keep the layer as it is. A tail
-/// line stays behind the flow.
-fn hoist<'a>(mut blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>) -> Vec<MarkdownEvent<'a>> {
-    let mut events = Vec::new();
-    let tail_line = if blocks
-        .last()
-        .is_some_and(|(kind, _)| *kind == Block::TailLine)
-    {
-        blocks.pop().map(|(_, block)| block)
-    } else {
-        None
-    };
-    let first_stack = blocks
-        .iter()
-        .rposition(|(kind, _)| *kind != Block::Stack)
-        .map_or(0, |index| index + 1);
-    if first_stack == 0 || first_stack == blocks.len() {
-        events.extend(blocks.into_iter().flat_map(|(_, block)| block));
-        events.extend(tail_line.into_iter().flatten());
-        return events;
-    }
-    let stacks = blocks.split_off(first_stack);
-    events.push(MarkdownEvent::Html(FLOW_OPEN.into()));
-    events.push(MarkdownEvent::InlineHtml(STACK_OPEN.into()));
-    for (_, stack) in stacks {
-        events.extend(stack[1..stack.len() - 1].iter().cloned());
-    }
-    events.push(MarkdownEvent::InlineHtml(STACK_CLOSE.into()));
-    events.extend(blocks.into_iter().flat_map(|(_, block)| block));
-    events.push(MarkdownEvent::Html(FLOW_CLOSE.into()));
-    events.extend(tail_line.into_iter().flatten());
     events
+}
+
+fn push_hunk<'a>(
+    events: &mut Vec<MarkdownEvent<'a>>,
+    hunk: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>,
+    attribution: &Attribution,
+) {
+    if hunk.is_empty() {
+        return;
+    }
+    events.push(MarkdownEvent::Html(HUNK_OPEN.into()));
+    events.push(MarkdownEvent::Html(attribution.lead_html().into()));
+    let mut stacks = Vec::new();
+    let mut content = Vec::new();
+    for (kind, block) in hunk.drain(..) {
+        if kind == Block::Stack {
+            stacks.push(block);
+        } else {
+            content.extend(block);
+        }
+    }
+    if !stacks.is_empty() {
+        events.push(MarkdownEvent::InlineHtml(STACK_OPEN.into()));
+        for stack in stacks {
+            events.extend(stack[1..stack.len() - 1].iter().cloned());
+        }
+        events.push(MarkdownEvent::InlineHtml(STACK_CLOSE.into()));
+    }
+    if !content.is_empty() {
+        events.push(MarkdownEvent::Html(HUNK_CONTENT_OPEN.into()));
+        events.extend(content);
+        events.push(MarkdownEvent::Html(HUNK_CLOSE.into()));
+    }
+    events.push(MarkdownEvent::Html(HUNK_CLOSE.into()));
 }
 
 /// The layer's direct child blocks, in order.
@@ -149,11 +186,6 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
     while index < events.len() {
         let (kind, end) = match &events[index] {
             MarkdownEvent::Start(tag) => {
-                let kind = match tag {
-                    Tag::Paragraph => Block::Paragraph,
-                    Tag::BlockQuote(_) => Block::Quote,
-                    _ => Block::Other,
-                };
                 let mut depth = 0usize;
                 let mut end = index;
                 for (offset, event) in events[index..].iter().enumerate() {
@@ -167,6 +199,11 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
                         break;
                     }
                 }
+                let kind = match tag {
+                    Tag::BlockQuote(_) => Block::Quote,
+                    Tag::Paragraph => Block::Paragraph,
+                    _ => Block::Other,
+                };
                 (kind, end)
             }
             MarkdownEvent::InlineHtml(html) if html.as_ref() == STACK_OPEN => {
@@ -177,9 +214,6 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
                     })
                     .map_or(events.len() - 1, |offset| index + 1 + offset);
                 (Block::Stack, end)
-            }
-            MarkdownEvent::Html(html) if html.starts_with(TAIL_LINE_OPEN) => {
-                (Block::TailLine, index)
             }
             _ => (Block::Other, index),
         };
