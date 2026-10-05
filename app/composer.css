@@ -497,20 +497,20 @@
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
 /* The island is a line and a half of the hunk's card prose (line-height
-   1.25), never smaller than the base 24px card action in its rail, and rises
-   into the card's free top corner until it holds exactly one line of flow.
-   The registered size resolves here, at the slot's line height, before
-   buttons with their own type inherit it. */
+   1.25), never smaller than the base 24px card action, and rises a quarter
+   line into the card's free top corner, never past the card's own padding, so
+   it holds exactly two lines of flow. The registered size resolves here, at
+   the slot's line height, before buttons with their own type inherit it. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
   initial-value: 24px;
 }
 .team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
-  --message-control-size: max(1.5lh, calc(24px + 2 * var(--app-control-edge-width)));
+  --message-control-size: max(1.5lh, 24px);
   display: block;
   float: inline-end;
-  margin: calc(1lh - var(--message-control-size)) 0 0 .5rem;
+  margin: max(-.25lh, -1 * var(--message-card-inset)) 0 0 .5rem;
   line-height: 1.25;
 }
 .team-surface .message-controls-slot > span { display: contents; }
@@ -520,9 +520,30 @@
   min-height: 0;
   margin: 0;
 }
+/* Message card actions are separate circles rather than one joined rail:
+   neutral glyphs inside a muted lane-accent ring, both lit to the full accent
+   while hovered, pressed, or speaking. */
+.team-surface .mosaic-message-card .message-actions.app-control-rail {
+  gap: 4px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+.team-surface .mosaic-message-card .message-actions > .card-action {
+  border: var(--app-control-edge-width) solid
+    color-mix(in srgb, var(--accent-slot, var(--accent)) 40%, var(--line));
+  border-radius: 50%;
+  background: var(--control-surface-soft);
+  box-shadow: none;
+  color: var(--muted);
+}
+.team-surface .mosaic-message-card .message-actions > .card-action:is(:hover, :active, .active) {
+  border-color: var(--accent-slot, var(--accent));
+  color: var(--accent-slot, var(--accent));
+}
 .team-surface .message-controls-slot .card-action {
-  width: calc(var(--message-control-size) - 2 * var(--app-control-edge-width));
-  height: calc(var(--message-control-size) - 2 * var(--app-control-edge-width));
+  width: var(--message-control-size);
+  height: var(--message-control-size);
   font-size: calc(var(--message-control-size) * .4);
 }
 .team-surface .message-controls-slot .card-action > svg.card-action-icon {

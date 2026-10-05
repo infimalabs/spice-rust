@@ -248,9 +248,12 @@ contrasting label inside their frosted frame.
 Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
 same inline flow beside it. Its buttons stand a line and a half of the hunk's
-prose tall, never below the base 24px card action, and the island rises into
-the card's free top corner until it blocks exactly one line of flow, so a
-one-line hunk is no taller than its line and text wraps close beside it. Only
+prose tall, never below the base 24px card action, and the island rises a
+quarter line into the card's free top corner, never past the card's own
+padding, so it blocks exactly two lines of flow and text wraps close beside it.
+Each action is its own circle rather than a segment of a joined rail: a neutral
+glyph inside a muted lane-accent ring, with glyph and ring lit to the full lane
+accent while hovered, pressed, or speaking. Only
 the hunk's associated image row clears the island before floating
 inline-start. Narrow cards preserve the same ordering instead of adding a
 separate controls header.
