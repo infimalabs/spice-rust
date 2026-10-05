@@ -773,12 +773,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--app-status-line-font-size);
 }
-/* Separate the always-on header accents without opening the flush shards.
-   Active block-end highlights remain full-width so adjacent focus or broadcast
-   state merges into one continuous signal. */
+/* Align the permanent stroke with the clock and menu content edges without
+   opening the flush shards. Active block-end highlights remain full-width so
+   adjacent focus or broadcast state merges into one continuous signal. */
 .composer-shard-heading::after {
   position: absolute;
-  inset: auto 2px -2px;
+  inset: auto 5px -2px 8px;
   height: 2px;
   background: var(--composer-underline-color);
   content: "";
