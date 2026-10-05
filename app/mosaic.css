@@ -977,9 +977,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   box-shadow: var(--team-send-command-ring), inset 0 1px 0 rgb(255 255 255 / 34%), inset 0 -2px 0 rgb(0 0 0 / 18%), 0 2px 0 color-mix(in srgb, var(--team-send-surface) 54%, black), 0 5px 8px -5px rgb(0 0 0 / 55%);
   font: 700 .94rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-shadow: 0 1px 0 rgb(0 0 0 / 24%); transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-send:not(:disabled):hover { filter: brightness(1.04) saturate(1.04); transform: translateY(-1px); }
+.team-composer .team-send:not(:disabled):hover { filter: brightness(1.04) saturate(1.04); }
 .team-composer .team-send:not(:disabled):active { filter: brightness(.97); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 0 2px 3px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 18%), 0 1px 0 color-mix(in srgb, var(--team-send-surface) 48%, black); }
-@media (prefers-reduced-motion: reduce) { .team-composer .team-send { transition: none; } }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--muted); }
 .team-slider.maxed,
@@ -1008,6 +1007,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-composer .team-composer-controls > .team-slider { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
 .team-composer .team-composer-controls > .team-slider > * { transition: filter var(--app-motion-settle) var(--app-ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .team-composer .team-send,
+  .team-composer .team-composer-controls > .team-send { transition: none; }
+}
 .team-composer .team-composer-controls[data-idle="true"] > * { opacity: var(--inactive-lane-opacity); }
 .team-composer .team-composer-controls[data-idle="true"] > .team-send,
 .team-composer .team-composer-controls[data-idle="true"] > .team-slider > * { filter: saturate(.55); }

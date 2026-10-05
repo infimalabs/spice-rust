@@ -123,8 +123,9 @@ whose vertical tracks follow side by side. Its 64px row centers the circle with
 is about 1.49 times the 35px global Spice and Dash controls: prominent, with
 enough negative space to avoid reading as a novelty control.
 Its accent-derived bevel, darker lower edge, and short cast shadow supply
-restrained physical depth in both themes. Hover lifts it by one pixel, active
-presses it by one, and reduced-motion mode keeps those states instantaneous.
+restrained physical depth in both themes. Hover brightens it without moving;
+pointer press moves it down one pixel, and release pops it back to rest.
+Reduced-motion mode keeps both state changes instantaneous.
 The keyboard-submit preview is a separate outer ring, so it does not erase the
 button's depth. It takes the focused agent's accent for ordinary submit and the
 purple broadcast accent for Command-Shift submit. Both are pure CSS reactions
