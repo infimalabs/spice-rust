@@ -431,10 +431,12 @@ bottom, and outer-edge insets. The global task strip keeps its joined
 `task-pill-strip app-control-rail` pill treatment. Team-local work instead
 forms square message-card flags in the task band: each stem group has one 4px
 inline-start rail, no enclosing top, trailing, or bottom edge, and no rounded
-corners. Its resting 5% wash rises to 10% on hover. The rail and wash use the
-group's lifecycle colour—accent when workable, muted when dormant, and triage
-when hidden—while active task handles retain their current owner's canonical
-accent. An 8px outer inset keeps the flags off the browser edge and a 4px gap
+corners. Its group-wide resting wash uses 5% of the lifecycle colour; only the
+hovered stem or handle target rises to a 10% wash in that target's current
+lifecycle or owner colour. The rail uses the group's lifecycle colour—accent
+when workable, muted when dormant, and triage when hidden—while active task
+handles retain their current owner's canonical accent.
+An 8px outer inset keeps the flags off the browser edge and a 4px gap
 keeps adjacent stem groups distinct; neither joins the status rule below.
 There is no team total; a team holds at most six members.
 
