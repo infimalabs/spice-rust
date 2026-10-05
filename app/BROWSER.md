@@ -189,8 +189,10 @@ load voices none of its history.
 
 When no agent in the team is running and none of its composers holds text, a
 quote, or an image, the sliders and send button step back like inactive
-controls: they dim and desaturate, and send is disabled because there is nothing
-to send. Their shared composer-surface field does not dim or change colour. The
+controls: they dim and their visual children desaturate, while send is disabled
+because there is nothing to send. The slider wrappers themselves remain
+unfiltered so the labels keep their control-frame-relative baseline and center
+gap. Their shared composer-surface field does not dim or change colour. The
 sliders stay usable. Drafting anything, or any agent running, lights the controls
 again. Typed text lives in each composer element, so the frame alone
 follows it: every composer change, including a value the app writes on mount,
