@@ -146,7 +146,8 @@ height remains the Chat plane's collapse distance and top spacer.
 The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and neither adjacent members nor the member-to-control
 junction paint a vertical separator, shadow, or panel-colored gutter. The team
-owns the field's left outer edge and the controls own its right outer edge.
+and its control column also paint no inline outer edge, so sibling status,
+composer, and stream surfaces meet directly without a vertical rule or gutter.
 Every member heading has a permanent accent-colored underline aligned to its
 content: the stroke starts beneath the relative-time edge at the heading's 8px
 start padding and ends beneath the hamburger/menu edge at its 5px end padding.
