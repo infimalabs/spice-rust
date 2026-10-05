@@ -266,19 +266,17 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     let acknowledged_prose = html
         .find("direction dTVQdQfLx")
         .expect("acknowledged prose renders");
-    let acknowledged_tail = html
-        .find("data-quote-tasks=\"dTVQdQfLx\"")
-        .expect("acknowledged task tail renders");
     assert!(
-        acknowledgement < acknowledged_prose && acknowledged_prose < acknowledged_tail,
-        "the disposition leads its words and board provenance trails the quote: {html}"
+        acknowledgement < acknowledged_prose,
+        "the disposition leads its words: {html}"
     );
     for key in keys {
         assert!(
             html.contains(&format!(
-                "<span class=\"message-quote-task-tail\" data-quote-tasks=\"{key}\"></span>"
+                "direction {key}<span class=\"message-quote-task-tail\" \
+                 data-quote-tasks=\"{key}\"></span></p>"
             )),
-            "a sourceless Operator quote holds its task target after its words: {html}"
+            "board provenance follows the quote's final word on its last line: {html}"
         );
     }
     assert!(html.contains(
@@ -349,6 +347,19 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
             "each {level} occurrence names its own task badges"
         );
     }
+    assert_eq!(
+        rendered
+            .html
+            .matches(
+                "outer direction <span class=\"message-quote-task-tail\" \
+                 data-quote-tasks=\"dTVQdQfLw\"></span></p>"
+            )
+            .count(),
+        2,
+        "a quote ending in a nested quote seats its provenance after its own last word: {}",
+        rendered.html
+    );
+    assert!(!rendered.html.contains("message-quote-task-line"));
 }
 
 /// A card holds the Work of every direction it quotes, at any depth or as a

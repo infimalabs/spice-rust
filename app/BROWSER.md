@@ -239,9 +239,13 @@ contrasting label inside their frosted frame.
 
 Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
-same inline flow beside it. Only the hunk's associated image row clears the
-island before floating inline-start. Narrow cards preserve the same ordering
-instead of adding a separate controls header.
+same inline flow beside it. Its buttons stand a line and a half of the hunk's
+prose tall, never below the base 24px card action, and the island rises into
+the card's free top corner until it blocks exactly one line of flow, so a
+one-line hunk is no taller than its line and text wraps close beside it. Only
+the hunk's associated image row clears the island before floating
+inline-start. Narrow cards preserve the same ordering instead of adding a
+separate controls header.
 
 Committed message cards sit in one lattice whose 9px perimeter and row and
 column seams equal the card's 9px content inset. The seam is one shared gap
@@ -309,10 +313,15 @@ only that hunk's rendered text, and its quote action retains that hunk's exact
 authenticated target. Authenticated marker nodes remain in the Markdown DOM
 for quote semantics but do not duplicate the classification pill in prose.
 
-Board provenance remains independent and terminal. Each complete quote layer
-keeps one empty task target after all of its hunks and nested quotes; Work fills
-that target with origin-task badges. Repeating source attribution around a
-nested quote never repeats or relocates the quote layer's task provenance.
+Board provenance is independent and terminal. Each complete quote layer keeps
+one empty inline task target directly after its speaker's last word, in its
+final hunk even when a nested quote follows; Work fills that target with
+origin-task badges. Empty, it takes no room; filled, it floats to the inline
+end of that final line, set apart from the word, and the browser wraps it
+beneath only when the line has no room. A layer with no words of its own keeps
+the target on a line after its content. The speak action never reads it.
+Repeating source attribution around a nested quote never repeats or relocates
+the quote layer's task provenance.
 
 Quotes at every depth carry no fill of their own; their text keeps the muted
 tone and smaller size. A quote's rail shows its speaker the way a top-level card
