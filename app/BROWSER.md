@@ -397,10 +397,12 @@ The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
 status band, while the team surface frames nothing around them. The 52px
 circular send button remains centered in its independent 74px right-edge
-composer-control column. The status band's matching 74px leading segment
-centers up to six 8px pips in one row from main agent through later members,
-using the same canonical left-to-right order as their composer columns; every
-smaller team simply leaves more breathing room around that sequence. Every pip
+composer-control column, which also sits on the stream surface, slightly
+brighter than the drafts beside it. The status band's matching 74px leading
+segment centers up to six 8px pips in one row from main agent through later
+members, using the same canonical left-to-right order as their composer
+columns; every smaller team simply leaves more breathing room around that
+sequence. Every pip
 mixes its member's canonical accent prominently into its status color and ring;
 queued, waiting, active, and dim bound/unbound states remain distinguishable.
 The global Spice and Dash-avatar circles share one diameter and equal top,
