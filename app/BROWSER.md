@@ -117,7 +117,9 @@ margin of its own.
 ## Team composer controls
 
 The full-width team send button sits above the speech and allocation sliders,
-whose vertical tracks follow side by side. The two current values occupy the
+whose vertical tracks follow side by side. The button is exactly two member
+composer headers tall, and the tracks take the rest of the frame. The two
+current values occupy the
 row immediately below the tracks, leaning on the center divider: speech ends
 and allocation starts 3px from it, so they read as one phrase such as "quiet
 drain" or "narrate steer". The control field owns one top edge, one seam below
@@ -127,9 +129,9 @@ but the button's. Swapping these two fixed units does not change the composer
 block, frame width, send row, label row, or slider-track size.
 At the 10rem minimum member width, the standard draft block is 170px tall and
 reads approximately square without widening the member column.
-That shared block size also determines the speech and allocation tracks, their
-frame, and the send row; the measured overlay height remains the Chat plane's
-collapse distance and top spacer.
+That shared block size also determines the speech and allocation tracks and
+their frame; the measured overlay height remains the Chat plane's collapse
+distance and top spacer.
 
 The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and neither adjacent members nor the member-to-control
