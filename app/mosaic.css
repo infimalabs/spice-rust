@@ -992,6 +992,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   padding: 0; border-top: var(--app-edge);
   background: var(--message-stream-surface);
 }
+/* In dark mode, lift the field the same half-step above the composer that the
+   default field sits below it: control-to-panel rather than page-to-control. */
+:root[data-app-effective-theme="dark"] .team-activity-grid {
+  --message-stream-surface: color-mix(in srgb, var(--control) 50%, var(--panel));
+}
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
   --mosaic-edge-gutter: var(--mosaic-gap);

@@ -252,11 +252,12 @@ prose card paints only its content height, centered vertically in that cell, so
 the cell's slack falls evenly above and below it and the visible space between
 cards follows their content while every cell still snaps to the grid. A card
 whose content fills its cell leaves the same seam around its neighbors; image
-covers still fill the card rectangle. The complete stream field uses one
-theme-aware surface halfway between the absolute page and the standard composer
-surface. Cards paint no fill of their own, so that field shows through them;
-they remain distinguished by their lane's 4px accent rail, square corners, and
-the gutters between them.
+covers still fill the card rectangle. The light stream field uses a surface
+halfway between the absolute page and the standard composer. The dark stream
+instead sits halfway between the composer and the brighter panel surface: one
+equal half-step above the composer rather than below it. Cards paint no fill of
+their own, so the field shows through them; they remain distinguished by their
+lane's 4px accent rail, square corners, and the gutters between them.
 Nested Markdown blockquotes and resolved or unavailable quote cards are square
 at every depth as well. A
 FINAL answer keeps only its pill, with no tint or edge of its own. Hover tints
