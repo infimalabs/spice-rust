@@ -505,11 +505,11 @@
   background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* The team's tasks are tabs standing on the status line: one per stem, its
+/* The team's tasks are tabs attached to the status line: one per stem, its
    badged stem target followed by its handles. Each tab rounds only its top
-   corners and drops one rule width over the status line's top rule on the same
-   opaque stream surface, so the tab and the line read as one piece while the
-   rule continues between tabs. Overflow scrolls inside the band. */
+   corners and ends exactly where the status row begins, leaving that row's
+   faint top rule continuous beneath every tab and between them. Overflow
+   scrolls inside the band. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
   z-index: 1;
@@ -518,7 +518,7 @@
   align-items: flex-end;
   gap: 4px;
   min-width: 0;
-  margin: 0 var(--team-chamber-inset) calc(-1 * var(--app-control-edge-width));
+  margin: 0 var(--team-chamber-inset);
   overflow: auto hidden;
   scrollbar-width: none;
 }

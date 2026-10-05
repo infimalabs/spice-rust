@@ -427,12 +427,13 @@ distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The global task strip uses the joined
 `task-pill-strip app-control-rail` frame and rounds as a true pill rather than
-at the shared rail radius. The team's tasks are instead tabs standing on the
+at the shared rail radius. The team's tasks are instead tabs attached to the
 status line, a step smaller than the global pills: each tab rounds only its top
-corners, has no bottom edge, and drops one rule width over the status line's
-top rule on the same stream surface, so the tab and the line read as one piece
-while the rule continues between tabs. There is no team total; a team holds at
-most six members. Tabs follow Work's clustering rule: from in-flight, ready,
+corners, has no bottom edge, and ends exactly at the status row's continuous
+faint top rule. A slightly brighter top edge distinguishes the tab while its
+sides retain the faint control edge and stream-surface fill. There is no team
+total; a team holds at most six members. Tabs follow Work's clustering rule:
+from in-flight, ready,
 blocked, and deferred offer order, each visibility-qualified stem's first task
 places one `task-pill--project` tab, and later matches join that tab without
 changing their relative order. Its `task-pill-stem-target` button displays the
