@@ -259,18 +259,20 @@ the gutters between them.
 Nested Markdown blockquotes and resolved or unavailable quote cards are square
 at every depth as well. A
 FINAL answer keeps only its pill, with no tint or edge of its own. Hover tints
-the card 4% toward its lane accent and adds a thin accent
-outline. Measurement clones use the same guttered geometry. Compaction and
+the card 4% toward its lane accent and draws no outline or border, on every
+card type. Measurement clones use the same guttered geometry. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
 drawn as accent rules.
 
 An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve
 that cover from the card width, but the committed lattice remains the placement
-authority so no aspect-ratio correction opens a ledger gap. Hover and keyboard
-focus paint one square card-sized border above the cover. Its inline-start rail
-and remaining edge meet as one boundary, never nested outlines, while the image
-remains untinted and cannot clip or wash out that edge. The live age and
+authority so no aspect-ratio correction opens a ledger gap. Keyboard focus
+paints one square card-sized border above the cover; its inline-start rail and
+remaining edge meet as one boundary, never nested outlines, and the image cannot
+clip or wash out that edge. Hover draws no border: the same card-sized layer
+screens the whole cover 16% toward the lane accent instead, since the image
+hides any background wash. The live age and
 producer sit in a compact frosted overlay docked flush into the image card's
 square top-left corner. The overlay carries no corner curve, so its edges meet
 the card without exposing a sliver of image. It pads its text 3px above, 6px
@@ -412,7 +414,7 @@ accent for about a second and a half, then the outline fades out over a little
 more than a second; each new target replays it. Without motion the outline
 clears at once at the same moment. The route focuses the card without a
 visible focus ring, so nothing replaces the faded outline; keyboard navigation
-continues from the card, and hover and focus draw their own outlines as usual.
+continues from the card, and hover and focus apply as usual.
 
 FINAL is producer metadata rather than an action: it follows the producer name
 in the same compact, translucent accent pill used for task origins inside

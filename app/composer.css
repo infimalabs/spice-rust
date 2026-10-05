@@ -779,7 +779,8 @@
 /* One card-sized square overlay owns the permanent lane rail and every
    interaction edge above the cover. A padding reserve holds the image geometry;
    outlining the square image or repeating the card rail creates clipped,
-   washed-out layers at the corners. */
+   washed-out layers at the corners. A cover hides any background wash, so on
+   hover the same overlay screens the image in the lane accent instead. */
 .team-surface .mosaic-message-card--image-cover::after {
   position: absolute;
   z-index: 4;
@@ -790,8 +791,7 @@
   pointer-events: none;
 }
 .team-surface .mosaic-message-card--image-cover:hover::after {
-  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 45%, transparent);
-  border-inline-start: 4px solid var(--accent-slot, var(--accent));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, transparent);
 }
 .team-surface .mosaic-message-card--image-cover:is(
   :focus-visible,
