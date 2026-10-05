@@ -497,12 +497,16 @@
   border-start-end-radius: var(--app-radius-compact);
   background: var(--control);
 }
-/* The team's task strip is the global strip, placed in its own band. */
+/* The team's task strip is the global strip, a size smaller and centered in
+   its own band so it floats clear of the status line beneath. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
+  align-self: center;
   max-width: calc(100% - 2 * var(--team-chamber-inset));
   margin-inline: var(--team-chamber-inset);
 }
+.team-tasks .task-pill { min-height: 21px; padding-block: 0; }
+.team-tasks .task-pill--project > button { padding-block: 0; }
 
 .team-lights[data-lane-drag-handle] {
   cursor: grab;

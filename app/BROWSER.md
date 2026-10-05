@@ -373,7 +373,10 @@ lower
 right, and centers every smaller team as a whole. The global Spice and
 Dash-avatar circles share one diameter and equal top, bottom, and outer-edge
 insets. The team's task strip reuses the
-global `task-pill-strip app-control-rail` frame. Its total pill
+global `task-pill-strip app-control-rail` frame, and both strips round as
+true pills rather than at the shared rail radius. The team's pills stand a
+step smaller than the global ones, and its strip centers in its band so it
+floats clear of the status line beneath. Its total pill
 (`data-work-scope="team"`) carries one open-task count. The remaining rail uses
 Work's clustering rule: from in-flight, ready, blocked, and deferred offer
 order, each visibility-qualified stem's first task places one
