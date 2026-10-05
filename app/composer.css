@@ -454,10 +454,11 @@
   box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
 }
 /* The content clips to the card's inner edge rather than its content box: it
-   reaches through both block paddings, so an action island rising into the
-   card's top corner, the final line's descenders, and a signoff's underlined
-   age are never cut. The grid also fills committed spare height below the
-   message, never above it. */
+   reaches through both block paddings and the inline-end padding, so an action
+   island rising into the card's top corner and pressing toward its edge, the
+   final line's descenders, and a signoff's underlined age are never cut. Text
+   still wraps at the content box. The grid also fills committed spare height
+   below the message, never above it. */
 .team-surface .mosaic-message-content {
   position: relative;
   display: grid;
@@ -466,7 +467,9 @@
   min-width: 0;
   min-height: 0;
   margin-block: calc(-1 * var(--message-card-inset));
+  margin-inline-end: calc(-1 * var(--message-card-inset));
   padding-block: var(--message-card-inset);
+  padding-inline-end: var(--message-card-inset);
   overflow: clip;
 }
 .team-surface .mosaic-message-content > :is(.message-flow, .message-body) { align-self: start; }
@@ -499,10 +502,11 @@
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
 /* The island's flow footprint is exactly two lines of the hunk's card prose
    (line-height 1.25), so an image row clearing it leaves the heading line and
-   one line of prose above. It rises a quarter line into the free corner above,
-   never past the card's own padding, and its buttons take that rise as extra
-   size. The registered size resolves here, at the slot's line height, before
-   buttons with their own type inherit it. */
+   one line of prose above. It rises a quarter line into the free corner above
+   and presses the same distance toward the inline end, never past the card's
+   own padding, and its buttons take that rise as extra size. The registered
+   size resolves here, at the slot's line height, before buttons with their
+   own type inherit it. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
@@ -512,7 +516,8 @@
   --message-control-size: max(calc(2lh + min(.25lh, var(--message-card-inset))), 24px);
   display: block;
   float: inline-end;
-  margin: calc(2lh - var(--message-control-size)) 0 0 .5rem;
+  margin-block: calc(2lh - var(--message-control-size)) 0;
+  margin-inline: .5rem calc(2lh - var(--message-control-size));
   line-height: 1.25;
 }
 .team-surface .message-controls-slot > span { display: contents; }
