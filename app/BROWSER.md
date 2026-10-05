@@ -338,11 +338,11 @@ unavailable quote keeps its warning rail.
 Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger: its
-task strip and complete live ticker fill the width left of the status-pip
-stack, which holds the right edge. The ticker keeps its relative age,
-lane-status class, agent/tool/command prefix and accent, truncated detail,
-accessible label, and live-region semantics in the status band; an empty fleet
-reserves that slot without inventing status.
+task strip and complete live ticker terminate at the topology control, whose
+fixed right-edge footprint continues the composer control rail below. The
+ticker keeps its relative age, lane-status class, agent/tool/command prefix and
+accent, truncated detail, accessible label, and live-region semantics in the
+status band; an empty fleet reserves that slot without inventing status.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -354,14 +354,16 @@ any plane, card, or team surface observing a resize. Browsers without
 `content-visibility` fall back to `display: none`.
 
 The toolbar is a fixed-height grid whether or not the team owns work, with no
-background, border, or shadow; the team surface frames nothing around it, so
-only the pane below carries the panel. The pip column spans the task band,
-sized to the framed global pill strip, and the status band below it. The status
-band has the same height and type size as a draft composer heading, which shows
-the same agent activity. The header holds all six member pips in two rows, the
-main agent at the lower
-right. The global Spice and Dash-avatar circles share one diameter
-and equal top, bottom, and outer-edge insets. The team's task strip reuses the
+outer background, border, or shadow; the team surface frames nothing around it,
+so only the pane below carries the panel. Its neutral topology control has the
+same 74px inline size and 60px block size as the Drive/send control immediately
+below it. This makes one aligned right-edge control column, moves the composer
+down by the control's small added headroom, and gives both the task strip and
+status line a natural endpoint. The control centers all six enlarged member
+pips in two rows while retaining canonical order, the main agent at the lower
+right, and centers every smaller team as a whole. The global Spice and
+Dash-avatar circles share one diameter and equal top, bottom, and outer-edge
+insets. The team's task strip reuses the
 global `task-pill-strip app-control-rail` frame. Its total pill
 (`data-work-scope="team"`) carries one open-task count. The remaining rail uses
 Work's clustering rule: from in-flight, ready, blocked, and deferred offer
@@ -371,8 +373,8 @@ relative order. Its one `task-pill-stem` button displays the raw stem, opens the
 team's Work scope narrowed to it, wears the muted blocked tone, and centers its
 label in equal inline hover space. The following `task-pill-handle` buttons
 open each task's detail and retain their own lifecycle or current-owner tone;
-closing detail returns focus to that handle. The ticker centers on the lower
-pip row; task overflow scrolls inside its band.
+closing detail returns focus to that handle. Task overflow scrolls inside its
+band.
 
 The team's total pill opens the canonical global `#/work/team/{team}` view, and
 `#/work/directions/team/{team}` addresses that team's Directions. The team Work

@@ -431,13 +431,15 @@
 .team-surface {
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
-  --team-pip-size: 9px;
-  --team-pip-gap: 4px;
-  --team-task-band: calc(23px + 2 * var(--app-control-edge-width));
-  /* The status band matches a draft composer heading; the header is the task
-     band plus the status band, tall enough for two rows of member pips. */
+  --team-pip-size: 14px;
+  --team-pip-gap: 7px;
+  --team-control-inline-size: 74px;
+  --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
+  /* The topology handle exactly continues the send control's footprint. Its
+     two header bands terminate both rails before that fixed control column. */
   --team-status-band: var(--app-status-line-band);
-  --team-header-size: calc(var(--team-task-band) + var(--team-status-band));
+  --team-task-band: calc(var(--team-control-submit-block-size) - var(--team-status-band));
+  --team-header-size: var(--team-control-submit-block-size);
   --team-chamber-inset: 8px;
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
@@ -462,27 +464,28 @@
 /* Sibling teams fuse into one console: a single shared rule is their seam. */
 .team-surface + .team-surface { border-inline-start: var(--app-control-edge); }
 
-/* The header is one fixed grid with no chrome of its own, the same with or
-   without team work so sibling teams line up: the pips span both bands at the
-   right edge; the task band above, as tall as the framed global pill strip,
-   and the status band below share the remaining width. The lower pip row
-   centers on the status band, so a one-row stack sits there too. */
+/* The header is one fixed grid with no outer chrome. Its topology handle
+   occupies the send control's exact footprint at the right edge; the task and
+   status rails terminate beside it. Pips remain canonically ordered inside
+   that larger centered target. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
   grid-template:
     "tasks pips" var(--team-task-band)
     "status pips" var(--team-status-band)
-    / minmax(0, 1fr) max-content;
+    / minmax(0, 1fr) var(--team-control-inline-size);
   block-size: var(--team-header-size);
   padding: 0;
 }
 .team-toolbar > .team-lights {
   grid-area: pips;
-  align-self: end;
-  justify-self: end;
-  margin-block-end: calc((var(--team-status-band) - var(--team-pip-size)) / 2);
-  padding-inline: var(--team-chamber-inset);
+  align-self: stretch;
+  justify-self: stretch;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  background: var(--control);
 }
 /* The team's task strip is the global strip, placed in its own band. */
 .team-toolbar > .team-tasks {
@@ -877,9 +880,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    spans exactly two member composer headers, and the slider tracks take the
    frame's remaining height. */
 .team-composer .team-composer-controls {
-  --team-control-item-height: calc(2 * var(--app-status-line-band));
+  --team-control-item-height: var(--team-control-submit-block-size);
   --team-control-label-row: 14px;
-  position: relative; display: grid; gap: 0; inline-size: 74px;
+  position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0;
   block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
