@@ -260,8 +260,9 @@ their own, so the field shows through them; they remain distinguished by their
 lane's 4px accent rail, square corners, and the gutters between them.
 Nested Markdown blockquotes and resolved or unavailable quote cards are square
 at every depth as well. A
-FINAL answer keeps only its pill, with no tint or edge of its own. Hover tints
-the card 4% toward its lane accent and draws no outline or border, on every
+FINAL answer keeps only its pill, with no tint or edge of its own. Hover washes
+the card 16% toward its lane accent, the same strength as an image cover's
+hover screen, and draws no outline or border, on every
 card type. Measurement clones use the same guttered geometry. Compaction and
 lifecycle dividers, such as a fresh session, remain semantic full-width rows
 drawn as accent rules.
