@@ -66,7 +66,7 @@ pub(in crate::resident) fn occupant_launch(
         .map_err(|error: vendor::EffortError| {
             store_fault("lane::effort-invalid", &error.to_string())
         })?;
-    let repository = launch_repository(paths, worktree)?;
+    let repository = admit_worktree(paths, worktree)?;
     // Run ahead of configuration load so the launch reads the advanced tree.
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
@@ -171,20 +171,6 @@ fn session_proof_horizon(paths: &RuntimePaths) -> Duration {
     #[cfg(not(feature = "test-short-horizons"))]
     let _ = paths;
     SESSION_PROOF
-}
-
-/// Admit only the durable worktree that still names this repository's root.
-fn launch_repository(paths: &RuntimePaths, worktree: &str) -> CommandResult<Repository> {
-    let repository = Repository::discover(worktree)
-        .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
-    if repository.common_dir() != paths.common || repository.worktree_root() != Path::new(worktree)
-    {
-        return Err(store_fault(
-            "lane::worktree-moved",
-            "durable lane worktree no longer names one current repository worktree root",
-        ));
-    }
-    Ok(repository)
 }
 
 /// Compose the vendor launch plan this lane's configuration admits.

@@ -124,6 +124,32 @@ fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_
 }
 
 #[test]
+fn a_worktree_in_another_repository_refuses_the_lane_instead_of_faulting_the_resident() {
+    let resident = AdvisoryRtkFixture::new();
+    let foreign = AdvisoryRtkFixture::new();
+
+    let Err(Outcome::Refusal(refusal)) = occupant_launch(
+        &resident.paths,
+        foreign.request(vendor::Resume::Fresh),
+        resident.reporter(),
+    ) else {
+        panic!("a copied journal naming another repository's worktree must park only that lane");
+    };
+    let diagnostic = refusal.diagnostic().expect("the refusal is diagnosed");
+    assert_eq!(diagnostic.reason(), "lane::foreign-worktree");
+    assert_eq!(
+        diagnostic.observed(),
+        Some(
+            foreign
+                .paths
+                .common
+                .to_str()
+                .expect("fixture path is UTF-8")
+        )
+    );
+}
+
+#[test]
 fn regular_cargo_lock_retains_the_complete_isolated_rust_environment() {
     let fixture = AdvisoryRtkFixture::new();
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");

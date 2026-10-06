@@ -241,6 +241,7 @@ fn select_task(
 }
 
 /// The lane's own repository, refused unless it is still the resident's worktree.
+/// A refusal parks only this lane; a fault would end the resident for every lane.
 fn lane_repository(
     repository: &Repository,
     worktree: &str,
@@ -250,8 +251,9 @@ fn lane_repository(
     if lane_repository.common_dir() != repository.common_dir()
         || lane_repository.worktree_root() != std::path::Path::new(worktree)
     {
-        return Err(environment_fault(
+        return Err(refusal(
             "git::worktree-moved",
+            Some(worktree.to_owned()),
             "the allocating lane no longer names one worktree in the resident repository",
         ));
     }

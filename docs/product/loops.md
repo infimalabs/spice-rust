@@ -287,6 +287,11 @@ stateDiagram-v2
   failed --> [*]
 ```
 
+No supervisor request is published until the lane's worktree is admitted as a
+root inside the resident's own Git common directory. A lane naming another
+repository's worktree, as in a resident started on a copied journal, parks with
+a refusal; the resident and its other lanes continue.
+
 The UI independently derives lane presentation; pending steering outranks
 liveness:
 
