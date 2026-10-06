@@ -100,6 +100,7 @@ pub(super) struct AppRender<'a> {
     pub select_task: Callback<wire::TaskStamp>,
     pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub request_task: Callback<wire::TaskStamp>,
+    pub retry_relations: Callback<MouseEvent>,
     pub close_task: Callback<()>,
 }
 
@@ -354,6 +355,8 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
         notes: render.notes,
         submit_note: render.submit_note.clone(),
         request_task: render.request_task.clone(),
+        open_task: render.select_task.clone(),
+        retry_relations: render.retry_relations.clone(),
         close: render.close_task.clone(),
     })
 }

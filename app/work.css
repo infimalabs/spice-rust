@@ -766,6 +766,30 @@
 .work-note-actions { align-self: start; }
 .work-note-actions .team-send { min-width: calc(8ch + 2rem + 2px); color: var(--page); }
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
+.work-map-primary-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.work-map-lenses {
+  width: fit-content;
+  max-width: 100%;
+}
+.work-map-lenses button,
+.work-map-control-group button {
+  min-height: 36px;
+  background: transparent;
+}
+.work-map-lenses button { padding: 6px 11px; font-size: .72rem; }
+.work-map-lenses button[aria-pressed="true"],
+.work-map-control-group button.active {
+  border-color: transparent;
+  background: var(--control);
+  color: var(--ink);
+  box-shadow: var(--app-selection-shadow);
+}
+.work-map-context { margin: 0; color: var(--muted); font-size: .73rem; }
 .work-map-controls {
   display: flex;
   flex-wrap: wrap;
@@ -779,6 +803,7 @@
   background: transparent;
   font-size: .7rem;
 }
+.work-map-depth span,
 .work-map-zoom span {
   display: grid;
   place-items: center;
@@ -787,6 +812,23 @@
   font-size: .69rem;
   white-space: nowrap;
 }
+.work-map-direction { margin-left: auto; }
+.work-map-bounds {
+  margin: 0 0 0 auto;
+  color: var(--muted);
+  font-size: .69rem;
+}
+.work-map-enrichment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-size: .72rem;
+}
+.work-map-enrichment--problem { color: var(--danger); }
+.work-map-enrichment small { flex-basis: 100%; }
 .work-map-empty {
   display: grid;
   gap: 3px;
@@ -943,6 +985,28 @@
 .work-map-fact small { max-width: 100%; overflow-wrap: anywhere; }
 .work-map-task small,
 .work-map-fact small { color: var(--muted); }
+.work-map-frontiers {
+  min-width: 0;
+  padding: 18px 0 0;
+  border-top: var(--app-edge-soft);
+}
+.work-map-frontier-list {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: .72rem;
+}
+.work-map-problem {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px 22px;
+  text-align: center;
+}
+.work-map-problem :is(h4, p) { margin: 0; }
+.work-map-problem p { color: var(--danger); }
 
 .work-detail-loading,
 .work-detail-problem { display: grid; justify-items: center; gap: 10px; padding: 56px 24px; text-align: center; }

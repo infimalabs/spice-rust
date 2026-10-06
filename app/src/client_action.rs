@@ -10,6 +10,9 @@ pub(crate) enum ClientAction {
     TaskDetail {
         task: TaskStamp,
     },
+    TaskRelations {
+        key: crate::TaskRelationsKey,
+    },
     DirectionHistory {
         request: crate::runtime::DirectionHistoryRequest,
     },
