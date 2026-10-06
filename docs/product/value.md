@@ -354,14 +354,17 @@ team of the lane actively claiming the task, no team when that lane is
 unteamed, otherwise the current creator team, otherwise the last claimant's
 team. Until topology loads, the client does not invent a team association.
 
-The overview is graph-first. Its heading names the selection context and exact
-count, then the graph appears before jobs and details. Every selected task is a
-root in the immediate graph built from the admitted board snapshot; direct
-dependencies outside the set and missing durable identities remain explicit.
-Typed relationship reads enrich Dependency, Lineage, Review, and Lifecycle
-lenses within their protocol root and node bounds, but those bounds never
-remove a selected root. Direction, depth, zoom, pan, reset, loading, refusal,
-retry, and truncation controls qualify only the enrichment they change.
+The overview is graph-first, at the same reading width as a task sheet. Its
+heading names the selection context and exact count, then the graph appears
+before jobs and details. A diagram never draws above its natural size until the
+operator zooms, and the graph frame is no taller than the diagram needs. Every
+selected task is a root in the immediate graph built from the admitted board
+snapshot; direct dependencies outside the set and missing durable identities
+remain explicit. Typed relationship reads enrich Dependency, Lineage, Review,
+and Lifecycle lenses within their protocol root and node bounds, but those
+bounds never remove a selected root. Direction, depth, zoom, pan, reset,
+loading, refusal, retry, and truncation controls qualify only the enrichment
+they change.
 
 **Running jobs** follows the graph and represents every command the admitted
 lane table reports as running or awaiting delivery, independent of the task

@@ -53,7 +53,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
             ></button>
             <aside
                 ref={render.sheet_ref.clone()}
-                class="work-detail work-detail--overview"
+                class="work-detail"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-detail-title"
