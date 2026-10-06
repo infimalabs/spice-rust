@@ -597,7 +597,7 @@
   max-width: 100%;
   align-items: flex-end;
   gap: var(--message-image-gap);
-  margin: .325em 8px .125em 0;
+  margin: 0.325em 8px 0.125em 0;
 }
 /* A shared row fills its hunk, so each image's pair share resolves against a
    definite width. A shrink-to-fit float would size from the images' natural
