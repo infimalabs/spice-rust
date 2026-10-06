@@ -137,15 +137,15 @@ button's depth. It takes the focused agent's accent for ordinary submit and the
 purple broadcast accent for Command-Shift submit. Both are pure CSS reactions
 to focus and existing modifier attributes; no observer or sampling path runs.
 
-The two current values occupy the row immediately below the tracks, leaning on
-the center divider: speech ends and allocation starts 3px from it, so they read
-as one phrase such as "quiet drain" or "narrate steer". The control field owns
-only the center divider between the sliders; slider states never tint their
-transparent backgrounds or add nested borders or inset shadows. Quiet and
-Steer use the neutral muted token, Speak and Drive keep the green accent, and
-Narrate and Drain keep the yellow/gold warning accent. The shared field behind
-the send button and sliders uses the standard composer surface, matching the
-drafts beside it, and continues their soft top rule across the control column.
+The two current values occupy the row immediately below the tracks, leaning
+toward the center: speech ends 3px before and allocation starts 4px after the
+column midpoint, so they read as one phrase such as "quiet drain" or "narrate
+steer". The transparent slider wrappers draw no backgrounds, borders, inset
+shadows, or center divider. Quiet and Steer use the neutral muted token, Speak
+and Drive keep the green accent, and Narrate and Drain keep the yellow/gold
+warning accent. The shared field behind the send button and sliders uses the
+standard composer surface, matching the drafts beside it, and continues their
+soft top rule across the control column.
 At the 10rem minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
 height remains the Chat plane's collapse distance and top spacer.

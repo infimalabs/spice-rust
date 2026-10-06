@@ -921,10 +921,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* The round submit leads, the vertical ranges follow side by side, and their
    current values finish the frame. Range wrappers stay frameless and state
-   uses fill alone, leaving the control field to own its center divider exactly
-   once. The 80px column keeps one 12px inline rhythm: the 56px submit, 1.6
-   times the 35px global action, leaves 12px on each side, as each 16px track
-   does within its 40px half. Its 68px row leaves 6px above and below. */
+   uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
+   submit, 1.6 times the 35px global action, leaves 12px on each side, as each
+   16px track does within its 40px half. Its 68px row leaves 6px above and
+   below. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -944,7 +944,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   min-height: 0; padding: 7px 2px; overflow: hidden;
   border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: ns-resize;
 }
-.team-composer .team-composer-controls::before { position: absolute; z-index: 1; inset-block: var(--team-control-item-height) var(--team-control-label-row); inset-inline-start: 50%; border-inline-start: var(--app-control-edge); content: ""; pointer-events: none; }
 .team-slider input {
   writing-mode: vertical-lr;
   direction: rtl;
@@ -968,7 +967,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* The frame is the labels' containing block, so slider clipping never reaches
    them. Both labels end two pixels above the frame's bottom edge; speech ends
-   and lifetime starts 3px from the divider (its 1px sits right of 50%), while
+   3px before and lifetime starts 4px after the column midpoint, while
    "narrate" overhangs the frame's left edge, short of the draft. */
 .team-composer .team-slider { grid-row: 2; }
 .team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
