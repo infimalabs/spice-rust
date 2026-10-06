@@ -22,6 +22,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
     pub(super) controls: &'a view::AgentControls,
     pub(super) composer_drag: &'a PrimaryComposerDragState,
+    pub(super) composer_slots: &'a super::ComposerSlots,
     pub(super) team_drag: &'a TeamDragState,
 }
 
@@ -109,6 +110,7 @@ pub(super) fn render_populated_fleet(
                                 render.select_task,
                                 render.open_message_task,
                                 &attention,
+                                render.composer_slots.slot(team.lane),
                             )}
                         </div>
                     </section>

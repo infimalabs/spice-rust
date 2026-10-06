@@ -144,12 +144,15 @@ the status and controls read as one L-shaped band. Member headings retain their
 accent underline, focused or broadcast drafts merge their full-width highlight,
 and vacant members mute content without changing the surface. The final edge
 above the message stream repeats the faint control edge at each shard's top.
-Measured composer height remains both the overlay collapse distance and the
-message-plane spacer; focusing a collapsed draft reveals it without scrolling
-the plane. Where scroll-driven animations run, the plane's scroll timeline
-moves the composer on the compositor in the same frame as the cards, and the
-app only re-anchors that animation while the composer rests fully shown or
-hidden; other browsers receive a per-frame transform.
+The composer rides in the Chat plane's own scroll content, so every engine's
+scroll moves it in the same frame as the cards. It sticks to the plane's top
+edge, so scrolling back never opens a gap above it, and measured composer
+height remains both the collapse distance and the message-plane spacer. The app
+moves only the composer's resting place, and only while it rests fully shown
+or hidden, so reversing either way moves it at once. Focusing a collapsed
+draft reveals it without scrolling the plane, and the plane's scroll padding
+keeps browser-scrolled targets clear of the exposed composer only while focus
+is outside it.
 
 The range values sit outside their thumbs as one centered phrase. Quiet and
 Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain

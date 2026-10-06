@@ -366,22 +366,39 @@
 .composer-shard-prose[data-composer-drag-handle="true"]:active {
   cursor: grabbing;
 }
-/* The plane's own scroll position drives the composer's collapse, so the
-   compositor moves it in the same frame and by the same snapped distance as
-   the cards. Rust writes only the animation range: its start is the scroll
-   position at which the composer is fully shown, and it moves only while the
-   composer rests fully shown or fully hidden. */
-.team-compose { timeline-scope: --team-plane; }
-.team-compose .lane-mosaic-plane { scroll-timeline: --team-plane block; }
-@supports (animation-timeline: scroll()) {
-  .team-compose .team-composer {
-    animation: team-composer-collapse linear both;
-    animation-timeline: --team-plane;
-  }
+/* The composer rides at the foot of a slot atop the Chat plane's scroll
+   content, so the browser's own scroll moves it with the cards on every
+   engine. Sticky bounds exclude the plane's spacer padding, so its bottom can
+   never pass the content's top edge, one composer height below the plane's
+   top: no gap opens above it. Rust moves the slot's foot only where that
+   cannot be seen. */
+.team-composer-slot {
+  position: absolute; inset: 0 0 auto; z-index: 1;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  pointer-events: none;
 }
-@keyframes team-composer-collapse {
-  to { transform: translate3d(0, calc(-1 * var(--team-composer-block)), 0); }
+.team-compose .team-composer {
+  position: sticky; bottom: 100%;
+  flex: none; pointer-events: auto;
+  border-bottom: var(--app-control-edge);
 }
+.team-compose .lane-mosaic-plane {
+  padding-top: var(--team-composer-block);
+  scroll-padding-top: var(--team-composer-block);
+}
+/* Cards raise themselves for hover, focus, selection, and nested tools; their
+   track keeps every such layer below the composer. */
+.team-compose .lane-mosaic-track { z-index: 0; }
+/* The composer's bottom edge is the stream's top rule until it scrolls away. */
+.team-compose:not([data-composer-fully-collapsed="true"]) .team-activity-grid {
+  border-top-color: transparent;
+}
+/* An empty team's plane is only its composer, with the notice below it. */
+.team-activity-grid[data-empty="true"] .lane-mosaic-plane {
+  flex: none; height: auto; overflow: hidden;
+}
+.team-activity-grid[data-empty="true"] .lane-mosaic-track { display: none; }
+.team-activity-grid[data-empty="true"] .mosaic-message-empty { order: 1; }
 /* Composer drag is a visual pairwise swap over the mounted grid. Transforms
    leave both grid slots reserved, so neither the form nor the message plane
    reflows while the pointer crosses a neighbor. */
