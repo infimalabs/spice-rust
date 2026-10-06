@@ -315,10 +315,10 @@ The message content clips at the card's inner edge, not its content box, so the
 island is never cut while text still wraps at the content box. The two actions
 join without a gap into one stream-surface cutout. Quote is square; Play rounds
 both left corners into a finger shape wherever content remains above it. A
-card-start marker drops Play's top-left radius for any leading hunk or nested
-quote chain that reaches the card top. The direct depth-zero case is already
-flush with the card's top and right edges, so both of its controls also omit
-their top border. Both controls omit their right border: Quote's left border is
+card-start marker covers any leading hunk or nested quote chain whose pair
+reaches the card top: that pair sits flush with the card's top and right edges,
+so Play drops its top-left radius and both controls omit their top border.
+Both controls omit their right border: Quote's left border is
 their single seam. Inline depth compensation puts the open right edge against
 the card boundary at every level. Each control carries a muted
 neutral glyph on a fill of the accent of the rail that contains it, so a quote's

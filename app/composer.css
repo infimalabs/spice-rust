@@ -562,10 +562,10 @@
 }
 /* Message card actions form one cutout rather than separate circles. The pair
    has no gap: Quote is square and Play rounds both inline-start corners into a
-   finger wherever content remains above it. Card-start metadata removes Play's
-   top-left radius from any direct hunk or nested quote chain that reaches the
-   card top, and rounds Quote's top-right corner into the card's own curve. The
-   direct depth-zero case also leaves both controls' top edges open.
+   finger wherever content remains above it. Card-start metadata marks any
+   direct hunk or nested quote chain whose pair reaches the card top: both
+   controls leave their top edge open, Play loses its top-left radius, and Quote
+   rounds its top-right corner into the card's own curve.
 
    Both controls leave their right edge open, so Quote's left edge is the pair's
    one seam and the depth-compensated pair meets the card's inline-end without
@@ -594,9 +594,9 @@
 .team-surface .mosaic-message-card .message-actions > .card-action--speak {
   border-radius: 50% 0 0 50%;
 }
-/* No leading quote: this direct hunk owns the card's literal top-right corner. */
+/* A pair at the card top sits flush against the card's literal top edge. */
 .team-surface .mosaic-message-card
-  .message-controls-slot[data-message-card-start][data-message-quote-depth="0"]
+  .message-controls-slot[data-message-card-start]
   .card-action {
   border-top: 0;
 }
