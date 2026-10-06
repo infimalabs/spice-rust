@@ -169,16 +169,16 @@ body:has(.shell--mosaic),
 .task-pill--project > button:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* A team stem flag echoes a message card rather than the global pill strip:
-   the group opens with a square message-card rail on its stem and closes with
-   a quote-sized rail after its last task handle, with no enclosing frame, all
-   on the composer's --control surface. Both rails, the stem badge, and stem
-   text use the soft muted neutral, since a group spans lanes and lifecycles.
-   A handle names the lane working it in its text and tint: the text mixes that
-   lane's accent toward ink, which keeps all six accents readable, and the tint
-   takes the accent. Unworked handles stay muted, weaker when dormant. Every
-   target mixes a 5% tint into --control and rises to 10% on hover. The strip's
-   in-flight dimming is dropped because text and tint carry ownership. */
+/* A team stem flag is a tab rather than a global pill: the group carries
+   matching message-card rails on both sides, the fleet's faint team-separator
+   line across its top, and 1em top corners, all over the composer's --control
+   surface. Rails, the stem badge, and stem text use the soft muted neutral,
+   since a group spans lanes and lifecycles. A handle names the lane working
+   it in its text and tint: the text mixes that lane's accent toward ink, which
+   keeps all six accents readable, and the tint takes the accent. Unworked
+   handles stay muted, weaker when dormant. Every target mixes a 5% tint into
+   --control and rises to 10% on hover. The strip's in-flight dimming is
+   dropped because text and tint carry ownership. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button {
   --task-tint: var(--muted);
@@ -192,21 +192,19 @@ body:has(.shell--mosaic),
 .team-tasks > .task-pill--project {
   overflow: clip;
   border: 0;
-  border-inline-start: var(--message-rail) solid var(--muted);
-  border-radius: 0;
+  border-block-start: var(--app-control-edge);
+  border-inline: var(--message-rail) solid var(--muted);
+  border-radius: 1em 1em 0 0;
   background: var(--control);
 }
 .team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
-/* Every joined target ends with the same 8px each handle starts and ends with,
-   so labels sit evenly spaced between the group's two rails. */
+/* Labels sit 8px apart from each other and 10px in from either rail. */
 .team-tasks .task-pill--project > .task-pill-stem-target { padding-inline-end: 8px; }
 .team-tasks .task-pill--project > .task-pill-handle {
   padding-inline: 8px;
   opacity: 1;
 }
-.team-tasks .task-pill--project > .task-pill-handle:last-child {
-  border-inline-end: var(--quote-rail) solid var(--muted);
-}
+.team-tasks .task-pill--project > .task-pill-handle:last-child { padding-inline-end: 10px; }
 .team-tasks .task-pill--project > .task-pill-handle.dormant {
   color: color-mix(in srgb, var(--muted) 62%, transparent);
 }
