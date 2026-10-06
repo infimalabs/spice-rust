@@ -176,6 +176,14 @@ surface beneath them. None of these treatments changes the field's geometry,
 and circular menu buttons, range thumbs, and the send action retain their own
 control shapes.
 
+On initial load, each member heading resolves from that lane's newest eligible
+authored prose and its provenance. If the current page contains no eligible
+prose but exposes an older frontier, the heading's lane continues directly to
+that newly exposed frontier even after it leaves the viewport. Header demand
+does not reissue an already recorded frontier: a sparse page that makes no
+progress stays closed until fresh viewport demand, so this dependency cannot
+spin, raise global history quotas, or make a busy peer starve the heading.
+
 The values sit outside the frame rather than riding the thumbs. A seven-letter
 word is more than twice a native thumb's width, a range thumb cannot carry text
 in either engine, and an overlay tracking the thumb would cover the track and

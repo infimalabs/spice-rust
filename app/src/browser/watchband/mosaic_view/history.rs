@@ -40,6 +40,7 @@ struct HistoryRequestKey {
 struct HistoryTarget {
     cursor: wire::MessageHistoryCursor,
     completion: u64,
+    prose_missing: bool,
     key: String,
     request_key: HistoryRequestKey,
 }
@@ -52,6 +53,14 @@ fn history_targets(
     targets
         .iter()
         .map(|(lane, (cursor, completion))| {
+            let prose_missing = !cards.iter().any(|card| match card {
+                ActivityCard::Agent { message, .. } => {
+                    message.lane == *lane
+                        && message.activity == wire::AgentActivityKind::Prose
+                        && crate::watchband::has_authored_prose(&message.text)
+                }
+                ActivityCard::Lifecycle { .. } => false,
+            });
             let key = cursor
                 .before
                 .and_then(|before| {
@@ -77,6 +86,7 @@ fn history_targets(
             HistoryTarget {
                 cursor: *cursor,
                 completion: *completion,
+                prose_missing,
                 key,
                 request_key: HistoryRequestKey {
                     revision,
@@ -173,22 +183,26 @@ impl HistoryPager {
         for offset in 0..self.targets.len() {
             let target = &self.targets[(start + offset) % self.targets.len()];
             let orphaned = self.orphaned.borrow().contains(&target.cursor.lane);
-            // Page only when this lane's frontier is visible, the merged plane is
-            // near its trailing edge, or a reconnect dropped the page this lane
-            // was already owed.
-            if !at_edge && !orphaned && !frontier_is_near(&self.observed, &viewport, &target.key) {
+            // Missing composer prose is its own lane-local demand: it can walk
+            // successive page frontiers even after those frontiers leave the
+            // viewport. The request key still closes each exact frontier after
+            // one request; only a real scroll may retry it.
+            let frontier_near = frontier_is_near(&self.observed, &viewport, &target.key);
+            let requested_completion = self.requested.borrow().get(&target.request_key).copied();
+            if !crate::watchband::history_frontier_request_due(
+                requested_completion,
+                target.completion,
+                fresh_demand,
+                target.prose_missing,
+                at_edge,
+                orphaned,
+                frontier_near,
+            ) {
                 continue;
             }
-            {
-                let mut requested = self.requested.borrow_mut();
-                if requested
-                    .get(&target.request_key)
-                    .is_some_and(|completion| !fresh_demand || *completion >= target.completion)
-                {
-                    continue;
-                }
-                requested.insert(target.request_key, target.completion);
-            }
+            self.requested
+                .borrow_mut()
+                .insert(target.request_key, target.completion);
             if self.request.request(target.cursor) {
                 *self.last_admitted.borrow_mut() = Some(target.cursor.lane);
                 self.orphaned.borrow_mut().remove(&target.cursor.lane);
@@ -243,7 +257,7 @@ pub(super) fn use_history_paging(
             let on_scroll = {
                 let inspect = Rc::clone(&inspect);
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-                    // A completed sparse page can retry only after fresh viewport demand.
+                    // A completed sparse page retries only after fresh viewport demand.
                     inspect(true);
                 })
             };
