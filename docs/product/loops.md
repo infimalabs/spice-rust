@@ -692,9 +692,9 @@ What the operator actually manipulates, stated as a component contract.
 ```mermaid
 block-beta
   columns 1
-  G["VIEW RAIL, agents | flow | topology"]
-  C["AGENTS VIEW, one always-mounted Chat console per live team"]
-  H["HEADER, lane lights | live status | Work and Directions menu"]
+  G["VIEW RAIL, Dash | Work overview action | Chat"]
+  C["CHAT VIEW, one always-mounted console per live team"]
+  H["HEADER, lane lights | live status | contextual task sets"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   M["MOSAIC, merged stream, newest first, explicit lane attribution"]
@@ -702,19 +702,21 @@ block-beta
 
 **Contract**
 
-- **The view rail is the global view vocabulary.** Agents is the conversation
-   surface; Flow and Topology are the complete closed analytical axes. A pane
-   belongs to one of those axes rather than inventing a third.
+- **The view rail separates location from overview.** Dash and Chat are the
+   complete durable destination vocabulary. Work is a browser-local task-set
+   action over the current destination; Flow and Topology remain the closed
+   analytical axes.
 - **The team console is the unit of tiling in Agents.** Consoles sit side by
    side; each is the complete operator surface for one live team containing
    one or more member lanes. Adding an agent widens its team console through the
    six-share visual ceiling; later members retain that maximum rather than
    narrowing it. Membership never adds another peer console.
-- **The team header is the summary and global navigation boundary.** The lane
-  lights expose compact membership and presence. The middle ticker announces
-  age, standing, prefix, accent, and detail as live status without consuming a
-  separate row. The team's task pill opens canonical team-scoped Work; neither
-  Work nor Directions is copied into the console.
+- **The team header is the summary and overview boundary.** The lane lights
+  expose compact membership and presence. The middle ticker announces age,
+  standing, prefix, accent, and detail as live status without consuming a
+  separate row. The team's task pill opens the unified overview with that
+  complete current team set; no Work or Directions page is copied into the
+  console.
 - **The member shards are the identity and composer-address summary.** They
   expose the concrete lane/worktree address, agent label, vendor identity, one
   mutually exclusive presence state with its age, pending direction, and held

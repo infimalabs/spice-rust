@@ -239,41 +239,35 @@ instruction.
 
 ### The view rail
 
-Dash, Work, and Chat are the sole global panel names, routed as `#/dash`,
-`#/work`, and `#/chat`; every team console is an always-mounted Chat surface,
-not another destination or mode. Its task pill links to the canonical global
-team Work view, `#/work/team/{team}`, and `#/work/directions/team/{team}`
-addresses that team's Directions. History, reload, and copied URLs restore the
-addressed global view. Work may add a scope, `/public/{stem}`,
-`/hidden/{stem}`, or `/team/{team}`, then `/task/{stamp}`, or name Directions
-as `/directions`, `/directions/team/{team}`, or
-`/direction/{directive, fanout, or key}`. Chat may add only
-`/card/{target}`.
+Dash and Chat are the complete durable panel vocabulary, routed as `#/dash`
+and `#/chat`. Work remains a visible action, not a destination: it opens the
+browser-local task overview over the current panel. Global and team task
+controls derive an exact task set from the admitted board; opening or closing
+that overview does not write browser history.
 
-A stem or target is one segment with letters, digits, `-._~` literal and every
-other byte as uppercase `%XX`; any other spelling is refused. A missing or
-empty fragment, or stray slashes around a route, is replaced in place with the
-canonical route. An unknown route or stray query opens Chat, replaces the
-address with `#/chat`, and names the refused route in a toast. An authenticated
-remote opening first captures its one-time fragment into tab-local session
-storage, then makes the same `#/chat` replacement; bootstrap and speech reuse
-only that token, and route fragments are never credentials.
+Chat alone may add `/card/{target}`. A target is one segment with letters,
+digits, and `-`; any other spelling is refused. A missing or empty fragment, or
+stray slashes around a route, is replaced in place with the canonical route.
+An unknown route, a retired Work fragment, or a stray query opens Chat,
+replaces the address with `#/chat`, and names the refused location in a toast.
+An authenticated remote opening first captures its one-time fragment into
+tab-local session storage, then makes the same `#/chat` replacement; bootstrap
+and speech reuse only that token, and route fragments are never credentials.
 
-Changing global destination, opening a Work task, and following a card or
-direction link each push one history entry; changing scope keeps the open task
-and, like switching tasks, replaces the entry. Closing a task this page opened
-consumes its entry; closing a loaded one replaces the address with its scope.
-Back and Forward only restore. A route naming something the resident proves
-absent is replaced with its container and a toast naming it: a missing stem
-opens All open work, an unknown task closes, and a card outside retained Chat
-history opens Chat; a transient failure keeps the route and its Retry. The team
-activity surface is a retained Chat card at `team-stream-{team}` while that
-team remains current and teamed; an unknown or independent lane is unavailable.
-Team arrangement menus, global Work arrangement, and an open task detail layer
-are browser-local; team, speech, and narration state keeps its format.
-Following a quote link is a history step, and Back returns the linking card
-where the reader left it. A fresh card link brings its card into view and focus
-once Chat hydrates, holding it as older history loads until the reader scrolls.
+Changing between Dash and Chat and following a Chat card each push one history
+entry. Back and Forward restore only those durable locations. A card outside
+retained Chat history is replaced with plain Chat and a toast names it; a
+transient read failure keeps the card location and its Retry. The team activity
+surface is a retained Chat card at `team-stream-{team}` while that team remains
+current and teamed; an unknown or independent lane is unavailable.
+
+Task overview selection, controls, map viewport, drafts, team arrangement,
+speech, and narration are browser-local. A durable route change closes the
+overview. Closing it directly restores focus to its surviving launcher.
+Following a retained Chat quote is a history step, and Back returns to the
+linking card where the reader left it. A fresh card link brings its card into
+view and focus once Chat hydrates, holding it as older history loads until the
+reader scrolls.
 
 ### The Spice menu quota well
 
@@ -316,13 +310,12 @@ section ([a changing
 region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
-Action-delivery refusals, composer refusals (image intake, a restored wake, an
-unreserved renewal), best-effort speech failures, and transient conditions (a
-Work board held at its last snapshot while reconnecting, an open task that has
-left the active scope) use the shared root toast, above every destination and
+Action-delivery refusals, composer refusals (image intake, a restored wake,
+unreserved renewal), best-effort speech failures, and transient overview
+refresh conditions use the shared root toast, above every destination and
 outside page flow, clearing after a fixed dwell. A condition toasts when it
 begins, not on every reconnect attempt. Validation, failures with an explicit
-retry, empty or unavailable page content, and durable degraded state stay
+retry, empty or unavailable local content, and durable degraded state stay
 beside what they qualify.
 
 ### The global Dash page
@@ -343,164 +336,85 @@ truncated. "No account usage reports" holds one single-limit card, and each
 "None." holds one list row; list rows stay one line, the full row in their
 title, so a first account moves nothing below.
 
-### The global Work page
+### The task overview
 
-**Running jobs** precedes the board with every command every resident lane
-still keeps, regardless of the selected Work scope. Rows are oldest first and
-name the agent, live started age, full command on hover, and the resident's
-reported standing. Five jobs show in full; more scroll in a keyboard-reachable
-region under pinned headings with the sixth peeking. An empty table reserves
-one row, so the first job does not move the board.
+The unchanged Work menu action, global task total, and global stem controls
+open one browser-local overview over whichever durable panel is current. The
+menu and total select every current open task; a stem selects every open task
+under that exact public or hidden stem. Team totals and team stems select the
+corresponding team-wide or team-and-stem set. A task handle selects exactly
+that task, a project fact selects its exact full dotted project, and a
+relationship control extends the current set with its target.
 
-One board shows open work in fixed ready, in-flight, blocked, and deferred
-rows. Cards fill each row in allocator order and scroll horizontally, so churn
-changes contents, not board size or labels. Creation order and project/phase
-clusters rearrange the same keyed cards; each lane reserves a label gutter, so
-rearranging never moves a card vertically. Rows keep the card cap's height even
-when empty and stand with no open task at all, and an open History holds one
-date of entries at the card cap while it loads, is empty, or holds its first
-entry, so Directions below never moves ([a changing region holds its largest
-footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
-Status is textual as well as colored, and narrow layouts keep labeled rows.
+Selection is an explicit, deduplicated vector in the resident's admitted offer
+order. It has no hidden current task, page, or sibling set. A valid context may
+produce an empty selection and still opens the same overview with an explicit
+empty state. Team membership follows the strongest current association: the
+team of the lane actively claiming the task, no team when that lane is
+unteamed, otherwise the current creator team, otherwise the last claimant's
+team. Until topology loads, the client does not invent a team association.
 
-The canonical team scope is `#/work/team/{team}`. Its open board admits each
-open task whose single home is that current roster team, across every open
-lifecycle. A task's home follows its strongest association: the team of the
-lane actively claiming it (none, leaving it only in the global pool, when that
-lane belongs to no team), otherwise its creator team when that team is on the
-roster, otherwise its last claimant's team. A task therefore leaves its creator
-team while another team's member holds its phase and returns once that claim
-ends. History uses the resident's team filter and restarts at the newest page
-whenever the scope changes, so pages from different teams or All open work
-never mix.
-A team the loaded roster lacks is replaced by `#/work` with a notice naming
-it; until the roster loads, a cold-loaded team link keeps its scope. Task
-detail retains the team scope; its project action still selects the task's
-project stem.
+The overview is graph-first. Its heading names the selection context and exact
+count, then the graph appears before jobs and details. Every selected task is a
+root in the immediate graph built from the admitted board snapshot; direct
+dependencies outside the set and missing durable identities remain explicit.
+Typed relationship reads enrich Dependency, Lineage, Review, and Lifecycle
+lenses within their protocol root and node bounds, but those bounds never
+remove a selected root. Direction, depth, zoom, pan, reset, loading, refusal,
+retry, and truncation controls qualify only the enrichment they change.
 
-Tasks created from a retained transcript expose one creator-context link on
-their card and in detail. Its visible label is the live relative age of the
-task's creation; its accessible name says it opens the creator context in Chat.
-It opens the newest retained message at or before the recorded creation
-boundary, paging older history as needed, and appears only when the lane proves
+**Running jobs** follows the graph and represents every command the admitted
+lane table reports as running or awaiting delivery, independent of the task
+selection. Rows name the agent, live started age, full command on hover, and
+reported standing. Five jobs show in full; more scroll in a
+keyboard-reachable region under pinned headings with the sixth peeking. An
+empty table reserves one row so the first job does not move the detail region.
+
+All selected task details are mounted together below the graph and jobs in the
+same order as the selection. There are no Details/Map tabs, task pagination,
+next/previous controls, or table of singular task pages. A graph or
+relationship control for an already selected task scrolls and focuses its
+article; an external related task extends the set. Each article carries its
+contract, attachments, state, ownership, blockers, relationships, provenance,
+closure evidence, observations, and composer. Loading or unavailable evidence
+occupies that task's own article and does not hide its siblings.
+
+Descriptions, acceptance criteria, observations, and closure evidence render
+through the sanitized task-text renderer. Wide code and tables scroll in their
+own box, raw HTML stays literal, and unsafe link schemes lose their
+destination. A handle already selected becomes a task chip that focuses its
+article; unrelated literal handles, code, and link text remain literal. A
+retained creator-context link opens the newest retained Chat message at or
+before the recorded creation boundary and appears only when the lane proves
 the recorded transcript generation.
 
-Descriptions, acceptance criteria, and observations render as authored Markdown
-through the sanitized task-text renderer in the detail drawer; observation
-author, time, order, and the recent window are unchanged. Wide code and tables
-scroll in their own box, raw HTML stays literal, and unsafe link schemes lose
-their destination. A handle the board holds becomes a Chat task chip; clicking
-or activating that chip opens the task in the shared detail drawer and returns
-focus to the chip when the drawer closes. Any other handle, and anything inside
-code or link text, stays literal.
+The observation composer mirrors Chat: the draft is on the left and equal
+action pills on the right hold **Add** and, for an operator, **Close**. Enter
+inserts a newline; Command or Control + Enter adds an observation. Holding
+Shift with that chord closes through the same permissions and validation. If
+Close is unavailable, the chord does not add an observation and the draft
+remains. Closing a task a lane still holds names that holder in the action's
+description.
 
-The observation composer mirrors the Chat composer: the draft on the left and
-its submit controls on the right, a column of equal pills holding **Add** and,
-for an operator, **Close**, which submits the draft as the closure's validation.
-Closing a task a lane still holds names that holder in the button's description.
+The overview is one modal sheet. It opens focus on Close, Escape and the
+backdrop dismiss it, reduced motion removes its transitions, and close returns
+focus to the surviving control that launched it. Narrow screens use the same
+graph-first and whole-set reading order without introducing another task
+browser.
 
-In the task observation composer, Enter inserts a newline and Command or
-Control + Enter adds an observation. Holding Shift with that chord instead
-closes the task using the draft as its reason, through the same permissions
-and validation as Close. If Close is unavailable, the chord does not add an
-observation and the draft remains.
+The global task strip and each team's task band retain their horned-tab
+presentation and visible Work terminology. The global total and stems hang
+from the command bar; a team's total, stems, and handles stand above its status
+band. Their count badges remain lifecycle-neutral, ownership accents remain on
+task handles, and overflow scrolls within the strip. These controls now open
+the local overview and never create a Work URL.
 
-Task detail treats admitted ownership facts as navigation. Its project action
-opens the matching Work scope and keeps the task open. Assignment, claim, and
-creator facts open the exact team member in Chat only when topology proves that
-destination; otherwise they stay readable facts.
-
-The global strip hangs from the window's top edge as horned tabs, the team
-header's task tabs turned upside down: rounded bottom corners, no top edge.
-It begins with a label-less total whose badge sums every open task; selecting
-it opens unscoped Work from any destination. One stem tab per stem with open
-work follows, rolling up every open task under that stem whether or not a team
-owns it, with no per-task breakout, and opens `#/work/{public|hidden}/{stem}`.
-Its stem label wears the same neutral muted tone as team-local stems. The hover
-title carries the ready, active, and blocked or deferred breakdown. The strip
-shows whenever any open work exists. The global board and Chat task
-references share one card identity, status, ownership, and selection contract;
-either opens the one shared detail layer, whose close returns focus to the
-launching card.
-
-A team header lists exactly the open tasks its team Work scope holds, so every
-task appears in at most one team header. It starts from in-flight, ready,
-blocked, and deferred offer order, then applies Work's grouping rule: each
-visibility-qualified project stem forms one group at its first task, and every
-later matching task joins it without changing relative order. Until the roster
-loads, team headers wait instead of guessing.
-
-Each team header is a fixed-height grid with no surrounding chrome of its own:
-no background, border, or shadow, so its content sits directly on the app
-surface above the team's panel. Open work occupies the full first row. The
-second row is one status band whose ticker leads into the physical-right pip
-segment; neither row has a hamburger.
-
-A badge-only flag leads the band: its single badge counts every open task the
-team header shows, equal to the sum of the stem badges and to the number of
-task handles, and opens that team's all-task Work page. It alone carries the
-message card's wider rail on both sides. Then one compact tab-shaped flag per
-visibility-qualified project stem follows in-flight, ready, blocked, and
-deferred offer order, on the composer's dark surface rather than the brighter
-message stream. Each stem/task group carries the nested quote's narrower rail
-on both sides. Both treatments taper into 1em rounded top corners, with no top
-edge and an open square bottom; task handles carry no rails of their own. The
-rails share the colour of the status band's top rule they stand on, so each
-tab and that rule read as one stroke. Every open-count badge, global or
-team-local, uses the same muted neutral treatment regardless of the lifecycles
-it counts. A handle working for a lane
-mixes a 5% tint of that lane's
-accent into the composer surface; unworked targets tint in the muted neutral.
-Every target rises to a 10% tint on hover. Labels sit 10px in from either rail
-and 8px either side of each join. An 8px outer inset keeps flags clear of the
-browser edge, and neighbouring stem groups are separated by the message
-stream's gap between lanes. The band scrolls horizontally when its labels
-outgrow the available width, without overlapping the status row or its pips.
-
-The stem label appears once and opens
-`#/work/team/{team}/{public|hidden}/{stem}`, narrowing the team's work to that
-stem; every grouped handle then opens its task's detail layer in place and
-receives focus again on close. The stem label wears the muted neutral at
-reduced strength; unworked task handles are muted, dormant ones weaker. An
-in-flight handle actively held by a current lane names that member through its
-text, the member's canonical accent mixed toward ink, and its tint. This
-ownership cue applies only to the team-local task handle: the project-stem
-controls and the global strip carry no owner. Operator claims and lanes absent
-from the admitted roster keep muted text and tint rather than guessing an owner
-color.
-
-Below the board, **Directions** pages the resident's operator-authored history
-newest first, one card per fanout. Search text, agent and team chips, lifecycle
-state chips, and an authored-before date filter the resident read before
-paging; Apply returns to the newest matching page and Clear removes every
-filter. Newer and Older replace one bounded page through durable journal
-cursors, while loading, no-match, refusal, and retry states retain the same
-controls and card grid. Every card holds at least one fixed entry footprint,
-its linked-task row reserved before a task links, and the empty line holds that
-same footprint, so the section keeps its height as the first direction arrives
-or a direction gains or loses its first task. A direction route clears the
-filters and reads the page that starts at its card, with a Newer directions
-edge above it, then marks and focuses that card. A team route selects that
-team's chip. An unknown or malformed direction or team leaves the route for
-`#/work/directions` and names it. Each team's Directions header links to its
-team route, lane-menu direction attention opens its oldest waiting direction,
-and the relative time on a retained Chat quote of an operator-authored
-direction links to its route: by directive or fanout identity when the team's
-inbox holds it, otherwise by key. Resident- and lane-authored steering remains
-readable context without a link because it is not part of global Directions
-history.
-
-Each global Directions entry is a message-familiar card: the resident's first
-unquoted line in sanitized rich Markdown, marked as a retained excerpt and
-signed by the operator's badge, the initials quote bylines use, without
-restating its section. Recipient badges group by current team without a visible
-team label, since the badges already name its members; each group carries the
-team name as its accessible name. They keep unknown recipients visible without
-inventing a link, open caused work in the shared task detail layer, and link an
-acknowledged or declined badge only when retiring history evidence and a
-retained authenticated reply resolve to that exact team-local Chat card; Back
-returns to that card. The mosaic holds three columns wide, two at intermediate
-width, and one on a narrow screen without changing newest-first order.
+Operator Directions no longer have a global archive page or route. Lane-menu
+direction attention opens the complete current task set for that lane's team;
+an unteamed or taskless context opens the explicit empty overview. Retained
+Chat cards remain the durable source for linkable conversation. No paged
+direction ledger, direction finder, route anchor, or compatibility alias is
+kept behind the overview.
 
 
 ### The team console
@@ -512,8 +426,9 @@ header gives the complete live status ticker and task strip the width left of
 its compact lane-light stack, which holds the right edge. The ticker keeps its
 relative age, lane standing, agent/tool/command prefix and accent, truncated
 detail, accessible label, and live-region behavior in its status band rather
-than consuming a separate row. The task pill links to canonical team-scoped
-global Work; no local analytical pane or team-local route duplicates it.
+than consuming a separate row. The task pill opens the browser-local overview
+with the canonical complete team task set; no local analytical pane or route
+duplicates it.
 
 The composer, speech and allocation controls, and send action retain their
 geometry and remain mounted. The former standalone ticker row becomes message
@@ -544,8 +459,9 @@ against the witnesses of their queue. Then member-held tasks only a human can
 move — a claim iced on unmet requirements, unclaimed work blocked on them,
 finished work in review; sibling dependencies are not shown. Last, a lease
 within two minutes of expiry and direction waiting over five minutes. A ruling
-lands and its request leaves; tasks open the detail layer, and direction opens
-its oldest waiting direction in global Directions. With nothing due the list is absent.
+lands and its request leaves; task attention opens the exact task overview,
+while direction attention opens that lane's complete team task set. With
+nothing due the list is absent.
 
 The lane controls follow: Wake only on a seatable vacant seat, Drain only on an
 occupied one, Remove only on a vacant seat holding no claim, plus renewal on any
@@ -555,11 +471,11 @@ immediately. The command shows in flight until answered, and a refusal stays
 with its reason. A control the principal's authority does not admit is absent,
 not disabled.
 
-Task, Latest activity, and Waiting direction rows update in place: a task opens
-its detail, and activity and direction links enter the exact Chat message or
-composer. Presence and its age, and the copyable channel, occupant, session, and
-worktree identifiers, complete the panel beside Create new team and Leave all
-teams.
+Task, Latest activity, and Waiting direction rows update in place: tasks and
+waiting directions open their exact overview sets, while activity links enter
+the exact Chat message or composer. Presence and its age, and the copyable
+channel, occupant, session, and worktree identifiers, complete the panel beside
+Create new team and Leave all teams.
 
 The panel is among the smallest controls in spice, so it spends no pixel twice.
 Its head is one line: label, presence state, and age. The held handle and
@@ -661,11 +577,12 @@ The toolbar remains fixed, with the status ticker beside the lane-light stack
 at the right edge, and the message stream owns the row the standalone ticker
 once occupied.
 
-Task-detail and global Directions links enter the exact Chat card or composer.
-Return anchors retain card identity and scroll offset only; Back and Forward do
-not restore hidden layout state. With no team at all the surface keeps the same
-toolbar and an empty middle status slot, so the first team to form, or the last
-to dissolve, moves no header control ([a changing region holds its largest
+Creator-context and actor links enter the exact Chat card or composer. Return
+anchors retain card identity and scroll offset only; Back and Forward do not
+restore browser-local overview or layout state. With no team at all the surface
+keeps the same toolbar and an empty middle status slot, so the first team to
+form, or the last to dissolve, moves no header control ([a changing region
+holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
 **Value:** the console is continuously both a writing and reading surface,
