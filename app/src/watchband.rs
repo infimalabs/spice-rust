@@ -948,24 +948,6 @@ pub fn quote_label(preview: Option<&str>) -> &str {
     preview.unwrap_or("quoted message")
 }
 
-/// Whether a directive author can be quoted into an operator-owned composer.
-///
-/// Operator prose is already the instruction side of that conversation, so
-/// quoting it back to an agent would create a self-quote rather than a reply.
-#[must_use]
-pub fn directive_author_is_quoteable(actor: &wire::Actor) -> bool {
-    !matches!(actor, wire::Actor::Operator)
-}
-
-/// Whether one resolved source has an author a composer can reply to.
-#[must_use]
-pub fn quote_author_is_quoteable(author: &wire::QuoteAuthor) -> bool {
-    match author {
-        wire::QuoteAuthor::Agent { .. } => true,
-        wire::QuoteAuthor::Directive { actor } => directive_author_is_quoteable(actor),
-    }
-}
-
 /// The count a navigation pill wears, or nothing.
 ///
 /// Zero is absence rather than a badge reading `0`: the badge exists to draw
@@ -1061,9 +1043,8 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        direction_message_links, directive_author_is_quoteable, directive_context_prose,
-        first_nonquoted_prose, lane_accent, quote_author_is_quoteable, swap_members,
-        task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
+        direction_message_links, directive_context_prose, first_nonquoted_prose, lane_accent,
+        swap_members, task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
         ticker_chunks, tool_media_description, transfer_member,
     };
@@ -1295,21 +1276,6 @@ mod tests {
         );
         assert_eq!(first_nonquoted_prose(span), None);
         assert_eq!(directive_context_prose("> > only borrowed\n>"), None);
-    }
-
-    #[test]
-    fn operator_sources_are_links_but_not_composer_quote_actions() {
-        assert!(!directive_author_is_quoteable(&wire::Actor::Operator));
-        assert!(!quote_author_is_quoteable(&wire::QuoteAuthor::Directive {
-            actor: wire::Actor::Operator,
-        }));
-        assert!(quote_author_is_quoteable(&wire::QuoteAuthor::Agent {
-            lane: id(1),
-            occupant: id(2),
-        }));
-        assert!(quote_author_is_quoteable(&wire::QuoteAuthor::Directive {
-            actor: wire::Actor::Spice,
-        }));
     }
 
     #[test]
