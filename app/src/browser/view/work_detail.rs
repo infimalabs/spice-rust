@@ -25,6 +25,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub request_task: Callback<TaskStamp>,
+    pub open_task: Callback<TaskStamp>,
+    pub retry_relations: Callback<MouseEvent>,
     pub close: Callback<()>,
 }
 
@@ -77,7 +79,10 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     selection: render.selection,
                     state: render.map,
                     focus_task: focus_task.clone(),
+                    open_task: render.open_task.clone(),
                     work: render.work,
+                    runtime: render.runtime,
+                    retry: render.retry_relations.clone(),
                 })}
                 <section class="work-overview-details" aria-labelledby="work-overview-details-title">
                     <div class="work-map-heading">

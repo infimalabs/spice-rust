@@ -141,6 +141,12 @@ impl ActionQueue {
             matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
         })
     }
+    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    pub(super) fn has_task_relations(&self, key: &crate::TaskRelationsKey) -> bool {
+        self.mailbox.borrow().pending.values().any(|entry| {
+            matches!(&entry.kind, PendingKind::TaskRelations { key: pending } if pending == key)
+        })
+    }
 
     pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
         self.mailbox.borrow_mut().admit_topology(id, range)
@@ -205,6 +211,7 @@ impl PendingKind {
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
+            | Self::TaskRelations { .. }
             | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
             | Self::ConsentRuling { .. }
@@ -437,6 +444,7 @@ impl ClientAction {
                 .saturating_add(settings.operator_email.as_ref().map_or(0, String::len)),
             Self::DrainSubmissions
             | Self::TaskDetail { .. }
+            | Self::TaskRelations { .. }
             | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
             | Self::ConsentRuling { .. }
@@ -451,6 +459,7 @@ impl ClientAction {
         !matches!(
             self,
             Self::TaskDetail { .. }
+                | Self::TaskRelations { .. }
                 | Self::DirectionHistory { .. }
                 | Self::WorkHistory { .. }
                 | Self::MessageHistory { .. }

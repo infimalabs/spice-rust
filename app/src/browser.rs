@@ -57,6 +57,7 @@ mod sender;
 mod speech_runtime;
 mod task_detail;
 mod task_feedback;
+mod task_relations;
 mod toast;
 mod view;
 mod watchband;
@@ -408,6 +409,11 @@ impl AppState {
                 .reform(move |task| work_map.selection(task))
         };
         let open_message_task = self.open_message_task.clone();
+        let retry_relations = task_relations::retry_callback(
+            self.surface.clone(),
+            self.work_detail.selected.clone(),
+            self.work_map.clone(),
+        );
         let app = render_app(
             AppRender {
                 connection: &self.connection,
@@ -442,6 +448,7 @@ impl AppState {
                 select_task,
                 open_message_task,
                 request_task: self.work_detail.request.clone(),
+                retry_relations,
                 close_task: self.work_detail.close.clone(),
             },
             work.as_ref(),
@@ -501,6 +508,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         },
         navigate.reform(|()| navigation::Intent::CloseTask),
     );
+    task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
     let direction_history = direction_history::use_controls(
         sender.clone(),
         surface.clone(),
