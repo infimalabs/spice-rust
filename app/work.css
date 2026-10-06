@@ -56,7 +56,6 @@
     opacity var(--app-motion-fast) var(--app-ease-standard),
     transform var(--app-motion-settle) var(--app-ease-standard);
 }
-.work-detail--overview { width: min(72rem, calc(100vw - 3rem)); }
 
 .work-detail-layer[data-work-detail-state="open"] .work-detail-backdrop { opacity: 1; }
 .work-detail-layer[data-work-detail-state="open"] .work-detail {
@@ -356,9 +355,13 @@
 }
 .work-map-heading h3 { margin: 0; font-size: .9rem; }
 .work-map-heading > span { color: var(--muted); font-size: .68rem; text-align: right; }
+/* The frame keeps its former clamp as a ceiling and shrinks to the diagram's
+   natural height, which the node overlay publishes with its width once
+   geometry lands. The image never draws above that natural size, so it shares
+   the overlay's contain fit: zoom alone enlarges. */
 .work-map-viewport {
   position: relative;
-  height: clamp(18rem, 42vh, 28rem);
+  height: min(clamp(18rem, 42vh, 28rem), max(10rem, calc(var(--work-map-diagram-block, 28rem) + 2rem)));
   overflow: hidden;
   border: var(--app-edge-soft);
   border-radius: var(--app-radius-inset);
@@ -371,11 +374,9 @@
   min-width: 0;
   height: 100%;
 }
-.work-map-diagram .mermaid-render > .message-image img {
-  max-width: 100%;
-  max-height: 100%;
-  aspect-ratio: auto;
-  object-fit: contain;
+.work-map-viewport .mermaid-render > .message-image img {
+  width: min(100%, var(--work-map-diagram-inline, 100%));
+  height: min(100%, var(--work-map-diagram-block, 100%));
 }
 .work-map-viewport .mermaid-render > .message-image,
 .work-map-node-layer {
@@ -399,12 +400,16 @@
   background: transparent;
   cursor: pointer;
 }
+/* The state badge straddles the node's top border like a legend, so a node at
+   natural size never loses its first label line beneath it. */
 .work-map-node-button[data-work-state]::after {
   content: attr(data-work-state);
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
   padding: 2px 6px;
+  white-space: nowrap;
   border: 1px solid color-mix(in srgb, var(--work-card-tone) 45%, var(--line));
   border-radius: var(--app-radius-pill);
   background: var(--panel);

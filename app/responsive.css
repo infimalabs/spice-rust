@@ -68,7 +68,6 @@
 
 @media (max-width: 1180px) {
   .work-detail { width: min(42rem, calc(100vw - 2rem)); }
-  .work-detail--overview { width: min(68rem, calc(100vw - 2rem)); }
 }
 
 @media (max-width: 920px) {
@@ -77,8 +76,7 @@
   .work-map-task-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
-  .work-detail,
-  .work-detail--overview { width: 100vw; }
+  .work-detail { width: 100vw; }
   .work-detail-header,
   .work-detail-content,
   .work-overview-map,

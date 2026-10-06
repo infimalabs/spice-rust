@@ -65,10 +65,15 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
         (host.clone(), *size, props.geometry.clone(), props.viewport),
         move |(host, _, _, viewport)| apply_overlay_layout(host, *viewport),
     );
+    use_effect_with((host.clone(), props.geometry.view_box), |(host, view)| {
+        publish_diagram_size(host, *view)
+    });
+    // Contain fit that never enlarges, like the capped image beneath it: zoom
+    // alone draws above natural size.
     let view = props.geometry.view_box;
     let scale = (f64::from(size.width) / view.width)
         .min(f64::from(size.height) / view.height)
-        .max(0.0);
+        .clamp(0.0, 1.0);
     let drawn_width = view.width * scale;
     let drawn_height = view.height * scale;
     let offset_x = (f64::from(size.width) - drawn_width) / 2.0;
@@ -149,6 +154,26 @@ fn publish_size(element: &web_sys::Element, size: &UseStateHandle<ViewportSize>)
     };
     if **size != next {
         size.set(next);
+    }
+}
+
+/// Publishes the diagram's natural size so its frame and image never exceed it.
+fn publish_diagram_size(host: &NodeRef, view: crate::mermaid_geometry::Rect) {
+    let Some(viewport) = host
+        .cast::<web_sys::Element>()
+        .and_then(|layer| layer.closest(".work-map-viewport").ok().flatten())
+        .and_then(|viewport| viewport.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let style = viewport.style();
+    for (property, value) in [
+        ("--work-map-diagram-inline", view.width),
+        ("--work-map-diagram-block", view.height),
+    ] {
+        style
+            .set_property(property, &format!("{value}px"))
+            .unwrap_or_else(|_| panic!("Work map writes {property}"));
     }
 }
 
