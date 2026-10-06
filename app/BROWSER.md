@@ -284,16 +284,17 @@ Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
 same inline flow beside it. The island blocks exactly two lines of the hunk's
 prose: it rises a quarter line into the free corner above and presses the same
-distance toward the card's inline end, never past the card's own padding, and
-its buttons take that rise as extra size, standing two and a quarter lines tall
-and never below the base 24px card action. The message content clips at the
-card's inner edge, not its content box, so the island is never cut while text
-still wraps at the content box. Each action is its own circle rather than a
-segment of a joined rail: a muted neutral glyph on a fill of the accent of the
-rail that contains it, so a quote's controls follow that quote's speaker and an
-operator or system quote's controls stay neutral inside an accented card. The
-fill is a final answer's 5% rest wash over the stream surface, so on a final
-card the control blends into the card and only its glyph shows, and a hovered
+distance toward the card's inline end, never past the card's own padding. Its
+buttons are the header's 35px circle, the size of the operator avatar and the
+Spice trigger, at every quote depth rather than shrinking with quoted type.
+The message content clips at the card's inner edge, not its content box, so the
+island is never cut while text still wraps at the content box. Each action is
+its own circle rather than a segment of a joined rail: a muted neutral glyph on
+a fill of the accent of the rail that contains it, so a quote's controls follow
+that quote's speaker and an operator or system quote's controls stay neutral
+inside an accented card. The fill is a final answer's 5% rest wash over the
+stream surface, so on a final card the control blends into the card and only
+its glyph shows, and a hovered
 card's 10% wash sets it apart. One static edge in the stream surface colour
 punches each circle out of its card and never changes. While hovered, pressed,
 or speaking, the control fills at 10% and its glyph lights to neutral ink; it

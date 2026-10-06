@@ -513,20 +513,22 @@
    (line-height 1.25), so an image row clearing it leaves the heading line and
    one line of prose above. It rises a quarter line into the free corner above
    and presses the same distance toward the inline end, never past the card's
-   own padding, and its buttons take that rise as extra size. The registered
-   size resolves here, at the slot's line height, before buttons with their
-   own type inherit it. */
+   own padding. Its buttons are the header's circle size at every quote depth,
+   so the bottom margin absorbs the difference to keep the two-line footprint.
+   The registered size resolves here, before buttons with their own type
+   inherit it. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
-  initial-value: 24px;
+  initial-value: 35px;
 }
 .team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
-  --message-control-size: max(calc(2lh + min(.25lh, var(--message-card-inset))), 24px);
+  --message-control-size: var(--app-header-control);
+  --message-control-rise: min(.25lh, var(--message-card-inset));
   display: block;
   float: inline-end;
-  margin-block: calc(2lh - var(--message-control-size)) 0;
-  margin-inline: .5rem calc(2lh - var(--message-control-size));
+  margin-block: calc(-1 * var(--message-control-rise)) calc(2lh + var(--message-control-rise) - var(--message-control-size));
+  margin-inline: .5rem calc(-1 * var(--message-control-rise));
   line-height: 1.25;
 }
 .team-surface .message-controls-slot > span { display: contents; }
