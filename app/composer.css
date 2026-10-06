@@ -564,8 +564,8 @@
    has no gap: Quote is square and Play rounds both inline-start corners into a
    finger wherever content remains above it. Card-start metadata removes Play's
    top-left radius from any direct hunk or nested quote chain that reaches the
-   card top. The direct depth-zero case also leaves both controls' top edges
-   open.
+   card top, and rounds Quote's top-right corner into the card's own curve. The
+   direct depth-zero case also leaves both controls' top edges open.
 
    Both controls leave their right edge open, so Quote's left edge is the pair's
    one seam and the depth-compensated pair meets the card's inline-end without
@@ -599,6 +599,11 @@
   .message-controls-slot[data-message-card-start][data-message-quote-depth="0"]
   .card-action {
   border-top: 0;
+}
+.team-surface .mosaic-message-card
+  .message-controls-slot[data-message-card-start]
+  .card-action:last-child {
+  border-start-end-radius: calc(2 * var(--mosaic-quote-radius));
 }
 .team-surface .mosaic-message-card
   .message-controls-slot[data-message-card-start]
@@ -879,8 +884,8 @@
   margin: 0;
   padding: 3px 9px 6px 9px;
   border: 0;
-  /* The signoff is docked flush to the square card edge; stream quote radius
-     resolves to zero here while non-stream markdown retains its own shape. */
+  /* The signoff is docked flush to the card's top-left corner; its one free
+     corner takes the stream quote radius, as non-stream markdown keeps its own. */
   border-radius: 0 0 var(--mosaic-quote-radius) 0;
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   box-shadow: none;

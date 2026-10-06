@@ -29,11 +29,11 @@
   border-radius: 50%;
 }
 
-/* Stream cards and every quote nested inside them have square corners.
-   Markdown outside the stream retains the ordinary surface radius. */
+/* Stream cards (2x) and nested quotes round by their rail width, ending each
+   curve at the rail's inner edge; other markdown keeps the surface radius. */
 .markdown-body { --mosaic-quote-radius: 12px; }
 .mosaic-message-card,
-.mosaic-message-card .markdown-body { --mosaic-quote-radius: 0; }
+.mosaic-message-card .markdown-body { --mosaic-quote-radius: 2px; }
 .markdown-body {
   --message-image-gap: 7px;
   --mosaic-quote-inline: 5px;
@@ -128,7 +128,7 @@
   padding: 15px;
   border: var(--app-edge);
   border-left: 4px solid var(--accent);
-  border-radius: 0;
+  border-radius: calc(2 * var(--mosaic-quote-radius));
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
 }
@@ -1165,9 +1165,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
 /* Message cards paint no fill of their own: the stream field behind them shows
-   through, and the thick left lane rail, square corners and the gutters between
-   cards set each one apart. A final answer rests in --card-rest-wash; hovering
-   any card washes --card-hover-wash, for prose cards and image covers alike. */
+   through, and the thick left lane rail, its rail-width corners and the gutters
+   set each card apart. A final answer rests in --card-rest-wash; hovering any
+   card washes --card-hover-wash, for prose cards and image covers alike. */
 .team-surface .mosaic-message-card {
   --card-hover-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 10%, transparent);
   container-type: inline-size;
@@ -1177,7 +1177,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   padding: var(--message-card-inset);
   border: 0;
   border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent-neutral));
-  border-radius: 0;
+  border-radius: calc(2 * var(--mosaic-quote-radius));
   background: var(--card-rest-wash, transparent);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: 1rem;
