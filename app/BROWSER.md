@@ -339,15 +339,15 @@ The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
 status band, while the team surface frames nothing around them. The 56px
 circular send button remains centered in its independent 80px physical-right
-composer-control column. That column's opaque field matches the composers'
-glass at rest and continues their soft top rule above the send button. The status band's
-matching 80px segment aligns directly above it, shares the ticker's
-stream-surface fill and stronger top rule, and centers up to six 8px pips in
-the same local right-to-left order as the composer columns. When a composer is
-fully collapsed, its bottom edge matches that status rule, visually bracketing
-the status row. Pips retain the unified presence palette: active, queued,
-waiting, and dim bound/unbound states remain
-distinguishable without encoding agent identity.
+composer-control column. That column's opaque field is the stream surface, so
+it reads apart from the composers' lighter glass and as one band with the
+status row. The status band's matching 80px segment aligns directly above it,
+shares the ticker's stream-surface fill and stronger top rule, and centers up
+to six 8px pips in the same local right-to-left order as the composer columns.
+When a composer is fully collapsed, its bottom edge matches that status rule,
+visually bracketing the status row. Pips retain the unified presence palette:
+active, queued, waiting, and dim bound/unbound states remain distinguishable
+without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. Global and team-local work share one horned-tab
 construction on the composer's dark `--control` surface rather than the
