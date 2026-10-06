@@ -272,24 +272,6 @@ impl WorkCounts {
     pub const fn has_open(self) -> bool {
         self.open() > 0
     }
-
-    /// The slowest open lifecycle these counts hold: deferred, then blocked,
-    /// then ready, then in flight. Every task count badge wears it, so a
-    /// roll-up shows how far its least-moving task is from motion.
-    #[must_use]
-    pub const fn slowest(self) -> Option<WorkAvailability> {
-        if self.deferred > 0 {
-            Some(WorkAvailability::Deferred)
-        } else if self.blocked > 0 {
-            Some(WorkAvailability::Blocked)
-        } else if self.ready > 0 {
-            Some(WorkAvailability::Ready)
-        } else if self.in_flight > 0 {
-            Some(WorkAvailability::InFlight)
-        } else {
-            None
-        }
-    }
 }
 
 impl FromIterator<WorkAvailability> for WorkCounts {

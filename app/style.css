@@ -293,24 +293,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-/* One activity ladder: an agent's presence pip and a task count badge, which
-   wears the slowest open lifecycle it counts. In flight reads as active,
-   ready as queued, blocked as waiting, and deferred as bound. */
-.agent-presence-indicator,
-.task-pill-count {
+/* Agent activity keeps one ladder: in flight reads as active, ready as queued,
+   blocked as waiting, and deferred as bound. */
+.agent-presence-indicator {
   --agent-presence-color: var(--accent);
   --agent-presence-opacity: 1;
 }
-.agent-presence-indicator.queued,
-.task-pill-count[data-slowest="ready"] { --agent-presence-color: var(--warning); }
-.agent-presence-indicator.waiting,
-.task-pill-count[data-slowest="blocked"] {
+.agent-presence-indicator.queued { --agent-presence-color: var(--warning); }
+.agent-presence-indicator.waiting {
   --agent-presence-color: var(--muted);
   --agent-presence-opacity: .7;
 }
 .agent-presence-indicator.bound,
-.agent-presence-indicator.unbound,
-.task-pill-count[data-slowest="deferred"] {
+.agent-presence-indicator.unbound {
   --agent-presence-color: var(--muted);
   --agent-presence-opacity: .35;
 }

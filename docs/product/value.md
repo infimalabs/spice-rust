@@ -447,9 +447,8 @@ on both sides. Both treatments taper into 1em rounded top corners, with no top
 edge and an open square bottom; task handles carry no rails of their own. The
 rails share the colour of the status band's top rule they stand on, so each
 tab and that rule read as one stroke. Every open-count badge, global or
-team-local, takes the colour of the slowest open task it counts on the presence
-pips' ladder: in flight reads active, ready queued, blocked waiting, and
-deferred as a bound pip. A handle working for a lane
+team-local, uses the same muted neutral treatment regardless of the lifecycles
+it counts. A handle working for a lane
 mixes a 5% tint of that lane's
 accent into the composer surface; unworked targets tint in the muted neutral.
 Every target rises to a 10% tint on hover. Labels sit 10px in from either rail

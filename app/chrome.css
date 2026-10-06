@@ -184,16 +184,15 @@ body:has(.shell--mosaic),
   --task-tint: var(--accent-slot);
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
-/* Every count badge, global or team-local, wears the presence ladder of the
-   slowest open task it counts; style.css maps data-slowest onto it. */
+/* Every count badge, global or team-local, uses one subdued neutral treatment;
+   the surrounding tab and handle retain their own state and owner signals. */
 .task-pill-count {
   padding: 0 5px;
   border-radius: var(--app-radius-pill);
-  background: var(--agent-presence-color);
+  background: var(--muted);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
   color: var(--page);
   font-size: 9px;
-  opacity: var(--agent-presence-opacity);
 }
 :is(.task-pill-strip, .team-tasks) :focus-visible { outline-offset: -2px; }
 .app-global-status {

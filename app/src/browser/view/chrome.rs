@@ -312,14 +312,10 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
-/// One open-task count badge, global or team-local, coloured by the slowest
-/// open lifecycle it rolls up so every filtered view reads the same ladder.
+/// One neutral open-task count badge shared by global and team-local roll-ups.
 pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
     html! {
-        <span
-            class="task-pill-count"
-            data-slowest={counts.slowest().map(crate::work::WorkAvailability::key)}
-        >{counts.open().to_string()}</span>
+        <span class="task-pill-count">{counts.open().to_string()}</span>
     }
 }
 
