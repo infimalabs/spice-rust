@@ -351,9 +351,11 @@ halfway between the absolute page and the standard composer. The dark stream
 instead sits halfway between the composer and the brighter panel surface: one
 equal half-step above the composer rather than below it. Cards paint no fill of
 their own, so the field shows through them; they remain distinguished by their
-lane's 4px accent rail, square corners, and the gutters between them.
-Nested Markdown blockquotes and resolved or unavailable quote cards are square
-at every depth as well. A
+lane's 4px accent rail, corners rounded by that same 4px, and the gutters
+between them. Nested Markdown blockquotes and resolved or unavailable quote
+cards round theirs by their 2px quote rail at every depth. Each curve ends
+exactly at its rail's inner edge, so no corner overhangs its border, and the
+control pair docked in a card's top-right corner follows the card's curve. A
 FINAL answer keeps its pill and rests washed 5% toward its lane accent, with no
 edge of its own. Hover washes any card 10% toward its lane accent, the same
 strength as an image cover's hover screen, and draws no outline or border, on
@@ -365,14 +367,16 @@ An image-only message with exactly one non-diagram image uses its whole
 committed card as an edge-to-edge cover viewport. Measurement clones reserve
 that cover from the card width, but the committed lattice remains the placement
 authority so no aspect-ratio correction opens a ledger gap. Keyboard focus
-paints one square card-sized border above the cover; its inline-start rail and
-remaining edge meet as one boundary, never nested outlines, and the image cannot
-clip or wash out that edge. Hover draws no border: the same card-sized layer
+paints one card-sized border above the cover, rounded with the card; its
+inline-start rail and remaining edge meet as one boundary, never nested
+outlines, and the image cannot clip or wash out that edge. Hover draws no
+border: the same card-sized layer
 screens the whole cover 10% toward the lane accent instead, since the image
 hides any background wash; a FINAL cover rests screened 5%. The live age and
 producer sit in a compact frosted overlay docked flush into the image card's
-square top-left corner. The overlay carries no corner curve, so its edges meet
-the card without exposing a sliver of image. It pads its text 3px above, 6px
+top-left corner, under the rail's own curve. Only its one free corner takes
+the 2px quote radius, so its edges meet the card without exposing a sliver of
+image. It pads its text 3px above, 6px
 below, and 9px on each side. Actions, when present, remain in their own inset
 overlay at the top right; multiple images, mixed prose, quotes, and diagrams
 keep their
