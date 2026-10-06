@@ -255,6 +255,7 @@ fn render_quote_card_body(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     attribution: image_flow::Attribution,
+    quote_depth: usize,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -263,7 +264,10 @@ fn render_quote_card_body(
         quotes,
         quote_agents,
         quote_sources,
-        Finish::QuoteCard(attribution),
+        Finish::QuoteCard {
+            attribution,
+            quote_depth,
+        },
     )
 }
 
@@ -274,7 +278,10 @@ enum Finish {
     /// Assistant prose split into attributed hunks around every quote.
     ProseCard,
     /// A quote card split into hunks attributed to its authenticated source.
-    QuoteCard(image_flow::Attribution),
+    QuoteCard {
+        attribution: image_flow::Attribution,
+        quote_depth: usize,
+    },
 }
 
 fn render(
@@ -310,7 +317,11 @@ fn render(
         quote_sources,
     );
     let events = coalesce_text_events(events);
-    let events = quotes::expand(events, quotes, quote_agents, quote_sources);
+    let quote_depth = match &finish {
+        Finish::QuoteCard { quote_depth, .. } => *quote_depth,
+        Finish::Received | Finish::ProseCard => 0,
+    };
+    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_count = markdown_image_only_count(&events, has_diagrams);
@@ -329,13 +340,18 @@ fn render(
                 task_tail: String::new(),
             })
         }
-        Finish::QuoteCard(attribution) => Some(attribution),
+        Finish::QuoteCard { attribution, .. } => Some(attribution),
     };
     let quote_attributions = outer_quotes
         .iter()
         .map(|quote| quote.attribution.clone())
         .collect::<Vec<_>>();
-    let events = image_flow::flow(&events, attribution.as_ref(), &quote_attributions);
+    let events = image_flow::flow(
+        &events,
+        attribution.as_ref(),
+        &quote_attributions,
+        quote_depth,
+    );
     let events = events.into_iter().flat_map(|event| match &event {
         MarkdownEvent::Start(Tag::CodeBlock(_)) => {
             task_code_block = true;

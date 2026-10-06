@@ -11,6 +11,7 @@ pub(super) fn expand<'a>(
     presentations: &[QuotePresentation],
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
+    quote_depth: usize,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
         return events;
@@ -18,22 +19,27 @@ pub(super) fn expand<'a>(
     let mut expanded = Vec::with_capacity(events.len());
     let mut event = 0;
     let mut presentation = 0;
+    let mut raw_quote_depth = 0usize;
     while event < events.len() {
-        let Some(target) = structural_quote_target(&events[event..]) else {
-            expanded.push(events[event].clone());
-            event += 1;
-            continue;
-        };
-        let Some(node) = presentations
-            .get(presentation)
-            .filter(|node| presentation_target(node) == target)
-        else {
+        let node = structural_quote_target(&events[event..]).and_then(|target| {
+            presentations
+                .get(presentation)
+                .filter(|node| presentation_target(node) == target)
+        });
+        let Some(node) = node else {
+            match &events[event] {
+                MarkdownEvent::Start(Tag::BlockQuote(_)) => raw_quote_depth += 1,
+                MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
+                    raw_quote_depth = raw_quote_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
             expanded.push(events[event].clone());
             event += 1;
             continue;
         };
         expanded.push(MarkdownEvent::InlineHtml(
-            render(node, agents, sources).into(),
+            render(node, agents, sources, quote_depth + raw_quote_depth + 1).into(),
         ));
         event += 3;
         presentation += 1;
@@ -220,6 +226,7 @@ fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
+    quote_depth: usize,
 ) -> String {
     match presentation {
         QuotePresentation::Resolved {
@@ -243,6 +250,7 @@ fn render(
                     disposition,
                     task_tail,
                 },
+                quote_depth,
             );
             let accent = speaker_accent(author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));

@@ -512,11 +512,12 @@
 /* The island's flow footprint is exactly two lines of the hunk's card prose
    (line-height 1.25), so an image row clearing it leaves the heading line and
    one line of prose above. It rises a half line into the free corner above and
-   presses the same distance toward the inline end, never past the card's own
-   padding. Its buttons are the header's circle size at every quote depth, so
-   the bottom margin absorbs the difference to keep the two-line footprint.
-   The registered size resolves here, before buttons with their own type
-   inherit it. */
+   crosses the card inset toward the inline end. The renderer records the hunk's
+   raw or authenticated quote depth; each level adds one quote-inline token to
+   that fixed end margin, reclaiming only nested padding that prose cannot reach.
+   Its buttons use the header's circle size at every depth, so the bottom margin
+   absorbs the difference to keep the two-line footprint. The registered size
+   resolves here, before buttons with their own type inherit it. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
@@ -528,7 +529,14 @@
   display: block;
   float: inline-end;
   margin-block: calc(-1 * var(--message-control-rise)) calc(2lh + var(--message-control-rise) - var(--message-control-size));
-  margin-inline: .5rem calc(-1 * var(--message-control-rise));
+  margin-inline:
+    .5rem
+    calc(
+      -1 * (
+        var(--message-card-inset)
+        + var(--mosaic-quote-inline) * var(--message-quote-depth, 0)
+      )
+    );
   line-height: 1.25;
 }
 .team-surface .message-controls-slot > span { display: contents; }
@@ -543,14 +551,14 @@
    finger wherever a leading or nested quote leaves content above it. The first
    top-level hunk of an unquoted message is the one structural exception: it is
    already flush with the card's top and inline-end edges, so Play keeps only
-   its bottom-left corner and Quote remains square. Play always leaves its right
-   edge open, so Quote's left edge is the pair's one seam. Quote also leaves its
-   right edge open when the hunk meets the card's inline-end; controls inside an
-   inset quote retain that enclosing edge. The unquoted top-corner exception
-   leaves both top edges open. Each control fills with the accent of the rail
-   that contains it, the card's or a quote's, at a final answer's 5% rest wash
-   over the stream surface: on a final card a control melts into the card and
-   only its glyph shows, and a hovered card's 10% wash reveals it. The remaining
+   its bottom-left corner and Quote remains square. Both controls leave their
+   right edge open, so Quote's left edge is the pair's one seam and the
+   depth-compensated pair meets the card's inline-end without another line. The
+   unquoted top-corner exception leaves both top edges open. Each control fills
+   with the accent of the rail that contains it, the card's or a quote's, at a
+   final answer's 5% rest wash over the stream surface: on a final card a
+   control melts into the card and only its glyph shows, and a hovered card's
+   10% wash reveals it. The remaining
    static edges use the stream surface colour in every state. Hovered, pressed,
    or speaking, the control fills at the 10% hover strength and its glyph lights
    to ink; nothing else changes. */
@@ -563,20 +571,14 @@
 .team-surface .mosaic-message-card .message-actions > .card-action {
   --card-action-accent: var(--accent-slot, var(--accent-neutral));
   border: var(--app-control-edge-width) solid var(--message-stream-surface);
+  border-right: 0;
   border-radius: 0;
   background: color-mix(in srgb, var(--card-action-accent) 5%, var(--message-stream-surface));
   box-shadow: none;
   color: var(--muted);
 }
 .team-surface .mosaic-message-card .message-actions > .card-action--speak {
-  border-right: 0;
   border-radius: 50% 0 0 50%;
-}
-/* A top-level hunk reaches the card's right edge; quoted hunks stay inset. */
-.team-surface .mosaic-message-card .markdown-body
-  > .message-hunk
-  > .message-controls-slot .card-action--quote {
-  border-right: 0;
 }
 /* No leading quote: this direct hunk owns the card's literal top-right corner. */
 .team-surface .mosaic-message-card .markdown-body

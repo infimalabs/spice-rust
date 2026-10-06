@@ -28,9 +28,10 @@ pub(super) struct Attribution {
 }
 
 impl Attribution {
-    fn lead_html(&self) -> String {
+    fn lead_html(&self, quote_depth: usize) -> String {
         format!(
-            "<span class=\"message-controls-slot\" data-message-controls=\"{}\"></span>\
+            "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
+             style=\"--message-quote-depth:{quote_depth}\"></span>\
              <p class=\"message-attribution\">{}{}</p>",
             super::escape_html_attribute(&self.controls_target),
             self.signoff,
@@ -56,15 +57,17 @@ pub(super) fn flow<'a>(
     events: &[MarkdownEvent<'a>],
     attribution: Option<&Attribution>,
     quote_attributions: &[Option<Attribution>],
+    quote_depth: usize,
 ) -> Vec<MarkdownEvent<'a>> {
     let mut quote_attributions = quote_attributions.iter();
-    let blocks = prepare_blocks(events, &mut quote_attributions);
-    lay_out_hunks(blocks, attribution)
+    let blocks = prepare_blocks(events, &mut quote_attributions, quote_depth);
+    lay_out_hunks(blocks, attribution, quote_depth)
 }
 
 fn prepare_blocks<'a, 'q>(
     events: &[MarkdownEvent<'a>],
     quote_attributions: &mut impl Iterator<Item = &'q Option<Attribution>>,
+    quote_depth: usize,
 ) -> Vec<(Block, Vec<MarkdownEvent<'a>>)> {
     let mut prepared = Vec::new();
     for (kind, range) in blocks(events) {
@@ -86,7 +89,12 @@ fn prepare_blocks<'a, 'q>(
         } else if kind == Block::Quote {
             let inner = &block[1..block.len() - 1];
             let attribution = quote_attributions.next().and_then(Option::as_ref);
-            let body = lay_out_hunks(prepare_blocks(inner, &mut std::iter::empty()), attribution);
+            let quote_depth = quote_depth + 1;
+            let body = lay_out_hunks(
+                prepare_blocks(inner, &mut std::iter::empty(), quote_depth),
+                attribution,
+                quote_depth,
+            );
             let mut quote = Vec::with_capacity(body.len() + 2);
             quote.push(block[0].clone());
             quote.extend(body);
@@ -118,6 +126,7 @@ fn push_paragraph_segment<'a>(
 fn lay_out_hunks<'a>(
     blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>,
     attribution: Option<&Attribution>,
+    quote_depth: usize,
 ) -> Vec<MarkdownEvent<'a>> {
     let Some(attribution) = attribution else {
         return blocks.into_iter().flat_map(|(_, block)| block).collect();
@@ -141,7 +150,13 @@ fn lay_out_hunks<'a>(
     let mut hunk_tail = None;
     for (index, (kind, block)) in blocks.into_iter().enumerate() {
         if matches!(kind, Block::Quote | Block::QuoteCard) {
-            push_hunk(&mut events, &mut hunk, attribution, hunk_tail.take());
+            push_hunk(
+                &mut events,
+                &mut hunk,
+                attribution,
+                hunk_tail.take(),
+                quote_depth,
+            );
             events.extend(block);
         } else {
             if let Some((_, end)) = tail.filter(|(tail_block, _)| *tail_block == index) {
@@ -150,7 +165,7 @@ fn lay_out_hunks<'a>(
             hunk.push((kind, block));
         }
     }
-    push_hunk(&mut events, &mut hunk, attribution, hunk_tail);
+    push_hunk(&mut events, &mut hunk, attribution, hunk_tail, quote_depth);
     if tail.is_none() && !attribution.task_tail.is_empty() {
         events.push(MarkdownEvent::Html(
             format!(
@@ -198,12 +213,15 @@ fn push_hunk<'a>(
     hunk: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>,
     attribution: &Attribution,
     tail: Option<(usize, usize)>,
+    quote_depth: usize,
 ) {
     if hunk.is_empty() {
         return;
     }
     events.push(MarkdownEvent::Html(HUNK_OPEN.into()));
-    events.push(MarkdownEvent::Html(attribution.lead_html().into()));
+    events.push(MarkdownEvent::Html(
+        attribution.lead_html(quote_depth).into(),
+    ));
     let mut stacks = Vec::new();
     let mut content = Vec::new();
     for (index, (kind, mut block)) in hunk.drain(..).enumerate() {
