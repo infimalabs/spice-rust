@@ -81,11 +81,40 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
             "non-Rust launch omitted {name}"
         );
     }
-    for name in ["HOME", "TMPDIR", "USER"] {
-        if crate::bootstrap_environment(name).is_some() {
-            assert!(environment.entries().iter().any(|(key, _)| key == name));
-        }
+    for name in ADMITTED_AMBIENT {
+        let carried = environment
+            .entries()
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone());
+        assert_eq!(
+            carried,
+            crate::bootstrap_environment(name),
+            "launch must carry {name} exactly when the resident has it"
+        );
     }
+}
+
+#[test]
+fn occupant_inherits_only_admitted_ambient_including_the_ssh_agent_socket() {
+    let ambient = |key: &str| Some(OsString::from(format!("ambient-{key}")));
+    let admitted = admitted_ambient(ambient);
+    let names = admitted
+        .iter()
+        .map(|(key, value)| {
+            assert_eq!(
+                Some(value.clone()),
+                ambient(key.to_str().expect("UTF-8 name"))
+            );
+            key.to_str().expect("UTF-8 name")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["HOME", "TMPDIR", "USER", "SSH_AUTH_SOCK"]);
+
+    let without_agent =
+        admitted_ambient(|key| (key != "SSH_AUTH_SOCK").then(|| ambient(key)).flatten());
+    assert!(without_agent.iter().all(|(key, _)| key != "SSH_AUTH_SOCK"));
+    assert_eq!(without_agent.len(), 3);
 }
 
 #[test]
