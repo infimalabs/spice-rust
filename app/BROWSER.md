@@ -443,7 +443,9 @@ waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The global task strip keeps its joined
-`task-pill-strip app-control-rail` pill treatment. Team-local work instead
+`task-pill-strip app-control-rail` pill treatment. Public stems retain their
+lifecycle-colored badges; the hidden `oops` stem uses the same soft neutral
+label and count badge as its team-local representation. Team-local work instead
 forms tab-shaped flags in the task band, on the composer's dark `--control`
 surface rather than the brighter message-stream surface: each stem group
 carries matching inline-start and inline-end rails at the message card's
