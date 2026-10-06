@@ -5,6 +5,11 @@
 //! composer by the same distance until it is fully revealed or hidden, so it
 //! reads as part of the stream. Only Mosaic's own anchor correction, which keeps
 //! cards visually still, is excluded.
+//!
+//! Where the browser runs scroll-driven animations, the plane's scroll timeline
+//! applies the offset on the compositor, in the same frame as the cards. This
+//! module then only re-anchors that animation's range; a main-thread transform
+//! written after each scroll event always trails the compositor by a frame.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -15,6 +20,10 @@ use web_sys::{Element, Event, HtmlElement, KeyboardEvent, ResizeObserver};
 use yew::prelude::*;
 
 const COLLAPSE_EPSILON_PX: f64 = 0.25;
+/// Re-anchoring below this distance would only rewrite floating-point noise.
+const ANCHOR_EPSILON_PX: f64 = 0.001;
+/// The `@keyframes` composer.css attaches to the plane's scroll timeline.
+const COLLAPSE_ANIMATION: &str = "team-composer-collapse";
 
 struct CollapseState {
     offset: f64,
@@ -25,6 +34,10 @@ struct CollapseState {
     /// integer `web_sys` getter truncates, so the composer never drifts off the
     /// cards on high-density displays.
     scroll_top_key: JsValue,
+    /// The composer when its scroll-driven collapse animation is active.
+    timeline: Option<HtmlElement>,
+    /// The animation range last written: its start and length.
+    range: Option<(f64, f64)>,
 }
 
 impl CollapseState {
@@ -34,6 +47,8 @@ impl CollapseState {
             maximum: 0.0,
             scroll_top: 0.0,
             scroll_top_key: JsValue::from_str("scrollTop"),
+            timeline: None,
+            range: None,
         }
     }
 
@@ -42,6 +57,30 @@ impl CollapseState {
             .ok()
             .and_then(|top| top.as_f64())
             .unwrap_or_else(|| f64::from(scroller.scroll_top()))
+    }
+
+    /// Place the scroll timeline's range so the compositor's offset at the
+    /// current plane position equals `offset`. While the composer travels with
+    /// the cards the start stays put, so scrolling writes nothing.
+    fn anchor_timeline(&mut self) {
+        let Some(composer) = &self.timeline else {
+            return;
+        };
+        let start = self.scroll_top - self.offset;
+        if self.range.is_some_and(|(painted, length)| {
+            (painted - start).abs() < ANCHOR_EPSILON_PX
+                && (length - self.maximum).abs() < ANCHOR_EPSILON_PX
+        }) {
+            return;
+        }
+        composer
+            .style()
+            .set_property(
+                "animation-range",
+                &format!("{start}px {}px", start + self.maximum),
+            )
+            .expect("the composer animation range is valid");
+        self.range = Some((start, self.maximum));
     }
 }
 
@@ -59,6 +98,9 @@ impl ComposerCollapse {
         let mut state = self.0.borrow_mut();
         let applied = state.plane_scroll_top(scroller) - before;
         state.scroll_top += applied;
+        // The timeline sees the new position in the next frame; its range must
+        // shift with it in the same task or the composer jumps for that frame.
+        state.anchor_timeline();
     }
 }
 
@@ -141,6 +183,7 @@ impl Registration {
         {
             let mut state = state.borrow_mut();
             state.scroll_top = state.plane_scroll_top(&scroller);
+            state.timeline = collapse_timeline(&composer);
         }
         sync_metrics(&surface, &composer, &scroll_element, &state);
 
@@ -280,9 +323,24 @@ fn follow_scroll(
         state.scroll_top = top;
         crate::mosaic::composer_collapse_offset(state.offset, state.maximum, scrolled, top)
     };
-    if update_collapse(state, requested) || !surface.has_attribute("data-composer-collapse") {
+    let changed = update_collapse(state, requested);
+    // A resting composer's range start follows the plane in the scroll event
+    // itself, so the compositor reverses it in the very frame the cards do.
+    state.borrow_mut().anchor_timeline();
+    if changed || !surface.has_attribute("data-composer-collapse") {
         frame.schedule();
     }
+}
+
+/// The composer when composer.css attached its collapse to the plane's scroll
+/// timeline, which it does only where scroll-driven animations run.
+fn collapse_timeline(composer: &HtmlElement) -> Option<HtmlElement> {
+    let name = web_sys::window()?
+        .get_computed_style(composer)
+        .ok()??
+        .get_property_value("animation-name")
+        .ok()?;
+    (name == COLLAPSE_ANIMATION).then(|| composer.clone())
 }
 
 fn sync_metrics(
@@ -345,13 +403,16 @@ fn paint_collapse(
     state: &SharedCollapse,
 ) {
     let (offset, maximum) = {
-        let state = state.borrow();
+        let mut state = state.borrow_mut();
+        state.anchor_timeline();
         (state.offset, state.maximum)
     };
-    composer
-        .style()
-        .set_property("transform", &format!("translate3d(0, {}px, 0)", -offset))
-        .expect("the composer transform is valid");
+    if state.borrow().timeline.is_none() {
+        composer
+            .style()
+            .set_property("transform", &format!("translate3d(0, {}px, 0)", -offset))
+            .expect("the composer transform is valid");
+    }
     scroller
         .style()
         .set_property(

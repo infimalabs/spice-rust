@@ -140,7 +140,10 @@ and vacant members mute content without changing the surface. The final edge
 above the message stream repeats the faint control edge at each shard's top.
 Measured composer height remains both the overlay collapse distance and the
 message-plane spacer; focusing a collapsed draft reveals it without scrolling
-the plane.
+the plane. Where scroll-driven animations run, the plane's scroll timeline
+moves the composer on the compositor in the same frame as the cards, and the
+app only re-anchors that animation while the composer rests fully shown or
+hidden; other browsers receive a per-frame transform.
 
 The range values sit outside their thumbs as one centered phrase. Quiet and
 Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain
