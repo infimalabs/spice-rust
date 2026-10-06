@@ -165,7 +165,9 @@ composer bodies. A focused member composer instead paints its block-end
 highlight at full member width, so adjacent broadcast targets merge into one
 continuous active signal. The focused draft itself, whether it is the primary
 or a quote draft pinned to a message, mixes its background 10% toward
-that accent. Keyboard broadcast preview lights every occupied recipient through
+that accent. A quote draft's close control stays neutral at rest and takes that
+same member accent on hover or keyboard focus, matching the member's other
+controls. Keyboard broadcast preview lights every occupied recipient through
 the same single lit state, filling each recipient's primary draft. A vacant or
 shut-down member mutes its heading and draft text without fading the composer
 surface beneath them. None of these treatments changes the field's geometry,

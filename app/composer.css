@@ -17,7 +17,7 @@
 }
 .composer-shard-heading > button:hover,
 .composer-shard-heading > button:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--accent-slot, var(--accent));
   background: var(--control);
   color: var(--ink);
 }
