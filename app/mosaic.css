@@ -754,6 +754,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   scroll-behavior: smooth;
 }
 .composer-shard {
+  position: relative;
   width: 100%;
   height: var(--composer-shard-block-size);
   min-height: var(--composer-shard-block-size);
@@ -771,7 +772,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
 .composer-shard--primary {
-  position: relative;
   order: 1;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }

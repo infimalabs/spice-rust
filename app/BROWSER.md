@@ -258,11 +258,13 @@ is refused in the composer rather than failing after Send.
 ## Composer provider watermark
 
 Each Chat lane paints its provider emblem as a small, faint watermark in the
-primary composer's lower-right corner. It occupies no layout space, accepts no
-pointer events, and sits behind the transparent textarea so selection, typing,
-and pasted images retain the entire composer. Provider identity remains
-available through the emblem's accessible label. Quote shards carry no
-watermark, and Dash agent tiles keep their full-size provider emblem.
+lower-right corner of every draft composer, both the primary composer and each
+message-pinned quote composer. It occupies no layout space, accepts no pointer
+events, and sits behind the transparent textarea so selection, typing, pasted
+images, and quote controls retain the entire composer. Provider identity remains
+available through each emblem's accessible label, while repeated standalone pi
+marks use distinct SVG gradients. Dash agent tiles keep their full-size provider
+emblem.
 
 ## Annotation dismissal
 

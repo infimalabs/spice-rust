@@ -759,6 +759,7 @@ fn render_agent_composer(
                 {render_quote_shards(
                     &lane_key,
                     &draft,
+                    standing,
                     status,
                     drafts,
                     onkeydown,
@@ -830,7 +831,7 @@ fn render_composer_body(
                 drag_start,
                 drag_lost_capture,
             )}
-            {render_composer_vendor_icon(standing, "composer")}
+            {render_composer_vendor_icon(standing, "composer", None)}
             <ComposerTextarea
                 key={draft.body.clone()}
                 id={primary_textarea_id(lane_key)}

@@ -998,6 +998,7 @@ fn render_message_controls(
 pub(super) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
+    standing: &Standing,
     status: crate::runtime::LaneStatus,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
@@ -1005,7 +1006,7 @@ pub(super) fn render_quote_shards(
 ) -> Html {
     html! {
         <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
-            {for draft.quotes.iter().map(|quote| {
+            {for draft.quotes.iter().enumerate().map(|(quote_index, quote)| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
                 let remove_identity = quote.identity.clone();
@@ -1061,6 +1062,7 @@ pub(super) fn render_quote_shards(
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
+                        {render_composer_vendor_icon(standing, "composer", Some(quote_index))}
                         <ComposerTextarea
                             key={quote.body.clone()}
                             id={textarea_id}

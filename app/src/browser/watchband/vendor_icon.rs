@@ -8,13 +8,14 @@ use crate::watchband::{self, Emblem, Provider, Standing};
 
 /// The emblem for `standing` as drawn on `surface`.
 ///
-/// Gradient ids are named by surface as well as lane: the mosaic stays mounted
-/// while hidden, so a lane drawn on two surfaces would otherwise mint one id
-/// twice, and `url(#id)` would resolve to the hidden copy, which does not
-/// paint.
+/// Gradient ids are named by surface and lane: the mosaic stays mounted while
+/// hidden, so a lane drawn on two surfaces would otherwise mint one id twice
+/// and `url(#id)` would resolve to the hidden copy. `instance` distinguishes
+/// repeated icons for one lane on the same surface.
 pub(in crate::browser) fn render_composer_vendor_icon(
     standing: &Standing,
     surface: &'static str,
+    instance: Option<usize>,
 ) -> Html {
     let mut label = watchband::standing_title(standing);
     let fast_mode = standing.thread.is_some() && standing.fast_mode;
@@ -30,7 +31,7 @@ pub(in crate::browser) fn render_composer_vendor_icon(
                 Some(provider),
             )
         }
-        Emblem::Pi => (render_omp_mark(surface, standing.lane), None),
+        Emblem::Pi => (render_omp_mark(surface, standing.lane, instance), None),
     };
     if fast_mode && provider.is_some() {
         label.push_str("; Fast mode");
@@ -63,10 +64,10 @@ fn render_vendor_glyph(path: &'static str, badge: Html) -> Html {
 }
 
 /// oh-my-pi's mark filling the emblem on its own.
-fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
+fn render_omp_mark(surface: &str, lane: CanonicalUuid, instance: Option<usize>) -> Html {
     html! {
         <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            {render_omp_pi(surface, lane)}
+            {render_omp_pi(surface, lane, instance)}
         </svg>
     }
 }
@@ -91,10 +92,14 @@ const OMP_PI: &str = "M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z";
 /// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
 /// 64-unit canvas.
 ///
-/// Every standalone pi carries its own gradient, named by its surface and lane,
-/// so the fill resolves inside the icon that paints it.
-fn render_omp_pi(surface: &str, lane: CanonicalUuid) -> Html {
-    let gradient = format!("{surface}-vendor-gradient-{lane}");
+/// Every standalone pi carries its own gradient, named by its surface, lane,
+/// and same-surface instance, so the fill resolves inside the icon that paints
+/// it.
+fn render_omp_pi(surface: &str, lane: CanonicalUuid, instance: Option<usize>) -> Html {
+    let gradient = match instance {
+        Some(instance) => format!("{surface}-vendor-gradient-{lane}-{instance}"),
+        None => format!("{surface}-vendor-gradient-{lane}"),
+    };
     let fill = format!("url(#{gradient})");
     html! {
         <>
