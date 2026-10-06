@@ -127,7 +127,7 @@ body:has(.shell--mosaic),
 .task-pill:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .task-pill.active { opacity: .78; }
 .task-pill.dormant { color: var(--muted); }
-.task-pill.system { color: var(--triage); }
+.task-pill.system { color: var(--muted); }
 .task-pill--all { padding-inline: 4px; }
 .task-pill-count {
   padding: 0 5px;
@@ -138,7 +138,7 @@ body:has(.shell--mosaic),
   font-size: 9px;
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
-.task-pill.system .task-pill-count { background: var(--triage); }
+.task-pill.system .task-pill-count { background: var(--muted); }
 /* One team-local stem tab: its neutral stem target, badged with the stem's
    open-task count, followed by every matching task handle. Each target keeps
    independent hover, focus, lifecycle, and owner presentation. */
