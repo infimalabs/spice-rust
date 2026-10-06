@@ -253,9 +253,10 @@ fn render_team_toolbar(
     }
 }
 
-/// The task tabs in this team's header band: each visibility-qualified stem
-/// once, badged with its open-task count, followed by all of its open task
-/// handles. The fleet never shows over Work, so none selects.
+/// The task tabs in this team's header band: a badge-only team total, then
+/// each visibility-qualified stem once, badged with its open-task count and
+/// followed by all of its open task handles. The fleet never shows over Work,
+/// so none selects.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let Some(work) = render.work else {
         return Html::default();
@@ -266,8 +267,53 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     }
     html! {
         <nav class="team-tasks" aria-label="Open tasks this team created or claims">
+            {render_team_total(team, &groups, render.navigate)}
             {for groups.iter().map(|group| render_team_task_group(team, group, render))}
         </nav>
+    }
+}
+
+/// The leading tab: only a badge counting every task the rail shows, opening
+/// the team's all-task Work page.
+fn render_team_total(
+    team: CanonicalUuid,
+    groups: &[crate::work::TeamTaskGroup<'_, '_>],
+    navigate: &Callback<navigation::Intent>,
+) -> Html {
+    use crate::work::WorkAvailability::{InFlight, Ready};
+    use crate::work::WorkScope;
+    let tasks = || groups.iter().flat_map(|group| group.tasks().iter());
+    let open = tasks().count();
+    let workable = tasks().any(|task| matches!(task.availability(), InFlight | Ready));
+    let title = format!(
+        "Open all of this team's work: {open} {}",
+        if open == 1 { "task" } else { "tasks" }
+    );
+    let navigate = navigate.clone();
+    let open_team = Callback::from(move |_| {
+        navigate.emit(navigation::Intent::Work(WorkScope::team_wide(team)));
+    });
+    html! {
+        <span
+            key="team-total"
+            class={classes!(
+                "task-pill",
+                "task-pill--project",
+                "task-pill--total",
+                (!workable).then_some("dormant"),
+            )}
+            data-work-scope="team"
+        >
+            <button
+                class="task-pill-stem-target"
+                type="button"
+                title={title.clone()}
+                aria-label={title}
+                onclick={open_team}
+            >
+                <span class="task-pill-count">{open.to_string()}</span>
+            </button>
+        </span>
     }
 }
 
