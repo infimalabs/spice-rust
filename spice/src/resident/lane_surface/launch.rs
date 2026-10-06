@@ -343,7 +343,20 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
     Ok(skill)
 }
 
+/// Ambient names a supervised occupant inherits verbatim when present.
+const ADMITTED_AMBIENT: [&str; 4] = ["HOME", "TMPDIR", "USER", "SSH_AUTH_SOCK"];
+
+fn admitted_ambient(lookup: impl Fn(&str) -> Option<OsString>) -> Vec<(OsString, OsString)> {
+    ADMITTED_AMBIENT
+        .into_iter()
+        .filter_map(|key| lookup(key).map(|value| (key.into(), value)))
+        .collect()
+}
+
 /// Carry only the ambient variables a supervised occupant is admitted to see.
+/// The operator's SSH agent socket is among them so lane Git over SSH signs
+/// through the agent that already holds the key, not through whatever
+/// unattended passphrase source `ssh` might otherwise reach.
 ///
 /// A configured shell-wrapper directory leads `PATH` so every bare `spice` in
 /// the installed skill reaches the route selected by tracked policy. The Rust
@@ -373,10 +386,7 @@ fn launch_environment(
             .expect("the RTK history contract always has a parent"),
     )
     .map_err(|error| store_fault("lane::rtk-history-unavailable", &error.to_string()))?;
-    let mut values = ["HOME", "TMPDIR", "USER"]
-        .into_iter()
-        .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
-        .collect::<Vec<(OsString, OsString)>>();
+    let mut values = admitted_ambient(|key| crate::bootstrap_environment(key));
     values.extend(cargo_environment(repository, lane)?);
     values.extend([
         (
