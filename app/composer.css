@@ -325,8 +325,8 @@
 }
 .composer-vendor-icon:not([data-composer-vendor-provider]) { opacity: .9; }
 
-/* The provider mark is a behind-text watermark, not a heading control. */
-.composer-shard--primary > .composer-vendor-icon {
+/* Each provider mark is a behind-text watermark, not a heading control. */
+.composer-shard > .composer-vendor-icon {
   position: absolute;
   right: 9px;
   bottom: 7px;
@@ -335,11 +335,11 @@
   opacity: .32;
   pointer-events: none;
 }
-/* Every draft's field is see-through, so its shard's fill shows when lit. */
-.composer-shard > textarea { background: transparent; }
-.composer-shard--primary > textarea {
+/* Every draft's field is see-through and stays above its shard's watermark. */
+.composer-shard > textarea {
   position: relative;
   z-index: 1;
+  background: transparent;
 }
 
 .team-surface .mosaic-composer {
