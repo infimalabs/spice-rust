@@ -543,14 +543,17 @@
    finger wherever a leading or nested quote leaves content above it. The first
    top-level hunk of an unquoted message is the one structural exception: it is
    already flush with the card's top and inline-end edges, so Play keeps only
-   its bottom-left corner and Quote remains square. Each control fills with the
-   accent of the rail that contains it, the card's or a quote's, at a final
-   answer's 5% rest wash over the stream surface: on a final card a control
-   melts into the card and only its glyph shows, and a hovered card's 10% wash
-   reveals it. One static edge in the stream surface colour punches the cutout
-   from its card in every state. Hovered, pressed, or speaking, the control
-   fills at the 10% hover strength and its glyph lights to ink; nothing else
-   changes. */
+   its bottom-left corner and Quote remains square. Play always leaves its right
+   edge open, so Quote's left edge is the pair's one seam. Quote also leaves its
+   right edge open when the hunk meets the card's inline-end; controls inside an
+   inset quote retain that enclosing edge. The unquoted top-corner exception
+   leaves both top edges open. Each control fills with the accent of the rail
+   that contains it, the card's or a quote's, at a final answer's 5% rest wash
+   over the stream surface: on a final card a control melts into the card and
+   only its glyph shows, and a hovered card's 10% wash reveals it. The remaining
+   static edges use the stream surface colour in every state. Hovered, pressed,
+   or speaking, the control fills at the 10% hover strength and its glyph lights
+   to ink; nothing else changes. */
 .team-surface .mosaic-message-card .message-actions.app-control-rail {
   gap: 0;
   overflow: visible;
@@ -566,9 +569,21 @@
   color: var(--muted);
 }
 .team-surface .mosaic-message-card .message-actions > .card-action--speak {
+  border-right: 0;
   border-radius: 50% 0 0 50%;
 }
+/* A top-level hunk reaches the card's right edge; quoted hunks stay inset. */
+.team-surface .mosaic-message-card .markdown-body
+  > .message-hunk
+  > .message-controls-slot .card-action--quote {
+  border-right: 0;
+}
 /* No leading quote: this direct hunk owns the card's literal top-right corner. */
+.team-surface .mosaic-message-card .markdown-body
+  > .message-hunk:first-child
+  > .message-controls-slot .card-action {
+  border-top: 0;
+}
 .team-surface .mosaic-message-card .markdown-body
   > .message-hunk:first-child
   > .message-controls-slot .card-action--speak {

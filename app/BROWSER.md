@@ -292,17 +292,22 @@ island is never cut while text still wraps at the content box. The two actions
 join without a gap into one stream-surface cutout. Quote is square; Play rounds
 both left corners into a finger shape for every hunk below a leading quote and
 at every nested quote depth. The same structural rule applies recursively,
-rather than naming a maximum depth. One case differs: when the card has no
-leading quote, its first top-level hunk is already flush with the card's top and
-right edges, so Quote stays square and Play rounds only its bottom-left corner.
-Each control carries a muted neutral glyph on a fill of the accent of the rail
-that contains it, so a quote's controls follow that quote's speaker and an
-operator or system quote's controls stay neutral inside an accented card. The
-fill is a final answer's 5% rest wash over the stream surface, so on a final
-card the control blends into the card and only its glyph shows, and a hovered
-card's 10% wash sets it apart. One static edge in the stream surface colour
-punches the cutout from its card and never changes. While hovered, pressed, or
-speaking, the control fills at 10% and its glyph lights to neutral ink.
+rather than naming a maximum depth. Play always omits its right border, so
+Quote's left border is the single seam between them. A top-level hunk also
+omits Quote's right border because the pair meets the card's right edge; inset
+quoted and nested hunks retain that enclosing edge because every quote level
+adds margin. One case differs: when the card has no leading quote, its first
+top-level hunk is already flush with the card's top and right edges, so Quote
+stays square, Play rounds only its bottom-left corner, and both controls also
+omit their top border. Each control carries a muted neutral glyph on a fill of
+the accent of the rail that contains it, so a quote's
+controls follow that quote's speaker and an operator or system quote's controls
+stay neutral inside an accented card. The fill is a final answer's 5% rest wash
+over the stream surface, so on a final card the control blends into the card and
+only its glyph shows, and a hovered card's 10% wash sets it apart. The remaining
+static edges use the stream surface colour and never change. While hovered,
+pressed, or speaking, the control fills at 10% and its glyph lights to neutral
+ink.
 Playback belongs to one exact hunk control, not every control in its card; the
 card keeps its aggregate `now-playing` state while only that control becomes
 Stop. Automatic Speak or Narrate playback owns the message's direct-prose
