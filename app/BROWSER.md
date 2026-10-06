@@ -283,24 +283,26 @@ contrasting label inside their frosted frame.
 Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
 same inline flow beside it. The island blocks exactly two lines of the hunk's
-prose: it rises a half line into the free corner above and presses the same
-distance toward the card's inline end, never past the card's own padding. Its
-buttons use the header's 35px control size, matching the operator avatar and
-Spice trigger at every quote depth rather than shrinking with quoted type.
+prose: it rises a half line into the free corner above and crosses the card
+inset toward the inline end. The renderer folds raw-blockquote and authenticated
+quote-card recursion into one numeric depth on each hunk's controls. CSS starts
+the negative end margin at the card inset and adds one
+`--mosaic-quote-inline` token per level, so the pair reclaims only nested right
+padding that prose cannot reach; no browser traversal or finite set of depth
+selectors participates. Its buttons use the header's 35px control size,
+matching the operator avatar and Spice trigger at every quote depth rather than
+shrinking with quoted type.
 The message content clips at the card's inner edge, not its content box, so the
 island is never cut while text still wraps at the content box. The two actions
 join without a gap into one stream-surface cutout. Quote is square; Play rounds
 both left corners into a finger shape for every hunk below a leading quote and
-at every nested quote depth. The same structural rule applies recursively,
-rather than naming a maximum depth. Play always omits its right border, so
-Quote's left border is the single seam between them. A top-level hunk also
-omits Quote's right border because the pair meets the card's right edge; inset
-quoted and nested hunks retain that enclosing edge because every quote level
-adds margin. One case differs: when the card has no leading quote, its first
-top-level hunk is already flush with the card's top and right edges, so Quote
-stays square, Play rounds only its bottom-left corner, and both controls also
-omit their top border. Each control carries a muted neutral glyph on a fill of
-the accent of the rail that contains it, so a quote's
+at every nested quote depth. Both controls omit their right border: Quote's left
+border is their single seam, and depth compensation puts its open right edge
+against the card boundary at every level. One case differs: when the card has
+no leading quote, its first top-level hunk is already flush with the card's top
+and right edges, so Quote stays square, Play rounds only its bottom-left corner,
+and both controls also omit their top border. Each control carries a muted
+neutral glyph on a fill of the accent of the rail that contains it, so a quote's
 controls follow that quote's speaker and an operator or system quote's controls
 stay neutral inside an accented card. The fill is a final answer's 5% rest wash
 over the stream surface, so on a final card the control blends into the card and
