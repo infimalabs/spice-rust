@@ -28,10 +28,16 @@ pub(super) struct Attribution {
 }
 
 impl Attribution {
-    fn lead_html(&self, quote_depth: usize) -> String {
+    fn lead_html(&self, quote_depth: usize, quote_block_steps: usize, card_start: bool) -> String {
+        let card_start = if card_start {
+            " data-message-card-start"
+        } else {
+            ""
+        };
         format!(
             "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
-             data-message-quote-depth=\"{quote_depth}\"></span>\
+             data-message-quote-depth=\"{quote_depth}\" \
+             data-message-quote-block-steps=\"{quote_block_steps}\"{card_start}></span>\
              <p class=\"message-attribution\">{}{}</p>",
             super::escape_html_attribute(&self.controls_target),
             self.signoff,
@@ -58,19 +64,38 @@ pub(super) fn flow<'a>(
     attribution: Option<&Attribution>,
     quote_attributions: &[Option<Attribution>],
     quote_depth: usize,
+    quote_block_steps: usize,
+    card_start: bool,
 ) -> Vec<MarkdownEvent<'a>> {
     let mut quote_attributions = quote_attributions.iter();
-    let blocks = prepare_blocks(events, &mut quote_attributions, quote_depth);
-    lay_out_hunks(blocks, attribution, quote_depth)
+    let blocks = prepare_blocks(
+        events,
+        &mut quote_attributions,
+        quote_depth,
+        quote_block_steps,
+        card_start,
+        true,
+    );
+    lay_out_hunks(
+        blocks,
+        attribution,
+        quote_depth,
+        quote_block_steps,
+        card_start,
+    )
 }
 
 fn prepare_blocks<'a, 'q>(
     events: &[MarkdownEvent<'a>],
     quote_attributions: &mut impl Iterator<Item = &'q Option<Attribution>>,
     quote_depth: usize,
+    quote_block_steps: usize,
+    card_start: bool,
+    reset_first_margin: bool,
 ) -> Vec<(Block, Vec<MarkdownEvent<'a>>)> {
     let mut prepared = Vec::new();
     for (kind, range) in blocks(events) {
+        let block_at_card_start = card_start && prepared.is_empty();
         let block = &events[range];
         if kind == Block::Paragraph {
             let mut start = 1usize;
@@ -90,10 +115,25 @@ fn prepare_blocks<'a, 'q>(
             let inner = &block[1..block.len() - 1];
             let attribution = quote_attributions.next().and_then(Option::as_ref);
             let quote_depth = quote_depth + 1;
+            let quote_block_steps = quote_block_steps
+                + if block_at_card_start && reset_first_margin {
+                    1
+                } else {
+                    2
+                };
             let body = lay_out_hunks(
-                prepare_blocks(inner, &mut std::iter::empty(), quote_depth),
+                prepare_blocks(
+                    inner,
+                    &mut std::iter::empty(),
+                    quote_depth,
+                    quote_block_steps,
+                    block_at_card_start,
+                    false,
+                ),
                 attribution,
                 quote_depth,
+                quote_block_steps,
+                block_at_card_start,
             );
             let mut quote = Vec::with_capacity(body.len() + 2);
             quote.push(block[0].clone());
@@ -127,6 +167,8 @@ fn lay_out_hunks<'a>(
     blocks: Vec<(Block, Vec<MarkdownEvent<'a>>)>,
     attribution: Option<&Attribution>,
     quote_depth: usize,
+    quote_block_steps: usize,
+    card_start: bool,
 ) -> Vec<MarkdownEvent<'a>> {
     let Some(attribution) = attribution else {
         return blocks.into_iter().flat_map(|(_, block)| block).collect();
@@ -150,12 +192,15 @@ fn lay_out_hunks<'a>(
     let mut hunk_tail = None;
     for (index, (kind, block)) in blocks.into_iter().enumerate() {
         if matches!(kind, Block::Quote | Block::QuoteCard) {
+            let hunk_at_card_start = card_start && events.is_empty();
             push_hunk(
                 &mut events,
                 &mut hunk,
                 attribution,
                 hunk_tail.take(),
                 quote_depth,
+                quote_block_steps,
+                hunk_at_card_start,
             );
             events.extend(block);
         } else {
@@ -165,7 +210,16 @@ fn lay_out_hunks<'a>(
             hunk.push((kind, block));
         }
     }
-    push_hunk(&mut events, &mut hunk, attribution, hunk_tail, quote_depth);
+    let hunk_at_card_start = card_start && events.is_empty();
+    push_hunk(
+        &mut events,
+        &mut hunk,
+        attribution,
+        hunk_tail,
+        quote_depth,
+        quote_block_steps,
+        hunk_at_card_start,
+    );
     if tail.is_none() && !attribution.task_tail.is_empty() {
         events.push(MarkdownEvent::Html(
             format!(
@@ -214,13 +268,17 @@ fn push_hunk<'a>(
     attribution: &Attribution,
     tail: Option<(usize, usize)>,
     quote_depth: usize,
+    quote_block_steps: usize,
+    card_start: bool,
 ) {
     if hunk.is_empty() {
         return;
     }
     events.push(MarkdownEvent::Html(HUNK_OPEN.into()));
     events.push(MarkdownEvent::Html(
-        attribution.lead_html(quote_depth).into(),
+        attribution
+            .lead_html(quote_depth, quote_block_steps, card_start)
+            .into(),
     ));
     let mut stacks = Vec::new();
     let mut content = Vec::new();
