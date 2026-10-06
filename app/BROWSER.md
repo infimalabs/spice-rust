@@ -381,13 +381,11 @@ controls and attribution again. This one rule applies recursively to top-level
 agent prose and resolved operator, agent, and peer-lane quotes.
 
 The control island floats at the inline end of the hunk. Its speak action uses
-only that hunk's rendered text. Agent and non-operator directive sources also
-retain that hunk's exact authenticated quote target. An operator-authored
-source keeps its linked age and attribution but has no Quote action: the
-composer is already the operator's side of the exchange, so quoting that source
-would be a self-quote rather than a reply. Authenticated marker nodes remain in
-the Markdown DOM for quote semantics but do not duplicate the classification
-pill in prose.
+only that hunk's rendered text, and its quote action retains that hunk's exact
+authenticated target for every source, operator-authored included, so the
+operator can reply against their own earlier words. Authenticated marker nodes
+remain in the Markdown DOM for quote semantics but do not duplicate the
+classification pill in prose.
 
 Board provenance is independent and terminal. Each complete quote layer keeps
 one empty inline task target directly after its speaker's last word, in its
