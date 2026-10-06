@@ -650,10 +650,11 @@
 }
 /* The composer overlays a spacer of its own height atop the Chat plane and moves
    exactly as far as the cards scroll, so it reads as part of the stream. Browser
-   scrolls keep targets clear of whatever part of it is still exposed. */
+   scrolls keep targets clear of whatever part of it is still exposed. The form
+   is one pane of overlay glass; nothing within it paints a fill of its own. */
 .team-composer {
   position: absolute; inset: 0 0 auto; z-index: 1;
-  border-bottom: var(--app-edge); background: var(--panel);
+  border-bottom: var(--app-edge); background: var(--overlay-veil); backdrop-filter: var(--overlay-frost);
   transform: translate3d(0, 0, 0); will-change: transform;
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
@@ -700,13 +701,13 @@
   overflow: hidden;
   border-color: var(--control-line-soft);
   border-radius: 0;
-  background: var(--control);
+  background: transparent;
   box-shadow: none;
 }
 /* The team owns the field's outer left edge and the form owns its bottom edge;
    member shards add neither of those structural rules. */
 .team-composer .composer-shard { border-block-end: 0; }
-.team-agent .composer-shard { background: var(--composer-fill, var(--control)); }
+.team-agent .composer-shard { background: var(--composer-fill, transparent); }
 .team-surface .team-agent::after {
   position: absolute;
   z-index: 6;
@@ -735,7 +736,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
   )
   .composer-shard--primary[data-broadcast-target-eligible="true"] {
-  --composer-fill: color-mix(in srgb, var(--control) 90%, var(--accent-slot, var(--accent)));
+  --composer-fill: color-mix(in srgb, var(--accent-slot, var(--accent)) 10%, transparent);
 }
 .team-surface .team-agent--vacant :is(.composer-shard-heading, textarea) {
   opacity: var(--inactive-lane-opacity);
@@ -923,8 +924,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. The faint start rule marks where sliding composers pass under the
-   frame; an inset shadow so the column keeps its full 80px. */
+   below. The column paints nothing of its own over the form's glass. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -936,7 +936,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: 0;
   border-block-start: var(--app-control-edge);
   border-radius: 0;
-  background: var(--control); box-shadow: inset var(--app-control-edge-width) 0 var(--control-line-soft);
+  background: transparent; box-shadow: none;
 }
 .team-slider {
   --control-state-accent: var(--accent);
