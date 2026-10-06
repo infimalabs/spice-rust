@@ -173,8 +173,10 @@ body:has(.shell--mosaic),
    carries matching nested-quote rails on both sides that taper into 1em top
    corners, while the leading badge-only total promotes those rails to the
    message-card width. There is no top or bottom edge, all over the composer's
-   --control surface. Rails, the stem badge, and stem text use the soft muted
-   neutral, since a group spans lanes and lifecycles. A handle names the lane
+   --control surface. Rails take --line, the colour of the status band's top
+   rule they stand on, so each tab and that rule read as one stroke. The stem
+   badge and stem text use the soft muted neutral, since a group spans lanes
+   and lifecycles. A handle names the lane
    working it in its text and tint: the text mixes that lane's accent toward
    ink, which keeps all six accents readable, and the tint takes the accent.
    Unworked handles stay muted, weaker when dormant. Every target mixes a 5%
@@ -193,7 +195,7 @@ body:has(.shell--mosaic),
 .team-tasks > .task-pill--project {
   overflow: clip;
   border: 0;
-  border-inline: var(--quote-rail) solid var(--muted);
+  border-inline: var(--quote-rail) solid var(--line);
   border-radius: 1em 1em 0 0;
   background: var(--control);
 }
