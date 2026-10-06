@@ -169,16 +169,17 @@ body:has(.shell--mosaic),
 .task-pill--project > button:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* A team stem flag is a tab rather than a global pill: the group carries
-   matching message-card rails on both sides that taper into 1em top corners,
-   with no top or bottom edge, all over the composer's --control surface.
-   Rails, the stem badge, and stem text use the soft muted neutral,
-   since a group spans lanes and lifecycles. A handle names the lane working
-   it in its text and tint: the text mixes that lane's accent toward ink, which
-   keeps all six accents readable, and the tint takes the accent. Unworked
-   handles stay muted, weaker when dormant. Every target mixes a 5% tint into
-   --control and rises to 10% on hover. The strip's in-flight dimming is
-   dropped because text and tint carry ownership. */
+/* A team stem flag is a tab rather than a global pill: each stem/task group
+   carries matching nested-quote rails on both sides that taper into 1em top
+   corners, while the leading badge-only total promotes those rails to the
+   message-card width. There is no top or bottom edge, all over the composer's
+   --control surface. Rails, the stem badge, and stem text use the soft muted
+   neutral, since a group spans lanes and lifecycles. A handle names the lane
+   working it in its text and tint: the text mixes that lane's accent toward
+   ink, which keeps all six accents readable, and the tint takes the accent.
+   Unworked handles stay muted, weaker when dormant. Every target mixes a 5%
+   tint into --control and rises to 10% on hover. The strip's in-flight dimming
+   is dropped because text and tint carry ownership. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button {
   --task-tint: var(--muted);
@@ -192,10 +193,11 @@ body:has(.shell--mosaic),
 .team-tasks > .task-pill--project {
   overflow: clip;
   border: 0;
-  border-inline: var(--message-rail) solid var(--muted);
+  border-inline: var(--quote-rail) solid var(--muted);
   border-radius: 1em 1em 0 0;
   background: var(--control);
 }
+.team-tasks > .task-pill--total { border-inline-width: var(--message-rail); }
 .team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
 /* Labels sit 8px apart from each other and 10px in from either rail. */
 .team-tasks .task-pill--project > .task-pill-stem-target { padding-inline-end: 8px; }
