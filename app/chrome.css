@@ -170,9 +170,9 @@ body:has(.shell--mosaic),
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 /* A team stem flag is a tab rather than a global pill: the group carries
-   matching message-card rails on both sides, the fleet's faint team-separator
-   line across its top, and 1em top corners, all over the composer's --control
-   surface. Rails, the stem badge, and stem text use the soft muted neutral,
+   matching message-card rails on both sides that taper into 1em top corners,
+   with no top or bottom edge, all over the composer's --control surface.
+   Rails, the stem badge, and stem text use the soft muted neutral,
    since a group spans lanes and lifecycles. A handle names the lane working
    it in its text and tint: the text mixes that lane's accent toward ink, which
    keeps all six accents readable, and the tint takes the accent. Unworked
@@ -192,7 +192,6 @@ body:has(.shell--mosaic),
 .team-tasks > .task-pill--project {
   overflow: clip;
   border: 0;
-  border-block-start: var(--app-control-edge);
   border-inline: var(--message-rail) solid var(--muted);
   border-radius: 1em 1em 0 0;
   background: var(--control);
