@@ -650,11 +650,11 @@
 }
 /* The composer overlays a spacer of its own height atop the Chat plane and moves
    exactly as far as the cards scroll, so it reads as part of the stream. Browser
-   scrolls keep targets clear of whatever part of it is still exposed. The form
-   is one pane of overlay glass; nothing within it paints a fill of its own. */
+   scrolls keep targets clear of whatever part of it is still exposed. Its member
+   composers share one overlay glass pane; the controls paint an opaque field. */
 .team-composer {
   position: absolute; inset: 0 0 auto; z-index: 1;
-  border-bottom: var(--app-edge); background: var(--overlay-veil); backdrop-filter: var(--overlay-frost);
+  border-bottom: var(--app-edge);
   transform: translate3d(0, 0, 0); will-change: transform;
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
@@ -682,6 +682,7 @@
   overscroll-behavior-inline: contain;
   scroll-behavior: smooth;
   direction: rtl;
+  background: var(--overlay-veil); backdrop-filter: var(--overlay-frost);
 }
 
 .team-surface .team-agent {
@@ -924,19 +925,19 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. The column paints nothing of its own over the form's glass. */
+   below. An inset shadow draws the faint start rule within the full 80px. The
+   opaque field is the composers' veil over the stream: their glass at rest,
+   which parts from them once cards scroll beneath the band. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
   --team-control-send-size: 56px;
   position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
-  margin-block-start: 0;
-  block-size: var(--team-composer-block-size);
+  margin-block-start: 0; block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
-  border: 0;
-  border-block-start: var(--app-control-edge);
-  border-radius: 0;
-  background: transparent; box-shadow: none;
+  border: 0; border-block-start: var(--app-control-edge); border-radius: 0;
+  background: linear-gradient(var(--overlay-veil), var(--overlay-veil)) var(--message-stream-surface);
+  box-shadow: inset var(--app-control-edge-width) 0 var(--control-line-soft);
 }
 .team-slider {
   --control-state-accent: var(--accent);
