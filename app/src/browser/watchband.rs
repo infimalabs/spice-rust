@@ -1,7 +1,7 @@
 //! Predecessor-style lane composer rendered inside the Lanes surface.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, HtmlSelectElement, PointerEvent};
@@ -83,6 +83,7 @@ pub(super) fn render_team(
         team_fleet,
         team_controls,
         composer_drag,
+        composer_slots,
         team_drag,
         select_task,
         open_message_task,
@@ -146,6 +147,7 @@ pub(super) fn render_team(
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
+    composer_slots.retain(&teams);
     if teams.is_empty() {
         return render_empty_fleet(team_fleet);
     }
@@ -169,9 +171,50 @@ pub(super) fn render_team(
         team_controls,
         controls,
         composer_drag,
+        composer_slots,
         team_drag,
     };
     render_populated_fleet(&teams, &standings, team_fleet, &render)
+}
+
+/// Each team's composer host in its Chat plane's scroll content, where the
+/// browser's own scroll moves the composer with the cards on every engine.
+/// Yew portals the composer into the host and the plane renders the host as
+/// its own node, so a draft keystroke never re-renders the plane and the plane
+/// never re-renders the composer.
+#[derive(Clone)]
+pub(super) struct ComposerSlots(Rc<RefCell<HashMap<CanonicalUuid, web_sys::HtmlElement>>>);
+
+#[hook]
+pub(super) fn use_composer_slots() -> ComposerSlots {
+    ComposerSlots(use_mut_ref(HashMap::new))
+}
+
+impl ComposerSlots {
+    fn slot(&self, team: CanonicalUuid) -> web_sys::HtmlElement {
+        self.0
+            .borrow_mut()
+            .entry(team)
+            .or_insert_with(|| {
+                let slot = web_sys::window()
+                    .and_then(|window| window.document())
+                    .and_then(|document| document.create_element("div").ok())
+                    .and_then(|slot| slot.dyn_into::<web_sys::HtmlElement>().ok())
+                    .expect("the app document creates a composer slot");
+                slot.set_class_name("team-composer-slot");
+                // The plane's activity region is live; typing is not news.
+                slot.set_attribute("aria-live", "off")
+                    .expect("the composer slot accepts its live-region opt-out");
+                slot
+            })
+            .clone()
+    }
+
+    fn retain(&self, teams: &[&crate::runtime::LaneRow]) {
+        self.0
+            .borrow_mut()
+            .retain(|lane, _| teams.iter().any(|team| team.lane == *lane));
+    }
 }
 
 #[hook]
@@ -221,6 +264,7 @@ fn render_compose(
     select: &Callback<wire::TaskStamp>,
     open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
     attention: &attention::TeamAttention,
+    composer_slot: web_sys::HtmlElement,
 ) -> Html {
     if team.members.is_empty() {
         return empty("No agents are assigned.");
@@ -245,62 +289,65 @@ fn render_compose(
         });
     let cards = activity_cards(runtime, team, quote_agents);
     let member_command = member_controls::command_callback(sender, surface, team.lane);
-    let history_targets = team_history_targets(runtime, team);
-    html! {
-        <div class="team-compose" onclick={Callback::from(agent_menu::dismiss_others)}>
-            <form class="team-composer" onsubmit={submit.clone()}>
-                <div class="team-agents">
-                    {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                        let header = primary_composer_header(runtime, team, member.lane, standing);
-                        render_agent_composer(
+    let composer = html! {
+        <form class="team-composer" onsubmit={submit.clone()}>
+            <div class="team-agents">
+                {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
+                    let header = primary_composer_header(runtime, team, member.lane, standing);
+                    render_agent_composer(
+                        member,
+                        standing,
+                        epoch,
+                        topology_revision,
+                        topology,
+                        standing.pending,
+                        authority,
+                        can_arrange,
+                        agent_menu::render(agent_menu::AgentMenu {
+                            runtime,
                             member,
                             standing,
-                            epoch,
+                            select,
+                            command: &member_command,
+                            can_arrange,
+                            can_configure,
                             topology_revision,
                             topology,
-                            standing.pending,
-                            authority,
-                            can_arrange,
-                            agent_menu::render(agent_menu::AgentMenu {
-                                runtime,
-                                member,
-                                standing,
-                                select,
-                                command: &member_command,
-                                can_arrange,
-                                can_configure,
-                                topology_revision,
-                                topology,
-                                sender,
-                                attention: attention.lane(member.lane),
-                            }),
                             sender,
-                            composer_drag,
-                            drafts,
-                            submissions,
-                            &broadcast_targets,
-                            &broadcast_help,
-                            header.stream,
-                            header.prose,
-                        )
-                    })}
-                </div>
-                {render_team_controls(
-                    team.lane,
-                    team.subscription,
-                    topology_revision,
-                    &control,
-                    team_controls,
-                    &controls.set_automatic_speech,
-                    sender,
-                    can_configure,
-                    ready,
-                    dormant,
-                )}
-                <span id={broadcast_help} class="visually-hidden">
-                    {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
-                </span>
-            </form>
+                            attention: attention.lane(member.lane),
+                        }),
+                        sender,
+                        composer_drag,
+                        drafts,
+                        submissions,
+                        &broadcast_targets,
+                        &broadcast_help,
+                        header.stream,
+                        header.prose,
+                    )
+                })}
+            </div>
+            {render_team_controls(
+                team.lane,
+                team.subscription,
+                topology_revision,
+                &control,
+                team_controls,
+                &controls.set_automatic_speech,
+                sender,
+                can_configure,
+                ready,
+                dormant,
+            )}
+            <span id={broadcast_help} class="visually-hidden">
+                {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
+            </span>
+        </form>
+    };
+    html! {
+        <div class="team-compose" onclick={Callback::from(agent_menu::dismiss_others)}>
+            // The composer renders into its slot in the plane's scroll content.
+            {yew::create_portal(composer, composer_slot.clone().into())}
             {render_activity(
                 team,
                 &cards,
@@ -308,11 +355,8 @@ fn render_compose(
                 controls,
                 open_message_task,
                 &control,
-                HistoryPaging {
-                    sender,
-                    targets: history_targets,
-                    revision: runtime.message_history_revision(),
-                },
+                HistoryPaging::of(runtime, team, sender),
+                composer_slot,
             )}
         </div>
     }
@@ -452,6 +496,10 @@ fn activity_cards(
     cards
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one team plane owns its cards and composer slot"
+)]
 fn render_activity(
     team: &crate::runtime::LaneRow,
     cards: &[ActivityCard],
@@ -460,6 +508,7 @@ fn render_activity(
     open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
     team_control: &controls::TeamControl,
     history: HistoryPaging<'_>,
+    composer_slot: web_sys::HtmlElement,
 ) -> Html {
     let empty = cards.is_empty();
     let narrate = controls.narrate.clone();
@@ -491,6 +540,7 @@ fn render_activity(
                 history_targets={history.targets}
                 history_revision={history.revision}
                 history={history_sender}
+                {composer_slot}
             />
         </div>
     }
@@ -500,6 +550,16 @@ struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
     targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
+}
+
+impl<'a> HistoryPaging<'a> {
+    fn of(runtime: &AppRuntime, team: &crate::runtime::LaneRow, sender: &'a SenderHandle) -> Self {
+        Self {
+            sender,
+            targets: team_history_targets(runtime, team),
+            revision: runtime.message_history_revision(),
+        }
+    }
 }
 
 /// One lease instant as a ticking age, or `vacant` for a lane holding no claim.

@@ -79,6 +79,7 @@ pub(super) struct AppRender<'a> {
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
     pub composer_drag: &'a super::watchband::PrimaryComposerDragState,
+    pub composer_slots: &'a super::watchband::ComposerSlots,
     pub team_drag: &'a super::watchband::TeamDragState,
     pub team_fleet: &'a NodeRef,
     pub unsafe_intent: bool,

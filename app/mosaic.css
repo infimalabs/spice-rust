@@ -648,26 +648,6 @@
   gap: 0;
   padding: 0;
 }
-/* The composer overlays a spacer of its own height atop the Chat plane and moves
-   exactly as far as the cards scroll, so it reads as part of the stream. Browser
-   scrolls keep targets clear of whatever part of it is still exposed. Its member
-   composers share one overlay glass pane; the controls paint an opaque field. */
-.team-composer {
-  position: absolute; inset: 0 0 auto; z-index: 1;
-  border-bottom: var(--app-control-edge);
-  transform: translate3d(0, 0, 0); will-change: transform;
-}
-.team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
-.team-compose .lane-mosaic-plane {
-  /* Cards can raise themselves for hover, focus, selection, and nested tools.
-     Contain every such layer below the composer instead of racing its equal
-     z-index while scroll motion waits for the next presentation frame. */
-  z-index: 0;
-  padding-top: var(--team-composer-block);
-  scroll-padding-top: var(--team-composer-block);
-}
-.team-compose .mosaic-message-empty { margin-top: var(--team-composer-block); }
-
 /* Canonical member zero is the main agent. Paint canonical order from the
    control-adjacent right edge, matching the predecessor, and let RTL overflow
    keep that edge visible on initial layout. Agent contents remain LTR. */
@@ -1046,7 +1026,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   padding: 0; border-top: var(--app-edge);
   background: var(--message-stream-surface);
 }
-.team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
   --mosaic-edge-gutter: var(--mosaic-gap);
   --mosaic-module: 3.75rem;

@@ -477,6 +477,8 @@ pub(super) struct MosaicPlaneProps {
     pub(super) history_targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     pub(super) history_revision: u64,
     pub(super) history: HistorySender,
+    /// The team's composer host, carried in this plane's scroll content.
+    pub(super) composer_slot: web_sys::HtmlElement,
 }
 
 struct MosaicPlaneView<'a> {
@@ -551,6 +553,7 @@ impl MosaicPlaneView<'_> {
                     if self.properties.members == 1 { "member" } else { "members" },
                 )}
             >
+                {Html::VRef(self.properties.composer_slot.clone().into())}
                 <div ref={track_host} class="lane-mosaic-track">
                     {rendered_cards}
                 </div>
@@ -599,13 +602,15 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     // Edges exist only in a settled layout: a plane measuring its first lattice
     // shows a placeholder extent that reads as a trailing edge, so it offers no
     // paging targets until the lattice commits and the edge means something.
+    // An empty plane's extent is only its composer's, never a trailing edge.
     let unsettled = BTreeMap::new();
-    let paging_targets =
-        if measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring" {
-            &unsettled
-        } else {
-            &properties.history_targets
-        };
+    let paging_targets = if properties.cards.is_empty()
+        || measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring"
+    {
+        &unsettled
+    } else {
+        &properties.history_targets
+    };
     use_history_paging(
         host.clone(),
         &properties.cards,
@@ -630,7 +635,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let committed_spans = committed_spans(rendered_plane.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
     let narration_cursor = use_state_eq(|| None::<String>);
-    use_image_resolution_events(host.clone(), properties.cards.clone());
+    // Composer images in the slot are the composer's own; only cards resolve here.
+    use_image_resolution_events(track_host.clone(), properties.cards.clone());
     use_activity_measurements(
         host.clone(),
         measurement_width,
@@ -658,7 +664,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
-    let composer = composer_collapse::use_composer_collapse(host.clone());
+    let composer =
+        composer_collapse::use_composer_collapse(host.clone(), properties.composer_slot.clone());
     use_plane_scroll(host.clone(), rendered_plane.clone(), composer);
     MosaicPlaneView {
         properties,

@@ -365,6 +365,7 @@ struct AppState {
     submissions: SubmissionHandle,
     sender: SenderHandle,
     composer_drag: watchband::PrimaryComposerDragState,
+    composer_slots: watchband::ComposerSlots,
     team_drag: watchband::TeamDragState,
     work_detail: task_detail::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
@@ -415,6 +416,7 @@ impl AppState {
                 composer_drafts: &self.composer_drafts,
                 submissions: &self.submissions,
                 composer_drag: &self.composer_drag,
+                composer_slots: &self.composer_slots,
                 team_drag: &self.team_drag,
                 team_fleet: &self.team_fleet,
                 unsafe_intent: self.unsafe_intent,
@@ -470,6 +472,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         refusals: toast::use_toaster(),
     };
     let composer_drag = use_composer_drag(&surface);
+    let composer_slots = watchband::use_composer_slots();
     let team_drag = use_team_drag(&surface);
     let navigate = navigation::intent_callback(
         route.clone(),
@@ -522,6 +525,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             submissions,
             sender,
             composer_drag,
+            composer_slots,
             team_drag,
             work_detail,
             work_map,
