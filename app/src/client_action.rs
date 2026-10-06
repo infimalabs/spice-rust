@@ -13,12 +13,6 @@ pub(crate) enum ClientAction {
     TaskRelations {
         key: crate::TaskRelationsKey,
     },
-    DirectionHistory {
-        request: crate::runtime::DirectionHistoryRequest,
-    },
-    WorkHistory {
-        request: crate::runtime::WorkHistoryRequest,
-    },
     /// Allow or deny one queued consent request. The witnesses are derived
     /// from the queue current when the ruling is sent, not when it was chosen.
     ConsentRuling {

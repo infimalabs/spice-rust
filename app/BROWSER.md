@@ -470,8 +470,8 @@ origin-task badges. Empty, it takes no room; filled, it floats to the inline
 end of that final line, set apart from the word, and the browser wraps it
 beneath only when the line has no room. A layer with no words of its own keeps
 the target on a line after its content. The speak action never reads it.
-Every task pill, in prose, quotes, Work detail, and the Directions ledger, is
-that same badge: accent type on a 6% accent tint at the quote-tail scale.
+Every task pill, in prose, quotes, and the unified task overview, is that same
+badge: accent type on a 6% accent tint at the quote-tail scale.
 Repeating source attribution around a nested quote never repeats or relocates
 the quote layer's task provenance.
 
@@ -555,38 +555,34 @@ other join has 8px on each side. An 8px outer inset keeps the team flags off
 the browser edge, and adjacent tabs in either strip are separated by the
 message stream's inter-lane `--mosaic-gap`; team flags never join the status
 rule below. The team total's sole badge counts every task the band shows, which
-is the sum of the stem badges and the number of handles, and opens the team's
-all-task Work scope, `#/work/team/{team}`.
+is the sum of the stem badges and the number of handles. Activating it opens
+the unified overview with the team's complete current task set already
+selected. It does not change the durable location.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
 `task-pill--project` flag, and later matches join that flag without changing
 their relative order. Its `task-pill-stem-target` button displays the raw stem
 in the muted blocked tone with a `task-pill-count` badge of the stem's open
-tasks, and opens the team's Work scope narrowed to that stem. The following
-`task-pill-handle` buttons open each task's detail, naming their working lane
-by text colour and tint; closing detail returns focus to that handle.
-Flag overflow scrolls inside its band without entering the status/pip row.
+tasks, and opens the same overview with that team's matching stem selected.
+The following `task-pill-handle` buttons open the exact task. Closing any
+overview returns focus to the control that opened it. Flag overflow scrolls
+inside its band without entering the status/pip row.
 
-The canonical global `#/work/team/{team}` view lists the team's work under the
-team's Dash name, its host agent's label such as "rb team"; the route keeps the
-UUID. `#/work/directions/team/{team}` addresses that team's Directions. The team Work
-scope admits each open task whose single home is that team: the team of the
-lane actively claiming it, or no team when that lane is unteamed; otherwise its
-current creator team; otherwise its last claimant's team. Its global task
-history uses the resident's team filter and restarts at the newest page when
-scope changes. There is no
-team-local Settled list or Kept jobs table; Running jobs, open work, and task
-history remain the global Work surfaces.
+The menu's unchanged Work action and the global total open every current task;
+global stem controls open their complete visibility-qualified stems. Team
+membership is the team of the lane actively claiming a task, or no team when
+that lane is unteamed; otherwise its current creator team; otherwise its last
+claimant's team. Project controls select the exact full dotted project, and a
+relationship control extends the current selected set with that task. Selection
+always follows the resident's admitted offer order and may be explicitly empty.
+The overview contains the complete selected graph and task details plus the
+resident's running or awaiting-delivery jobs.
 
-Directions is likewise global. Its team route selects that team's filter while
-search text, recipient, lifecycle state, and authored-before filters constrain
-the resident read before pagination. Newer and Older replace one bounded,
-newest-first page through journal cursors without splitting a fanout. A focused
-direction route clears filters and loads the page beginning at that card.
-Direction cards use the shared sanitized Markdown, image, task-detail, and Chat
-return-link surfaces; there is no team-local direction ledger or
-`#/chat/direction/...` route.
+Only Dash and Chat are durable routes. Work, task, and direction controls are
+browser-local overview actions: they neither create history entries nor claim a
+restorable URL. A stale former Work or Directions URL normalizes to Chat under
+the ordinary unavailable-location notice.
 
 The composer columns, speech and allocation sliders, and send controls retain
 their dimensions. Removing the standalone ticker row gives that block height

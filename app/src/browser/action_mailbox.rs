@@ -212,8 +212,6 @@ impl PendingKind {
             Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
-            | Self::DirectionHistory { .. }
-            | Self::WorkHistory { .. }
             | Self::ConsentRuling { .. }
             | Self::LaneRenewal { .. }
             | Self::MemberLane { .. }
@@ -445,8 +443,6 @@ impl ClientAction {
             Self::DrainSubmissions
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
-            | Self::DirectionHistory { .. }
-            | Self::WorkHistory { .. }
             | Self::ConsentRuling { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
@@ -458,11 +454,7 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(
             self,
-            Self::TaskDetail { .. }
-                | Self::TaskRelations { .. }
-                | Self::DirectionHistory { .. }
-                | Self::WorkHistory { .. }
-                | Self::MessageHistory { .. }
+            Self::TaskDetail { .. } | Self::TaskRelations { .. } | Self::MessageHistory { .. }
         )
     }
 

@@ -321,6 +321,76 @@ mod tests {
     }
 
     #[test]
+    fn every_scope_and_project_selects_the_complete_admitted_set() {
+        let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            .parse()
+            .expect("fixture team");
+        let mut first = task(1, "alpha.one");
+        first.creator_team = Some(team);
+        let mut hidden = task(2, ".alpha.audit");
+        hidden.creator_team = Some(team);
+        let other = task(3, "beta.other");
+        let mut last = task(4, "alpha.one");
+        last.creator_team = Some(team);
+        let mut board = board(vec![first, hidden, other, last]);
+        board.offer = vec![stamp(3), stamp(2), stamp(4), stamp(1)];
+        let work = WorkProjection::from_board_with_team_memberships(
+            &board,
+            Some(BTreeSet::from([team])),
+            &BTreeMap::new(),
+        );
+        let public_alpha = super::super::WorkStemIdentity::new(
+            super::super::WorkVisibility::Public,
+            "alpha".to_owned(),
+        );
+        let hidden_alpha = super::super::WorkStemIdentity::new(
+            super::super::WorkVisibility::Hidden,
+            "alpha".to_owned(),
+        );
+
+        assert_eq!(
+            work.overview_for_scope(WorkScope::AllOpen).tasks(),
+            &[stamp(3), stamp(2), stamp(4), stamp(1)],
+        );
+        assert_eq!(
+            work.overview_for_scope(WorkScope::Stem(public_alpha.clone()))
+                .tasks(),
+            &[stamp(4), stamp(1)],
+        );
+        assert_eq!(
+            work.overview_for_scope(WorkScope::Stem(hidden_alpha))
+                .tasks(),
+            &[stamp(2)],
+        );
+        assert_eq!(
+            work.overview_for_scope(WorkScope::team_wide(team)).tasks(),
+            &[stamp(2), stamp(4), stamp(1)],
+        );
+        assert_eq!(
+            work.overview_for_scope(WorkScope::Team {
+                team,
+                stem: Some(public_alpha),
+            })
+            .tasks(),
+            &[stamp(4), stamp(1)],
+        );
+        assert_eq!(
+            work.overview_for_project("alpha.one".to_owned()).tasks(),
+            &[stamp(4), stamp(1)],
+        );
+
+        let empty = work.overview_for_scope(WorkScope::Team {
+            team,
+            stem: Some(super::super::WorkStemIdentity::new(
+                super::super::WorkVisibility::Public,
+                "beta".to_owned(),
+            )),
+        });
+        assert!(empty.is_empty());
+        assert!(matches!(empty.context(), TaskOverviewContext::Scope(_)));
+    }
+
+    #[test]
     fn graph_preserves_roots_above_typed_limit_and_names_outside_neighbors() {
         let mut rows = (1..=10)
             .map(|value| task(value, "alpha.graph"))

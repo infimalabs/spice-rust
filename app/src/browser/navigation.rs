@@ -1,32 +1,30 @@
-//! Hash-history ownership for the addressable app view.
+//! Hash-history ownership for durable Dash and Chat locations.
 //!
-//! The URL is the sole durable selection: a global destination, a Work scope
-//! and its task detail, or a Chat card. Per-team modes, menus, arrangement,
-//! and a task detail opened over Dash or Chat stay browser-local, so they
-//! never reach history. Browser Back, Forward, and fragment links only
-//! rehydrate the route; every history entry the app creates is one push.
-
-use std::cell::RefCell;
-use std::rc::Rc;
+//! Task overviews are browser-local overlays. Their complete selection never
+//! enters the URL or creates a history entry; browser Back and Forward own only
+//! durable destinations and Chat card anchors.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::Closure;
-use wire::TaskStamp;
 use yew::prelude::*;
 
 use super::SurfaceData;
 use crate::AppDestination;
 use crate::view::{AppRoute, NormalizedAppLocation, RouteStep, normalize_app_location};
-use crate::work::{WorkProjection, WorkScope};
+use crate::work::{TaskOverviewSelection, WorkProjection, WorkScope};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
     Dash,
+    /// Open every task in one current board scope without changing location.
     Work(WorkScope),
-    /// Open this exact durable task: through its route on Work, or as a
-    /// browser-local detail over Dash or Chat.
-    Task(TaskStamp),
-    /// Close the open task detail.
+    /// Open every task in one exact project without changing location.
+    Project(String),
+    /// Open this exact durable task without changing location.
+    Task(wire::TaskStamp),
+    /// Open a caller-derived complete selection, such as a relationship lead.
+    Overview(TaskOverviewSelection),
+    /// Close the browser-local task overview.
     CloseTask,
     Chat,
 }
@@ -37,9 +35,6 @@ pub(super) enum Navigation {
     Step(RouteStep),
     /// Replace a route whose settled data refused a segment, naming it.
     Refuse(AppRoute, String),
-    /// Close the routed task detail. Back consumes the entry this page pushed
-    /// to open it; any other task entry is replaced by its containing scope.
-    CloseTask,
 }
 
 /// A notice naming one refused route. The identity distinguishes repeated
@@ -50,40 +45,67 @@ pub(super) struct RouteNotice {
     pub(super) text: String,
 }
 
-/// Translate one reader intent against the route it was made on.
+/// Translate one reader intent against the durable route and current board.
 pub(super) fn intent_callback(
     route: AppRoute,
     navigate: Callback<Navigation>,
-    local_task: UseStateHandle<Option<TaskStamp>>,
+    local_selection: UseStateHandle<Option<TaskOverviewSelection>>,
     surface: UseStateHandle<SurfaceData>,
 ) -> Callback<Intent> {
     Callback::from(move |intent| {
         let step = match intent {
             Intent::Dash => route.show(AppDestination::Dash),
             Intent::Chat => route.show(AppDestination::Chat),
-            Intent::Work(scope) => route.show_work(scope),
-            Intent::Task(task) => {
-                let Some(scope) = route.work_scope() else {
-                    local_task.set(Some(task));
-                    return;
-                };
-                let scope = surface
-                    .read()
-                    .as_ref()
-                    .map_or(WorkScope::AllOpen, |runtime| {
-                        runtime.board().map_or(WorkScope::AllOpen, |board| {
-                            WorkProjection::from_board_and_lanes(board, runtime.lanes())
-                                .scope_showing(&task, scope)
+            Intent::Work(scope) => {
+                local_selection.set(Some(
+                    surface
+                        .read()
+                        .as_ref()
+                        .and_then(|runtime| {
+                            runtime.board().map(|board| {
+                                WorkProjection::from_board_and_lanes(board, runtime.lanes())
+                                    .overview_for_scope(scope.clone())
+                            })
                         })
-                    });
-                route.open_task(task, scope)
+                        .unwrap_or_else(|| {
+                            TaskOverviewSelection::new(
+                                [],
+                                crate::work::TaskOverviewContext::Scope(scope),
+                            )
+                        }),
+                ));
+                return;
+            }
+            Intent::Project(project) => {
+                local_selection.set(Some(
+                    surface
+                        .read()
+                        .as_ref()
+                        .and_then(|runtime| {
+                            runtime.board().map(|board| {
+                                WorkProjection::from_board_and_lanes(board, runtime.lanes())
+                                    .overview_for_project(project.clone())
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            TaskOverviewSelection::new(
+                                [],
+                                crate::work::TaskOverviewContext::Project(project),
+                            )
+                        }),
+                ));
+                return;
+            }
+            Intent::Task(task) => {
+                local_selection.set(Some(TaskOverviewSelection::task(task)));
+                return;
+            }
+            Intent::Overview(selection) => {
+                local_selection.set(Some(selection));
+                return;
             }
             Intent::CloseTask => {
-                if route.task().is_some() {
-                    navigate.emit(Navigation::CloseTask);
-                } else {
-                    local_task.set(None);
-                }
+                local_selection.set(None);
                 return;
             }
         };
@@ -98,8 +120,6 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<Navigation
     let location = use_state(location_route);
     let notice = use_state(|| None::<RouteNotice>);
     let announced = use_mut_ref(|| 0_u64);
-    // The task entry this page pushed, so closing it can consume it.
-    let owned = use_mut_ref(|| None::<String>);
     let announce = {
         let notice = notice.clone();
         move |text: String| {
@@ -145,54 +165,19 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<Navigation
     let navigate = {
         let location = location.clone();
         Callback::from(move |navigation: Navigation| {
-            let current = location_route().route().path();
             match navigation {
                 Navigation::Step(RouteStep::Push(route)) => {
-                    let path = route.path();
-                    if route.task().is_some() {
-                        *owned.borrow_mut() = Some(path.clone());
-                    }
-                    write_location(&path, Entry::Push);
-                }
-                Navigation::Step(RouteStep::Replace(route)) => {
-                    replace_owned(&owned, &current, &route);
+                    write_location(&route.path(), Entry::Push);
                 }
                 Navigation::Refuse(route, text) => {
-                    replace_owned(&owned, &current, &route);
+                    write_location(&route.path(), Entry::Replace);
                     announce(text);
-                }
-                Navigation::CloseTask => {
-                    let Some(open) = location_route().route().without_task() else {
-                        return;
-                    };
-                    if owned.borrow().as_deref() == Some(current.as_str()) {
-                        let history = web_sys::window()
-                            .and_then(|window| window.history().ok())
-                            .expect("app navigation requires browser history");
-                        // The popstate this raises rehydrates the route.
-                        history
-                            .back()
-                            .expect("app navigation requires history.back");
-                        return;
-                    }
-                    write_location(&open.path(), Entry::Replace);
                 }
             }
             location.set(location_route());
         })
     };
     (location.route().clone(), (*notice).clone(), navigate)
-}
-
-/// Replace the current entry, carrying this page's ownership of a task entry
-/// to the task that replaces it.
-fn replace_owned(owned: &Rc<RefCell<Option<String>>>, current: &str, route: &AppRoute) {
-    let path = route.path();
-    let mut owned = owned.borrow_mut();
-    if owned.as_deref() == Some(current) {
-        *owned = route.task().is_some().then(|| path.clone());
-    }
-    write_location(&path, Entry::Replace);
 }
 
 fn location_route() -> NormalizedAppLocation {

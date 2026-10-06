@@ -1,9 +1,8 @@
-//! That the axis and app destination registries are complete and stable.
+//! That the analytical axes and durable app destination registries are complete.
 //!
 //! A registry cannot audit itself: a walk over `ALL` never visits a variant
-//! omitted from `ALL`. So each vocabulary is also gathered here by exhaustive
-//! descent, a successor chain whose `match` names every variant and fails to
-//! compile while one is missing, and the two are compared at runtime.
+//! omitted from `ALL`. Each vocabulary is gathered here by exhaustive descent,
+//! so adding a variant without classifying it fails compilation.
 
 use std::collections::BTreeSet;
 
@@ -26,8 +25,7 @@ fn descend_app_destinations() -> Vec<AppDestination> {
     std::iter::successors(
         Some(AppDestination::Dash),
         |destination| match destination {
-            AppDestination::Dash => Some(AppDestination::Work),
-            AppDestination::Work => Some(AppDestination::Chat),
+            AppDestination::Dash => Some(AppDestination::Chat),
             AppDestination::Chat => None,
         },
     )
@@ -43,7 +41,6 @@ fn the_axis_registry_lists_every_axis_that_exists() {
 fn every_global_destination_has_one_exact_hash_route() {
     let routes = [
         (AppDestination::Dash, "/dash"),
-        (AppDestination::Work, "/work"),
         (AppDestination::Chat, "/chat"),
     ];
     assert_eq!(descend_app_destinations(), AppDestination::ALL);
@@ -58,7 +55,15 @@ fn every_global_destination_has_one_exact_hash_route() {
 
 #[test]
 fn unrecognized_route_paths_are_refused() {
-    for path in ["", "/", "/unknown", "/work/", "/dash/", "/work?scope=all"] {
+    for path in [
+        "",
+        "/",
+        "/unknown",
+        "/work",
+        "/work/",
+        "/dash/",
+        "/work?scope=all",
+    ] {
         assert_eq!(
             AppDestination::from_path(path),
             None,

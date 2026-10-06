@@ -55,8 +55,6 @@ fn handle_stream_frame(
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);
-        stale.resolve_direction_history(runtime, changed);
-        stale.resolve_work_history(runtime, changed);
         let operator = changed
             .then(|| runtime.settings())
             .flatten()
@@ -272,15 +270,6 @@ fn apply_command_response(
                 admit_response(session, bytes)?;
             runtime.apply_task_relations(&key, &admitted);
             CommandApplication::ordinary(false)
-        }
-        PendingKind::DirectionHistory { request } => {
-            let admitted: crate::Admitted<Response<wire::intent::DirectionHistoryAnswer>> =
-                admit_response(session, bytes)?;
-            runtime.apply_direction_history(&request, &admitted);
-            CommandApplication::ordinary(false)
-        }
-        kind @ PendingKind::WorkHistory { .. } => {
-            apply_history_response(session, runtime, kind, bytes)?
         }
         kind => apply_mutating_response(session, handles, runtime, id, kind, bytes)?,
     })
@@ -519,22 +508,6 @@ fn apply_scalar_response(
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         PendingKind::Consent => runtime.apply_consent_queue(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
-    }
-    Ok(CommandApplication::ordinary(false))
-}
-
-/// Board history pages for the global Work archive.
-fn apply_history_response(
-    session: &Session,
-    runtime: &mut AppRuntime,
-    kind: PendingKind,
-    bytes: &[u8],
-) -> Result<CommandApplication, String> {
-    let admitted: crate::Admitted<Response<wire::intent::BoardAnswer>> =
-        admit_response(session, bytes)?;
-    match kind {
-        PendingKind::WorkHistory { request } => runtime.apply_work_history(&request, &admitted),
-        _ => unreachable!("history response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))
 }

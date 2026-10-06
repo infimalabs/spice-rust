@@ -12,8 +12,6 @@ pub(super) struct Controls {
     /// Override the captured launch control with a stable surviving element.
     pub return_focus_to: Callback<web_sys::Element>,
     pub notes: NoteComposers,
-    /// Open one complete task set and read every selected task.
-    pub open: Callback<TaskOverviewSelection>,
     /// Read one task again without changing the selected set.
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
@@ -117,7 +115,6 @@ pub(super) fn use_controls(
         return_focus_to,
         sheet_ref,
         notes,
-        open,
         request,
         close: request_close,
         submit_note,

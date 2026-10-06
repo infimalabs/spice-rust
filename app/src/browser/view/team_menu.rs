@@ -28,12 +28,6 @@ pub(super) fn render(
             runtime,
             context,
         ),
-        AppDestination::Work => render_axis(
-            Axis::Flow,
-            axis_count(Axis::Flow, runtime),
-            runtime,
-            context,
-        ),
         AppDestination::Chat => render_chat(runtime, context),
     }
 }

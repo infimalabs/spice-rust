@@ -100,12 +100,6 @@ pub(crate) enum PendingKind {
     TaskRelations {
         key: runtime::TaskRelationsKey,
     },
-    DirectionHistory {
-        request: runtime::DirectionHistoryRequest,
-    },
-    WorkHistory {
-        request: runtime::WorkHistoryRequest,
-    },
     LaneRenewal {
         team: wire::CanonicalUuid,
         lane: wire::CanonicalUuid,

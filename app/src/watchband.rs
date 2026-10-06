@@ -14,9 +14,6 @@
 //! a task. A field the reference design shows and the wire does not carry is
 //! therefore absent here rather than approximated.
 
-#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
-pub(crate) mod directive_ledger;
-
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, LaneInbox};
 use wire::{CanonicalUuid, TaskHandle};
@@ -44,9 +41,7 @@ pub use presence::{MemberPresence, MemberPresenceState, member_presence};
 pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
-pub use task_links::{
-    DirectionMessageLinks, direction_message_links, reported_tasks, task_mentions,
-};
+pub use task_links::{reported_tasks, task_mentions};
 
 /// Accent slots the band cycles through.
 ///
@@ -1072,8 +1067,8 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        direction_message_links, directive_context_prose, first_nonquoted_prose, lane_accent,
-        swap_members, task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
+        directive_context_prose, first_nonquoted_prose, lane_accent, swap_members,
+        task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
         ticker_chunks, tool_media_description, transfer_member,
     };
@@ -1106,96 +1101,6 @@ mod tests {
             wakeable: true,
             jobs: Vec::new(),
         }
-    }
-
-    fn message(lane: wire::CanonicalUuid, offset: u64, text: &str) -> wire::AgentMessage {
-        wire::AgentMessage {
-            prose_origin: None,
-            lane,
-            author: id(90),
-            locus: wire::MessageLocus {
-                member: 1,
-                offset,
-                length: 1,
-                event: 0,
-            },
-            authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-            authored_synthetic: false,
-            observed: None,
-            activity: wire::AgentActivityKind::Prose,
-            final_answer: false,
-            text: text.to_owned(),
-            provider_error: None,
-            classifications: Vec::new(),
-            quote_target: None,
-            directive_contexts: Vec::new(),
-            quotes: Vec::new(),
-            automatic_speech: None,
-            unavailable_tool_terminals: Vec::new(),
-            boundary: None,
-            media: Vec::new(),
-        }
-    }
-
-    fn directive_reply(
-        lane: wire::CanonicalUuid,
-        offset: u64,
-        key: &str,
-        kind: wire::MessageClassificationKind,
-    ) -> wire::AgentMessage {
-        let marker = kind.marker();
-        let text = format!("{marker} directive");
-        let mut message = message(lane, offset, &text);
-        message.classifications.push(wire::MessageClassification {
-            start: 0,
-            end: u32::try_from(marker.len()).expect("marker fits wire range"),
-            kind,
-        });
-        message.directive_contexts.push(wire::MessageDirective {
-            start: u32::try_from(marker.len() + 1).expect("context start fits wire range"),
-            end: u32::try_from(text.len()).expect("context end fits wire range"),
-            quote_target: wire::QuoteTarget::Steering {
-                key: key.to_owned(),
-                digest: wire::QuoteTarget::text_digest("directive"),
-            },
-            actor: wire::Actor::Operator,
-            authored: "2030-04-12T18:40:00.000Z"
-                .parse()
-                .expect("fixture directive instant"),
-        });
-        message
-    }
-
-    #[test]
-    fn direction_links_choose_newest_retained_team_reply_and_no_others() {
-        let outsider = directive_reply(
-            id(2),
-            60,
-            "dTworkLink",
-            wire::MessageClassificationKind::Acknowledgement,
-        );
-        let acknowledged = directive_reply(
-            id(1),
-            40,
-            "dTworkLink",
-            wire::MessageClassificationKind::Acknowledgement,
-        );
-        let declined = directive_reply(
-            id(1),
-            50,
-            "dTworkLink",
-            wire::MessageClassificationKind::Decline,
-        );
-        let messages = [&outsider, &declined, &acknowledged];
-        let links = direction_message_links(&std::collections::BTreeSet::from([id(1)]), messages);
-
-        assert_eq!(
-            links
-                .directive_key("dTworkLink")
-                .map(|message| message.locus.offset),
-            Some(50),
-        );
-        assert!(links.directive_key("dTmissing").is_none());
     }
 
     #[test]

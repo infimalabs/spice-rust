@@ -786,16 +786,6 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::DirectionHistory { request } => {
-            refresh::send_direction_history(principal, writer, actions, request)
-                .await
-                .map(|_| None)
-        }
-        ClientAction::WorkHistory { request } => {
-            refresh::send_work_history(principal, writer, actions, request)
-                .await
-                .map(|_| None)
-        }
         ClientAction::GlobalSettings(settings) => {
             send_global_settings(principal, writer, actions, settings)
                 .await

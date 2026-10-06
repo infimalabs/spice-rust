@@ -1,7 +1,7 @@
-//! Pure task projection shared by every app Work surface.
+//! Pure task projection shared by every app task control and overview.
 //!
 //! The admitted board snapshot and current lane topology are the sole inputs.
-//! This module owns lifecycle precedence, stable Work scope identity,
+//! This module owns lifecycle precedence, stable selection scope identity,
 //! full-project grouping, relationship summaries, counts, board arrangements
 //! over the resident's offer order, and owner naming so consumers cannot drift.
 
@@ -31,7 +31,7 @@ use wire::{Actor, TaskStamp};
 use crate::runtime::{BoardView, LaneMember, LaneView};
 use crate::watchband;
 
-/// One mutually exclusive task lifecycle in the Work surface.
+/// One mutually exclusive task lifecycle in the current board projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WorkAvailability {
     /// A current active claim possesses this open task.
@@ -47,7 +47,7 @@ pub enum WorkAvailability {
 }
 
 impl WorkAvailability {
-    /// Stable presentation key shared by every Work lifecycle surface.
+    /// Stable presentation key shared by every task lifecycle surface.
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
@@ -73,7 +73,7 @@ pub enum WorkVisibility {
     Public,
     Hidden,
 }
-/// Durable-in-render selection for the global Work surface.
+/// Browser-local policy selecting a complete set for the unified overview.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum WorkScope {
     /// Every open task across every visibility-qualified stem.
@@ -148,55 +148,6 @@ impl WorkScope {
     }
 }
 
-/// The inline order of cards inside each shared board lane.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum WorkOrder {
-    /// The resident allocator's offer order: the task offered next leads.
-    /// Work the allocator does not offer follows in queue order.
-    #[default]
-    Offer,
-    /// Newest creation first, by durable birth stamp.
-    Newest,
-}
-
-/// The attribute that clusters cards inside each shared board lane.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum WorkClustering {
-    /// One unbroken row per lane.
-    #[default]
-    None,
-    /// One cluster per full dotted project.
-    Project,
-    /// One cluster per workflow phase.
-    Phase,
-}
-
-/// How cards sit inside the one shared set of board lanes.
-///
-/// Every arrangement renders the same cards in the same lanes; only their
-/// inline order and separation differ, so switching never loses, duplicates,
-/// or reorders durable data.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct WorkArrangement {
-    pub order: WorkOrder,
-    pub clustering: WorkClustering,
-}
-
-/// The shared attribute of one cluster of cards.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorkClusterKey<'a> {
-    /// The whole lane, when no clustering is chosen.
-    Lane,
-    Project(&'a str),
-    Phase(&'a str),
-}
-
-/// Consecutive cards sharing one cluster attribute, in the chosen order.
-#[derive(Debug)]
-pub struct WorkCluster<'p, 'a> {
-    pub key: WorkClusterKey<'a>,
-    pub tasks: Vec<&'p WorkTask<'a>>,
-}
 /// One visibility-qualified stem and the team-local tasks grouped beneath it.
 ///
 /// Groups follow their first task in lifecycle and offer order, matching the
@@ -433,16 +384,6 @@ impl<'a> WorkTask<'a> {
             .or(self.row.workflow.body.assignment.as_ref())
     }
 
-    /// The attribute this task shares with its cluster.
-    #[must_use]
-    pub fn cluster_key(&self, clustering: WorkClustering) -> WorkClusterKey<'a> {
-        match clustering {
-            WorkClustering::None => WorkClusterKey::Lane,
-            WorkClustering::Project => WorkClusterKey::Project(&self.row.statement.body.project),
-            WorkClustering::Phase => WorkClusterKey::Phase(self.row.workflow.body.phase.as_str()),
-        }
-    }
-
     #[must_use]
     pub fn belongs_to_team(&self, team: wire::CanonicalUuid) -> bool {
         self.team == Some(team)
@@ -518,8 +459,6 @@ pub struct WorkProjection<'a> {
     /// Every task index in the resident's offer order, then every task the
     /// allocator does not offer in lifecycle and queue order.
     offered: Vec<usize>,
-    /// Every task index, newest birth stamp first.
-    newest: Vec<usize>,
     /// Current roster team identities, absent until the lane topology loads.
     /// A team route settles unavailable only when a loaded roster lacks it.
     teams: Option<BTreeSet<wire::CanonicalUuid>>,
@@ -563,16 +502,6 @@ impl<'a> WorkProjection<'a> {
         }
     }
 
-    /// Exact visibility-qualified stem scope containing one admitted project.
-    #[must_use]
-    pub fn scope_for_project(&self, project: &str) -> Option<WorkScope> {
-        let project = self
-            .projects
-            .iter()
-            .find(|candidate| candidate.project == project)?;
-        Some(WorkScope::Stem(self.stems[project.stem].identity.clone()))
-    }
-
     #[must_use]
     pub fn scope_counts(&self, scope: &WorkScope) -> WorkCounts {
         match scope {
@@ -587,7 +516,7 @@ impl<'a> WorkProjection<'a> {
         }
     }
 
-    /// Whether one task belongs to the selected Work scope.
+    /// Whether one task belongs to the selected overview scope.
     #[must_use]
     pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
         match scope {
@@ -636,58 +565,6 @@ impl<'a> WorkProjection<'a> {
             }
         }
         groups
-    }
-
-    /// The scope to open `task` under: `scope` itself when it already shows
-    /// the task, otherwise every open task, so a filter never hides the task
-    /// the operator asked to see.
-    #[must_use]
-    pub fn scope_showing(&self, task: &TaskStamp, scope: &WorkScope) -> WorkScope {
-        let shown = self
-            .tasks
-            .iter()
-            .find(|candidate| candidate.row.statement.body.born == *task)
-            .is_some_and(|candidate| self.in_scope(candidate, scope));
-        if shown {
-            scope.clone()
-        } else {
-            WorkScope::AllOpen
-        }
-    }
-
-    /// The in-scope tasks of one shared board lane, top to bottom, clustered.
-    ///
-    /// Cards follow the chosen order. Clustering gathers each attribute's
-    /// cards into one cluster that keeps that order, and clusters follow the
-    /// order of their first card, so the lane's leading card still leads.
-    /// Every arrangement places a task in exactly the one lane its
-    /// availability names.
-    #[must_use]
-    pub fn lane<'p>(
-        &'p self,
-        availability: WorkAvailability,
-        scope: &WorkScope,
-        arrangement: WorkArrangement,
-    ) -> Vec<WorkCluster<'p, 'a>> {
-        let order = match arrangement.order {
-            WorkOrder::Offer => &self.offered,
-            WorkOrder::Newest => &self.newest,
-        };
-        let mut clusters = Vec::<WorkCluster<'p, 'a>>::new();
-        for task in order.iter().map(|&index| &self.tasks[index]) {
-            if task.availability != availability || !self.in_scope(task, scope) {
-                continue;
-            }
-            let key = task.cluster_key(arrangement.clustering);
-            match clusters.iter_mut().find(|cluster| cluster.key == key) {
-                Some(cluster) => cluster.tasks.push(task),
-                None => clusters.push(WorkCluster {
-                    key,
-                    tasks: vec![task],
-                }),
-            }
-        }
-        clusters
     }
 
     pub fn from_board(board: &'a BoardView) -> Self {
@@ -808,7 +685,7 @@ impl<'a> WorkProjection<'a> {
             })
             .collect();
 
-        let (offered, newest) = board_orders(board, &offer_ranks, &availability);
+        let offered = board_order(board, &offer_ranks, &availability);
 
         Self {
             counts,
@@ -817,7 +694,6 @@ impl<'a> WorkProjection<'a> {
             stems,
             offered,
             teams,
-            newest,
         }
     }
 }
@@ -878,15 +754,15 @@ fn offer_ranks(board: &BoardView, by_born: &BTreeMap<&TaskStamp, usize>) -> Vec<
     ranks
 }
 
-/// Every task index in the resident's offer order, and newest first.
+/// Every task index in the resident's offer order.
 ///
 /// The resident ranks only work it would offer; that rank leads, and the rest
 /// keeps lifecycle and queue order beneath it.
-fn board_orders(
+fn board_order(
     board: &BoardView,
     offer_ranks: &[Option<usize>],
     availability: &[WorkAvailability],
-) -> (Vec<usize>, Vec<usize>) {
+) -> Vec<usize> {
     let rank = |index: &usize| offer_ranks[*index].unwrap_or(usize::MAX);
     let mut offered = (0..board.tasks.len()).collect::<Vec<_>>();
     offered.sort_by(|left, right| {
@@ -894,15 +770,7 @@ fn board_orders(
             .cmp(&rank(right))
             .then_with(|| compare_tasks(&board.tasks, availability, *left, *right))
     });
-    let mut newest = (0..board.tasks.len()).collect::<Vec<_>>();
-    newest.sort_by(|left, right| {
-        board.tasks[*right]
-            .statement
-            .body
-            .born
-            .cmp(&board.tasks[*left].statement.body.born)
-    });
-    (offered, newest)
+    offered
 }
 
 /// The name an operator reads for one task owner.
