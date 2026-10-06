@@ -311,9 +311,11 @@ ink.
 Playback belongs to one exact hunk control, not every control in its card; the
 card keeps its aggregate `now-playing` state while only that control becomes
 Stop. Automatic Speak or Narrate playback owns the message's direct-prose
-control and leaves quoted source controls on Play. ACK-bearing tool-call intents
-use that same direct-prose control and a durable tape quote target rather than
-forming a second, actionless card kind. Each hunk also
+control and leaves quoted source controls on Play. Every Markdown control slot
+owns a keyed portal root, so sibling direct-prose and quoted-source controls
+retain separate callbacks when a card has more than one hunk. ACK-bearing
+tool-call intents use that same direct-prose control and a durable tape quote
+target rather than forming a second, actionless card kind. Each hunk also
 opens with a zero-width presentational prop two lines tall, so the hunk's
 associated image row, which clears both sides before floating inline-start,
 always starts below the first two lines whether or not the island is present
