@@ -511,10 +511,10 @@
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
 /* The island's flow footprint is exactly two lines of the hunk's card prose
    (line-height 1.25), so an image row clearing it leaves the heading line and
-   one line of prose above. It rises a quarter line into the free corner above
-   and presses the same distance toward the inline end, never past the card's
-   own padding. Its buttons are the header's circle size at every quote depth,
-   so the bottom margin absorbs the difference to keep the two-line footprint.
+   one line of prose above. It rises a half line into the free corner above and
+   presses the same distance toward the inline end, never past the card's own
+   padding. Its buttons are the header's circle size at every quote depth, so
+   the bottom margin absorbs the difference to keep the two-line footprint.
    The registered size resolves here, before buttons with their own type
    inherit it. */
 @property --message-control-size {
@@ -524,7 +524,7 @@
 }
 .team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
   --message-control-size: var(--app-header-control);
-  --message-control-rise: min(.25lh, var(--message-card-inset));
+  --message-control-rise: min(.5lh, var(--message-card-inset));
   display: block;
   float: inline-end;
   margin-block: calc(-1 * var(--message-control-rise)) calc(2lh + var(--message-control-rise) - var(--message-control-size));

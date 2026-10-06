@@ -283,7 +283,7 @@ contrasting label inside their frosted frame.
 Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
 same inline flow beside it. The island blocks exactly two lines of the hunk's
-prose: it rises a quarter line into the free corner above and presses the same
+prose: it rises a half line into the free corner above and presses the same
 distance toward the card's inline end, never past the card's own padding. Its
 buttons are the header's 35px circle, the size of the operator avatar and the
 Spice trigger, at every quote depth rather than shrinking with quoted type.
