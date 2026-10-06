@@ -148,7 +148,9 @@ standard composer surface, matching the drafts beside it, and continues their
 soft top rule across the control column.
 At the 10rem minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
-height remains the Chat plane's collapse distance and top spacer.
+height remains the Chat plane's collapse distance and top spacer. Focus
+entering a collapsed composer, such as Quote opening its new draft, reveals the
+composer fully without moving the plane's scroll position.
 
 The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and adjacent members paint no vertical separator, shadow,

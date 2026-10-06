@@ -79,10 +79,12 @@ pub(super) fn use_composer_collapse(host: NodeRef) -> ComposerCollapse {
 
 struct Registration {
     scroller: Element,
+    composer: HtmlElement,
     observer: ResizeObserver,
     _resize: Closure<dyn FnMut(js_sys::Array, ResizeObserver)>,
     scroll: Closure<dyn FnMut(Event)>,
     key: Closure<dyn FnMut(KeyboardEvent)>,
+    focus: Closure<dyn FnMut(Event)>,
     _paint: Closure<dyn FnMut(f64)>,
     frame: FrameScheduler,
 }
@@ -216,12 +218,33 @@ impl Registration {
             .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref())
             .expect("the owned activity plane accepts its keyboard listener");
 
+        // Focus entering the composer, from Quote's new draft or the keyboard,
+        // reveals it fully so the caret is never behind the plane.
+        let focus_surface = surface.clone();
+        let focus_composer = composer.clone();
+        let focus_scroller = scroll_element.clone();
+        let focus_state = Rc::clone(&state);
+        let focus = Closure::<dyn FnMut(Event)>::new(move |_| {
+            set_collapse(
+                &focus_surface,
+                &focus_composer,
+                &focus_scroller,
+                &focus_state,
+                0.0,
+            );
+        });
+        composer
+            .add_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref())
+            .expect("the team composer accepts its focus listener");
+
         Some(Self {
             scroller,
+            composer,
             observer,
             _resize: resize,
             scroll,
             key,
+            focus,
             _paint: paint,
             frame,
         })
@@ -238,6 +261,9 @@ impl Drop for Registration {
         let _ = self
             .scroller
             .remove_event_listener_with_callback("keydown", self.key.as_ref().unchecked_ref());
+        let _ = self
+            .composer
+            .remove_event_listener_with_callback("focusin", self.focus.as_ref().unchecked_ref());
     }
 }
 
