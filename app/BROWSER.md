@@ -132,10 +132,12 @@ press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts share the
-overlay glass and gain a 10% lane-accent tint when lit; the control column uses
-the matching opaque field plus one faint start rule. Member headings retain
-their accent underline, focused or broadcast drafts merge their full-width
-highlight, and vacant members mute content without changing the surface.
+lighter standard overlay glass and gain a 10% lane-accent tint when lit. The
+control column uses the exact status-line surface with no rule above Send, so
+the status and controls read as one L-shaped band. Member headings retain their
+accent underline, focused or broadcast drafts merge their full-width highlight,
+and vacant members mute content without changing the surface. The final edge
+above the message stream repeats the faint control edge at each shard's top.
 Measured composer height remains both the overlay collapse distance and the
 message-plane spacer; focusing a collapsed draft reveals it without scrolling
 the plane.

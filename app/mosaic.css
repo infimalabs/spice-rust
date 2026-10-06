@@ -654,7 +654,7 @@
    composers share one overlay glass pane; the controls paint an opaque field. */
 .team-composer {
   position: absolute; inset: 0 0 auto; z-index: 1;
-  border-bottom: var(--app-edge);
+  border-bottom: var(--app-control-edge);
   transform: translate3d(0, 0, 0); will-change: transform;
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
@@ -925,9 +925,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. An inset shadow draws the faint start rule within the full 80px. The
-   opaque field is the composers' veil over the stream: their glass at rest,
-   which parts from them once cards scroll beneath the band. */
+   below. The exact status-line surface turns down through this column as one
+   L-shaped field; only the inline inset shadow marks its joint with drafts. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -935,8 +934,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0; block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
-  border: 0; border-block-start: var(--app-control-edge); border-radius: 0;
-  background: linear-gradient(var(--overlay-veil), var(--overlay-veil)) var(--message-stream-surface);
+  border: 0; border-radius: 0;
+  background: var(--message-stream-surface) padding-box;
   box-shadow: inset var(--app-control-edge-width) 0 var(--control-line-soft);
 }
 .team-slider {
