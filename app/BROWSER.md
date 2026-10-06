@@ -431,13 +431,17 @@ distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The global task strip keeps its joined
 `task-pill-strip app-control-rail` pill treatment. Team-local work instead
-forms square message-card flags in the task band: each stem group has one 4px
-inline-start rail, no enclosing top, trailing, or bottom edge, and no rounded
-corners. Its group-wide resting wash uses 5% of the lifecycle colour; only the
-hovered stem or handle target rises to a 10% wash in that target's current
-lifecycle or owner colour. The rail uses the group's lifecycle colour—accent
-when workable, muted when dormant, and triage when hidden—while active task
-handles retain their current owner's canonical accent.
+forms square message-card flags in the task band: each stem group has one
+inline-start rail at the message card's `--message-rail` width, no enclosing
+top, trailing, or bottom edge, and no rounded corners. A stem belongs to no
+single lane or lifecycle, so its rail and `task-pill-count` badge use
+`--accent-neutral`. Flag text is neutral throughout: the stem label muted, task
+handles in ink, and dormant handles muted. A task handle a lane is working
+carries a rail at the quote's `--quote-rail` width in that lane's accent; an
+unworked handle reserves the rail's width but draws none, so a handle rail
+always means someone is running it. Every stem or handle target rests at a 5%
+tint of its own colour, the lane accent on a worked handle and neutral
+elsewhere, and rises to 10% on hover.
 An 8px outer inset keeps the flags off the browser edge and a 4px gap
 keeps adjacent stem groups distinct; neither joins the status rule below.
 There is no team total; a team holds at most six members.
@@ -446,10 +450,10 @@ Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
 `task-pill--project` flag, and later matches join that flag without changing
 their relative order. Its `task-pill-stem-target` button displays the raw stem
-in the muted blocked tone with a `task-pill-count` badge of the stem's open
+in the muted blocked tone with a neutral `task-pill-count` badge of the stem's open
 tasks, and opens the team's Work scope narrowed to that stem. The following
-`task-pill-handle` buttons open each task's detail and retain their own
-lifecycle or current-owner tone; closing detail returns focus to that handle.
+`task-pill-handle` buttons open each task's detail, naming their working lane
+only by rail and tint; closing detail returns focus to that handle.
 Flag overflow scrolls inside its band without entering the status/pip row.
 
 The canonical global `#/work/team/{team}` view lists the team's work under the

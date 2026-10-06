@@ -801,7 +801,7 @@
   position: absolute;
   z-index: 4;
   inset: 0;
-  border-inline-start: 4px solid var(--accent-slot, var(--accent));
+  border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent));
   border-radius: inherit;
   background: var(--card-rest-wash, transparent);
   content: "";

@@ -436,10 +436,13 @@ segment; neither row has a hamburger or aggregate team-task count.
 
 One compact square flag per visibility-qualified project stem follows in-flight,
 ready, blocked, and deferred offer order. A flag echoes the message cards: one
-4px inline-start lifecycle rail, no enclosing perimeter or rounded corners, and
-a 5% lifecycle-tinted resting wash. The hovered stem or handle target alone
-takes a 10% wash in its current lifecycle or owner colour. Workable, dormant,
-and hidden groups use accent, muted, and triage rails respectively. An 8px
+inline-start rail at the message card's width and no enclosing perimeter or
+rounded corners. A stem spans lanes and lifecycles, so its rail and open-count
+badge are neutral. A task handle a lane is working carries a rail at the
+quote's width in that lane's accent; an unworked handle draws no rail, so a
+handle rail always means someone is running it. Every stem or handle target
+rests at a 5% tint of its own colour, the lane accent on a worked handle and
+neutral elsewhere, and rises to 10% on hover. An 8px
 outer inset and 4px inter-group gap keep flags clear of the browser edge and
 one another. The band
 scrolls horizontally when its labels outgrow the available width, without
@@ -448,12 +451,14 @@ overlapping the status row or its pips.
 The stem label appears once and opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the team's work to that
 stem; every grouped handle then opens its task's detail layer in place and
-receives focus again on close. The stem label wears the neutral muted tone of
-blocked or deferred work. An in-flight handle actively held by a current lane
-takes that member's canonical accent. This ownership cue applies only to the
-team-local task handle: the project-stem controls, group lifecycle rail, and
-global strip stay unchanged. Operator claims and lanes absent from the admitted
-roster keep their lifecycle tone rather than guessing an owner color.
+receives focus again on close. All flag text is neutral: the stem label wears
+the muted tone of blocked or deferred work, task handles read in ink, and
+dormant handles in the muted tone. An in-flight handle actively held by a
+current lane names that member only through its rail and tint in the member's
+canonical accent. This ownership cue applies only to the
+team-local task handle: the project-stem controls and the global strip stay
+unchanged. Operator claims and lanes absent from the admitted roster keep no
+rail and a neutral tint rather than guessing an owner color.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle

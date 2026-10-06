@@ -38,7 +38,7 @@
   --message-image-gap: 7px;
   --mosaic-quote-inline: 5px;
   --mosaic-quote-pad-block: 4px;
-  --mosaic-quote-rail: 2px;
+  --mosaic-quote-rail: var(--quote-rail);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1176,7 +1176,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   --message-card-inset: 9px;
   padding: var(--message-card-inset);
   border: 0;
-  border-inline-start: 4px solid var(--accent-slot, var(--accent-neutral));
+  border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent-neutral));
   border-radius: 0;
   background: var(--card-rest-wash, transparent);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
