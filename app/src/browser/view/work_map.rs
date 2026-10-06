@@ -11,8 +11,7 @@ use yew::prelude::*;
 
 use crate::browser::mermaid::MermaidImage;
 use crate::work::{
-    TaskOverviewContext, TaskOverviewSelection, WorkAvailability, WorkProjection,
-    WorkRelationshipDirection,
+    TaskOverviewSelection, WorkAvailability, WorkProjection, WorkRelationshipDirection,
 };
 use crate::{AppRuntime, TaskRelationsKey, TaskRelationsState};
 
@@ -192,11 +191,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             if selection.tasks().contains(&task) {
                 focus.emit(task);
             } else {
-                let tasks = selection.tasks().iter().cloned().chain([task.clone()]);
-                open.emit(TaskOverviewSelection::new(
-                    tasks,
-                    TaskOverviewContext::Relationships(task),
-                ));
+                open.emit(selection.with_related_task(task));
             }
         })
     };
