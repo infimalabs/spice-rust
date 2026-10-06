@@ -171,22 +171,22 @@ body:has(.shell--mosaic),
 }
 /* A team stem flag echoes a message card rather than the global pill strip:
    a square message-card rail on the stem, a quote-sized rail on every task
-   handle, and no enclosing frame, all on the composer surface. Stems span
-   lanes and lifecycles, so their rails, badges, and text use the soft muted
-   neutral; task text uses it too, weaker when dormant. A handle names the
-   lane working it only by colour: its rail and tint take that lane's accent,
-   otherwise they stay neutral. Every target rests at a 5% tint of its own
-   colour and rises to 10% on hover. The strip's in-flight dimming is dropped
-   because the rail and tint now carry ownership. */
+   handle, and no enclosing frame, all on the composer's --control surface.
+   Stems span lanes and lifecycles, so their rails, badges, and text use the
+   soft muted neutral; task text uses it too, weaker when dormant. A handle
+   names the lane working it only by colour: its rail and tint take that lane's
+   accent, otherwise they stay neutral. Every target mixes a 5% tint of its own
+   colour into --control and rises to 10% on hover. The strip's in-flight
+   dimming is dropped because the rail and tint now carry ownership. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button {
   --task-tint: var(--muted);
   padding-block: 0;
-  background: color-mix(in srgb, var(--task-tint) 5%, transparent);
+  background: color-mix(in srgb, var(--task-tint) 5%, var(--control));
   color: var(--muted);
 }
 .team-tasks .task-pill--project > button:hover {
-  background: color-mix(in srgb, var(--task-tint) 10%, transparent);
+  background: color-mix(in srgb, var(--task-tint) 10%, var(--control));
 }
 .team-tasks > .task-pill--project {
   overflow: clip;
@@ -196,6 +196,9 @@ body:has(.shell--mosaic),
   background: var(--control);
 }
 .team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
+/* The stem's trailing 4px matches each handle's leading 4px after its rail;
+   the joined targets therefore keep equal whitespace on both sides of a rail. */
+.team-tasks .task-pill--project > .task-pill-stem-target { padding-inline-end: 4px; }
 .team-tasks .task-pill--project > .task-pill-handle {
   border-inline-start: var(--quote-rail) solid var(--task-tint);
   opacity: 1;
