@@ -170,19 +170,20 @@ body:has(.shell--mosaic),
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 /* A team stem flag echoes a message card rather than the global pill strip:
-   one square message-card rail and no enclosing frame. A stem spans lanes and
-   lifecycles, so its rail and count badge are neutral. All flag text is
-   neutral too: stems muted, task handles ink, and dormant handles muted. A
-   handle names the lane working it only by colour: a quote-sized rail in that
-   lane's accent. An unworked handle keeps the rail's width but draws nothing,
-   so a rail always means someone is running the task. Every target, stem or
-   handle, rests at a 5% tint of its own colour (the lane accent on a worked
-   handle, neutral otherwise) and rises to 10% on hover. */
+   a square message-card rail on the stem, a quote-sized rail on every task
+   handle, and no enclosing frame, all on the composer surface. Stems span
+   lanes and lifecycles, so their rails, badges, and text use the soft muted
+   neutral; task text uses it too, weaker when dormant. A handle names the
+   lane working it only by colour: its rail and tint take that lane's accent,
+   otherwise they stay neutral. Every target rests at a 5% tint of its own
+   colour and rises to 10% on hover. The strip's in-flight dimming is dropped
+   because the rail and tint now carry ownership. */
 .team-tasks .task-pill { min-height: 21px; padding-block: 0; }
 .team-tasks .task-pill--project > button {
-  --task-tint: var(--accent-neutral);
+  --task-tint: var(--muted);
   padding-block: 0;
   background: color-mix(in srgb, var(--task-tint) 5%, transparent);
+  color: var(--muted);
 }
 .team-tasks .task-pill--project > button:hover {
   background: color-mix(in srgb, var(--task-tint) 10%, transparent);
@@ -190,20 +191,20 @@ body:has(.shell--mosaic),
 .team-tasks > .task-pill--project {
   overflow: clip;
   border: 0;
-  border-inline-start: var(--message-rail) solid var(--accent-neutral);
+  border-inline-start: var(--message-rail) solid var(--muted);
   border-radius: 0;
-  background: none;
+  background: var(--control);
 }
-.team-tasks .task-pill--project > .task-pill-stem-target { color: var(--accent-neutral); }
-.team-tasks .task-pill--project .task-pill-count { background: var(--accent-neutral); }
+.team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
 .team-tasks .task-pill--project > .task-pill-handle {
-  border-inline-start: var(--quote-rail) solid transparent;
-  color: var(--accent-neutral);
+  border-inline-start: var(--quote-rail) solid var(--task-tint);
+  opacity: 1;
 }
-.team-tasks .task-pill--project > .task-pill-handle.dormant { color: var(--muted); }
+.team-tasks .task-pill--project > .task-pill-handle.dormant {
+  color: color-mix(in srgb, var(--muted) 62%, transparent);
+}
 .team-tasks .task-pill--project > .task-pill-handle[data-accent] {
   --task-tint: var(--accent-slot);
-  border-inline-start-color: var(--task-tint);
 }
 .team-tasks :focus-visible { outline-offset: -2px; }
 .app-global-status {
