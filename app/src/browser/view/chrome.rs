@@ -1,6 +1,6 @@
 //! The chrome standing above the feed.
 //!
-//! One bar of project pills and the connectivity-bearing Spice button across the top, one
+//! One bar of stem tabs and the connectivity-bearing Spice button across the top, one
 //! band of lane standings under it, one line of the newest command outcome
 //! under that, and the card the feed packs. All four are placement and markup
 //! only: every number they show is derived in [`crate::watchband`], which a
@@ -75,7 +75,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-expanded={(**render.menu_open).to_string()}
             >
                 {operator_link}
-                <nav class="task-pill-strip" aria-label="Open task projects">
+                <nav class="task-pill-strip" aria-label="Open task stems">
                     {all_work_pill}
                     {for stems.into_iter().map(|stem| {
                         render_stem_pill(stem, on_work.then_some(render.work_scope), render.navigate)
