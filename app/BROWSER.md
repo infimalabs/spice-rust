@@ -294,27 +294,33 @@ contrasting label inside their frosted frame.
 
 Every attributable hunk owns a shrink-wrapped action island at its top
 inline-end. The island floats; attribution and ordinary prose remain in the
-same inline flow beside it. The island blocks exactly two lines of the hunk's
-prose: it rises a half line into the free corner above and crosses the card
-inset toward the inline end. The renderer folds raw-blockquote and authenticated
-quote-card recursion into one numeric depth in inert metadata on each hunk's
-controls. The trusted portal mount copies that value into a CSS custom property,
-so the ordinary serving policy never has to admit raw inline styles. CSS starts
-the negative end margin at the card inset and adds one
-`--mosaic-quote-inline` token per level, reclaiming only nested right padding
-that prose cannot reach; no finite set of depth selectors participates. Its
-buttons use the header's 35px control size, matching the operator avatar and
-Spice trigger at every quote depth rather than shrinking with quoted type.
+same inline flow beside it. At top level the island blocks exactly two lines of
+the hunk's prose. The renderer records recursive raw/authenticated quote depth,
+the cumulative block-spacing steps on that exact ancestry, and whether the hunk
+remains on the card-leading chain as inert metadata on its controls. The trusted
+portal mount copies both numeric values into CSS custom properties, so the
+ordinary serving policy never has to admit raw inline styles.
+Inline-end uses the card inset plus the existing 5px quote inset per depth.
+Block-start follows the actual box model independently: every quote shell adds
+its fixed 4px padding, while a shell adds its 4px margin only when a first-child
+reset does not suppress it. On the card-leading chain, the one final jump also
+bridges the quoted 8.125px half-line rise to the card's 9px inset. This keeps
+mixed raw/authenticated trees exact at arbitrary depth instead of extrapolating
+one average jump. The trailing flow margin stays tied to each layer's half-line
+rise, so added upward travel releases prose width instead of adding it back
+below. The zero-width start prop still keeps image rows below the first two
+lines. No finite set of depth selectors participates. The buttons use the
+header's 35px control size at every depth.
 The message content clips at the card's inner edge, not its content box, so the
 island is never cut while text still wraps at the content box. The two actions
 join without a gap into one stream-surface cutout. Quote is square; Play rounds
-both left corners into a finger shape for every hunk below a leading quote and
-at every nested quote depth. Both controls omit their right border: Quote's left
-border is their single seam, and depth compensation puts its open right edge
-against the card boundary at every level. One case differs: when the card has
-no leading quote, its first top-level hunk is already flush with the card's top
-and right edges, so Quote stays square, Play rounds only its bottom-left corner,
-and both controls also omit their top border. Each control carries a muted
+both left corners into a finger shape wherever content remains above it. A
+card-start marker drops Play's top-left radius for any leading hunk or nested
+quote chain that reaches the card top. The direct depth-zero case is already
+flush with the card's top and right edges, so both of its controls also omit
+their top border. Both controls omit their right border: Quote's left border is
+their single seam. Inline depth compensation puts the open right edge against
+the card boundary at every level. Each control carries a muted
 neutral glyph on a fill of the accent of the rail that contains it, so a quote's
 controls follow that quote's speaker and an operator or system quote's controls
 stay neutral inside an accented card. The fill is a final answer's 5% rest wash

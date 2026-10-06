@@ -255,7 +255,7 @@ fn render_quote_card_body(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     attribution: image_flow::Attribution,
-    quote_depth: usize,
+    layout: QuoteLayout,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -266,9 +266,16 @@ fn render_quote_card_body(
         quote_sources,
         Finish::QuoteCard {
             attribution,
-            quote_depth,
+            layout,
         },
     )
+}
+
+#[derive(Clone, Copy)]
+struct QuoteLayout {
+    depth: usize,
+    block_steps: usize,
+    card_start: bool,
 }
 
 /// How a rendering presents its body.
@@ -280,7 +287,7 @@ enum Finish {
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
         attribution: image_flow::Attribution,
-        quote_depth: usize,
+        layout: QuoteLayout,
     },
 }
 
@@ -317,11 +324,27 @@ fn render(
         quote_sources,
     );
     let events = coalesce_text_events(events);
-    let quote_depth = match &finish {
-        Finish::QuoteCard { quote_depth, .. } => *quote_depth,
-        Finish::Received | Finish::ProseCard => 0,
+    let QuoteLayout {
+        depth: quote_depth,
+        block_steps: quote_block_steps,
+        card_start,
+    } = match &finish {
+        Finish::QuoteCard { layout, .. } => *layout,
+        Finish::Received | Finish::ProseCard => QuoteLayout {
+            depth: 0,
+            block_steps: 0,
+            card_start: true,
+        },
     };
-    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
+    let events = quotes::expand(
+        events,
+        quotes,
+        quote_agents,
+        quote_sources,
+        quote_depth,
+        quote_block_steps,
+        card_start,
+    );
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_count = markdown_image_only_count(&events, has_diagrams);
@@ -351,6 +374,8 @@ fn render(
         attribution.as_ref(),
         &quote_attributions,
         quote_depth,
+        quote_block_steps,
+        card_start,
     );
     let events = events.into_iter().flat_map(|event| match &event {
         MarkdownEvent::Start(Tag::CodeBlock(_)) => {
