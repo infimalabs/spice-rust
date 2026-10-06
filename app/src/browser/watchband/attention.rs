@@ -58,10 +58,12 @@ impl TeamAttention {
     /// Every member's candidate items, dropping consent requests already ruled.
     pub(super) fn new(
         runtime: &AppRuntime,
+        team: CanonicalUuid,
         standings: &[Standing],
         work: Option<&crate::work::WorkProjection<'_>>,
         sender: &SenderHandle,
         select: &Callback<wire::TaskStamp>,
+        navigate: &Callback<navigation::Intent>,
     ) -> Self {
         let mut items =
             watchband::team_attention(standings, work, runtime.inbox(), runtime.consent_queue());
@@ -74,7 +76,7 @@ impl TeamAttention {
         });
         Self {
             items,
-            view: item_view(runtime, sender, select),
+            view: item_view(runtime, team, sender, select, navigate),
         }
     }
 
@@ -93,8 +95,10 @@ impl TeamAttention {
 /// One item renderer that owns every handle its controls need.
 fn item_view(
     runtime: &AppRuntime,
+    team: CanonicalUuid,
     sender: &SenderHandle,
     select: &Callback<wire::TaskStamp>,
+    navigate: &Callback<navigation::Intent>,
 ) -> Callback<AttentionItem, Html> {
     let decide = runtime.offers(CommandKind::ConsentDecide);
     let rulings = runtime
@@ -109,6 +113,7 @@ fn item_view(
         .collect::<BTreeMap<_, _>>();
     let sender = sender.clone();
     let select = select.clone();
+    let navigate = navigate.clone();
     Callback::from(move |item: AttentionItem| {
         let body = match &item.subject {
             AttentionSubject::Consent(pending) => render_consent(
@@ -132,7 +137,9 @@ fn item_view(
                 pending,
                 oldest,
                 preview,
-            } => render_direction(&item, *directive, *pending, *oldest, preview),
+            } => render_direction(
+                &item, *directive, *pending, *oldest, preview, team, &navigate,
+            ),
         };
         html! {
             <li
@@ -270,28 +277,32 @@ fn open_task(task: &wire::TaskStamp, select: &Callback<wire::TaskStamp>) -> Call
 
 fn render_direction(
     item: &AttentionItem,
-    directive: CanonicalUuid,
+    _directive: CanonicalUuid,
     pending: usize,
     oldest: i64,
     preview: &str,
+    team: CanonicalUuid,
+    navigate: &Callback<navigation::Intent>,
 ) -> Html {
     let waiting = if pending == 1 {
         "1 waiting".to_owned()
     } else {
         format!("{pending} waiting")
     };
-    let route = crate::view::AppRoute::Directions {
-        focus: Some(crate::view::DirectionsFocus::Direction(
-            crate::runtime::DirectionRef::Identity(directive),
-        )),
-    };
+    let navigate = navigate.clone();
+    let open = Callback::from(move |event: MouseEvent| {
+        agent_menu::close(&event);
+        navigate.emit(navigation::Intent::Work(crate::work::WorkScope::team_wide(
+            team,
+        )));
+    });
     html! {
-        <a
+        <button
+            type="button"
             class="agent-menu-attention-chip"
-            href={format!("#{}", route.path())}
             aria-label={format!("Open {}'s oldest waiting direction in Work", item.label)}
             title={preview.to_owned()}
-            onclick={Callback::from(|event: MouseEvent| agent_menu::close(&event))}
+            onclick={open}
         >
             <span class="agent-menu-attention-copy">
                 <strong>{"Direction"}</strong>
@@ -299,6 +310,6 @@ fn render_direction(
                 {waiting}
             </span>
             <Age authored={oldest} class={classes!("agent-menu-attention-age")} />
-        </a>
+        </button>
     }
 }

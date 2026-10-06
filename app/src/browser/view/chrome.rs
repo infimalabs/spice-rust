@@ -16,7 +16,7 @@
 use super::*;
 use crate::browser::clock::Age;
 use crate::watchband;
-use crate::work::{WorkCounts, WorkProjection};
+use crate::work::{WorkCounts, WorkProjection, WorkScope};
 
 /// Characters the ticker's `aria-live` label announces.
 const TICKER_SPOKEN_BUDGET: usize = 160;
@@ -27,7 +27,6 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) destination: AppDestination,
     pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
-    pub(super) work_scope: &'a WorkScope,
     pub(super) work: Option<&'a WorkProjection<'a>>,
     pub(super) identity: &'a UseStateHandle<Option<AppIdentity>>,
     pub(super) app_update: &'a UseStateHandle<Option<AppUpdate>>,
@@ -45,7 +44,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         runtime.is_some(),
         runtime.is_some_and(|runtime| runtime.lanes().is_some()),
     );
-    let on_work = render.destination == AppDestination::Work;
     let stems = render
         .work
         .into_iter()
@@ -58,13 +56,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         .work
         .map(WorkProjection::counts)
         .filter(|counts| counts.has_open())
-        .map(|counts| {
-            render_aggregate_pill(
-                counts,
-                on_work.then_some(render.work_scope),
-                render.navigate,
-            )
-        });
+        .map(|counts| render_aggregate_pill(counts, render.navigate));
     let operator_link = render_operator_link(&render, runtime);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
@@ -78,7 +70,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 <nav class="task-pill-strip" aria-label="Open task stems">
                     {all_work_pill}
                     {for stems.into_iter().map(|stem| {
-                        render_stem_pill(stem, on_work.then_some(render.work_scope), render.navigate)
+                        render_stem_pill(stem, render.navigate)
                     })}
                 </nav>
                 if let Some(status) = status {
@@ -97,10 +89,10 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     }
 }
 
-/// The operator's face at the head of the bar, opening global Dash the way the
-/// aggregate count beside it opens global Work. It keeps its place and size
-/// while identity loads, so the pills after it never shift, and it looks the
-/// same on every route: being on Dash does not mark the face.
+/// The operator's face at the head of the bar opens durable Dash; the aggregate
+/// count beside it opens the browser-local all-work overview. The face keeps
+/// its place and size while identity loads, so the pills after it never shift,
+/// and it looks the same on every route.
 fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
     let operator = runtime
         .and_then(AppRuntime::settings)
@@ -139,47 +131,61 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRunti
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
     html! {
         <nav class="app-navigation app-control-rail app-option-rail" aria-label="Views">
-            {for AppDestination::ALL.map(|destination| {
-                let navigate = render.navigate.clone();
-                let menu_open = render.menu_open.clone();
-                let selected = destination == render.destination;
-                let intent = match destination {
-                    AppDestination::Dash => navigation::Intent::Dash,
-                    AppDestination::Work => navigation::Intent::Work(WorkScope::AllOpen),
-                    AppDestination::Chat => navigation::Intent::Chat,
-                };
-                let badge = navigation_badge(destination, runtime, render.submissions);
-                html! {
-                    <button
-                        class={classes!("app-option", "app-option--counted", selected.then_some("selected"))}
-                        type="button"
-                        aria-current={selected.then_some("page")}
-                        title={destination.description()}
-                        onclick={Callback::from(move |_| {
-                            navigate.emit(intent.clone());
-                            app_menu::close(&menu_open);
-                        })}
-                    >
-                        <span class="app-option-label">{destination.label()}</span>
-                        if let Some(count) = badge {
-                            <span class="app-option-badge">{count}</span>
-                        }
-                    </button>
-                }
-            })}
+            {navigation_option(
+                render,
+                "Dash",
+                AppDestination::Dash.description(),
+                navigation::Intent::Dash,
+                render.destination == AppDestination::Dash,
+                watchband::badge(axis_count(Axis::Topology, runtime)),
+            )}
+            {navigation_option(
+                render,
+                "Work",
+                "Work across tasks, claims, deferrals, and reviews",
+                navigation::Intent::Work(WorkScope::AllOpen),
+                false,
+                watchband::badge(axis_count(Axis::Flow, runtime)),
+            )}
+            {navigation_option(
+                render,
+                "Chat",
+                AppDestination::Chat.description(),
+                navigation::Intent::Chat,
+                render.destination == AppDestination::Chat,
+                watchband::badge(waiting_directives(runtime, render.submissions)),
+            )}
         </nav>
     }
 }
 
-fn navigation_badge(
-    destination: AppDestination,
-    runtime: Option<&AppRuntime>,
-    submissions: &SubmissionStatus,
-) -> Option<String> {
-    destination.axis().map_or_else(
-        || watchband::badge(waiting_directives(runtime, submissions)),
-        |axis| watchband::badge(axis_count(axis, runtime)),
-    )
+fn navigation_option(
+    render: &CommandBarRender<'_>,
+    label: &'static str,
+    title: &'static str,
+    intent: navigation::Intent,
+    selected: bool,
+    badge: Option<String>,
+) -> Html {
+    let navigate = render.navigate.clone();
+    let menu_open = render.menu_open.clone();
+    html! {
+        <button
+            class={classes!("app-option", "app-option--counted", selected.then_some("selected"))}
+            type="button"
+            aria-current={selected.then_some("page")}
+            {title}
+            onclick={Callback::from(move |_| {
+                navigate.emit(intent.clone());
+                app_menu::close(&menu_open);
+            })}
+        >
+            <span class="app-option-label">{label}</span>
+            if let Some(count) = badge {
+                <span class="app-option-badge">{count}</span>
+            }
+        </button>
+    }
 }
 
 fn render_app_menu(
@@ -321,12 +327,7 @@ pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
 
 /// The label-less total leading the global strip, opening all open Work. Like
 /// the team total, its badge is one open-task count.
-fn render_aggregate_pill(
-    counts: WorkCounts,
-    current: Option<&WorkScope>,
-    navigate: &Callback<navigation::Intent>,
-) -> Html {
-    let selected = current == Some(&WorkScope::AllOpen);
+fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Intent>) -> Html {
     let open = counts.open();
     let title = format!(
         "All open work: {open} {}; {} ready, {} active or in flight, {} blocked or deferred",
@@ -338,12 +339,10 @@ fn render_aggregate_pill(
     let navigate = navigate.clone();
     html! {
         <button
-            class={classes!("task-pill", "task-pill--all", selected.then_some("selected"))}
+            class="task-pill task-pill--all"
             type="button"
             title={title.clone()}
             aria-label={title}
-            aria-pressed={selected.to_string()}
-            aria-current={selected.then_some("page")}
             data-work-scope="all"
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
         >
@@ -354,15 +353,10 @@ fn render_aggregate_pill(
 
 /// One global stem tab opening that stem's Work, the scope its counts
 /// describe.
-fn render_stem_pill(
-    stem: &crate::work::WorkStem,
-    current: Option<&WorkScope>,
-    navigate: &Callback<navigation::Intent>,
-) -> Html {
+fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation::Intent>) -> Html {
     let identity = stem.identity();
     let counts = stem.counts();
     let scope = WorkScope::Stem(identity.clone());
-    let selected = current == Some(&scope);
     let title = format!(
         "{identity}: {} ready, {} active or in flight, {} blocked or deferred",
         counts.ready(),
@@ -373,12 +367,10 @@ fn render_stem_pill(
     html! {
         <button
             key={identity.to_string()}
-            class={classes!("task-pill", selected.then_some("selected"))}
+            class="task-pill"
             type="button"
             title={title.clone()}
             aria-label={title}
-            aria-pressed={selected.to_string()}
-            aria-current={selected.then_some("page")}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}

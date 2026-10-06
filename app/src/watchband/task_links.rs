@@ -1,8 +1,6 @@
-//! Task identities and retained message cards reachable from Work surfaces.
+//! Task identities reported by authored message text.
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use wire::{CanonicalUuid, TaskHandle};
+use wire::TaskHandle;
 
 use super::canonical_task_handle;
 
@@ -46,64 +44,4 @@ pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
         }
     }
     mentions
-}
-
-/// Retained authenticated direction replies reachable from global Directions.
-///
-/// The projection avoids rescanning message history for every recipient badge.
-pub struct DirectionMessageLinks<'a> {
-    directives: BTreeMap<String, &'a wire::AgentMessage>,
-}
-
-impl<'a> DirectionMessageLinks<'a> {
-    /// Retained acknowledgement or decline for one recipient key.
-    #[must_use]
-    pub fn directive_key(&self, key: &str) -> Option<&'a wire::AgentMessage> {
-        self.directives.get(key).copied()
-    }
-}
-
-/// Index reachable direction replies for messages retained by these lanes.
-#[must_use]
-pub fn direction_message_links<'a>(
-    member_lanes: &BTreeSet<CanonicalUuid>,
-    messages: impl IntoIterator<Item = &'a wire::AgentMessage>,
-) -> DirectionMessageLinks<'a> {
-    let mut links = DirectionMessageLinks {
-        directives: BTreeMap::new(),
-    };
-    for message in messages {
-        if !member_lanes.contains(&message.lane) {
-            continue;
-        }
-        let is_reply = message.classifications.iter().any(|classification| {
-            matches!(
-                classification.kind,
-                wire::MessageClassificationKind::Acknowledgement
-                    | wire::MessageClassificationKind::Decline
-            )
-        });
-        if !is_reply {
-            continue;
-        }
-        for context in &message.directive_contexts {
-            if let wire::QuoteTarget::Steering { key, .. } = &context.quote_target {
-                replace_with_newer(&mut links.directives, key.clone(), message);
-            }
-        }
-    }
-    links
-}
-
-fn replace_with_newer<'a, K: Ord>(
-    messages: &mut BTreeMap<K, &'a wire::AgentMessage>,
-    key: K,
-    candidate: &'a wire::AgentMessage,
-) {
-    if messages
-        .get(&key)
-        .is_none_or(|current| current.chronology_key() <= candidate.chronology_key())
-    {
-        messages.insert(key, candidate);
-    }
 }

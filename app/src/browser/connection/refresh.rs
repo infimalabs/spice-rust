@@ -106,60 +106,6 @@ async fn send_board(
     )
     .await
 }
-pub(super) async fn send_direction_history(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    request: &crate::runtime::DirectionHistoryRequest,
-) -> Result<Option<CanonicalUuid>, String> {
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::DirectionHistory {
-            request: request.clone(),
-        },
-        CommandKind::SteerHistory,
-        vec![],
-        SteerHistory {
-            window: request.window.clone(),
-            query: request.query.clone(),
-            lanes: request.lanes.clone(),
-            dispositions: request.dispositions.clone(),
-            authored_before: request.authored_before,
-            limit: crate::runtime::DIRECTION_HISTORY_PAGE_SIZE,
-        },
-    )
-    .await
-    .map(Some)
-}
-
-pub(super) async fn send_work_history(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    request: &crate::runtime::WorkHistoryRequest,
-) -> Result<Option<CanonicalUuid>, String> {
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::WorkHistory {
-            request: request.clone(),
-        },
-        CommandKind::BoardRead,
-        vec![],
-        BoardRead::History {
-            before: request.before.clone(),
-            query: request.query.clone(),
-            completed_before: request.completed_before,
-            team: request.team,
-            limit: 50,
-        },
-    )
-    .await
-    .map(Some)
-}
 pub(super) async fn send_task_detail(
     principal: &Principal,
     writer: &mut SocketWriter,

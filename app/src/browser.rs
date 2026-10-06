@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneEffortRetune, LaneFastRetune,
-    LaneRead, LaneRenewal, LaneRetune, LaneState, SteerHistory, SteerInbox, SteerSend, TaskAnswer,
+    LaneRead, LaneRenewal, LaneRetune, LaneState, SteerInbox, SteerSend, TaskAnswer,
     TeamArrangement, TeamConfigure, TeamLife, VendorCatalog,
 };
 use wire::{
@@ -33,21 +33,18 @@ use crate::speech_queue::{
     NarrationMessage, SpeechControl, SpeechOwner, SpeechQueue, SpeechRequest,
 };
 use crate::view::{AppRoute, RouteEvidence};
-use crate::work::{WorkArrangement, WorkProjection, WorkScope};
+use crate::work::WorkProjection;
 use crate::{
     AppDestination, AppRuntime, Axis, Principal, Session, SteerPane, StreamDirective,
     TaskDetailState, stale_reads,
 };
 
 mod app_menu;
-mod archive_status;
 mod card_target;
 mod clipboard;
 mod clock;
 mod connection;
 mod diagnostics;
-mod direction_card;
-mod direction_history;
 mod image_media;
 mod image_viewer;
 mod mermaid;
@@ -61,8 +58,6 @@ mod task_relations;
 mod toast;
 mod view;
 mod watchband;
-mod work_card;
-mod work_history;
 
 use crate::PendingKind;
 use crate::action_mailbox::{ActionLease, ActionQueue};
@@ -362,8 +357,6 @@ struct AppState {
     card_target: Option<String>,
     card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
-    work_scope: WorkScope,
-    work_arrangement: UseStateHandle<WorkArrangement>,
     identity: UseStateHandle<Option<AppIdentity>>,
     app_update: UseStateHandle<Option<AppUpdate>>,
     team_controls: UseReducerHandle<TeamControls>,
@@ -374,8 +367,6 @@ struct AppState {
     composer_drag: watchband::PrimaryComposerDragState,
     team_drag: watchband::TeamDragState,
     work_detail: task_detail::Controls,
-    direction_history: direction_history::Controls,
-    work_history: work_history::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
@@ -402,12 +393,8 @@ impl AppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let select_task = {
-            let work_map = self.work_map.clone();
-            self.work_detail
-                .open
-                .reform(move |task| work_map.selection(task))
-        };
+        let select_task = self.navigate.reform(navigation::Intent::Task);
+        let open_overview = self.navigate.reform(navigation::Intent::Overview);
         let open_message_task = self.open_message_task.clone();
         let retry_relations = task_relations::retry_callback(
             self.surface.clone(),
@@ -422,8 +409,6 @@ impl AppState {
                 card_target_notice,
                 navigate: &self.navigate,
                 app_menu_open: &self.app_menu_open,
-                work_scope: &self.work_scope,
-                work_arrangement: &self.work_arrangement,
                 identity: &self.identity,
                 app_update: &self.app_update,
                 team_controls: &self.team_controls,
@@ -438,14 +423,13 @@ impl AppState {
                 selected_task: &self.work_detail.selected,
                 detail_presented: *self.work_detail.presented,
                 detail_closing: *self.work_detail.closing,
-                direction_history: &self.direction_history,
                 work_map: &self.work_map,
-                work_history: &self.work_history,
                 detail_close: &self.work_detail.close_ref,
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
                 submit_note: self.work_detail.submit_note.clone(),
                 select_task,
+                open_overview,
                 open_message_task,
                 request_task: self.work_detail.request.clone(),
                 retry_relations,
@@ -468,8 +452,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let surface = use_state(SurfaceData::default);
     let app_menu_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
-    let local_task = use_local_task(&route);
-    let work_arrangement = use_state(WorkArrangement::default);
+    let local_selection = use_local_overview(&route);
     let work_map = use_state(view::WorkMapState::default);
     let identity = use_state(|| None::<AppIdentity>);
     let app_update = use_state(|| None::<AppUpdate>);
@@ -491,7 +474,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let navigate = navigation::intent_callback(
         route.clone(),
         properties.navigate.clone(),
-        local_task.clone(),
+        local_selection.clone(),
         surface.clone(),
     );
     let work_detail = task_detail::use_controls(
@@ -499,28 +482,12 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         surface.clone(),
         work_detail_mounted(&surface),
         task_detail::Request {
-            selection: route
-                .task()
-                .cloned()
-                .or_else(|| (*local_task).clone())
-                .map(|task| work_map.selection(task)),
+            selection: (*local_selection).clone(),
             leaving: route.card_target().is_some(),
         },
         navigate.reform(|()| navigation::Intent::CloseTask),
     );
     task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
-    let direction_history = direction_history::use_controls(
-        sender.clone(),
-        surface.clone(),
-        route.app_destination() == AppDestination::Work,
-        route.directions().flatten().cloned(),
-        properties.navigate.clone(),
-    );
-    let work_history = work_history::use_controls(
-        sender.clone(),
-        surface.clone(),
-        route.work_scope().and_then(WorkScope::team),
-    );
     let speech_status = use_state(SpeechStatus::default);
     let speech_owner = use_state(|| None::<SpeechOwner>);
     let speech_runtime = SpeechRuntime {
@@ -543,12 +510,10 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             app_menu_open,
             destination: route.app_destination(),
             card_target: route.card_target().map(str::to_owned),
-            work_scope: route.work_scope().cloned().unwrap_or_default(),
-            route,
             route_navigate: properties.navigate.clone(),
-            card_target_status,
+            route,
             navigate,
-            work_arrangement,
+            card_target_status,
             identity,
             app_update,
             team_controls,
@@ -559,8 +524,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             composer_drag,
             team_drag,
             work_detail,
-            direction_history,
-            work_history,
             work_map,
             speech_status,
             agents,
@@ -629,10 +592,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.card_target_status.clone(),
         chat_visible,
     );
-    card_target::use_global_direction_target(
-        global_direction_card(&state.route, &state.surface),
-        state.destination == AppDestination::Work,
-    );
     use_mosaic_root_scroll(chat_visible);
     app_menu::use_dismissal(state.app_menu_open.clone());
     watchband::use_team_arrangement_escape(&state.team_controls, chat_visible);
@@ -641,14 +600,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.team_fleet.clone(),
         teamed_lane_count(&state.surface),
     );
-    let surface_view = state.surface.read();
-    let work = project_work(surface_view.as_ref());
-    use_route_settlement(
-        work.as_ref(),
-        &state.route,
-        &state.surface,
-        state.route_navigate.clone(),
-    );
+    use_route_settlement(&state.route, &state.surface, state.route_navigate.clone());
 }
 
 #[function_component(App)]
@@ -684,71 +636,33 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
         })
 }
 
-/// The element a Directions route brings into view: its direction's card
-/// once the anchored page holds it, otherwise the Directions section.
-fn global_direction_card(route: &AppRoute, surface: &SurfaceData) -> Option<String> {
-    match route.directions()? {
-        Some(crate::view::DirectionsFocus::Direction(target)) => {
-            let surface = surface.read();
-            let group = surface.as_ref()?.direction_history().group(target)?;
-            Some(crate::view::global_direction_card_id(group.fanout))
-        }
-        Some(crate::view::DirectionsFocus::Team(_)) | None => {
-            Some(crate::view::DIRECTIONS_SECTION_ID.to_owned())
-        }
-    }
-}
-
-/// A task opened over Dash or Chat: browser-local, so any route change ends it.
+/// A task overview is browser-local, so any durable route change ends it.
 #[hook]
-fn use_local_task(route: &AppRoute) -> UseStateHandle<Option<TaskStamp>> {
-    let local_task = use_state(|| None::<TaskStamp>);
+fn use_local_overview(
+    route: &AppRoute,
+) -> UseStateHandle<Option<crate::work::TaskOverviewSelection>> {
+    let selection = use_state(|| None::<crate::work::TaskOverviewSelection>);
     {
-        let local_task = local_task.clone();
+        let selection = selection.clone();
         use_effect_with(route.clone(), move |_| {
-            if local_task.is_some() {
-                local_task.set(None);
+            if selection.is_some() {
+                selection.set(None);
             }
         });
     }
-    local_task
+    selection
 }
 
 /// Validate the route's data-backed segments once authoritative state
 /// settles them, replacing a refused route with its containing view.
 #[hook]
 fn use_route_settlement(
-    work: Option<&WorkProjection<'_>>,
     route: &AppRoute,
     surface: &SurfaceData,
     navigate: Callback<navigation::Navigation>,
 ) {
-    let card = card_target::use_retention(route.card_target(), surface);
     let evidence = RouteEvidence {
-        scope: route
-            .work_scope()
-            .zip(work)
-            .and_then(|(scope, work)| work.contains_scope(scope)),
-        task: route.task().and_then(|task| {
-            surface
-                .read()
-                .as_ref()?
-                .task_detail(task)
-                .and_then(TaskDetailState::known)
-        }),
-        card,
-        direction: route.directions().flatten().and_then(|focus| {
-            let surface = surface.read();
-            let runtime = surface.as_ref()?;
-            match focus {
-                crate::view::DirectionsFocus::Team(team) => runtime
-                    .lanes()
-                    .map(|topology| topology.lanes.iter().any(|row| row.lane == *team)),
-                crate::view::DirectionsFocus::Direction(target) => {
-                    runtime.direction_history().locate(target)
-                }
-            }
-        }),
+        card: card_target::use_retention(route.card_target(), surface),
     };
     use_effect_with((route.clone(), evidence), move |(route, evidence)| {
         if let Some((next, notice)) = route.unavailable(*evidence) {
@@ -971,14 +885,6 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
 
 fn empty(message: &'static str) -> Html {
     html! { <div class="empty">{message}</div> }
-}
-
-fn phase_class(status: &str) -> Classes {
-    if matches!(status, "completed" | "deleted") {
-        classes!("tag")
-    } else {
-        classes!("tag", "active")
-    }
 }
 
 #[wasm_bindgen(start)]

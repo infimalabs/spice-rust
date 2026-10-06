@@ -95,25 +95,6 @@ pub(super) fn use_task_toaster() -> Toaster {
         .0
 }
 
-#[derive(Properties, PartialEq)]
-pub(super) struct NoticeProps {
-    pub(super) message: Option<AttrValue>,
-}
-
-/// Announce a condition through the root toast whenever it begins or its text
-/// changes, so the condition fades on its own instead of shifting the content
-/// it describes.
-#[function_component(Notice)]
-pub(super) fn notice(props: &NoticeProps) -> Html {
-    let toaster = use_toaster();
-    use_effect_with(props.message.clone(), move |message| {
-        if let Some(message) = message {
-            toaster.settled(message.clone());
-        }
-    });
-    Html::default()
-}
-
 /// The toast pill. Hidden text stays in place so the pill fades out rather
 /// than collapsing first. A `raised` toast is a manual popover in the top
 /// layer; the one inside a dialog is already there.

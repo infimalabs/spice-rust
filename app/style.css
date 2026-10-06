@@ -989,11 +989,9 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .team-arrangement-menu { align-content: start; grid-auto-rows: minmax(48px, auto); }
 
-/* Every task pill, wherever a handle appears, is one quiet variant: accent type
-   on a 6% accent tint at the quote-tail scale, so a handle never outweighs the
-   words around it. */
-.message-task-chip,
-.team-direction-task-chip {
+/* Task handles in message prose use one quiet variant: accent type on a 6%
+   tint at quote-tail scale, so a handle never outweighs surrounding words. */
+.message-task-chip {
   display: inline-flex;
   max-width: min(24ch, 100%);
   min-width: 0;
@@ -1014,8 +1012,8 @@ tbody tr:last-child td { border-bottom: 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-:is(.message-task-chip, .team-direction-task-chip):hover { filter: brightness(1.08); }
-:is(.message-task-chip-label, .team-direction-task-chip-label) {
+.message-task-chip:hover { filter: brightness(1.08); }
+.message-task-chip-label {
   display: block;
   min-width: 0;
   overflow: hidden;

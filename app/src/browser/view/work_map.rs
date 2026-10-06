@@ -84,7 +84,6 @@ impl WorkMapLens {
 /// never reduced to fit a typed request; only optional enrichment is bounded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::browser) struct WorkMapState {
-    pinned: Vec<TaskStamp>,
     lens: WorkMapLens,
     direction: WorkRelationshipDirection,
     depth: u8,
@@ -97,7 +96,6 @@ pub(in crate::browser) struct WorkMapState {
 impl Default for WorkMapState {
     fn default() -> Self {
         Self {
-            pinned: Vec::new(),
             lens: WorkMapLens::Dependency,
             direction: WorkRelationshipDirection::Both,
             depth: DEFAULT_DEPTH,
@@ -110,25 +108,6 @@ impl Default for WorkMapState {
 }
 
 impl WorkMapState {
-    pub(in crate::browser) fn pinned(&self, task: &TaskStamp) -> bool {
-        self.pinned.contains(task)
-    }
-
-    pub(in crate::browser) const fn pin_limit_reached(&self) -> bool {
-        false
-    }
-
-    pub(in crate::browser) fn selection(&self, task: TaskStamp) -> TaskOverviewSelection {
-        let mut tasks = self.pinned.clone();
-        tasks.push(task.clone());
-        let context = if tasks.len() == 1 {
-            TaskOverviewContext::Task
-        } else {
-            TaskOverviewContext::Relationships(task)
-        };
-        TaskOverviewSelection::new(tasks, context)
-    }
-
     pub(in crate::browser) fn request_key(
         &self,
         selection: &TaskOverviewSelection,
@@ -140,14 +119,6 @@ impl WorkMapState {
             .cloned()
             .collect::<Vec<_>>();
         TaskRelationsKey::new(roots, self.lens.relation(), self.depth, self.max_nodes)
-    }
-
-    fn toggle_pin(&mut self, task: TaskStamp) {
-        if let Some(index) = self.pinned.iter().position(|pinned| pinned == &task) {
-            self.pinned.remove(index);
-        } else {
-            self.pinned.push(task);
-        }
     }
 
     fn reset_controls(&mut self) {
@@ -185,14 +156,10 @@ pub(super) struct WorkMapRender<'a, 'work> {
     pub selection: &'a TaskOverviewSelection,
     pub state: &'a UseStateHandle<WorkMapState>,
     pub focus_task: Callback<TaskStamp>,
-    pub open_task: Callback<TaskStamp>,
+    pub open_overview: Callback<TaskOverviewSelection>,
     pub work: &'a WorkProjection<'work>,
     pub runtime: Option<&'a AppRuntime>,
     pub retry: Callback<MouseEvent>,
-}
-
-pub(super) fn toggle_root_callback(state: UseStateHandle<WorkMapState>) -> Callback<TaskStamp> {
-    Callback::from(move |task| update(&state, |next| next.toggle_pin(task)))
 }
 
 pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
@@ -220,12 +187,16 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
     let activate_task = {
         let selection = render.selection.clone();
         let focus = render.focus_task.clone();
-        let open = render.open_task.clone();
+        let open = render.open_overview.clone();
         Callback::from(move |task: TaskStamp| {
             if selection.tasks().contains(&task) {
                 focus.emit(task);
             } else {
-                open.emit(task);
+                let tasks = selection.tasks().iter().cloned().chain([task.clone()]);
+                open.emit(TaskOverviewSelection::new(
+                    tasks,
+                    TaskOverviewContext::Relationships(task),
+                ));
             }
         })
     };

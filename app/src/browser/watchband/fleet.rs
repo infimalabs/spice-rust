@@ -68,10 +68,12 @@ pub(super) fn render_populated_fleet(
                     .collect::<Vec<_>>();
                 let attention = attention::TeamAttention::new(
                     render.runtime,
+                    team.lane,
                     &team_standings,
                     render.work,
                     render.sender,
                     render.select_task,
+                    render.navigate,
                 );
                 html! {
                     <section
@@ -274,7 +276,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
 }
 
 /// The leading tab: only a badge counting every task the rail shows, opening
-/// the team's all-task Work page.
+/// the unified overview with that team's complete current selection.
 fn render_team_total(
     team: CanonicalUuid,
     groups: &[crate::work::TeamTaskGroup<'_, '_>],

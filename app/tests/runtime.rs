@@ -24,8 +24,6 @@ mod renewal;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;
-#[path = "runtime/work_history.rs"]
-mod work_history;
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
 const LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c6";
@@ -353,24 +351,6 @@ fn board_response(
     session
         .admit_frame(&bytes)
         .expect("board response is admitted")
-}
-
-fn admitted_board_answer(
-    session: &Session,
-    body: wire::intent::BoardAnswer,
-) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
-    let bytes = support::response(
-        WireVersion::CURRENT,
-        uuid(REQUEST),
-        uuid(EPOCH),
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(body.cursor),
-            body,
-        }),
-    );
-    session
-        .admit_frame(&bytes)
-        .expect("board answer is admitted")
 }
 
 /// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.

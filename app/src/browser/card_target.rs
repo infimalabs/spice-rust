@@ -19,10 +19,6 @@ pub(super) struct Status {
 /// History-state key naming where a reader left through a card link.
 const RETURN_STATE: &str = "appReturn";
 
-/// Work links whose Chat destination records the Work card they leave: task
-/// message links and direction recipient badges.
-const WORK_RETURN_LINKS: &str = "a.work-message-link[href], a.team-direction-recipient-link[href]";
-
 /// The element holding a followed card link and its offset inside its scrolling
 /// surface at that moment.
 struct ReturnAnchor {
@@ -70,9 +66,7 @@ fn plane_offset(card: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
 
 /// A return origin's scrolling surface and top edge relative to it.
 fn return_offset(origin: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
-    let surface = origin
-        .closest(".lane-mosaic-plane, .work-lane-track")
-        .ok()??;
+    let surface = origin.closest(".lane-mosaic-plane").ok()??;
     let offset = origin.get_bounding_client_rect().top() - surface.get_bounding_client_rect().top();
     Some((surface, offset))
 }
@@ -82,10 +76,6 @@ pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
     let _ = remember_return(event, "a.message-quote-age[href]", ".mosaic-message-card");
 }
 
-/// Preserve a global Work card before following one of its Chat links.
-pub(super) fn remember_global_work_return(event: &web_sys::MouseEvent) {
-    let _ = remember_return(event, WORK_RETURN_LINKS, "[data-card-return-origin]");
-}
 /// Whether a native anchor click will navigate this tab.
 pub(super) fn follows_in_tab(event: &web_sys::MouseEvent) -> bool {
     !event.default_prevented()
@@ -557,45 +547,6 @@ pub(super) fn use_target(
             }
         },
     );
-}
-
-/// Focus and mark the global Work direction card a durable route names, once
-/// its anchored page renders it.
-#[hook]
-pub(super) fn use_global_direction_target(target: Option<String>, visible: bool) {
-    let status = use_state(|| None::<Status>);
-    let held = use_mut_ref(|| None::<Hold>);
-    use_effect_with((target, visible), move |(target, visible)| {
-        let mut selected = None;
-        if let Some(requested) = target.as_deref().filter(|_| *visible) {
-            if held
-                .borrow()
-                .as_ref()
-                .is_some_and(|hold| hold.target != requested)
-            {
-                held.borrow_mut().take();
-            }
-            let document = web_sys::window().and_then(|window| window.document());
-            let route = Route {
-                target: requested,
-                status_target: requested,
-                returned: false,
-                document: document.as_ref(),
-                status: &status,
-            };
-            selected = route.reach(&held);
-        } else {
-            held.borrow_mut().take();
-            if status.is_some() {
-                status.set(None);
-            }
-        }
-        move || {
-            if let Some(element) = selected {
-                let _ = element.remove_attribute("data-card-route-selected");
-            }
-        }
-    });
 }
 
 /// One visible route target once its destination is ready.

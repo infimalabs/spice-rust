@@ -72,46 +72,17 @@
 }
 
 @media (max-width: 920px) {
-  .work-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-detail-facts,
   .work-detail-links { grid-template-columns: 1fr; }
   .work-map-task-list { grid-template-columns: 1fr; }
-  .work-direction-finder { grid-template-columns: 1fr; }
-  .work-direction-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
-  .work-history-list { grid-template-columns: 1fr; }
-  /* One scrolling control row keeps the pinned header two rows tall. */
-  .work-arrangement {
-    flex-wrap: nowrap;
-    width: 100%;
-    margin-left: 0;
-    overflow-x: auto;
-  }
-  .work-arrangement-group { flex-wrap: nowrap; }
-  .work-lane {
-    gap: 8px;
-    padding-block: 10px;
-  }
-  .work-card-list > .work-card-cell {
-    flex-basis: min(16rem, calc(100vw - 7.5rem));
-  }
-  .work-card { gap: 8px; padding: 12px; }
-  .work-history { margin-top: 14px; }
-  .work-history-finder { grid-template-columns: 1fr; }
-  .work-direction-fields,
-  .work-direction-ledger { grid-template-columns: 1fr; }
-  .work-directions-heading { align-items: start; }
-  .work-history-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .work-history-page-actions { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; }
-  .work-history-filter-actions button,
-  .work-history-page-actions button { width: 100%; }
-  .work-history-pagination { align-items: stretch; flex-direction: column; }
   .work-detail,
   .work-detail--overview { width: 100vw; }
   .work-detail-header,
   .work-detail-content,
   .work-overview-map,
+  .work-overview-jobs,
   .work-overview-details { padding-inline: 14px; }
   .work-map-lenses { width: 100%; }
   .work-map-controls { align-items: stretch; }

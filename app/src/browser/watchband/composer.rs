@@ -293,11 +293,6 @@ pub(super) fn team_quote_sources(
     team: &crate::runtime::LaneRow,
 ) -> crate::composer_markdown::QuoteSources {
     let mut sources = crate::composer_markdown::QuoteSources::new();
-    let member_lanes = team
-        .members
-        .iter()
-        .map(|member| member.lane)
-        .collect::<BTreeSet<_>>();
     for message in runtime.messages().iter().rev() {
         let Some((position, member)) = team
             .members
@@ -326,35 +321,9 @@ pub(super) fn team_quote_sources(
             });
         }
         for context in &message.directive_contexts {
-            let source = match &context.quote_target {
-                wire::QuoteTarget::Steering { key, .. }
-                    if context.actor == wire::Actor::Operator =>
-                {
-                    let direction = runtime
-                        .inbox()
-                        .and_then(|inbox| {
-                            watchband::directive_ledger::direction_identity(
-                                &member_lanes,
-                                inbox,
-                                key,
-                            )
-                        })
-                        .map_or_else(
-                            || crate::runtime::DirectionRef::Key(key.clone()),
-                            crate::runtime::DirectionRef::Identity,
-                        );
-                    crate::view::direction_quote_source(&context.actor, &direction)
-                }
-                _ => None,
-            };
             sources
                 .entry(context.quote_target.to_string())
-                .or_insert_with(|| {
-                    let mut quote_source =
-                        crate::composer_markdown::QuoteSource::directive(context);
-                    quote_source.card_id = source;
-                    quote_source
-                });
+                .or_insert_with(|| crate::composer_markdown::QuoteSource::directive(context));
         }
     }
     sources

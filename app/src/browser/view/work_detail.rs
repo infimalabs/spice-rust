@@ -1,15 +1,13 @@
 //! Graph-first contextual overview for one complete selected task set.
 
 use super::super::clock::{TaskTimePresentation, task_time};
-use super::super::work_card;
 use super::*;
 use crate::runtime::LaneView;
-use crate::work::{TaskOverviewSelection, WorkProjection, WorkScope, WorkTask};
+use crate::work::{TaskOverviewSelection, WorkProjection, WorkTask};
 use wire::TaskStamp;
 
 pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
-    pub scope: &'a WorkScope,
     pub lanes: Option<&'a LaneView>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
@@ -25,7 +23,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub request_task: Callback<TaskStamp>,
-    pub open_task: Callback<TaskStamp>,
+    pub open_overview: Callback<TaskOverviewSelection>,
     pub retry_relations: Callback<MouseEvent>,
     pub close: Callback<()>,
 }
@@ -79,11 +77,14 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     selection: render.selection,
                     state: render.map,
                     focus_task: focus_task.clone(),
-                    open_task: render.open_task.clone(),
+                    open_overview: render.open_overview.clone(),
                     work: render.work,
                     runtime: render.runtime,
                     retry: render.retry_relations.clone(),
                 })}
+                if let Some(lanes) = render.lanes {
+                    {super::work_jobs::render(&lanes.lanes)}
+                }
                 <section class="work-overview-details" aria-labelledby="work-overview-details-title">
                     <div class="work-map-heading">
                         <h3 id="work-overview-details-title">{"Task details"}</h3>
@@ -199,20 +200,6 @@ fn render_available(
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    let scope_notice = projected.and_then(|task| {
-        let project = &render.work.projects()[task.project()];
-        let stem = render.work.stems()[project.stem()].identity();
-        render
-            .scope
-            .stem()
-            .filter(|active| *active != stem)
-            .map(|active| {
-                format!(
-                    "This task is now in {} under {}; your active {} scope remains unchanged.",
-                    statement.project, stem, active
-                )
-            })
-    });
     let messages = render.creator_messages.iter().map(AsRef::as_ref);
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     html! {
@@ -237,7 +224,6 @@ fn render_available(
                     )}
                 }
             </div>
-            <crate::browser::toast::Notice message={scope_notice.map(AttrValue::from)} />
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
@@ -296,7 +282,7 @@ fn render_activity(
             </div>
             {task_detail::render_closure_record(
                 answer.closure.as_ref(),
-                |actor| work_card::actor_name(actor, render.lanes),
+                |actor| actor_name(actor, render.lanes),
                 |task| selection_has(render.selection, task),
             )}
             if answer.notes.is_empty() {
@@ -307,7 +293,7 @@ fn render_activity(
                         <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
                             <header>
                                 <strong title={note.author.to_string()}>
-                                    {work_card::actor_name(&note.author, render.lanes)}
+                                    {actor_name(&note.author, render.lanes)}
                                 </strong>
                                 {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                             </header>
@@ -334,11 +320,8 @@ fn fact(label: &'static str, value: String) -> Html {
 }
 
 fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
-    let Some(scope) = render.work.scope_for_project(project) else {
-        return fact("Project", project.to_owned());
-    };
     let navigate = render.navigate.clone();
-    let destination = scope.clone();
+    let target = project.to_owned();
     let project = project.to_owned();
     html! {
         <div>
@@ -350,7 +333,7 @@ fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
                     data-task-project-link={project.clone()}
                     aria-label={format!("Show {project} in Work")}
                     onclick={Callback::from(move |_| {
-                        navigate.emit(navigation::Intent::Work(destination.clone()));
+                        navigate.emit(navigation::Intent::Project(target.clone()));
                     })}
                 >{project}</button>
             </dd>
@@ -447,11 +430,19 @@ fn actor_fact(
     };
     linked_identity_fact(
         label,
-        work_card::actor_name(actor, render.lanes),
+        actor_name(actor, render.lanes),
         actor.to_string(),
         suffix,
         destination,
     )
+}
+
+fn actor_name(actor: &wire::Actor, lanes: Option<&LaneView>) -> String {
+    let member = match actor {
+        wire::Actor::Lane(lane) => lanes.and_then(|lanes| lanes.member(*lane)),
+        wire::Actor::Operator | wire::Actor::Spice => None,
+    };
+    crate::work::owner_label(actor, member)
 }
 
 fn priority_fact(tags: &[String]) -> Html {

@@ -6,15 +6,6 @@
 //! set is closed for the same reason the command registry is: a match over it
 //! is exhaustive.
 
-#[cfg(any(target_arch = "wasm32", test))]
-use wire::TaskStamp;
-
-#[cfg(any(target_arch = "wasm32", test))]
-use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
-
-#[cfg(any(target_arch = "wasm32", test))]
-use crate::runtime::DirectionRef;
-
 /// The complete view vocabulary.
 ///
 /// Each axis is a question one app destination answers.
@@ -58,19 +49,18 @@ impl Axis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppDestination {
     Dash,
-    Work,
     Chat,
 }
 
 impl AppDestination {
-    /// Every global destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Dash, Self::Work, Self::Chat];
+    /// Every durable global destination, left to right.
+    pub const ALL: [Self; 2] = [Self::Dash, Self::Chat];
+
     /// Exact hash-history path for this destination.
     #[must_use]
     pub const fn path(self) -> &'static str {
         match self {
             Self::Dash => "/dash",
-            Self::Work => "/work",
             Self::Chat => "/chat",
         }
     }
@@ -88,17 +78,7 @@ impl AppDestination {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Dash => "Dash",
-            Self::Work => "Work",
             Self::Chat => "Chat",
-        }
-    }
-
-    /// Destination represented by one analytical axis.
-    #[must_use]
-    pub const fn for_axis(axis: Axis) -> Self {
-        match axis {
-            Axis::Topology => Self::Dash,
-            Axis::Flow => Self::Work,
         }
     }
 
@@ -107,7 +87,6 @@ impl AppDestination {
     pub const fn axis(self) -> Option<Axis> {
         match self {
             Self::Dash => Some(Axis::Topology),
-            Self::Work => Some(Axis::Flow),
             Self::Chat => None,
         }
     }
@@ -117,7 +96,6 @@ impl AppDestination {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Dash => "Dash for consolidated state, controls, and details",
-            Self::Work => "Work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
         }
     }
@@ -282,63 +260,30 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
-/// One admitted app URL state: the complete addressable view.
+/// One admitted durable app URL state.
 ///
-/// Global destinations remain the complete navigation vocabulary. A Work
-/// scope, task detail, or the operator's Directions refine Work and a card
-/// refines Chat, so a route can never select an impossible global view.
-/// Dash has no subordinate selection; per-team modes, menus, and
-/// arrangement stay browser-local.
+/// Task overviews are browser-local overlays and therefore never refine this
+/// route or create history entries.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AppRoute {
     Dash,
-    Work {
-        scope: WorkScope,
-        task: Option<TaskStamp>,
-    },
-    /// All open Work with its operator Directions in view, narrowed to one
-    /// team or focused on one direction when named.
-    Directions {
-        focus: Option<DirectionsFocus>,
-    },
-    Chat {
-        card: Option<String>,
-    },
-}
-
-/// What a Directions route names within operator direction history.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum DirectionsFocus {
-    /// Directions sent to one team's members.
-    Team(wire::CanonicalUuid),
-    /// One direction, read from the page that holds it.
-    Direction(DirectionRef),
+    Chat { card: Option<String> },
 }
 
 /// One history transition a navigation makes.
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RouteStep {
     Push(AppRoute),
-    Replace(AppRoute),
 }
 
-/// Settled evidence for the data a route names; `None` until authoritative
-/// state resolves that segment.
+/// Settled evidence for the data a durable route names.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RouteEvidence {
-    pub(crate) scope: Option<bool>,
-    pub(crate) task: Option<bool>,
     pub(crate) card: Option<bool>,
-    pub(crate) direction: Option<bool>,
 }
-
-/// The scope a Directions route shows its history within.
-#[cfg(any(target_arch = "wasm32", test))]
-static DIRECTIONS_SCOPE: WorkScope = WorkScope::AllOpen;
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl AppRoute {
@@ -346,10 +291,6 @@ impl AppRoute {
     pub(crate) const fn destination(destination: AppDestination) -> Self {
         match destination {
             AppDestination::Dash => Self::Dash,
-            AppDestination::Work => Self::Work {
-                scope: WorkScope::AllOpen,
-                task: None,
-            },
             AppDestination::Chat => Self::Chat { card: None },
         }
     }
@@ -369,49 +310,6 @@ impl AppRoute {
                 (Some(CARD_SEGMENT), Some(target), None) => Self::card(target.to_owned()),
                 _ => None,
             },
-            "work" => {
-                let rest = segments.collect::<Vec<_>>();
-                match rest.as_slice() {
-                    [DIRECTIONS_SEGMENT] => return Some(Self::Directions { focus: None }),
-                    [DIRECTIONS_SEGMENT, TEAM_SEGMENT, team] => {
-                        return Some(Self::Directions {
-                            focus: Some(DirectionsFocus::Team(team.parse().ok()?)),
-                        });
-                    }
-                    [DIRECTION_SEGMENT, direction] => {
-                        return Some(Self::Directions {
-                            focus: Some(DirectionsFocus::Direction(direction_ref(direction)?)),
-                        });
-                    }
-                    _ => {}
-                }
-                let (scope, rest) = match rest.as_slice() {
-                    [TEAM_SEGMENT, team, visibility, stem, rest @ ..]
-                        if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
-                    {
-                        let scope = WorkScope::Team {
-                            team: team.parse().ok()?,
-                            stem: Some(stem_identity(visibility, stem)?),
-                        };
-                        (scope, rest)
-                    }
-                    [TEAM_SEGMENT, team, rest @ ..] => {
-                        (WorkScope::team_wide(team.parse().ok()?), rest)
-                    }
-                    [visibility, stem, rest @ ..]
-                        if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
-                    {
-                        (WorkScope::Stem(stem_identity(visibility, stem)?), rest)
-                    }
-                    rest => (WorkScope::AllOpen, rest),
-                };
-                let task = match rest {
-                    [] => None,
-                    [TASK_SEGMENT, task] => Some(task.parse().ok()?),
-                    _ => return None,
-                };
-                Some(Self::Work { scope, task })
-            }
             _ => None,
         }
     }
@@ -420,42 +318,16 @@ impl AppRoute {
     pub(crate) const fn app_destination(&self) -> AppDestination {
         match self {
             Self::Dash => AppDestination::Dash,
-            Self::Work { .. } | Self::Directions { .. } => AppDestination::Work,
             Self::Chat { .. } => AppDestination::Chat,
         }
     }
 
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn card_target(&self) -> Option<&str> {
         match self {
             Self::Chat { card } => card.as_deref(),
-            Self::Dash | Self::Work { .. } | Self::Directions { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn work_scope(&self) -> Option<&WorkScope> {
-        match self {
-            Self::Work { scope, .. } => Some(scope),
-            Self::Directions { .. } => Some(&DIRECTIONS_SCOPE),
-            Self::Dash | Self::Chat { .. } => None,
-        }
-    }
-
-    /// The Directions refinement: `Some(None)` for the section itself.
-    #[must_use]
-    pub(crate) const fn directions(&self) -> Option<Option<&DirectionsFocus>> {
-        match self {
-            Self::Directions { focus } => Some(focus.as_ref()),
-            Self::Dash | Self::Work { .. } | Self::Chat { .. } => None,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn task(&self) -> Option<&TaskStamp> {
-        match self {
-            Self::Work { task, .. } => task.as_ref(),
-            Self::Dash | Self::Directions { .. } | Self::Chat { .. } => None,
+            Self::Dash => None,
         }
     }
 
@@ -466,184 +338,32 @@ impl AppRoute {
             Self::Dash => AppDestination::Dash.path().to_owned(),
             Self::Chat { card: None } => AppDestination::Chat.path().to_owned(),
             Self::Chat { card: Some(card) } => format!("/chat/{CARD_SEGMENT}/{card}"),
-            Self::Directions { focus: None } => format!("/work/{DIRECTIONS_SEGMENT}"),
-            Self::Directions {
-                focus: Some(DirectionsFocus::Team(team)),
-            } => format!("/work/{DIRECTIONS_SEGMENT}/{TEAM_SEGMENT}/{team}"),
-            Self::Directions {
-                focus: Some(DirectionsFocus::Direction(direction)),
-            } => format!("/work/{DIRECTION_SEGMENT}/{direction}"),
-            Self::Work { scope, task } => {
-                let mut path = AppDestination::Work.path().to_owned();
-                match scope {
-                    WorkScope::AllOpen => {}
-                    WorkScope::Stem(stem) => push_stem_segments(stem, &mut path),
-                    WorkScope::Team { team, stem } => {
-                        path.push('/');
-                        path.push_str(TEAM_SEGMENT);
-                        path.push('/');
-                        path.push_str(&team.to_string());
-                        if let Some(stem) = stem {
-                            push_stem_segments(stem, &mut path);
-                        }
-                    }
-                }
-                if let Some(task) = task {
-                    path.push('/');
-                    path.push_str(TASK_SEGMENT);
-                    path.push('/');
-                    path.push_str(&task.to_string());
-                }
-                path
-            }
         }
     }
 
-    /// Show one global destination: a new entry unless already there.
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    /// Show one durable global destination: a new entry unless already there.
     #[must_use]
     pub(crate) fn show(&self, destination: AppDestination) -> Option<RouteStep> {
         let next = Self::destination(destination);
         (*self != next).then_some(RouteStep::Push(next))
     }
 
-    /// Show one Work scope. Inside Work the scope replaces the entry and an
-    /// open task detail stays open; from elsewhere, Directions included, Work
-    /// opens as a new entry.
-    #[must_use]
-    pub(crate) fn show_work(&self, scope: WorkScope) -> Option<RouteStep> {
-        match self {
-            Self::Work {
-                scope: current,
-                task,
-            } => (*current != scope).then(|| {
-                RouteStep::Replace(Self::Work {
-                    scope,
-                    task: task.clone(),
-                })
-            }),
-            Self::Dash | Self::Directions { .. } | Self::Chat { .. } => {
-                Some(RouteStep::Push(Self::Work { scope, task: None }))
-            }
-        }
-    }
-
-    /// Open one task detail under the Work scope that shows it. Opening
-    /// pushes; switching an already-open detail to another task replaces.
-    #[must_use]
-    pub(crate) fn open_task(&self, task: TaskStamp, scope: WorkScope) -> Option<RouteStep> {
-        let open = self.task();
-        if open == Some(&task) {
-            return None;
-        }
-        let next = Self::Work {
-            scope,
-            task: Some(task),
-        };
-        Some(if open.is_some() {
-            RouteStep::Replace(next)
-        } else {
-            RouteStep::Push(next)
-        })
-    }
-
-    /// This route with its task detail closed, when one is open.
-    #[must_use]
-    pub(crate) fn without_task(&self) -> Option<Self> {
-        match self {
-            Self::Work {
-                scope,
-                task: Some(_),
-            } => Some(Self::Work {
-                scope: scope.clone(),
-                task: None,
-            }),
-            Self::Dash
-            | Self::Work { task: None, .. }
-            | Self::Directions { .. }
-            | Self::Chat { .. } => None,
-        }
-    }
-
-    /// The route replacing this one once settled data refuses a segment,
-    /// with a notice naming the refused identifier. A missing Work scope leaves
-    /// All open work, a missing task leaves its containing scope, a missing
-    /// card leaves plain Chat, and a missing direction leaves Directions.
+    /// Refuse a missing Chat card back to plain Chat.
     #[must_use]
     pub(crate) fn unavailable(&self, evidence: RouteEvidence) -> Option<(Self, String)> {
         match self {
-            Self::Work { scope, .. } if evidence.scope == Some(false) => Some((
-                Self::destination(AppDestination::Work),
-                match scope {
-                    WorkScope::Team { team, stem: None } => {
-                        format!("Team {team} is not in the roster; showing All open work.")
-                    }
-                    WorkScope::Team {
-                        team,
-                        stem: Some(stem),
-                    } => format!(
-                        "Team {team} work in {stem} is no longer available; showing All open work."
-                    ),
-                    WorkScope::Stem(stem) => {
-                        format!("Work scope {stem} is no longer available; showing All open work.")
-                    }
-                    WorkScope::AllOpen => unreachable!("all Work is always available"),
-                },
-            )),
-            Self::Work {
-                scope,
-                task: Some(task),
-            } if evidence.task == Some(false) => Some((
-                Self::Work {
-                    scope: scope.clone(),
-                    task: None,
-                },
-                format!("Task {task} is unavailable; closed its detail."),
-            )),
             Self::Chat { card: Some(card) } if evidence.card == Some(false) => Some((
                 Self::destination(AppDestination::Chat),
                 format!("Linked card {card} is unavailable in retained Chat history; opened Chat."),
             )),
-            Self::Directions { focus: Some(focus) } if evidence.direction == Some(false) => Some((
-                Self::Directions { focus: None },
-                match focus {
-                    DirectionsFocus::Team(team) => {
-                        format!("Team {team} is not in the roster; showing all Directions.")
-                    }
-                    DirectionsFocus::Direction(direction) => format!(
-                        "Direction {direction} is not in operator direction history; showing Directions."
-                    ),
-                },
-            )),
-            _ => None,
+            Self::Dash | Self::Chat { .. } => None,
         }
     }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 const CARD_SEGMENT: &str = "card";
-#[cfg(any(target_arch = "wasm32", test))]
-const DIRECTION_SEGMENT: &str = "direction";
-#[cfg(any(target_arch = "wasm32", test))]
-const DIRECTIONS_SEGMENT: &str = "directions";
-#[cfg(any(target_arch = "wasm32", test))]
-const TEAM_SEGMENT: &str = "team";
-#[cfg(any(target_arch = "wasm32", test))]
-const TASK_SEGMENT: &str = "task";
-#[cfg(any(target_arch = "wasm32", test))]
-const PUBLIC_SEGMENT: &str = "public";
-#[cfg(any(target_arch = "wasm32", test))]
-const HIDDEN_SEGMENT: &str = "hidden";
-
-/// A routed direction: a canonical directive or fanout UUID, or a minted
-/// acknowledgment key. Each has one spelling, so the segment round-trips.
-#[cfg(any(target_arch = "wasm32", test))]
-fn direction_ref(segment: &str) -> Option<DirectionRef> {
-    if let Ok(identity) = segment.parse::<wire::CanonicalUuid>() {
-        return (identity.to_string() == segment).then_some(DirectionRef::Identity(identity));
-    }
-    wire::steering_key(segment).then(|| DirectionRef::Key(segment.to_owned()))
-}
-
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 const TEAM_STREAM_CARD_PREFIX: &str = "team-stream-";
 
@@ -655,83 +375,6 @@ pub(crate) fn team_stream_card_target(team: wire::CanonicalUuid) -> String {
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn team_stream_card_team(target: &str) -> Option<wire::CanonicalUuid> {
     target.strip_prefix(TEAM_STREAM_CARD_PREFIX)?.parse().ok()
-}
-
-/// One visibility-qualified stem from its two route segments.
-#[cfg(any(target_arch = "wasm32", test))]
-fn stem_identity(visibility: &str, stem: &str) -> Option<WorkStemIdentity> {
-    let visibility = match visibility {
-        PUBLIC_SEGMENT => WorkVisibility::Public,
-        HIDDEN_SEGMENT => WorkVisibility::Hidden,
-        _ => return None,
-    };
-    Some(WorkStemIdentity::new(visibility, decode_segment(stem)?))
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn push_stem_segments(stem: &WorkStemIdentity, path: &mut String) {
-    path.push('/');
-    path.push_str(if stem.hidden() {
-        HIDDEN_SEGMENT
-    } else {
-        PUBLIC_SEGMENT
-    });
-    path.push('/');
-    encode_segment(stem.stem(), path);
-}
-
-/// Bytes a route segment carries literally; every other byte is `%XX`.
-#[cfg(any(target_arch = "wasm32", test))]
-const fn unreserved(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn encode_segment(text: &str, into: &mut String) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for byte in text.bytes() {
-        if unreserved(byte) {
-            into.push(char::from(byte));
-        } else {
-            into.push('%');
-            into.push(char::from(HEX[usize::from(byte >> 4)]));
-            into.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-    }
-}
-
-/// Decode one canonical segment: unreserved bytes literal, every other byte
-/// as uppercase `%XX`, UTF-8, and non-empty. Anything else is refused.
-#[cfg(any(target_arch = "wasm32", test))]
-fn decode_segment(segment: &str) -> Option<String> {
-    const fn hex(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
-        }
-    }
-    let bytes = segment.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        if byte == b'%' {
-            let value = hex(*bytes.get(index + 1)?)? << 4 | hex(*bytes.get(index + 2)?)?;
-            if unreserved(value) {
-                return None;
-            }
-            decoded.push(value);
-            index += 3;
-        } else if unreserved(byte) {
-            decoded.push(byte);
-            index += 1;
-        } else {
-            return None;
-        }
-    }
-    String::from_utf8(decoded)
-        .ok()
-        .filter(|text| !text.is_empty())
 }
 
 /// One browser location resolved to a usable app route.
@@ -807,15 +450,6 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
                 notice: None,
             };
         }
-        if let Some(segment) = malformed_direction(fragment) {
-            return NormalizedAppLocation {
-                route: AppRoute::Directions { focus: None },
-                replace: true,
-                notice: Some(format!(
-                    "`{segment}` names no direction or team; showing Directions."
-                )),
-            };
-        }
     }
 
     NormalizedAppLocation {
@@ -823,16 +457,6 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
         replace: true,
         notice: Some(format!("Unrecognized route `{search}{hash}`; opened Chat.")),
     }
-}
-
-/// The single refused segment of a Directions route that names neither a
-/// direction nor a team; any other shape is simply unrecognized.
-#[cfg(any(target_arch = "wasm32", test))]
-fn malformed_direction(fragment: &str) -> Option<&str> {
-    let rest = fragment.strip_prefix("/work/")?;
-    rest.strip_prefix("direction/")
-        .or_else(|| rest.strip_prefix("directions/team/"))
-        .filter(|segment| !segment.is_empty() && !segment.contains('/'))
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -844,52 +468,22 @@ fn normalized_destination(fragment: &str) -> Option<AppDestination> {
     match name {
         "" | "chat" => Some(AppDestination::Chat),
         "dash" => Some(AppDestination::Dash),
-        "work" => Some(AppDestination::Work),
         _ => None,
     }
 }
 
-#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) fn card_href(target: &str) -> String {
     let route = AppRoute::card(target.to_owned())
         .expect("a rendered app card has a canonical route target");
     format!("#{}", route.path())
 }
 
-/// Link one quote source: a direction source is the Work route suffix
-/// `work/direction/{reference}`, and every other source names a card.
-#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+/// Link one retained quote source to its durable Chat card.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) fn quote_source_href(source: &str) -> String {
-    if source.starts_with(DIRECTION_SOURCE) {
-        format!("#/{source}")
-    } else {
-        card_href(source)
-    }
+    card_href(source)
 }
-
-#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-const DIRECTION_SOURCE: &str = "work/direction/";
-
-/// The global Work source of an operator direction. Resident and lane
-/// directions are absent from global direction history, so they have no
-/// canonical source link.
-#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
-pub(crate) fn direction_quote_source(
-    actor: &wire::Actor,
-    direction: &crate::runtime::DirectionRef,
-) -> Option<String> {
-    matches!(actor, wire::Actor::Operator).then(|| format!("{DIRECTION_SOURCE}{direction}"))
-}
-
-/// The global Work Directions card of one fanout.
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) fn global_direction_card_id(fanout: wire::CanonicalUuid) -> String {
-    format!("work-direction-{fanout}")
-}
-
-/// The global Work Directions section a Directions route brings into view.
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) const DIRECTIONS_SECTION_ID: &str = "work-directions";
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn valid_card_target(target: &str) -> bool {

@@ -237,15 +237,6 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
     assert_eq!(projection.contains_scope(&hidden_scope), Some(true));
     assert_eq!(projection.scope_counts(&public_scope).open(), 2);
     assert_eq!(projection.scope_counts(&hidden_scope).open(), 1);
-    assert_eq!(
-        projection.scope_for_project("alpha.runtime"),
-        Some(public_scope.clone()),
-    );
-    assert_eq!(
-        projection.scope_for_project(".alpha.audit"),
-        Some(hidden_scope.clone()),
-    );
-    assert_eq!(projection.scope_for_project("gone.project"), None);
 
     let absent = WorkScope::Stem(WorkStemIdentity {
         visibility: WorkVisibility::Public,
@@ -253,36 +244,6 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
     });
     assert_eq!(projection.contains_scope(&absent), Some(false));
     assert_eq!(projection.scope_counts(&absent), projection.counts());
-}
-
-#[test]
-fn opening_a_task_keeps_a_scope_that_shows_it_and_widens_one_that_hides_it() {
-    let public = task(1, "alpha.runtime");
-    let hidden = task(2, ".alpha.audit");
-    let public_born = public.statement.body.born.clone();
-    let hidden_born = hidden.statement.body.born.clone();
-    let board = board(vec![public, hidden]);
-    let projection = WorkProjection::from_board(&board);
-    let public_scope = WorkScope::Stem(projection.stems[0].identity.clone());
-    let hidden_scope = WorkScope::Stem(projection.stems[1].identity.clone());
-
-    assert_eq!(
-        projection.scope_showing(&public_born, &public_scope),
-        public_scope
-    );
-    assert_eq!(
-        projection.scope_showing(&hidden_born, &hidden_scope),
-        hidden_scope
-    );
-    assert_eq!(
-        projection.scope_showing(&hidden_born, &public_scope),
-        WorkScope::AllOpen
-    );
-    let absent = task(3, "alpha.runtime").statement.body.born;
-    assert_eq!(
-        projection.scope_showing(&absent, &public_scope),
-        WorkScope::AllOpen
-    );
 }
 
 #[test]
@@ -340,134 +301,6 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
     assert_eq!(lane.tasks, [1, 3, 2, 0]);
     assert_eq!(projection.tasks[2].project, 0);
     assert_eq!(lane.counts.unavailable(), 1);
-}
-
-const OPEN_LANES: [WorkAvailability; 4] = [
-    WorkAvailability::InFlight,
-    WorkAvailability::Ready,
-    WorkAvailability::Blocked,
-    WorkAvailability::Deferred,
-];
-
-fn titles<'a>(clusters: &[WorkCluster<'_, 'a>]) -> Vec<&'a str> {
-    clusters
-        .iter()
-        .flat_map(|cluster| &cluster.tasks)
-        .map(|task| task.row().presentation_title.as_str())
-        .collect()
-}
-
-fn arrangement(order: WorkOrder, clustering: WorkClustering) -> WorkArrangement {
-    WorkArrangement { order, clustering }
-}
-
-#[test]
-fn one_board_follows_the_resident_offer_and_clusters_by_first_card() {
-    let mut active = task(6, "beta.core");
-    active.claim = Some(claim(&active, ClaimDisposition::Active));
-    let mut done = task(1, "alpha.render");
-    done.workflow.body.completion = Some(
-        "2026-09-23T06:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
-    let mut assigned = task(2, "beta.core");
-    assigned.workflow.body.assignment = Some(Actor::Spice);
-    // Board rows arrive in neither offer, time, nor project order.
-    let mut board = board(vec![
-        task(9, "alpha.render"),
-        task(7, "beta.core"),
-        active,
-        task(4, ".alpha.audit"),
-        done,
-        task(5, "alpha.render"),
-        assigned,
-    ]);
-    // The resident offers no hidden work; one stale stamp is ignored.
-    board.offer = [7, 5, 99, 9, 2].map(stamp).to_vec();
-    let projection = WorkProjection::from_board(&board);
-    let all = WorkScope::AllOpen;
-    let ready = |order, clustering| {
-        projection.lane(
-            WorkAvailability::Ready,
-            &all,
-            arrangement(order, clustering),
-        )
-    };
-
-    let offered = ready(WorkOrder::Offer, WorkClustering::None);
-    assert!(matches!(offered.as_slice(), [lane] if lane.key == WorkClusterKey::Lane));
-    assert_eq!(
-        titles(&offered),
-        ["task 7", "task 5", "task 9", "task 2", "task 4"],
-        "the next offer leads every project; unoffered work follows in queue order"
-    );
-    assert_eq!(
-        titles(&projection.lane(WorkAvailability::Ready, &all, WorkArrangement::default())),
-        titles(&offered),
-        "the offer order is the default arrangement"
-    );
-    assert_eq!(
-        titles(&ready(WorkOrder::Newest, WorkClustering::None)),
-        ["task 9", "task 7", "task 5", "task 4", "task 2"]
-    );
-
-    let by_project = ready(WorkOrder::Offer, WorkClustering::Project);
-    assert_eq!(
-        by_project
-            .iter()
-            .map(|cluster| cluster.key)
-            .collect::<Vec<_>>(),
-        [
-            WorkClusterKey::Project("beta.core"),
-            WorkClusterKey::Project("alpha.render"),
-            WorkClusterKey::Project(".alpha.audit"),
-        ],
-        "clusters follow their first card, so the next offer still leads"
-    );
-    assert_eq!(
-        titles(&by_project),
-        ["task 7", "task 2", "task 5", "task 9", "task 4"]
-    );
-    assert_eq!(
-        titles(&ready(WorkOrder::Newest, WorkClustering::Project)),
-        ["task 9", "task 5", "task 7", "task 2", "task 4"]
-    );
-    for order in [WorkOrder::Offer, WorkOrder::Newest] {
-        for clustering in [
-            WorkClustering::None,
-            WorkClustering::Project,
-            WorkClustering::Phase,
-        ] {
-            let mut placed = OPEN_LANES
-                .into_iter()
-                .flat_map(|lane| {
-                    titles(&projection.lane(lane, &all, arrangement(order, clustering)))
-                })
-                .collect::<Vec<_>>();
-            placed.sort_unstable();
-            assert_eq!(
-                placed,
-                ["task 2", "task 4", "task 5", "task 6", "task 7", "task 9"],
-                "{order:?}/{clustering:?} places every open task in exactly one shared lane"
-            );
-        }
-    }
-    assert_eq!(
-        titles(&projection.lane(WorkAvailability::InFlight, &all, WorkArrangement::default())),
-        ["task 6"]
-    );
-
-    let public_alpha = WorkScope::Stem(projection.stems[0].identity.clone());
-    assert_eq!(
-        titles(&projection.lane(
-            WorkAvailability::Ready,
-            &public_alpha,
-            WorkArrangement::default()
-        )),
-        ["task 5", "task 9"],
-        "a stem scope narrows the one board without splitting it"
-    );
 }
 
 #[test]

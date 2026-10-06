@@ -1,14 +1,13 @@
 //! App surface rendering for the operator browser.
 
 use super::*;
-use crate::work::{TaskOverviewSelection, WorkArrangement, WorkProjection, WorkScope};
+use crate::work::{TaskOverviewSelection, WorkProjection};
 
 pub(super) mod chrome;
-mod direction_history;
 mod quota;
 mod team_menu;
-mod work_board;
 mod work_detail;
+mod work_jobs;
 mod work_map;
 
 pub(super) use work_map::WorkMapState;
@@ -74,8 +73,6 @@ pub(super) struct AppRender<'a> {
     pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub app_menu_open: &'a UseStateHandle<bool>,
-    pub work_scope: &'a WorkScope,
-    pub work_arrangement: &'a UseStateHandle<WorkArrangement>,
     pub identity: &'a UseStateHandle<Option<AppIdentity>>,
     pub app_update: &'a UseStateHandle<Option<AppUpdate>>,
     pub team_controls: &'a UseReducerHandle<TeamControls>,
@@ -91,13 +88,12 @@ pub(super) struct AppRender<'a> {
     pub detail_presented: bool,
     pub detail_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
-    pub direction_history: &'a super::direction_history::Controls,
-    pub work_history: &'a work_history::Controls,
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
+    pub open_overview: Callback<TaskOverviewSelection>,
     pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub request_task: Callback<wire::TaskStamp>,
     pub retry_relations: Callback<MouseEvent>,
@@ -132,7 +128,6 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
                 navigate: render.navigate,
                 identity: render.identity,
                 app_update: render.app_update,
-                work_scope: render.work_scope,
                 work,
                 surface: render.surface,
                 cursor: &cursor,
@@ -156,7 +151,6 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
 
 pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let mosaic_active = render.destination == AppDestination::Chat;
-    let active_axis = render.destination.axis();
     html! {
         <>
             <div
@@ -170,10 +164,10 @@ pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProject
                     {watchband::render_team(render, work)}
                 </main>
             </div>
-            if let Some(active_axis) = active_axis {
+            if render.destination == AppDestination::Dash {
                 <div key="analytics" class="workspace">
                     <main class="content">
-                        {render_analytics(render, active_axis, work)}
+                        {render_analytics(render)}
                     </main>
                 </div>
             }
@@ -181,25 +175,13 @@ pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProject
     }
 }
 
-fn render_analytics(
-    render: &AppRender<'_>,
-    active_axis: Axis,
-    work: Option<&WorkProjection<'_>>,
-) -> Html {
-    let (summary, body) = match active_axis {
-        Axis::Flow => (
-            work.map(|work| flow_summary(work, render.work_scope)),
-            render_flow(render, work),
-        ),
-        Axis::Topology => render_topology(render),
-    };
-    let surface = render.surface.read();
-    let lanes = surface.as_ref().and_then(|runtime| runtime.lanes());
+fn render_analytics(render: &AppRender<'_>) -> Html {
+    let (summary, body) = render_topology(render);
     html! {
         <>
             <div class="page-heading">
                 <div>
-                    <h1>{analytics_heading(active_axis, work, render.work_scope, lanes)}</h1>
+                    <h1>{"Resident dashboard"}</h1>
                     if let Some(summary) = summary {
                         <p>{summary}</p>
                     }
@@ -211,120 +193,9 @@ fn render_analytics(
 }
 
 pub(super) const fn axis_label(axis: Axis) -> &'static str {
-    AppDestination::for_axis(axis).label()
-}
-fn analytics_heading(
-    axis: Axis,
-    work: Option<&WorkProjection<'_>>,
-    scope: &WorkScope,
-    lanes: Option<&crate::runtime::LaneView>,
-) -> String {
     match axis {
-        Axis::Topology => "Resident dashboard".to_owned(),
-        Axis::Flow => match scope {
-            WorkScope::AllOpen => "All open work".to_owned(),
-            WorkScope::Team { team, stem } => {
-                let name = lanes
-                    .and_then(|lanes| lanes.lanes.iter().find(|row| row.lane == *team))
-                    .map_or_else(|| format!("Team {team}"), team_name);
-                stem.as_ref().map_or_else(
-                    || format!("{name} work"),
-                    |stem| format!("{name} {stem} work"),
-                )
-            }
-            WorkScope::Stem(identity) => work
-                .and_then(|projection| projection.stem(identity))
-                .map_or_else(
-                    || "All open work".to_owned(),
-                    |stem| format!("{} work", stem.identity()),
-                ),
-        },
-    }
-}
-
-fn flow_summary(work: &WorkProjection<'_>, scope: &WorkScope) -> String {
-    let counts = work.scope_counts(scope);
-    format!(
-        "{} open: {} ready, {} active, {} blocked, {} deferred",
-        counts.open(),
-        counts.ready(),
-        counts.in_flight(),
-        counts.blocked(),
-        counts.deferred(),
-    )
-}
-
-pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
-    let Some(work) = work else {
-        return match &**render.connection {
-            Connection::Starting | Connection::Connecting => {
-                empty("Loading the current board snapshot.")
-            }
-            Connection::Offline(_) => empty("Board snapshot unavailable while reconnecting."),
-            Connection::Online { .. } => empty("No board snapshot is available."),
-        };
-    };
-    let surface = render.surface.read();
-    let runtime = surface.as_ref();
-    let scope_key = match render.work_scope {
-        WorkScope::AllOpen => "all".to_owned(),
-        WorkScope::Stem(identity) if work.stem(identity).is_some() => identity.to_string(),
-        WorkScope::Stem(_) => "all".to_owned(),
-        WorkScope::Team { team, stem } if work.contains_scope(render.work_scope) != Some(false) => {
-            stem.as_ref().map_or_else(
-                || format!("team:{team}"),
-                |stem| format!("team:{team}:{stem}"),
-            )
-        }
-        WorkScope::Team { .. } => "all".to_owned(),
-    };
-    // Every reconnect attempt passes back through Connecting, so the snapshot
-    // stays stale until the connection is live again; the notice then toasts
-    // once per outage rather than once per attempt.
-    let stale = !matches!(&**render.connection, Connection::Online { .. });
-    let selected = (**render.selected_task)
-        .as_ref()
-        .and_then(TaskOverviewSelection::first);
-    let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
-    let creator_context = Callback::from(|event: MouseEvent| {
-        super::card_target::remember_global_work_return(&event);
-    });
-    let lanes = runtime
-        .and_then(AppRuntime::lanes)
-        .map_or(&[][..], |lanes| lanes.lanes.as_slice());
-    html! {
-        <div class="work-layout" data-work-scope={scope_key}>
-            {super::watchband::render_global_jobs(lanes)}
-            <section tabindex="-1" class="section work-board-section">
-                {work_board::render(
-                    work,
-                    render.work_scope,
-                    stale,
-                    selected,
-                    work_board::WorkBoardControls {
-                        map: render.work_map,
-                        select: render.select_task.clone(),
-                        creator_context,
-                        creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
-                        toggle_map_root,
-                        arrangement: render.work_arrangement,
-                        lanes: runtime.and_then(AppRuntime::lanes),
-                        history_state: runtime.map(AppRuntime::work_history),
-                        history: render.work_history,
-                    },
-                )}
-            </section>
-            if let Some(runtime) = runtime {
-                {direction_history::render(
-                    runtime.direction_history(),
-                    runtime.lanes(),
-                    runtime.board(),
-                    runtime.messages(),
-                    render.direction_history,
-                    &render.select_task,
-                )}
-            }
-        </div>
+        Axis::Flow => "Work",
+        Axis::Topology => "Dash",
     }
 }
 
@@ -339,7 +210,6 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
     let runtime = surface.as_ref();
     work_detail::render(work_detail::WorkDetailRender {
         work,
-        scope: render.work_scope,
         lanes: runtime.and_then(AppRuntime::lanes),
         navigate: render.navigate,
         creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
@@ -355,7 +225,7 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
         notes: render.notes,
         submit_note: render.submit_note.clone(),
         request_task: render.request_task.clone(),
-        open_task: render.select_task.clone(),
+        open_overview: render.open_overview.clone(),
         retry_relations: render.retry_relations.clone(),
         close: render.close_task.clone(),
     })

@@ -190,6 +190,7 @@ pub(crate) fn expand_media_payloads<'a>(
 }
 
 /// Render received text using exact resident-authenticated semantic ranges.
+#[cfg(test)]
 pub(crate) fn render_received_with_classifications(
     markdown: &str,
     classifications: &[MessageClassification],

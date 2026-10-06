@@ -64,8 +64,6 @@ pub(super) struct CountdownProps {
 /// Density-aware task timestamp presentation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TaskTimePresentation {
-    CompactElapsed,
-    CompactRemaining,
     DetailedElapsed,
     DetailedRemaining,
 }
@@ -73,19 +71,13 @@ pub(super) enum TaskTimePresentation {
 impl TaskTimePresentation {
     const fn clock(self) -> RelativeClock {
         match self {
-            Self::CompactElapsed | Self::DetailedElapsed => RelativeClock::Elapsed,
-            Self::CompactRemaining | Self::DetailedRemaining => RelativeClock::Remaining,
+            Self::DetailedElapsed => RelativeClock::Elapsed,
+            Self::DetailedRemaining => RelativeClock::Remaining,
         }
-    }
-
-    const fn detailed(self) -> bool {
-        matches!(self, Self::DetailedElapsed | Self::DetailedRemaining)
     }
 
     const fn key(self) -> &'static str {
         match self {
-            Self::CompactElapsed => "compact-elapsed",
-            Self::CompactRemaining => "compact-remaining",
             Self::DetailedElapsed => "detailed-elapsed",
             Self::DetailedRemaining => "detailed-remaining",
         }
@@ -247,7 +239,7 @@ fn task_timestamp(props: &TaskTimestampProps) -> Html {
     let labels = ClockLabels::Task {
         compact,
         full: full.clone(),
-        detailed: props.presentation.detailed(),
+        detailed: true,
     };
     let clock = props.presentation.clock();
     let slot = use_node_ref();
@@ -415,11 +407,6 @@ pub(super) fn local_date_millis(instant: i64, canonical: &str) -> String {
         .split_once('T')
         .map_or(canonical, |(date, _)| date);
     local_timestamp(instant, fallback, LocalStyle::Date).to_string()
-}
-
-pub(super) fn local_date(instant: &wire::Instant) -> String {
-    let canonical = instant.to_string();
-    local_date_millis(instant.get().as_millisecond(), &canonical)
 }
 
 /// The browser's current instant in epoch milliseconds.

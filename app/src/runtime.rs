@@ -24,7 +24,6 @@ use crate::socket::Admitted;
 use crate::watchband;
 
 mod consent;
-mod direction_history;
 mod lanes;
 mod member_control;
 mod message_cards;
@@ -32,19 +31,13 @@ mod message_cards;
 mod publication;
 mod scoped;
 mod stream;
-mod work_history;
 pub use consent::ConsentRuling;
-pub use direction_history::{
-    DIRECTION_HISTORY_PAGE_SIZE, DirectionHistoryRequest, DirectionHistoryState, DirectionRef,
-    direction_history_authored_cutoff,
-};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::AppSurface;
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
-pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
 /// Whether a topology mutation response leaves the app owing an authoritative read.
@@ -469,8 +462,6 @@ pub struct AppRuntime {
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
     task_relations_revision: u64,
-    direction_history: DirectionHistoryState,
-    work_history: WorkHistoryState,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -514,8 +505,6 @@ impl AppRuntime {
             task_details: BTreeMap::new(),
             task_relations: BTreeMap::new(),
             task_relations_revision: 0,
-            direction_history: DirectionHistoryState::default(),
-            work_history: WorkHistoryState::default(),
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -571,10 +560,6 @@ impl AppRuntime {
             self.principal = Principal::admitted(accepted);
             self.message_reconnect_pending = true;
             self.terminal = None;
-            self.invalidate_direction_history();
-            if self.work_history.active() {
-                self.evict_work_history(true);
-            }
             self.reconnect_consent_rulings();
             self.abandon_member_commands();
             self.task_details.values_mut().for_each(refresh_task_detail);
@@ -852,7 +837,6 @@ impl AppRuntime {
             runtime
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
-            runtime.work_history.invalidate(false);
         });
     }
     /// Apply one correlated detail response without crossing capability scope.
@@ -1079,7 +1063,6 @@ pub struct Stale {
     consent: bool,
     task_details: BTreeSet<wire::TaskStamp>,
     task_relation_kinds: BTreeSet<TaskRelationKind>,
-    direction_history: bool,
 }
 
 impl Stale {
@@ -1095,7 +1078,6 @@ impl Stale {
         match kind.as_str().split_once("::") {
             Some(("steer", _)) => {
                 self.inbox = true;
-                self.direction_history = true;
             }
             // The inbox is keyed on the lane roster, not only on the steer
             // ledger: the resident builds one row per seated lane and carries
@@ -1153,22 +1135,6 @@ impl Stale {
         self.task_relation_kinds.clear();
     }
 
-    /// Re-read the newest matching Direction page after any steering mutation.
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_direction_history(&self, runtime: &mut AppRuntime, changed: bool) {
-        if changed && self.direction_history {
-            runtime.invalidate_direction_history();
-        }
-    }
-
-    /// Hold terminal paging until a changed task snapshot has been refreshed.
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_work_history(&self, runtime: &mut AppRuntime, changed: bool) {
-        if changed && self.board {
-            runtime.invalidate_work_history();
-        }
-    }
-
     /// Affected open task details, in durable identity order.
     pub fn task_details(&self) -> impl Iterator<Item = &wire::TaskStamp> {
         self.task_details.iter()
@@ -1220,7 +1186,6 @@ impl Stale {
             || self.consent
             || !self.task_details.is_empty()
             || !self.task_relation_kinds.is_empty()
-            || self.direction_history
     }
 }
 /// Projects current-read invalidation from live facts or complete backlog tails, never history pages.
