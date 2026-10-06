@@ -867,13 +867,31 @@ fn until_next_multiple(millis: i64, quantum: i64) -> i64 {
 pub fn first_nonquoted_prose(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim)
-        .find(|line| {
-            !line.is_empty()
-                && !line.starts_with('>')
-                && wire::QuoteTarget::from_markdown(line).is_err()
-                && !is_unavailable_quote_context(line)
-        })
+        .find(|line| is_authored_line(line))
         .map(ToOwned::to_owned)
+}
+
+/// First authored line of one directive context the resident quoted.
+///
+/// The resident presents an acknowledged directive as a blockquote, one `>`
+/// level per line, so its span is entirely quoted text. Removing exactly that
+/// presentation level leaves the directive as authored; any quote the
+/// directive itself borrowed keeps its own `>` and stays skipped.
+#[must_use]
+pub fn directive_context_prose(span: &str) -> Option<String> {
+    span.lines()
+        .map(|line| line.trim_start().strip_prefix('>').unwrap_or(line).trim())
+        .find(|line| is_authored_line(line))
+        .map(ToOwned::to_owned)
+}
+
+/// Whether one trimmed line is the author's own words rather than borrowed
+/// quote context.
+fn is_authored_line(line: &str) -> bool {
+    !line.is_empty()
+        && !line.starts_with('>')
+        && wire::QuoteTarget::from_markdown(line).is_err()
+        && !is_unavailable_quote_context(line)
 }
 
 /// Whether `line` is the exact structural marker emitted for a failed quote.
@@ -1043,9 +1061,9 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        direction_message_links, directive_author_is_quoteable, lane_accent,
-        quote_author_is_quoteable, quote_label, swap_members, task_elapsed_label,
-        task_elapsed_label_deadline_millis, task_remaining_label,
+        direction_message_links, directive_author_is_quoteable, directive_context_prose,
+        first_nonquoted_prose, lane_accent, quote_author_is_quoteable, swap_members,
+        task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
         ticker_chunks, tool_media_description, transfer_member,
     };
@@ -1262,9 +1280,21 @@ mod tests {
     }
 
     #[test]
-    fn absent_preview_has_one_documented_label() {
-        assert_eq!(quote_label(Some("author words")), "author words");
-        assert_eq!(quote_label(None), "quoted message");
+    fn a_directive_context_previews_its_authored_line_not_the_presentation_quote() {
+        // The resident quotes each directive line once; the preview is the
+        // directive as written, past its own borrowed quotes and blank lines.
+        let span = concat!(
+            "> > peer words\n>\n",
+            "> [quote](spice://quote/v1/steer/dVLN9Km2P/",
+            "45c4f18d377f09bc76f1bdb27883e1073f983eecc64dc911607a2e55fb38ee4d)\n",
+            "> keep the ladder",
+        );
+        assert_eq!(
+            directive_context_prose(span).as_deref(),
+            Some("keep the ladder")
+        );
+        assert_eq!(first_nonquoted_prose(span), None);
+        assert_eq!(directive_context_prose("> > only borrowed\n>"), None);
     }
 
     #[test]
