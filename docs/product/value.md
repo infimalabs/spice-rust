@@ -444,9 +444,11 @@ visibility-qualified project stem follows in-flight, ready, blocked, and
 deferred offer order, on the composer's dark surface rather than the brighter
 message stream. Each stem/task group carries the nested quote's narrower rail
 on both sides. Both treatments taper into 1em rounded top corners, with no top
-edge and an open square bottom; task handles carry no rails of their own. A
-group spans lanes and lifecycles, so its rails and open-count badge use the
-soft muted neutral. A handle working for a lane mixes a 5% tint of that lane's
+edge and an open square bottom; task handles carry no rails of their own. The
+rails share the colour of the status band's top rule they stand on, so each
+tab and that rule read as one stroke. A group spans lanes and lifecycles, so
+its open-count badge uses the soft muted neutral. A handle working for a lane
+mixes a 5% tint of that lane's
 accent into the composer surface; unworked targets tint in the muted neutral.
 Every target rises to a 10% tint on hover. Labels sit 10px in from either rail
 and 8px either side of each join. An 8px outer inset keeps flags clear of the

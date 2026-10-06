@@ -452,9 +452,11 @@ badge-only `task-pill--total` carries matching inline-start and inline-end rails
 at the message card's `--message-rail` width. Each following stem/task group
 uses the nested quote's narrower `--quote-rail` width on both sides. Both rail
 treatments taper into 1em top corners, with no top edge and a square open
-bottom; no handle carries a rail of its own. A group spans lanes and
-lifecycles, so both rails and the `task-pill-count` badge use the soft
-`--muted` neutral. The stem label is muted at reduced opacity; unworked handles
+bottom; no handle carries a rail of its own. Both rails take `--line`, the
+colour of the status band's top rule they stand on, so each tab and that rule
+read as one stroke. A group spans lanes and lifecycles, so the
+`task-pill-count` badge uses the soft `--muted` neutral. The stem label is
+muted at reduced opacity; unworked handles
 are muted, dormant ones weaker. A handle a lane is working names that lane in
 its text, the lane accent mixed 55% toward `--ink`, and in a 5% tint of the
 accent mixed into `--control`; unworked targets tint in `--muted`. In-flight
