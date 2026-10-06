@@ -143,12 +143,14 @@ column midpoint, so they read as one phrase such as "quiet drain" or "narrate
 steer". The transparent slider wrappers draw no backgrounds, borders, inset
 shadows, or center divider. Quiet and Steer use the neutral muted token, Speak
 and Drive keep the green accent, and Narrate and Drain keep the yellow/gold
-warning accent. The whole team composer form is one pane of the shared overlay
+warning accent. The member composers share one pane of the shared overlay
 glass, the overlay veil over the overlay frost, so the stream scrolling beneath
-reads blurred through every draft and behind the send button and sliders. No
-composer, composer section, or control column paints a fill of its own, and the
-column draws no inline rule beside the drafts; it still continues their soft
-top rule. A lit draft tints the glass with 10% of its lane accent.
+reads blurred through every draft. No composer or composer section paints a
+fill of its own; a lit draft tints the glass with 10% of its lane accent. The
+control column beside them paints an opaque field, the overlay veil over the
+stream surface, so at rest it reads as the same glass and parts from the
+composers only once cards scroll beneath the band. A faint inline rule marks
+its start beside the drafts, and it continues their soft top rule.
 At the 10rem minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
 height remains the Chat plane's collapse distance and top spacer. Focus
@@ -217,7 +219,7 @@ quote, or an image, the sliders and send button step back like inactive
 controls: they dim and their visual children desaturate, while send is disabled
 because there is nothing to send. The slider wrappers themselves remain
 unfiltered so the labels keep their control-frame-relative baseline and center
-gap. The glass behind them does not dim or change colour. The
+gap. The field behind them does not dim or change colour. The
 sliders stay usable. Drafting anything, or any agent running, lights the controls
 again. Typed text lives in each composer element, so the frame alone
 follows it: every composer change, including a value the app writes on mount,
@@ -485,8 +487,8 @@ The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
 status band, while the team surface frames nothing around them. The 56px
 circular send button remains centered in its independent 80px physical-right
-composer-control column. That column shares the composer form's frosted glass
-and continues the composers' soft top rule above the send button. The status band's
+composer-control column. That column's opaque field matches the composers'
+glass at rest and continues their soft top rule above the send button. The status band's
 matching 80px segment aligns directly above it, shares the ticker's
 stream-surface fill and stronger top rule, and centers up to six 8px pips in
 the same local right-to-left order as the composer columns. When a composer is
