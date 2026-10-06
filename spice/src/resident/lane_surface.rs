@@ -575,7 +575,7 @@ fn admit_seat(
             "drain the existing lane or choose another linked worktree",
         ));
     }
-    validate_worktree(paths, &request.worktree).map_err(typed_outcome)?;
+    admit_worktree(paths, &request.worktree).map_err(typed_outcome)?;
     Ok((observed, topology_revision))
 }
 
@@ -1148,7 +1148,14 @@ pub(super) fn recall(
     })
 }
 
-fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> {
+/// Admit only a durable lane worktree root inside this resident's Git common
+/// directory. Every seat and every occupant launch passes here before touching
+/// the worktree, so a resident started on a copied journal parks lanes that
+/// name another repository's worktrees instead of driving them.
+pub(in crate::resident) fn admit_worktree(
+    paths: &RuntimePaths,
+    worktree: &str,
+) -> CommandResult<Repository> {
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
     if repository.common_dir() != paths.common {
@@ -1171,5 +1178,5 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
             ),
         )));
     }
-    Ok(())
+    Ok(repository)
 }

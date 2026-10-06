@@ -32,6 +32,8 @@ pub(super) mod terminal;
 #[cfg(test)]
 pub(super) mod test_support;
 
+#[cfg(all(unix, not(test)))]
+use super::lane_surface::admit_worktree;
 use super::lane_surface::{
     OccupantLaunchRequest, SessionProofError, await_session, occupant_launch,
 };
@@ -273,6 +275,9 @@ pub(super) fn launch_direct(
 
 #[cfg(all(unix, not(test)))]
 fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> CommandResult<Launch> {
+    // The detached child derives its runtime paths from this worktree, so its
+    // own admission cannot tell a foreign repository apart; admit it here.
+    admit_worktree(paths, request.worktree)?;
     let directory = supervisor_directory(paths, request.lane, request.occupant);
     fs::create_dir_all(&directory).map_err(|error| {
         environment_fault("lane::supervisor-state-unavailable", &error.to_string())
