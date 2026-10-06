@@ -31,7 +31,7 @@ impl Attribution {
     fn lead_html(&self, quote_depth: usize) -> String {
         format!(
             "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
-             style=\"--message-quote-depth:{quote_depth}\"></span>\
+             data-message-quote-depth=\"{quote_depth}\"></span>\
              <p class=\"message-attribution\">{}{}</p>",
             super::escape_html_attribute(&self.controls_target),
             self.signoff,
