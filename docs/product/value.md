@@ -630,14 +630,14 @@ this team), Drain (draw all otherwise assignable work): three values, a
 **server-side allocation lifetime** whose eligibility the client never
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
-request shows as pending, also on the submit label, until the command settles.
+request shows as pending on the lifetime control until the command settles.
 Beside the draft, one compact framed control holds the quiet/speak/narrate
 speech dial and the lifetime dial in two upper columns of vertical ranges, the
 current values set above the frame as one phrase, speech ending and lifetime
 starting at the center divider. Minimum remains at the bottom and maximum
-at the top. One divider-separated, full-width send action below them names the
-current lifetime; the frame uses the same restrained corners as the adjacent
-draft rather than pill geometry.
+at the top. The send action says `Send` in every lifetime while its color
+continues to identify Steer, Drive, or Drain; the frame uses the same restrained
+corners as the adjacent draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.
