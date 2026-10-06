@@ -863,12 +863,21 @@ fn until_next_multiple(millis: i64, quantum: i64) -> i64 {
 /// first raw line is not necessarily something the resident wrote. Trimming
 /// before classification handles indented context, and returning `None` for a
 /// message containing only context lets the caller continue into older messages.
-#[must_use]
-pub fn first_nonquoted_prose(text: &str) -> Option<String> {
+fn first_authored_prose_line(text: &str) -> Option<&str> {
     text.lines()
         .map(str::trim)
         .find(|line| is_authored_line(line))
-        .map(ToOwned::to_owned)
+}
+
+#[must_use]
+pub fn first_nonquoted_prose(text: &str) -> Option<String> {
+    first_authored_prose_line(text).map(ToOwned::to_owned)
+}
+
+/// Whether a message contains words eligible for a composer prose heading.
+#[must_use]
+pub fn has_authored_prose(text: &str) -> bool {
+    first_authored_prose_line(text).is_some()
 }
 
 /// First authored line of one directive context the resident quoted.
@@ -934,6 +943,26 @@ pub fn latest_lane_prose<'a>(
             message.lane == lane && message.activity == wire::AgentActivityKind::Prose
         })
         .find_map(|message| first_nonquoted_prose(&message.text).map(|prose| (message, prose)))
+}
+/// Whether one visible history frontier should issue a page request.
+///
+/// Missing composer prose is an independent consumer demand, so it may advance
+/// through a newly exposed offscreen frontier. It does not reissue an already
+/// recorded frontier; only a fresh viewport gesture can reissue its request.
+#[must_use]
+pub fn history_frontier_request_due(
+    requested_completion: Option<u64>,
+    completion: u64,
+    fresh_demand: bool,
+    prose_missing: bool,
+    at_edge: bool,
+    orphaned: bool,
+    frontier_near: bool,
+) -> bool {
+    if !(prose_missing || at_edge || orphaned || frontier_near) {
+        return false;
+    }
+    requested_completion.is_none_or(|requested| fresh_demand && requested < completion)
 }
 
 /// Display the producer's preview or the explicit absent-preview label.

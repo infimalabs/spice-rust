@@ -3,10 +3,10 @@ use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT, TeamDrop,
     UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, elapsed_label,
-    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
-    member_presence, one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
-    short, split_member, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks,
-    ticker_line, topology, truncate,
+    elapsed_label_deadline_millis, first_nonquoted_prose, history_frontier_request_due, jobs_kept,
+    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
+    remaining_label_deadline_millis, reported_tasks, short, split_member, standing_title,
+    standings, task_mentions, team_jobs, teams, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -941,6 +941,36 @@ fn ineligible_own_activity_yields_older_own_prose_never_a_peer_message() {
         latest_lane_prose(uuid(LANE_A), only_ineligible.iter()),
         None
     );
+}
+#[test]
+fn missing_composer_prose_demands_only_successive_history_frontiers() {
+    assert!(history_frontier_request_due(
+        None, 4, false, true, false, false, false,
+    ));
+    assert!(!history_frontier_request_due(
+        Some(4),
+        5,
+        false,
+        true,
+        false,
+        false,
+        false,
+    ));
+    assert!(!history_frontier_request_due(
+        None, 4, false, false, false, false, false,
+    ));
+    assert!(history_frontier_request_due(
+        None, 4, false, false, true, false, false,
+    ));
+    assert!(history_frontier_request_due(
+        Some(4),
+        5,
+        true,
+        false,
+        true,
+        false,
+        false,
+    ));
 }
 
 #[test]
