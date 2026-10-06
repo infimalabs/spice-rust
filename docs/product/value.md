@@ -436,24 +436,23 @@ surface above the team's panel. Open work occupies the full first row. The
 second row is one status band whose ticker leads into the physical-right pip
 segment; neither row has a hamburger.
 
-A badge-only flag in the same style leads the band: its single badge counts
-every open task the team header shows, equal to the sum of the stem badges
-and to the number of task handles, and opens that team's all-task Work page.
-Then one compact tab-shaped flag per visibility-qualified project stem follows
-in-flight, ready, blocked, and deferred offer order, on the composer's dark
-surface rather than the brighter message stream. Each flag carries matching
-rails at the message card's width on both sides that taper into 1em rounded
-top corners, with no top edge and an open square bottom; its task handles
-carry no rails of their own. A group spans
-lanes and lifecycles, so its rails and open-count badge use the soft muted
-neutral. A handle working for a lane mixes a 5% tint of that lane's accent
-into the composer surface; unworked targets tint in the muted neutral. Every
-target rises to a 10% tint on hover. Labels sit 10px in from either rail and
-8px either side of each join. An 8px outer inset keeps flags clear of the
+A badge-only flag leads the band: its single badge counts every open task the
+team header shows, equal to the sum of the stem badges and to the number of
+task handles, and opens that team's all-task Work page. It alone carries the
+message card's wider rail on both sides. Then one compact tab-shaped flag per
+visibility-qualified project stem follows in-flight, ready, blocked, and
+deferred offer order, on the composer's dark surface rather than the brighter
+message stream. Each stem/task group carries the nested quote's narrower rail
+on both sides. Both treatments taper into 1em rounded top corners, with no top
+edge and an open square bottom; task handles carry no rails of their own. A
+group spans lanes and lifecycles, so its rails and open-count badge use the
+soft muted neutral. A handle working for a lane mixes a 5% tint of that lane's
+accent into the composer surface; unworked targets tint in the muted neutral.
+Every target rises to a 10% tint on hover. Labels sit 10px in from either rail
+and 8px either side of each join. An 8px outer inset keeps flags clear of the
 browser edge, and neighbouring stem groups are separated by the message
-stream's gap between lanes. The band
-scrolls horizontally when its labels outgrow the available width, without
-overlapping the status row or its pips.
+stream's gap between lanes. The band scrolls horizontally when its labels
+outgrow the available width, without overlapping the status row or its pips.
 
 The stem label appears once and opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the team's work to that
