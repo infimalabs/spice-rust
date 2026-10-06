@@ -436,20 +436,19 @@ surface above the team's panel. Open work occupies the full first row. The
 second row is one status band whose ticker leads into the physical-right pip
 segment; neither row has a hamburger or aggregate team-task count.
 
-One compact square flag per visibility-qualified project stem follows in-flight,
-ready, blocked, and deferred offer order, on the composer's dark surface rather
-than the brighter message stream. A flag echoes the message cards: it opens
-with a rail at the message card's width on its stem and closes with a rail at
-the quote's width after its last task handle, with no other rails, enclosing
-perimeter, or rounded corners. A group spans lanes and lifecycles, so both
-rails and the open-count badge use the soft muted neutral. A handle working for
-a lane mixes a 5% tint of that lane's accent into the composer surface;
-unworked targets tint in the muted neutral. Every target rises to a 10% tint on
-hover. Each task handle keeps 8px
-on both sides, and the stem ends with the same 8px. An 8px outer inset keeps
-flags clear of the browser edge, and neighbouring stem groups are separated by
-the message stream's gap between lanes, giving a thick-rail, labels,
-thin-rail, gap cadence. The band
+One compact tab-shaped flag per visibility-qualified project stem follows
+in-flight, ready, blocked, and deferred offer order, on the composer's dark
+surface rather than the brighter message stream. Each flag carries matching
+rails at the message card's width on both sides, the same faint line that
+separates whole teams across its top, 1em rounded top corners, and an open
+square bottom; its task handles carry no rails of their own. A group spans
+lanes and lifecycles, so its rails and open-count badge use the soft muted
+neutral. A handle working for a lane mixes a 5% tint of that lane's accent
+into the composer surface; unworked targets tint in the muted neutral. Every
+target rises to a 10% tint on hover. Labels sit 10px in from either rail and
+8px either side of each join. An 8px outer inset keeps flags clear of the
+browser edge, and neighbouring stem groups are separated by the message
+stream's gap between lanes. The band
 scrolls horizontally when its labels outgrow the available width, without
 overlapping the status row or its pips.
 

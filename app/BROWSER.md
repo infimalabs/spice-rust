@@ -439,21 +439,21 @@ distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The global task strip keeps its joined
 `task-pill-strip app-control-rail` pill treatment. Team-local work instead
-forms square message-card flags in the task band, on the composer's dark
-`--control` surface rather than the brighter message-stream surface: each stem
-group opens with an inline-start rail at the message card's `--message-rail`
-width on its stem and closes with an inline-end rail at the quote's
-`--quote-rail` width on its last task handle; no other handle carries a rail,
-and there is no enclosing top or bottom edge and no rounded corners. A group
+forms tab-shaped flags in the task band, on the composer's dark `--control`
+surface rather than the brighter message-stream surface: each stem group
+carries matching inline-start and inline-end rails at the message card's
+`--message-rail` width, a top edge of the fleet's faint team-separator
+`--app-control-edge`, 1em top corners, and a square open bottom; no handle
+carries a rail of its own. A group
 spans lanes and lifecycles, so both rails and the `task-pill-count` badge use
 the soft `--muted` neutral. The stem label is muted at reduced opacity;
 unworked handles are muted, dormant ones weaker. A handle a lane is working
 names that lane in its text, the lane accent mixed 55% toward `--ink`, and in a
 5% tint of the accent mixed into `--control`; unworked targets tint in
 `--muted`. In-flight handles are not dimmed, because text and tint carry
-ownership. Every target rises to a 10% tint on hover. The stem
-keeps the group's 10px outer inline-start inset and ends with 8px; every
-handle has 8px on each side. An 8px outer inset keeps the flags off the
+ownership. Every target rises to a 10% tint on hover. Labels sit 10px in from
+either rail: the stem starts and the last handle ends with 10px, and every
+other join has 8px on each side. An 8px outer inset keeps the flags off the
 browser edge, and adjacent stem groups are separated by the message stream's
 inter-lane `--mosaic-gap`; neither joins the status rule below.
 There is no team total; a team holds at most six members.
