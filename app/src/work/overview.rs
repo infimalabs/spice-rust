@@ -67,6 +67,16 @@ impl TaskOverviewSelection {
         Self::new([task], TaskOverviewContext::Task)
     }
 
+    /// Extend this exact selection with one relationship lead, preserving the
+    /// admitted root order before the new task.
+    #[must_use]
+    pub fn with_related_task(&self, task: TaskStamp) -> Self {
+        Self::new(
+            self.tasks.iter().cloned().chain([task.clone()]),
+            TaskOverviewContext::Relationships(task),
+        )
+    }
+
     #[must_use]
     pub fn tasks(&self) -> &[TaskStamp] {
         &self.tasks
@@ -295,6 +305,20 @@ mod tests {
             TaskOverviewContext::Task,
         );
         assert_eq!(selection.tasks(), &[stamp(2), first]);
+    }
+
+    #[test]
+    fn single_and_relationship_entries_keep_exact_root_identity() {
+        let single = TaskOverviewSelection::task(stamp(1));
+        assert_eq!(single.tasks(), &[stamp(1)]);
+        assert_eq!(single.context(), &TaskOverviewContext::Task);
+
+        let related = single.with_related_task(stamp(2));
+        assert_eq!(related.tasks(), &[stamp(1), stamp(2)]);
+        assert_eq!(
+            related.context(),
+            &TaskOverviewContext::Relationships(stamp(2)),
+        );
     }
 
     #[test]
