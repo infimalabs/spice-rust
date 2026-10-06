@@ -368,6 +368,10 @@ after that compact attribution sequence on the same line.
 When that opening run continues into another paragraph, the later paragraph
 keeps the ordinary Markdown paragraph gap; making the first paragraph inline
 for attribution does not collapse the boundary between them.
+Within each paragraph, ordinary browser whitespace collapsing applies. The
+Markdown structure owns authored paragraph, break, list, quote, and code
+boundaries; paragraph CSS does not reinterpret source spacing as preformatted
+flow.
 
 All images associated with the hunk are consolidated next, floated at the
 inline start, and followed by the remaining prose. A nested quote interrupts
