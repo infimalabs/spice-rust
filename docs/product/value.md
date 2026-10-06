@@ -439,9 +439,9 @@ segment; neither row has a hamburger or aggregate team-task count.
 One compact tab-shaped flag per visibility-qualified project stem follows
 in-flight, ready, blocked, and deferred offer order, on the composer's dark
 surface rather than the brighter message stream. Each flag carries matching
-rails at the message card's width on both sides, the same faint line that
-separates whole teams across its top, 1em rounded top corners, and an open
-square bottom; its task handles carry no rails of their own. A group spans
+rails at the message card's width on both sides that taper into 1em rounded
+top corners, with no top edge and an open square bottom; its task handles
+carry no rails of their own. A group spans
 lanes and lifecycles, so its rails and open-count badge use the soft muted
 neutral. A handle working for a lane mixes a 5% tint of that lane's accent
 into the composer surface; unworked targets tint in the muted neutral. Every

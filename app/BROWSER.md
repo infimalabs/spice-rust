@@ -442,9 +442,8 @@ bottom, and outer-edge insets. The global task strip keeps its joined
 forms tab-shaped flags in the task band, on the composer's dark `--control`
 surface rather than the brighter message-stream surface: each stem group
 carries matching inline-start and inline-end rails at the message card's
-`--message-rail` width, a top edge of the fleet's faint team-separator
-`--app-control-edge`, 1em top corners, and a square open bottom; no handle
-carries a rail of its own. A group
+`--message-rail` width that taper into 1em top corners, with no top edge and a
+square open bottom; no handle carries a rail of its own. A group
 spans lanes and lifecycles, so both rails and the `task-pill-count` badge use
 the soft `--muted` neutral. The stem label is muted at reduced opacity;
 unworked handles are muted, dormant ones weaker. A handle a lane is working
