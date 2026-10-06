@@ -325,7 +325,7 @@ target rather than forming a second, actionless card kind. Each hunk also
 opens with a zero-width presentational prop two lines tall, so the hunk's
 associated image row, which clears both sides before floating inline-start,
 always starts below the first two lines whether or not the island is present
-or resized; paired images still share that row and fill it. Narrow cards
+or resized; paired images still share that row. Narrow cards
 preserve the same ordering instead of adding a separate controls header.
 
 Committed message cards sit in one lattice whose 9px perimeter and row and
@@ -371,10 +371,12 @@ ordinary in-flow layouts.
 
 Each hunk consolidates its associated images into one inline-start row after
 attribution. The row alone clears inline-end controls; prose then wraps beside
-a single image using ordinary CSS flow-root geometry. A multi-image row fills
-its hunk, keeps the standard 7px gap, and shares that definite width at narrow
-widths, so its frames are the same before and after the images load and the
-card measures once at its final height.
+it using ordinary CSS flow-root geometry, whether it holds one image or
+several. A multi-image row keeps the standard 7px gap and each image's
+definite preferred width, so it floats only as wide as its images and its
+frames are the same before and after they load; at narrow widths the squares
+shrink evenly to share the hunk, and the card measures once at its final
+height.
 
 ## Attribution placement
 
