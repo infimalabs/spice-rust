@@ -446,6 +446,7 @@
   --team-task-band: calc(var(--team-control-submit-block-size) - var(--team-status-band));
   --team-header-size: var(--team-control-submit-block-size);
   --team-chamber-inset: 8px;
+  --mosaic-gap: 9px; /* Between stream lanes, and between task stem groups. */
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling team surfaces. */
@@ -506,16 +507,16 @@
 }
 .team-toolbar > .team-lights:empty { display: none; }
 /* One square message-card flag per task stem occupies the first row. An 8px
-   outer inset keeps the flags off the team/browser edge, and 4px separates
-   sibling stem groups. Overflow scrolls inside this band without entering the
-   status and pip row below. */
+   outer inset keeps the flags off the team/browser edge, and the message
+   stream's inter-lane gap separates sibling stem groups. Overflow scrolls
+   inside this band without entering the status and pip row below. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
   z-index: 1;
   display: flex;
   align-self: end;
   align-items: flex-end;
-  gap: 4px;
+  gap: var(--mosaic-gap);
   min-width: 0;
   margin: 0 8px;
   overflow: auto hidden;
@@ -1048,7 +1049,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
   --mosaic-edge-gutter: var(--mosaic-gap);
-  --mosaic-gap: 9px;
   --mosaic-module: 3.75rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
