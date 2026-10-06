@@ -462,7 +462,10 @@ either rail: the stem starts and the last handle ends with 10px, and every
 other join has 8px on each side. An 8px outer inset keeps the flags off the
 browser edge, and adjacent stem groups are separated by the message stream's
 inter-lane `--mosaic-gap`; neither joins the status rule below.
-There is no team total; a team holds at most six members.
+A badge-only `task-pill--total` flag leads the band. Its sole
+`task-pill-count` badge counts every task the band shows, which is the sum of
+the stem badges and the number of handles, and opens the team's all-task Work
+scope, `#/work/team/{team}`.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one

@@ -434,9 +434,12 @@ Each team header is a fixed-height grid with no surrounding chrome of its own:
 no background, border, or shadow, so its content sits directly on the app
 surface above the team's panel. Open work occupies the full first row. The
 second row is one status band whose ticker leads into the physical-right pip
-segment; neither row has a hamburger or aggregate team-task count.
+segment; neither row has a hamburger.
 
-One compact tab-shaped flag per visibility-qualified project stem follows
+A badge-only flag in the same style leads the band: its single badge counts
+every open task the team header shows, equal to the sum of the stem badges
+and to the number of task handles, and opens that team's all-task Work page.
+Then one compact tab-shaped flag per visibility-qualified project stem follows
 in-flight, ready, blocked, and deferred offer order, on the composer's dark
 surface rather than the brighter message stream. Each flag carries matching
 rails at the message card's width on both sides that taper into 1em rounded

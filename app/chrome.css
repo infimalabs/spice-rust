@@ -199,6 +199,8 @@ body:has(.shell--mosaic),
 .team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
 /* Labels sit 8px apart from each other and 10px in from either rail. */
 .team-tasks .task-pill--project > .task-pill-stem-target { padding-inline-end: 8px; }
+/* The badge-only team total keeps its badge 10px in from either rail. */
+.team-tasks .task-pill--total > .task-pill-stem-target { padding-inline: 10px; }
 .team-tasks .task-pill--project > .task-pill-handle {
   padding-inline: 8px;
   opacity: 1;
