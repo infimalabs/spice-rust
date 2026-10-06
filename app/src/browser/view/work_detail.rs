@@ -1,11 +1,10 @@
-//! Contextual detail drawer for one durable Work task identity over any page.
+//! Graph-first contextual overview for one complete selected task set.
 
 use super::super::clock::{TaskTimePresentation, task_time};
 use super::super::work_card;
 use super::*;
-use crate::TaskRelationsState;
 use crate::runtime::LaneView;
-use crate::work::{WorkProjection, WorkScope, WorkTask};
+use crate::work::{TaskOverviewSelection, WorkProjection, WorkScope, WorkTask};
 use wire::TaskStamp;
 
 pub(super) struct WorkDetailRender<'a, 'work> {
@@ -14,30 +13,22 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub lanes: Option<&'a LaneView>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
-    pub selected: Option<&'a TaskStamp>,
+    pub selection: &'a TaskOverviewSelection,
     pub presented: bool,
     pub closing: bool,
     pub map: &'a UseStateHandle<work_map::WorkMapState>,
-    pub detail: Option<&'a TaskDetailState>,
-    pub relations: Option<&'a TaskRelationsState>,
-    pub can_read_relations: bool,
+    pub runtime: Option<&'a AppRuntime>,
     pub can_note: bool,
     pub can_close: bool,
     pub close_ref: &'a NodeRef,
     pub sheet_ref: &'a NodeRef,
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
-    pub select_task: Callback<TaskStamp>,
     pub request_task: Callback<TaskStamp>,
     pub close: Callback<()>,
-    pub retry_relations: Callback<MouseEvent>,
 }
 
 pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
-    let Some(selected) = render.selected else {
-        return Html::default();
-    };
-    let map_open = render.map.mode() == work_map::WorkDetailMode::Map;
     let close_click = render.close.reform(|_: MouseEvent| ());
     let state = if render.closing {
         "closing"
@@ -46,6 +37,8 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     } else {
         "opening"
     };
+    let focus_task = focus_task_callback();
+    let count = render.selection.tasks().len();
     html! {
         <div
             class="work-detail-layer"
@@ -55,62 +48,94 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
             <button
                 type="button"
                 class="work-detail-backdrop"
-                aria-label="Close task detail"
+                aria-label="Close task overview"
                 onclick={close_click.clone()}
             ></button>
             <aside
                 ref={render.sheet_ref.clone()}
-                class={classes!("work-detail", map_open.then_some("work-detail--map"))}
+                class="work-detail work-detail--overview"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-detail-title"
-                data-task-stamp={selected.to_string()}
+                data-task-count={count.to_string()}
+                data-task-stamps={render.selection.tasks().iter().map(ToString::to_string).collect::<Vec<_>>().join(" ")}
             >
                 <header class="work-detail-header">
                     <div>
-                        <p class="work-detail-kicker">{if map_open { "Task map" } else { "Task detail" }}</p>
-                        <h2 id="work-detail-title">{detail_title(render.detail, selected)}</h2>
+                        <p class="work-detail-kicker">{"Task overview"}</p>
+                        <h2 id="work-detail-title">{overview_title(render.selection)}</h2>
                     </div>
                     <button
                         ref={render.close_ref.clone()}
                         type="button"
                         class="work-detail-close app-compact-control"
-                        aria-label="Close task detail"
+                        aria-label="Close task overview"
                         onclick={close_click}
                     >{"Close"}</button>
                 </header>
-                {work_map::render_tabs(render.map, selected)}
-                <div
-                    id="work-detail-panel"
-                    class="work-detail-panel"
-                    role="tabpanel"
-                    aria-labelledby="work-detail-tab"
-                    aria-hidden={map_open.to_string()}
-                    hidden={map_open}
-                >
-                    {render_detail_body(&render, selected)}
-                </div>
-                <div
-                    id="work-map-panel"
-                    class="work-detail-panel"
-                    role="tabpanel"
-                    aria-labelledby="work-map-tab"
-                    aria-hidden={(!map_open).to_string()}
-                    hidden={!map_open}
-                >
-                    {work_map::render(work_map::WorkMapRender {
-                        selected,
-                        state: render.map,
-                        select_task: render.select_task.clone(),
-                        relations: render.relations,
-                        can_read_relations: render.can_read_relations,
-                        retry: render.retry_relations.clone(),
-                        work: render.work,
-                    })}
-                </div>
+                {work_map::render(work_map::WorkMapRender {
+                    selection: render.selection,
+                    state: render.map,
+                    focus_task: focus_task.clone(),
+                    work: render.work,
+                })}
+                <section class="work-overview-details" aria-labelledby="work-overview-details-title">
+                    <div class="work-map-heading">
+                        <h3 id="work-overview-details-title">{"Task details"}</h3>
+                        <span>{format!("{count} selected")}</span>
+                    </div>
+                    if render.selection.is_empty() {
+                        <p class="work-map-empty">{"No task details exist for this selection."}</p>
+                    } else {
+                        {for render.selection.tasks().iter().map(|task| {
+                            let detail = render.runtime.and_then(|runtime| runtime.task_detail(task));
+                            html! {
+                                <article
+                                    key={task.to_string()}
+                                    class="work-overview-task"
+                                    data-task-stamp={task.to_string()}
+                                    tabindex="-1"
+                                    aria-labelledby={format!("work-overview-task-title-{task}")}
+                                >
+                                    <div class="work-overview-task-heading">
+                                        <p class="work-detail-kicker">{"Selected task"}</p>
+                                        <h3 id={format!("work-overview-task-title-{task}")}>
+                                            {detail_title(detail, task)}
+                                        </h3>
+                                    </div>
+                                    {render_detail_body(&render, task, detail, &focus_task)}
+                                </article>
+                            }
+                        })}
+                    }
+                </section>
             </aside>
         </div>
     }
+}
+
+fn overview_title(selection: &TaskOverviewSelection) -> String {
+    let count = selection.tasks().len();
+    format!(
+        "{} · {count} {}",
+        selection.context().label(),
+        if count == 1 { "task" } else { "tasks" },
+    )
+}
+fn focus_task_callback() -> Callback<TaskStamp> {
+    Callback::from(move |task: TaskStamp| {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let selector = format!(".work-overview-task[data-task-stamp=\"{task}\"]");
+        let Some(element) = document.query_selector(&selector).ok().flatten() else {
+            return;
+        };
+        element.scroll_into_view();
+        if let Ok(element) = element.dyn_into::<web_sys::HtmlElement>() {
+            let _ = element.focus();
+        }
+    })
 }
 
 fn detail_title(detail: Option<&TaskDetailState>, selected: &TaskStamp) -> String {
@@ -120,8 +145,13 @@ fn detail_title(detail: Option<&TaskDetailState>, selected: &TaskStamp) -> Strin
     )
 }
 
-fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -> Html {
-    match render.detail {
+fn render_detail_body(
+    render: &WorkDetailRender<'_, '_>,
+    selected: &TaskStamp,
+    detail: Option<&TaskDetailState>,
+    focus_task: &Callback<TaskStamp>,
+) -> Html {
+    match detail {
         None | Some(TaskDetailState::Loading) => html! {
             <div class="work-detail-loading" role="status">
                 <span class="work-detail-spinner" aria-hidden="true"></span>
@@ -136,7 +166,7 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
             };
             html! {
                 <div class="work-detail-problem" role="alert">
-                    <h3>{"Task detail unavailable"}</h3>
+                    <h4>{"Task detail unavailable"}</h4>
                     <p><code>{reason}</code></p>
                     if let Some(detail) = detail {
                         <p>{detail}</p>
@@ -146,7 +176,7 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
             }
         }
         Some(TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer)) => {
-            render_available(render, answer)
+            render_available(render, answer, focus_task)
         }
     }
 }
@@ -154,6 +184,7 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
 fn render_available(
     render: &WorkDetailRender<'_, '_>,
     answer: &wire::intent::TaskDetailAnswer,
+    focus_task: &Callback<TaskStamp>,
 ) -> Html {
     let row = &answer.task;
     let statement = &row.statement.body;
@@ -182,8 +213,8 @@ fn render_available(
     html! {
         <div
             class="work-detail-content"
-            onclick={task_detail::task_text_chip_click(&render.select_task)}
-            onkeydown={task_detail::task_text_chip_keydown(&render.select_task)}
+            onclick={task_detail::task_text_chip_click(focus_task)}
+            onkeydown={task_detail::task_text_chip_keydown(focus_task)}
         >
             <div class="work-detail-identity">
                 <code>{statement.handle.to_string()}</code>
@@ -204,7 +235,7 @@ fn render_available(
             <crate::browser::toast::Notice message={scope_notice.map(AttrValue::from)} />
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
-                {task_detail::render_contract(statement, |task| board_has(render.work, task), true)}
+                {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
             </section>
             {task_detail::render_media(&answer.media)}
             <section class="work-detail-section">
@@ -226,7 +257,7 @@ fn render_available(
             </section>
             <section class="work-detail-section">
                 <h3>{"Relationships"}</h3>
-                {render_relationships(render.work, projected, statement, &render.select_task)}
+                {render_relationships(render.work, projected, statement, render.selection, focus_task)}
             </section>
             <section class="work-detail-section">
                 <h3>{"Provenance"}</h3>
@@ -242,9 +273,6 @@ fn render_available(
                 {render_git_context(row)}
             </section>
             {render_activity(render, answer)}
-            <button type="button" class="work-detail-back app-compact-control" onclick={render.close.reform(|_: MouseEvent| ())}>
-                {"Back to Work"}
-            </button>
         </div>
     }
 }
@@ -264,7 +292,7 @@ fn render_activity(
             {task_detail::render_closure_record(
                 answer.closure.as_ref(),
                 |actor| work_card::actor_name(actor, render.lanes),
-                |task| board_has(render.work, task),
+                |task| selection_has(render.selection, task),
             )}
             if answer.notes.is_empty() {
                 <p class="muted">{"No observations have been recorded."}</p>
@@ -278,13 +306,13 @@ fn render_activity(
                                 </strong>
                                 {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                             </header>
-                            {task_detail::render_task_text(&note.text, "work-note-body", |task| board_has(render.work, task))}
+                            {task_detail::render_task_text(&note.text, "work-note-body", |task| selection_has(render.selection, task))}
                         </li>
                     })}
                 </ol>
             }
             {task_detail::render_note_composer(
-                "work-detail-note",
+                format!("work-detail-note-{}", statement.born),
                 statement.handle.as_str(),
                 &statement.born,
                 render.can_note,
@@ -473,18 +501,25 @@ fn render_relationships(
     work: &WorkProjection<'_>,
     task: Option<&WorkTask<'_>>,
     statement: &wire::intent::BoardStatement,
-    select: &Callback<TaskStamp>,
+    selection: &TaskOverviewSelection,
+    focus: &Callback<TaskStamp>,
 ) -> Html {
     let dependencies = statement
         .dependencies
         .iter()
-        .map(|born| render_task_link(work, born, "Dependency", select));
+        .map(|born| render_task_link(work, born, "Dependency", selection, focus));
     let dependents = task
         .into_iter()
         .flat_map(|task| task.dependents().iter())
         .map(|dependent| {
             let row = work.tasks()[dependent.task()].row();
-            render_task_link(work, &row.statement.body.born, "Dependent", select)
+            render_task_link(
+                work,
+                &row.statement.body.born,
+                "Dependent",
+                selection,
+                focus,
+            )
         });
     if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
         return html! { <p class="muted">{"No dependencies or dependents."}</p> };
@@ -492,37 +527,43 @@ fn render_relationships(
     html! { <div class="work-detail-links">{for dependencies.chain(dependents)}</div> }
 }
 
-/// Whether the admitted board holds `born`, so a contract chip can open it.
-fn board_has(work: &WorkProjection<'_>, born: &TaskStamp) -> bool {
-    work.tasks()
-        .iter()
-        .any(|task| task.row().statement.body.born == *born)
+fn selection_has(selection: &TaskOverviewSelection, born: &TaskStamp) -> bool {
+    selection.tasks().contains(born)
 }
 
 fn render_task_link(
     work: &WorkProjection<'_>,
     born: &TaskStamp,
     relationship: &'static str,
-    select: &Callback<TaskStamp>,
+    selection: &TaskOverviewSelection,
+    focus: &Callback<TaskStamp>,
 ) -> Html {
     let row = work
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == *born)
         .map(WorkTask::row);
-    let target = born.clone();
-    let activate = {
-        let select = select.clone();
-        Callback::from(move |_| select.emit(target.clone()))
-    };
-    html! {
-        <button type="button" class="work-detail-link" onclick={activate}>
-            <span>{relationship}</span>
+    let contents = html! {
+        <>
+            <span>{if selection_has(selection, born) { relationship } else { "Outside selection" }}</span>
             <strong>{row.map_or_else(|| born.to_string(), |row| row.statement.body.handle.to_string())}</strong>
             if let Some(row) = row {
                 <small>{row.presentation_title.clone()}</small>
             }
-        </button>
+        </>
+    };
+    if !selection_has(selection, born) {
+        return html! {
+            <article class="work-detail-link work-detail-link--external">{contents}</article>
+        };
+    }
+    let target = born.clone();
+    let activate = {
+        let focus = focus.clone();
+        Callback::from(move |_| focus.emit(target.clone()))
+    };
+    html! {
+        <button type="button" class="work-detail-link" onclick={activate}>{contents}</button>
     }
 }
 

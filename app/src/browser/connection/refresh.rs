@@ -183,30 +183,6 @@ pub(super) async fn send_task_detail(
     .map(Some)
 }
 
-pub(super) async fn send_task_relations(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    key: &crate::TaskRelationsKey,
-) -> Result<Option<CanonicalUuid>, String> {
-    if !SteerPane::over(principal).offers(CommandKind::TaskRelations)
-        || actions.has_task_relations(key)
-    {
-        return Ok(None);
-    }
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::TaskRelations { key: key.clone() },
-        CommandKind::TaskRelations,
-        vec![],
-        key.request(),
-    )
-    .await
-    .map(Some)
-}
-
 pub(super) async fn send_lanes(
     principal: &Principal,
     writer: &mut SocketWriter,

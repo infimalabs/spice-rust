@@ -97,9 +97,6 @@ pub(crate) enum PendingKind {
     TaskDetail {
         task: wire::TaskStamp,
     },
-    TaskRelations {
-        key: runtime::TaskRelationsKey,
-    },
     DirectionHistory {
         request: runtime::DirectionHistoryRequest,
     },
@@ -148,8 +145,7 @@ mod speech;
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     AppRuntime, BoardView, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, Stale,
-    StreamApplication, StreamDirective, StreamTerminal, TaskDetailState, TaskRelationsKey,
-    TaskRelationsState, stale_reads,
+    StreamApplication, StreamDirective, StreamTerminal, TaskDetailState, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

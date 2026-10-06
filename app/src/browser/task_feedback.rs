@@ -9,7 +9,6 @@ enum PendingFeedback {
     Closing { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
     DetailRefresh { task: TaskStamp },
-    RelationsRefresh { task: TaskStamp },
 }
 
 impl PendingFeedback {
@@ -19,8 +18,7 @@ impl PendingFeedback {
             | Self::NoteReconciling { task, .. }
             | Self::Closing { task, .. }
             | Self::Reconnecting { task }
-            | Self::DetailRefresh { task }
-            | Self::RelationsRefresh { task } => task,
+            | Self::DetailRefresh { task } => task,
         }
     }
 
@@ -39,9 +37,6 @@ impl PendingFeedback {
             Self::DetailRefresh { .. } => {
                 "Refreshing task evidence without closing this detail.".into()
             }
-            Self::RelationsRefresh { .. } => {
-                "Refreshing relationships without replacing this map.".into()
-            }
         }
     }
 
@@ -51,9 +46,7 @@ impl PendingFeedback {
                 Some(format!("Observation saved for {subject}.").into())
             }
             Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
-            Self::Reconnecting { .. }
-            | Self::DetailRefresh { .. }
-            | Self::RelationsRefresh { .. } => None,
+            Self::Reconnecting { .. } | Self::DetailRefresh { .. } => None,
         }
     }
 }
@@ -126,26 +119,24 @@ fn feedback(state: &AppState) -> Feedback {
             break;
         }
     }
-    let surface_pending = state.work_detail.selected.as_ref().and_then(|task| {
-        let detail = runtime.and_then(|runtime| runtime.task_detail(task));
-        if matches!(&*state.connection, Connection::Offline(_))
-            && detail.and_then(TaskDetailState::answer).is_some()
-        {
-            return Some(PendingFeedback::Reconnecting { task: task.clone() });
-        }
-        if state.work_map.map_open() {
-            let key = state.work_map.relations_key(task);
-            if matches!(
-                runtime.and_then(|runtime| runtime.task_relations(&key)),
-                Some(crate::TaskRelationsState::Refreshing(_))
-            ) {
-                return Some(PendingFeedback::RelationsRefresh { task: task.clone() });
+    let surface_pending = state
+        .work_detail
+        .selected
+        .as_ref()
+        .into_iter()
+        .flat_map(|selection| selection.tasks())
+        .find_map(|task| {
+            let detail = runtime.and_then(|runtime| runtime.task_detail(task));
+            if matches!(&*state.connection, Connection::Offline(_))
+                && detail.and_then(TaskDetailState::answer).is_some()
+            {
+                Some(PendingFeedback::Reconnecting { task: task.clone() })
+            } else if matches!(detail, Some(TaskDetailState::Refreshing(_))) {
+                Some(PendingFeedback::DetailRefresh { task: task.clone() })
+            } else {
+                None
             }
-        } else if matches!(detail, Some(TaskDetailState::Refreshing(_))) {
-            return Some(PendingFeedback::DetailRefresh { task: task.clone() });
-        }
-        None
-    });
+        });
     Feedback {
         pending: note_pending.or(surface_pending),
         settled: note_settled,

@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::browser::clock::{TaskTimePresentation, task_time};
+use crate::work::TaskOverviewSelection;
 pub(super) struct Controls {
-    pub selected: UseStateHandle<Option<TaskStamp>>,
+    pub selected: UseStateHandle<Option<TaskOverviewSelection>>,
     pub presented: UseStateHandle<bool>,
     pub closing: UseStateHandle<bool>,
     pub close_ref: NodeRef,
@@ -11,16 +12,19 @@ pub(super) struct Controls {
     /// Override the captured launch control with a stable surviving element.
     pub return_focus_to: Callback<web_sys::Element>,
     pub notes: NoteComposers,
+    /// Open one complete task set and read every selected task.
+    pub open: Callback<TaskOverviewSelection>,
+    /// Read one task again without changing the selected set.
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
-/// The task detail the current view asks for: the route's Work task, or a
-/// browser-local task opened over Dash or Chat.
+/// The overview the current view asks for: currently a route's singular task,
+/// with complete scoped sets admitted through browser-local overview controls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Request {
-    pub task: Option<TaskStamp>,
+    pub selection: Option<TaskOverviewSelection>,
     /// The view is a Chat card route, which owns focus: ending the request
     /// then drops the sheet without its close slide or focus return.
     pub leaving: bool,
@@ -37,7 +41,7 @@ pub(super) fn use_controls(
     requested: Request,
     close: Callback<()>,
 ) -> Controls {
-    let selected = use_state(|| None::<TaskStamp>);
+    let selected = use_state(|| None::<TaskOverviewSelection>);
     let return_focus = use_mut_ref(|| None::<web_sys::Element>);
     let presented = use_state_eq(|| false);
     let closing = use_state_eq(|| false);
@@ -49,13 +53,20 @@ pub(super) fn use_controls(
     };
     let ready = surface.read().is_some();
     let request = request_callback(sender.clone(), surface.clone());
-    let select = select_callback(
+    let open = select_callback(
         request.clone(),
         selected.clone(),
         presented.clone(),
         closing.clone(),
         return_focus.clone(),
     );
+    let request_close = {
+        let closing = closing.clone();
+        Callback::from(move |()| {
+            closing.set(true);
+            close.emit(());
+        })
+    };
     let complete_close =
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
     let leave = leave_callback(
@@ -64,7 +75,14 @@ pub(super) fn use_controls(
         closing.clone(),
         return_focus.clone(),
     );
-    use_request(requested, ready, select, leave, &selected, closing.clone());
+    use_request(
+        requested,
+        ready,
+        open.clone(),
+        leave,
+        &selected,
+        closing.clone(),
+    );
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
@@ -82,7 +100,10 @@ pub(super) fn use_controls(
         sheet_ref.clone(),
         return_focus.clone(),
     );
-    overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
+    overlay::use_escape_owner(
+        selected.is_some() && !*closing && mounted,
+        request_close.clone(),
+    );
     let return_focus_to = {
         let return_focus = return_focus.clone();
         Callback::from(move |target| *return_focus.borrow_mut() = Some(target))
@@ -96,43 +117,52 @@ pub(super) fn use_controls(
         return_focus_to,
         sheet_ref,
         notes,
+        open,
         request,
-        close,
+        close: request_close,
         submit_note,
     }
 }
 
-/// Follow the requested task: show it, read it once a runtime exists, and
-/// close the sheet when the request ends.
+/// Follow the requested task set: show it, read every task once a runtime
+/// exists, and close the sheet when the request ends.
 #[hook]
 fn use_request(
     requested: Request,
     ready: bool,
-    select: Callback<TaskStamp>,
+    open: Callback<TaskOverviewSelection>,
     leave: Callback<()>,
-    selected: &UseStateHandle<Option<TaskStamp>>,
+    selected: &UseStateHandle<Option<TaskOverviewSelection>>,
     closing: UseStateHandle<bool>,
 ) {
     let shown = selected.is_some();
-    use_effect_with((requested.task, ready), move |(task, _)| match task {
-        Some(task) => select.emit(task.clone()),
-        None if shown && requested.leaving => leave.emit(()),
-        None if shown => closing.set(true),
-        None => {}
+    let prior = use_mut_ref(|| None::<TaskOverviewSelection>);
+    let leaving = requested.leaving;
+    use_effect_with((requested.selection, ready), move |(selection, _)| {
+        let was_requested = prior.borrow().is_some();
+        *prior.borrow_mut() = selection.clone();
+        match selection {
+            Some(selection) => open.emit(selection.clone()),
+            None if shown && was_requested && leaving => leave.emit(()),
+            None if shown && was_requested => closing.set(true),
+            None => {}
+        }
     });
 }
 
-/// Show one task in the shared detail sheet and make sure its detail is read.
+/// Show one complete task set and make sure every task's detail is read.
 fn select_callback(
     request: Callback<TaskStamp>,
-    selected: UseStateHandle<Option<TaskStamp>>,
+    selected: UseStateHandle<Option<TaskOverviewSelection>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
     return_focus: Rc<RefCell<Option<web_sys::Element>>>,
-) -> Callback<TaskStamp> {
-    Callback::from(move |task: TaskStamp| {
-        request.emit(task.clone());
-        if selected.as_ref() == Some(&task) && !*closing {
+) -> Callback<TaskOverviewSelection> {
+    Callback::from(move |selection: TaskOverviewSelection| {
+        for task in selection.tasks() {
+            request.emit(task.clone());
+        }
+        if selected.as_ref() == Some(&selection) && !*closing {
             return;
         }
         if selected.is_none() {
@@ -142,7 +172,7 @@ fn select_callback(
             presented.set(false);
             closing.set(false);
         }
-        selected.set(Some(task));
+        selected.set(Some(selection));
     })
 }
 
@@ -189,7 +219,7 @@ fn request_callback(
 
 /// Drop the sheet for a view that owns focus, without its close slide.
 fn leave_callback(
-    selected: UseStateHandle<Option<TaskStamp>>,
+    selected: UseStateHandle<Option<TaskOverviewSelection>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
     return_focus: Rc<RefCell<Option<web_sys::Element>>>,
@@ -203,7 +233,7 @@ fn leave_callback(
 }
 
 fn complete_close_callback(
-    selected: UseStateHandle<Option<TaskStamp>>,
+    selected: UseStateHandle<Option<TaskOverviewSelection>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
 ) -> Callback<()> {
@@ -238,48 +268,26 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
     });
 }
 
-/// Focus enters the sheet only when it opens. Replacing the selected task in
-/// an already-open sheet focuses its active tab instead of replaying entry
-/// focus, and a close returns to the card for the last selected task.
+/// Focus enters the overview when it opens. A close returns to the launch
+/// control, then to the first selected task's surviving card.
 #[hook]
 pub(super) fn use_focus(
-    selected: &UseStateHandle<Option<TaskStamp>>,
+    selected: &UseStateHandle<Option<TaskOverviewSelection>>,
     mounted: bool,
     close: NodeRef,
-    sheet: NodeRef,
+    _sheet: NodeRef,
     return_focus: Rc<RefCell<Option<web_sys::Element>>>,
 ) {
     let last_seen = use_mut_ref(|| None::<TaskStamp>);
-    let mounted_selection = use_mut_ref(|| None::<TaskStamp>);
     {
         let last_seen = last_seen.clone();
-        let mounted_selection = mounted_selection.clone();
         use_effect_with(
             ((**selected).clone(), mounted),
-            move |(selected, mounted)| {
-                let previous = mounted_selection.borrow_mut().take();
-                if *mounted {
-                    *mounted_selection.borrow_mut() = selected.clone();
-                    if let Some(task) = selected {
-                        *last_seen.borrow_mut() = Some(task.clone());
-                    }
-                    if previous.is_some()
-                        && selected.is_some()
-                        && previous.as_ref() != selected.as_ref()
-                        && let Some(tab) = sheet
-                            .cast::<web_sys::Element>()
-                            .and_then(|sheet| {
-                                sheet
-                                    .query_selector("[role=\"tab\"][aria-selected=\"true\"]")
-                                    .ok()
-                                    .flatten()
-                            })
-                            .and_then(|tab| tab.dyn_into::<web_sys::HtmlElement>().ok())
-                    {
-                        let options = web_sys::FocusOptions::new();
-                        options.set_prevent_scroll(true);
-                        let _ = tab.focus_with_options(&options);
-                    }
+            move |(selection, mounted)| {
+                if *mounted
+                    && let Some(task) = selection.as_ref().and_then(TaskOverviewSelection::first)
+                {
+                    *last_seen.borrow_mut() = Some(task.clone());
                 }
             },
         );
@@ -599,7 +607,7 @@ fn submitted_close(event: &SubmitEvent) -> bool {
 /// to that task and preserving only that task's draft while feedback uses its task-owned toast.
 /// With a `closure`, the same draft can instead close the task as its validation.
 pub(super) fn render_note_composer(
-    id: &'static str,
+    id: String,
     handle: &str,
     task: &TaskStamp,
     can_note: bool,
@@ -616,15 +624,16 @@ pub(super) fn render_note_composer(
     let closing = composer.submission == NoteSubmission::Closing;
     let form_key = task.to_string();
     let task = task.clone();
+    let label_id = id.clone();
     html! {
         <form
             key={form_key}
             class="form work-note-composer"
             onsubmit={submit.reform(move |event| (task.clone(), event))}
         >
-            <label for={id}>{format!("Observation for {handle}")}</label>
+            <label for={label_id}>{format!("Observation for {handle}")}</label>
             <textarea
-                {id}
+                id={id}
                 key={composer.draft.clone()}
                 readonly={busy}
                 onkeydown={note_keyboard_submit(!busy)}

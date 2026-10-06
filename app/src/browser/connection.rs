@@ -781,11 +781,6 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::TaskRelations { key } => {
-            refresh::send_task_relations(principal, writer, actions, key)
-                .await
-                .map(|_| None)
-        }
         ClientAction::DirectionHistory { request } => {
             refresh::send_direction_history(principal, writer, actions, request)
                 .await

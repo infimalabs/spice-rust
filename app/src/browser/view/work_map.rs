@@ -1,100 +1,30 @@
-//! Bounded typed relationship lenses for the selected Work task set.
+//! Immediate whole-set task graph for the contextual overview.
 
+use std::fmt::Write as _;
 use std::rc::Rc;
 
 use wire::TaskStamp;
-use wire::intent::{
-    TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TaskRelationKind, TaskRelationNodeRef,
-    TaskRelationTruncation,
-};
 use yew::prelude::*;
 
 use crate::browser::mermaid::MermaidImage;
-use crate::work::{WorkAvailability, WorkProjection, WorkRelationshipDirection};
-use crate::{TaskRelationsKey, TaskRelationsState};
+use crate::work::{
+    TaskOverviewContext, TaskOverviewGraph, TaskOverviewNode, TaskOverviewNodeKind,
+    TaskOverviewSelection, WorkAvailability, WorkProjection,
+};
 
-mod lens;
 mod overlay;
 
-const DEFAULT_DEPTH: u8 = 2;
-const DEFAULT_NODES: u16 = 48;
-const NODE_STEP: u16 = 32;
-const MAX_PINNED_ROOTS: usize = wire::intent::TASK_RELATION_ROOT_LIMIT - 1;
 const ZOOM_MIN: u16 = 100;
 const ZOOM_MAX: u16 = 200;
 const ZOOM_STEP: u16 = 25;
 const PAN_STEP: i16 = 48;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum WorkDetailMode {
-    #[default]
-    Details,
-    Map,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum WorkMapLens {
-    #[default]
-    Dependency,
-    Origin,
-    Review,
-    Lifecycle,
-}
-
-impl WorkMapLens {
-    const fn relation(self) -> TaskRelationKind {
-        match self {
-            Self::Dependency => TaskRelationKind::Dependency,
-            Self::Origin => TaskRelationKind::Origin,
-            Self::Review => TaskRelationKind::Review,
-            Self::Lifecycle => TaskRelationKind::Lifecycle,
-        }
-    }
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Dependency => "Dependencies",
-            Self::Origin => "Lineage",
-            Self::Review => "Reviews",
-            Self::Lifecycle => "Lifecycle",
-        }
-    }
-
-    const fn key(self) -> &'static str {
-        match self {
-            Self::Dependency => "dependency",
-            Self::Origin => "origin",
-            Self::Review => "review",
-            Self::Lifecycle => "lifecycle",
-        }
-    }
-
-    const fn context(self) -> &'static str {
-        match self {
-            Self::Dependency => {
-                "Dependency edges point from each dependent task to the prerequisite it requires."
-            }
-            Self::Origin => {
-                "Task ancestry includes siblings reached through their shared task parent; non-task ACK and origin identities remain exact."
-            }
-            Self::Review => "Completed handoffs preserve phase author → reviewer → verdict order.",
-            Self::Lifecycle => {
-                "Historical task transitions remain ordered by durable fact position."
-            }
-        }
-    }
-}
-
-/// Browser-owned map controls. Durable task stamps and exact request parameters
-/// intentionally outlive any one board projection.
+/// Browser-local viewport and board-root choices. Roots become one explicit
+/// [`TaskOverviewSelection`] before the overview opens; they are never a second
+/// hidden selection inside the overview.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::browser) struct WorkMapState {
-    mode: WorkDetailMode,
     pinned: Vec<TaskStamp>,
-    lens: WorkMapLens,
-    direction: WorkRelationshipDirection,
-    depth: u8,
-    max_nodes: u16,
     zoom: u16,
     pan_x: i16,
     pan_y: i16,
@@ -103,12 +33,7 @@ pub(in crate::browser) struct WorkMapState {
 impl Default for WorkMapState {
     fn default() -> Self {
         Self {
-            mode: WorkDetailMode::Details,
             pinned: Vec::new(),
-            lens: WorkMapLens::Dependency,
-            direction: WorkRelationshipDirection::Both,
-            depth: DEFAULT_DEPTH,
-            max_nodes: DEFAULT_NODES,
             zoom: ZOOM_MIN,
             pan_x: 0,
             pan_y: 0,
@@ -117,72 +42,38 @@ impl Default for WorkMapState {
 }
 
 impl WorkMapState {
-    pub(super) const fn mode(&self) -> WorkDetailMode {
-        self.mode
-    }
-
-    pub(in crate::browser) const fn map_open(&self) -> bool {
-        matches!(self.mode, WorkDetailMode::Map)
-    }
-
     pub(in crate::browser) fn pinned(&self, task: &TaskStamp) -> bool {
         self.pinned.contains(task)
     }
 
-    pub(in crate::browser) fn pin_limit_reached(&self) -> bool {
-        self.pinned.len() >= MAX_PINNED_ROOTS
+    /// The former protocol-root cap no longer governs overview selection.
+    pub(in crate::browser) const fn pin_limit_reached(&self) -> bool {
+        false
     }
 
-    fn roots(&self, selected: &TaskStamp) -> Vec<TaskStamp> {
-        let mut roots = self.pinned.clone();
-        roots.push(selected.clone());
-        roots.sort();
-        roots.dedup();
-        roots
-    }
-
-    pub(in crate::browser) fn relations_key(&self, selected: &TaskStamp) -> TaskRelationsKey {
-        TaskRelationsKey::new(
-            self.roots(selected),
-            self.lens.relation(),
-            self.depth,
-            self.max_nodes,
-        )
-        .expect("Work map controls stay inside typed relationship limits")
-    }
-
-    pub(in crate::browser) fn request_key(&self, selected: &TaskStamp) -> Option<TaskRelationsKey> {
-        (self.mode == WorkDetailMode::Map).then(|| self.relations_key(selected))
+    pub(in crate::browser) fn selection(&self, task: TaskStamp) -> TaskOverviewSelection {
+        let mut tasks = self.pinned.clone();
+        tasks.push(task.clone());
+        let context = if tasks.len() == 1 {
+            TaskOverviewContext::Task
+        } else {
+            TaskOverviewContext::Relationships(task)
+        };
+        TaskOverviewSelection::new(tasks, context)
     }
 
     fn toggle_pin(&mut self, task: TaskStamp) {
         if let Some(index) = self.pinned.iter().position(|pinned| pinned == &task) {
             self.pinned.remove(index);
-        } else if !self.pin_limit_reached() {
+        } else {
             self.pinned.push(task);
-            self.pinned.sort();
         }
     }
 
-    fn center(&mut self) {
-        self.pinned.clear();
-    }
-
-    fn reset_controls(&mut self) {
-        self.direction = WorkRelationshipDirection::Both;
-        self.depth = DEFAULT_DEPTH;
-        self.max_nodes = DEFAULT_NODES;
+    fn reset_viewport(&mut self) {
         self.zoom = ZOOM_MIN;
         self.pan_x = 0;
         self.pan_y = 0;
-    }
-
-    fn expand(&mut self) {
-        self.depth = self.depth.saturating_add(1).min(TASK_RELATION_DEPTH_LIMIT);
-        self.max_nodes = self
-            .max_nodes
-            .saturating_add(NODE_STEP)
-            .min(TASK_RELATION_NODE_LIMIT);
     }
 
     fn zoom(&mut self, increase: bool) {
@@ -200,13 +91,9 @@ impl WorkMapState {
 }
 
 pub(super) struct WorkMapRender<'a, 'work> {
-    pub selected: &'a TaskStamp,
+    pub selection: &'a TaskOverviewSelection,
     pub state: &'a UseStateHandle<WorkMapState>,
-    pub select_task: Callback<TaskStamp>,
-    pub relations: Option<&'a TaskRelationsState>,
-    pub can_read_relations: bool,
-    /// Reads an unavailable lens again.
-    pub retry: Callback<MouseEvent>,
+    pub focus_task: Callback<TaskStamp>,
     pub work: &'a WorkProjection<'work>,
 }
 
@@ -214,94 +101,28 @@ pub(super) fn toggle_root_callback(state: UseStateHandle<WorkMapState>) -> Callb
     Callback::from(move |task| update(&state, |next| next.toggle_pin(task)))
 }
 
-pub(super) fn render_tabs(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -> Html {
-    let details = set_mode_callback(state.clone(), WorkDetailMode::Details);
-    let map = set_mode_callback(state.clone(), WorkDetailMode::Map);
-    html! {
-        <div class="work-detail-tabs app-control-rail" role="tablist" aria-label="Task view">
-            <button
-                id="work-detail-tab"
-                type="button"
-                role="tab"
-                aria-controls="work-detail-panel"
-                aria-selected={(state.mode() == WorkDetailMode::Details).to_string()}
-                class={(state.mode() == WorkDetailMode::Details).then_some("active")}
-                onclick={details}
-            >{"Details"}</button>
-            <button
-                id="work-map-tab"
-                type="button"
-                role="tab"
-                aria-controls="work-map-panel"
-                aria-selected={(state.mode() == WorkDetailMode::Map).to_string()}
-                class={(state.mode() == WorkDetailMode::Map).then_some("active")}
-                onclick={map}
-            >
-                {format!("Map ({})", state.roots(selected).len())}
-            </button>
-        </div>
-    }
-}
-
 pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
-    let controls = render_controls(render.state, render.selected);
-    if !render.can_read_relations {
-        return html! {
-            <div class="work-map-content">
-                {controls}
-                <div class="work-map-problem" role="alert">
-                    <h3>{"Relationship map unavailable"}</h3>
-                    <p>{"This capability does not offer task::relations."}</p>
-                </div>
-            </div>
-        };
-    }
-    let answer = match render.relations {
-        None | Some(TaskRelationsState::Loading) => {
-            return html! {
-                <div class="work-map-content">
-                    {controls}
-                    <div class="work-detail-loading" role="status">
-                        <span class="work-detail-spinner" aria-hidden="true"></span>
-                        <p>{format!("Loading the {} lens…", render.state.lens.label())}</p>
-                    </div>
-                </div>
-            };
-        }
-        Some(TaskRelationsState::Unavailable { reason, detail }) => {
-            return html! {
-                <div class="work-map-content">
-                    {controls}
-                    <div class="work-map-problem" role="alert">
-                        <h3>{"Relationship map unavailable"}</h3>
-                        <p><code>{reason}</code></p>
-                        if let Some(detail) = detail { <p>{detail}</p> }
-                        <button type="button" class="app-compact-control" onclick={render.retry.clone()}>{"Retry lens"}</button>
-                    </div>
-                </div>
-            };
-        }
-        Some(TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer)) => {
-            answer.as_ref()
-        }
-    };
-    let Some(presentation) = lens::project(
-        answer,
-        render.state.lens.relation(),
-        render.state.direction,
-        render.selected,
-    ) else {
-        return html! {
-            <div class="work-map-content">
-                {controls}
-                <div class="work-map-problem" role="alert">
-                    <h3>{"Relationship map unavailable"}</h3>
-                    <p>{"The admitted answer could not be projected without crossing typed identities."}</p>
-                </div>
-            </div>
-        };
-    };
-    let targets = map_targets(&presentation, render.work);
+    let graph = render.work.overview_graph(render.selection);
+    let controls = render_controls(render.state);
+    let presentation = present(&graph, render.work);
+    let targets = Rc::new(
+        presentation
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                (node.task_index.is_some() && node.selected).then_some(())?;
+                Some(overlay::MapNodeTarget {
+                    id: node.id.clone(),
+                    task: node.task.clone(),
+                    label: node.label.clone(),
+                    selected: node.selected,
+                    availability: node.tone.map(|tone| tone.availability),
+                    disposition: node.tone.and_then(|tone| tone.disposition),
+                    state: node.tone.map(|tone| tone.label),
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
     let node_ids = Rc::new(targets.iter().map(|target| target.id.clone()).collect());
     let viewport = overlay::ViewportTransform {
         zoom: render.state.zoom,
@@ -310,33 +131,36 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
     };
     let render_geometry = Some(overlay::renderer(
         targets,
-        render.select_task.clone(),
+        render.focus_task.clone(),
         viewport,
     ));
-    let source = AttrValue::from(presentation.source.clone());
-    let related = presentation.nodes.len().saturating_sub(answer.roots.len());
+
     html! {
-        <div
-            class="work-map-content"
-            data-work-map-roots={answer.roots.len().to_string()}
-            data-work-map-lens={render.state.lens.key()}
-            data-work-map-snapshot={answer.snapshot.to_string()}
+        <section
+            class="work-map-content work-overview-map"
+            aria-labelledby="work-map-diagram-title"
+            data-work-map-roots={render.selection.tasks().len().to_string()}
+            data-work-map-context={render.selection.context().label()}
         >
-            {controls}
-            <p class="work-map-context">{render.state.lens.context()}</p>
-            if related == 0 {
-                <p class="work-map-empty" role="status">
-                    {format!("No {} relationships are visible at the current depth.", render.state.lens.label().to_lowercase())}
-                </p>
-            }
-            <section class="work-map-diagram" aria-labelledby="work-map-diagram-title">
-                <div class="work-map-heading">
-                    <div>
-                        <p class="work-detail-kicker">{"Bounded typed read"}</p>
-                        <h3 id="work-map-diagram-title">{format!("{} map", render.state.lens.label())}</h3>
-                    </div>
-                    <span>{format!("{} nodes · {} edges · snapshot {}", presentation.nodes.len(), presentation.edges.len(), answer.snapshot)}</span>
+            <div class="work-map-heading">
+                <div>
+                    <p class="work-detail-kicker">{"Admitted board snapshot"}</p>
+                    <h3 id="work-map-diagram-title">{"Task graph"}</h3>
                 </div>
+                <span>{format!(
+                    "{} selected · {} visible nodes · {} dependencies",
+                    render.selection.tasks().len(),
+                    graph.nodes().len(),
+                    graph.edges().len(),
+                )}</span>
+            </div>
+            {controls}
+            if render.selection.is_empty() {
+                <div class="work-map-empty" role="status">
+                    <strong>{"No tasks selected"}</strong>
+                    <span>{"This valid context has no current tasks."}</span>
+                </div>
+            } else {
                 <div
                     class="work-map-viewport"
                     data-work-map-zoom={render.state.zoom.to_string()}
@@ -344,260 +168,158 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     data-work-map-pan-y={render.state.pan_y.to_string()}
                 >
                     <MermaidImage
-                        {source}
+                        source={AttrValue::from(presentation.source.clone())}
                         {node_ids}
                         {render_geometry}
                         final_answer={true}
                     />
                 </div>
-            </section>
-            {render_relationship_list(&presentation, render.work, render.selected, &render.select_task)}
-            {render_truncation(answer.truncation.as_ref(), render.state)}
-        </div>
+                {render_node_list(&presentation, &render.focus_task)}
+            }
+        </section>
     }
 }
 
-fn set_mode_callback(
-    state: UseStateHandle<WorkMapState>,
-    mode: WorkDetailMode,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| update(&state, |next| next.mode = mode))
+struct Presentation {
+    nodes: Vec<PresentedNode>,
+    source: String,
 }
 
-fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -> Html {
-    let center = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, WorkMapState::center))
-    };
-    let reset = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, WorkMapState::reset_controls))
-    };
-    html! {
-        <>
-            <div class="work-map-primary-controls">
-                <section class="work-map-lenses app-control-rail" aria-label="Relationship lens">
-                    {lens_button(state, WorkMapLens::Dependency)}
-                    {lens_button(state, WorkMapLens::Origin)}
-                    {lens_button(state, WorkMapLens::Review)}
-                    {lens_button(state, WorkMapLens::Lifecycle)}
-                </section>
-                if state.lens == WorkMapLens::Dependency {
-                    <div class="work-map-control-group work-map-direction app-control-rail" aria-label="Dependency direction">
-                        {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
-                        {direction_button(state, WorkRelationshipDirection::Both, "Both")}
-                        {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
-                    </div>
-                }
-            </div>
-            <section class="work-map-controls" aria-label="Map controls">
-                <div class="work-map-control-group app-control-rail work-map-depth" aria-label="Relationship depth">
-                    <button type="button" aria-label="Decrease map depth" disabled={state.depth == 0} onclick={depth_callback(state.clone(), false)}>{"−"}</button>
-                    <span>{format!("Depth {}", state.depth)}</span>
-                    <button type="button" aria-label="Increase map depth" disabled={state.depth >= TASK_RELATION_DEPTH_LIMIT} onclick={depth_callback(state.clone(), true)}>{"+"}</button>
-                </div>
-                {render_viewport_controls(state)}
-                <div class="work-map-control-group app-control-rail work-map-actions">
-                    <button type="button" disabled={state.pinned.is_empty()} onclick={center}>
-                        {format!("Center on task {selected}")}
-                    </button>
-                    <button type="button" disabled={is_default_view(state)} onclick={reset}>{"Reset view"}</button>
-                </div>
-                <span class="work-map-bounds">{format!("Limit {} nodes", state.max_nodes)}</span>
-            </section>
-        </>
-    }
+struct PresentedNode {
+    id: String,
+    task: TaskStamp,
+    task_index: Option<usize>,
+    label: String,
+    detail: String,
+    selected: bool,
+    kind: TaskOverviewNodeKind,
+    tone: Option<TaskTone>,
 }
 
-fn lens_button(state: &UseStateHandle<WorkMapState>, lens: WorkMapLens) -> Html {
-    let active = state.lens == lens;
-    let change = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, |next| next.lens = lens))
-    };
-    html! {
-        <button
-            type="button"
-            aria-pressed={active.to_string()}
-            class={active.then_some("active")}
-            onclick={change}
-        >{lens.label()}</button>
-    }
-}
-
-fn direction_button(
-    state: &UseStateHandle<WorkMapState>,
-    direction: WorkRelationshipDirection,
-    label: &'static str,
-) -> Html {
-    let active = state.direction == direction;
-    let change = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, |next| next.direction = direction))
-    };
-    html! {
-        <button type="button" aria-pressed={active.to_string()} class={active.then_some("active")} onclick={change}>{label}</button>
-    }
-}
-
-fn depth_callback(state: UseStateHandle<WorkMapState>, increase: bool) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        update(&state, |next| {
-            next.depth = if increase {
-                next.depth.saturating_add(1).min(TASK_RELATION_DEPTH_LIMIT)
-            } else {
-                next.depth.saturating_sub(1)
-            };
-        });
-    })
-}
-
-#[derive(Clone, Copy)]
-enum ViewportAction {
-    Zoom(bool),
-    Pan(i16, i16),
-}
-
-fn render_viewport_controls(state: &UseStateHandle<WorkMapState>) -> Html {
-    html! {
-        <>
-            <div class="work-map-control-group app-control-rail work-map-zoom" aria-label="Map zoom">
-                <button type="button" aria-label="Zoom map out" disabled={state.zoom <= ZOOM_MIN} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(false))}>{"−"}</button>
-                <span>{format!("{}%", state.zoom)}</span>
-                <button type="button" aria-label="Zoom map in" disabled={state.zoom >= ZOOM_MAX} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(true))}>{"+"}</button>
-            </div>
-            <div class="work-map-control-group app-control-rail work-map-pan" aria-label="Map pan">
-                <button type="button" aria-label="Pan map left" onclick={viewport_callback(state.clone(), ViewportAction::Pan(-PAN_STEP, 0))}>{"←"}</button>
-                <button type="button" aria-label="Pan map up" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, -PAN_STEP))}>{"↑"}</button>
-                <button type="button" aria-label="Pan map down" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, PAN_STEP))}>{"↓"}</button>
-                <button type="button" aria-label="Pan map right" onclick={viewport_callback(state.clone(), ViewportAction::Pan(PAN_STEP, 0))}>{"→"}</button>
-            </div>
-        </>
-    }
-}
-
-fn viewport_callback(
-    state: UseStateHandle<WorkMapState>,
-    action: ViewportAction,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        update(&state, |next| match action {
-            ViewportAction::Zoom(increase) => next.zoom(increase),
-            ViewportAction::Pan(x, y) => next.pan(x, y),
-        });
-    })
-}
-
-fn is_default_view(state: &WorkMapState) -> bool {
-    state.direction == WorkRelationshipDirection::Both
-        && state.depth == DEFAULT_DEPTH
-        && state.max_nodes == DEFAULT_NODES
-        && state.zoom == ZOOM_MIN
-        && state.pan_x == 0
-        && state.pan_y == 0
-}
-fn map_targets(
-    presentation: &lens::Presentation,
-    work: &WorkProjection<'_>,
-) -> Rc<Vec<overlay::MapNodeTarget>> {
-    Rc::new(
-        presentation
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                let task = node.task.as_ref()?;
-                let tone = task_tone(work, task);
-                Some(overlay::MapNodeTarget {
-                    id: node.id.clone(),
-                    task: task.clone(),
-                    label: node.label.clone(),
-                    current: node.current,
-                    availability: tone.map(|tone| tone.availability),
-                    disposition: tone.and_then(|tone| tone.disposition),
-                    state: tone.map(|tone| tone.label),
-                })
-            })
-            .collect(),
-    )
-}
-
-#[derive(Clone, Copy)]
-struct TaskTone {
-    availability: &'static str,
-    disposition: Option<&'static str>,
-    label: &'static str,
-}
-
-fn task_tone(work: &WorkProjection<'_>, task: &TaskStamp) -> Option<TaskTone> {
-    let task = work
-        .tasks()
+fn present(graph: &TaskOverviewGraph, work: &WorkProjection<'_>) -> Presentation {
+    let nodes = graph
+        .nodes()
         .iter()
-        .find(|candidate| candidate.row().statement.body.born == *task)?;
-    let availability = task.availability();
-    let (label, disposition) = match availability {
-        WorkAvailability::InFlight => ("In flight", None),
-        WorkAvailability::Ready => ("Ready", None),
-        WorkAvailability::Blocked => ("Blocked", None),
-        WorkAvailability::Deferred => ("Deferred", None),
-        WorkAvailability::Terminal if task.row().workflow.body.status == "deleted" => {
-            ("Deleted", Some("deleted"))
-        }
-        // Completed map nodes use the neutral terminal tone, matching the
-        // board's History region rather than its completion accent.
-        WorkAvailability::Terminal => ("Completed", None),
-    };
-    Some(TaskTone {
-        availability: availability.key(),
-        disposition,
-        label,
-    })
+        .enumerate()
+        .map(|(index, node)| present_node(index, node, work))
+        .collect::<Vec<_>>();
+    let mut source = String::from("flowchart LR\n");
+    for node in &nodes {
+        let diagram = crate::mermaid_label::multiline(&format!("{}\n{}", node.label, node.detail));
+        writeln!(source, "  {}[\"{diagram}\"]", node.id).expect("String writes are infallible");
+    }
+    for edge in graph.edges() {
+        let connector = if edge.satisfied() { "-.->" } else { "-->" };
+        writeln!(
+            source,
+            "  n{} {connector}|requires| n{}",
+            edge.prerequisite(),
+            edge.dependent(),
+        )
+        .expect("String writes are infallible");
+    }
+    let selected = nodes
+        .iter()
+        .filter(|node| node.selected)
+        .map(|node| node.id.as_str())
+        .collect::<Vec<_>>();
+    if !selected.is_empty() {
+        writeln!(source, "  class {} selected", selected.join(","))
+            .expect("String writes are infallible");
+        source.push_str("  classDef selected stroke-width:3px\n");
+    }
+    let missing = nodes
+        .iter()
+        .filter(|node| node.kind == TaskOverviewNodeKind::Missing)
+        .map(|node| node.id.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        writeln!(source, "  class {} missing", missing.join(","))
+            .expect("String writes are infallible");
+        source.push_str("  classDef missing stroke-dasharray:5 4\n");
+    }
+    Presentation { nodes, source }
 }
 
-fn render_relationship_list(
-    presentation: &lens::Presentation,
-    work: &WorkProjection<'_>,
-    selected: &TaskStamp,
-    select: &Callback<TaskStamp>,
-) -> Html {
+fn present_node(index: usize, node: &TaskOverviewNode, work: &WorkProjection<'_>) -> PresentedNode {
+    let row = node.task_index().map(|index| work.tasks()[index].row());
+    let label = row.map_or_else(
+        || node.task().to_string(),
+        |row| {
+            format!(
+                "{} · {}",
+                row.statement.body.handle,
+                compact(&row.presentation_title),
+            )
+        },
+    );
+    let detail = match (node.kind(), row) {
+        (TaskOverviewNodeKind::Selected, Some(row)) => format!(
+            "Selected · {} · {}",
+            row.workflow.body.phase, row.workflow.body.status,
+        ),
+        (TaskOverviewNodeKind::External, Some(row)) => format!(
+            "External dependency · {} · {}",
+            row.workflow.body.phase, row.workflow.body.status,
+        ),
+        (TaskOverviewNodeKind::Missing, _) => "Missing from the admitted board snapshot".to_owned(),
+        (_, None) => "Unavailable in the admitted board snapshot".to_owned(),
+    };
+    PresentedNode {
+        id: format!("n{index}"),
+        task: node.task().clone(),
+        task_index: node.task_index(),
+        label,
+        detail,
+        selected: node.selected(),
+        kind: node.kind(),
+        tone: node
+            .task_index()
+            .map(|index| task_tone(&work.tasks()[index])),
+    }
+}
+
+fn render_node_list(presentation: &Presentation, focus: &Callback<TaskStamp>) -> Html {
     html! {
         <section class="work-map-list" aria-labelledby="work-map-list-title">
             <div class="work-map-heading">
-                <h3 id="work-map-list-title">{"Relationships in this map"}</h3>
-                <span>{"Typed identities in stable order"}</span>
+                <h3 id="work-map-list-title">{"Tasks in this graph"}</h3>
+                <span>{"Selected roots first; outside neighbors are explicit"}</span>
             </div>
             <div class="work-map-task-list">
                 {for presentation.nodes.iter().map(|node| {
-                    if let Some(task) = &node.task {
+                    let kind = match node.kind {
+                        TaskOverviewNodeKind::Selected => "Selected task",
+                        TaskOverviewNodeKind::External => "External dependency",
+                        TaskOverviewNodeKind::Missing => "Missing dependency",
+                    };
+                    if node.task_index.is_some() && node.selected {
                         let activate = {
-                            let select = select.clone();
-                            let task = task.clone();
-                            Callback::from(move |_| select.emit(task.clone()))
+                            let focus = focus.clone();
+                            let task = node.task.clone();
+                            Callback::from(move |_| focus.emit(task.clone()))
                         };
-                        let tone = task_tone(work, task);
                         html! {
                             <button
                                 key={node.id.clone()}
                                 type="button"
                                 class="work-map-task"
-                                data-task-stamp={task.to_string()}
-                                aria-current={(task == selected).then_some("true")}
-                                data-work-availability={tone.map(|tone| tone.availability)}
-                                data-work-disposition={tone.and_then(|tone| tone.disposition)}
-                                data-work-state={tone.map(|tone| tone.label)}
+                                data-task-stamp={node.task.to_string()}
+                                data-task-selected={node.selected.to_string()}
+                                data-work-availability={node.tone.map(|tone| tone.availability)}
+                                data-work-disposition={node.tone.and_then(|tone| tone.disposition)}
+                                data-work-state={node.tone.map(|tone| tone.label)}
                                 onclick={activate}
                             >
-                                <span>{node.kind}</span>
+                                <span>{kind}</span>
                                 <strong>{node.label.clone()}</strong>
                                 <small>{node.detail.clone()}</small>
-                                if let Some(tone) = tone {
-                                    <span class="work-map-task-state">{tone.label}</span>
-                                }
                             </button>
                         }
                     } else {
                         html! {
-                            <article key={node.id.clone()} class="work-map-fact">
-                                <span>{node.kind}</span>
+                            <article key={node.id.clone()} class="work-map-fact" data-task-neighbor={kind}>
+                                <span>{kind}</span>
                                 <strong>{node.label.clone()}</strong>
                                 <small>{node.detail.clone()}</small>
                             </article>
@@ -609,61 +331,85 @@ fn render_relationship_list(
     }
 }
 
-fn render_truncation(
-    truncation: Option<&TaskRelationTruncation>,
-    state: &UseStateHandle<WorkMapState>,
-) -> Html {
-    let Some(truncation) = truncation else {
-        return Html::default();
+#[derive(Clone, Copy)]
+struct TaskTone {
+    availability: &'static str,
+    disposition: Option<&'static str>,
+    label: &'static str,
+}
+
+fn task_tone(task: &crate::work::WorkTask<'_>) -> TaskTone {
+    let availability = task.availability();
+    let (label, disposition) = match availability {
+        WorkAvailability::InFlight => ("In flight", None),
+        WorkAvailability::Ready => ("Ready", None),
+        WorkAvailability::Blocked => ("Blocked", None),
+        WorkAvailability::Deferred => ("Deferred", None),
+        WorkAvailability::Terminal if task.row().workflow.body.status == "deleted" => {
+            ("Deleted", Some("deleted"))
+        }
+        WorkAvailability::Terminal => ("Completed", None),
     };
-    let total = u32::try_from(truncation.frontier.len())
-        .unwrap_or(u32::MAX)
-        .saturating_add(truncation.omitted);
-    let cannot_expand =
-        state.depth >= TASK_RELATION_DEPTH_LIMIT && state.max_nodes >= TASK_RELATION_NODE_LIMIT;
-    let expand = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, WorkMapState::expand))
-    };
+    TaskTone {
+        availability: availability.key(),
+        disposition,
+        label,
+    }
+}
+
+fn compact(value: &str) -> String {
+    const LIMIT: usize = 48;
+    let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().count() > LIMIT {
+        value = value.chars().take(LIMIT - 1).collect();
+        value.push('…');
+    }
+    value
+}
+
+#[derive(Clone, Copy)]
+enum ViewportAction {
+    Zoom(bool),
+    Pan(i16, i16),
+    Reset,
+}
+
+fn render_controls(state: &UseStateHandle<WorkMapState>) -> Html {
     html! {
-        <section class="work-map-frontiers" aria-labelledby="work-map-frontiers-title">
-            <div class="work-map-heading">
-                <h3 id="work-map-frontiers-title">{"Truncated relationships"}</h3>
-                <span>{format!("{total} omitted · nothing silently hidden")}</span>
+        <section class="work-map-controls" aria-label="Map controls">
+            <div class="work-map-control-group app-control-rail work-map-zoom" aria-label="Map zoom">
+                <button type="button" aria-label="Zoom map out" disabled={state.zoom <= ZOOM_MIN} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(false))}>{"−"}</button>
+                <span>{format!("{}%", state.zoom)}</span>
+                <button type="button" aria-label="Zoom map in" disabled={state.zoom >= ZOOM_MAX} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(true))}>{"+"}</button>
             </div>
-            <ul class="work-map-frontier-list">
-                {for truncation.frontier.iter().map(|frontier| html! {
-                    <li>{format!(
-                        "Depth {} · {} · {} → {}",
-                        frontier.depth,
-                        lens::edge_label(frontier.edge.relation),
-                        reference_label(&frontier.edge.from),
-                        reference_label(&frontier.edge.to),
-                    )}</li>
-                })}
-                if truncation.omitted > 0 {
-                    <li>{format!("{} additional frontier edges exceed the metadata bound", truncation.omitted)}</li>
-                }
-            </ul>
-            <button type="button" class="app-compact-control" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
+            <div class="work-map-control-group app-control-rail work-map-pan" aria-label="Map pan">
+                <button type="button" aria-label="Pan map left" onclick={viewport_callback(state.clone(), ViewportAction::Pan(-PAN_STEP, 0))}>{"←"}</button>
+                <button type="button" aria-label="Pan map up" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, -PAN_STEP))}>{"↑"}</button>
+                <button type="button" aria-label="Pan map down" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, PAN_STEP))}>{"↓"}</button>
+                <button type="button" aria-label="Pan map right" onclick={viewport_callback(state.clone(), ViewportAction::Pan(PAN_STEP, 0))}>{"→"}</button>
+            </div>
+            <div class="work-map-control-group app-control-rail work-map-actions">
+                <button type="button" disabled={is_default_view(state)} onclick={viewport_callback(state.clone(), ViewportAction::Reset)}>{"Reset view"}</button>
+            </div>
         </section>
     }
 }
 
-fn reference_label(reference: &TaskRelationNodeRef) -> String {
-    match reference {
-        TaskRelationNodeRef::Task { task } => format!("task {task}"),
-        TaskRelationNodeRef::Origin { origin } => format!("origin {origin}"),
-        TaskRelationNodeRef::Review { task, position } => {
-            format!("task {task} review fact {position}")
-        }
-        TaskRelationNodeRef::Lifecycle { task, position } => {
-            format!("task {task} lifecycle fact {position}")
-        }
-        TaskRelationNodeRef::Claim { task, position } => {
-            format!("task {task} claim fact {position}")
-        }
-    }
+fn viewport_callback(
+    state: UseStateHandle<WorkMapState>,
+    action: ViewportAction,
+) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        update(&state, |next| match action {
+            ViewportAction::Zoom(increase) => next.zoom(increase),
+            ViewportAction::Pan(x, y) => next.pan(x, y),
+            ViewportAction::Reset => next.reset_viewport(),
+        });
+    })
+}
+
+fn is_default_view(state: &WorkMapState) -> bool {
+    state.zoom == ZOOM_MIN && state.pan_x == 0 && state.pan_y == 0
 }
 
 fn update(state: &UseStateHandle<WorkMapState>, change: impl FnOnce(&mut WorkMapState)) {

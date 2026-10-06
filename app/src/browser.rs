@@ -57,7 +57,6 @@ mod sender;
 mod speech_runtime;
 mod task_detail;
 mod task_feedback;
-mod task_relations;
 mod toast;
 mod view;
 mod watchband;
@@ -396,18 +395,18 @@ impl AppState {
         });
         let surface_view = self.surface.read();
         let work = project_work(surface_view.as_ref());
-        let retry_relations = task_relations::retry_callback(
-            self.surface.clone(),
-            self.work_detail.selected.clone(),
-            self.work_map.clone(),
-        );
         let card_target_notice = (*self.card_target_status)
             .as_ref()
             .filter(|status| {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let select_task = self.navigate.reform(navigation::Intent::Task);
+        let select_task = {
+            let work_map = self.work_map.clone();
+            self.work_detail
+                .open
+                .reform(move |task| work_map.selection(task))
+        };
         let open_message_task = self.open_message_task.clone();
         let app = render_app(
             AppRender {
@@ -444,7 +443,6 @@ impl AppState {
                 open_message_task,
                 request_task: self.work_detail.request.clone(),
                 close_task: self.work_detail.close.clone(),
-                retry_relations,
             },
             work.as_ref(),
         );
@@ -465,6 +463,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let card_target_status = use_state(|| None::<card_target::Status>);
     let local_task = use_local_task(&route);
     let work_arrangement = use_state(WorkArrangement::default);
+    let work_map = use_state(view::WorkMapState::default);
     let identity = use_state(|| None::<AppIdentity>);
     let app_update = use_state(|| None::<AppUpdate>);
     let team_controls = use_reducer(TeamControls::restore);
@@ -493,7 +492,11 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         surface.clone(),
         work_detail_mounted(&surface),
         task_detail::Request {
-            task: route.task().cloned().or_else(|| (*local_task).clone()),
+            selection: route
+                .task()
+                .cloned()
+                .or_else(|| (*local_task).clone())
+                .map(|task| work_map.selection(task)),
             leaving: route.card_target().is_some(),
         },
         navigate.reform(|()| navigation::Intent::CloseTask),
@@ -510,7 +513,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         surface.clone(),
         route.work_scope().and_then(WorkScope::team),
     );
-    let work_map = use_state(view::WorkMapState::default);
     let speech_status = use_state(SpeechStatus::default);
     let speech_owner = use_state(|| None::<SpeechOwner>);
     let speech_runtime = SpeechRuntime {
@@ -608,12 +610,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         },
     );
     task_feedback::use_feedback(state);
-    task_relations::use_request(
-        &state.sender,
-        &state.surface,
-        &state.work_detail.selected,
-        &state.work_map,
-    );
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
     use_speech_failure_toast(&state.speech_status);

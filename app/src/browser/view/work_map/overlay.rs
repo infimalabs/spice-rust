@@ -12,7 +12,7 @@ pub(super) struct MapNodeTarget {
     pub(super) id: String,
     pub(super) task: TaskStamp,
     pub(super) label: String,
-    pub(super) current: bool,
+    pub(super) selected: bool,
     pub(super) availability: Option<&'static str>,
     pub(super) disposition: Option<&'static str>,
     pub(super) state: Option<&'static str>,
@@ -95,8 +95,8 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                     Callback::from(move |_| select.emit(task.clone()))
                 };
                 let label = target.state.map_or_else(
-                    || format!("Open {} in Work detail", target.label),
-                    |state| format!("Open {} in Work detail — {state}", target.label),
+                    || format!("Focus {} in the task overview", target.label),
+                    |state| format!("Focus {} in the task overview — {state}", target.label),
                 );
                 let left = offset_x + (node.rect.x - view.x) * scale;
                 let top = offset_y + (node.rect.y - view.y) * scale;
@@ -106,7 +106,7 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                     <button
                         key={node.id.clone()}
                         type="button"
-                        class={classes!("work-map-node-button", target.current.then_some("current"))}
+                        class={classes!("work-map-node-button", target.selected.then_some("selected"))}
                         data-map-left={left.to_string()}
                         data-map-top={top.to_string()}
                         data-map-width={width.to_string()}
@@ -118,7 +118,7 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                         data-work-state={target.state}
                         aria-label={label.clone()}
                         title={label}
-                        aria-current={target.current.then_some("true")}
+                        data-task-selected={target.selected.to_string()}
                         onclick={activate}
                     ></button>
                 })

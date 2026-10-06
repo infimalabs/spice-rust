@@ -68,6 +68,7 @@
 
 @media (max-width: 1180px) {
   .work-detail { width: min(42rem, calc(100vw - 2rem)); }
+  .work-detail--overview { width: min(68rem, calc(100vw - 2rem)); }
 }
 
 @media (max-width: 920px) {
@@ -106,20 +107,18 @@
   .work-history-filter-actions button,
   .work-history-page-actions button { width: 100%; }
   .work-history-pagination { align-items: stretch; flex-direction: column; }
-  .work-detail { width: 100vw; }
+  .work-detail,
+  .work-detail--overview { width: 100vw; }
   .work-detail-header,
-  .work-detail-content { padding-inline: 14px; }
-  .work-detail-tabs { margin-inline: 14px; }
-  .work-map-content { padding-inline: 14px; }
-  .work-map-lenses { width: 100%; }
+  .work-detail-content,
+  .work-overview-map,
+  .work-overview-details { padding-inline: 14px; }
   .work-map-controls { align-items: stretch; }
   .work-map-control-group { width: 100%; }
   .work-map-control-group button { flex: 1 1 0; }
-  .work-map-depth,
   .work-map-zoom { display: grid; grid-template-columns: auto 1fr auto; }
   .work-map-pan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .work-map-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .work-map-bounds { width: 100%; margin-left: 0; text-align: center; }
+  .work-map-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .work-map-heading { align-items: flex-start; flex-direction: column; }
   .work-map-heading > span { text-align: left; }
   .work-map-viewport { height: 18rem; }
