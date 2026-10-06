@@ -359,6 +359,9 @@ segmented classification pill. The pill orders ACK or NAK first, FINAL second
 when present, then TASTE, REVIEW, and BROADCAST roles; each segment keeps its
 own authenticated color and interaction. Ordinary prose begins immediately
 after that compact attribution sequence on the same line.
+When that opening run continues into another paragraph, the later paragraph
+keeps the ordinary Markdown paragraph gap; making the first paragraph inline
+for attribution does not collapse the boundary between them.
 
 All images associated with the hunk are consolidated next, floated at the
 inline start, and followed by the remaining prose. A nested quote interrupts

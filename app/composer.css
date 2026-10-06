@@ -585,6 +585,9 @@
   display: inline;
   margin-block-start: 0;
 }
+/* The first paragraph is inline so attribution can lead it. Inline boxes ignore
+   block margins, so a following paragraph owns their ordinary .7em gap. */
+.markdown-body .message-hunk-content > p:first-child + p { margin-block-start: .7em; }
 .markdown-body .message-hunk > p.message-image-stack {
   display: flex;
   float: inline-start;
