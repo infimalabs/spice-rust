@@ -5,7 +5,12 @@
 //! full-project grouping, relationship summaries, counts, board arrangements
 //! over the resident's offer order, and owner naming so consumers cannot drift.
 
+mod overview;
 mod relationship;
+pub use overview::{
+    TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
+    TaskOverviewNodeKind, TaskOverviewSelection,
+};
 pub use relationship::{
     WorkRelationshipDirection, WorkRelationshipEdge, WorkRelationshipError,
     WorkRelationshipExpansion, WorkRelationshipFrontier, WorkRelationshipGraph,

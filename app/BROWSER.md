@@ -93,6 +93,26 @@ and the local grant date identify it, with `Reset credit` reserved for an
 absent or invalid grant time. A valid expiry stays right-aligned as an `expires`
 relative countdown with exact-time hover detail.
 
+## Graph-first task overview
+
+Task activation opens one contextual overview for the complete selected task
+set. The selection is an ordered, stable-deduplicated list: every selected
+root remains visible even when the set is larger than the relation command's
+former root or node limits. Scope and project entry points derive that list
+from the locally admitted board in its offered order.
+
+The overview is one continuous modal surface. Its admitted-board dependency
+graph renders first, including selected roots with no edges and explicit
+outside-board or outside-selection neighbors. Zoom, pan, reset, and selected
+node activation remain available without changing the selection. Every
+selected task then owns a full detail section below the graph; evidence,
+ownership, blockers, relationships, provenance, timestamps, activity, notes,
+loading, unavailable, and retry states appear simultaneously rather than
+behind tabs, pagination, or next/previous controls. Activating a selected graph
+node scrolls and moves focus to that task's detail section. Escape, backdrop,
+and Close dismiss the overview and restore the prior focus when it still
+exists. Reduced-motion mode removes the sheet and graph transitions.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift

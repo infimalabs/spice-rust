@@ -54,7 +54,6 @@ fn handle_stream_frame(
             }
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
-        stale.resolve_task_relations(runtime, changed);
         stale.resolve_direction_history(runtime, changed);
         stale.resolve_work_history(runtime, changed);
         let operator = changed
@@ -266,12 +265,6 @@ fn apply_command_response(
                 admit_response(session, bytes)?;
             runtime.apply_task_detail(&task, &admitted);
             reconcile_note_detail(handles, runtime, &task)
-        }
-        PendingKind::TaskRelations { key } => {
-            let admitted: crate::Admitted<Response<wire::intent::TaskRelationsAnswer>> =
-                admit_response(session, bytes)?;
-            runtime.apply_task_relations(&key, &admitted);
-            CommandApplication::ordinary(false)
         }
         PendingKind::DirectionHistory { request } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectionHistoryAnswer>> =

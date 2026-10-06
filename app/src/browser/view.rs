@@ -1,7 +1,7 @@
 //! App surface rendering for the operator browser.
 
 use super::*;
-use crate::work::{WorkArrangement, WorkProjection, WorkScope};
+use crate::work::{TaskOverviewSelection, WorkArrangement, WorkProjection, WorkScope};
 
 pub(super) mod chrome;
 mod direction_history;
@@ -87,7 +87,7 @@ pub(super) struct AppRender<'a> {
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
-    pub selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
+    pub selected_task: &'a UseStateHandle<Option<TaskOverviewSelection>>,
     pub detail_presented: bool,
     pub detail_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
@@ -101,7 +101,6 @@ pub(super) struct AppRender<'a> {
     pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub request_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
-    pub retry_relations: Callback<MouseEvent>,
 }
 
 pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
@@ -282,7 +281,9 @@ pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'
     // stays stale until the connection is live again; the notice then toasts
     // once per outage rather than once per attempt.
     let stale = !matches!(&**render.connection, Connection::Online { .. });
-    let selected = (**render.selected_task).as_ref();
+    let selected = (**render.selected_task)
+        .as_ref()
+        .and_then(TaskOverviewSelection::first);
     let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
     let creator_context = Callback::from(|event: MouseEvent| {
         super::card_target::remember_global_work_return(&event);
@@ -330,38 +331,30 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
     let Some(work) = work else {
         return Html::default();
     };
+    let Some(selection) = (**render.selected_task).as_ref() else {
+        return Html::default();
+    };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let selected = (**render.selected_task).as_ref();
-    let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
-    let relation_key = selected.map(|selected| render.work_map.relations_key(selected));
-    let relations = relation_key
-        .as_ref()
-        .and_then(|key| runtime.and_then(|runtime| runtime.task_relations(key)));
     work_detail::render(work_detail::WorkDetailRender {
         work,
         scope: render.work_scope,
         lanes: runtime.and_then(AppRuntime::lanes),
         navigate: render.navigate,
         creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
-        selected,
+        selection,
         presented: render.detail_presented,
         closing: render.detail_closing,
         map: render.work_map,
-        detail,
-        relations,
-        can_read_relations: runtime
-            .is_some_and(|runtime| runtime.offers(CommandKind::TaskRelations)),
+        runtime,
         can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
         can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
         close_ref: render.detail_close,
         sheet_ref: render.detail_sheet,
         notes: render.notes,
         submit_note: render.submit_note.clone(),
-        select_task: render.select_task.clone(),
         request_task: render.request_task.clone(),
         close: render.close_task.clone(),
-        retry_relations: render.retry_relations.clone(),
     })
 }
 
