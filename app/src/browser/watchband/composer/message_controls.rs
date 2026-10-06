@@ -44,7 +44,13 @@ fn collect_quote_controls(
                 .unwrap_or_else(|| agent_message_source_id(context.message));
             (quote_target, source_id)
         });
-        push_quote_control(quote, target, text, display_millis, context, controls);
+        let source = QuoteControlSource {
+            target_text: target,
+            text,
+            preview: watchband::first_nonquoted_prose,
+            display_millis,
+        };
+        push_quote_control(quote, &source, context, controls);
         collect_quote_controls(quotes, quote_sources, context, controls);
     }
 }
@@ -72,32 +78,39 @@ fn collect_directive_controls(
                 agent_message_source_id(context.message),
             )
         });
-        push_quote_control(
-            quote,
-            &target_text,
+        let source = QuoteControlSource {
+            target_text: &target_text,
             text,
-            directive.authored.get().as_millisecond(),
-            context,
-            controls,
-        );
+            preview: watchband::directive_context_prose,
+            display_millis: directive.authored.get().as_millisecond(),
+        };
+        push_quote_control(quote, &source, context, controls);
     }
+}
+
+/// The hunk one quote control sits on: its target identity, the rendered text
+/// its speak action reads, and how that text yields the authored line its
+/// composer shard shows.
+struct QuoteControlSource<'a> {
+    target_text: &'a str,
+    text: &'a str,
+    preview: fn(&str) -> Option<String>,
+    display_millis: i64,
 }
 
 fn push_quote_control(
     quote: Option<(wire::QuoteTarget, String)>,
-    target_text: &str,
-    text: &str,
-    display_millis: i64,
+    source: &QuoteControlSource<'_>,
     context: &MessageControlContext<'_>,
     controls: &mut Vec<MarkdownControl>,
 ) {
+    let display_millis = source.display_millis;
     let quote = quote.map(|(target, source_id)| {
         let lane = context.quote_lane.to_string();
-        let focus_identity = target_text.to_owned();
+        let focus_identity = source.target_text.to_owned();
         let focus_lane = lane.clone();
         let dispatcher = context.quote_dispatcher.clone();
-        let preview =
-            watchband::quote_label(watchband::first_nonquoted_prose(text).as_deref()).to_owned();
+        let preview = watchband::quote_label((source.preview)(source.text).as_deref()).to_owned();
         let order = context.order;
         Callback::from(move |()| {
             dispatcher.dispatch(ComposerAction::AddQuote {
@@ -119,10 +132,10 @@ fn push_quote_control(
         quote,
     };
     controls.push(MarkdownControl {
-        target: AttrValue::from(target_text.to_owned()),
+        target: AttrValue::from(source.target_text.to_owned()),
         content: render_message_controls(
             context.message,
-            text,
+            source.text,
             &correspondent,
             true,
             context.producer_label,
