@@ -289,13 +289,14 @@ inline-end. The island floats; attribution and ordinary prose remain in the
 same inline flow beside it. The island blocks exactly two lines of the hunk's
 prose: it rises a half line into the free corner above and crosses the card
 inset toward the inline end. The renderer folds raw-blockquote and authenticated
-quote-card recursion into one numeric depth on each hunk's controls. CSS starts
+quote-card recursion into one numeric depth in inert metadata on each hunk's
+controls. The trusted portal mount copies that value into a CSS custom property,
+so the ordinary serving policy never has to admit raw inline styles. CSS starts
 the negative end margin at the card inset and adds one
-`--mosaic-quote-inline` token per level, so the pair reclaims only nested right
-padding that prose cannot reach; no browser traversal or finite set of depth
-selectors participates. Its buttons use the header's 35px control size,
-matching the operator avatar and Spice trigger at every quote depth rather than
-shrinking with quoted type.
+`--mosaic-quote-inline` token per level, reclaiming only nested right padding
+that prose cannot reach; no finite set of depth selectors participates. Its
+buttons use the header's 35px control size, matching the operator avatar and
+Spice trigger at every quote depth rather than shrinking with quoted type.
 The message content clips at the card's inner edge, not its content box, so the
 island is never cut while text still wraps at the content box. The two actions
 join without a gap into one stream-surface cutout. Quote is square; Play rounds

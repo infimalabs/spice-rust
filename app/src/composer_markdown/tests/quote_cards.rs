@@ -130,6 +130,21 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     assert_eq!(
         rendered
             .html
+            .matches("data-message-quote-depth=\"1\"")
+            .count(),
+        2
+    );
+    assert_eq!(
+        rendered
+            .html
+            .matches("data-message-quote-depth=\"2\"")
+            .count(),
+        1
+    );
+    assert!(!rendered.html.contains("style=\"--message-quote-depth"));
+    assert_eq!(
+        rendered
+            .html
             .matches("data-quote-state=\"resolved\"")
             .count(),
         2
@@ -549,6 +564,16 @@ fn attribution_hunks_restart_around_quotes_and_lead_with_their_images() {
         .map(|(position, _)| position)
         .collect::<Vec<_>>();
     assert_eq!(answer_controls.len(), 2, "{html}");
+    assert_eq!(
+        html.matches("data-message-quote-depth=\"0\"").count(),
+        2,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("data-message-quote-depth=\"1\"").count(),
+        1,
+        "{html}"
+    );
     assert_eq!(answer_attributions.len(), 2, "{html}");
 
     let first_image = html.find("src=\"a.png\"").expect("first image");

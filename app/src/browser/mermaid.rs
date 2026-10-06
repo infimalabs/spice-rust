@@ -713,6 +713,19 @@ fn collect_control_slots(
         else {
             continue;
         };
+        // Raw inline styles are refused by the app CSP. The renderer owns this
+        // numeric metadata; applying it through CSSOM keeps CSS layout generic.
+        let depth = target.get_attribute("data-message-quote-depth");
+        let depth = depth
+            .as_deref()
+            .filter(|depth| depth.parse::<usize>().is_ok())
+            .unwrap_or("0");
+        target
+            .dyn_ref::<web_sys::HtmlElement>()
+            .expect("control slots are HTML spans")
+            .style()
+            .set_property("--message-quote-depth", depth)
+            .expect("quote depth is a valid CSS integer");
         let key = previous
             .iter()
             .find(|slot| slot.target == target)
