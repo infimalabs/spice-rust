@@ -280,11 +280,12 @@ fn render_team_total(
     groups: &[crate::work::TeamTaskGroup<'_, '_>],
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
-    use crate::work::WorkAvailability::{InFlight, Ready};
-    use crate::work::WorkScope;
-    let tasks = || groups.iter().flat_map(|group| group.tasks().iter());
-    let open = tasks().count();
-    let workable = tasks().any(|task| matches!(task.availability(), InFlight | Ready));
+    use crate::work::{WorkCounts, WorkScope};
+    let counts = groups
+        .iter()
+        .flat_map(|group| group.tasks().iter().map(|task| task.availability()))
+        .collect::<WorkCounts>();
+    let open = counts.open();
     let title = format!(
         "Open all of this team's work: {open} {}",
         if open == 1 { "task" } else { "tasks" }
@@ -296,12 +297,7 @@ fn render_team_total(
     html! {
         <span
             key="team-total"
-            class={classes!(
-                "task-pill",
-                "task-pill--project",
-                "task-pill--total",
-                (!workable).then_some("dormant"),
-            )}
+            class="task-pill task-pill--project task-pill--total"
             data-work-scope="team"
         >
             <button
@@ -311,7 +307,7 @@ fn render_team_total(
                 aria-label={title}
                 onclick={open_team}
             >
-                <span class="task-pill-count">{open.to_string()}</span>
+                {view::chrome::render_task_count(counts)}
             </button>
         </span>
     }
@@ -324,21 +320,20 @@ fn render_team_task_group(
     group: &crate::work::TeamTaskGroup<'_, '_>,
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    use crate::work::WorkAvailability::{InFlight, Ready};
     let stem = group.stem().clone();
     let stem_label = stem.stem().to_owned();
     let stem_key = stem.to_string();
-    let open = group.tasks().len();
+    let counts = group
+        .tasks()
+        .iter()
+        .map(|task| task.availability())
+        .collect::<crate::work::WorkCounts>();
+    let open = counts.open();
     let stem_aria_label = format!(
         "Open this team's {stem} work: {open} {}",
         if open == 1 { "task" } else { "tasks" }
     );
-    let hidden = stem.hidden();
-    let visibility = if hidden { "hidden" } else { "public" };
-    let workable = group
-        .tasks()
-        .iter()
-        .any(|task| matches!(task.availability(), InFlight | Ready));
+    let visibility = if stem.hidden() { "hidden" } else { "public" };
     let open_stem = {
         let navigate = render.navigate.clone();
         let scope = crate::work::WorkScope::Team {
@@ -350,12 +345,7 @@ fn render_team_task_group(
     html! {
         <span
             key={stem_key}
-            class={classes!(
-                "task-pill",
-                "task-pill--project",
-                hidden.then_some("system"),
-                (!workable).then_some("dormant"),
-            )}
+            class="task-pill task-pill--project"
             data-task-stem={stem_label.clone()}
             data-task-visibility={visibility}
         >
@@ -367,21 +357,15 @@ fn render_team_task_group(
                 onclick={open_stem}
             >
                 <span class="task-pill-stem">{stem_label}</span>
-                <span class="task-pill-count">{open.to_string()}</span>
+                {view::chrome::render_task_count(counts)}
             </button>
-            {for group.tasks().iter().copied().map(|task| {
-                render_team_task_handle(task, hidden, render)
-            })}
+            {for group.tasks().iter().copied().map(|task| render_team_task_handle(task, render))}
         </span>
     }
 }
 
 /// One task-detail target inside its stem group.
-fn render_team_task_handle(
-    task: &crate::work::WorkTask<'_>,
-    hidden: bool,
-    render: &FleetRender<'_, '_>,
-) -> Html {
+fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRender<'_, '_>) -> Html {
     use crate::work::WorkAvailability::{InFlight, Ready};
     let statement = &task.row().statement.body;
     let availability = task.availability();
@@ -410,8 +394,6 @@ fn render_team_task_handle(
             class={classes!(
                 "task-pill",
                 "task-pill-handle",
-                hidden.then_some("system"),
-                (availability == InFlight).then_some("active"),
                 (!matches!(availability, InFlight | Ready)).then_some("dormant"),
             )}
             type="button"

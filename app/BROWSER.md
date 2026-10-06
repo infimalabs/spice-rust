@@ -448,39 +448,42 @@ the status row. Pips retain the unified presence palette: active, queued,
 waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
-bottom, and outer-edge insets. The global task strip keeps its joined
-`task-pill-strip app-control-rail` pill treatment. Public stems retain their
-lifecycle-colored badges; the hidden `oops` stem uses the same soft neutral
-label and count badge as its team-local representation. Team-local work instead
-forms tab-shaped flags in the task band, on the composer's dark `--control`
-surface rather than the brighter message-stream surface. The leading
-badge-only `task-pill--total` carries matching inline-start and inline-end rails
-at the message card's `--message-rail` width. Each following stem/task group
-uses the nested quote's narrower `--quote-rail` width on both sides. Both rail
-treatments taper into 1em top corners, with no top edge and a square open
-bottom; no handle carries a rail of its own. Both rails take `--line`, the
-colour of the status band's top rule they stand on, so each tab and that rule
-read as one stroke. A group spans lanes and lifecycles, so the
-`task-pill-count` badge uses the soft `--muted` neutral. The stem label is
-muted at reduced opacity; unworked handles
-are muted, dormant ones weaker. A handle a lane is working names that lane in
-its text, the lane accent mixed 55% toward `--ink`, and in a 5% tint of the
-accent mixed into `--control`; unworked targets tint in `--muted`. In-flight
-handles are not dimmed, because text and tint carry ownership. Every target
-rises to a 10% tint on hover. Labels sit 10px in from either rail: the stem
-starts and the last handle ends with 10px, and every other join has 8px on each
-side. An 8px outer inset keeps the flags off the browser edge, and adjacent
-stem groups are separated by the message stream's inter-lane `--mosaic-gap`;
-neither joins the status rule below. The total's sole `task-pill-count` badge
-counts every task the band shows, which is the sum of the stem badges and the
-number of handles, and opens the team's all-task Work scope,
-`#/work/team/{team}`.
+bottom, and outer-edge insets. Global and team-local work share one horned-tab
+construction on the composer's dark `--control` surface rather than the
+brighter message-stream surface. The global `task-pill-strip` hangs its tabs
+from the window's top edge with rounded bottom corners; a team's task band
+stands its tabs on the status rule with rounded top corners. Each strip leads
+with a badge-only total, `task-pill--all` globally and `task-pill--total` per
+team, whose inline-start and inline-end rails take the message card's
+`--message-rail` width. Each following stem tab uses the nested quote's
+narrower `--quote-rail` width on both sides. Both rail treatments taper into
+1em corners, with no edge along the glued side and a square open side; no
+handle carries a rail of its own. Both rails take `--line`, the colour of the
+status band's top rule the team tabs stand on, so each team tab and that rule
+read as one stroke. A global tab is a stem roll-up: one stem label and its
+badge, with no task breakouts. Every `task-pill-count` badge, global or
+team-local, carries `data-slowest`, the slowest open lifecycle it counts
+(deferred, then blocked, ready, in flight), and wears the presence pip's ladder
+for it: in flight as active `--accent`, ready as queued `--warning`, blocked as
+waiting, and deferred as bound. The stem label is muted at reduced opacity;
+unworked handles are muted, dormant ones weaker. A handle a lane is working
+names that lane in its text, the lane accent mixed 55% toward `--ink`, and in a
+5% tint of the accent mixed into `--control`; unworked targets tint in
+`--muted`. In-flight handles are not dimmed, because text and tint carry
+ownership. Every target rises to a 10% tint on hover. Labels sit 10px in from
+either rail: the stem starts and the last handle ends with 10px, and every
+other join has 8px on each side. An 8px outer inset keeps the team flags off
+the browser edge, and adjacent tabs in either strip are separated by the
+message stream's inter-lane `--mosaic-gap`; team flags never join the status
+rule below. The team total's sole badge counts every task the band shows, which
+is the sum of the stem badges and the number of handles, and opens the team's
+all-task Work scope, `#/work/team/{team}`.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
 `task-pill--project` flag, and later matches join that flag without changing
 their relative order. Its `task-pill-stem-target` button displays the raw stem
-in the muted blocked tone with a muted `task-pill-count` badge of the stem's open
+in the muted blocked tone with a `task-pill-count` badge of the stem's open
 tasks, and opens the team's Work scope narrowed to that stem. The following
 `task-pill-handle` buttons open each task's detail, naming their working lane
 by text colour and tint; closing detail returns focus to that handle.

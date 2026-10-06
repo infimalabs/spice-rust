@@ -446,7 +446,6 @@
   --team-task-band: calc(var(--team-control-submit-block-size) - var(--team-status-band));
   --team-header-size: var(--team-control-submit-block-size);
   --team-chamber-inset: 8px;
-  --mosaic-gap: 9px; /* Between stream lanes, and between task stem groups. */
   /* Match the predecessor's weighted swimlanes: each team receives one
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling team surfaces. */

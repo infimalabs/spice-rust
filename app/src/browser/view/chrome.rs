@@ -15,7 +15,6 @@
 
 use super::*;
 use crate::browser::clock::Age;
-use crate::task_pill::TaskPill;
 use crate::watchband;
 use crate::work::{WorkCounts, WorkProjection};
 
@@ -47,12 +46,11 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         runtime.is_some_and(|runtime| runtime.lanes().is_some()),
     );
     let on_work = render.destination == AppDestination::Work;
-    let task_pills = render
+    let stems = render
         .work
         .into_iter()
         .flat_map(WorkProjection::stems)
         .filter(|stem| stem.counts().has_open())
-        .map(TaskPill::from_stem)
         .collect::<Vec<_>>();
     // The strip rolls up every open task, team-associated or not; the total
     // leads it whenever any open work exists.
@@ -77,10 +75,10 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-expanded={(**render.menu_open).to_string()}
             >
                 {operator_link}
-                <nav class="task-pill-strip app-control-rail" aria-label="Open task projects">
+                <nav class="task-pill-strip" aria-label="Open task projects">
                     {all_work_pill}
-                    {for task_pills.into_iter().map(|pill| {
-                        render_stem_pill(pill, on_work.then_some(render.work_scope), render.navigate)
+                    {for stems.into_iter().map(|stem| {
+                        render_stem_pill(stem, on_work.then_some(render.work_scope), render.navigate)
                     })}
                 </nav>
                 if let Some(status) = status {
@@ -314,6 +312,17 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
+/// One open-task count badge, global or team-local, coloured by the slowest
+/// open lifecycle it rolls up so every filtered view reads the same ladder.
+pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
+    html! {
+        <span
+            class="task-pill-count"
+            data-slowest={counts.slowest().map(crate::work::WorkAvailability::key)}
+        >{counts.open().to_string()}</span>
+    }
+}
+
 /// The label-less total leading the global strip, opening all open Work. Like
 /// the team total, its badge is one open-task count.
 fn render_aggregate_pill(
@@ -323,23 +332,17 @@ fn render_aggregate_pill(
 ) -> Html {
     let selected = current == Some(&WorkScope::AllOpen);
     let open = counts.open();
-    let ready = counts.ready();
-    let active = counts.in_flight();
-    let unavailable = counts.unavailable();
     let title = format!(
-        "All open work: {open} {}; {ready} ready, {active} active or in flight, {unavailable} blocked or deferred",
-        if open == 1 { "task" } else { "tasks" }
+        "All open work: {open} {}; {} ready, {} active or in flight, {} blocked or deferred",
+        if open == 1 { "task" } else { "tasks" },
+        counts.ready(),
+        counts.in_flight(),
+        counts.unavailable(),
     );
     let navigate = navigate.clone();
     html! {
         <button
-            class={classes!(
-                "task-pill",
-                "task-pill--all",
-                (active > 0).then_some("active"),
-                (ready == 0 && active == 0).then_some("dormant"),
-                selected.then_some("selected"),
-            )}
+            class={classes!("task-pill", "task-pill--all", selected.then_some("selected"))}
             type="button"
             title={title.clone()}
             aria-label={title}
@@ -348,46 +351,44 @@ fn render_aggregate_pill(
             data-work-scope="all"
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
         >
-            <span class="task-pill-count">{open.to_string()}</span>
+            {render_task_count(counts)}
         </button>
     }
 }
 
-/// One global stem pill opening that stem's Work, the scope its counts
+/// One global stem tab opening that stem's Work, the scope its counts
 /// describe.
 fn render_stem_pill(
-    pill: TaskPill,
+    stem: &crate::work::WorkStem,
     current: Option<&WorkScope>,
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
-    let scope = WorkScope::Stem(pill.identity.clone());
+    let identity = stem.identity();
+    let counts = stem.counts();
+    let scope = WorkScope::Stem(identity.clone());
     let selected = current == Some(&scope);
-    let title = pill.title();
+    let title = format!(
+        "{identity}: {} ready, {} active or in flight, {} blocked or deferred",
+        counts.ready(),
+        counts.in_flight(),
+        counts.unavailable(),
+    );
     let navigate = navigate.clone();
     html! {
         <button
-            key={pill.identity.to_string()}
-            class={classes!(
-                "task-pill",
-                pill.hidden.then_some("system"),
-                (pill.active > 0).then_some("active"),
-                (pill.ready == 0 && pill.active == 0).then_some("dormant"),
-                selected.then_some("selected"),
-            )}
+            key={identity.to_string()}
+            class={classes!("task-pill", selected.then_some("selected"))}
             type="button"
             title={title.clone()}
             aria-label={title}
             aria-pressed={selected.to_string()}
             aria-current={selected.then_some("page")}
-            data-task-stem={pill.stem.clone()}
-            data-task-visibility={if pill.hidden { "hidden" } else { "public" }}
-            data-ready={pill.ready.to_string()}
-            data-active={pill.active.to_string()}
-            data-unavailable={pill.unavailable.to_string()}
+            data-task-stem={identity.stem().to_owned()}
+            data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
-            <span class="task-pill-stem">{pill.stem.clone()}</span>
-            <span class="task-pill-count">{pill.count()}</span>
+            <span class="task-pill-stem">{identity.stem().to_owned()}</span>
+            {render_task_count(counts)}
         </button>
     }
 }
