@@ -84,6 +84,11 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         ),
         (OsString::from("SHLVL"), OsString::from("1")),
         (
+            OsString::from("SSH_AUTH_SOCK"),
+            OsString::from("/fixture/producer-agent.sock"),
+        ),
+        (OsString::from("TERM_SESSION_ID"), OsString::from("w0t0p0")),
+        (
             prefixed_name(SHELL_HOOK_PREFIX, "REPO_ROOT"),
             OsString::from("/fixture/repository"),
         ),
@@ -110,6 +115,7 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("/fixture/consumer-spice"),
         ),
         (OsString::from("SHLVL"), OsString::from("2")),
+        (OsString::from("TMUX"), OsString::from("/fixture/tmux,1,0")),
         (
             prefixed_name(SHELL_HOOK_PREFIX, "WRAPPERS"),
             OsString::from("consumer wrapper functions"),
