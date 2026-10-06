@@ -437,16 +437,19 @@ second row is one status band whose ticker leads into the physical-right pip
 segment; neither row has a hamburger or aggregate team-task count.
 
 One compact square flag per visibility-qualified project stem follows in-flight,
-ready, blocked, and deferred offer order, on the composer's surface. A flag
-echoes the message cards: the stem carries a rail at the message card's width,
-each task handle a rail at the quote's width, and there is no enclosing
-perimeter or rounded corners. A stem spans lanes and lifecycles, so its rail and
-open-count badge use the soft muted neutral. A handle's rail is muted unless a
-lane is working the task, in which case it takes that lane's accent. Every stem
-or handle target rests at a 5% tint of its rail colour and rises to 10% on
-hover. An 8px outer inset keeps flags clear of the browser edge, and
-neighbouring stem groups are separated by the message stream's gap between
-lanes, giving a thick-rail, thin-rail, gap cadence. The band
+ready, blocked, and deferred offer order, on the composer's dark surface rather
+than the brighter message stream. A flag echoes the message cards: the stem
+carries a rail at the message card's width, each task handle a rail at the
+quote's width, and there is no enclosing perimeter or rounded corners. A stem
+spans lanes and lifecycles, so its rail and open-count badge use the soft muted
+neutral. A handle's rail is muted unless a lane is working the task, in which
+case it takes that lane's accent. Every stem or handle target mixes a 5% tint
+of its rail colour into the composer surface and rises to 10% on hover. At a
+stem-to-task or task-to-task join, 4px of trailing space before a rail matches
+the 4px after it; the outer ends retain 10px insets. An 8px outer inset keeps
+flags clear of the browser edge, and neighbouring stem groups are separated by
+the message stream's gap between lanes, giving a thick-rail, thin-rail, gap
+cadence. The band
 scrolls horizontally when its labels outgrow the available width, without
 overlapping the status row or its pips.
 
