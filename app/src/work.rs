@@ -151,7 +151,7 @@ impl WorkScope {
 /// One visibility-qualified stem and the team-local tasks grouped beneath it.
 ///
 /// Groups follow their first task in lifecycle and offer order, matching the
-/// Work board's clustering rule. Tasks inside a group retain that same order.
+/// task-strip grouping rule. Tasks inside a group retain that same order.
 #[derive(Debug)]
 pub struct TeamTaskGroup<'p, 'a> {
     stem: &'p WorkStemIdentity,
@@ -540,9 +540,9 @@ impl<'a> WorkProjection<'a> {
     /// One team's open task rail, grouped by visibility-qualified stem.
     ///
     /// The source order is in-flight, ready, blocked, then deferred, with each
-    /// lifecycle retaining resident offer order. As on the project-clustered
-    /// Work board, groups follow their first task and gather every later match
-    /// without changing the tasks' relative order.
+    /// lifecycle retaining resident offer order. As in the global task strip,
+    /// groups follow their first task and gather every later match without
+    /// changing the tasks' relative order.
     #[must_use]
     pub fn team_task_groups<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<TeamTaskGroup<'p, 'a>> {
         use WorkAvailability::{Blocked, Deferred, InFlight, Ready};

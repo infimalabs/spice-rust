@@ -266,7 +266,8 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
 }
 
 /// Focus enters the overview when it opens. A close returns to the launch
-/// control, then to the first selected task's surviving card.
+/// control. If that launcher no longer survives, focus stays with the document
+/// instead of searching for controls from the retired task page.
 #[hook]
 pub(super) fn use_focus(
     selected: &UseStateHandle<Option<TaskOverviewSelection>>,
@@ -275,20 +276,6 @@ pub(super) fn use_focus(
     _sheet: NodeRef,
     return_focus: Rc<RefCell<Option<web_sys::Element>>>,
 ) {
-    let last_seen = use_mut_ref(|| None::<TaskStamp>);
-    {
-        let last_seen = last_seen.clone();
-        use_effect_with(
-            ((**selected).clone(), mounted),
-            move |(selection, mounted)| {
-                if *mounted
-                    && let Some(task) = selection.as_ref().and_then(TaskOverviewSelection::first)
-                {
-                    *last_seen.borrow_mut() = Some(task.clone());
-                }
-            },
-        );
-    }
     use_effect_with(selected.is_some() && mounted, move |active| {
         if *active && let Some(button) = close.cast::<web_sys::HtmlElement>() {
             let options = web_sys::FocusOptions::new();
@@ -300,32 +287,12 @@ pub(super) fn use_focus(
         if selected.is_some() {
             return;
         }
-        let target = last_seen.borrow_mut().take();
-        let focused = return_focus
+        let _ = return_focus
             .borrow_mut()
             .take()
             .filter(overlay::returnable)
             .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
             .is_some_and(|element| element.focus().is_ok());
-        let focused = focused
-            || target
-                .as_ref()
-                .and_then(|task| {
-                    let document = web_sys::window()?.document()?;
-                    let selector = format!(".work-card-open[data-task-stamp=\"{task}\"]");
-                    document.query_selector(&selector).ok().flatten()
-                })
-                .filter(overlay::returnable)
-                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                .is_some_and(|element| element.focus().is_ok());
-        if !focused
-            && target.is_some()
-            && let Some(document) = web_sys::window().and_then(|window| window.document())
-            && let Ok(Some(board)) = document.query_selector(".work-board-section")
-            && let Ok(board) = board.dyn_into::<web_sys::HtmlElement>()
-        {
-            let _ = board.focus();
-        }
     });
 }
 

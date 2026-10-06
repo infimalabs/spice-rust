@@ -34,42 +34,18 @@ const lightApp = await launchAppBrowser(chromium, {
 
 ## Browser branding and remaining work
 
-The tab and menu use the predecessor's brand: the short lowercase name `spice`,
-placed last. The Wasm app carries no separate product name in
-user-facing text, which matters in a tab where only a few characters show. The
-predecessor Python Spice (`spice.git`, `spice/serve/web.py` and
-`spice/serve/static/app.audio.js`) had three branding conventions, and each is
-decided here:
+The tab and menu use the lowercase brand `spice`, always trailing changing
+state. Titles are `5 tasks - spice`, `1 task - spice`,
+`7 tasks (stale) - spice`, `Loading - spice`, and
+`Disconnected - spice`; the static page title is `spice`. Speech never retitles
+the tab.
 
-- Its title and menu label came from `pyproject.toml` `[project] name`, else
-  `[serve] brand` (default `spice`). Adopted: the `spice` default as the brand.
-  The per-repository override is not carried over; this repository has no
-  brand configuration key.
-- It shipped a static raster set: `favicon.ico`, 16/32px PNGs,
-  `apple-touch-icon`, and `site.webmanifest`. Rejected: one generated SVG icon
-  carries the live count, which a static file cannot. spice is a loopback
-  operator tab, not a home-screen install. Until the Wasm app's first branding
-  effect runs, the tab shows the browser's default icon.
-- During speech playback it retitled the tab with the speaking agent first
-  (`main-b - spice`). The shape is adopted: the changing state leads and the
-  brand trails after ` - `. The speech trigger is not; the title holds the
-  remaining-task count and stays stable instead of flipping with each
-  utterance, while the app marks the speaking message card `now-playing` and
-  only its owning hunk's control as active.
-
-Titles read `5 tasks - spice`, `1 task - spice`, `7 tasks (stale) - spice`,
-`Loading - spice`, and `Disconnected - spice`; the static page title is
-`spice`. These supersede earlier title spellings.
-
-Once the first board snapshot arrives, the title gives the exact number of
-remaining public tasks and the icon wears the same count. The pepper keeps the
-icon's upper-left corner, and the badge fills the lower right with digits large
-enough to read at the 16px tab size. The badge shows exact values through 99
-and bounds larger labels at `99+`; the title remains exact. Title and icon are
-rewritten only when this state changes. A zero badge is explicit. Loading has
-an ellipsis, and disconnection without a retained board has an exclamation
-mark. During reconnect, the last known count stays visible in amber and the
-title marks it stale; a current snapshot restores the green badge.
+Once a board snapshot arrives, the title carries the exact remaining public
+task count and the generated SVG pepper icon carries the same badge. Icon
+labels are exact through 99 and then `99+`; zero is explicit. Loading and
+disconnected states use ellipsis and exclamation marks. Reconnect retains the
+last count in amber and marks the title stale; current data restores green.
+Title and icon are rewritten only when this state changes.
 
 ## Provider quota rows
 
@@ -149,115 +125,34 @@ margin of its own.
 
 ## Team composer controls
 
-The 56px round team send button sits above the speech and allocation sliders,
-whose vertical tracks follow side by side. The 80px control column keeps one
-12px inline rhythm: the circle leaves 12px at each edge, and each 16px slider
-track leaves 12px on each side within its 40px half. The circle's 68px row
-leaves 6px above and below. The button is 1.6 times the 35px global Spice and
-Dash controls: prominent, with enough negative space to avoid reading as a
-novelty control.
-Its visible label is always "Send"; the adjacent allocation label and the
-button's color continue to identify Steer, Drive, or Drain.
-Its accent-derived face rolls continuously into a softly shaded edge, using
-asymmetric edge light and diffuse elevation and contact shadows instead of
-nested outline rings. Hover brightens it without moving; pointer press moves it
-down one pixel, softens the face highlight, and draws the diffuse shadow inward
-before release pops it back to rest. Reduced-motion mode keeps both state
-changes instantaneous.
-The keyboard-submit preview is a separate outer ring, so it does not erase the
-button's depth. It takes the focused agent's accent for ordinary submit and the
-purple broadcast accent for Command-Shift submit. Both are pure CSS reactions
-to focus and existing modifier attributes; no observer or sampling path runs.
+The 56px Send action occupies the top of an 80px control column, with the
+speech and allocation vertical ranges below it. Its label stays “Send”; color
+and the adjacent allocation value distinguish Steer, Drive, and Drain. Hover,
+press, reduced-motion, ordinary-submit, and broadcast-preview states change
+paint only, never geometry.
 
-The two current values occupy the row immediately below the tracks, leaning
-toward the center: speech ends 3px before and allocation starts 4px after the
-column midpoint, so they read as one phrase such as "quiet drain" or "narrate
-steer". The transparent slider wrappers draw no backgrounds, borders, inset
-shadows, or center divider. Quiet and Steer use the neutral muted token, Speak
-and Drive keep the green accent, and Narrate and Drain keep the yellow/gold
-warning accent. The member composers share one pane of the shared overlay
-glass, the overlay veil over the overlay frost, so the stream scrolling beneath
-reads blurred through every draft. No composer or composer section paints a
-fill of its own; a lit draft tints the glass with 10% of its lane accent. The
-control column beside them paints an opaque field, the overlay veil over the
-stream surface, so at rest it reads as the same glass and parts from the
-composers only once cards scroll beneath the band. A faint inline rule marks
-its start beside the drafts, and it continues their soft top rule.
-At the 10rem minimum member width, the standard draft block remains
-approximately square without widening the member column. Its measured overlay
-height remains the Chat plane's collapse distance and top spacer. Focus
-entering a collapsed composer, such as Quote opening its new draft, reveals the
-composer fully without moving the plane's scroll position.
+Member drafts and the control column are one zero-gap field. Drafts share the
+overlay glass and gain a 10% lane-accent tint when lit; the control column uses
+the matching opaque field plus one faint start rule. Member headings retain
+their accent underline, focused or broadcast drafts merge their full-width
+highlight, and vacant members mute content without changing the surface.
+Measured composer height remains both the overlay collapse distance and the
+message-plane spacer; focusing a collapsed draft reveals it without scrolling
+the plane.
 
-The member columns and that control frame are one joined field. Their measured
-layout gap is zero, and adjacent members paint no vertical separator, shadow,
-or panel-colored gutter. The control frame's start edge carries the faint
-control-edge rule, drawn as an inset shadow inside its 80px, so composers
-sliding beneath it stay legible; it stops at the frame's top rule, so the pips
-and status band read as one continuous strip within a team. The same faint
-rule separates sibling teams below their task band.
-Every member heading has a permanent accent-colored underline aligned to its
-content: the stroke starts beneath the relative-time edge at the heading's 8px
-start padding and ends beneath the hamburger/menu edge at its 5px end padding.
-This leaves a 13px break between adjacent accents without separating the
-composer bodies. A focused member composer instead paints its block-end
-highlight at full member width, so adjacent broadcast targets merge into one
-continuous active signal. The focused draft itself, whether it is the primary
-or a quote draft pinned to a message, mixes its background 10% toward
-that accent. A quote draft's close control stays neutral at rest and takes that
-same member accent on hover or keyboard focus, matching the member's other
-controls. Keyboard broadcast preview lights every occupied recipient through
-the same single lit state, filling each recipient's primary draft. A vacant or
-shut-down member mutes its heading and draft text without fading the composer
-surface beneath them. None of these treatments changes the field's geometry,
-and circular menu buttons, range thumbs, and the send action retain their own
-control shapes.
+The range values sit outside their thumbs as one centered phrase. Quiet and
+Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain
+use warning. Every engine maps Up/Right upward and Down/Left downward. Narrate
+voices live card edges; Speak voices resident-classified final answers and
+acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
+history never auto-plays.
 
-On initial load, each member heading resolves from that lane's newest eligible
-authored prose and its provenance. If the current page contains no eligible
-prose but exposes an older frontier, the heading's lane continues directly to
-that newly exposed frontier even after it leaves the viewport. Header demand
-does not reissue an already recorded frontier: a sparse page that makes no
-progress stays closed until fresh viewport demand, so this dependency cannot
-spin, raise global history quotas, or make a busy peer starve the heading.
-
-The values sit outside the frame rather than riding the thumbs. A seven-letter
-word is more than twice a native thumb's width, a range thumb cannot carry text
-in either engine, and an overlay tracking the thumb would cover the track and
-its focus ring. Above the frame nothing clips the phrase: "narrate", the longest
-speech value at the label's 9px, overhangs the frame's left edge by a few
-pixels and stays clear of the draft.
-
-Both sliders take one stop per arrow press on every engine: Up and Right
-raise, Down and Left lower. A native vertical range in WebKit and Firefox
-raises on Left, so the app handles Left and Right itself rather than inheriting
-each engine's mapping.
-
-The speech slider decides what live cards voice. Narrate speaks each new
-card's edge segments. Speak voices only what the resident classifies: a final
-answer's first and last visible paragraphs, and the bodies of acknowledged
-steering. Neither ever enters a fenced code block, and neither reads Markdown
-marks aloud: emphasis, strike, code, heading, and list markers drop while
-`snake_case` and spaced `2 * 3` keep their characters. Both edge selections
-end at the first list item outside a fence, so a list never rides along as the
-closing paragraph; a message that opens with a list voices its first item. A
-final answer usually revises the prose card already shown under the same
-identity, so the per-agent cursor remembers whether its card carried that
-speech; the revision is spoken once in Speak without repeating Narrate. A page
-load voices none of its history.
-
-When no agent in the team is running and none of its composers holds text, a
-quote, or an image, the sliders and send button step back like inactive
-controls: they dim and their visual children desaturate, while send is disabled
-because there is nothing to send. The slider wrappers themselves remain
-unfiltered so the labels keep their control-frame-relative baseline and center
-gap. The field behind them does not dim or change colour. The
-sliders stay usable. Drafting anything, or any agent running, lights the controls
-again. Typed text lives in each composer element, so the frame alone
-follows it: every composer change, including a value the app writes on mount,
-send, or restore, raises a bubbling `input` event at the team form, and only the
-frame re-renders, only when the answer flips. A keystroke never renders the
-app.
+Each member heading resolves from that lane’s newest eligible authored prose.
+If one history page has none, header demand continues to a newly exposed older
+frontier, but never reissues the same frontier without fresh viewport demand.
+An idle team with no draft, quote, or image dims the send frame while leaving
+the sliders usable; draft input rerenders that frame only when its active answer
+changes.
 
 ## Lane menu
 
@@ -329,110 +224,33 @@ contrasting label inside their frosted frame.
 
 ## Message card control flow
 
-Every attributable hunk owns a shrink-wrapped action island at its top
-inline-end. The island floats; attribution and ordinary prose remain in the
-same inline flow beside it. At top level the island blocks exactly two lines of
-the hunk's prose. The renderer records recursive raw/authenticated quote depth,
-the cumulative block-spacing steps on that exact ancestry, and whether the hunk
-remains on the card-leading chain as inert metadata on its controls. The trusted
-portal mount copies both numeric values into CSS custom properties, so the
-ordinary serving policy never has to admit raw inline styles.
-Inline-end uses the card inset plus the existing 5px quote inset per depth.
-Block-start follows the actual box model independently: every quote shell adds
-its fixed 4px padding, while a shell adds its 4px margin only when a first-child
-reset does not suppress it. On the card-leading chain, the one final jump also
-bridges the quoted 8.125px half-line rise to the card's 9px inset. This keeps
-mixed raw/authenticated trees exact at arbitrary depth instead of extrapolating
-one average jump. The trailing flow margin stays tied to each layer's half-line
-rise, so added upward travel releases prose width instead of adding it back
-below. The zero-width start prop still keeps image rows below the first two
-lines. No finite set of depth selectors participates. The buttons use the
-header's 35px control size at every depth.
-The message content clips at the card's inner edge, not its content box, so the
-island is never cut while text still wraps at the content box. The two actions
-join without a gap into one stream-surface cutout. Quote is square; Play rounds
-both left corners into a finger shape wherever content remains above it. A
-card-start marker covers any leading hunk or nested quote chain whose pair
-reaches the card top: that pair sits flush with the card's top and right edges,
-so Play drops its top-left radius and both controls omit their top border.
-Both controls omit their right border: Quote's left border is
-their single seam. Inline depth compensation puts the open right edge against
-the card boundary at every level. Each control carries a muted
-neutral glyph on a fill of the accent of the rail that contains it, so a quote's
-controls follow that quote's speaker and an operator or system quote's controls
-stay neutral inside an accented card. The fill is a final answer's 5% rest wash
-over the stream surface, so on a final card the control blends into the card and
-only its glyph shows, and a hovered card's 10% wash sets it apart. The remaining
-static edges use the stream surface colour and never change. While hovered,
-pressed, or speaking, the control fills at 10% and its glyph lights to neutral
-ink.
-Playback belongs to one exact hunk control, not every control in its card; the
-card keeps its aggregate `now-playing` state while only that control becomes
-Stop. Automatic Speak or Narrate playback owns the message's direct-prose
-control and leaves quoted source controls on Play. Every Markdown control slot
-owns a keyed portal root, so sibling direct-prose and quoted-source controls
-retain separate callbacks when a card has more than one hunk. ACK-bearing
-tool-call intents use that same direct-prose control and a durable tape quote
-target rather than forming a second, actionless card kind. Each hunk also
-opens with a zero-width presentational prop two lines tall, so the hunk's
-associated image row, which clears both sides before floating inline-start,
-always starts below the first two lines whether or not the island is present
-or resized; paired images still share that row. Narrow cards
-preserve the same ordering instead of adding a separate controls header.
+Every attributable prose hunk owns one floating Quote/Play action island at its
+top inline-end. Attribution and prose remain in normal flow beside it. The
+renderer records exact raw/authenticated quote depth, cumulative block spacing,
+and card-leading ancestry as trusted metadata; CSS uses those values to dock the
+island against the card edge at arbitrary nesting depth without inline styles
+or finite depth selectors. A zero-width two-line prop keeps associated image
+rows below the controls.
 
-Committed message cards sit in one lattice whose 9px perimeter and row and
-column seams equal the card's 9px content inset. The seam is one shared gap
-between neighbors, never two adjoining margins. The lattice carves its
-perimeter and every seam from the admitted rectangle; it never grows to make
-room. Every cell remains a whole number of rows. A
-prose card paints only its content height, centered vertically in that cell, so
-the cell's slack falls evenly above and below it and the visible space between
-cards follows their content while every cell still snaps to the grid. A card
-whose content fills its cell leaves the same seam around its neighbors; image
-covers still fill the card rectangle. The light stream field uses a surface
-halfway between the absolute page and the standard composer. The dark stream
-instead sits halfway between the composer and the brighter panel surface: one
-equal half-step above the composer rather than below it. Cards paint no fill of
-their own, so the field shows through them; they remain distinguished by their
-lane's 4px accent rail, corners rounded by that same 4px, and the gutters
-between them. Nested Markdown blockquotes and resolved or unavailable quote
-cards round theirs by their 2px quote rail at every depth. Each curve ends
-exactly at its rail's inner edge, so no corner overhangs its border, and the
-control pair docked in a card's top-right corner follows the card's curve. A
-FINAL answer keeps its pill and rests washed 5% toward its lane accent, with no
-edge of its own. Hover washes any card 10% toward its lane accent, the same
-strength as an image cover's hover screen, and draws no outline or border, on
-every card type. Measurement clones use the same guttered geometry. Compaction and
-lifecycle dividers, such as a fresh session, remain semantic full-width rows
-drawn as accent rules.
+Quote and Play form one 35px control pair with one internal seam and no outer
+right edge. Their fill follows the owning lane or quote accent, with neutral
+glyphs and paint-only hover, press, speaking, and reduced-motion states.
+Playback belongs to one exact hunk: automatic speech uses direct prose, quoted
+sources retain independent Play controls, and keyed portal roots preserve each
+hunk’s callback. Narrow cards keep this order rather than adding a controls
+header.
 
-An image-only message with exactly one non-diagram image uses its whole
-committed card as an edge-to-edge cover viewport. Measurement clones reserve
-that cover from the card width, but the committed lattice remains the placement
-authority so no aspect-ratio correction opens a ledger gap. Keyboard focus
-paints one card-sized border above the cover, rounded with the card; its
-inline-start rail and remaining edge meet as one boundary, never nested
-outlines, and the image cannot clip or wash out that edge. Hover draws no
-border: the same card-sized layer
-screens the whole cover 10% toward the lane accent instead, since the image
-hides any background wash; a FINAL cover rests screened 5%. The live age and
-producer sit in a compact frosted overlay docked flush into the image card's
-top-left corner, under the rail's own curve. Only its one free corner takes
-the 2px quote radius, so its edges meet the card without exposing a sliver of
-image. It pads its text 3px above, 6px
-below, and 9px on each side. Actions, when present, remain in their own inset
-overlay at the top right; multiple images, mixed prose, quotes, and diagrams
-keep their
-ordinary in-flow layouts.
+Committed cards occupy a fixed 9px lattice perimeter and shared seams carved
+from the admitted rectangle. Prose cards center their painted height within
+whole-row cells; cards add no private fill, retaining their lane rail, matching
+rail-radius corners, final-answer wash, and hover wash. Measurement clones use
+the same geometry.
 
-Each hunk consolidates its associated images into one inline-start row after
-attribution. The row alone clears inline-end controls; prose then wraps beside
-it using ordinary CSS flow-root geometry, whether it holds one image or
-several. A multi-image row keeps the standard 7px gap and each image's
-definite preferred width, so it floats only as wide as its images and its
-frames are the same before and after they load; at narrow widths the squares
-shrink evenly to share the hunk, and the card measures once at its final
-height.
+A single-image message uses its card as an edge-to-edge cover. Focus paints one
+card-sized boundary, hover and FINAL use whole-cover screens, and attribution
+stays in a compact top-left frost while actions remain top-right. Multi-image
+or mixed-content hunks instead use one inline-start row with stable preferred
+sizes; prose wraps beside it and narrow rows shrink images evenly.
 
 ## Attribution placement
 
