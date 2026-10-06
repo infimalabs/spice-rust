@@ -42,6 +42,21 @@ const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_COMMON_DIR",
 ];
 
+/// Per-login agent sockets and terminal session identifiers: they name the
+/// shell a command ran in, never a build or test input, so a commit made from
+/// another terminal still reuses the receipts its prove produced.
+const SESSION_IDENTITY: [&str; 9] = [
+    "ITERM_SESSION_ID",
+    "SSH_AGENT_PID",
+    "SSH_AUTH_SOCK",
+    "SSH_CLIENT",
+    "SSH_CONNECTION",
+    "SSH_TTY",
+    "TERM_SESSION_ID",
+    "TMUX",
+    "TMUX_PANE",
+];
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the canonical gate command rim owns compiler environment acquisition"
@@ -95,6 +110,9 @@ fn retained(name: &OsStr) -> bool {
         && bytes != b"GIT_EDITOR"
         && bytes != b"GIT_EXEC_PATH"
         && bytes != b"GIT_OPTIONAL_LOCKS"
+        && !SESSION_IDENTITY
+            .iter()
+            .any(|candidate| name == OsStr::new(candidate))
         && !operational_routing(name)
         && !git_local_environment(name)
 }
