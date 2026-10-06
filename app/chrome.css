@@ -27,6 +27,8 @@
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-operator-link-margin-end: 8px;
   --app-disclosure-gap: 7px;
+  /* Between stream lanes, and between task tabs, global or team-local. */
+  --mosaic-gap: 9px;
   /* A team's status line and each draft composer heading show the same agent
      activity at one type size in one band height. */
   --app-status-line-font-size: 12px;
@@ -103,121 +105,97 @@ body:has(.shell--mosaic),
   font-size: .7rem;
 }
 
-/* One joined strip that scrolls rather than wraps, as wide as its pills, and
-   rounded as a true pill whatever the shared rail radius. */
+/* Task tabs. The global strip's stem roll-ups hang from the window's top
+   edge, rounded below; a team's stem groups stand on its status rule, rounded
+   above. Otherwise they are one horned tab: nested-quote rails on both sides
+   in --line, the colour of the status band's top rule the team tabs stand on,
+   tapering into 1em corners, with no edge along the glued side, all over the
+   composer's --control surface. Each strip leads with a badge-only total whose
+   rails take the message card's width. Tabs are --mosaic-gap apart and scroll
+   rather than wrap. Stem text is the muted neutral at reduced opacity. */
 .task-pill-strip {
   grid-area: 1 / 2;
   justify-self: start;
-  flex-wrap: nowrap;
+  align-self: start;
+  display: flex;
+  gap: var(--mosaic-gap);
   max-width: 100%;
+  margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
   overflow-x: auto;
-  border-radius: var(--app-radius-pill);
 }
 .task-pill {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
-  min-height: 23px;
-  padding: 2px 10px;
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
-  color: var(--accent);
+  min-height: 21px;
+  padding: 0;
+  color: var(--muted);
   font: 500 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.task-pill:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.task-pill.active { opacity: .78; }
-.task-pill.dormant { color: var(--muted); }
-.task-pill.system { color: var(--muted); }
-.task-pill--all { padding-inline: 4px; }
-.task-pill-count {
-  padding: 0 5px;
-  border-radius: var(--app-radius-pill);
-  background: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
-  color: var(--page);
-  font-size: 9px;
-}
-.task-pill.dormant .task-pill-count { background: var(--muted); }
-.task-pill.system .task-pill-count { background: var(--muted); }
-/* One team-local stem tab: its neutral stem target, badged with the stem's
-   open-task count, followed by every matching task handle. Each target keeps
-   independent hover, focus, lifecycle, and owner presentation. */
-.task-pill--project { gap: 0; padding: 0; }
-.task-pill--project > button {
-  align-self: stretch;
-  min-height: 0;
-  padding: 2px 4px;
+:is(.task-pill-strip, .team-tasks) > .task-pill {
+  overflow: clip;
   border: 0;
-  border-radius: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
+  border-inline: var(--quote-rail) solid var(--line);
+  border-radius: 0 0 1em 1em;
+  background: var(--control);
 }
-/* Every stem label, global or team-local, wears the muted tone of blocked work
-   whatever its lifecycle; badges and handles keep theirs. */
+.team-tasks > .task-pill { border-radius: 1em 1em 0 0; }
+:is(.task-pill-strip, .team-tasks) > :is(.task-pill--all, .task-pill--total) {
+  border-inline-width: var(--message-rail);
+}
 .task-pill .task-pill-stem {
   color: var(--muted);
   opacity: .72;
+}
+/* Every target mixes a 5% tint into --control and rises to 10% on hover. A
+   global tab is one target; a team tab is its stem target followed by every
+   matching task handle. Labels sit 8px apart and 10px in from either rail. */
+:is(.task-pill-strip > .task-pill, .task-pill--project > button) {
+  --task-tint: var(--muted);
+  background: color-mix(in srgb, var(--task-tint) 5%, var(--control));
+  color: var(--muted);
+}
+:is(.task-pill-strip > .task-pill, .task-pill--project > button):hover {
+  background: color-mix(in srgb, var(--task-tint) 10%, var(--control));
+}
+.task-pill-strip > .task-pill { padding-inline: 10px; }
+.task-pill--project { gap: 0; }
+.task-pill--project > button {
+  align-self: stretch;
+  min-height: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
 }
 .task-pill--project > .task-pill-stem-target {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding-inline: 10px;
+  padding-inline-start: 10px;
 }
 .task-pill--project > button:last-child { padding-inline-end: 10px; }
-.task-pill--project > button:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-/* A team stem flag is a tab rather than a global pill: each stem/task group
-   carries matching nested-quote rails on both sides that taper into 1em top
-   corners, while the leading badge-only total promotes those rails to the
-   message-card width. There is no top or bottom edge, all over the composer's
-   --control surface. Rails take --line, the colour of the status band's top
-   rule they stand on, so each tab and that rule read as one stroke. The stem
-   badge and stem text use the soft muted neutral, since a group spans lanes
-   and lifecycles. A handle names the lane
-   working it in its text and tint: the text mixes that lane's accent toward
-   ink, which keeps all six accents readable, and the tint takes the accent.
-   Unworked handles stay muted, weaker when dormant. Every target mixes a 5%
-   tint into --control and rises to 10% on hover. The strip's in-flight dimming
-   is dropped because text and tint carry ownership. */
-.team-tasks .task-pill { min-height: 21px; padding-block: 0; }
-.team-tasks .task-pill--project > button {
-  --task-tint: var(--muted);
-  padding-block: 0;
-  background: color-mix(in srgb, var(--task-tint) 5%, var(--control));
-  color: var(--muted);
-}
-.team-tasks .task-pill--project > button:hover {
-  background: color-mix(in srgb, var(--task-tint) 10%, var(--control));
-}
-.team-tasks > .task-pill--project {
-  overflow: clip;
-  border: 0;
-  border-inline: var(--quote-rail) solid var(--line);
-  border-radius: 1em 1em 0 0;
-  background: var(--control);
-}
-.team-tasks > .task-pill--total { border-inline-width: var(--message-rail); }
-.team-tasks .task-pill--project .task-pill-count { background: var(--muted); }
-/* Labels sit 8px apart from each other and 10px in from either rail. */
-.team-tasks .task-pill--project > .task-pill-stem-target { padding-inline-end: 8px; }
-/* The badge-only team total keeps its badge 10px in from either rail. */
-.team-tasks .task-pill--total > .task-pill-stem-target { padding-inline: 10px; }
-.team-tasks .task-pill--project > .task-pill-handle {
-  padding-inline: 8px;
-  opacity: 1;
-}
-.team-tasks .task-pill--project > .task-pill-handle:last-child { padding-inline-end: 10px; }
-.team-tasks .task-pill--project > .task-pill-handle.dormant {
-  color: color-mix(in srgb, var(--muted) 62%, transparent);
-}
-.team-tasks .task-pill--project > .task-pill-handle[data-accent] {
+/* A handle names the lane working it in its text and tint: the text mixes
+   that lane's accent toward ink, which keeps all six accents readable, and the
+   tint takes the accent. Unworked handles stay muted, weaker when dormant. */
+.task-pill-handle.dormant { color: color-mix(in srgb, var(--muted) 62%, transparent); }
+.task-pill-handle[data-accent] {
   --task-tint: var(--accent-slot);
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
-.team-tasks :focus-visible { outline-offset: -2px; }
+/* Every count badge, global or team-local, wears the presence ladder of the
+   slowest open task it counts; style.css maps data-slowest onto it. */
+.task-pill-count {
+  padding: 0 5px;
+  border-radius: var(--app-radius-pill);
+  background: var(--agent-presence-color);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
+  color: var(--page);
+  font-size: 9px;
+  opacity: var(--agent-presence-opacity);
+}
+:is(.task-pill-strip, .team-tasks) :focus-visible { outline-offset: -2px; }
 .app-global-status {
   grid-area: 1 / 3;
   min-width: 0;

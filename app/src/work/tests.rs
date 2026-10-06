@@ -256,6 +256,23 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
 }
 
 #[test]
+fn a_count_badge_wears_its_slowest_open_lifecycle() {
+    use WorkAvailability::{Blocked, Deferred, InFlight, Ready, Terminal};
+    let slowest = |availabilities: &[WorkAvailability]| {
+        availabilities
+            .iter()
+            .copied()
+            .collect::<WorkCounts>()
+            .slowest()
+    };
+    assert_eq!(slowest(&[Terminal]), None);
+    assert_eq!(slowest(&[InFlight, Terminal]), Some(InFlight));
+    assert_eq!(slowest(&[InFlight, Ready]), Some(Ready));
+    assert_eq!(slowest(&[Ready, Blocked, InFlight]), Some(Blocked));
+    assert_eq!(slowest(&[Blocked, Deferred, Ready]), Some(Deferred));
+}
+
+#[test]
 fn opening_a_task_keeps_a_scope_that_shows_it_and_widens_one_that_hides_it() {
     let public = task(1, "alpha.runtime");
     let hidden = task(2, ".alpha.audit");

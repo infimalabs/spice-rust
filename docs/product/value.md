@@ -410,15 +410,15 @@ opens the matching Work scope and keeps the task open. Assignment, claim, and
 creator facts open the exact team member in Chat only when topology proves that
 destination; otherwise they stay readable facts.
 
-The project pills begin with a label-less aggregate pill whose badge sums every
-open task; selecting it opens unscoped Work from any destination. One stem pill
-per stem with open work follows, rolling up every open task under that stem
-whether or not a team owns it, and opens `#/work/{public|hidden}/{stem}`. Its
-stem label wears the same neutral muted tone as team-local stems. Public stem
-badges keep their lifecycle colour; the hidden `oops` badge uses the same
-neutral muted treatment as its team-local representation. The hover title
-carries the ready, active, and blocked or deferred breakdown. The
-strip shows whenever any open work exists. The global board and Chat task
+The global strip hangs from the window's top edge as horned tabs, the team
+header's task tabs turned upside down: rounded bottom corners, no top edge.
+It begins with a label-less total whose badge sums every open task; selecting
+it opens unscoped Work from any destination. One stem tab per stem with open
+work follows, rolling up every open task under that stem whether or not a team
+owns it, with no per-task breakout, and opens `#/work/{public|hidden}/{stem}`.
+Its stem label wears the same neutral muted tone as team-local stems. The hover
+title carries the ready, active, and blocked or deferred breakdown. The strip
+shows whenever any open work exists. The global board and Chat task
 references share one card identity, status, ownership, and selection contract;
 either opens the one shared detail layer, whose close returns focus to the
 launching card.
@@ -446,8 +446,10 @@ message stream. Each stem/task group carries the nested quote's narrower rail
 on both sides. Both treatments taper into 1em rounded top corners, with no top
 edge and an open square bottom; task handles carry no rails of their own. The
 rails share the colour of the status band's top rule they stand on, so each
-tab and that rule read as one stroke. A group spans lanes and lifecycles, so
-its open-count badge uses the soft muted neutral. A handle working for a lane
+tab and that rule read as one stroke. Every open-count badge, global or
+team-local, takes the colour of the slowest open task it counts on the presence
+pips' ladder: in flight reads active, ready queued, blocked waiting, and
+deferred as a bound pip. A handle working for a lane
 mixes a 5% tint of that lane's
 accent into the composer surface; unworked targets tint in the muted neutral.
 Every target rises to a 10% tint on hover. Labels sit 10px in from either rail
@@ -464,7 +466,7 @@ reduced strength; unworked task handles are muted, dormant ones weaker. An
 in-flight handle actively held by a current lane names that member through its
 text, the member's canonical accent mixed toward ink, and its tint. This
 ownership cue applies only to the team-local task handle: the project-stem
-controls and the global strip stay unchanged. Operator claims and lanes absent
+controls and the global strip carry no owner. Operator claims and lanes absent
 from the admitted roster keep muted text and tint rather than guessing an owner
 color.
 

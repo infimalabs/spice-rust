@@ -67,8 +67,6 @@ pub mod socket;
 pub mod speech_owner;
 pub mod speech_queue;
 pub mod state;
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-mod task_pill;
 pub mod view;
 pub mod watchband;
 #[cfg(any(target_arch = "wasm32", test))]
