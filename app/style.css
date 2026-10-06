@@ -37,6 +37,10 @@
   /* The speaker accent of the operator and of the system itself: any card or
      quote whose speaker holds no lane accent slot wears it. */
   --accent-neutral: var(--ink);
+  /* Speaker rail widths: a message card's and a quote's. Anything that names
+     a speaker or owner with a left rail uses one of these two sizes. */
+  --message-rail: 4px;
+  --quote-rail: 2px;
   /* The one treatment for anything shown over the interface: the page
      beneath stays visible as frosted glass under a theme-weighted veil. */
   --overlay-veil: rgb(21 27 21 / 26%);
