@@ -438,31 +438,32 @@ segment; neither row has a hamburger or aggregate team-task count.
 
 One compact square flag per visibility-qualified project stem follows in-flight,
 ready, blocked, and deferred offer order, on the composer's dark surface rather
-than the brighter message stream. A flag echoes the message cards: the stem
-carries a rail at the message card's width, each task handle a rail at the
-quote's width, and there is no enclosing perimeter or rounded corners. A stem
-spans lanes and lifecycles, so its rail and open-count badge use the soft muted
-neutral. A handle's rail is muted unless a lane is working the task, in which
-case it takes that lane's accent. Every stem or handle target mixes a 5% tint
-of its rail colour into the composer surface and rises to 10% on hover. At a
-stem-to-task or task-to-task join, 4px of trailing space before a rail matches
-the 4px after it; the outer ends retain 10px insets. An 8px outer inset keeps
+than the brighter message stream. A flag echoes the message cards: it opens
+with a rail at the message card's width on its stem and closes with a rail at
+the quote's width after its last task handle, with no other rails, enclosing
+perimeter, or rounded corners. A group spans lanes and lifecycles, so both
+rails and the open-count badge use the soft muted neutral. A handle working for
+a lane mixes a 5% tint of that lane's accent into the composer surface;
+unworked targets tint in the muted neutral. Every target rises to a 10% tint on
+hover. Each task handle keeps 8px
+on both sides, and the stem ends with the same 8px. An 8px outer inset keeps
 flags clear of the browser edge, and neighbouring stem groups are separated by
-the message stream's gap between lanes, giving a thick-rail, thin-rail, gap
-cadence. The band
+the message stream's gap between lanes, giving a thick-rail, labels,
+thin-rail, gap cadence. The band
 scrolls horizontally when its labels outgrow the available width, without
 overlapping the status row or its pips.
 
 The stem label appears once and opens
 `#/work/team/{team}/{public|hidden}/{stem}`, narrowing the team's work to that
 stem; every grouped handle then opens its task's detail layer in place and
-receives focus again on close. All flag text uses the muted neutral: task
-handles at full strength, the stem label softer, and dormant handles softest.
-An in-flight handle actively held by a current lane names that member only
-through its rail and tint in the member's canonical accent. This ownership cue
-applies only to the team-local task handle: the project-stem controls and the
-global strip stay unchanged. Operator claims and lanes absent from the admitted
-roster keep a muted rail and tint rather than guessing an owner color.
+receives focus again on close. The stem label wears the muted neutral at
+reduced strength; unworked task handles are muted, dormant ones weaker. An
+in-flight handle actively held by a current lane names that member through its
+text, the member's canonical accent mixed toward ink, and its tint. This
+ownership cue applies only to the team-local task handle: the project-stem
+controls and the global strip stay unchanged. Operator claims and lanes absent
+from the admitted roster keep muted text and tint rather than guessing an owner
+color.
 
 Below the board, **Directions** pages the resident's operator-authored history
 newest first, one card per fanout. Search text, agent and team chips, lifecycle
