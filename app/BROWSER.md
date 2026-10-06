@@ -151,10 +151,12 @@ approximately square without widening the member column. Its measured overlay
 height remains the Chat plane's collapse distance and top spacer.
 
 The member columns and that control frame are one joined field. Their measured
-layout gap is zero, and neither adjacent members nor the member-to-control
-junction paint a vertical separator, shadow, or panel-colored gutter. The team
-and its control column also paint no inline outer edge, so sibling status,
-composer, and stream surfaces meet directly without a vertical rule or gutter.
+layout gap is zero, and adjacent members paint no vertical separator, shadow,
+or panel-colored gutter. The control frame's start edge carries the faint
+control-edge rule, drawn as an inset shadow inside its 80px, so composers
+sliding beneath it stay legible; the same faint rule separates sibling teams
+below their task band. Neither rule enters the pips and status band, which
+reads as one continuous strip across a team.
 Every member heading has a permanent accent-colored underline aligned to its
 content: the stroke starts beneath the relative-time edge at the heading's 8px
 start padding and ends beneath the hamburger/menu edge at its 5px end padding.
