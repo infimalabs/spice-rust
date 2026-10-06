@@ -26,8 +26,9 @@ impl TaskPill {
         }
     }
 
+    /// The badge: every open task under the stem, as team-local stems count.
     pub(crate) fn count(&self) -> String {
-        format!("{}·{}·{}", self.ready, self.active, self.unavailable)
+        (self.ready + self.active + self.unavailable).to_string()
     }
 
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]

@@ -415,7 +415,9 @@ open task; selecting it opens unscoped Work from any destination. One stem pill
 per stem with open work follows, rolling up every open task under that stem
 whether or not a team owns it, and opens `#/work/{public|hidden}/{stem}`. Its
 stem label wears the same neutral muted tone as team-local stems while its
-badge keeps the lifecycle colour. The
+badge, like theirs, is the stem's single open-task total and keeps the
+lifecycle colour; the hover title carries the ready, active, and blocked or
+deferred breakdown. The
 strip shows whenever any open work exists. The global board and Chat task
 references share one card identity, status, ownership, and selection contract;
 either opens the one shared detail layer, whose close returns focus to the
