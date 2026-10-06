@@ -924,7 +924,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. */
+   below. The faint start rule marks where sliding composers pass under the
+   frame; an inset shadow so the column keeps its full 80px. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -936,7 +937,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border: 0;
   border-block-start: var(--app-control-edge);
   border-radius: 0;
-  background: var(--control); box-shadow: none;
+  background: var(--control); box-shadow: inset var(--app-control-edge-width) 0 var(--control-line-soft);
 }
 .team-slider {
   --control-state-accent: var(--accent);
