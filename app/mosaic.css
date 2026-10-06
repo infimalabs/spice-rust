@@ -430,8 +430,8 @@
 /* The fleet meets the viewport edges, so its focus ring paints inside it. */
 .team-fleet:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
-/* The team frames nothing around its header: the header's content sits on the
-   app surface, and only the pane below carries the panel. */
+/* Internal teams carry one faint, non-layout seam from the status row to the
+   fleet bottom; the last team stays unframed and the seam ignores input. */
 .team-surface {
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
@@ -461,6 +461,7 @@
   container-type: inline-size;
   overflow: visible;
 }
+.team-fleet > .team-surface:has(~ .team-surface)::after { position: absolute; inset: var(--team-task-band) 0 0 auto; z-index: 2; width: 0; border-inline-end: var(--app-control-edge); content: ""; pointer-events: none; }
 /* In dark mode, lift the stream and status band the same half-step above the
    composer: control-to-panel rather than page-to-control. */
 :root[data-app-effective-theme="dark"] .team-surface {
@@ -486,7 +487,7 @@
   padding: 0;
 }
 /* Pips are the status row's trailing inline content, on the same stream surface
-   and soft top rule as the ticker. Their local RTL flow matches the composer
+   and full top rule as the ticker. Their local RTL flow matches the composer
    grid's canonical right-to-left ordering, keeping member zero control-adjacent.
    Empty fleets surrender the whole segment. */
 .team-toolbar > .team-lights {
@@ -502,7 +503,7 @@
   max-width: var(--team-control-inline-size);
   margin: 0;
   padding: 0;
-  border-block-start: var(--app-control-edge);
+  border-block-start: var(--app-edge);
   background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
@@ -595,16 +596,16 @@
   .app-option-badge { display: none; }
 }
 
-/* The status band's top rule is the lesser control edge the composers draw
-   along its bottom; the surface stops at the padding box so the translucent
-   stroke blends with the page exactly as the bottom one does. */
+/* The status band's top rule matches the composer's bottom edge. The surface
+   stops at the padding box so the translucent stroke retains the same
+   compositing geometry across the ticker and pip segment. */
 .team-toolbar > .ticker {
   grid-area: status;
   align-self: stretch;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
   border: 0;
-  border-block-start: var(--app-control-edge);
+  border-block-start: var(--app-edge);
   background: var(--message-stream-surface) padding-box;
   font-size: var(--app-status-line-font-size);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));

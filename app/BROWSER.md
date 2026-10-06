@@ -402,11 +402,15 @@ physical-right Drive/slider column. Up to six unified 8px pips occupy that
 segment in the same rendered order as the composer columns. Both sequences use
 local RTL flow so canonical member zero remains control-adjacent; the app's
 outer LTR flow is unchanged. The status row uses the same theme-aware surface
-as the message stream and one soft top rule throughout; bound and unbound
-status dims only its text, never that surface. The ticker retains relative age,
-lane-status class, agent/tool/command prefix and accent, truncated detail,
+as the message stream and one composer-bottom-strength top rule throughout;
+bound and unbound status dims only its text, never that surface. The ticker
+retains relative age, lane-status class, agent/tool/command prefix and accent,
 accessible label, and live-region semantics; an empty fleet has no pip reserve
 and keeps the full surfaced status slot without inventing status.
+Adjacent teams share one faint vertical seam on the physical-right edge of the
+left team. It starts at the status row, continues to the fleet bottom, and
+takes no layout space; neither outer fleet edge is framed, so a lone team has
+no vertical border.
 
 Chat itself is never unmounted. Every other destination leaves the inactive
 agents workspace inert, `aria-hidden`, out of flow, and at
@@ -424,9 +428,11 @@ circular send button remains centered in its independent 80px physical-right
 composer-control column. That column matches the darker composer surface and
 continues the composers' soft top rule above the send button. The status band's
 matching 80px segment aligns directly above it, shares the ticker's
-stream-surface fill and top rule, and centers up to six 8px pips in the same
-local right-to-left order as the composer columns. Pips retain the unified
-presence palette: active, queued, waiting, and dim bound/unbound states remain
+stream-surface fill and stronger top rule, and centers up to six 8px pips in
+the same local right-to-left order as the composer columns. When a composer is
+fully collapsed, its bottom edge matches that status rule, visually bracketing
+the status row. Pips retain the unified presence palette: active, queued,
+waiting, and dim bound/unbound states remain
 distinguishable without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. The global task strip keeps its joined
