@@ -836,6 +836,8 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let signoffs = signoff_portals(props.signoff.as_ref(), &signoff_slots);
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
+    // Key each control's portal root; an inner key cannot distinguish sibling
+    // providers.
     html! {
         <div
             ref={host}
@@ -885,8 +887,8 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 let control = props.controls.get(slot.index)?;
                 let context = slot.control;
                 Some(yew::create_portal(html! {
-                    <ContextProvider<SpeechControl> {context}>
-                        <span key={slot.key.clone()}>{control.content.clone()}</span>
+                    <ContextProvider<SpeechControl> key={slot.key.clone()} {context}>
+                        <span>{control.content.clone()}</span>
                     </ContextProvider<SpeechControl>>
                 }, slot.target.clone()))
             })}
