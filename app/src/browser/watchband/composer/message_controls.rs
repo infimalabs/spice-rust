@@ -23,6 +23,7 @@ fn collect_quote_controls(
         let wire::QuotePresentation::Resolved {
             target,
             text,
+            author,
             quotes,
             ..
         } = quote
@@ -36,19 +37,14 @@ fn collect_quote_controls(
             || crate::runtime::agent_message_display_millis(context.message),
             |source| source.display_millis,
         );
-        let source_id = quote_sources
-            .get(target)
-            .and_then(|source| source.card_id.clone())
-            .unwrap_or_else(|| agent_message_source_id(context.message));
-        push_quote_control(
-            quote_target,
-            target,
-            source_id,
-            text,
-            display_millis,
-            context,
-            controls,
-        );
+        let quote = watchband::quote_author_is_quoteable(author).then(|| {
+            let source_id = quote_sources
+                .get(target)
+                .and_then(|source| source.card_id.clone())
+                .unwrap_or_else(|| agent_message_source_id(context.message));
+            (quote_target, source_id)
+        });
+        push_quote_control(quote, target, text, display_millis, context, controls);
         collect_quote_controls(quotes, quote_sources, context, controls);
     }
 }
@@ -69,10 +65,16 @@ fn collect_directive_controls(
         let Some(text) = text.get(start..end) else {
             continue;
         };
+        let target_text = directive.quote_target.to_string();
+        let quote = watchband::directive_author_is_quoteable(&directive.actor).then(|| {
+            (
+                directive.quote_target.clone(),
+                agent_message_source_id(context.message),
+            )
+        });
         push_quote_control(
-            directive.quote_target.clone(),
-            &directive.quote_target.to_string(),
-            agent_message_source_id(context.message),
+            quote,
+            &target_text,
             text,
             directive.authored.get().as_millisecond(),
             context,
@@ -82,38 +84,39 @@ fn collect_directive_controls(
 }
 
 fn push_quote_control(
-    target: wire::QuoteTarget,
+    quote: Option<(wire::QuoteTarget, String)>,
     target_text: &str,
-    source_id: String,
     text: &str,
     display_millis: i64,
     context: &MessageControlContext<'_>,
     controls: &mut Vec<MarkdownControl>,
 ) {
-    let lane = context.quote_lane.to_string();
-    let focus_identity = target_text.to_owned();
-    let focus_lane = lane.clone();
-    let dispatcher = context.quote_dispatcher.clone();
-    let preview =
-        watchband::quote_label(watchband::first_nonquoted_prose(text).as_deref()).to_owned();
-    let order = context.order;
-    let quote = Callback::from(move |()| {
-        dispatcher.dispatch(ComposerAction::AddQuote {
-            lane: lane.clone(),
-            target: target.clone(),
-            source_id: source_id.clone(),
-            order,
-            display_millis,
-            preview: preview.clone(),
-        });
-        focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
+    let quote = quote.map(|(target, source_id)| {
+        let lane = context.quote_lane.to_string();
+        let focus_identity = target_text.to_owned();
+        let focus_lane = lane.clone();
+        let dispatcher = context.quote_dispatcher.clone();
+        let preview =
+            watchband::quote_label(watchband::first_nonquoted_prose(text).as_deref()).to_owned();
+        let order = context.order;
+        Callback::from(move |()| {
+            dispatcher.dispatch(ComposerAction::AddQuote {
+                lane: lane.clone(),
+                target: target.clone(),
+                source_id: source_id.clone(),
+                order,
+                display_millis,
+                preview: preview.clone(),
+            });
+            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
+        })
     });
     let correspondent = view::chrome::Correspondent {
         accent: 0,
         speak: context.speak.clone(),
         speech_owner: context.speech_owner.cloned(),
         message_key: context.message_key.to_owned(),
-        quote: Some(quote),
+        quote,
     };
     controls.push(MarkdownControl {
         target: AttrValue::from(target_text.to_owned()),
