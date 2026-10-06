@@ -1024,7 +1024,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-composer-controls[data-idle="true"] > .team-send,
 .team-composer .team-composer-controls[data-idle="true"] > .team-slider > * { filter: saturate(.55); }
 .team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
-/* Command previews ring outside the Drive button now that its row has room.
+/* Command previews ring outside the send button now that its row has room.
    Ordinary submit follows the focused agent; broadcast uses its purple slot. */
 .team-composer:has(.team-agent[data-accent="0"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-0); }
 .team-composer:has(.team-agent[data-accent="1"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-1); }

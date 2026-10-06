@@ -527,7 +527,6 @@ pub(super) fn render_team_controls(
                 (selected == TeamLife::Drain).then_some("maxed"),
             )}
             send_title={format!("Send with {}: {}", selected.label(), selected.help())}
-            send_label={selected.label()}
         >
             {speech_slider(
                 team,

@@ -124,6 +124,8 @@ track leaves 12px on each side within its 40px half. The circle's 68px row
 leaves 6px above and below. The button is 1.6 times the 35px global Spice and
 Dash controls: prominent, with enough negative space to avoid reading as a
 novelty control.
+Its visible label is always "Send"; the adjacent allocation label and the
+button's color continue to identify Steer, Drive, or Drain.
 Its accent-derived face rolls continuously into a softly shaded edge, using
 asymmetric edge light and diffuse elevation and contact shadows instead of
 nested outline rings. Hover brightens it without moving; pointer press moves it
@@ -142,7 +144,7 @@ only the center divider between the sliders; slider states never tint their
 transparent backgrounds or add nested borders or inset shadows. Quiet and
 Steer use the neutral muted token, Speak and Drive keep the green accent, and
 Narrate and Drain keep the yellow/gold warning accent. The shared field behind
-the Drive button and sliders uses the standard composer surface, matching the
+the send button and sliders uses the standard composer surface, matching the
 drafts beside it, and continues their soft top rule across the control column.
 At the 10rem minimum member width, the standard draft block remains
 approximately square without widening the member column. Its measured overlay
@@ -398,7 +400,7 @@ mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger. Its
 task strip keeps the full first row. The second row is one full-width status
 band: the ticker leads into a fixed 80px pip segment directly above the
-physical-right Drive/slider column. Up to six unified 8px pips occupy that
+physical-right send/slider column. Up to six unified 8px pips occupy that
 segment in the same rendered order as the composer columns. Both sequences use
 local RTL flow so canonical member zero remains control-adjacent; the app's
 outer LTR flow is unchanged. The status row uses the same theme-aware surface

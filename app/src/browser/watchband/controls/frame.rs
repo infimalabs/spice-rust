@@ -23,7 +23,6 @@ pub(in crate::browser::watchband) struct FrameProps {
     pub lifetime_pending: bool,
     pub send_class: Classes,
     pub send_title: String,
-    pub send_label: &'static str,
     pub children: Html,
 }
 
@@ -87,7 +86,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
                 type="submit"
                 disabled={idle || !props.ready}
                 title={props.send_title.clone()}
-            >{props.send_label}</button>
+            >{"Send"}</button>
             {props.children.clone()}
         </aside>
     }
