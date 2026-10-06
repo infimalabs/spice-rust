@@ -427,16 +427,11 @@ fn resolve_tape(
         .ok()
         .and_then(|event| decoded.events().get(event))
         .ok_or(SourceError::Unknown)?;
-    let listen::Event::Prose(prose) = event else {
-        return Err(SourceError::Unknown);
-    };
-    if prose.role != listen::ProseRole::Assistant {
-        return Err(SourceError::Unknown);
-    }
+    let prose = crate::agent_prose::quoteable(event).ok_or(SourceError::Unknown)?;
     let text = agent_presenter
         .map_or_else(
             || Ok(prose.text.clone()),
-            |present| present(reader, lane, source, locus.event, prose),
+            |present| present(reader, lane, source, locus.event, &prose),
         )
         .map_err(|_| SourceError::Unreadable)?;
     Ok(SourceQuote {
@@ -497,6 +492,8 @@ mod tests {
 
     const PREDECESSOR_TEXT: &str = "answer from predecessor";
     const SUCCESSOR_TEXT: &str = "answer from successor";
+    const INTENT_TEXT: &str = "ACK 1kQwPZtK: intent-backed reply";
+    const INTENT_RECORD: &str = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: intent-backed reply","arguments":{}}],"stopReason":"toolUse"}}"#;
 
     struct DurableQuoteFixture {
         root: PathBuf,
@@ -507,6 +504,7 @@ mod tests {
         source: CanonicalUuid,
         predecessor_locus: tape::Locus,
         successor_locus: tape::Locus,
+        intent_locus: tape::Locus,
         end_offset: u64,
     }
 
@@ -533,10 +531,13 @@ mod tests {
                 )
                 .expect("fixture prose is durable");
             }
+            tape.tee(format!("{INTENT_RECORD}\n").as_bytes())
+                .expect("fixture tool intent is durable");
             let scan =
                 listen::scan(&tape_path, listen::Dialect::Omp, None).expect("fixture tape scans");
             let predecessor_locus = scan.records[0].locus;
             let successor_locus = scan.records[1].locus;
+            let intent_locus = scan.records[2].locus;
             let source = scan
                 .checkpoint
                 .source
@@ -560,6 +561,7 @@ mod tests {
                 source,
                 predecessor_locus,
                 successor_locus,
+                intent_locus,
                 end_offset: scan.checkpoint.next.offset,
             }
         }
@@ -643,7 +645,7 @@ mod tests {
                     },
                     to: next,
                     usage: Vec::new(),
-                    non_usage_records: 2,
+                    non_usage_records: 3,
                     residue_records: 0,
                 },
                 journal::FactCause::Root,
@@ -671,6 +673,7 @@ mod tests {
         for (locus, text, occupant) in [
             (fixture.predecessor_locus, PREDECESSOR_TEXT, uuid(3)),
             (fixture.successor_locus, SUCCESSOR_TEXT, uuid(4)),
+            (fixture.intent_locus, INTENT_TEXT, uuid(4)),
         ] {
             assert_eq!(
                 resolver.resolve(&fixture.target(fixture.source, locus, text).to_string(), 0),

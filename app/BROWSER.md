@@ -295,10 +295,12 @@ card the control blends into the card and only its glyph shows, and a hovered
 card's 10% wash sets it apart. One static edge in the stream surface colour
 punches each circle out of its card and never changes. While hovered, pressed,
 or speaking, the control fills at 10% and its glyph lights to neutral ink; it
-casts no shadow. Playback belongs to one exact hunk control, not every control
-in its card; the card keeps its aggregate `now-playing` state while only that
-control becomes Stop. Automatic Speak or Narrate playback owns the message's
-direct-prose control and leaves quoted source controls on Play. Each hunk also
+Playback belongs to one exact hunk control, not every control in its card; the
+card keeps its aggregate `now-playing` state while only that control becomes
+Stop. Automatic Speak or Narrate playback owns the message's direct-prose
+control and leaves quoted source controls on Play. ACK-bearing tool-call intents
+use that same direct-prose control and a durable tape quote target rather than
+forming a second, actionless card kind. Each hunk also
 opens with a zero-width presentational prop two lines tall, so the hunk's
 associated image row, which clears both sides before floating inline-start,
 always starts below the first two lines whether or not the island is present
@@ -372,9 +374,13 @@ controls and attribution again. This one rule applies recursively to top-level
 agent prose and resolved operator, agent, and peer-lane quotes.
 
 The control island floats at the inline end of the hunk. Its speak action uses
-only that hunk's rendered text, and its quote action retains that hunk's exact
-authenticated target. Authenticated marker nodes remain in the Markdown DOM
-for quote semantics but do not duplicate the classification pill in prose.
+only that hunk's rendered text. Agent and non-operator directive sources also
+retain that hunk's exact authenticated quote target. An operator-authored
+source keeps its linked age and attribution but has no Quote action: the
+composer is already the operator's side of the exchange, so quoting that source
+would be a self-quote rather than a reply. Authenticated marker nodes remain in
+the Markdown DOM for quote semantics but do not duplicate the classification
+pill in prose.
 
 Board provenance is independent and terminal. Each complete quote layer keeps
 one empty inline task target directly after its speaker's last word, in its

@@ -106,6 +106,28 @@ fn assert_turn_sequence(records: &[&[u8]]) {
     assert!(messages[0].chronology_key() < prose.chronology_key());
 }
 
+#[test]
+fn acknowledgement_tool_intent_publishes_a_durable_quote_target() {
+    let text = "ACK 1kQwPZtK: Settled tool caption.";
+    let publisher = publish_records(&[br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: Settled tool caption.","arguments":{}}],"stopReason":"toolUse"}}"#]);
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages
+        .iter()
+        .find(|message| message.activity == wire::AgentActivityKind::Prose)
+        .expect("acknowledgement intent publishes as prose");
+
+    assert_eq!(prose.text, text);
+    assert_eq!(
+        prose.quote_target,
+        Some(wire::QuoteTarget::Tape {
+            lane: prose.lane,
+            source: TEST_TAPE_SOURCE.parse().expect("fixture source"),
+            locus: prose.locus,
+            digest: wire::QuoteTarget::text_digest(text),
+        })
+    );
+}
+
 mod acknowledgement;
 mod reasoning;
 

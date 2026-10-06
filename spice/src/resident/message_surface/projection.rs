@@ -380,7 +380,7 @@ fn project_event_body(
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<Option<ProjectedEvent>> {
     if !event.suppress_intent
-        && let Some(prose) = acknowledging_prose(event.decoded)
+        && let Some(prose) = spice::agent_prose::quoteable(event.decoded)
     {
         if let listen::Event::Tool(tool) = event.decoded {
             // The call still joins its later result through the preview map.
@@ -493,12 +493,9 @@ fn agent_quote_target(
     source: Option<CanonicalUuid>,
     locus: wire::MessageLocus,
 ) -> CommandResult<Option<wire::QuoteTarget>> {
-    let Some(prose) = decoded.prose() else {
+    let Some(prose) = spice::agent_prose::quoteable(decoded) else {
         return Ok(None);
     };
-    if prose.role != listen::ProseRole::Assistant {
-        return Ok(None);
-    }
     let source = source.ok_or_else(|| {
         store_fault(
             "serve::message-source-unavailable",
@@ -511,46 +508,6 @@ fn agent_quote_target(
         locus,
         digest: wire::QuoteTarget::text_digest(&prose.text),
     }))
-}
-
-/// The assistant prose one event presents as a message card.
-///
-/// Visible assistant text presents itself. A tool call presents its intent
-/// only when that intent carries an acknowledgement header: the dialect keeps
-/// an intent only for a message whose prose settled as paraphrased reasoning,
-/// and an acknowledgement retired from those words must still appear in the
-/// flow of message cards. Any other intent stays tool activity.
-pub(super) fn acknowledging_prose(
-    decoded: &listen::Event,
-) -> Option<std::borrow::Cow<'_, listen::Prose>> {
-    match decoded {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-            Some(std::borrow::Cow::Borrowed(prose))
-        }
-        listen::Event::StreamedProse(prose)
-            if prose.role == listen::ProseRole::Assistant
-                && steer::has_acknowledgement(&prose.text) =>
-        {
-            Some(std::borrow::Cow::Borrowed(prose))
-        }
-        listen::Event::Tool(listen::Tool {
-            moment:
-                listen::ToolMoment::Call {
-                    intent: Some(intent),
-                    ..
-                },
-            locus,
-            ..
-        }) if steer::has_acknowledgement(intent) => Some(std::borrow::Cow::Owned(listen::Prose {
-            role: listen::ProseRole::Assistant,
-            text: intent.clone(),
-            phase: None,
-            media: Vec::new(),
-            external_media: Vec::new(),
-            locus: *locus,
-        })),
-        _ => None,
-    }
 }
 
 fn project_prose_presentation(
@@ -578,7 +535,7 @@ fn pending_presentation(
     presentation_event: impl Fn(listen::Locus) -> PresentationEvent,
     locus: wire::MessageLocus,
 ) -> Option<pending::PendingPresentation> {
-    let prose = acknowledging_prose(decoded)?;
+    let prose = spice::agent_prose::quoteable(decoded)?;
     pending::PendingPresentation::of(
         &prose.text,
         steering,

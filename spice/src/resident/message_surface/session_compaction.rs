@@ -804,9 +804,9 @@ fn decode_record(
 
 fn visible_event(event: &listen::Event) -> bool {
     match event {
-        listen::Event::Prose(_) => super::projection::acknowledging_prose(event).is_some(),
+        listen::Event::Prose(_) => spice::agent_prose::quoteable(event).is_some(),
         listen::Event::Compaction(_) => true,
-        listen::Event::Tool(_) if super::projection::acknowledging_prose(event).is_some() => true,
+        listen::Event::Tool(_) if spice::agent_prose::quoteable(event).is_some() => true,
         listen::Event::Tool(tool) => match &tool.moment {
             listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
             listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => false,

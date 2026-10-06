@@ -8,6 +8,8 @@ pub use serve;
 
 pub mod agent_launch;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod agent_prose;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod agent_wrapper;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cargo_isolation;
