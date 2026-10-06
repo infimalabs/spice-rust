@@ -467,10 +467,8 @@ handle carries a rail of its own. Both rails take `--line`, the colour of the
 status band's top rule the team tabs stand on, so each team tab and that rule
 read as one stroke. A global tab is a stem roll-up: one stem label and its
 badge, with no task breakouts. Every `task-pill-count` badge, global or
-team-local, carries `data-slowest`, the slowest open lifecycle it counts
-(deferred, then blocked, ready, in flight), and wears the presence pip's ladder
-for it: in flight as active `--accent`, ready as queued `--warning`, blocked as
-waiting, and deferred as bound. The stem label is muted at reduced opacity;
+team-local, uses the same muted neutral background regardless of the
+lifecycles it counts. The stem label is muted at reduced opacity;
 unworked handles are muted, dormant ones weaker. A handle a lane is working
 names that lane in its text, the lane accent mixed 55% toward `--ink`, and in a
 5% tint of the accent mixed into `--control`; unworked targets tint in
