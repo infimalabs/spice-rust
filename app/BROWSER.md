@@ -154,9 +154,9 @@ The member columns and that control frame are one joined field. Their measured
 layout gap is zero, and adjacent members paint no vertical separator, shadow,
 or panel-colored gutter. The control frame's start edge carries the faint
 control-edge rule, drawn as an inset shadow inside its 80px, so composers
-sliding beneath it stay legible; the same faint rule separates sibling teams
-below their task band. Neither rule enters the pips and status band, which
-reads as one continuous strip across a team.
+sliding beneath it stay legible; it stops at the frame's top rule, so the pips
+and status band read as one continuous strip within a team. The same faint
+rule separates sibling teams below their task band.
 Every member heading has a permanent accent-colored underline aligned to its
 content: the stroke starts beneath the relative-time edge at the heading's 8px
 start padding and ends beneath the hamburger/menu edge at its 5px end padding.
