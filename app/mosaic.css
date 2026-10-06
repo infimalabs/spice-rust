@@ -506,10 +506,10 @@
   background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* One square message-card flag per task stem occupies the first row. An 8px
-   outer inset keeps the flags off the team/browser edge, and the message
-   stream's inter-lane gap separates sibling stem groups. Overflow scrolls
-   inside this band without entering the status and pip row below. */
+/* One horned tab per task stem occupies the first row. An 8px outer inset
+   keeps the tabs off the team/browser edge, and the message stream's
+   inter-lane gap separates sibling stem groups. Overflow scrolls inside this
+   band without entering the status and pip row below. */
 .team-toolbar > .team-tasks {
   grid-area: tasks;
   z-index: 1;
