@@ -8,7 +8,8 @@
   --muted: #647064;
   --line: #d7ded2;
   --line-soft: color-mix(in srgb, var(--line) 58%, transparent);
-  --control-line-soft: color-mix(in srgb, var(--line) 36%, transparent);
+  /* Control edges stay opaque as content moves beneath translucent surfaces. */
+  --control-line-soft: color-mix(in srgb, var(--line) 40%, var(--control));
   --accent: #2d6a4f;
   --accent-soft: #d9eee5;
   --focus: #1268a5;

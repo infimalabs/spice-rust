@@ -386,6 +386,22 @@
   flex: none; pointer-events: auto;
   border-bottom: var(--app-control-edge);
 }
+/* Continue the members' frost below the form, then mask it out over one blur
+   radius. The control column keeps its hard edge, and the fade catches no input. */
+.team-compose .team-composer::after {
+  position: absolute;
+  z-index: 2;
+  inset: auto var(--team-control-inline-size) -10px 0;
+  height: 10px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--control) 52%, transparent) 0 0),
+    var(--overlay-veil);
+  backdrop-filter: var(--overlay-frost);
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+  mask-image: linear-gradient(to bottom, #000, transparent);
+  content: "";
+  pointer-events: none;
+}
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
