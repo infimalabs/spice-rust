@@ -228,7 +228,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     )}
                 </p>
             }
-            {render_enrichment_state(can_read, relations, &render.retry)}
+            <crate::browser::toast::Notice text={enrichment_problem(can_read, relations)} />
             if render.selection.is_empty() {
                 <div class="work-map-empty" role="status">
                     <strong>{"No tasks selected"}</strong>
@@ -240,6 +240,9 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     render.state,
                     render.work,
                     &activate_task,
+                    can_read && matches!(relations, None | Some(TaskRelationsState::Loading)),
+                    matches!(relations, Some(TaskRelationsState::Unavailable { .. }))
+                        .then(|| render.retry.clone()),
                 )}
                 {render_relationship_list(&presentation, render.work, render.selection, render.state.lens, &activate_task)}
                 {render_truncation(answer.and_then(|answer| answer.truncation.as_ref()), render.state)}
@@ -253,41 +256,38 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
     }
 }
 
-fn render_enrichment_state(
-    can_read: bool,
-    relations: Option<&TaskRelationsState>,
-    retry: &Callback<MouseEvent>,
-) -> Html {
+/// The real problem behind absent enrichment, if any. Loading and refreshing
+/// over retained evidence are routine and say nothing.
+fn enrichment_problem(can_read: bool, relations: Option<&TaskRelationsState>) -> Option<AttrValue> {
     if !can_read {
-        return html! {
-            <p class="work-map-enrichment" role="status">
-                {"Typed enrichment is unavailable to this capability; the admitted-board graph remains current."}
-            </p>
-        };
+        return Some(AttrValue::from(
+            "Typed enrichment is unavailable to this capability; the admitted-board graph remains current.",
+        ));
     }
-    match relations {
-        None | Some(TaskRelationsState::Loading) => html! {
-            <p class="work-map-enrichment" role="status">{"Loading typed relationship enrichment…"}</p>
-        },
-        Some(TaskRelationsState::Refreshing(_)) => html! {
-            <p class="work-map-enrichment" role="status">{"Refreshing typed relationships; admitted enrichment remains visible."}</p>
-        },
-        Some(TaskRelationsState::Unavailable { reason, detail }) => html! {
-            <div class="work-map-enrichment work-map-enrichment--problem" role="alert">
-                <span>{format!("Typed enrichment unavailable: {reason}")}</span>
-                if let Some(detail) = detail { <small>{detail}</small> }
-                <button type="button" class="app-compact-control" onclick={retry.clone()}>{"Retry enrichment"}</button>
-            </div>
-        },
-        Some(TaskRelationsState::Available(_)) => Html::default(),
-    }
+    let Some(TaskRelationsState::Unavailable { reason, detail }) = relations else {
+        return None;
+    };
+    Some(
+        detail
+            .as_ref()
+            .map_or_else(
+                || format!("Typed enrichment unavailable: {reason}"),
+                |detail| format!("Typed enrichment unavailable: {reason}. {detail}"),
+            )
+            .into(),
+    )
 }
 
+/// Draw the graph. A first enrichment read holds the frame's ceiling until it
+/// answers. Unavailable enrichment is absent content, so its Retry rests inside
+/// the graph's own reserved viewport rather than in flow.
 fn render_graph(
     presentation: &lens::Presentation,
     state: &WorkMapState,
     work: &WorkProjection<'_>,
     activate: &Callback<TaskStamp>,
+    pending: bool,
+    retry: Option<Callback<MouseEvent>>,
 ) -> Html {
     let targets = map_targets(presentation, work);
     let node_ids = Rc::new(targets.iter().map(|target| target.id.clone()).collect());
@@ -300,6 +300,7 @@ fn render_graph(
     html! {
         <div
             class="work-map-viewport"
+            aria-busy={pending.then_some("true")}
             data-work-map-zoom={state.zoom.to_string()}
             data-work-map-pan-x={state.pan_x.to_string()}
             data-work-map-pan-y={state.pan_y.to_string()}
@@ -310,6 +311,9 @@ fn render_graph(
                 {render_geometry}
                 final_answer={true}
             />
+            if let Some(retry) = retry {
+                <button type="button" class="app-compact-control work-map-retry" onclick={retry}>{"Retry enrichment"}</button>
+            }
         </div>
     }
 }

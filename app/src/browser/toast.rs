@@ -95,6 +95,25 @@ pub(super) fn use_task_toaster() -> Toaster {
         .0
 }
 
+#[derive(Properties, PartialEq)]
+pub(super) struct NoticeProps {
+    /// The problem in force, or none.
+    pub text: Option<AttrValue>,
+}
+
+/// Toast a real problem on the root toast when it begins. It renders nothing,
+/// so a problem never adds an in-flow status line beside what it qualifies.
+#[function_component(Notice)]
+pub(super) fn notice(props: &NoticeProps) -> Html {
+    let toaster = use_toaster();
+    use_effect_with(props.text.clone(), move |text| {
+        if let Some(text) = text {
+            toaster.settled(text.clone());
+        }
+    });
+    Html::default()
+}
+
 /// The toast pill. Hidden text stays in place so the pill fades out rather
 /// than collapsing first. A `raised` toast is a manual popover in the top
 /// layer; the one inside a dialog is already there.

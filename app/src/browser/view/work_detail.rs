@@ -182,10 +182,7 @@ fn render_detail_body(
 ) -> Html {
     match detail {
         None | Some(TaskDetailState::Loading) => html! {
-            <div class="work-detail-loading" role="status">
-                <span class="work-detail-spinner" aria-hidden="true"></span>
-                <p>{"Loading task evidence and observations…"}</p>
-            </div>
+            <div class="work-detail-placeholder" aria-busy="true"></div>
         },
         Some(TaskDetailState::Unavailable { reason, detail }) => {
             let retry = {
@@ -193,13 +190,13 @@ fn render_detail_body(
                 let task = selected.clone();
                 Callback::from(move |_| request.emit(task.clone()))
             };
+            let problem = detail.as_ref().map_or_else(
+                || format!("Task detail unavailable: {reason}"),
+                |detail| format!("Task detail unavailable: {reason}. {detail}"),
+            );
             html! {
-                <div class="work-detail-problem" role="alert">
-                    <h4>{"Task detail unavailable"}</h4>
-                    <p><code>{reason}</code></p>
-                    if let Some(detail) = detail {
-                        <p>{detail}</p>
-                    }
+                <div class="work-detail-placeholder">
+                    <crate::browser::toast::Notice text={Some(AttrValue::from(problem))} />
                     <button type="button" class="app-compact-control" onclick={retry}>{"Retry detail"}</button>
                 </div>
             }
