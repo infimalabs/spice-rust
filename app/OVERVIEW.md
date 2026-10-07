@@ -24,11 +24,20 @@ Lineage preserves exact task, ACK, and origin identities. Review chains retain
 phase author → reviewer → verdict order. Lifecycle facts retain their durable
 source order. Zoom, pan, reset, and task-node activation remain available
 without changing the selection. At 100% zoom a diagram draws at no more than
-its natural size, shrinking only to fit, and the graph frame shrinks to the
-diagram's natural height within its 18–28rem viewport-relative ceiling; zoom
-alone enlarges it. Until the first enrichment read answers, the frame holds
-that ceiling. Each node's state badge straddles its top border so it never
-covers the node's label.
+its natural size, shrinking only to fit and sitting centered in the graph
+frame; zoom alone enlarges it. Each node's state badge straddles its top border
+so it never covers the node's label.
+
+The sheet reserves geometry: a region whose read can change holds one fixed
+footprint from first paint, so loading, enrichment, other lanes' board
+changes, and jobs starting or finishing move nothing below it. The graph frame
+is 18–28rem viewport-relative whatever the diagram's shape. The relationship
+list and any truncation scroll inside one 14–24rem viewport-relative region.
+**Running jobs** always holds five and a half rows (two and a half cards when
+narrow) and scrolls beyond them. A first detail read's placeholder holds a full
+sheet height, so its answer moves nothing still on screen. Status changes
+replace text in place: a trust approval in progress relabels its own button.
+Only a shown task's own detail content may grow or shrink in place.
 
 Every selected task then owns a full detail section below the graph. Current
 ownership and claim, task state and contract, project/team location, timestamps

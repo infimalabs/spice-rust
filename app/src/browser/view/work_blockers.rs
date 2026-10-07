@@ -263,7 +263,7 @@ fn render_trust_requirement(
     );
     let action_label = match state {
         Some(BlockerActionState::Pending) => "Approving…",
-        Some(BlockerActionState::Approved) => "Approved · refreshing…",
+        Some(BlockerActionState::Approved) => "Approved",
         Some(BlockerActionState::Failed(_)) => "Retry approval",
         None if can_grant => "Approve trust grant",
         None => "Approval unavailable",
@@ -285,9 +285,10 @@ fn render_trust_requirement(
                 <code title={digest.to_string()}>{digest.to_string()}</code>
                 if let Some(BlockerActionState::Failed(issue)) = state {
                     <p class="work-blocker-issue" role="alert">{issue.clone()}</p>
-                } else if pending {
-                    <p class="work-blocker-progress" role="status">{action_label}</p>
                 }
+                // Progress changes only the button's own label, so the card
+                // never grows a line while approval settles.
+                <span class="visually-hidden" role="status">{pending.then_some(action_label)}</span>
             </div>
             <button
                 type="button"

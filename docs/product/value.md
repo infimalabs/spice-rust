@@ -366,7 +366,10 @@ team. Until topology loads, the client does not invent a team association.
 The overview is graph-first, at the same reading width as a task sheet. Its
 heading names the selection context and exact count, then the graph appears
 before jobs and details. A diagram never draws above its natural size until the
-operator zooms, and the graph frame is no taller than the diagram needs. Every
+operator zooms. The overview reserves geometry: the graph frame, relationship
+list, and jobs table each hold one fixed footprint and scroll within it, and a
+first detail read holds a full sheet height, so reads answering, other lanes
+changing the board, and jobs coming and going move nothing below them. Every
 selected task is a root in the immediate graph built from the admitted board
 snapshot; direct dependencies outside the set and missing durable identities
 remain explicit. Typed relationship reads enrich Dependency, Lineage, Review,
@@ -379,8 +382,8 @@ they change.
 lane table reports as running or awaiting delivery, independent of the task
 selection. Rows name the agent, live started age, full command on hover, and
 reported standing. Five jobs show in full; more scroll in a
-keyboard-reachable region under pinned headings with the sixth peeking. An
-empty table reserves one row so the first job does not move the detail region.
+keyboard-reachable region under pinned headings with the sixth peeking. The
+table holds that height with fewer jobs, so no job moves the detail region.
 
 All selected task details are mounted together below the graph and jobs in the
 same order as the selection. There are no Details/Map tabs, task pagination,
