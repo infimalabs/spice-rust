@@ -52,10 +52,15 @@ placeholder or **Retry enrichment** inside the graph frame.
 ## Task blocker review
 
 Every task overview reserves one fixed-height status rail directly under its
-header. A blocked selection pairs the danger-styled `!` with **Needs
-attention**; a clear selection pairs a quiet `✓` with **Ready to proceed**.
-The rail summarizes blockers across the complete selected set, including
-incomplete dependencies and unsatisfied typed environmental requirements.
+header. It counts only walls the operator must move: unsatisfied typed
+environmental requirements (trust grant, journal schema, appliance version)
+and dependency chains no agent can advance because a link is deferred, cyclic,
+closed without completing, or held by such a requirement. A
+dependency on work an agent can claim or is working is an ordinary wait and
+never counts. A walled selection pairs the danger-styled `!` with **Needs
+attention**; otherwise a quiet `✓` pairs with **Ready to proceed**, even while
+tasks wait on peers. Each review card names the task where its chain stops
+and why only the operator can move it.
 Both states occupy the same geometry, and asynchronous detail reads do not own
 the rail's data, so loading and replacing task cards cannot move the graph or
 surrounding content.
