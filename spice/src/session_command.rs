@@ -137,10 +137,35 @@ const LANE_BRIEFING_DEADLINE: std::time::Duration = std::time::Duration::from_se
 /// The seat is the lane rather than a live thread: the transcript read is the
 /// session the residency head records for the lane. Any failure still yields
 /// a page, one that names the refusal and the commands that read the rest.
+#[derive(Clone, Copy)]
+enum BriefingMoment {
+    Startup,
+    Refresh,
+}
+
+/// The fresh-session briefing, with an explicit notice when allocation already
+/// assigned this lane a task before the agent came online.
+pub(crate) fn lane_launch_briefing(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> String {
+    render_lane_briefing(environment, lane, configuration, BriefingMoment::Startup)
+}
+
 pub(crate) fn lane_briefing(
     environment: &Environment,
     lane: wire::CanonicalUuid,
     configuration: Option<&spice::config::RepositoryCapture>,
+) -> String {
+    render_lane_briefing(environment, lane, configuration, BriefingMoment::Refresh)
+}
+
+fn render_lane_briefing(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+    moment: BriefingMoment,
 ) -> String {
     let context = DeadlineContext {
         action: "briefing".to_owned(),
@@ -155,11 +180,29 @@ pub(crate) fn lane_briefing(
         let _ = sender.send(DeadlineEvent::Complete(report, std::time::Instant::now()));
     });
     let page = match built {
-        Ok(Report::Recall { digest, .. }) => digest,
+        Ok(Report::Recall {
+            held_work, digest, ..
+        }) => {
+            let Some(notice) = assignment_notice(moment, held_work.own_claim.as_ref()) else {
+                return format!("<system-notice>\n{}\n</system-notice>", digest.trim_end());
+            };
+            format!("{notice}\n\n{}", digest.trim_end())
+        }
         Ok(_) => unreachable!("lane recall builds only a briefing"),
         Err(refusal) => digest::refused(&refusal),
     };
     format!("<system-notice>\n{}\n</system-notice>", page.trim_end())
+}
+
+fn assignment_notice(
+    moment: BriefingMoment,
+    claim: Option<&model::HeldClaimView>,
+) -> Option<String> {
+    let claim = (matches!(moment, BriefingMoment::Startup)).then_some(claim)??;
+    Some(format!(
+        "# Task already assigned\n\n`{}` is already assigned to this lane in phase `{}`: {}. Continue this task now; run `spice task show {}` for its contract before asking the allocator for work.",
+        claim.handle, claim.phase, claim.title, claim.handle,
+    ))
 }
 
 fn lane_recall(
@@ -669,5 +712,30 @@ mod tests {
             render_diagnostic.expected(),
             Some("one registered read-only transcript query")
         );
+    }
+
+    #[test]
+    fn held_task_notice_is_emitted_only_for_a_fresh_start() {
+        let claim = model::HeldClaimView {
+            handle: "SESSION-held".to_owned(),
+            project: "spice.session".to_owned(),
+            phase: "todo".to_owned(),
+            status: "pending".to_owned(),
+            title: "Carry the assigned task".to_owned(),
+            lease_expiry: None,
+            flow: vec!["todo".to_owned(), "review".to_owned()],
+            description: None,
+            acceptance: Vec::new(),
+        };
+        let notice = assignment_notice(BriefingMoment::Startup, Some(&claim))
+            .expect("a fresh holder receives its assignment notice");
+        assert!(notice.contains("# Task already assigned"));
+        assert!(notice.contains("`SESSION-held` is already assigned"));
+        assert!(notice.contains("phase `todo`: Carry the assigned task"));
+        assert_eq!(
+            assignment_notice(BriefingMoment::Refresh, Some(&claim)),
+            None,
+        );
+        assert_eq!(assignment_notice(BriefingMoment::Startup, None), None);
     }
 }

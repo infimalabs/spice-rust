@@ -8,6 +8,29 @@ use super::*;
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn fresh_launch_without_a_claim_has_no_assignment_banner() {
+    let fixture = AdvisoryRtkFixture::new();
+    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
+    let resolved =
+        spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
+    let (plan, _) = launch_plan(
+        &repository,
+        &resolved,
+        Selection {
+            vendor: &fixture.vendor,
+            lane: fixture.lane,
+            pinned: Pinned::nothing(vendor::Resume::Fresh),
+            fast_mode: false,
+            model: None,
+            effort: None,
+        },
+    )
+    .expect("fresh launch plan composes");
+    assert!(plan.launch().prompt.contains("<system-notice>"));
+    assert!(!plan.launch().prompt.contains("# Task already assigned"));
+}
+
+#[test]
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
     let fixture = AdvisoryRtkFixture::new();
     let vendor = fixture.root.join("fake-omp");
