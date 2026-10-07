@@ -100,22 +100,23 @@ press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
-lane-accent tint when lit. One standard 32% glass thickness is the shared
+lane-accent tint when lit. One standard 31% glass thickness is the shared
 primitive; the dark veil uses it while the light theme retains its softer base.
-Composer headings use the derived 64% theme-control paint as two thicknesses
+Composer headings use the derived 62% theme-control paint as two thicknesses
 and retain their full-width accent underlines. Behind the entire form, one
 pointer-inert composited screen continues 10px over the message stream. The
-control frame uses one derived 96% theme-control gradient as three thicknesses,
-holds that paint through the status-line band above its bottom, then fades
-smoothly to transparent across the final 30px. A solid, opaque, theme-derived
-1px inset rule marks its top edge. Equal soft elevation on both
-inline edges combines with the dimensional Send action and ranges, so the
-frame reads as a raised bridge that adjacent panels can slide beneath without
-ending at an opaque block. Sibling
-teams need no hard separator through this region because their glass, accents,
-and content already distinguish them. The screen owns the
-form glass, one complex theme-derived background, and one 10px frost filter. Its
-header edge eases from an opaque control line through stronger control color
+control frame uses one derived 93% theme-control paint as three thicknesses and
+holds it through the full height of the neighboring text areas. That paint
+fades smoothly across the 10px continuation below instead of exposing the
+stream inside the frame. Its opaque 1px top inset rule reuses the shared
+backdrop edge color, so the boundary is continuous. Equal soft elevation
+appears on both inline sides; at a team boundary the following composer carries
+the otherwise-clipped right cast, letting either neighbor read beneath the
+raised controls without moving either surface. Sibling teams need no hard
+separator because their glass, accents, and content already distinguish them.
+The screen owns the form glass, one complex theme-derived background, and one
+10px frost filter. Its header edge eases from an opaque control line through
+stronger control color
 into ordinary glass. The form has no physical lower edge or strengthening band;
 the ordinary veil simply continues 10px beyond it while a mask fades that
 continuation to transparent. No backdrop-filter boundary exists at the form

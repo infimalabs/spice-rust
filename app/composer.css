@@ -410,6 +410,28 @@
   content: "";
   pointer-events: none;
 }
+/* The paint remains nearly solid through the neighboring drafts' full height,
+   then fades only below them. Grid children stay above this pointer-inert
+   continuation without changing their containing blocks. */
+.team-composer .team-composer-controls::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 0 -10px;
+  background: linear-gradient(
+    to bottom,
+    var(--composer-triple-glass-paint) 0 calc(100% - 10px),
+    transparent 100%
+  );
+  content: "";
+  pointer-events: none;
+}
+.team-composer .team-composer-controls > * { z-index: 1; }
+/* Each surface clips its controls' outer right shadow. Mirror that same
+   elevation inside the next composer, where it paints as the preceding
+   control frame's visible cast without changing either surface's geometry. */
+.team-surface + .team-surface .team-composer {
+  box-shadow: inset 8px 0 14px -6px rgb(0 0 0 / 42%);
+}
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);

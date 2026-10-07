@@ -779,7 +779,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 
 /* The heading stays unpositioned so the open agent menu anchors to its shard.
-   Its derived 64% control tint is the double-thick paint over the shared
+   Its derived 62% control tint is the double-thick paint over the shared
    glass. The permanent accent spans the full border box as a bottom-aligned
    2px background stroke; active block-end accents remain full-width. */
 .composer-shard-heading {
@@ -919,9 +919,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. The shared frost screen continues beneath one 96%, triple-thick
-   control paint; a solid top inset rule and equal inline shadows lift the
-   frame above the panels on every side. */
+   below. One 93%, triple-thick control paint stays continuous through the
+   frame, then fades across the shared 10px continuation. The matching top
+   rule and equal inline shadows lift it above the panels on every side. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -930,13 +930,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin-block-start: 0; block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
-  background: linear-gradient(
-    to bottom,
-    var(--composer-triple-glass-paint) 0 calc(100% - var(--app-status-line-band)),
-    transparent 100%
-  );
+  isolation: isolate;
+  background-color: var(--composer-triple-glass-paint);
   box-shadow:
-    inset 0 var(--app-control-edge-width) 0 var(--line),
+    inset 0 var(--app-control-edge-width) 0 var(--control-line-soft),
     -8px 0 14px -6px rgb(0 0 0 / 42%),
     8px 0 14px -6px rgb(0 0 0 / 42%);
 }
