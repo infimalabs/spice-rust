@@ -393,7 +393,7 @@
 .team-compose .team-composer::after {
   position: absolute;
   z-index: -1;
-  inset: 0 var(--team-control-inline-size) -10px 0;
+  inset: 0 0 -10px;
   background:
     linear-gradient(
       to bottom,
@@ -416,9 +416,6 @@
     linear-gradient(to bottom, #000 0 calc(100% - 10px), transparent 100%);
   content: "";
   pointer-events: none;
-}
-.team-compose[data-composer-fully-collapsed="true"] .team-composer::after {
-  display: none;
 }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);

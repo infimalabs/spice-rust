@@ -430,8 +430,6 @@
 /* The fleet meets the viewport edges, so its focus ring paints inside it. */
 .team-fleet:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
-/* Internal teams carry one faint, non-layout seam from the status row to the
-   fleet bottom; the last team stays unframed and the seam ignores input. */
 .team-surface {
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
@@ -460,7 +458,6 @@
   container-type: inline-size;
   overflow: visible;
 }
-.team-fleet > .team-surface:has(~ .team-surface)::after { position: absolute; inset: var(--team-task-band) 0 0 auto; z-index: 2; width: 0; border-inline-end: var(--app-control-edge); content: ""; pointer-events: none; }
 /* In dark mode, lift the stream and status band the same half-step above the
    composer: control-to-panel rather than page-to-control. */
 :root[data-app-effective-theme="dark"] .team-surface {
@@ -903,8 +900,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. The exact status-line surface turns down through this column as one
-   L-shaped field; only the inline inset shadow marks its joint with drafts. */
+   below. The shared frost screen continues beneath the transparent control
+   frame; only the inline inset shadow marks its joint with drafts. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -913,8 +910,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin-block-start: 0; block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
-  background: var(--message-stream-surface) padding-box;
-  box-shadow: inset var(--app-control-edge-width) 0 var(--control-line-soft);
+  background: transparent;
+  box-shadow:
+    -8px 0 14px -6px rgb(0 0 0 / 42%),
+    8px 0 14px -6px rgb(0 0 0 / 42%);
 }
 .team-slider {
   --control-state-accent: var(--accent);

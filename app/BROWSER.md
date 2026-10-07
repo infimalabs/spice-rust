@@ -100,20 +100,23 @@ press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
-lane-accent tint when lit. Behind them, one pointer-inert composited screen
-spans the full member region and continues 10px over the message stream; the
-control column remains outside it. The screen owns the member glass, one
-complex theme-derived background, and one 10px frost filter. Its header edge
-eases from an opaque control line through stronger control color into ordinary
-glass. Its lower 20px strengthens toward the same opaque line at the form edge,
-then returns toward translucent frost while a mask fades the entire screen to
-transparent across the continuation. No backdrop-filter boundary exists at the
-form edge, and the only physical glass edge is fully masked out. The shared
-control edge remains opaque and theme-derived for other control consumers. The
-control column uses the exact status-line surface with no rule above Send, so
-status and controls read as one L-shaped band. Member headings retain their
-accent underline, focused or broadcast drafts merge their full-width highlight,
-and vacant members mute content without changing the surface.
+lane-accent tint when lit. Behind the entire form, one pointer-inert composited
+screen continues 10px over the message stream. The transparent control frame
+has equal soft elevation on both inline edges; together with the dimensional
+Send action and ranges, it reads as a raised bridge that adjacent panels can
+slide beneath. Sibling teams need no hard separator through this region because
+their glass, accents, and content already distinguish them. The screen owns the
+form glass, one complex theme-derived background, and one 10px frost filter. Its
+header edge eases from an opaque control line through stronger
+control color into ordinary glass. Its lower 20px strengthens toward the same
+opaque line at the form edge, then returns toward translucent frost while a mask
+fades the entire screen to transparent across the continuation. No
+backdrop-filter boundary exists at the form edge, and the only physical glass
+edge is fully masked out. The 10px continuation remains after the form fully
+collapses, preventing a final visual snap. The shared control edge remains
+opaque and theme-derived for other control consumers. Member headings retain
+their accent underline, focused or broadcast drafts merge their full-width
+highlight, and vacant members mute content without changing the surface.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
