@@ -300,6 +300,7 @@ fn board_response_with_requirements(
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
         recent_cell: None,
+        next: None,
         offer: Vec::new(),
         origins: Default::default(),
         notes: Default::default(),

@@ -18,6 +18,16 @@ pub struct TaskFacts {
     indexes: Arc<Indexes>,
 }
 
+/// Creation route evidence normalized while resident task history advances.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TaskOrigin {
+    /// Actor route candidate (`operator`, `spice`, session, or occupant
+    /// identity); request projection validates its route grammar.
+    Identity(String),
+    /// A lane creation whose occupant is resolved from current residency.
+    ResidencyIdentity(journal::crossing::CanonicalUuid),
+}
+
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -38,13 +48,65 @@ struct Indexes {
         ),
         journal::crossing::Seq,
     >,
+    explicit_releases: std::collections::BTreeSet<journal::crossing::Seq>,
+    lane_occupants: BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::CanonicalUuid>,
+    lane_sessions: BTreeMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::CanonicalUuid,
+        ),
+        String,
+    >,
+    task_origins: BTreeMap<journal::crossing::TaskStamp, TaskOrigin>,
+    duplicate_task_origins: std::collections::BTreeSet<journal::crossing::TaskStamp>,
+    invalid_creator_teams: std::collections::BTreeSet<journal::crossing::TaskStamp>,
 }
 
 impl Indexes {
     fn advanced(&self, rows: &[journal::crossing::Envelope<journal::crossing::AnyFact>]) -> Self {
         let mut next = self.clone();
         for row in rows {
-            if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
+            if let Some(declared) = row
+                .fact
+                .read::<journal::crossing::body::LaneSessionDeclared>()
+            {
+                next.lane_sessions
+                    .insert((declared.lane, declared.occupant), declared.identity);
+            } else if let Some(started) = row.fact.read::<journal::crossing::body::LaneStarted>() {
+                next.lane_occupants.insert(started.lane, started.occupant);
+                next.context_anchors
+                    .insert((started.lane, started.occupant), row.seq);
+            } else if let Some(added) = row.fact.read::<journal::crossing::body::TaskAdded>() {
+                let origin = match &row.actor {
+                    journal::crossing::Actor::Operator => {
+                        TaskOrigin::Identity("operator".to_owned())
+                    }
+                    journal::crossing::Actor::Spice => TaskOrigin::Identity("spice".to_owned()),
+                    journal::crossing::Actor::Lane(lane) => next.lane_occupants.get(lane).map_or(
+                        TaskOrigin::ResidencyIdentity(*lane),
+                        |occupant| {
+                            TaskOrigin::Identity(
+                                next.lane_sessions
+                                    .get(&(*lane, *occupant))
+                                    .cloned()
+                                    .unwrap_or_else(|| occupant.to_string()),
+                            )
+                        },
+                    ),
+                };
+                if !matches!(row.actor, journal::crossing::Actor::Lane(_))
+                    && added.creation.creator_team().is_some()
+                {
+                    next.invalid_creator_teams.insert(added.task.clone());
+                }
+                if next
+                    .task_origins
+                    .insert(added.task.clone(), origin)
+                    .is_some()
+                {
+                    next.duplicate_task_origins.insert(added.task);
+                }
+            } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
             } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
                 if let Some(terminal) = done.terminal {
@@ -55,6 +117,12 @@ impl Indexes {
                 }
             } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
                 next.claims.insert(won.actor, (row.seq, won.cell));
+            } else if row
+                .fact
+                .read::<journal::crossing::body::ClaimFreed>()
+                .is_some()
+            {
+                next.explicit_releases.insert(row.seq);
             } else if let Some(opened) = context_opening(&row.fact) {
                 next.context_anchors.insert(opened, row.seq);
             }
@@ -236,6 +304,42 @@ impl TaskFacts {
         self.indexes.claims.get(actor).cloned()
     }
 
+    /// Whether a claim head position was established by an explicit release.
+    #[must_use]
+    pub fn is_explicit_release(&self, claim: journal::crossing::Seq) -> bool {
+        self.indexes.explicit_releases.contains(&claim)
+    }
+
+    /// Creation route indexed while task history advances.
+    #[must_use]
+    pub fn task_origin(&self, task: &journal::crossing::TaskStamp) -> Option<&TaskOrigin> {
+        self.indexes.task_origins.get(task)
+    }
+
+    /// Whether one task has more than one creation fact.
+    #[must_use]
+    pub fn has_duplicate_task_origin(&self, task: &journal::crossing::TaskStamp) -> bool {
+        self.indexes.duplicate_task_origins.contains(task)
+    }
+
+    /// Whether a non-lane creation improperly names a creator team.
+    #[must_use]
+    pub fn has_invalid_creator_team(&self, task: &journal::crossing::TaskStamp) -> bool {
+        self.indexes.invalid_creator_teams.contains(task)
+    }
+
+    /// Vendor session identity declared for one lane occupant, if any.
+    #[must_use]
+    pub fn lane_session_identity(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Option<&str> {
+        self.indexes
+            .lane_sessions
+            .get(&(lane, occupant))
+            .map(String::as_str)
+    }
     /// The newest fact opening a context for one lane occupant.
     #[must_use]
     pub fn context_anchor(
@@ -480,15 +584,63 @@ fn advance_trust(
                 "task snapshot authority moved during completion".to_owned(),
             )));
         }
+        let (allocation_frontier, dependency_standing, claim_head_cells) =
+            allocation_index(&build.tasks).map_err(BusReadError::Head)?;
         Ok(BuildStep::Ready(TaskSnapshot {
             cursor: build.cursor,
             facts: build.facts,
             tasks: Arc::from(build.tasks),
+            allocation_frontier: Arc::from(allocation_frontier),
+            dependency_standing: Arc::new(dependency_standing),
+            claim_head_cells: Arc::new(claim_head_cells),
             trust: Arc::from(build.trust),
             residency,
             materialization_steps: build.steps,
         }))
     })
+}
+fn allocation_index(
+    tasks: &[journal::TaskHeads],
+) -> Result<
+    (
+        Vec<usize>,
+        BTreeMap<journal::crossing::TaskStamp, DependencyStanding>,
+        BTreeMap<(journal::crossing::Actor, journal::crossing::Seq), journal::crossing::ClaimCell>,
+    ),
+    GuardError,
+> {
+    let mut frontier = Vec::new();
+    let mut standing = BTreeMap::new();
+    let mut claim_head_cells = BTreeMap::new();
+    let mut prior = None;
+    for (index, heads) in tasks.iter().enumerate() {
+        let task = heads.statement().body().born.clone();
+        if prior.as_ref().is_some_and(|prior| prior >= &task) {
+            return Err(GuardError::Invalid(
+                "task snapshot heads are not in unique task-stamp order".to_owned(),
+            ));
+        }
+        prior = Some(task.clone());
+        let state = match heads.workflow().body().status.as_str() {
+            "completed" => DependencyStanding::Completed,
+            "deleted" => DependencyStanding::Deleted,
+            _ => DependencyStanding::Open,
+        };
+        standing.insert(task, state);
+        let actively_claimed = heads.claim().is_some_and(|claim| {
+            claim.body().disposition == journal::crossing::ClaimDisposition::Active
+        });
+        if let Some(claim) = heads.claim() {
+            claim_head_cells.insert(
+                (claim.body().actor.clone(), claim.body().claimed),
+                claim.body().cell.clone(),
+            );
+        }
+        if state == DependencyStanding::Open || actively_claimed {
+            frontier.push(index);
+        }
+    }
+    Ok((frontier, standing, claim_head_cells))
 }
 
 enum BuildStep {

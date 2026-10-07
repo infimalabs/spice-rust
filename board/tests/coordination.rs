@@ -877,5 +877,82 @@ fn active_claim_is_only_admitted_from_matching_coherent_live_heads() {
     ));
 }
 
+#[test]
+fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies() {
+    let completed_stamp = stamp("BOARD-completed");
+    let deleted_stamp = stamp("BOARD-deleted");
+    let missing_stamp = stamp("BOARD-missing");
+    let mut completed_workflow = workflow("todo");
+    completed_workflow.status = "completed".to_owned();
+    completed_workflow.completion = Some(instant("2026-08-01T06:10:00.000Z"));
+    let mut deleted_workflow = workflow("todo");
+    deleted_workflow.status = "deleted".to_owned();
+    deleted_workflow.completion = Some(instant("2026-08-01T06:10:00.000Z"));
+    let completed =
+        admitted(statement("BOARD-completed"), completed_workflow, None, None).expect("completed");
+    let deleted =
+        admitted(statement("BOARD-deleted"), deleted_workflow, None, None).expect("deleted");
+    let mut ready_statement = statement("BOARD-ready");
+    ready_statement.dependencies = vec![completed_stamp.clone(), deleted_stamp.clone()];
+    let ready = admitted(ready_statement, workflow("todo"), None, None).expect("ready");
+    let full = [completed, deleted, ready.clone()];
+    let reference = select(&full, &Actor::Spice, &all_projects(), 2)
+        .expect("both terminal forms satisfy dependency edges");
+
+    let settled = BTreeSet::from([completed_stamp, deleted_stamp]);
+    let frontier = [ready.clone()];
+    let indexed = board::select_with_satisfied(
+        &frontier,
+        &Actor::Spice,
+        &all_projects(),
+        2,
+        None,
+        &environment(),
+        &settled,
+    )
+    .expect("compact standing preserves the complete-board selection");
+    assert_eq!(indexed.entry().born(), reference.entry().born());
+
+    let mut missing_statement = statement("BOARD-missing-dependent");
+    missing_statement.dependencies = vec![missing_stamp];
+    let missing =
+        admitted(missing_statement, workflow("todo"), None, None).expect("missing dependency");
+    assert!(
+        board::select_with_satisfied(
+            &[missing],
+            &Actor::Spice,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            &settled,
+        )
+        .is_none(),
+        "a stamp omitted from both frontier and standing never becomes implicit success"
+    );
+
+    let mut first_statement = statement("BOARD-cycle-a");
+    first_statement.dependencies = vec![stamp("BOARD-cycle-b")];
+    let mut second_statement = statement("BOARD-cycle-b");
+    second_statement.dependencies = vec![stamp("BOARD-cycle-a")];
+    let cycle = [
+        admitted(first_statement, workflow("todo"), None, None).expect("cycle first"),
+        admitted(second_statement, workflow("todo"), None, None).expect("cycle second"),
+    ];
+    assert!(
+        board::select_with_satisfied(
+            &cycle,
+            &Actor::Spice,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            &settled,
+        )
+        .is_none(),
+        "an open dependency cycle terminates and remains blocked"
+    );
+}
+
 #[path = "coordination/late.rs"]
 mod late;

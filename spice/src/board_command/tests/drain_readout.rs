@@ -181,6 +181,60 @@ fn task_next_returns_the_callers_active_claim_before_allocator_drain() {
 }
 
 #[test]
+fn next_read_returns_one_typed_state_without_board_rows() {
+    let (root, bus, epoch, seats) = fixture("task-next-bounded-read", 1);
+    let task = todo_task(&bus, epoch, "DRAIN-next0001", "Bounded candidate");
+    let actor = Actor::Lane(seats[0].lane);
+    let Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Board(answer),
+    }) = issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Next,
+    )
+    else {
+        panic!("next-work read does not return a board answer")
+    };
+    assert_eq!(position, ReplyPosition::Snapshot(answer.cursor));
+    assert!(
+        answer.tasks.is_empty(),
+        "next-work never projects board rows"
+    );
+    let Some(NextWorkState::Candidate { task: selected }) = answer.next else {
+        panic!("eligible work does not return the candidate state")
+    };
+    assert_eq!(
+        TaskHandle::for_project(
+            &selected.statement.body.project,
+            &selected.statement.body.born
+        ),
+        task
+    );
+
+    claim_task(&bus, epoch, &seats[0], &actor, &task);
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        actor,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Next,
+    )
+    else {
+        panic!("held next-work read does not return a board answer")
+    };
+    assert!(matches!(answer.next, Some(NextWorkState::Active { .. })));
+    clean(&root, bus);
+}
+
+#[test]
 fn empty_drain_readout_omits_zero_categories_and_names_each_policy() {
     let (root, bus, epoch, seats) = fixture("drain-readout-quiet", 1);
     let quiet = board(&bus, epoch, Actor::Lane(seats[0].lane));

@@ -304,6 +304,39 @@ fn retained_fleet(retained: usize) -> (Bus, Seq) {
 }
 
 #[test]
+fn allocation_frontier_does_not_grow_with_unrelated_terminal_history() {
+    const TERMINAL_TASKS: usize = 1_301;
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    journal
+        .apply(initial_write(
+            uuid(COMMAND_ONE),
+            Arc::new(Mutex::new(Vec::new())),
+        ))
+        .expect("live task commits");
+    let mut bulk = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let mut cause = FactCause::Existing(Seq::new(1).expect("live task cause"));
+    for index in 0..TERMINAL_TASKS {
+        cause = FactCause::Pending(append_retained_terminal(&mut bulk, index, cause));
+    }
+    journal.apply(bulk).expect("terminal history commits");
+    let bus = Bus::start(journal).expect("dedicated writer starts");
+
+    let snapshot = bus.task_snapshot().expect("indexed snapshot reads");
+    assert_eq!(snapshot.tasks().len(), TERMINAL_TASKS + 1);
+    assert_eq!(
+        snapshot.allocation_frontier().count(),
+        1,
+        "request-time allocation visits only the fixed live graph"
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
 fn a_new_task_among_a_retained_fleet_costs_one_moved_bundle() {
     let (bus, last) = retained_fleet(RETAINED_FACTS);
     let settled = bus.task_snapshot().expect("multi-page snapshot settles");
@@ -572,6 +605,51 @@ fn append_retained_task(
         generation: 0,
     });
     pending
+}
+
+fn append_retained_terminal(
+    write: &mut JournalWrite,
+    index: usize,
+    cause: FactCause,
+) -> journal::PendingFact {
+    let task = journal::crossing::TaskStamp::for_micros(
+        i64::try_from(index + 20_000).expect("terminal fleet moment"),
+    )
+    .expect("terminal fleet stamp");
+    let task_phase = phase("todo");
+    let added = write
+        .fact(
+            retained_added(task.clone(), index, task_phase.clone()),
+            cause,
+        )
+        .expect("terminal task addition builds");
+    let head_task = task.clone();
+    write.task_head(added, move |seq| retained_task_head(head_task, index, seq));
+    let done = write
+        .fact(
+            body::TaskDone {
+                task: task.clone(),
+                validation: "terminal fleet fixture".to_owned(),
+                terminal: None,
+                git: None,
+                source: body::SourceBoundary::Incomplete {
+                    reason: "in-process fixture".to_owned(),
+                },
+            },
+            FactCause::Pending(added),
+        )
+        .expect("terminal completion builds");
+    write.workflow_head(task, done, move |_| WorkflowHead {
+        flow: vec![task_phase.clone()],
+        phase: task_phase,
+        status: "completed".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: Some(instant("2030-04-12T18:44:10.271Z")),
+        generation: 0,
+    });
+    done
 }
 
 fn retained_added(

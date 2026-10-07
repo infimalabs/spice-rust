@@ -30,8 +30,8 @@ pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
     Selection, capturable_entry, eligible_entry, environment_satisfied, is_released_by,
-    is_self_review, offer_order, recent_claim_cell, satisfied_tasks, select, selectable_entry,
-    stealable_entry,
+    is_self_review, offer_order, recent_claim_cell, satisfied_tasks, select, select_with_satisfied,
+    selectable_entry, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};

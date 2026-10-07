@@ -26,7 +26,7 @@ mod runtime {
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
 
     mod task_snapshot;
-    pub use task_snapshot::{TaskFacts, context_opening};
+    pub use task_snapshot::{TaskFacts, TaskOrigin, context_opening};
     use task_snapshot::{TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot};
     mod transcript_sessions;
     use transcript_sessions::TranscriptSessionState;
@@ -112,12 +112,36 @@ mod runtime {
         }
     }
 
+    /// Standing of one durable task identity at a task-snapshot barrier.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum DependencyStanding {
+        Open,
+        Completed,
+        Deleted,
+    }
+
+    impl DependencyStanding {
+        #[must_use]
+        pub const fn is_settled(self) -> bool {
+            matches!(self, Self::Completed | Self::Deleted)
+        }
+    }
+
     /// One queued, immutable view of the heads needed by board requests.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct TaskSnapshot {
         cursor: Option<journal::crossing::Seq>,
         facts: TaskFacts,
         tasks: Arc<[TaskHeads]>,
+        allocation_frontier: Arc<[usize]>,
+        dependency_standing:
+            Arc<std::collections::BTreeMap<journal::crossing::TaskStamp, DependencyStanding>>,
+        claim_head_cells: Arc<
+            std::collections::BTreeMap<
+                (journal::crossing::Actor, journal::crossing::Seq),
+                journal::crossing::ClaimCell,
+            >,
+        >,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
         materialization_steps: u64,
@@ -241,6 +265,56 @@ mod runtime {
         #[must_use]
         pub fn tasks(&self) -> &[TaskHeads] {
             &self.tasks
+        }
+
+        /// Heads in the live allocation graph, plus any anomalous terminal row
+        /// that still carries an active claim.
+        ///
+        /// The index is built once when the resident advances its task
+        /// snapshot. A request therefore visits no unrelated terminal row.
+        pub fn allocation_frontier(&self) -> impl ExactSizeIterator<Item = &TaskHeads> {
+            self.allocation_frontier.iter().map(|&index| {
+                self.tasks
+                    .get(index)
+                    .expect("validated allocation frontier index")
+            })
+        }
+
+        /// One exact current head bundle by durable task identity.
+        #[must_use]
+        pub fn task_heads(&self, task: &journal::crossing::TaskStamp) -> Option<&TaskHeads> {
+            self.tasks
+                .binary_search_by(|heads| heads.statement().body().born.cmp(task))
+                .ok()
+                .map(|index| &self.tasks[index])
+        }
+
+        /// Known standing for one dependency identity. `None` means the stamp
+        /// is missing from authoritative task heads, not settled.
+        #[must_use]
+        pub fn dependency_standing(
+            &self,
+            task: &journal::crossing::TaskStamp,
+        ) -> Option<DependencyStanding> {
+            self.dependency_standing.get(task).copied()
+        }
+
+        /// Principal's most recent claim-time cell without scanning task heads.
+        ///
+        /// Current facts carry the cell directly. For a legacy latest win that
+        /// omitted it, the matching current claim head supplies the migrated
+        /// cell exactly as the full-board allocator does.
+        #[must_use]
+        pub fn recent_claim_cell(
+            &self,
+            actor: &journal::crossing::Actor,
+        ) -> Option<journal::crossing::ClaimCell> {
+            let (claimed, cell) = self.facts.latest_claim(actor)?;
+            cell.or_else(|| {
+                self.claim_head_cells
+                    .get(&(actor.clone(), claimed))
+                    .cloned()
+            })
         }
 
         /// Current trust heads captured at the same board barrier.
@@ -1356,7 +1430,7 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     AppHeads, BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError,
-    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction,
-    MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts,
+    CommitOutcome, CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
+    MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts, TaskOrigin,
     TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
 };

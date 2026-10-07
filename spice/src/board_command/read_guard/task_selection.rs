@@ -19,6 +19,11 @@ pub(super) fn selected_tasks(
     principal: &wire::Actor,
 ) -> Result<TaskSelection, Outcome<CommandAnswer>> {
     match read {
+        BoardRead::Next => Ok(TaskSelection {
+            tasks: Some(Default::default()),
+            evidence: Default::default(),
+            history: None,
+        }),
         BoardRead::All { .. } => Ok(TaskSelection {
             tasks: None,
             evidence: Default::default(),

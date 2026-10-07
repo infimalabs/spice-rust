@@ -182,6 +182,19 @@ impl DrainReadout {
         .join("\n");
         Self { text, board, team }
     }
+
+    pub(super) fn from_next(board: NextWorkCounts, team: TeamLife) -> Self {
+        Self::new(
+            ParkedCounts {
+                active: board.active,
+                stale: board.stale,
+                blocked: board.blocked,
+                waiting: board.waiting,
+                oops: board.oops,
+            },
+            team,
+        )
+    }
 }
 
 /// Build the empty-drain reply from the board snapshot the allocator drained.
@@ -190,6 +203,7 @@ impl DrainReadout {
 /// status, positioned at the cursor of that snapshot. Rows the actor route
 /// rejects and a lane without an allocation subscription are refused exactly
 /// as the allocator itself refuses them.
+#[cfg(test)]
 pub(in crate::board_command) fn drain_reply(
     board: &BoardAnswer,
 ) -> Result<Reply<DrainReadout>, Outcome<CommandAnswer>> {
