@@ -78,7 +78,7 @@ fn feedback(state: &AppState) -> Feedback {
     let runtime = surface.as_ref();
     let mut note_pending = None;
     let mut note_settled = None;
-    for (task, composer) in state.work_detail.notes.published.iter() {
+    for (task, composer) in state.task_detail.notes.published.iter() {
         if note_pending.is_none() {
             note_pending = match &composer.submission {
                 NoteSubmission::Pending { .. } => Some(PendingFeedback::NoteSaving {
@@ -120,9 +120,11 @@ fn feedback(state: &AppState) -> Feedback {
         }
     }
     let surface_pending = state
-        .work_detail
-        .selected
+        .sidebar
+        .content
         .as_ref()
+        .as_ref()
+        .and_then(|content| content.tasks())
         .into_iter()
         .flat_map(|selection| selection.tasks())
         .find_map(|task| {

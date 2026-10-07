@@ -7,11 +7,10 @@ use crate::work::TaskOverviewSelection;
 pub(super) fn use_request(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    selected: &UseStateHandle<Option<TaskOverviewSelection>>,
+    selected: Option<TaskOverviewSelection>,
     map: &UseStateHandle<view::WorkMapState>,
 ) {
     let key = selected
-        .as_ref()
         .as_ref()
         .and_then(|selection| map.request_key(selection));
     let revision = surface
@@ -47,12 +46,11 @@ pub(super) fn use_request(
 
 pub(super) fn retry_callback(
     surface: UseStateHandle<SurfaceData>,
-    selected: UseStateHandle<Option<TaskOverviewSelection>>,
+    selected: Option<TaskOverviewSelection>,
     map: UseStateHandle<view::WorkMapState>,
 ) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         let Some(key) = selected
-            .as_ref()
             .as_ref()
             .and_then(|selection| map.request_key(selection))
         else {

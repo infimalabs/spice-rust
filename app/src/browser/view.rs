@@ -5,6 +5,7 @@ use crate::work::{TaskOverviewSelection, WorkProjection};
 
 pub(super) mod chrome;
 mod quota;
+mod sidebar;
 mod team_menu;
 mod work_blockers;
 mod work_detail;
@@ -86,12 +87,12 @@ pub(super) struct AppRender<'a> {
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
-    pub selected_task: &'a UseStateHandle<Option<TaskOverviewSelection>>,
-    pub detail_presented: bool,
-    pub detail_closing: bool,
+    pub sidebar_content: &'a UseStateHandle<Option<super::sidebar::Content>>,
+    pub sidebar_presented: bool,
+    pub sidebar_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
-    pub detail_close: &'a NodeRef,
-    pub detail_sheet: &'a NodeRef,
+    pub sidebar_close: &'a NodeRef,
+    pub sidebar_sheet: &'a NodeRef,
     pub blocker_review: &'a UseStateHandle<bool>,
     pub blocker_review_button: &'a NodeRef,
     pub blocker_review_close: &'a NodeRef,
@@ -103,7 +104,7 @@ pub(super) struct AppRender<'a> {
     pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub request_task: Callback<wire::TaskStamp>,
     pub retry_relations: Callback<MouseEvent>,
-    pub close_task: Callback<()>,
+    pub close_sidebar: Callback<()>,
 }
 
 pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
@@ -150,7 +151,7 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
                 >{notice.clone()}</p>
             }
             {render_workspace(&render, work)}
-            {render_task_detail(&render, work)}
+            {render_sidebar(&render, work)}
         </div>
     }
 }
@@ -205,39 +206,47 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
     }
 }
 
-fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
-    let Some(work) = work else {
-        return Html::default();
-    };
-    let Some(selection) = (**render.selected_task).as_ref() else {
+fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+    let sidebar_content = render.sidebar_content.as_ref();
+    let Some(content) = sidebar_content.as_ref() else {
         return Html::default();
     };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    work_detail::render(work_detail::WorkDetailRender {
-        work,
-        lanes: runtime.and_then(AppRuntime::lanes),
-        navigate: render.navigate,
-        creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
-        selection,
-        presented: render.detail_presented,
-        closing: render.detail_closing,
-        map: render.work_map,
-        runtime,
-        can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
-        can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
-        close_ref: render.detail_close,
-        sheet_ref: render.detail_sheet,
-        blocker_review: render.blocker_review,
-        blocker_review_button_ref: render.blocker_review_button,
-        blocker_review_close_ref: render.blocker_review_close,
-        notes: render.notes,
-        submit_note: render.submit_note.clone(),
-        grant_trust: render.grant_trust.clone(),
-        request_task: render.request_task.clone(),
-        open_overview: render.open_overview.clone(),
-        retry_relations: render.retry_relations.clone(),
-        close: render.close_task.clone(),
+    let content = match content {
+        super::sidebar::Content::Tasks(selection) => {
+            let Some(work) = work else {
+                return Html::default();
+            };
+            work_detail::render(work_detail::WorkDetailRender {
+                work,
+                lanes: runtime.and_then(AppRuntime::lanes),
+                navigate: render.navigate,
+                creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
+                selection,
+                map: render.work_map,
+                runtime,
+                can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
+                can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
+                blocker_review: render.blocker_review,
+                blocker_review_button_ref: render.blocker_review_button,
+                blocker_review_close_ref: render.blocker_review_close,
+                notes: render.notes,
+                submit_note: render.submit_note.clone(),
+                grant_trust: render.grant_trust.clone(),
+                request_task: render.request_task.clone(),
+                open_overview: render.open_overview.clone(),
+                retry_relations: render.retry_relations.clone(),
+            })
+        }
+    };
+    sidebar::render(sidebar::SidebarRender {
+        content,
+        presented: render.sidebar_presented,
+        closing: render.sidebar_closing,
+        close_ref: render.sidebar_close,
+        sheet_ref: render.sidebar_sheet,
+        close: render.close_sidebar.clone(),
     })
 }
 

@@ -1,18 +1,31 @@
-# Task overview
+# App sidebar and task overview
 
-## Graph-first task overview
+## App sidebar
 
-Task activation opens one contextual overview for the complete selected task
-set. The selection is an ordered, stable-deduplicated list: every selected
-root remains visible even when the set is larger than the relation command's
-former root or node limits. Scope and project entry points derive that list
-from the locally admitted board in its offered order.
+The app owns one browser-local sidebar at the right edge. Its layer, frosted
+backdrop, sticky header, Close action, scroll frame, sheet-local overlay slot,
+Escape ownership, close transition, inert and ARIA wiring, and focus return are
+content-agnostic. The sheet is 46rem wide, 42rem at or below 1180px, and the
+full window at or below 560px.
 
-The overview is one continuous modal surface at the task sheet's reading width:
-46rem, 42rem at or below 1180px, and the full window at or below 560px. Its
-admitted-board graph renders first, including every selected root, roots with
-no edges, and explicit outside-board or outside-selection neighbors. The same
-graph offers focused Dependency, Lineage, Reviews, and Lifecycle lenses.
+Exactly one closed content type occupies the sidebar. Opening different content
+while it is present swaps the content in place without replaying the opening
+transition; Escape, backdrop, or Close then dismisses the shared sheet and
+returns focus to a surviving launcher. A content-local overlay owns Escape
+ahead of the sheet and leaves the sheet frame mounted but inert behind it.
+Reduced-motion mode removes the shared sheet transition.
+
+## Task overview
+
+Task activation opens the task overview content for the complete selected task
+set. The selection is an ordered, stable-deduplicated list: every selected root
+remains visible even when the set is larger than the relation command's former
+root or node limits. Scope and project entry points derive that list from the
+locally admitted board in its offered order.
+
+The admitted-board graph renders first, including every selected root, roots
+with no edges, and explicit outside-board or outside-selection neighbors. The
+same graph offers focused Dependency, Lineage, Reviews, and Lifecycle lenses.
 Dependency direction and typed depth/node controls bound optional resident
 enrichment without bounding the local selection; loading, refreshing,
 unavailable, retry, and explicit truncation/frontier states never replace or
@@ -34,9 +47,7 @@ activity, notes, loading, unavailable, and retry states appear simultaneously
 rather than behind tabs, pagination, or next/previous controls. Activating a
 selected graph node scrolls and moves focus to that task's detail section;
 activating a related external task follows that lead in the same overview.
-Escape, backdrop, and Close dismiss the overview and restore the prior focus
-when it still exists. Reduced-motion mode removes the sheet and graph
-transitions.
+Reduced-motion mode also removes graph transitions.
 
 ## Task blocker review
 
