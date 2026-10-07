@@ -651,7 +651,6 @@
 /* Canonical member zero is the main agent. Paint canonical order from the
    control-adjacent right edge, matching the predecessor, and let RTL overflow
    keep that edge visible on initial layout. Agent contents remain LTR. */
-/* A control-color skin masks the frost's sampling edges; its center stays glass. */
 .team-surface .team-agents {
   display: grid;
   grid-template-columns: repeat(var(--team-weight, 4), minmax(10rem, 1fr));
@@ -663,17 +662,6 @@
   overscroll-behavior-inline: contain;
   scroll-behavior: smooth;
   direction: rtl;
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--control) 70%, transparent) 0,
-      color-mix(in srgb, var(--control) 52%, transparent) var(--app-status-line-band),
-      transparent calc(var(--app-status-line-band) + 20px),
-      transparent calc(100% - 20px),
-      color-mix(in srgb, var(--control) 52%, transparent) 100%
-    ),
-    var(--overlay-veil);
-  backdrop-filter: var(--overlay-frost);
 }
 
 .team-surface .team-agent {
