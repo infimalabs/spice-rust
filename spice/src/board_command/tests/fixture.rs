@@ -35,7 +35,7 @@ pub(super) fn lapse_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &T
     let expiry = at(&held, task)
         .lease
         .as_ref()
-        .expect("a review claim carries its lease")
+        .expect("a claim carries its lease")
         .body
         .expiry;
     let request = board::lapse::Request {
