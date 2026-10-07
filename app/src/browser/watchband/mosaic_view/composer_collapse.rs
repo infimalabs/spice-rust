@@ -322,19 +322,25 @@ fn sync_metrics(
         }
     };
     set_collapse(surface, scroller, state, requested);
+    // A resize changes the rest even when a fully revealed offset stays zero.
+    state.borrow_mut().place_rest();
 }
 
-/// Settle the offset and, at the edges, move the rest after the top edge.
+/// Settle the offset. The absolute rest re-anchors only while exposure changes;
+/// once either edge is reached, CSS sticky positioning owns continued motion
+/// without a layout write for every scroll event.
 fn set_collapse(
     surface: &HtmlElement,
     scroller: &HtmlElement,
     state: &SharedCollapse,
     requested: f64,
 ) {
-    if update_collapse(state, requested) || !surface.has_attribute("data-composer-collapse") {
+    let changed = update_collapse(state, requested);
+    let uninitialized = !surface.has_attribute("data-composer-collapse");
+    if changed || uninitialized {
         paint_collapse(surface, scroller, state);
+        state.borrow_mut().place_rest();
     }
-    state.borrow_mut().place_rest();
 }
 
 fn update_collapse(state: &SharedCollapse, requested: f64) -> bool {

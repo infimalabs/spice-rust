@@ -109,9 +109,11 @@ above the message stream repeats the faint control edge at each shard's top.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
-height remains both the collapse distance and the message-plane spacer. The app
-moves only the composer's resting place, and only while it rests fully shown
-or hidden, so reversing either way moves it at once. Programmatic focus moves
+height remains both the collapse distance and the message-plane spacer. Between
+exposure edges, one fixed absolute rest lets native scroll carry the composer.
+At either edge sticky positioning owns continued motion without repeated layout
+writes; the first reversed delta reanchors the rest once, so reveal or collapse
+begins immediately. Programmatic focus moves
 the caret without browser focus scrolling the viewport, team fleet, member
 strip, or message plane. The composer's existing focus transition still reveals
 a collapsed draft fully, and the plane's scroll padding keeps other
