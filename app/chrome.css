@@ -68,9 +68,6 @@ body:has(.shell--mosaic),
   padding: 0;
   border-radius: var(--app-radius-element);
 }
-.app-disclosure[data-transient-status="true"] {
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) var(--app-header-control);
-}
 .app-disclosure[data-expanded="true"] {
   z-index: 20;
   contain: none;
@@ -195,17 +192,6 @@ body:has(.shell--mosaic),
   font-size: 9px;
 }
 :is(.task-pill-strip, .team-tasks) :focus-visible { outline-offset: -2px; }
-.app-global-status {
-  grid-area: 1 / 3;
-  min-width: 0;
-  max-width: min(22rem, 42vw);
-  overflow: hidden;
-  color: var(--muted);
-  font: 500 .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.app-global-status[data-connection="reconnecting"] { color: var(--triage); }
 .app-menu { position: static; grid-row: 1; grid-column: -2; }
 .app-menu[open] { z-index: 2; }
 .app-menu > summary {

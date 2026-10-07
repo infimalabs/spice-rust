@@ -6,7 +6,6 @@ use wire::{QuotaAttempt, QuotaFailureKind, QuotaGeneration};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Condition {
     NeverSampled,
-    Refreshing,
     Current,
     StaleLastGood,
     Unsupported,
@@ -17,7 +16,6 @@ impl Condition {
     pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::NeverSampled => "never-sampled",
-            Self::Refreshing => "refreshing",
             Self::Current => "current",
             Self::StaleLastGood => "stale-last-good",
             Self::Unsupported => "unsupported",
@@ -28,7 +26,6 @@ impl Condition {
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::NeverSampled => "Not sampled yet",
-            Self::Refreshing => "Refreshing",
             Self::Current => "Current",
             Self::StaleLastGood => "Last good sample; refresh failed",
             Self::Unsupported => "Quota sampling unsupported",
@@ -38,12 +35,15 @@ impl Condition {
 }
 
 /// Distinguishable words and chronology for one generation.
+///
+/// A sample in flight is routine and says nothing: the presentation follows
+/// only finished attempts, so a refresh never changes what the operator reads.
 pub(crate) struct Presentation {
     pub(crate) condition: Condition,
     pub(crate) detail: &'static str,
     pub(crate) sampled_at_ms: Option<i64>,
-    /// Retained data whose latest attempt did not fail, including while a
-    /// refresh runs over it; its age then carries nothing worth reading.
+    /// Retained data whose latest attempt did not fail; its age then carries
+    /// nothing worth reading.
     pub(crate) fresh: bool,
 }
 
@@ -53,9 +53,7 @@ pub(crate) fn present(generation: &QuotaGeneration) -> Presentation {
         .as_ref()
         .map(|snapshot| snapshot.generated_at_ms);
     let failed = matches!(generation.latest_attempt, Some(QuotaAttempt::Failed { .. }));
-    let condition = if generation.refreshing {
-        Condition::Refreshing
-    } else if sampled_at_ms.is_some() && failed {
+    let condition = if sampled_at_ms.is_some() && failed {
         Condition::StaleLastGood
     } else if sampled_at_ms.is_some() {
         Condition::Current
@@ -72,18 +70,14 @@ pub(crate) fn present(generation: &QuotaGeneration) -> Presentation {
     } else {
         Condition::NeverSampled
     };
-    let detail = match (condition, sampled_at_ms.is_some()) {
-        (Condition::Refreshing, true) => {
-            "Refreshing; retained data remains visible and continues to age."
-        }
-        (Condition::Refreshing, false) => "The first provider quota sample is running.",
-        (Condition::Current, _) => "The most recent sample completed successfully.",
-        (Condition::StaleLastGood, _) => {
+    let detail = match condition {
+        Condition::Current => "The most recent sample completed successfully.",
+        Condition::StaleLastGood => {
             "The latest refresh failed; retained successful data remains visible and continues to age."
         }
-        (Condition::Unsupported, _) => "The configured OMP executable cannot provide quota usage.",
-        (Condition::Failed, _) => "No successful provider quota sample is available.",
-        (Condition::NeverSampled, _) => "The resident has not completed a provider quota sample.",
+        Condition::Unsupported => "The configured OMP executable cannot provide quota usage.",
+        Condition::Failed => "No successful provider quota sample is available.",
+        Condition::NeverSampled => "The resident has not completed a provider quota sample.",
     };
     Presentation {
         condition,
@@ -483,44 +477,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sampler_conditions_keep_retained_failure_distinct() {
+    fn sampler_conditions_keep_retained_failure_distinct_and_ignore_refreshes() {
         let mut generation = QuotaGeneration::default();
-        assert_eq!(present(&generation).condition, Condition::NeverSampled);
+        let unchanged_by_refresh = |generation: &mut QuotaGeneration| {
+            let settled = present(generation);
+            generation.refreshing = true;
+            let refreshing = present(generation);
+            generation.refreshing = false;
+            assert_eq!(
+                (settled.condition, settled.detail, settled.fresh),
+                (refreshing.condition, refreshing.detail, refreshing.fresh),
+                "a sample in flight changes nothing the operator reads"
+            );
+            settled.condition
+        };
+        assert_eq!(
+            unchanged_by_refresh(&mut generation),
+            Condition::NeverSampled
+        );
 
-        generation.refreshing = true;
-        assert_eq!(present(&generation).condition, Condition::Refreshing);
-        generation.refreshing = false;
         generation.latest_attempt = Some(QuotaAttempt::Failed {
             finished_at_ms: 20,
             kind: QuotaFailureKind::ExecutableUnavailable,
             exit_code: None,
         });
-        assert_eq!(present(&generation).condition, Condition::Unsupported);
+        assert_eq!(
+            unchanged_by_refresh(&mut generation),
+            Condition::Unsupported
+        );
         generation.latest_attempt = Some(QuotaAttempt::Failed {
             finished_at_ms: 21,
             kind: QuotaFailureKind::Timeout,
             exit_code: None,
         });
-        assert_eq!(present(&generation).condition, Condition::Failed);
+        assert_eq!(unchanged_by_refresh(&mut generation), Condition::Failed);
 
         generation.last_good = Some(Arc::new(snapshot()));
-        assert_eq!(present(&generation).condition, Condition::StaleLastGood);
-        assert_eq!(present(&generation).sampled_at_ms, Some(10));
-        generation.refreshing = true;
-        assert!(
-            !present(&generation).fresh,
-            "a refresh does not freshen a failed sample"
+        assert_eq!(
+            unchanged_by_refresh(&mut generation),
+            Condition::StaleLastGood
         );
-        generation.refreshing = false;
+        assert_eq!(present(&generation).sampled_at_ms, Some(10));
+        assert!(!present(&generation).fresh);
 
         generation.latest_attempt = Some(QuotaAttempt::Succeeded { finished_at_ms: 30 });
-        assert_eq!(present(&generation).condition, Condition::Current);
+        assert_eq!(unchanged_by_refresh(&mut generation), Condition::Current);
         assert!(present(&generation).fresh);
-        generation.refreshing = true;
-        assert!(
-            present(&generation).fresh,
-            "a refresh over current data stays fresh"
-        );
     }
 
     #[test]
