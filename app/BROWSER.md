@@ -108,8 +108,9 @@ pointer-inert composited screen continues 10px over the message stream. The
 control frame uses one derived 93% theme-control paint as three thicknesses and
 holds it through the full height of the neighboring text areas. That paint
 fades smoothly across the 10px continuation below instead of exposing the
-stream inside the frame. Its opaque 1px top inset rule reuses the shared
-backdrop edge color, so the boundary is continuous. Equal soft elevation
+stream inside the frame. The continuation itself paints its opaque 1px top
+inset rule above the control paint, using the shared backdrop edge color so the
+boundary remains continuous. Equal soft elevation
 appears on both inline sides; at a team boundary the following composer carries
 the otherwise-clipped right cast, letting either neighbor read beneath the
 raised controls without moving either surface. Sibling teams need no hard
