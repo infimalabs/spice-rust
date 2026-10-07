@@ -297,10 +297,13 @@ admission closes, the cursor remains immediately before the first omitted row
 and the reply carries the exact continuation command.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
-prints only the current execution contract: identity, title, project, phase,
-status, active claim, requirements, acceptance, dependencies, artifacts, phase
-guidance, and next command. `--context` adds origin, acknowledgment, hydration,
-Git, parked-commit, and authored metadata; `--history` adds the newest-first
+prints only the current execution contract: identity, the whole authored
+statement in the fields `spice task modify` replaces (title, project, priority,
+description, acceptance), phase, status, active claim, requirements,
+dependencies, artifacts, phase guidance, and next command. Statement fields are
+never cut by `--max-text`, so a field read there is exactly the value a
+replacement overwrites. `--context` adds origin, acknowledgment, hydration,
+Git, parked-commit, and tag metadata; `--history` adds the newest-first
 workflow steps (each completion with the phase it closed and its validation,
 each phase advance, each review verdict with its finding or note and linked
 corrections, under the actor and time that took it) and newest-first notes

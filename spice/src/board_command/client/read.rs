@@ -393,6 +393,7 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
         format!("project {}", statement.project),
+        format!("priority {}", task_priority(&statement.tags).unwrap_or("-")),
         format!("phase {}", workflow.phase),
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
@@ -409,6 +410,21 @@ pub(in crate::board_command) fn task_show_bounded(
             "blocked"
         }
     ));
+    lines.push("description:".to_owned());
+    match statement
+        .description
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        Some(text) => lines.extend(text.lines().map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("  {line}")
+            }
+        })),
+        None => lines.push("  -".to_owned()),
+    }
     lines.push("acceptance:".to_owned());
     if !substantive_acceptance(&statement.acceptance) {
         lines.push("  -".to_owned());
@@ -468,10 +484,6 @@ fn task_show_context_lines(
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
     let mut lines = vec![
-        format!(
-            "description {}",
-            budget.clip(statement.description.as_deref().unwrap_or("-"))
-        ),
         format!("origin {}", statement.provenance),
         task_flow_line(&workflow.flow),
         format!("review {}", workflow.review),
@@ -500,7 +512,9 @@ fn task_show_context_lines(
     ));
     lines.extend(git_context_lines(task));
     lines.extend(parked_commit_lines(task));
-    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
+    let tags = visible_tags(&statement.tags)
+        .filter(|tag| !tag.starts_with(board::PRIORITY_TAG_PREFIX))
+        .collect::<Vec<_>>();
     if tags.is_empty() {
         lines.push("tags -".to_owned());
     } else {
@@ -977,6 +991,12 @@ fn git_context_lines(task: &BoardTask) -> Vec<String> {
     }
     lines.push(shell_words::join(command));
     lines
+}
+
+/// The authored priority a task's tags carry.
+fn task_priority(tags: &[String]) -> Option<&str> {
+    tags.iter()
+        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
 }
 
 fn push_bulleted(lines: &mut Vec<String>, text: &str) {

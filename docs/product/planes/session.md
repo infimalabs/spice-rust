@@ -104,8 +104,9 @@ move this opening boundary. If the source is incomplete, the registered stream
 is absent or ambiguous, or no matching session declaration exists, the task
 renders the specific unavailability reason instead of inventing a lookup.
 
-The same compact view points to `spice doc ledger HANDLE` for current authored
-rationale, append-only notes, and workflow steps, and `spice task show HANDLE
+The same compact view prints the whole authored statement and points to
+`spice doc ledger HANDLE` for the task as a document with its append-only
+notes and workflow steps, and `spice task show HANDLE
 --history` carries the same steps under bounded pagination. When a claim,
 completion, or review records a
 Git boundary, the task renders its fact identity and a shell-executable
