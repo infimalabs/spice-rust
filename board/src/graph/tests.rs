@@ -135,6 +135,8 @@ fn reviewed(
             reviewer,
             verdict,
             finding: (verdict == body::Verdict::Finding).then(|| "finding".to_owned()),
+            note: None,
+            followups: Vec::new(),
             git: None,
             source: body::SourceBoundary::unrecorded(),
         },

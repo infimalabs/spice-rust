@@ -55,7 +55,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | Canonical document text is classified and emitted again | byte-identical fixed point | [The task-document properties](../interfaces.md#behavioral-properties) |
-| `doc ledger HANDLE` renders a dialect-representable task | emits its current task prose, flow, authored tags, priority, and append-only notes without exporting a family or dependency graph | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
+| `doc ledger HANDLE` renders a dialect-representable task | emits its current task prose, flow, authored tags, priority, and append-only notes interleaved with its workflow steps without exporting a family or dependency graph | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
 | `doc ledger HANDLE` sees a task whose flow is outside the dialect vocabulary | reports `doc::ledger-unrepresentable` rather than inventing a document | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
 | Apply twice | idempotent | [The task-document properties](../interfaces.md#behavioral-properties) |
 | Apply is interrupted before or after commit | no partial family exists; retry commits once or returns the existing receipt | [The task-document properties](../interfaces.md#behavioral-properties) |

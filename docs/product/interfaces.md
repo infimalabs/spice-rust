@@ -19,9 +19,10 @@ previews the tasks that spelling would touch, and applies only that exact digest
 against the board snapshot captured by the apply invocation.
 `spice doc ledger HANDLE` travels the other direction only as a narrow
 single-task document containing the current title, description, acceptance,
-flow, authored tags, priority, and append-only task notes when those values are
-representable in the dialect. The terminal receives an 8 KiB preview by
-default, may request at most 128 KiB with `--max-bytes`, and uses
+flow, authored tags, priority, and append-only task notes interleaved with its
+workflow steps when those values are representable in the dialect. The terminal
+receives an 8 KiB preview by default, may request at most 128 KiB with
+`--max-bytes`, and uses
 `--output FILE` for the complete canonical bytes plus an export receipt. It is
 not the inverse of document apply and does not export a family or dependency
 graph.
@@ -40,7 +41,7 @@ flowchart TD
     B --> R["DocApplied receipt"]
   end
   M --> PL
-  B --> L["doc ledger HANDLE:<br/>current task prose + flow<br/>+ append-only notes"]
+  B --> L["doc ledger HANDLE:<br/>current task prose + flow<br/>+ append-only notes + workflow steps"]
 ```
 
 ### Behavioral properties
@@ -85,7 +86,7 @@ the row was created and does not namespace later document matching.
 | dependency graph | stored from the complete parsed graph | replaced from the complete parsed graph; an omitted explicit edge is removed |
 | flow | explicit flow, or the ordinary acceptance-sensitive default | unchanged by document edits |
 | description | stored; absence is empty | replaced; absence clears it |
-| annotations | appended as task notes; exact duplicates are not appended again | new annotations are appended; omission does not erase prior notes |
+| annotations | appended as task notes; exact duplicates, and the workflow-step annotations `doc ledger` exports, are not appended | new annotations are appended; omission does not erase prior notes |
 | due | normalized by the Markdown dialect but not projected into board heads | no board effect |
 
 These are replacement semantics, not patch semantics. In particular, an absent
@@ -299,14 +300,20 @@ The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,
 status, active claim, requirements, acceptance, dependencies, artifacts, phase
 guidance, and next command. `--context` adds origin, acknowledgment, hydration,
-Git, parked-commit, and authored metadata; `--history` adds newest-first notes
-under the interactive row, byte, and text limits. `spice task list` always
+Git, parked-commit, and authored metadata; `--history` adds the newest-first
+workflow steps (each completion with the phase it closed and its validation,
+each phase advance, each review verdict with its finding or note and linked
+corrections, under the actor and time that took it) and newest-first notes
+under the interactive row, byte, and text limits. Any principal that may read
+the task reads them there; the raw `spice journal` stays operator-only. `spice
+task list` always
 orders current/actionable rows before waiting and terminal rows, then newest
 first, and applies the 20-row interactive default even with `--all` or
 `--project`. Both surfaces emit an exact `--after` continuation when rows remain.
-When both detail switches are present, context rows, closure, and notes share
-one aggregate detail budget. Their continuation preserves both switches and
-resumes at the first withheld context-row cursor or note position.
+When both detail switches are present, context rows, closure, workflow steps,
+and notes share one aggregate detail budget. Their continuation preserves both
+switches and resumes at the first withheld context-row cursor, step, or note
+position.
 
 `spice lane list` uses the same interactive row and byte limits. It orders the
 calling lane first, then occupied or claim-holding lanes, then remaining lanes;

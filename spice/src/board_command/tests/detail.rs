@@ -157,6 +157,7 @@ fn task_show_prints_only_the_named_tasks_notes() {
             notes: &answer.notes[&shown_born],
             acknowledgments: &[],
             closure: None,
+            steps: &[],
         },
         None,
     );
@@ -238,6 +239,7 @@ fn task_show_separates_current_context_and_bounded_history() {
             notes: &notes,
             acknowledgments: &[],
             closure: None,
+            steps: &[],
         },
         None,
         &TaskShowOptions {

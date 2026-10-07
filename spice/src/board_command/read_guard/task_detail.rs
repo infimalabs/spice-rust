@@ -67,16 +67,34 @@ pub(super) struct TaskRecord {
     /// The operator's closure of each closed task; a settled task closes once.
     pub(super) closures:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
+    /// Every done, phase advance, and review verdict.
+    pub(super) steps:
+        std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailStep>>,
 }
 
-/// Read the named tasks' notes, closures, and acknowledgments from the
-/// snapshot's facts.
+/// Read the named tasks' notes, closures, workflow steps, and acknowledgments
+/// from the snapshot's facts.
 pub(super) fn task_record(
     facts: &bus::TaskFacts,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
 ) -> TaskRecord {
     let mut record = TaskRecord::default();
+    // The phase each named task's workflow holds, so a completion names the
+    // phase it closed; only creation and advance move it.
+    let mut phases = std::collections::BTreeMap::new();
     for envelope in facts.iter() {
+        if let Some((task, step)) = task_step(envelope, &mut phases, tasks) {
+            record
+                .steps
+                .entry(task)
+                .or_default()
+                .push(wire::intent::TaskDetailStep {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    author: envelope.actor.clone(),
+                    step,
+                });
+        }
         if let Some(noted) = envelope.fact.read::<body::TaskNoted>()
             && tasks.contains(&noted.task)
         {
@@ -132,6 +150,60 @@ pub(super) fn task_record(
         rows.sort_by_key(|row| row.position);
     }
     record
+}
+
+/// The workflow step one fact records on a named task, if it records one.
+fn task_step(
+    envelope: &wire::Envelope<wire::AnyFact>,
+    phases: &mut std::collections::BTreeMap<wire::TaskStamp, wire::Phase>,
+    tasks: &std::collections::BTreeSet<wire::TaskStamp>,
+) -> Option<(wire::TaskStamp, wire::intent::TaskStep)> {
+    match envelope.fact.kind() {
+        wire::FactKind::TaskAdded => {
+            let added = envelope.fact.read::<body::TaskAdded>()?;
+            if tasks.contains(&added.task) {
+                phases.insert(added.task, added.phase);
+            }
+            None
+        }
+        wire::FactKind::TaskDone => {
+            let done = envelope.fact.read::<body::TaskDone>()?;
+            let phase = phases.get(&done.task)?.clone();
+            Some((
+                done.task,
+                wire::intent::TaskStep::Done {
+                    phase,
+                    validation: done.validation,
+                },
+            ))
+        }
+        wire::FactKind::TaskPhased => {
+            let phased = envelope.fact.read::<body::TaskPhased>()?;
+            let phase = phases.get_mut(&phased.task)?;
+            phase.clone_from(&phased.phase);
+            Some((
+                phased.task,
+                wire::intent::TaskStep::Phased {
+                    phase: phased.phase,
+                },
+            ))
+        }
+        wire::FactKind::TaskReviewed => {
+            let reviewed = envelope.fact.read::<body::TaskReviewed>()?;
+            if !tasks.contains(&reviewed.task) {
+                return None;
+            }
+            Some((
+                reviewed.task,
+                wire::intent::TaskStep::Reviewed {
+                    verdict: reviewed.verdict,
+                    text: reviewed.finding.or(reviewed.note),
+                    followups: reviewed.followups,
+                },
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn task_media(

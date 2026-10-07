@@ -39,10 +39,11 @@ pub use board::{
     TASK_RELATION_EDGE_LIMIT, TASK_RELATION_FRONTIER_LIMIT, TASK_RELATION_NODE_LIMIT,
     TASK_RELATION_ROOT_LIMIT, TASK_TIMELINE_LANE_LIMIT, TASK_TIMELINE_PAGE_LIMIT_MAX,
     TaskAcknowledgment, TaskClaimContext, TaskDetail, TaskDetailAnswer, TaskDetailClosure,
-    TaskDetailNote, TaskGitContext, TaskGitContextKind, TaskHistoryCursor, TaskHistoryPage,
-    TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
-    TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskTimeline,
-    TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer,
+    TaskDetailNote, TaskDetailStep, TaskGitContext, TaskGitContextKind, TaskHistoryCursor,
+    TaskHistoryPage, TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind,
+    TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation, TaskRelations,
+    TaskRelationsAnswer, TaskStep, TaskTimeline, TaskTimelineAnswer, TaskTimelineEntry,
+    TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer,
 };
 mod report;
 pub use report::{

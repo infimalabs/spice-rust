@@ -143,6 +143,10 @@ pub(super) fn client_show(
                         .map_or(&[], Vec::as_slice),
                     acknowledgments,
                     closure: board.closures.get(&task.statement.body.born),
+                    steps: board
+                        .steps
+                        .get(&task.statement.body.born)
+                        .map_or(&[], Vec::as_slice),
                 },
                 origin_context.as_deref(),
                 &options,
@@ -313,13 +317,14 @@ fn task_show_origin_context(
     Ok(Some(blocks.join("\n").into_boxed_str()))
 }
 
-/// Durable history shown with one task: its notes and every acknowledged
-/// steering key on its record.
+/// Durable history shown with one task: its notes, its closure, its workflow
+/// steps, and every acknowledged steering key on its record.
 #[derive(Clone, Copy, Default)]
 pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],
     pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
     pub(in crate::board_command) closure: Option<&'a wire::intent::TaskDetailClosure>,
+    pub(in crate::board_command) steps: &'a [wire::intent::TaskDetailStep],
 }
 
 fn task_flow_line(flow: &[wire::Phase]) -> String {
@@ -441,6 +446,7 @@ pub(in crate::board_command) fn task_show_bounded(
     }
     if options.context || options.history {
         lines.extend(bounded_detail_lines(
+            board,
             task,
             history,
             origin_context,
@@ -515,6 +521,7 @@ fn task_show_context_lines(
 enum TaskShowDetailSection {
     Context,
     Closure,
+    Step,
     Note,
 }
 
@@ -526,6 +533,7 @@ struct TaskShowDetailRow {
 }
 
 fn bounded_detail_lines(
+    board: &BoardAnswer,
     task: &BoardTask,
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
@@ -553,6 +561,13 @@ fn bounded_detail_lines(
                 text: closure_lines_bounded(closure, budget).join("\n"),
             });
         }
+        let mut steps = history.steps.iter().collect::<Vec<_>>();
+        steps.sort_by_key(|step| std::cmp::Reverse(step.position));
+        rows.extend(steps.into_iter().map(|step| TaskShowDetailRow {
+            cursor: format!("step:{}", step.position),
+            section: TaskShowDetailSection::Step,
+            text: render_task_step(board, step, budget),
+        }));
         let mut notes = history.notes.iter().collect::<Vec<_>>();
         notes.sort_by_key(|note| std::cmp::Reverse(note.position));
         rows.extend(notes.into_iter().map(|note| TaskShowDetailRow {
@@ -581,8 +596,13 @@ fn bounded_detail_lines(
     let page = admission
         .finish(|resume| task_show_continuation(&task.statement.body.handle, options, resume));
     let mut lines = Vec::new();
+    let mut steps_started = false;
     let mut notes_started = false;
     for row in page.rows {
+        if matches!(row.section, TaskShowDetailSection::Step) && !steps_started {
+            lines.push("workflow:".to_owned());
+            steps_started = true;
+        }
         if matches!(row.section, TaskShowDetailSection::Note) && !notes_started {
             lines.push("notes:".to_owned());
             notes_started = true;
@@ -598,6 +618,36 @@ fn bounded_detail_lines(
     Ok(lines)
 }
 
+fn render_task_step(
+    board: &BoardAnswer,
+    step: &wire::intent::TaskDetailStep,
+    budget: wire::output::Budget,
+) -> String {
+    let mut rendered = format!("  {}", step_heading(step));
+    if let Some(text) = step_text(step) {
+        let text = budget.clip(text);
+        push_indented(&mut rendered, &text.text);
+        if let Some(withheld) = text.withheld_bytes {
+            rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
+        }
+    }
+    if let Some(followups) = step_followups(step, |stamp| stamp_name(board, stamp)) {
+        push_indented(&mut rendered, &followups);
+    }
+    rendered
+}
+
+/// Append `text` under a history row's heading, four columns in.
+fn push_indented(rendered: &mut String, text: &str) {
+    for line in text.lines() {
+        rendered.push('\n');
+        if !line.is_empty() {
+            rendered.push_str("    ");
+            rendered.push_str(line);
+        }
+    }
+}
+
 fn render_task_note(
     note: &wire::intent::TaskDetailNote,
     acknowledgments: &[wire::intent::TaskAcknowledgment],
@@ -609,13 +659,7 @@ fn render_task_note(
         .map_or_else(String::new, |row| format!(" ack:{}", row.key));
     let text = budget.clip(&note.text);
     let mut rendered = format!("  {} {} {}{origin}", note.position, note.at, note.author);
-    for line in text.text.lines() {
-        rendered.push('\n');
-        if !line.is_empty() {
-            rendered.push_str("    ");
-            rendered.push_str(line);
-        }
-    }
+    push_indented(&mut rendered, &text.text);
     if let Some(withheld) = text.withheld_bytes {
         rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
     }

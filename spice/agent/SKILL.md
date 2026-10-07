@@ -131,7 +131,9 @@ command for more.
 - Complete implementation with `spice task done --validation TEXT`. A clean
   review (`spice task review HANDLE --finding clean --note NOTE`) inspects the
   integrated diff and independently checks proportionate evidence against the
-  acceptance and the steering its claim context lists. Correct a review
+  acceptance and the steering its claim context lists; `spice task show HANDLE
+  --context --history` carries the implementer's validation, earlier verdicts,
+  and their notes and corrections. Correct a review
   directly only when every change is tiny, deterministic, mechanical,
   low-risk, within the reviewed ownership and acceptance, and leaves no
   independently reviewable decision: commit it separately under the active

@@ -356,6 +356,16 @@ pub struct TaskReviewed {
         deserialize_with = "crate::optional::present"
     )]
     pub finding: Option<String>,
+    /// Reviewer's note on a clean verdict; a finding carries its note in `finding`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub note: Option<String>,
+    /// Correction tasks the finding linked, in the order the reviewer named them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub followups: Vec<TaskStamp>,
     /// Repository history published before the review completed.
     #[serde(
         default,

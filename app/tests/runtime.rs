@@ -305,6 +305,7 @@ fn board_response_with_requirements(
         notes: Default::default(),
         acknowledgments: Default::default(),
         closures: Default::default(),
+        steps: Default::default(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,
