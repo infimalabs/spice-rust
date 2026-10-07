@@ -841,11 +841,14 @@ fn append_review_statement(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
+    let dependencies = (statement.dependencies != entry.statement().dependencies)
+        .then(|| statement.dependencies.clone());
     let edited = write
         .fact(
             body::TaskEdited {
                 task: entry.born().clone(),
                 revision,
+                dependencies,
                 notice: None,
             },
             FactCause::Pending(reviewed),
@@ -1300,11 +1303,14 @@ fn edit_doc_task(
     statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
     statement.dependencies = spec.dependencies;
+    let dependencies = (statement.dependencies != existing.statement().dependencies)
+        .then(|| statement.dependencies.clone());
     let edited = write
         .fact(
             body::TaskEdited {
                 task: existing.born().clone(),
                 revision,
+                dependencies,
                 notice: None,
             },
             cause,

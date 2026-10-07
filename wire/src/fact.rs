@@ -403,6 +403,33 @@ impl FactKind {
     pub fn affects_steering(self) -> bool {
         Self::STEERING_AUTHORITY.contains(&self)
     }
+
+    /// Relationship projections whose visible content this fact kind can change.
+    ///
+    /// This classification lives on the closed fact vocabulary so adding a
+    /// task fact cannot require an app-local registry. A task node's title,
+    /// phase, or status is repeated in every relationship family, so lifecycle
+    /// and statement changes affect all four families even when only one edge
+    /// family changes.
+    #[must_use]
+    pub const fn task_relation_kinds(self) -> &'static [crate::intent::TaskRelationKind] {
+        use crate::intent::TaskRelationKind::{Dependency, Lifecycle, Origin, Review};
+
+        match self {
+            Self::TaskAdded => &[Origin, Dependency, Lifecycle],
+            Self::TaskNoted => &[],
+            Self::TaskPhased
+            | Self::TaskDone
+            | Self::TaskReviewed
+            | Self::TaskAssigned
+            | Self::TaskDeferred
+            | Self::TaskWoken
+            | Self::TaskEdited
+            | Self::TaskDeleted
+            | Self::TaskClosed => &[Origin, Dependency, Review, Lifecycle],
+            _ => &[],
+        }
+    }
 }
 
 impl fmt::Display for FactKind {

@@ -157,7 +157,7 @@ pub(super) fn handle_incoming(
             .refresh_after_millis
     });
     drop(runtime_slot);
-    if publish {
+    if publish && application.publish {
         let _publication = diagnostics::span("state.publish", || diagnostics::Metadata {
             frame_bytes: Some(bytes.len()),
             cards: data
@@ -180,6 +180,7 @@ pub(super) fn handle_incoming(
 struct CommandApplication {
     refresh: bool,
     lane_authority: bool,
+    publish: bool,
     stale: crate::Stale,
 }
 
@@ -188,6 +189,7 @@ impl CommandApplication {
         Self {
             refresh,
             lane_authority: false,
+            publish: true,
             stale: crate::Stale::default(),
         }
     }
@@ -198,6 +200,7 @@ impl CommandApplication {
         Self {
             refresh: false,
             lane_authority: false,
+            publish: true,
             stale,
         }
     }
@@ -268,8 +271,13 @@ fn apply_command_response(
         PendingKind::TaskRelations { key } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskRelationsAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_task_relations(&key, &admitted);
-            CommandApplication::ordinary(false)
+            let publish = runtime.apply_task_relations(&key, &admitted);
+            CommandApplication {
+                refresh: false,
+                lane_authority: false,
+                publish,
+                stale: crate::Stale::default(),
+            }
         }
         kind => apply_mutating_response(session, handles, runtime, id, kind, bytes)?,
     })
@@ -294,6 +302,7 @@ fn apply_mutating_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                publish: true,
                 stale: crate::Stale::default(),
             }
         }
@@ -303,6 +312,7 @@ fn apply_mutating_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                publish: true,
                 stale: crate::Stale::default(),
             }
         }
@@ -329,6 +339,7 @@ fn apply_mutating_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                publish: true,
                 stale: crate::Stale::default(),
             }
         }
@@ -673,6 +684,7 @@ fn apply_member_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                publish: true,
                 stale: crate::Stale::default(),
             }
         }

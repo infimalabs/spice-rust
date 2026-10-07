@@ -775,10 +775,12 @@ fn commit_dependency_edit(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
+    let dependencies = statement.dependencies.clone();
     let edited = match write.fact(
         body::TaskEdited {
             task: entry.born().clone(),
             revision,
+            dependencies: Some(dependencies),
             notice: None,
         },
         FactCause::Root,
