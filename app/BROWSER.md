@@ -147,7 +147,10 @@ the caret without browser focus scrolling the viewport, team fleet, member
 strip, or message plane. The composer's existing focus transition still reveals
 a collapsed draft fully, and the plane's scroll padding keeps other
 browser-scrolled targets clear of the exposed composer only while focus is
-outside it.
+outside it. The team fleet opens at its canonical right edge and holds that
+edge through resizes only while the operator leaves it there; once they scroll
+to another team, a keyboard opening or closing, a rotation, or a team arriving
+keeps their place.
 
 The range values sit outside their thumbs as one centered phrase. Quiet and
 Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain

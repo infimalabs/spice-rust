@@ -217,23 +217,46 @@ impl ComposerSlots {
     }
 }
 
+/// The fleet opens at its canonical right edge and holds it through resizes
+/// only while the operator leaves it there. Once they scroll to another team,
+/// a keyboard opening or closing, a rotation, or a team arriving keeps their
+/// place: the edge pin never takes a team out from under them.
 #[hook]
 pub(super) fn use_team_fleet_right_edge(host: NodeRef, team_count: usize) {
+    let pinned = use_mut_ref(|| true);
     use_effect_with((host, team_count), move |(host, _)| {
         let registration = host.cast::<web_sys::HtmlElement>().and_then(|element| {
-            element.set_scroll_left(element.scroll_width());
+            if *pinned.borrow() {
+                element.set_scroll_left(element.scroll_width());
+            }
+            let scrolled = element.clone();
+            let scroll_pinned = pinned.clone();
+            let on_scroll = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                *scroll_pinned.borrow_mut() =
+                    scrolled.scroll_left() + scrolled.client_width() >= scrolled.scroll_width() - 1;
+            });
+            element
+                .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref())
+                .ok()?;
             let observed = element.clone();
-            let callback =
+            let resize_pinned = pinned.clone();
+            let on_resize =
                 Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(move |_, _| {
-                    observed.set_scroll_left(observed.scroll_width())
+                    if *resize_pinned.borrow() {
+                        observed.set_scroll_left(observed.scroll_width());
+                    }
                 });
-            let observer = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
+            let observer = web_sys::ResizeObserver::new(on_resize.as_ref().unchecked_ref()).ok()?;
             observer.observe(&element);
-            Some((observer, callback))
+            Some((element, on_scroll, observer, on_resize))
         });
         move || {
-            if let Some((observer, _callback)) = registration {
+            if let Some((element, on_scroll, observer, _on_resize)) = registration {
                 observer.disconnect();
+                let _ = element.remove_event_listener_with_callback(
+                    "scroll",
+                    on_scroll.as_ref().unchecked_ref(),
+                );
             }
         }
     });
