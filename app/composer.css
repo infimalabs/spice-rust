@@ -1,5 +1,6 @@
 .composer-shard-heading > button,
-.agent-menu-button {
+.agent-menu-button,
+.composer-shard-image-attach {
   display: grid;
   place-items: center;
   width: 22px;
@@ -23,7 +24,9 @@
 }
 .agent-menu-button:hover,
 .agent-menu-button:active,
-.agent-menu-button:focus-visible {
+.agent-menu-button:focus-visible,
+.composer-shard-image-attach:active,
+.composer-shard-image-attach:focus-within {
   border-color: var(--accent-slot, var(--accent));
   background: var(--control);
   color: var(--accent-slot, var(--accent));
@@ -32,19 +35,20 @@
   outline: 2px solid var(--accent-slot, var(--accent));
   outline-offset: 1px;
 }
-/* Draft image chooser, sized as a thumbnail chip by mosaic.css. Touch screens
-   only: a pointer user pastes or drops instead. The transparent input covers
-   the chip so the platform opens its chooser from a real tap. */
+/* Draft image chooser in the menu's own circle frame, centred in the
+   thumbnail strip's band. Touch screens only: a pointer user pastes or drops
+   instead. The transparent input covers the frame so the platform opens its
+   chooser from a real tap. */
 .composer-shard-image-attach {
+  position: relative;
   display: none;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
+  flex: none;
+  align-self: center;
+  overflow: hidden;
   font-size: 16px;
-  line-height: 1;
 }
 @media (hover: none) and (pointer: coarse) {
-  .composer-shard-image-attach { display: inline-flex; }
+  .composer-shard-image-attach { display: grid; }
 }
 .composer-shard-image-attach input {
   position: absolute;
