@@ -397,7 +397,7 @@
     linear-gradient(
       to bottom,
       var(--control-line-soft) 0,
-      color-mix(in srgb, var(--control) 70%, transparent) 2px,
+      var(--composer-double-glass-paint) 2px,
       color-mix(in srgb, var(--control) 52%, transparent) var(--app-status-line-band),
       transparent calc(var(--app-status-line-band) + 20px)
     ),
