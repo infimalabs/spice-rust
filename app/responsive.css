@@ -67,7 +67,7 @@
 }
 
 @media (max-width: 1180px) {
-  .work-detail { width: min(42rem, calc(100vw - 2rem)); }
+  .app-sidebar { width: min(42rem, calc(100vw - 2rem)); }
 }
 
 @media (max-width: 920px) {
@@ -76,8 +76,8 @@
   .work-map-task-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
-  .work-detail { width: 100vw; }
-  .work-detail-header,
+  .app-sidebar { width: 100vw; }
+  .app-sidebar-header,
   .work-detail-content,
   .work-blocker-rail,
   .work-blocker-review-header,

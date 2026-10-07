@@ -11,51 +11,23 @@ pub(super) struct TrustGrantRequest {
     pub digest: wire::Digest,
 }
 pub(super) struct Controls {
-    pub selected: UseStateHandle<Option<TaskOverviewSelection>>,
-    pub presented: UseStateHandle<bool>,
-    pub closing: UseStateHandle<bool>,
-    pub close_ref: NodeRef,
-    pub sheet_ref: NodeRef,
-    /// Override the captured launch control with a stable surviving element.
-    pub return_focus_to: Callback<web_sys::Element>,
     pub blocker_review: UseStateHandle<bool>,
     pub blocker_review_button_ref: NodeRef,
     pub blocker_review_close_ref: NodeRef,
     pub notes: NoteComposers,
     /// Read one task again without changing the selected set.
     pub request: Callback<TaskStamp>,
-    pub close: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub grant_trust: Callback<TrustGrantRequest>,
 }
 
-/// The overview the current view asks for: currently a route's singular task,
-/// with complete scoped sets admitted through browser-local overview controls.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Request {
-    pub selection: Option<TaskOverviewSelection>,
-    /// The view is a Chat card route, which owns focus: ending the request
-    /// then drops the sheet without its close slide or focus return.
-    pub leaving: bool,
-}
-
-/// `mounted` is whether the app root can render the detail layer; only a
-/// mounted layer owns Escape, animates its close, or returns focus. `close`
-/// ends the request; the sheet follows the request that results.
+/// Own task-specific state for the task content mounted in the app sidebar.
 #[hook]
 pub(super) fn use_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
-    mounted: bool,
-    requested: Request,
-    close: Callback<()>,
+    selection: Option<TaskOverviewSelection>,
 ) -> Controls {
-    let selected = use_state(|| None::<TaskOverviewSelection>);
-    let return_focus = use_mut_ref(|| None::<web_sys::Element>);
-    let presented = use_state_eq(|| false);
-    let closing = use_state_eq(|| false);
-    let close_ref = use_node_ref();
-    let sheet_ref = use_node_ref();
     let blocker_review = use_state_eq(|| false);
     let blocker_review_button_ref = use_node_ref();
     let blocker_review_close_ref = use_node_ref();
@@ -63,92 +35,39 @@ pub(super) fn use_controls(
         state: use_mut_ref(BTreeMap::new),
         published: use_state(BTreeMap::new),
     };
-    let ready = surface.read().is_some();
     let request = request_callback(sender.clone(), surface.clone());
-    let open = select_callback(
-        request.clone(),
-        selected.clone(),
-        presented.clone(),
-        closing.clone(),
-        return_focus.clone(),
-    );
-    let request_close = {
-        let closing = closing.clone();
-        let blocker_review = blocker_review.clone();
-        Callback::from(move |()| {
-            if *blocker_review {
-                blocker_review.set(false);
-            } else {
-                closing.set(true);
-                close.emit(());
+    {
+        let request = request.clone();
+        use_effect_with(selection.clone(), move |selection| {
+            if let Some(selection) = selection {
+                for task in selection.tasks() {
+                    request.emit(task.clone());
+                }
             }
-        })
-    };
-    let complete_close =
-        complete_close_callback(selected.clone(), presented.clone(), closing.clone());
-    let leave = leave_callback(
-        selected.clone(),
-        presented.clone(),
-        closing.clone(),
-        return_focus.clone(),
-    );
-    use_request(
-        requested,
-        ready,
-        open.clone(),
-        leave,
-        &selected,
-        closing.clone(),
-    );
+        });
+    }
     {
         let blocker_review = blocker_review.clone();
-        use_effect_with((*selected).clone(), move |_| blocker_review.set(false));
+        use_effect_with(selection, move |_| blocker_review.set(false));
     }
-    use_present(
-        selected.is_some() && mounted && !*presented,
-        presented.clone(),
-    );
-    overlay::use_close_transition(
-        *closing,
-        *presented && mounted && !overlay::reduced_motion(),
-        sheet_ref.clone(),
-        complete_close,
-    );
-    use_focus(
-        &selected,
-        mounted,
-        close_ref.clone(),
-        sheet_ref.clone(),
-        return_focus.clone(),
-    );
     use_blocker_review_focus(
         *blocker_review,
         blocker_review_button_ref.clone(),
         blocker_review_close_ref.clone(),
     );
-    overlay::use_escape_owner(
-        selected.is_some() && !*closing && mounted,
-        request_close.clone(),
-    );
-    let return_focus_to = {
-        let return_focus = return_focus.clone();
-        Callback::from(move |target| *return_focus.borrow_mut() = Some(target))
+    let close_blocker_review = {
+        let blocker_review = blocker_review.clone();
+        Callback::from(move |()| blocker_review.set(false))
     };
+    overlay::use_escape_owner(*blocker_review, close_blocker_review);
     let submit_note = note_submit_callback(sender.clone(), surface.clone(), notes.clone());
     let grant_trust = trust_grant_callback(sender, surface);
     Controls {
-        selected,
-        presented,
-        closing,
-        close_ref,
-        return_focus_to,
-        sheet_ref,
         blocker_review,
         blocker_review_button_ref,
         blocker_review_close_ref,
         notes,
         request,
-        close: request_close,
         submit_note,
         grant_trust,
     }
@@ -191,69 +110,6 @@ fn trust_grant_callback(
     })
 }
 
-/// Follow the requested task set: show it, read every task once a runtime
-/// exists, and close the sheet when the request ends.
-#[hook]
-fn use_request(
-    requested: Request,
-    ready: bool,
-    open: Callback<TaskOverviewSelection>,
-    leave: Callback<()>,
-    selected: &UseStateHandle<Option<TaskOverviewSelection>>,
-    closing: UseStateHandle<bool>,
-) {
-    let shown = selected.is_some();
-    let prior = use_mut_ref(|| None::<TaskOverviewSelection>);
-    let leaving = requested.leaving;
-    use_effect_with((requested.selection, ready), move |(selection, _)| {
-        let was_requested = prior.borrow().is_some();
-        *prior.borrow_mut() = selection.clone();
-        match selection {
-            Some(selection) => open.emit(selection.clone()),
-            None if shown && was_requested && leaving => leave.emit(()),
-            None if shown && was_requested => closing.set(true),
-            None => {}
-        }
-    });
-}
-
-/// Show one complete task set and make sure every task's detail is read.
-fn select_callback(
-    request: Callback<TaskStamp>,
-    selected: UseStateHandle<Option<TaskOverviewSelection>>,
-    presented: UseStateHandle<bool>,
-    closing: UseStateHandle<bool>,
-    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
-) -> Callback<TaskOverviewSelection> {
-    Callback::from(move |selection: TaskOverviewSelection| {
-        for task in selection.tasks() {
-            request.emit(task.clone());
-        }
-        if selected.as_ref() == Some(&selection) && !*closing {
-            return;
-        }
-        if selected.is_none() {
-            *return_focus.borrow_mut() = active_focus_target();
-        }
-        if selected.is_none() || *closing {
-            presented.set(false);
-            closing.set(false);
-        }
-        selected.set(Some(selection));
-    })
-}
-
-fn active_focus_target() -> Option<web_sys::Element> {
-    web_sys::window()?
-        .document()?
-        .active_element()
-        .filter(|element| {
-            element
-                .dyn_ref::<web_sys::HtmlElement>()
-                .is_some_and(|element| element.tab_index() >= 0)
-        })
-}
-
 /// Read one task's detail unless an admitted answer is already held; every
 /// surface showing a task reads it here without selecting it anywhere.
 fn request_callback(
@@ -284,57 +140,6 @@ fn request_callback(
     })
 }
 
-/// Drop the sheet for a view that owns focus, without its close slide.
-fn leave_callback(
-    selected: UseStateHandle<Option<TaskOverviewSelection>>,
-    presented: UseStateHandle<bool>,
-    closing: UseStateHandle<bool>,
-    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
-) -> Callback<()> {
-    Callback::from(move |()| {
-        return_focus.borrow_mut().take();
-        presented.set(false);
-        closing.set(false);
-        selected.set(None);
-    })
-}
-
-fn complete_close_callback(
-    selected: UseStateHandle<Option<TaskOverviewSelection>>,
-    presented: UseStateHandle<bool>,
-    closing: UseStateHandle<bool>,
-) -> Callback<()> {
-    Callback::from(move |()| {
-        presented.set(false);
-        closing.set(false);
-        selected.set(None);
-    })
-}
-
-/// Present the sheet one frame after a mounted layer renders it unpresented,
-/// so reselecting the shown task, or a selection made before its layer
-/// mounted, still slides in from the opening state instead of sticking there.
-#[hook]
-fn use_present(pending: bool, presented: UseStateHandle<bool>) {
-    use_effect_with(pending, move |pending| {
-        let frame = pending.then(|| {
-            let window = web_sys::window().expect("app presentation has a browser window");
-            let show = presented.clone();
-            let callback = Closure::once(move |_: f64| show.set(true));
-            let frame = window
-                .request_animation_frame(callback.as_ref().unchecked_ref())
-                .expect("app window accepts a presentation frame");
-            (window, frame, callback)
-        });
-        move || {
-            if let Some((window, frame, callback)) = frame {
-                let _ = window.cancel_animation_frame(frame);
-                drop(callback);
-            }
-        }
-    });
-}
-
 /// Move focus into the sheet-local blocker review and back to its launcher.
 #[hook]
 fn use_blocker_review_focus(open: bool, launcher: NodeRef, close: NodeRef) {
@@ -353,37 +158,6 @@ fn use_blocker_review_focus(open: bool, launcher: NodeRef, close: NodeRef) {
             options.set_prevent_scroll(true);
             let _ = target.focus_with_options(&options);
         }
-    });
-}
-
-/// Focus enters the overview when it opens. A close returns to the launch
-/// control. If that launcher no longer survives, focus stays with the document
-/// instead of searching for controls from the retired task page.
-#[hook]
-pub(super) fn use_focus(
-    selected: &UseStateHandle<Option<TaskOverviewSelection>>,
-    mounted: bool,
-    close: NodeRef,
-    _sheet: NodeRef,
-    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
-) {
-    use_effect_with(selected.is_some() && mounted, move |active| {
-        if *active && let Some(button) = close.cast::<web_sys::HtmlElement>() {
-            let options = web_sys::FocusOptions::new();
-            options.set_prevent_scroll(true);
-            let _ = button.focus_with_options(&options);
-        }
-    });
-    use_effect_with((**selected).clone(), move |selected| {
-        if selected.is_some() {
-            return;
-        }
-        let _ = return_focus
-            .borrow_mut()
-            .take()
-            .filter(overlay::returnable)
-            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-            .is_some_and(|element| element.focus().is_ok());
     });
 }
 

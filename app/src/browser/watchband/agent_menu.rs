@@ -203,6 +203,7 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
             </li>
         };
     };
+    let focus_key = format!("agent-task:{handle}");
     let open = {
         let select = select.clone();
         Callback::from(move |event: MouseEvent| {
@@ -222,6 +223,7 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
                 type="button"
                 class="agent-menu-value agent-menu-link"
                 data-task-handle={handle.to_owned()}
+                data-sidebar-focus-key={focus_key}
                 aria-label={format!("Open task {handle}: {title}")}
                 title={title.clone()}
                 onclick={open}
