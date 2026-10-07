@@ -44,18 +44,18 @@ without encoding agent identity.
 The global Spice and Dash-avatar circles share one diameter and equal top,
 bottom, and outer-edge insets. Global and team-local work share one horned-tab
 construction on the composer's dark `--control` surface rather than the
-brighter message-stream surface. The global `task-pill-strip` hangs its tabs
-from the window's top edge with rounded bottom corners; a team's task band
-stands its tabs on the status rule with rounded top corners. Each strip leads
-with a badge-only total, `task-pill--all` globally and `task-pill--total` per
-team, whose inline-start and inline-end rails take the message card's
+brighter message-stream surface. The global `.app-global-work-tabs` rail hangs
+its tabs from the window's top edge with rounded bottom corners; a team's task
+band stands its tabs on the status rule with rounded top corners. Each strip
+leads with a badge-only total, identified by `data-work-scope`, one globally
+and one per team; its inline-start and inline-end rails take the message card's
 `--message-rail` width. Each following stem tab uses the nested quote's
 narrower `--quote-rail` width on both sides. Both rail treatments taper into
-1em corners, with no edge along the glued side and a square open side; no
+`--app-radius-horn` corners, with no edge along the glued side and a square open side; no
 handle carries a rail of its own. Both rails take `--line`, the colour of the
 status band's top rule the team tabs stand on, so each team tab and that rule
 read as one stroke. A global tab is a stem roll-up: one stem label and its
-badge, with no task breakouts. Every `task-pill-count` badge, global or
+badge, with no task breakouts. Every `.app-count-badge`, global or
 team-local, uses the same muted neutral background regardless of the
 lifecycles it counts. The stem label is muted at reduced opacity;
 unworked handles are muted, dormant ones weaker. A handle a lane is working
@@ -74,11 +74,11 @@ selected. It does not change the durable location.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
-`task-pill--project` flag, and later matches join that flag without changing
-their relative order. Its `task-pill-stem-target` button displays the raw stem
-in the muted blocked tone with a `task-pill-count` badge of the stem's open
-tasks, and opens the same overview with that team's matching stem selected.
-The following `task-pill-handle` buttons open the exact task. Closing any
+`.app-horn-tab--group` flag, and later matches join that flag without changing
+their relative order. Its `.app-horn-tab__target` button displays the raw stem
+in the muted blocked tone with an `.app-count-badge` of the stem's open tasks,
+and opens the same overview with that team's matching stem selected. The
+following `.app-horn-tab__handle` buttons open the exact task. Closing any
 overview returns focus to the control that opened it. Flag overflow scrolls
 inside its band without entering the status/pip row.
 

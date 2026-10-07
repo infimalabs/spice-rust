@@ -50,19 +50,19 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     );
     html! {
         <div
-            class="work-detail-layer"
-            data-work-detail-state={state}
+            class="app-overlay-layer work-overview-layer"
+            data-overlay-state={state}
             inert={render.closing.then_some("true")}
         >
             <button
                 type="button"
-                class="work-detail-backdrop"
+                class="app-overlay-backdrop"
                 aria-label="Close task overview"
                 onclick={close_click.clone()}
             ></button>
             <aside
                 ref={render.sheet_ref.clone()}
-                class="work-detail"
+                class="app-side-sheet work-overview-sheet"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-detail-title"
@@ -70,19 +70,19 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 data-task-stamps={render.selection.tasks().iter().map(ToString::to_string).collect::<Vec<_>>().join(" ")}
             >
                 <div
-                    class="work-detail-frame"
+                    class="app-sheet-frame"
                     inert={(**render.blocker_review).then_some("true")}
                     aria-hidden={(**render.blocker_review).to_string()}
                 >
-                    <header class="work-detail-header">
+                    <header class="app-sheet-header">
                         <div>
-                            <p class="work-detail-kicker">{"Task overview"}</p>
+                            <p class="app-sheet-kicker">{"Task overview"}</p>
                             <h2 id="work-detail-title">{overview_title(render.selection)}</h2>
                         </div>
                         <button
                             ref={render.close_ref.clone()}
                             type="button"
-                            class="work-detail-close app-compact-control"
+                            class="app-sheet-close app-compact-control"
                             aria-label="Close task overview"
                             onclick={close_click}
                         >{"Close"}</button>
@@ -119,7 +119,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                                         aria-labelledby={format!("work-overview-task-title-{task}")}
                                     >
                                         <div class="work-overview-task-heading">
-                                            <p class="work-detail-kicker">{"Selected task"}</p>
+                                            <p class="app-sheet-kicker">{"Selected task"}</p>
                                             <h3 id={format!("work-overview-task-title-{task}")}>
                                                 {detail_title(detail, task)}
                                             </h3>
@@ -227,11 +227,11 @@ fn render_available(
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     html! {
         <div
-            class="work-detail-content"
+            class="app-sheet-body"
             onclick={task_detail::task_text_chip_click(focus_task)}
             onkeydown={task_detail::task_text_chip_keydown(focus_task)}
         >
-            <div class="work-detail-identity">
+            <div class="app-sheet-identity">
                 <code>{statement.handle.to_string()}</code>
                 <chrome::CopyButton
                     class="app-compact-control"
@@ -240,21 +240,21 @@ fn render_available(
                 >{"Copy identity"}</chrome::CopyButton>
                 if let Some(href) = creator_context {
                     {task_detail::creator_context_link(
-                        "work-detail-context-link",
+                        "work-context-link",
                         href,
                         statement,
                         None,
                     )}
                 }
             </div>
-            <section class="work-detail-section">
+            <section class="app-sheet-section">
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
             </section>
             {task_detail::render_media(&answer.media)}
-            <section class="work-detail-section">
+            <section class="app-sheet-section">
                 <h3>{"State"}</h3>
-                <dl class="work-detail-facts">
+                <dl class="app-fact-grid">
                     {project_fact(render, &statement.project)}
                     {fact("Status", workflow.status.clone())}
                     {fact("Current phase", workflow.phase.to_string())}
@@ -268,13 +268,13 @@ fn render_available(
                 </dl>
                 {render_possession(row, render)}
             </section>
-            <section class="work-detail-section">
+            <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
                 {render_relationships(render.work, projected, statement, render.selection, focus_task)}
             </section>
-            <section class="work-detail-section">
+            <section class="app-sheet-section">
                 <h3>{"Provenance"}</h3>
-                <dl class="work-detail-facts">
+                <dl class="app-fact-grid">
                     {fact("Origin", statement.provenance.to_string())}
                     {fact("Origin thread", row.origin_thread.clone())}
                     {creator_team_fact(row.creator_team, render)}
@@ -297,8 +297,8 @@ fn render_activity(
 ) -> Html {
     let statement = &answer.task.statement.body;
     html! {
-        <section class="work-detail-section work-detail-activity">
-            <div class="work-detail-section-heading">
+        <section class="app-sheet-section work-activity">
+            <div class="app-section-heading">
                 <h3>{"Activity"}</h3>
                 <span>{format!("{} observations", answer.notes.len())}</span>
             </div>
@@ -351,7 +351,7 @@ fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
             <dd title={project.clone()}>
                 <button
                     type="button"
-                    class="work-detail-fact-link"
+                    class="app-fact-link"
                     data-task-project-link={project.clone()}
                     aria-label={format!("Show {project} in Work")}
                     onclick={Callback::from(move |_| {
@@ -399,7 +399,7 @@ fn linked_identity_fact(
             <dt>{label}</dt>
             <dd title={identity}>
                 <a
-                    class="work-detail-fact-link"
+                    class="app-fact-link"
                     data-task-chat-link={member.to_string()}
                     {href}
                     aria-label={format!("Open {display} in Chat")}
@@ -479,9 +479,9 @@ fn render_possession(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_
     let claim = row.claim.as_ref();
     let lease = row.lease.as_ref();
     html! {
-        <div class="work-detail-subsection">
+        <div class="app-sheet-subsection">
             <h4>{"Claim and lease"}</h4>
-            <dl class="work-detail-facts">
+            <dl class="app-fact-grid">
                 {claim.map_or_else(|| fact("Claim", "Unclaimed".to_owned()), |claim| {
                     actor_fact(
                         "Claim",
@@ -525,7 +525,7 @@ fn render_relationships(
     if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
         return html! { <p class="muted">{"No dependencies or dependents."}</p> };
     }
-    html! { <div class="work-detail-links">{for dependencies.chain(dependents)}</div> }
+    html! { <div class="work-relationship-links">{for dependencies.chain(dependents)}</div> }
 }
 
 fn selection_has(selection: &TaskOverviewSelection, born: &TaskStamp) -> bool {
@@ -555,7 +555,7 @@ fn render_task_link(
     };
     if !selection_has(selection, born) {
         return html! {
-            <article class="work-detail-link work-detail-link--external">{contents}</article>
+            <article class="work-relationship-link work-relationship-link--external">{contents}</article>
         };
     }
     let target = born.clone();
@@ -564,7 +564,7 @@ fn render_task_link(
         Callback::from(move |_| focus.emit(target.clone()))
     };
     html! {
-        <button type="button" class="work-detail-link" onclick={activate}>{contents}</button>
+        <button type="button" class="work-relationship-link" onclick={activate}>{contents}</button>
     }
 }
 
@@ -581,9 +581,9 @@ fn render_claim_context(row: &wire::intent::BoardTask) -> Html {
         }
     };
     html! {
-        <div class="work-detail-subsection">
+        <div class="app-sheet-subsection">
             <h4>{"Claim provenance"}</h4>
-            <dl class="work-detail-facts">
+            <dl class="app-fact-grid">
                 {fact("Claimed fact", context.claimed.to_string())}
                 {fact("Lane", context.lane.to_string())}
                 {fact("Occupant", context.occupant.to_string())}
@@ -599,9 +599,9 @@ fn render_git_context(row: &wire::intent::BoardTask) -> Html {
         return Html::default();
     };
     html! {
-        <div class="work-detail-subsection">
+        <div class="app-sheet-subsection">
             <h4>{"Repository boundary"}</h4>
-            <dl class="work-detail-facts">
+            <dl class="app-fact-grid">
                 {fact("Lifecycle", context.kind.as_str().to_owned())}
                 {fact("Fact", context.fact.to_string())}
                 {fact("Head", context.boundary.head.clone())}

@@ -88,7 +88,7 @@ fn render_job(row: &ResidentJob<'_>) -> Html {
         >
             <td>
                 <span class="team-task-member">
-                    <span class="agent-presence" aria-hidden="true"></span>
+                    <span class="app-presence-pip app-presence-pip--work" aria-hidden="true"></span>
                     <strong class="team-task-member-name">{label.to_owned()}</strong>
                 </span>
             </td>

@@ -1,5 +1,4 @@
-.work-detail-layer {
-  min-width: 0;
+.work-overview-layer {
   --work-in-flight: var(--accent);
   --work-ready: var(--focus);
   --work-blocked: var(--danger);
@@ -17,120 +16,21 @@
 :is(.work-map-node-button, .work-map-task)[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
 :is(.work-map-node-button, .work-map-task)[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
 
-.work-detail-layer {
-  position: fixed;
-  z-index: 80;
-  inset: 0;
-  display: grid;
-  justify-items: end;
-}
-
-.work-detail-backdrop {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  min-height: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: var(--overlay-veil);
-  backdrop-filter: var(--overlay-frost);
-  box-shadow: none;
-  cursor: default;
-  opacity: 0;
-  transition: opacity var(--app-motion-settle) var(--app-ease-standard);
-}
-
-.work-detail {
-  position: relative;
-  z-index: 1;
-  width: min(46rem, calc(100vw - 3rem));
-  height: 100%;
-  overflow: hidden;
-  border: 0;
-  border-left: var(--app-control-edge);
-  background: color-mix(in srgb, var(--panel) 96%, var(--page));
-  opacity: 0;
-  transform: translateX(1.25rem);
-  transition:
-    opacity var(--app-motion-fast) var(--app-ease-standard),
-    transform var(--app-motion-settle) var(--app-ease-standard);
-}
-.work-detail-frame { height: 100%; overflow: auto; overscroll-behavior: contain; }
-
-.work-detail-layer[data-work-detail-state="open"] .work-detail-backdrop { opacity: 1; }
-.work-detail-layer[data-work-detail-state="open"] .work-detail {
-  opacity: 1;
-  transform: translateX(0);
-}
-/* One blocker owns the veil and frost: a modal dialog above the sheet supplies both. */
-:root:has(dialog:modal) .work-detail-backdrop {
-  background: transparent;
-  backdrop-filter: none;
-}
-
-.work-detail-header {
-  position: sticky;
-  z-index: 2;
-  top: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 18px 22px;
-  border-bottom: var(--app-control-edge);
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.work-detail-header h2 { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.25; }
-.work-detail-kicker {
-  margin: 0;
-  color: var(--accent);
-  font-size: .67rem;
-  font-weight: 760;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-}
-.work-detail-close { flex: none; }
 
 
-.work-detail-content { display: grid; padding: 18px 22px 28px; }
-.work-detail-identity {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding-bottom: 18px;
-}
-.work-detail-identity code {
-  min-width: 0;
-  margin-right: auto;
-  color: var(--accent);
-  font-size: .78rem;
-  overflow-wrap: anywhere;
-}
-.work-detail-identity button { white-space: nowrap; }
-.work-detail-context-link {
+.work-context-link {
   flex: none;
   color: var(--link);
-  font: 700 .68rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--app-type-sm)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
   white-space: nowrap;
 }
-.work-detail-context-link:hover { text-decoration: underline; }
-.work-detail-context-link:focus-visible {
-  outline: 2px solid var(--focus);
+.work-context-link:hover { text-decoration: underline; }
+.work-context-link:focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }
 
-.work-detail-section {
-  padding: 18px 0;
-  border-top: var(--app-edge-soft);
-}
-.work-detail-section h3 { margin: 0 0 12px; font-size: .9rem; }
-.work-detail-section h4 { margin: 15px 0 8px; color: var(--muted); font-size: .72rem; text-transform: uppercase; }
-.work-detail-section ul { margin: 8px 0 0; padding-left: 20px; }
 /* Authored task Markdown: block spacing comes from its own elements, so
    the source newlines between them must not render as blank lines. Wide or
    long blocks scroll inside their own box instead of stretching the detail. */
@@ -142,40 +42,8 @@
 .task-text pre { max-height: 24rem; overflow: auto; }
 .task-text img { max-width: 100%; }
 .task-text a { color: var(--accent); }
-.work-detail-section ul > li + li { margin-top: 4px; }
-.work-detail .task-text .message-task-chip:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.work-detail-media { --mosaic-image-size: 8.75rem; min-width: 0; }
-.work-detail-subsection { margin-top: 15px; padding-top: 1px; border-top: var(--app-edge-soft); }
-
-.work-detail-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 18px;
-  margin: 0;
-  font-size: .75rem;
-}
-.work-detail-facts > div { min-width: 0; }
-.work-detail-facts dt { color: var(--muted); font-weight: 700; }
-.work-detail-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
-.work-detail-fact-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent);
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.work-detail-fact-link:hover { text-decoration-color: currentcolor; }
-.work-detail-fact-link:focus-visible {
-  border-radius: 2px;
-  outline: 2px solid var(--focus);
+.app-side-sheet .task-text .message-task-chip:focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }
 .work-blocker-rail {
@@ -198,7 +66,7 @@
   place-items: center;
   inline-size: 1.75rem;
   block-size: 1.75rem;
-  border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--muted) 35%, transparent);
   border-radius: 50%;
   color: var(--muted);
 }
@@ -208,10 +76,10 @@
   color: var(--danger);
 }
 .work-blocker-rail-copy { display: grid; min-width: 0; gap: 2px; }
-.work-blocker-rail-copy strong { font-size: .76rem; }
+.work-blocker-rail-copy strong { font-size: var(--app-type-detail); }
 .work-blocker-rail-copy span {
   overflow: hidden;
-  font-size: .68rem;
+  font-size: var(--app-type-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -224,22 +92,8 @@
   overscroll-behavior: contain;
   background: color-mix(in srgb, var(--panel) 97%, var(--page));
 }
-.work-blocker-review-header {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 18px 22px;
-  border-bottom: var(--app-control-edge);
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
-  backdrop-filter: blur(12px);
-}
-.work-blocker-review-header h2 { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.25; }
-.work-blocker-review-body { display: grid; gap: 18px; padding: 18px 22px 32px; }
-.work-blocker-review-intro { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.5; }
+.work-blocker-review-body { gap: 18px; padding-block-end: 32px; }
+.work-blocker-review-intro { margin: 0; color: var(--muted); font-size: var(--app-type-body); line-height: 1.5; }
 .work-blocker-task {
   display: grid;
   gap: 12px;
@@ -259,13 +113,13 @@
   gap: 14px;
   min-width: 0;
   padding: 12px;
-  border-left: 3px solid var(--warning);
+  border-left: var(--app-focus-ring-strong-width) solid var(--warning);
   border-radius: var(--app-radius-compact);
   background: var(--panel);
 }
 .work-blocker-card--action { border-left-color: var(--danger); }
-.work-blocker-card strong { font-size: .78rem; }
-.work-blocker-card p { margin: 4px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
+.work-blocker-card strong { font-size: var(--app-type-body); }
+.work-blocker-card p { margin: 4px 0 0; color: var(--muted); font-size: var(--app-type-label); line-height: 1.45; }
 .work-blocker-card code { display: block; margin-top: 7px; font-size: .66rem; overflow-wrap: anywhere; }
 .work-blocker-card > button { align-self: center; min-width: 8.75rem; }
 .work-blocker-state {
@@ -277,8 +131,8 @@
 .work-blocker-issue { color: var(--danger) !important; }
 .work-blocker-progress { color: var(--accent) !important; }
 
-.work-detail-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.work-detail-link {
+.work-relationship-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.work-relationship-link {
   display: grid;
   justify-items: start;
   gap: 2px;
@@ -287,23 +141,16 @@
   padding: 9px 10px;
   text-align: left;
 }
-.work-detail-link--external {
+.work-relationship-link--external {
   border: var(--app-edge-soft);
   border-radius: var(--app-radius-control);
   background: var(--control-surface-soft);
 }
-.work-detail-link span { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
-.work-detail-link strong,
-.work-detail-link small { max-width: 100%; overflow-wrap: anywhere; }
-.work-detail-link small { color: var(--muted); }
+.work-relationship-link span { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
+.work-relationship-link strong,
+.work-relationship-link small { max-width: 100%; overflow-wrap: anywhere; }
+.work-relationship-link small { color: var(--muted); }
 
-.work-detail-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.work-detail-section-heading span { color: var(--muted); font-size: .7rem; }
 .work-note-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .work-note-card {
   padding: 10px 11px;
@@ -311,16 +158,16 @@
   border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
 }
-.work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .68rem; }
+.work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: var(--app-type-sm); }
 .work-note-card .work-note-body { margin-top: 7px; }
 /* The operator's closure is the task's completion evidence, not one more
    observation, so it carries the completed tone and sits above them. */
 .work-closure-card {
   margin-bottom: 8px;
-  border-left: 3px solid var(--work-completed);
+  border-left: var(--app-focus-ring-strong-width) solid var(--work-completed);
 }
 .work-closure-card header strong { color: var(--ink); }
-.work-closure-claim { margin: 7px 0 0; color: var(--muted); font-size: .74rem; }
+.work-closure-claim { margin: 7px 0 0; color: var(--muted); font-size: var(--app-type-control); }
 /* The observation composer mirrors the Chat composer: the draft on the left and
    one column of equal one-word pills on the right, wide enough for the busy
    labels so a submission never resizes the draft. */
@@ -334,7 +181,7 @@
 .work-note-composer textarea { min-height: 88px; }
 .work-note-actions { align-self: start; }
 .work-note-actions .team-send { min-width: calc(8ch + 2rem + 2px); color: var(--page); }
-.work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
+.work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: var(--app-type-control); }
 .work-map-primary-controls {
   display: flex;
   flex-wrap: wrap;
@@ -350,7 +197,7 @@
   min-height: 36px;
   background: transparent;
 }
-.work-map-lenses button { padding: 6px 11px; font-size: .72rem; }
+.work-map-lenses button { padding: 6px 11px; font-size: var(--app-type-label); }
 .work-map-lenses button[aria-pressed="true"],
 .work-map-control-group button.active {
   border-color: transparent;
@@ -394,7 +241,7 @@
   gap: 7px 12px;
   margin: 0;
   color: var(--muted);
-  font-size: .72rem;
+  font-size: var(--app-type-label);
 }
 .work-map-enrichment--problem { color: var(--danger); }
 .work-map-enrichment small { flex-basis: 100%; }
@@ -406,7 +253,7 @@
   border-radius: var(--app-radius-inset);
   background: var(--control-surface-soft);
   color: var(--muted);
-  font-size: .74rem;
+  font-size: var(--app-type-control);
 }
 .work-map-empty strong { color: var(--ink); }
 .work-map-list {
@@ -434,7 +281,7 @@
 }
 .work-overview-task-heading { margin-bottom: 16px; }
 .work-overview-task-heading h3 { margin: 2px 0 0; font-size: 1rem; line-height: 1.3; }
-.work-overview-task > .work-detail-content { padding: 0; }
+.work-overview-task > .app-sheet-body { padding: 0; }
 .work-overview-task > :is(.work-detail-loading, .work-detail-problem) { padding-block: 32px; }
 .work-map-heading {
   display: flex;
@@ -443,8 +290,8 @@
   gap: 14px;
   margin-bottom: 11px;
 }
-.work-map-heading h3 { margin: 0; font-size: .9rem; }
-.work-map-heading > span { color: var(--muted); font-size: .68rem; text-align: right; }
+.work-map-heading h3 { margin: 0; font-size: var(--app-type-section); }
+.work-map-heading > span { color: var(--muted); font-size: var(--app-type-sm); text-align: right; }
 /* The frame keeps its former clamp as a ceiling and shrinks to the diagram's
    natural height, which the node overlay publishes with its width once
    geometry lands. The image never draws above that natural size, so it shares
@@ -485,7 +332,7 @@
 .work-map-node-button {
   --work-card-tone: var(--work-terminal);
   position: absolute; pointer-events: auto; padding: 0;
-  border: 2px solid color-mix(in srgb, var(--work-card-tone) 65%, transparent);
+  border: var(--app-focus-ring-width) solid color-mix(in srgb, var(--work-card-tone) 65%, transparent);
   border-radius: var(--app-radius-control);
   background: transparent;
   cursor: pointer;
@@ -500,7 +347,7 @@
   transform: translate(-50%, -50%);
   padding: 2px 6px;
   white-space: nowrap;
-  border: 1px solid color-mix(in srgb, var(--work-card-tone) 45%, var(--line));
+  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--work-card-tone) 45%, var(--line));
   border-radius: var(--app-radius-pill);
   background: var(--panel);
   color: var(--work-card-tone);
@@ -513,19 +360,19 @@
   background: color-mix(in srgb, var(--work-card-tone) 9%, transparent);
 }
 .work-map-node-button:focus-visible {
-  outline: 3px solid var(--focus);
+  outline: var(--app-focus-ring-strong-width) solid var(--focus);
   outline-offset: -3px;
 }
-.work-map-node-button[data-task-selected="true"] { border-width: 3px; }
+.work-map-node-button[data-task-selected="true"] { border-width: var(--app-focus-ring-strong-width); }
 .mermaid-render[data-source-visible="true"] > .work-map-node-layer { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .work-map-viewport .mermaid-render > .message-image,
   .work-map-node-layer,
-  .work-detail-backdrop,
-  .work-detail { transition: none; }
-  .work-detail-backdrop,
-  .work-detail { opacity: 1; }
-  .work-detail { transform: none; }
+  .app-overlay-backdrop,
+  .app-side-sheet { transition: none; }
+  .app-overlay-backdrop,
+  .app-side-sheet { opacity: 1; }
+  .app-side-sheet { transform: none; }
 }
 .work-map-task-list {
   display: grid;
@@ -544,7 +391,7 @@
 }
 .work-map-task {
   --work-card-tone: var(--work-terminal);
-  border-left: 3px solid var(--work-card-tone);
+  border-left: var(--app-focus-ring-strong-width) solid var(--work-card-tone);
 }
 .work-map-task[data-task-selected="true"] {
   background: color-mix(in srgb, var(--work-card-tone) 7%, var(--control-surface));
@@ -552,7 +399,7 @@
 }
 .work-map-fact { border-radius: var(--app-radius-element); background: var(--control-surface-soft); }
 .work-map-task span,
-.work-map-fact span { color: var(--accent); font-size: .62rem; text-transform: uppercase; }
+.work-map-fact span { color: var(--accent); font-size: var(--app-type-xs); text-transform: uppercase; }
 .work-map-task strong,
 .work-map-task small,
 .work-map-fact strong,
@@ -570,7 +417,7 @@
   margin: 0 0 10px;
   padding-left: 20px;
   color: var(--muted);
-  font-size: .72rem;
+  font-size: var(--app-type-label);
 }
 .work-map-problem {
   display: grid;
@@ -589,7 +436,7 @@
 .work-detail-spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid var(--line);
+  border: var(--app-focus-ring-strong-width) solid var(--line);
   border-top-color: var(--accent);
   border-radius: 50%;
 }
@@ -615,7 +462,7 @@
   border-block: var(--app-edge);
 }
 .team-job-scroll:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }
 .team-job-empty {
@@ -633,13 +480,13 @@
   top: 0;
   background: var(--panel);
 }
-.team-job-table th { padding: 6px 10px; font-size: .58rem; font-weight: 650; }
+.team-job-table th { padding: 6px 10px; font-size: var(--app-type-2xs); font-weight: 650; }
 .team-job-table th:nth-child(1) { width: 9rem; }
 .team-job-table th:nth-child(2),
 .team-job-table th:nth-child(4) { width: 5.5rem; }
 .team-job-table td { padding: 7px 10px; vertical-align: middle; background: color-mix(in srgb, var(--panel) 76%, var(--page)); }
 .team-job-row { block-size: var(--team-job-row); }
-.team-job-row td:first-child { border-left: 2px solid var(--accent-slot, var(--accent)); }
+.team-job-row td:first-child { border-left: var(--quote-rail) solid var(--accent-slot, var(--accent)); }
 .team-job-row .team-task-member { max-width: 100%; }
 .team-job-age,
 .team-job-standing {
@@ -695,7 +542,7 @@
     gap: 6px 12px;
     padding: 9px 10px;
     border-block: var(--app-edge);
-    border-left: 2px solid var(--accent-slot, var(--accent));
+    border-left: var(--quote-rail) solid var(--accent-slot, var(--accent));
     background: color-mix(in srgb, var(--panel) 76%, var(--page));
   }
   .team-jobs .team-job-row td {
@@ -713,7 +560,7 @@
     margin-right: 4px;
     color: var(--muted);
     font-family: ui-sans-serif, system-ui, sans-serif;
-    font-size: .58rem;
+    font-size: var(--app-type-2xs);
     font-weight: 650;
     text-transform: uppercase;
   }
@@ -723,7 +570,7 @@
   .team-jobs .team-job-command::before {
     content: "Command";
     color: var(--muted);
-    font-size: .58rem;
+    font-size: var(--app-type-2xs);
     font-weight: 650;
     text-transform: uppercase;
   }

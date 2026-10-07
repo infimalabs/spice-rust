@@ -93,12 +93,12 @@
 .markdown-body .math-display > .math-render { display: inline-flex; min-width: max-content; }
 .markdown-body .math-display .math-render img { display: block; width: auto; height: auto; }
 .markdown-body .math-source-fallback {
-  color: var(--muted); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+  color: var(--muted); font: var(--app-type-status)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
 }
 
 .markdown-body code {
   padding: 0; background: transparent;
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-status)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .markdown-body pre {
   max-width: 100%; margin: .55em 0; padding: .65em .75em; overflow: auto;
@@ -115,7 +115,7 @@
   margin-left: auto;
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--app-highlight-source);
 }
 
 .mosaic-message-card {
@@ -127,7 +127,7 @@
   margin: 0 0 14px;
   padding: 15px;
   border: var(--app-edge);
-  border-left: 4px solid var(--accent);
+  border-left: var(--message-rail) solid var(--accent);
   border-radius: calc(2 * var(--mosaic-quote-radius));
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
@@ -207,7 +207,7 @@
   grid-area: 1 / 1; display: grid; width: 100%; height: 100%;
   padding: 10px; place-items: center; border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--control-surface-soft); color: var(--muted);
-  font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 600 var(--app-type-sm)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 .message-image-status[data-mosaic-image-status="loaded"] { display: none; }
@@ -221,7 +221,7 @@
 .message-image--openable:focus-visible { outline: none; }
 .message-image--openable:focus-visible img,
 .message-image--openable:focus-visible .message-image-status {
-  outline: 2px solid var(--accent-slot, var(--accent)); outline-offset: 2px;
+  outline: var(--app-focus-ring-width) solid var(--accent-slot, var(--accent)); outline-offset: 2px;
 }
 .markdown-body p.message-image-stack,
 .message-attachments {
@@ -272,13 +272,13 @@
 }
 .mermaid-render > .message-image:disabled { opacity: 1; cursor: default; }
 .mermaid-render > .message-image--openable:focus-visible {
-  outline: 2px solid var(--accent-slot, var(--accent)); outline-offset: -2px;
+  outline: var(--app-focus-ring-width) solid var(--accent-slot, var(--accent)); outline-offset: -2px;
 }
 .mermaid-slot:empty::before {
   content: "Rendering diagram"; box-sizing: border-box; place-items: center;
   border: var(--app-edge); border-radius: var(--app-radius-control);
   background: var(--control-surface-soft); color: var(--muted);
-  font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 600 var(--app-type-sm)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* A diagram is read, not cropped: it letterboxes inside the square floor. */
 .mermaid-render > .message-image img {
@@ -301,11 +301,11 @@
   width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0;
   border: var(--app-edge); border-radius: 50%;
   background: var(--panel); color: var(--text);
-  font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 600 var(--app-type-label)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
 }
 .mermaid-source-toggle:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
+  outline: var(--app-focus-ring-width) solid var(--accent); outline-offset: 2px;
 }
 /* Source/error inspection replaces the preview; opening it never resizes the floor. */
 .mermaid-source-body {
@@ -359,12 +359,12 @@
 }
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
 .image-annotation-stage { grid-area: image; min-width: 0; min-height: 0; outline: none; }
-.image-annotation-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.image-annotation-stage:focus-visible { outline: var(--app-focus-ring-width) solid var(--accent); outline-offset: 2px; }
 .image-annotation-svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 .image-annotation-svg--draw { cursor: crosshair; }
 .image-annotation-hit { fill: transparent; stroke: transparent; stroke-width: 20px; vector-effect: non-scaling-stroke; cursor: move; }
 .image-annotation-mark { pointer-events: none; stroke-linejoin: round; }
-.image-annotation-handle { fill: white; stroke: #ef4444; stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: crosshair; }
+.image-annotation-handle { fill: var(--app-highlight-source); stroke: var(--app-annotation-danger); stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: crosshair; }
 .image-annotation-loading { text-align: center; color: var(--muted); }
 /* Out of flow, so showing or clearing a result never moves what is beneath it. */
 .toast {
@@ -428,13 +428,12 @@
   overscroll-behavior-inline: contain;
 }
 /* The fleet meets the viewport edges, so its focus ring paints inside it. */
-.team-fleet:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.team-fleet:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: -2px; }
 
 .team-surface {
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
-  --team-pip-size: 8px;
   --team-pip-gap: 0;
   --team-control-inline-size: 80px;
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
@@ -499,8 +498,6 @@
   max-width: var(--team-control-inline-size);
   margin: 0;
   padding: 0;
-  border-block-start: var(--app-edge);
-  background: var(--message-stream-surface) padding-box;
 }
 .team-toolbar > .team-lights:empty { display: none; }
 /* One horned tab per task stem occupies the first row. An 8px outer inset
@@ -510,14 +507,8 @@
 .team-toolbar > .team-tasks {
   grid-area: tasks;
   z-index: 1;
-  display: flex;
   align-self: end;
-  align-items: flex-end;
-  gap: var(--mosaic-gap);
-  min-width: 0;
   margin: 0 8px;
-  overflow: auto hidden;
-  scrollbar-width: none;
 }
 
 .team-lights[data-lane-drag-handle] {
@@ -527,21 +518,11 @@
 .team-lights[data-lane-drag-handle]:active { cursor: grabbing; }
 /* Edge controls meet the fleet's clipping edges, so their rings paint inside. */
 .team-lights[data-lane-drag-handle]:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--app-focus-ring-width) solid var(--accent);
   outline-offset: -2px;
 }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
-.team-light {
-  width: var(--team-pip-size);
-  height: var(--team-pip-size);
-  border-radius: 50%;
-  background: var(--agent-presence-color);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
-  opacity: var(--agent-presence-opacity);
-}
-.team-light.bound,
-.team-light.unbound { box-shadow: none; }
 
 .app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 
@@ -557,7 +538,7 @@
   background: transparent;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--app-type-status);
   font-weight: 600;
   line-height: 1.45;
 }
@@ -568,16 +549,6 @@
   box-shadow: var(--app-selection-shadow);
 }
 .app-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-option-badge { flex: none;
-  min-width: 19px;
-  padding: 0 5px;
-  border-radius: var(--app-radius-pill);
-  background: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
-  color: var(--page);
-  font-size: 9px;
-  font-weight: 700;
-}
 /* A counted option centres its label alone and hangs its badge in the trailing
    column, so a badge appearing, vanishing, or gaining a digit never moves the
    label. The equal outer columns keep the label on the option's centre line. */
@@ -586,10 +557,10 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
 }
 .app-option--counted > .app-option-label { grid-column: 2; }
-.app-option--counted > .app-option-badge { grid-column: 3; justify-self: start; }
+.app-option--counted > .app-count-badge--option { grid-column: 3; justify-self: start; }
 @container (max-width: 20rem) {
   .app-option { gap: 2px; padding-inline: 3px; }
-  .app-option-badge { display: none; }
+  .app-count-badge--option { display: none; }
 }
 
 /* The status band's top rule matches the composer's bottom edge. The surface
@@ -600,10 +571,6 @@
   align-self: stretch;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
-  border: 0;
-  border-block-start: var(--app-edge);
-  background: var(--message-stream-surface) padding-box;
-  font-size: var(--app-status-line-font-size);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));
 }
 .team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"])
@@ -640,25 +607,6 @@
    viewport width. */
 .team-composer {
   --team-composer-block-size: 160px;
-  --composer-double-glass-paint: color-mix(
-    in srgb,
-    var(--control) min(
-      100%,
-      calc(var(--app-glass-thickness) + var(--app-glass-thickness))
-    ),
-    transparent
-  );
-  --composer-triple-glass-paint: color-mix(
-    in srgb,
-    var(--control) min(
-      100%,
-      calc(
-        var(--app-glass-thickness) + var(--app-glass-thickness) +
-        var(--app-glass-thickness)
-      )
-    ),
-    transparent
-  );
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0;
@@ -792,26 +740,26 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   height: var(--app-status-line-band);
   min-height: var(--app-status-line-band);
   padding: 0 var(--composer-heading-inline-end) 0 var(--composer-heading-inline-start);
-  border-bottom: 2px solid transparent;
+  border-bottom: var(--quote-rail) solid transparent;
   background: linear-gradient(var(--composer-underline-color), var(--composer-underline-color))
     left bottom / 100% 2px no-repeat border-box;
-  background-color: var(--composer-double-glass-paint);
+  background-color: var(--app-control-glass-paint);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--app-status-line-font-size);
+  font-size: var(--app-type-status);
 }
 .composer-shard-heading strong {
   overflow: hidden;
   color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink));
-  font-size: var(--app-status-line-font-size);
+  font-size: var(--app-type-status);
   font-weight: 400;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .composer-shard-heading strong:has(+ .composer-shard-image-indicators .composer-shard-image-indicator) {
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, var(--app-mask-opaque) calc(100% - 18px), transparent);
+  mask-image: linear-gradient(90deg, var(--app-mask-opaque) calc(100% - 18px), transparent);
 }
 .composer-shard-link {
   color: var(--accent);
@@ -859,7 +807,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   padding: 0;
   overflow: hidden;
   border: 0;
-  border-radius: 1px;
+  border-radius: var(--app-radius-hairline);
   background: color-mix(in srgb, var(--control) 84%, var(--page));
   box-shadow: none;
 }
@@ -874,7 +822,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .composer-shard-image-indicator:hover,
 .composer-shard-image-indicator:has(.composer-shard-image-open:focus-visible) {
-  outline: 1px solid var(--accent);
+  outline: var(--app-control-edge-width) solid var(--accent);
   outline-offset: -1px;
 }
 .composer-shard-image-remove {
@@ -890,7 +838,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 1px;
+  border-radius: var(--app-radius-hairline);
   background: color-mix(in srgb, var(--control) 80%, transparent);
   color: var(--ink);
   font-size: 10px;
@@ -931,10 +879,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
-  background-color: var(--composer-triple-glass-paint);
   box-shadow:
-    -8px 0 14px -6px rgb(0 0 0 / 42%),
-    8px 0 14px -6px rgb(0 0 0 / 42%);
+    -8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent),
+    8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
 .team-slider {
   --control-state-accent: var(--accent);
@@ -959,7 +906,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider input:disabled { cursor: not-allowed; }
 .team-slider span {
   color: var(--muted);
-  font: 9px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-badge)/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: lowercase;
   white-space: nowrap;
 }
@@ -977,14 +924,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-send-surface: var(--control-state-accent, var(--accent)); --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
   position: relative; overflow: hidden;
   grid-row: 1; grid-column: 1 / -1; place-self: center; width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size); margin: 0; padding: 0;
-  border: 1px solid color-mix(in srgb, var(--team-send-surface) 68%, black); border-radius: 50%; background: linear-gradient(150deg, color-mix(in srgb, var(--team-send-surface) 80%, white) 0%, color-mix(in srgb, var(--team-send-surface) 96%, white) 46%, var(--team-send-surface) 68%, color-mix(in srgb, var(--team-send-surface) 76%, black) 100%);
-  box-shadow: var(--team-send-command-ring), inset 1px 2px 4px -3px rgb(255 255 255 / 52%), inset -2px -4px 6px -3px rgb(0 0 0 / 34%), 0 3px 4px -2px color-mix(in srgb, var(--team-send-surface) 38%, black), 0 9px 14px -9px rgb(0 0 0 / 65%);
-  font: 700 .94rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; text-shadow: 0 1px 0 rgb(0 0 0 / 24%); transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
+  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-send-surface) 68%, var(--app-shadow-source)); border-radius: 50%; background: linear-gradient(150deg, color-mix(in srgb, var(--team-send-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-send-surface) 96%, var(--app-highlight-source)) 46%, var(--team-send-surface) 68%, color-mix(in srgb, var(--team-send-surface) 76%, var(--app-shadow-source)) 100%);
+  box-shadow: var(--team-send-command-ring), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-send-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
+  font: 700 .94rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; text-shadow: 0 1px 0 color-mix(in srgb, var(--app-shadow-source) 24%, transparent); transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-send::before { position: absolute; inset: 0; border: 0; border-radius: 50%; background: radial-gradient(ellipse at 34% 18%, rgb(255 255 255 / 16%), transparent 48%); box-shadow: none; content: ""; pointer-events: none; }
+.team-composer .team-send::before { position: absolute; inset: 0; border: 0; border-radius: 50%; background: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer .team-send:not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
-.team-composer .team-send:not(:disabled):active { filter: brightness(.985); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px rgb(0 0 0 / 22%), inset -1px -3px 5px -3px rgb(0 0 0 / 20%), 0 2px 3px -2px color-mix(in srgb, var(--team-send-surface) 38%, black), 0 5px 9px -7px rgb(0 0 0 / 58%); }
-.team-composer .team-send:not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, rgb(255 255 255 / 8%), transparent 52%); box-shadow: none; }
+.team-composer .team-send:not(:disabled):active { filter: brightness(.985); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-send-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
+.team-composer .team-send:not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--muted); }
 .team-slider.maxed,
@@ -1195,7 +1142,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
     [inert],
     .mosaic-message-card--image-cover
   ) {
-  outline: 2px solid var(--focus);
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: -2px;
 }
 .team-surface .mosaic-message-card.mosaic-compaction-card {
@@ -1218,11 +1165,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   ):not([inert]) {
   z-index: 1;
   scroll-margin-block: 8px;
-  animation: card-target-highlight 2.8s ease-out;
+  animation: card-target-highlight var(--app-motion-highlight) ease-out;
 }
 @keyframes card-target-highlight {
-  from, 57% { outline: 2px solid var(--accent); outline-offset: -2px; }
-  to { outline: 2px solid transparent; outline-offset: -2px; }
+  from, 57% { outline: var(--app-focus-ring-width) solid var(--accent); outline-offset: -2px; }
+  to { outline: var(--app-focus-ring-width) solid transparent; outline-offset: -2px; }
 }
 /* Without motion the highlight still clears, at once instead of fading. */
 @media (prefers-reduced-motion: reduce) {
@@ -1241,7 +1188,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   display: flex; float: inline-end; align-items: center; gap: 6px;
   min-width: 0; max-inline-size: 100%;
   margin-block-end: .25rem; margin-inline-start: .5rem;
-  color: var(--muted); font-size: 12px;
+  color: var(--muted); font-size: var(--app-type-status);
 }
 .team-surface .message-controls-meta,
 .team-surface .message-controls-actions {
@@ -1309,7 +1256,7 @@ a.relative-age {
   background: none;
   color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink));
   font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 12px;
+  font-size: var(--app-type-status);
   font-weight: 400;
   line-height: 1.25;
   text-align: right;
@@ -1443,7 +1390,7 @@ a.relative-age {
   display: none;
 }
 /* Card footer actions share one compact control treatment. */
-.team-surface .mosaic-message-card footer .card-action {
+.team-surface .mosaic-message-card footer .app-card-action {
   width: 32px;
   min-width: 32px;
   height: 32px;
@@ -1455,12 +1402,12 @@ a.relative-age {
   font-size: 1rem;
   font-weight: 400;
 }
-.team-surface .mosaic-message-card footer .card-action:hover,
-.team-surface .mosaic-message-card footer .card-action:focus-visible {
+.team-surface .mosaic-message-card footer .app-card-action:hover,
+.team-surface .mosaic-message-card footer .app-card-action:focus-visible {
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 6%, var(--control-surface-soft));
   color: var(--ink);
 }
-.team-surface .mosaic-message-card footer .card-action:active {
+.team-surface .mosaic-message-card footer .app-card-action:active {
   background: color-mix(
     in srgb,
     var(--accent-slot, var(--accent)) 12%,
@@ -1470,7 +1417,7 @@ a.relative-age {
 }
 .team-surface .mosaic-message-empty {
   padding: 16px 6px;
-  font-size: .68rem;
+  font-size: var(--app-type-sm);
 }
 
 

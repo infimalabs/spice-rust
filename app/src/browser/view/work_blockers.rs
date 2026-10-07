@@ -144,9 +144,9 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 aria-labelledby="work-blocker-review-title"
                 data-blocker-count={self.count.to_string()}
             >
-                <header class="work-blocker-review-header">
+                <header class="app-sheet-header">
                     <div>
-                        <p class="work-detail-kicker">{"Needs attention"}</p>
+                        <p class="app-sheet-kicker">{"Needs attention"}</p>
                         <h2 id="work-blocker-review-title">
                             {format!("{} selection {}", self.count, if self.count == 1 { "blocker" } else { "blockers" })}
                         </h2>
@@ -158,7 +158,7 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                         onclick={close}
                     >{"Back to overview"}</button>
                 </header>
-                <div class="work-blocker-review-body">
+                <div class="app-sheet-body work-blocker-review-body">
                     <p class="work-blocker-review-intro">
                         {"Resolve an actionable requirement here. Dependency and runtime requirements remain visible without offering controls that cannot help."}
                     </p>
@@ -195,7 +195,7 @@ fn render_task(
     html! {
         <article class="work-blocker-task" data-task-stamp={statement.born.to_string()}>
             <header>
-                <p class="work-detail-kicker">{"Blocked task"}</p>
+                <p class="app-sheet-kicker">{"Blocked task"}</p>
                 <h3>{row.presentation_title.clone()}</h3>
                 <code>{statement.handle.to_string()}</code>
             </header>
