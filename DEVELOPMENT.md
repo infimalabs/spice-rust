@@ -107,7 +107,8 @@ reusable browser-shard receipt.
 ## Subsystem guides
 
 - Browser checks: [`app/BROWSER.md`](app/BROWSER.md); the always-chat team
-  console: [`app/CONSOLE.md`](app/CONSOLE.md).
+  console: [`app/CONSOLE.md`](app/CONSOLE.md); the task overview:
+  [`app/OVERVIEW.md`](app/OVERVIEW.md).
 - Firefox latency profiling: [`app/PROFILE.md`](app/PROFILE.md).
 - `spice dev report-page` and the `spice dev xtask -- report` study:
   [`xtask/REPORT.md`](xtask/REPORT.md).
