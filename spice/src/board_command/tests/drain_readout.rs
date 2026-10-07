@@ -222,7 +222,7 @@ fn next_read_returns_one_typed_state_without_board_rows() {
     }) = issue(
         &bus,
         epoch,
-        actor,
+        actor.clone(),
         CommandKind::BoardRead,
         Vec::new(),
         &BoardRead::Next,
@@ -231,7 +231,99 @@ fn next_read_returns_one_typed_state_without_board_rows() {
         panic!("held next-work read does not return a board answer")
     };
     assert!(matches!(answer.next, Some(NextWorkState::Active { .. })));
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("claimed snapshot reads")
+            .task_head_update_visits(),
+        1,
+        "claim win updates one live head"
+    );
+
+    free_active(&bus, epoch, &actor, &seats[0], &task);
+    let released = bus.task_snapshot().expect("released snapshot reads");
+    assert_eq!(
+        released.task_head_update_visits(),
+        1,
+        "claim release updates one live head"
+    );
+    assert_eq!(released.allocation_frontier().count(), 1);
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Next,
+    )
+    else {
+        panic!("released next-work read does not return a board answer")
+    };
+    assert!(matches!(answer.next, Some(NextWorkState::Candidate { .. })));
+
+    complete_and_delete_delta_heads(&bus, epoch, &seats[0], actor, task);
     clean(&root, bus);
+}
+fn complete_and_delete_delta_heads(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    actor: Actor,
+    task: TaskHandle,
+) {
+    claim_task(bus, epoch, seat, &actor, &task);
+    let held = board(bus, epoch, actor.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, &task), seat.lane, seat.occupant, false)
+            .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "delta frontier completion fixture".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+    let completed = bus.task_snapshot().expect("completed snapshot reads");
+    assert_eq!(completed.task_head_update_visits(), 1);
+    let born = task.born().expect("completed task identity");
+    assert!(
+        completed
+            .allocation_frontier()
+            .all(|heads| heads.statement().body().born != born),
+        "completed work leaves the frontier from its changed head alone"
+    );
+
+    let withdrawn = todo_task(bus, epoch, "DRAIN-delete01", "Deleted work");
+    let visible = board(bus, epoch, Actor::Operator);
+    let heads = at(&visible, &withdrawn);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDelete,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskDelete {
+            task: withdrawn,
+            reason: "delta frontier deletion fixture".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    let deleted = bus.task_snapshot().expect("deleted snapshot reads");
+    assert_eq!(deleted.task_head_update_visits(), 1);
+    assert_eq!(
+        deleted.allocation_frontier().count(),
+        0,
+        "deleted work leaves the frontier from its changed head alone"
+    );
 }
 
 #[test]

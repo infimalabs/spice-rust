@@ -221,19 +221,28 @@ presentation, document barriers, and fresh birth-stamp allocation retain
 explicit full-board reads; scoped reads omit global allocator history rather
 than presenting partial history as complete.
 
-`task next` alone uses the `next` authority projection. When a resident task
-snapshot is built, it indexes the nonterminal allocation frontier and retains
-one compact standing value (`open`, `completed`, or `deleted`) per known task
-stamp. A cold startup or snapshot-generation rebuild reads the complete current
-head set once; all queued `next` reads at that generation share the resulting
-immutable index. For a frontier with \(V\) vertices and \(E\) dependency edges,
-request-time projection visits \(V\) heads, resolves only those \(E\) edges
-against compact standing, and runs the existing ranking over that graph. It
-does not traverse terminal heads or retained facts, and returns at most one
-task head bundle. Completed and deleted standing satisfy an edge; open standing
-and a stamp missing from the index block it. Thus retained terminal history can
-increase rebuild storage and standing lookup depth, but never the number of
-task rows projected or vertices ranked by one `next` request.
+`task next` alone uses the `next` authority projection. A cold resident startup
+reads the \(H\) current task-head bundles once, stores that complete authority
+as an immutable base chunk, and builds a compact allocation index: the \(V\)
+open heads, reference counts and standing only for their \(E\) direct
+dependency edges, and origin evidence only for live tasks. Completed and
+deleted standing satisfy an edge; open standing and a stamp absent from
+authority block it.
+
+After that rebuild, one snapshot generation reads only its \(\Delta\) changed
+task bundles and appends them as an immutable delta chunk; it neither traverses
+nor copies the \(H\) retained heads. A generation with changed task heads
+updates the compact frontier and edge maps in \(O(V + E + \Delta)\), including
+one indexed point read for a newly referenced dependency not among the changed
+heads. A commit with no changed task head reuses those indexes in \(O(1)\).
+Explicit complete-board consumers materialize and cache the ordered \(H\)-head
+view lazily; `next` never does.
+
+At request time, `next` visits exactly the \(V\) live heads and performs one
+constant-time compact hash lookup for each of their \(E\) dependency edges.
+Origin and release evidence are also compact live-task hash lookups. Thus its
+projection work and wire result are \(O(V + E)\), independent of \(H\); it
+returns at most one task head bundle from the same snapshot barrier.
 
 Task-artifact commands remain daemonless. They read bounded current task-head
 pages and their reply cursor inside one read-only journal transaction, so

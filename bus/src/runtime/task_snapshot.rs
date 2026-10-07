@@ -1,9 +1,65 @@
 //! Incremental immutable task snapshots owned by the sole journal writer.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::*;
+/// Deterministic work performed by one live-allocation projection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AllocationWork {
+    pub task_visits: usize,
+    pub standing_lookups: usize,
+}
+
+/// Instrumented live-allocation access over one immutable snapshot.
+pub struct AllocationRead<'a> {
+    snapshot: &'a TaskSnapshot,
+    task_visits: std::cell::Cell<usize>,
+    standing_lookups: std::cell::Cell<usize>,
+}
+
+impl<'a> AllocationRead<'a> {
+    pub(super) fn new(snapshot: &'a TaskSnapshot) -> Self {
+        Self {
+            snapshot,
+            task_visits: std::cell::Cell::new(0),
+            standing_lookups: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Visit each live allocation head exactly once.
+    pub fn frontier(&self) -> impl ExactSizeIterator<Item = &'a TaskHeads> + '_ {
+        self.snapshot.allocation_frontier.iter().inspect(|_| {
+            self.task_visits
+                .set(self.task_visits.get().saturating_add(1));
+        })
+    }
+
+    /// Resolve one direct dependency edge.
+    #[must_use]
+    pub fn dependency_standing(
+        &self,
+        task: &journal::crossing::TaskStamp,
+    ) -> Option<DependencyStanding> {
+        self.standing_lookups
+            .set(self.standing_lookups.get().saturating_add(1));
+        self.snapshot.dependency_standing.get(task).copied()
+    }
+
+    #[must_use]
+    pub fn work(&self) -> AllocationWork {
+        AllocationWork {
+            task_visits: self.task_visits.get(),
+            standing_lookups: self.standing_lookups.get(),
+        }
+    }
+}
+
+/// Impossible live-allocation authority retained for a stable read fault.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AllocationFault {
+    ActiveTerminal { task: journal::crossing::TaskStamp },
+}
 
 /// Persistent task-authority history shared by queued task snapshots.
 ///
@@ -28,38 +84,94 @@ pub enum TaskOrigin {
     ResidencyIdentity(journal::crossing::CanonicalUuid),
 }
 
+/// Append-only completion-terminal lookup updated without copying old tasks.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct TerminalIndex {
+    tail: Option<Arc<TerminalChunk>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct TerminalChunk {
+    prior: Option<Arc<TerminalChunk>>,
+    task: journal::crossing::TaskStamp,
+    operation: journal::crossing::CanonicalUuid,
+    seq: journal::crossing::Seq,
+}
+
+impl TerminalIndex {
+    fn pushed(
+        &self,
+        task: journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+        seq: journal::crossing::Seq,
+    ) -> Self {
+        Self {
+            tail: Some(Arc::new(TerminalChunk {
+                prior: self.tail.clone(),
+                task,
+                operation,
+                seq,
+            })),
+        }
+    }
+
+    fn get(
+        &self,
+        task: &journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+    ) -> Option<journal::crossing::Seq> {
+        let mut cursor = self.tail.as_deref();
+        while let Some(chunk) = cursor {
+            if &chunk.task == task && chunk.operation == operation {
+                return Some(chunk.seq);
+            }
+            cursor = chunk.prior.as_deref();
+        }
+        None
+    }
+}
+
+impl Drop for TerminalIndex {
+    fn drop(&mut self) {
+        let mut tail = self.tail.take();
+        while let Some(chunk) = tail {
+            let Ok(TerminalChunk { prior, .. }) = Arc::try_unwrap(chunk) else {
+                break;
+            };
+            tail = prior;
+        }
+    }
+}
+
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Indexes {
-    trust_surfaces: BTreeMap<String, journal::crossing::Digest>,
-    terminals: BTreeMap<
-        journal::crossing::TaskStamp,
-        BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::Seq>,
-    >,
+    trust_surfaces: HashMap<String, journal::crossing::Digest>,
+    terminals: TerminalIndex,
     claims: HashMap<
         journal::crossing::Actor,
         (journal::crossing::Seq, Option<journal::crossing::ClaimCell>),
     >,
-    context_anchors: BTreeMap<
+    context_anchors: HashMap<
         (
             journal::crossing::CanonicalUuid,
             journal::crossing::CanonicalUuid,
         ),
         journal::crossing::Seq,
     >,
-    explicit_releases: std::collections::BTreeSet<journal::crossing::Seq>,
-    lane_occupants: BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::CanonicalUuid>,
-    lane_sessions: BTreeMap<
+    explicit_releases: HashMap<journal::crossing::TaskStamp, journal::crossing::Seq>,
+    lane_occupants: HashMap<journal::crossing::CanonicalUuid, journal::crossing::CanonicalUuid>,
+    lane_sessions: HashMap<
         (
             journal::crossing::CanonicalUuid,
             journal::crossing::CanonicalUuid,
         ),
         String,
     >,
-    task_origins: BTreeMap<journal::crossing::TaskStamp, TaskOrigin>,
-    duplicate_task_origins: std::collections::BTreeSet<journal::crossing::TaskStamp>,
-    invalid_creator_teams: std::collections::BTreeSet<journal::crossing::TaskStamp>,
+    task_origins: HashMap<journal::crossing::TaskStamp, TaskOrigin>,
+    duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
+    invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
 }
 
 impl Indexes {
@@ -110,24 +222,31 @@ impl Indexes {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
             } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
                 if let Some(terminal) = done.terminal {
-                    next.terminals
-                        .entry(done.task)
-                        .or_default()
-                        .insert(terminal.operation, row.seq);
+                    next.terminals =
+                        next.terminals
+                            .pushed(done.task.clone(), terminal.operation, row.seq);
+                    next.retire_task_origin(&done.task);
                 }
+            } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
+                next.retire_task_origin(&deleted.task);
+            } else if let Some(closed) = row.fact.read::<journal::crossing::body::TaskClosed>() {
+                next.retire_task_origin(&closed.task);
             } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
                 next.claims.insert(won.actor, (row.seq, won.cell));
-            } else if row
-                .fact
-                .read::<journal::crossing::body::ClaimFreed>()
-                .is_some()
-            {
-                next.explicit_releases.insert(row.seq);
+            } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
+                next.explicit_releases.insert(freed.task, row.seq);
             } else if let Some(opened) = context_opening(&row.fact) {
                 next.context_anchors.insert(opened, row.seq);
             }
         }
         next
+    }
+
+    fn retire_task_origin(&mut self, task: &journal::crossing::TaskStamp) {
+        self.task_origins.remove(task);
+        self.duplicate_task_origins.remove(task);
+        self.invalid_creator_teams.remove(task);
+        self.explicit_releases.remove(task);
     }
 }
 
@@ -292,7 +411,7 @@ impl TaskFacts {
         task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
-        self.indexes.terminals.get(task)?.get(&operation).copied()
+        self.indexes.terminals.get(task, operation)
     }
 
     /// The newest claim one actor won: its position and claim-time cell.
@@ -304,10 +423,14 @@ impl TaskFacts {
         self.indexes.claims.get(actor).cloned()
     }
 
-    /// Whether a claim head position was established by an explicit release.
+    /// Whether this task's current claim head was established by an explicit release.
     #[must_use]
-    pub fn is_explicit_release(&self, claim: journal::crossing::Seq) -> bool {
-        self.indexes.explicit_releases.contains(&claim)
+    pub fn is_explicit_release(
+        &self,
+        task: &journal::crossing::TaskStamp,
+        claim: journal::crossing::Seq,
+    ) -> bool {
+        self.indexes.explicit_releases.get(task) == Some(&claim)
     }
 
     /// Creation route indexed while task history advances.
@@ -349,6 +472,24 @@ impl TaskFacts {
     ) -> Option<journal::crossing::Seq> {
         self.indexes.context_anchors.get(&(lane, occupant)).copied()
     }
+
+    fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {
+        let live = frontier
+            .iter()
+            .map(|heads| heads.statement().body().born.clone())
+            .collect::<HashSet<_>>();
+        let indexes = Arc::make_mut(&mut self.indexes);
+        indexes.task_origins.retain(|task, _| live.contains(task));
+        indexes
+            .duplicate_task_origins
+            .retain(|task| live.contains(task));
+        indexes
+            .invalid_creator_teams
+            .retain(|task| live.contains(task));
+        indexes
+            .explicit_releases
+            .retain(|task, _| live.contains(task));
+    }
 }
 
 impl Drop for TaskFacts {
@@ -356,6 +497,114 @@ impl Drop for TaskFacts {
         let mut tail = self.tail.take();
         while let Some(chunk) = tail {
             let Ok(TaskFactChunk { prior, rows: _ }) = Arc::try_unwrap(chunk) else {
+                break;
+            };
+            tail = prior;
+        }
+    }
+}
+
+/// Persistent task heads: one immutable changed-head chunk per generation and
+/// one lazily materialized complete-board view.
+#[derive(Debug)]
+pub(super) struct TaskHeadStore {
+    tail: Option<Arc<TaskHeadChunk>>,
+    len: usize,
+    materialized: std::sync::OnceLock<Arc<[journal::TaskHeads]>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct TaskHeadChunk {
+    prior: Option<Arc<TaskHeadChunk>>,
+    changes: Box<[journal::TaskHeads]>,
+}
+
+impl TaskHeadStore {
+    fn from_base(tasks: Vec<journal::TaskHeads>) -> Self {
+        let len = tasks.len();
+        Self {
+            tail: (!tasks.is_empty()).then(|| {
+                Arc::new(TaskHeadChunk {
+                    prior: None,
+                    changes: tasks.into_boxed_slice(),
+                })
+            }),
+            len,
+            materialized: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn advanced(&self, moved: Vec<journal::TaskHeads>, len: usize) -> Self {
+        if moved.is_empty() {
+            let mut carried = self.clone();
+            carried.len = len;
+            return carried;
+        }
+        Self {
+            tail: Some(Arc::new(TaskHeadChunk {
+                prior: self.tail.clone(),
+                changes: moved.into_boxed_slice(),
+            })),
+            len,
+            materialized: std::sync::OnceLock::new(),
+        }
+    }
+
+    const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(super) fn tasks(&self) -> &[journal::TaskHeads] {
+        self.materialized
+            .get_or_init(|| {
+                let mut chunks = Vec::new();
+                let mut cursor = self.tail.as_deref();
+                while let Some(chunk) = cursor {
+                    chunks.push(chunk.changes.as_ref());
+                    cursor = chunk.prior.as_deref();
+                }
+                chunks.reverse();
+                let mut tasks = Vec::with_capacity(self.len);
+                for changes in chunks {
+                    for heads in changes {
+                        let stamp = &heads.statement().body().born;
+                        match tasks.binary_search_by(|kept: &journal::TaskHeads| {
+                            kept.statement().body().born.cmp(stamp)
+                        }) {
+                            Ok(index) => tasks[index] = heads.clone(),
+                            Err(index) => tasks.insert(index, heads.clone()),
+                        }
+                    }
+                }
+                Arc::from(tasks)
+            })
+            .as_ref()
+    }
+}
+
+impl Clone for TaskHeadStore {
+    fn clone(&self) -> Self {
+        Self {
+            tail: self.tail.clone(),
+            len: self.len,
+            materialized: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl PartialEq for TaskHeadStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.tasks() == other.tasks()
+    }
+}
+
+impl Eq for TaskHeadStore {}
+
+impl Drop for TaskHeadStore {
+    fn drop(&mut self) {
+        let mut tail = self.tail.take();
+        while let Some(chunk) = tail {
+            let Ok(TaskHeadChunk { prior, changes: _ }) = Arc::try_unwrap(chunk) else {
                 break;
             };
             tail = prior;
@@ -392,10 +641,9 @@ pub(super) struct TaskSnapshotBuild {
     cursor: Option<journal::crossing::Seq>,
     tasks: Vec<journal::TaskHeads>,
     task_after: Option<journal::crossing::TaskStamp>,
-    /// The tasks the last ready snapshot held, at the cursor it held them:
-    /// this build reads only the heads that moved past it, so a commit costs
-    /// what it changed rather than every task the journal remembers.
-    prior: Option<(journal::crossing::Seq, Arc<[journal::TaskHeads]>)>,
+    /// Last ready generation. Changed task bundles are applied to its
+    /// persistent head store and compact allocation indexes.
+    prior: Option<TaskSnapshot>,
     trust: Vec<JournalHead<journal::crossing::TrustHead>>,
     trust_after: Option<journal::crossing::Digest>,
     stage: SnapshotStage,
@@ -429,9 +677,7 @@ pub(super) fn invalidate_task_snapshot(state: &mut TaskSnapshotState) {
     let carried = match state {
         TaskSnapshotState::Ready(snapshot) => Some((
             snapshot.facts.clone(),
-            snapshot
-                .cursor
-                .map(|cursor| (cursor, Arc::clone(&snapshot.tasks))),
+            snapshot.cursor.map(|_| snapshot.clone()),
         )),
         TaskSnapshotState::Building(build) => Some((build.facts.clone(), build.prior.clone())),
         TaskSnapshotState::Empty | TaskSnapshotState::Fault(_) => None,
@@ -514,23 +760,22 @@ fn advance_tasks(
     mut build: TaskSnapshotBuild,
 ) -> Result<BuildStep, journal::ReadError<BusReadError>> {
     journal.read_with(|read| {
-        if let Some((since, prior)) = build.prior.take() {
+        if let Some(prior) = &build.prior {
             if read.cursor().map_err(BusReadError::Head)? != build.cursor {
                 return Err(BusReadError::Head(GuardError::Invalid(
                     "task snapshot authority moved between bounded pages".to_owned(),
                 )));
             }
-            build.tasks = match build.cursor.filter(|cursor| *cursor > since) {
-                Some(cursor) => {
-                    let first = journal::crossing::Seq::new(since.get() + 1)
-                        .expect("a position past a position is not zero");
-                    let moved = read
-                        .changed_task_heads(first, cursor)
-                        .map_err(BusReadError::Head)?;
-                    merged(&prior, moved)
-                }
-                None => prior.to_vec(),
-            };
+            let since = prior
+                .cursor()
+                .expect("a carried task snapshot has a durable cursor");
+            if let Some(cursor) = build.cursor.filter(|cursor| *cursor > since) {
+                let first = journal::crossing::Seq::new(since.get() + 1)
+                    .expect("a position past a position is not zero");
+                build.tasks = read
+                    .changed_task_heads(first, cursor)
+                    .map_err(BusReadError::Head)?;
+            }
             build.stage = SnapshotStage::Trust;
             return Ok(BuildStep::Pending(build));
         }
@@ -545,20 +790,6 @@ fn advance_tasks(
         }
         Ok(BuildStep::Pending(build))
     })
-}
-
-/// The prior tasks with each moved bundle replacing its stamp's, or taking
-/// its place in stamp order when the task is new; both inputs arrive sorted.
-fn merged(prior: &[journal::TaskHeads], moved: Vec<journal::TaskHeads>) -> Vec<journal::TaskHeads> {
-    let mut tasks = prior.to_vec();
-    for heads in moved {
-        let stamp = &heads.statement().body().born;
-        match tasks.binary_search_by(|kept| kept.statement().body().born.cmp(stamp)) {
-            Ok(index) => tasks[index] = heads,
-            Err(index) => tasks.insert(index, heads),
-        }
-    }
-    tasks
 }
 
 fn advance_trust(
@@ -584,36 +815,64 @@ fn advance_trust(
                 "task snapshot authority moved during completion".to_owned(),
             )));
         }
-        let (allocation_frontier, dependency_standing, claim_head_cells) =
-            allocation_index(&build.tasks).map_err(BusReadError::Head)?;
+        let task_head_update_visits = build.tasks.len();
+        let task_count = build.prior.as_ref().map_or(build.tasks.len(), |prior| {
+            let since = prior
+                .cursor()
+                .expect("a carried task snapshot has a durable cursor");
+            prior.tasks.len()
+                + build
+                    .tasks
+                    .iter()
+                    .filter(|heads| heads.statement().body().queue_origin > since)
+                    .count()
+        });
+        let allocation = match &build.prior {
+            Some(prior) => advance_allocation_index(read, prior, &build.tasks),
+            None => rebuild_allocation_index(&build.tasks, &build.facts),
+        }
+        .map_err(BusReadError::Head)?;
+        build.facts.retain_allocation_origins(&allocation.frontier);
+        let tasks = match &build.prior {
+            Some(prior) => prior
+                .tasks
+                .advanced(std::mem::take(&mut build.tasks), task_count),
+            None => TaskHeadStore::from_base(std::mem::take(&mut build.tasks)),
+        };
         Ok(BuildStep::Ready(TaskSnapshot {
             cursor: build.cursor,
             facts: build.facts,
-            tasks: Arc::from(build.tasks),
-            allocation_frontier: Arc::from(allocation_frontier),
-            dependency_standing: Arc::new(dependency_standing),
-            claim_head_cells: Arc::new(claim_head_cells),
+            tasks,
+            allocation_frontier: allocation.frontier,
+            dependency_standing: allocation.standing,
+            dependency_references: allocation.references,
+            legacy_recent_claim_cells: allocation.legacy_recent_claim_cells,
+            allocation_faults: allocation.faults,
             trust: Arc::from(build.trust),
             residency,
             materialization_steps: build.steps,
+            task_head_update_visits,
         }))
     })
 }
-fn allocation_index(
+
+struct AllocationIndex {
+    frontier: Arc<[journal::TaskHeads]>,
+    references: Arc<HashMap<journal::crossing::TaskStamp, usize>>,
+    standing: Arc<HashMap<journal::crossing::TaskStamp, DependencyStanding>>,
+    legacy_recent_claim_cells: Arc<HashMap<journal::crossing::Actor, journal::crossing::ClaimCell>>,
+    faults: Arc<[AllocationFault]>,
+}
+
+fn rebuild_allocation_index(
     tasks: &[journal::TaskHeads],
-) -> Result<
-    (
-        Vec<usize>,
-        BTreeMap<journal::crossing::TaskStamp, DependencyStanding>,
-        BTreeMap<(journal::crossing::Actor, journal::crossing::Seq), journal::crossing::ClaimCell>,
-    ),
-    GuardError,
-> {
+    facts: &TaskFacts,
+) -> Result<AllocationIndex, GuardError> {
     let mut frontier = Vec::new();
-    let mut standing = BTreeMap::new();
-    let mut claim_head_cells = BTreeMap::new();
+    let mut references = HashMap::new();
+    let mut faults = Vec::new();
     let mut prior = None;
-    for (index, heads) in tasks.iter().enumerate() {
+    for heads in tasks {
         let task = heads.statement().body().born.clone();
         if prior.as_ref().is_some_and(|prior| prior >= &task) {
             return Err(GuardError::Invalid(
@@ -621,26 +880,190 @@ fn allocation_index(
             ));
         }
         prior = Some(task.clone());
-        let state = match heads.workflow().body().status.as_str() {
-            "completed" => DependencyStanding::Completed,
-            "deleted" => DependencyStanding::Deleted,
-            _ => DependencyStanding::Open,
-        };
-        standing.insert(task, state);
-        let actively_claimed = heads.claim().is_some_and(|claim| {
-            claim.body().disposition == journal::crossing::ClaimDisposition::Active
-        });
-        if let Some(claim) = heads.claim() {
-            claim_head_cells.insert(
-                (claim.body().actor.clone(), claim.body().claimed),
-                claim.body().cell.clone(),
-            );
-        }
-        if state == DependencyStanding::Open || actively_claimed {
-            frontier.push(index);
+        match task_standing(heads) {
+            DependencyStanding::Open => {
+                add_dependencies(
+                    &mut references,
+                    heads.statement().body().dependencies.iter(),
+                );
+                frontier.push(heads.clone());
+            }
+            DependencyStanding::Completed | DependencyStanding::Deleted => {
+                if actively_claimed(heads) {
+                    faults.push(AllocationFault::ActiveTerminal { task });
+                }
+            }
         }
     }
-    Ok((frontier, standing, claim_head_cells))
+    let mut standing = HashMap::with_capacity(references.len());
+    for heads in tasks {
+        let task = &heads.statement().body().born;
+        if references.contains_key(task) {
+            standing.insert(task.clone(), task_standing(heads));
+        }
+    }
+    let mut legacy_recent_claim_cells = HashMap::new();
+    let missing = facts
+        .indexes
+        .claims
+        .iter()
+        .filter_map(|(actor, (claimed, cell))| {
+            cell.is_none()
+                .then(|| ((actor.clone(), *claimed), actor.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    if !missing.is_empty() {
+        for heads in tasks {
+            let Some(claim) = heads.claim() else {
+                continue;
+            };
+            if let Some(actor) = missing.get(&(claim.body().actor.clone(), claim.body().claimed)) {
+                legacy_recent_claim_cells.insert(actor.clone(), claim.body().cell.clone());
+            }
+        }
+    }
+    Ok(AllocationIndex {
+        frontier: Arc::from(frontier),
+        references: Arc::new(references),
+        standing: Arc::new(standing),
+        legacy_recent_claim_cells: Arc::new(legacy_recent_claim_cells),
+        faults: Arc::from(faults),
+    })
+}
+
+fn advance_allocation_index(
+    read: &journal::JournalRead<'_>,
+    prior: &TaskSnapshot,
+    moved: &[journal::TaskHeads],
+) -> Result<AllocationIndex, GuardError> {
+    if moved.is_empty() {
+        return Ok(AllocationIndex {
+            frontier: Arc::clone(&prior.allocation_frontier),
+            references: Arc::clone(&prior.dependency_references),
+            standing: Arc::clone(&prior.dependency_standing),
+            legacy_recent_claim_cells: Arc::clone(&prior.legacy_recent_claim_cells),
+            faults: Arc::clone(&prior.allocation_faults),
+        });
+    }
+    let mut frontier = prior.allocation_frontier.to_vec();
+    let mut references = (*prior.dependency_references).clone();
+    let mut standing = (*prior.dependency_standing).clone();
+    let mut faults = prior.allocation_faults.to_vec();
+    let mut resolve = std::collections::HashSet::new();
+    for heads in moved {
+        let task = heads.statement().body().born.clone();
+        faults.retain(|fault| fault.task() != &task);
+        match frontier.binary_search_by(|kept| kept.statement().body().born.cmp(&task)) {
+            Ok(index) => {
+                let old = frontier.remove(index);
+                remove_dependencies(
+                    &mut references,
+                    &mut standing,
+                    old.statement().body().dependencies.iter(),
+                );
+            }
+            Err(_) => {}
+        }
+        match task_standing(heads) {
+            DependencyStanding::Open => {
+                for dependency in &heads.statement().body().dependencies {
+                    if references.get(dependency).copied().unwrap_or(0) == 0 {
+                        resolve.insert(dependency.clone());
+                    }
+                }
+                add_dependencies(
+                    &mut references,
+                    heads.statement().body().dependencies.iter(),
+                );
+                let index = frontier
+                    .binary_search_by(|kept| kept.statement().body().born.cmp(&task))
+                    .unwrap_or_else(|index| index);
+                frontier.insert(index, heads.clone());
+            }
+            DependencyStanding::Completed | DependencyStanding::Deleted => {
+                if actively_claimed(heads) {
+                    faults.push(AllocationFault::ActiveTerminal { task: task.clone() });
+                }
+            }
+        }
+        if references.contains_key(&task) {
+            resolve.insert(task);
+        }
+    }
+    faults.sort_by(|left, right| left.task().cmp(right.task()));
+    for task in resolve {
+        if !references.contains_key(&task) {
+            standing.remove(&task);
+            continue;
+        }
+        let heads = match moved.binary_search_by(|heads| heads.statement().body().born.cmp(&task)) {
+            Ok(index) => Some(moved[index].clone()),
+            Err(_) => read.task_heads_for(&task)?,
+        };
+        match heads {
+            Some(heads) => {
+                standing.insert(task, task_standing(&heads));
+            }
+            None => {
+                standing.remove(&task);
+            }
+        }
+    }
+    Ok(AllocationIndex {
+        frontier: Arc::from(frontier),
+        references: Arc::new(references),
+        standing: Arc::new(standing),
+        legacy_recent_claim_cells: Arc::clone(&prior.legacy_recent_claim_cells),
+        faults: Arc::from(faults),
+    })
+}
+
+fn add_dependencies<'a>(
+    references: &mut HashMap<journal::crossing::TaskStamp, usize>,
+    dependencies: impl Iterator<Item = &'a journal::crossing::TaskStamp>,
+) {
+    for dependency in dependencies {
+        *references.entry(dependency.clone()).or_default() += 1;
+    }
+}
+
+fn remove_dependencies<'a>(
+    references: &mut HashMap<journal::crossing::TaskStamp, usize>,
+    standing: &mut HashMap<journal::crossing::TaskStamp, DependencyStanding>,
+    dependencies: impl Iterator<Item = &'a journal::crossing::TaskStamp>,
+) {
+    for dependency in dependencies {
+        let Some(count) = references.get_mut(dependency) else {
+            continue;
+        };
+        *count -= 1;
+        if *count == 0 {
+            references.remove(dependency);
+            standing.remove(dependency);
+        }
+    }
+}
+
+fn task_standing(heads: &journal::TaskHeads) -> DependencyStanding {
+    match heads.workflow().body().status.as_str() {
+        "completed" => DependencyStanding::Completed,
+        "deleted" => DependencyStanding::Deleted,
+        _ => DependencyStanding::Open,
+    }
+}
+
+fn actively_claimed(heads: &journal::TaskHeads) -> bool {
+    heads.claim().is_some_and(|claim| {
+        claim.body().disposition == journal::crossing::ClaimDisposition::Active
+    })
+}
+
+impl AllocationFault {
+    fn task(&self) -> &journal::crossing::TaskStamp {
+        match self {
+            Self::ActiveTerminal { task } => task,
+        }
+    }
 }
 
 enum BuildStep {
