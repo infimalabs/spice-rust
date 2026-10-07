@@ -11,11 +11,10 @@ use yew::prelude::*;
 
 use crate::browser::mermaid::MermaidImage;
 use crate::work::{
-    TaskOverviewSelection, WorkAvailability, WorkProjection, WorkRelationshipDirection,
+    TaskOverviewSelection, WorkAvailability, WorkProjection, WorkRelationshipDirection, lens,
 };
 use crate::{AppRuntime, TaskRelationsKey, TaskRelationsState};
 
-mod lens;
 mod overlay;
 
 const DEFAULT_DEPTH: u8 = 2;
