@@ -78,7 +78,31 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 data-blocker-count={self.count.to_string()}
                 aria-label="Selection blockers"
             >
-                <span class="work-blocker-rail-mark" aria-hidden="true">{"!"}</span>
+                <span class="work-blocker-rail-mark" aria-hidden="true">
+                    if active {
+                        <svg width="17" height="17" viewBox="0 0 24 24" focusable="false">
+                            <path
+                                d="M12 5.5v10"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.5"
+                                stroke-linecap="round"
+                            />
+                            <circle cx="12" cy="19" r="1.4" fill="currentColor" />
+                        </svg>
+                    } else {
+                        <svg width="17" height="17" viewBox="0 0 24 24" focusable="false">
+                            <path
+                                d="m4.5 12.5 4.5 4.5L19.5 6.5"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.8"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            />
+                        </svg>
+                    }
+                </span>
                 <span class="work-blocker-rail-copy">
                     <strong>{if active { "Needs attention" } else { "Ready to proceed" }}</strong>
                     <span>{summary}</span>
