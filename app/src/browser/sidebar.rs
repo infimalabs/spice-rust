@@ -36,7 +36,7 @@ impl ReturnFocus {
         let key = self.key?;
         let document = web_sys::window()?.document()?;
         let candidates = document
-            .query_selector_all(&format!("[{RETURN_FOCUS_KEY}]"))
+            .query_selector_all("[data-sidebar-focus-key]")
             .ok()?;
         (0..candidates.length())
             .filter_map(|index| candidates.item(index))
@@ -62,7 +62,8 @@ pub(super) struct Controls {
     pub closing: UseStateHandle<bool>,
     pub close_ref: NodeRef,
     pub sheet_ref: NodeRef,
-    /// Override the captured launcher with a stable surviving element.
+    /// Override implicit capture with a launcher. Its stable focus key recovers
+    /// an equivalent element if rendering replaces the original node.
     pub return_focus_to: Callback<web_sys::Element>,
     pub close: Callback<()>,
 }
