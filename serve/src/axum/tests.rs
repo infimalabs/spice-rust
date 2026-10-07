@@ -166,12 +166,8 @@ async fn stream_frame_bytes(socket: &mut ClientSocket) -> (wire::StreamFrame, Ve
     (frame, bytes)
 }
 
-fn speech() -> crate::SpeechConfig {
-    crate::SpeechConfig::default()
-}
-
 fn generation(app: &TestApp, capabilities: Capabilities) -> Generation {
-    Generation::new(epoch(), capabilities, app.version(), app.source(), speech())
+    Generation::new(epoch(), capabilities, app.version(), app.source())
 }
 
 const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
@@ -945,6 +941,7 @@ async fn request_with_headers(
 async fn remote_websocket(
     address: SocketAddr,
     host: &str,
+    origin: &str,
     auth: Option<&str>,
 ) -> Result<ClientSocket, tokio_tungstenite::tungstenite::Error> {
     let path = auth.map_or_else(
@@ -957,49 +954,10 @@ async fn remote_websocket(
     request
         .headers_mut()
         .insert(HOST, host.parse().expect("remote Host"));
-    request.headers_mut().insert(
-        ORIGIN,
-        format!("http://{host}").parse().expect("remote Origin"),
-    );
+    request
+        .headers_mut()
+        .insert(ORIGIN, origin.parse().expect("remote Origin"));
     connect_async(request).await.map(|opened| opened.0)
-}
-
-async fn speech_request(address: SocketAddr, host: &str, origin: &str, body: &[u8]) -> Vec<u8> {
-    speech_request_to("/speech", address, host, origin, body).await
-}
-
-async fn speech_request_to(
-    path: &str,
-    address: SocketAddr,
-    host: &str,
-    origin: &str,
-    body: &[u8],
-) -> Vec<u8> {
-    let mut stream = tokio::net::TcpStream::connect(address)
-        .await
-        .expect("connect to app server");
-    let head = format!(
-        concat!(
-            "POST {path} HTTP/1.1\r\n",
-            "Host: {host}\r\n",
-            "Origin: {origin}\r\n",
-            "Content-Type: application/json\r\n",
-            "Content-Length: {}\r\n",
-            "Connection: close\r\n\r\n",
-        ),
-        body.len(),
-        path = path,
-        host = host,
-        origin = origin,
-    );
-    stream.write_all(head.as_bytes()).await.expect("write head");
-    stream.write_all(body).await.expect("write body");
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .await
-        .expect("read response");
-    response
 }
 
 fn response_body(response: &[u8]) -> &[u8] {
@@ -1018,159 +976,6 @@ fn response_header<'a>(response: &'a [u8], expected: &str) -> Option<&'a str> {
         let (name, value) = line.split_once(':')?;
         name.eq_ignore_ascii_case(expected).then(|| value.trim())
     })
-}
-
-fn external_speech(command: &[&str]) -> crate::SpeechConfig {
-    crate::SpeechConfig::new(
-        crate::SpeechBackend::External,
-        command.iter().map(ToString::to_string).collect(),
-        crate::speech::DEFAULT_VOICE.to_owned(),
-        "audio/test".to_owned(),
-        175,
-    )
-    .expect("external speech fixture")
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn speech_endpoint_uses_the_request_worktree_server_owned_argv_contract() {
-    let app = TestApp::new();
-    let generation = Generation::new(
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        crate::SpeechConfig::default(),
-    )
-    .with_speech_resolver(|worktree| {
-        (worktree == "/worktrees/speech")
-            .then(|| {
-                crate::SpeechConfig::new(
-                    crate::SpeechBackend::External,
-                    [
-                        "/bin/sh",
-                        "-c",
-                        "printf '%s|' \"$SPICE_RS_SAY_VOICE\"; exec cat", // env-policy: allow
-                    ]
-                    .map(ToString::to_string)
-                    .to_vec(),
-                    "Zoe\"; $(echo injected) '".to_owned(),
-                    "audio/test".to_owned(),
-                    175,
-                )
-                .expect("external speech fixture")
-            })
-            .ok_or_else(|| "unknown worktree".to_owned())
-    });
-    let (server, _control) = Server::bind(generation).await.expect("binds");
-    let address = server.local_addr().expect("local address");
-    let task = tokio::spawn(server.up());
-    let body = wire::encode(&wire::SpeechRequest {
-        text: "spoken exactly; $(not a shell)".to_owned(),
-        worktree: "/worktrees/speech".to_owned(),
-    })
-    .expect("request encodes");
-    let response = speech_request(
-        address,
-        &address.to_string(),
-        &format!("http://{address}"),
-        &body,
-    )
-    .await;
-
-    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert!(
-        response
-            .windows(b"content-type: audio/test".len())
-            .any(|window| window == b"content-type: audio/test")
-    );
-    assert_eq!(
-        response_body(&response),
-        b"Zoe\"; $(echo injected) '|spoken exactly; $(not a shell)",
-        "the worktree voice arrives verbatim as renderer data, never as shell text"
-    );
-
-    task.abort();
-    assert!(task.await.expect_err("aborted server task").is_cancelled());
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
-    let app = TestApp::new();
-    for speech in [
-        crate::SpeechConfig::new(
-            crate::SpeechBackend::Disabled,
-            Vec::new(),
-            crate::speech::DEFAULT_VOICE.to_owned(),
-            "audio/wav".to_owned(),
-            175,
-        )
-        .expect("disabled speech"),
-        crate::SpeechConfig::default(),
-        external_speech(&[]),
-        external_speech(&["/definitely/missing/spice-speech"]),
-    ] {
-        let (server, _control) = Server::bind(Generation::new(
-            epoch(),
-            Capabilities::default(),
-            app.version(),
-            app.source(),
-            speech,
-        ))
-        .await
-        .expect("binds");
-        let address = server.local_addr().expect("local address");
-        let task = tokio::spawn(server.up());
-        let body = wire::encode(&wire::SpeechRequest {
-            text: "bounded failure".to_owned(),
-            worktree: "/worktrees/speech".to_owned(),
-        })
-        .expect("request encodes");
-        let response = speech_request(
-            address,
-            &address.to_string(),
-            &format!("http://{address}"),
-            &body,
-        )
-        .await;
-        assert!(response.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
-        assert_eq!(
-            response_body(&response),
-            b"external speech backend is unavailable"
-        );
-        task.abort();
-        assert!(task.await.expect_err("aborted server task").is_cancelled());
-    }
-
-    let (server, _control) = Server::bind(Generation::new(
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        external_speech(&["/bin/cat"]),
-    ))
-    .await
-    .expect("binds");
-    let address = server.local_addr().expect("local address");
-    let task = tokio::spawn(server.up());
-    let malformed = speech_request(
-        address,
-        &address.to_string(),
-        &format!("http://{address}"),
-        br#"{"text":"valid","command":["/bin/cat"]}"#,
-    )
-    .await;
-    assert!(malformed.starts_with(b"HTTP/1.1 422 Unprocessable Entity\r\n"));
-    let cross_origin = speech_request(
-        address,
-        &address.to_string(),
-        "https://attacker.example",
-        br#"{"text":"valid","worktree":"/worktrees/speech"}"#,
-    )
-    .await;
-    assert!(cross_origin.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
-
-    task.abort();
-    assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1281,13 +1086,7 @@ async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
     let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        Generation::new(
-            epoch(),
-            Capabilities::default(),
-            app_version(&app),
-            app,
-            speech(),
-        ),
+        Generation::new(epoch(), Capabilities::default(), app_version(&app), app),
         None,
         1,
     )

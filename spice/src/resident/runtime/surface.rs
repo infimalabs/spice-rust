@@ -120,16 +120,8 @@ async fn start_surface<'a>(
         kind,
         token,
     } = access;
-    let speech_paths = paths.clone();
-    let generation = serve::axum::Generation::new(
-        epoch,
-        capabilities.clone(),
-        version,
-        app,
-        config.speech.clone(),
-    )
-    .with_speech_resolver(move |worktree| speech_paths.speech_for_worktree(worktree))
-    .with_operator_identity(operator_identity);
+    let generation = serve::axum::Generation::new(epoch, capabilities.clone(), version, app)
+        .with_operator_identity(operator_identity);
     let quote_presenter =
         spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
     let (server, control) = serve::axum::Server::bind_streaming(

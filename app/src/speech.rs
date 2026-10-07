@@ -1,12 +1,10 @@
-//! Browser-owned playback for each queued entry's admitted worktree speech contract.
+//! Browser system synthesis for each queued entry's admitted worktree voices.
+
+use std::collections::HashMap;
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{
-    Blob, BlobPropertyBag, Event, HtmlAudioElement, SpeechSynthesis, SpeechSynthesisUtterance,
-    SpeechSynthesisVoice, Url,
-};
+use web_sys::{Event, SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
 use crate::speech_owner::PlaybackOwnership;
 
@@ -22,9 +20,9 @@ const MAX_OFFERED_VOICES: usize = 8;
 pub enum SystemStart {
     /// The utterance is with the browser.
     Speaking,
-    /// The browser has published no voices yet, so no voice can be selected
-    /// and no utterance was started. The installed `voiceschanged` observer
-    /// calls the caller's resume once the browser publishes its list.
+    /// The browser has published no voices yet, so no candidate can be
+    /// matched and no utterance was started. The installed `voiceschanged`
+    /// observer calls the caller's resume once the browser publishes its list.
     AwaitingVoices,
 }
 
@@ -38,29 +36,28 @@ pub struct SystemObservers<Voices, Ended, Failed> {
     pub failed: Failed,
 }
 
-/// One browser playback owner. Replacements always stop the prior media first.
+/// One browser playback owner. Replacements always stop the prior utterance first.
 #[derive(Default)]
 pub struct Controller {
     ownership: PlaybackOwnership,
     synthesis: Option<SpeechSynthesis>,
     utterance: Option<SpeechSynthesisUtterance>,
-    audio: Option<HtmlAudioElement>,
-    audio_url: Option<String>,
     on_end: Option<Closure<dyn FnMut(Event)>>,
     on_error: Option<Closure<dyn FnMut(Event)>>,
-    on_pause: Option<Closure<dyn FnMut(Event)>>,
     on_voices: Option<Closure<dyn FnMut(Event)>>,
+    /// The voice each agent settled on; its search runs once per page.
+    chosen: HashMap<String, SpeechSynthesisVoice>,
 }
 
 impl Controller {
-    /// Stop current media, invalidate pending fetches, and begin one replacement.
+    /// Stop the current utterance, invalidate pending work, and begin one replacement.
     pub fn begin(&mut self) -> u64 {
         let generation = self.ownership.begin();
         self.release_media();
         generation
     }
 
-    /// Whether an asynchronous renderer result still belongs to this owner.
+    /// Whether an asynchronous result still belongs to this owner.
     pub const fn is_current(&self, generation: u64) -> bool {
         self.ownership.is_current(generation)
     }
@@ -72,7 +69,7 @@ impl Controller {
         self.on_voices.is_some() && self.is_current(generation)
     }
 
-    /// Stop current system or external playback and invalidate pending work.
+    /// Stop current playback and invalidate pending work.
     pub fn stop(&mut self) {
         self.ownership.stop();
         self.release_media();
@@ -88,40 +85,31 @@ impl Controller {
             synthesis.set_onvoiceschanged(None);
             synthesis.cancel();
         }
-        if let Some(audio) = &self.audio {
-            audio.set_onended(None);
-            audio.set_onerror(None);
-            audio.set_onpause(None);
-            let _ = audio.pause();
-            audio.set_current_time(0.0);
-        }
-        if let Some(url) = self.audio_url.take() {
-            let _ = Url::revoke_object_url(&url);
-        }
         self.synthesis = None;
         self.utterance = None;
-        self.audio = None;
         self.on_end = None;
         self.on_error = None;
-        self.on_pause = None;
         self.on_voices = None;
     }
 
-    /// Start exact-voice system synthesis for the current generation.
+    /// Speak `text` for `agent` through the browser's system synthesis.
+    ///
+    /// An empty `voices` list speaks with the device's default voice. Otherwise
+    /// the first candidate this browser publishes wins and stays the agent's
+    /// voice for the rest of the page.
     ///
     /// A browser publishes its voice list asynchronously: on a fresh page
     /// `get_voices` answers an empty list until the engine has enumerated the
     /// installed voices and fired `voiceschanged`. An empty list is therefore
-    /// no verdict on the configured voice, and refusing on it is what makes a
-    /// present voice look intermittently unavailable. Only a published list
-    /// that omits the configured name is a naming mismatch; an empty one
-    /// installs the observer that resumes this request and reports
-    /// [`SystemStart::AwaitingVoices`], leaving the entry the queue head.
+    /// no verdict on the candidates; it installs the observer that resumes this
+    /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
+    /// list carrying no candidate is refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
+        agent: &str,
         text: &str,
-        voice_name: &str,
+        voices: &[String],
         words_per_minute: u32,
         observers: SystemObservers<Voices, Ended, Failed>,
     ) -> Result<SystemStart, String>
@@ -141,26 +129,36 @@ impl Controller {
         let synthesis = web_sys::window()
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .speech_synthesis()
-            .map_err(|_| "system speech backend is unavailable".to_owned())?;
-        let offered: Vec<SpeechSynthesisVoice> = synthesis
-            .get_voices()
-            .iter()
-            .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
-            .collect();
-        let Some(voice) = offered.iter().find(|voice| voice.name() == voice_name) else {
-            if !offered.is_empty() {
-                return Err(unavailable_voice(voice_name, &offered));
+            .map_err(|_| "system speech is unavailable".to_owned())?;
+        let voice = match self.chosen.get(agent) {
+            _ if voices.is_empty() => None,
+            Some(voice) if voices.contains(&voice.name()) => Some(voice.clone()),
+            _ => {
+                let offered: Vec<SpeechSynthesisVoice> = synthesis
+                    .get_voices()
+                    .iter()
+                    .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
+                    .collect();
+                if offered.is_empty() {
+                    let observed = Closure::wrap(
+                        Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>
+                    );
+                    synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
+                    self.synthesis = Some(synthesis);
+                    self.on_voices = Some(observed);
+                    return Ok(SystemStart::AwaitingVoices);
+                }
+                let voice = voices
+                    .iter()
+                    .find_map(|name| offered.iter().find(|voice| voice.name() == *name))
+                    .ok_or_else(|| unavailable_voices(voices, &offered))?;
+                self.chosen.insert(agent.to_owned(), voice.clone());
+                Some(voice.clone())
             }
-            let observed =
-                Closure::wrap(Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>);
-            synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
-            self.synthesis = Some(synthesis);
-            self.on_voices = Some(observed);
-            return Ok(SystemStart::AwaitingVoices);
         };
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
             .map_err(|_| "system speech utterance could not be created".to_owned())?;
-        utterance.set_voice(Some(voice));
+        utterance.set_voice(voice.as_ref());
         utterance.set_rate(
             (words_per_minute as f32 / REFERENCE_WORDS_PER_MINUTE)
                 .clamp(MIN_SYSTEM_RATE, MAX_SYSTEM_RATE),
@@ -180,51 +178,6 @@ impl Controller {
         self.on_voices = None;
         Ok(SystemStart::Speaking)
     }
-
-    /// Install externally rendered bytes and ask the browser to play them.
-    pub fn start_external(
-        &mut self,
-        generation: u64,
-        bytes: &[u8],
-        content_type: &str,
-        on_end: impl Fn() + 'static,
-        on_error: impl Fn() + 'static,
-        on_pause: impl Fn() + 'static,
-    ) -> Result<js_sys::Promise, String> {
-        if !self.is_current(generation) {
-            return Err("speech request was superseded".to_owned());
-        }
-        let parts = js_sys::Array::new();
-        parts.push(&js_sys::Uint8Array::from(bytes));
-        let options = BlobPropertyBag::new();
-        options.set_type(content_type);
-        let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options)
-            .map_err(|_| "rendered speech bytes were not browser-playable".to_owned())?;
-        let url = Url::create_object_url_with_blob(&blob)
-            .map_err(|_| "rendered speech URL could not be created".to_owned())?;
-        let audio = HtmlAudioElement::new_with_src(&url)
-            .map_err(|_| "browser audio backend is unavailable".to_owned())?;
-        let ended = Closure::wrap(Box::new(move |_event: Event| on_end()) as Box<dyn FnMut(_)>);
-        let failed = Closure::wrap(Box::new(move |_event: Event| on_error()) as Box<dyn FnMut(_)>);
-        let paused_audio = audio.clone();
-        let paused = Closure::wrap(Box::new(move |_event: Event| {
-            if !paused_audio.ended() {
-                on_pause();
-            }
-        }) as Box<dyn FnMut(_)>);
-        audio.set_onended(Some(ended.as_ref().unchecked_ref()));
-        audio.set_onerror(Some(failed.as_ref().unchecked_ref()));
-        audio.set_onpause(Some(paused.as_ref().unchecked_ref()));
-        let playing = audio
-            .play()
-            .map_err(|_| "browser refused rendered speech playback".to_owned())?;
-        self.audio = Some(audio);
-        self.audio_url = Some(url);
-        self.on_end = Some(ended);
-        self.on_error = Some(failed);
-        self.on_pause = Some(paused);
-        Ok(playing)
-    }
 }
 
 impl Drop for Controller {
@@ -233,16 +186,12 @@ impl Drop for Controller {
     }
 }
 
-/// Refuse an absent configured voice while naming what the browser published.
+/// Refuse a voice list this device carries none of, naming what it offers.
 ///
-/// The operator configured one exact voice and gets that voice or silence:
-/// naming the published alternatives is what makes a mismatch diagnosable
-/// without a substitution nobody asked for. System synthesis runs on the
-/// viewing device, so a phone offers its own voices rather than the
-/// resident's; the refusal says so and names the backend that renders on
-/// the resident instead. The list is bounded because a browser can offer
-/// hundreds of voices and this sentence is shown whole.
-fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> String {
+/// Naming the published voices is what makes a mismatch fixable: the next
+/// `say.voices` entry is one of these names. The list is bounded because a
+/// browser can offer hundreds of voices and this sentence is shown whole.
+fn unavailable_voices(voices: &[String], offered: &[SpeechSynthesisVoice]) -> String {
     let mut names: Vec<String> = offered
         .iter()
         .take(MAX_OFFERED_VOICES)
@@ -255,11 +204,10 @@ fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> Stri
     {
         names.push(format!("and {elided} more"));
     }
+    let wanted: Vec<String> = voices.iter().map(|voice| format!("{voice:?}")).collect();
     format!(
-        "system voice {voice_name:?} is not on this device; system speech uses the viewing \
-         device's own voices, and this browser offers {}. To hear the resident's voices on \
-         every device, set say.backend = \"external\" with the say.command renderer in \
-         docs/product/interfaces.md (Speech)",
+        "none of the voices {} is on this device; this browser offers {}",
+        wanted.join(", "),
         names.join(", "),
     )
 }
@@ -280,12 +228,4 @@ fn system_failure(event: &Event) -> String {
         return "system speech playback failed".to_owned();
     };
     format!("system speech playback failed: {code}")
-}
-
-/// Await the browser's asynchronous media-play admission.
-pub async fn await_play(promise: js_sys::Promise) -> Result<(), String> {
-    JsFuture::from(promise)
-        .await
-        .map(|_| ())
-        .map_err(|_| "browser refused rendered speech playback".to_owned())
 }

@@ -332,7 +332,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "worktree": "/worktrees/lane-a",
     "speech": {
       "backend": "system",
-      "voice": "Samantha",
+      "voices": ["Samantha"],
       "words_per_minute": 190
     },
     "life": "drive",
@@ -409,7 +409,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "worktree": "/worktrees/lane-a",
       "speech": {
         "backend": "system",
-        "voice": "Samantha",
+        "voices": ["Samantha"],
         "words_per_minute": 190
       },
       "life": "drive",

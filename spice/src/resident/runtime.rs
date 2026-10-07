@@ -40,7 +40,6 @@ pub(super) struct SurfaceConfig {
     pub(super) taste: taste::Bag,
     pub(super) judge_enabled: bool,
     pub(super) consent: consent::Policy,
-    speech: serve::SpeechConfig,
     pub(super) allocation: board::NextConfig,
     pub(super) projects: board::ProjectPolicy,
     pub(super) lane: lane::Config,
@@ -115,7 +114,6 @@ fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface
             taste: loaded.resolved().root().taste().bag().clone(),
             judge_enabled: loaded.resolved().root().judge().enabled().unwrap_or(false),
             consent: loaded.resolved().root().consent().policy().clone(),
-            speech: loaded.resolved().root().say().clone(),
             allocation: *loaded.resolved().root().board().next(),
             projects: loaded.resolved().root().tasks().project_policy(),
             lane: loaded.resolved().root().lane().clone(),
@@ -172,6 +170,8 @@ impl RuntimePaths {
         })
     }
 
+    /// Browser speech contract for one admitted worktree, read from its
+    /// current configuration.
     pub(super) fn speech_for_worktree(
         &self,
         worktree: &str,

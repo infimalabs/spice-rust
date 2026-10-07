@@ -1,11 +1,11 @@
 use app::speech_queue::{
-    Advance, AutomaticChange, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors,
-    NarrationMessage, SpeechControl, SpeechQueue, SpeechRequest,
+    Advance, AutomaticChange, Enqueue, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage,
+    SpeechControl, SpeechQueue, SpeechRequest,
 };
 
 fn playback(lane: &str) -> wire::SpeechPlayback {
     wire::SpeechPlayback::System {
-        voice: format!("voice-{lane}"),
+        voices: vec![format!("voice-{lane}")],
         words_per_minute: 175,
     }
 }
@@ -160,37 +160,6 @@ fn stop_and_lane_abandonment_cannot_revive_superseded_playback() {
     assert!(!queue.active());
     assert_eq!(queue.pending(), 0);
     assert_eq!(queue.finish(survivor.id()), Advance::Ignored);
-}
-
-#[test]
-fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
-    let mut manual_queue = SpeechQueue::default();
-    enable(&mut manual_queue, "lineage");
-    let head = started(manual_queue.enqueue(manual("lineage", "surface", "surface")));
-    assert_eq!(
-        manual_queue.enqueue(narration("lineage", "queued")),
-        Enqueue::Queued
-    );
-    assert_eq!(
-        manual_queue.external_pause(head.id()),
-        ExternalPause::Stopped
-    );
-    assert_eq!(manual_queue.pending(), 0);
-    assert_eq!(manual_queue.finish(head.id()), Advance::Ignored);
-
-    let mut automatic = SpeechQueue::default();
-    enable(&mut automatic, "team-a");
-    enable(&mut automatic, "team-b");
-    let head = started(automatic.enqueue(narration("team-a", "head")));
-    assert_eq!(
-        automatic.enqueue(narration("team-b", "successor")),
-        Enqueue::Queued
-    );
-    let successor = match automatic.external_pause(head.id()) {
-        ExternalPause::Start(entry) => entry,
-        other => panic!("paused narration did not advance its queue: {other:?}"),
-    };
-    assert_eq!(successor.text(), "successor");
 }
 
 #[test]

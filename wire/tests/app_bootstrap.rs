@@ -67,8 +67,9 @@ fn app_bootstrap_has_one_strict_body_shape() {
 
     for malformed in [
         r#"{"backend":"unknown"}"#,
-        r#"{"backend":"disabled","voice":"Zoe"}"#,
+        r#"{"backend":"disabled","voices":["Zoe"]}"#,
         r#"{"backend":"system","words_per_minute":175}"#,
+        r#"{"backend":"system","voice":"Zoe","words_per_minute":175}"#,
         r#"{"backend":"external","content_type":"audio/wav","words_per_minute":175}"#,
     ] {
         assert!(

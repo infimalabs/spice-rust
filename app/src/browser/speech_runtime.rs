@@ -12,14 +12,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
-use super::connection::request_external_speech;
 use super::watchband::TeamSpeech;
 use super::{SurfaceData, toast};
 use crate::AppRuntime;
 use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
-    Advance, AutomaticChange, Enqueue, ExternalPause, NarrationCursorRow, NarrationCursors,
-    NarrationMessage, SpeechEntry, SpeechOwner, SpeechQueue, SpeechRequest,
+    Advance, AutomaticChange, Enqueue, NarrationCursorRow, NarrationCursors, NarrationMessage,
+    SpeechEntry, SpeechOwner, SpeechQueue, SpeechRequest,
 };
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
@@ -85,23 +84,9 @@ impl SpeechRuntime {
         match entry.playback().clone() {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
             wire::SpeechPlayback::System {
-                voice,
+                voices,
                 words_per_minute,
-            } => self.start_system(entry, generation, &voice, words_per_minute),
-            wire::SpeechPlayback::External {
-                content_type,
-                available,
-                ..
-            } => {
-                if available {
-                    self.start_external(entry, generation, content_type);
-                } else {
-                    self.finish(
-                        entry.id(),
-                        Some("external speech backend is unavailable".to_owned()),
-                    );
-                }
-            }
+            } => self.start_system(entry, generation, voices, words_per_minute),
         }
     }
 
@@ -109,7 +94,7 @@ impl SpeechRuntime {
         &self,
         entry: SpeechEntry,
         generation: u64,
-        voice: &str,
+        voices: Vec<String>,
         words_per_minute: u32,
     ) {
         let ended = self.clone();
@@ -117,20 +102,23 @@ impl SpeechRuntime {
         let awaiting = self.clone();
         let id = entry.id();
         let resumed = entry.clone();
-        let resumed_voice = voice.to_owned();
         let result = self.controller.borrow_mut().start_system(
             generation,
+            entry.worktree(),
             entry.text(),
-            voice,
+            &voices,
             words_per_minute,
             SystemObservers {
-                voices: move || {
-                    awaiting.resume_system(
-                        resumed.clone(),
-                        generation,
-                        resumed_voice.clone(),
-                        words_per_minute,
-                    );
+                voices: {
+                    let voices = voices.clone();
+                    move || {
+                        awaiting.resume_system(
+                            resumed.clone(),
+                            generation,
+                            voices.clone(),
+                            words_per_minute,
+                        );
+                    }
                 },
                 ended: move || ended.defer_finish(id, None),
                 failed: move |issue| {
@@ -160,7 +148,7 @@ impl SpeechRuntime {
         &self,
         entry: SpeechEntry,
         generation: u64,
-        voice: String,
+        voices: Vec<String>,
         words_per_minute: u32,
     ) {
         let runtime = self.clone();
@@ -169,7 +157,7 @@ impl SpeechRuntime {
             if !runtime.is_current(entry.id(), generation) {
                 return;
             }
-            runtime.start_system(entry, generation, &voice, words_per_minute);
+            runtime.start_system(entry, generation, voices, words_per_minute);
         });
     }
 
@@ -190,57 +178,8 @@ impl SpeechRuntime {
             }
             runtime.finish(
                 id,
-                Some(
-                    "this device's browser published no system voices; to speak from the \
-                     resident, set say.backend = \"external\" with the say.command renderer \
-                     in docs/product/interfaces.md (Speech)"
-                        .to_owned(),
-                ),
+                Some("this device's browser published no system voices".to_owned()),
             );
-        });
-    }
-
-    fn start_external(&self, entry: SpeechEntry, generation: u64, content_type: String) {
-        let runtime = self.clone();
-        spawn_local(async move {
-            let rendered =
-                request_external_speech(entry.worktree(), entry.text(), &content_type).await;
-            if !runtime.is_current(entry.id(), generation) {
-                return;
-            }
-            let bytes = match rendered {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    runtime.finish(entry.id(), Some(error));
-                    return;
-                }
-            };
-            let ended = runtime.clone();
-            let failed = runtime.clone();
-            let paused = runtime.clone();
-            let id = entry.id();
-            let playing = runtime.controller.borrow_mut().start_external(
-                generation,
-                &bytes,
-                &content_type,
-                move || ended.defer_finish(id, None),
-                move || {
-                    failed.defer_finish(id, Some("rendered speech playback failed".to_owned()));
-                },
-                move || paused.external_pause(id),
-            );
-            let playing = match playing {
-                Ok(playing) => playing,
-                Err(error) => {
-                    runtime.finish(id, Some(error));
-                    return;
-                }
-            };
-            if let Err(error) = crate::speech::await_play(playing).await
-                && runtime.is_current(id, generation)
-            {
-                runtime.finish(id, Some(error));
-            }
         });
     }
 
@@ -268,19 +207,6 @@ impl SpeechRuntime {
 
     fn is_current(&self, id: u64, generation: u64) -> bool {
         self.queue.borrow().is_active(id) && self.controller.borrow().is_current(generation)
-    }
-
-    fn external_pause(&self, id: u64) {
-        let pause = self.queue.borrow_mut().external_pause(id);
-        match pause {
-            ExternalPause::Ignored => {}
-            ExternalPause::Stopped | ExternalPause::Idle => {
-                self.controller.borrow_mut().stop();
-                self.owner.set(None);
-                self.status.set(SpeechStatus::Idle);
-            }
-            ExternalPause::Start(entry) => self.start(entry),
-        }
     }
 
     fn stop(&self) {

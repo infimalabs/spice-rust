@@ -6,7 +6,6 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,17 +13,14 @@ use std::time::Duration;
 
 use ::axum::Router;
 use ::axum::body::{Body, Bytes};
-use ::axum::extract::DefaultBodyLimit;
-use ::axum::extract::{Json, OriginalUri, RawQuery, State};
+use ::axum::extract::{OriginalUri, RawQuery, State};
 use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
-use ::axum::routing::{get, post};
+use ::axum::routing::get;
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
-use tokio::time::timeout;
+use tokio::sync::{Mutex, Notify, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::Discovery;
@@ -43,11 +39,6 @@ const LOOPBACK_EPHEMERAL: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCA
 const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
 /// One-frame native commands share the socket's existing message ceiling.
 const SOCKET_MESSAGE_BYTES: usize = 64 * 1_024 * 1_024;
-const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
-const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
-const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
-const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
-const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
 const INLINE_THEME_OPEN: &str = "<script data-app-theme>";
 const INLINE_MODULE_OPEN: &str = "<script type=\"module\">";
 const INLINE_MODULE_CLOSE: &str = "</script>";
@@ -258,29 +249,6 @@ impl fmt::Display for OpeningError {
 
 impl Error for OpeningError {}
 
-#[derive(Clone)]
-struct SpeechResolver(
-    Arc<dyn Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static>,
-);
-
-impl SpeechResolver {
-    fn new(
-        resolve: impl Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static,
-    ) -> Self {
-        Self(Arc::new(resolve))
-    }
-
-    fn resolve(&self, worktree: &str) -> Result<crate::SpeechConfig, String> {
-        (self.0)(worktree)
-    }
-}
-
-impl fmt::Debug for SpeechResolver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SpeechResolver")
-    }
-}
-
 #[derive(Debug)]
 struct SurfaceState {
     authority: Authority,
@@ -290,9 +258,7 @@ struct SurfaceState {
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    speech: SpeechResolver,
     operator: wire::OperatorIdentity,
-    speech_slot: Semaphore,
     history: history::HistoryLimits,
     admission: Mutex<Admission>,
     admission_changed: watch::Sender<Admission>,
@@ -640,14 +606,13 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-/// Identity, capabilities, app, speech resolver, and operator presentation for one server generation.
+/// Identity, capabilities, app, and operator presentation for one server generation.
 #[derive(Debug)]
 pub struct Generation {
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    speech: SpeechResolver,
     operator: wire::OperatorIdentity,
 }
 
@@ -659,27 +624,14 @@ impl Generation {
         capabilities: Capabilities,
         version: wire::Version,
         app: crate::AppSource,
-        speech: crate::SpeechConfig,
     ) -> Self {
-        let fallback = speech.clone();
         Self {
             epoch,
             capabilities,
             version,
             app,
-            speech: SpeechResolver::new(move |_| Ok(fallback.clone())),
             operator: wire::OperatorIdentity::default(),
         }
-    }
-
-    /// Resolve executable speech configuration from each request's admitted worktree.
-    #[must_use]
-    pub fn with_speech_resolver(
-        mut self,
-        resolve: impl Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static,
-    ) -> Self {
-        self.speech = SpeechResolver::new(resolve);
-        self
     }
 
     /// Publish the effective operator identity through every bootstrap of this generation.
@@ -754,7 +706,6 @@ impl Server {
             capabilities,
             version,
             app,
-            speech,
             operator,
         } = generation;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
@@ -791,9 +742,7 @@ impl Server {
                     capabilities,
                     version,
                     app,
-                    speech,
                     operator,
-                    speech_slot: Semaphore::new(1),
                     history: history::HistoryLimits::new(),
                     admission: Mutex::new(Admission::Open),
                     admission_changed,
@@ -855,8 +804,6 @@ impl Server {
         let router = Router::new()
             .route("/socket", get(socket))
             .route("/bootstrap", get(bootstrap))
-            .route("/speech", post(speech))
-            .layer(DefaultBodyLimit::max(SPEECH_REQUEST_BYTES))
             .fallback(app)
             .with_state(state);
         let connections = closing.connections.clone();
@@ -961,171 +908,6 @@ fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
 
 mod bootstrap;
 use bootstrap::bootstrap;
-
-async fn speech(
-    State(state): State<Arc<SurfaceState>>,
-    RawQuery(query): RawQuery,
-    headers: HeaderMap,
-    Json(request): Json<wire::SpeechRequest>,
-) -> Response {
-    if !state.access.admits_token(query.as_deref()) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if admit_headers(&state, &headers, true).is_err() {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if request.text.is_empty() || request.text.len() > SPEECH_TEXT_BYTES {
-        return speech_error(
-            StatusCode::BAD_REQUEST,
-            "speech text must be nonempty and at most 32768 bytes",
-        );
-    }
-    let speech = match state.speech.resolve(&request.worktree) {
-        Ok(speech) => speech,
-        Err(error) => {
-            return speech_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("speech configuration is unavailable: {error}"),
-            );
-        }
-    };
-    if speech.backend() != crate::SpeechBackend::External || speech.command().is_none() {
-        return speech_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "external speech backend is unavailable",
-        );
-    }
-    let Ok(_permit) = state.speech_slot.try_acquire() else {
-        return speech_error(StatusCode::TOO_MANY_REQUESTS, "speech renderer is busy");
-    };
-    let bytes = match render_external_speech(&speech, request.text.as_bytes()).await {
-        Ok(bytes) => bytes,
-        Err(error) => return speech_error(error.status(), error.message()),
-    };
-    let Ok(content_type) = HeaderValue::from_str(speech.content_type()) else {
-        return speech_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "speech media type became unavailable",
-        );
-    };
-    let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(CONTENT_TYPE, content_type);
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    install_browser_headers(&mut response);
-    response
-}
-
-async fn render_external_speech(
-    speech: &crate::SpeechConfig,
-    text: &[u8],
-) -> Result<Vec<u8>, SpeechRenderError> {
-    let argv = speech
-        .resolved_command()
-        .ok_or(SpeechRenderError::Unavailable)?;
-    let mut command = tokio::process::Command::new(&argv[0]);
-    command
-        .args(&argv[1..])
-        .env(crate::speech::VOICE_ENVIRONMENT, speech.voice())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .map_err(|_| SpeechRenderError::Unavailable)?;
-    let mut stdin = child.stdin.take().ok_or(SpeechRenderError::Io)?;
-    let stdout = child.stdout.take().ok_or(SpeechRenderError::Io)?;
-    let stderr = child.stderr.take().ok_or(SpeechRenderError::Io)?;
-    let rendered = timeout(SPEECH_RUNTIME, async {
-        let write = async {
-            stdin.write_all(text).await?;
-            stdin.shutdown().await?;
-            drop(stdin);
-            Ok::<_, std::io::Error>(())
-        };
-        let read_audio = async {
-            let mut bytes = Vec::new();
-            stdout
-                .take(SPEECH_AUDIO_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .await?;
-            Ok::<_, std::io::Error>(bytes)
-        };
-        let read_diagnostic = async {
-            let mut bytes = Vec::new();
-            stderr
-                .take(SPEECH_DIAGNOSTIC_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .await?;
-            Ok::<_, std::io::Error>(bytes)
-        };
-        let ((), audio, _diagnostic, status) =
-            tokio::try_join!(write, read_audio, read_diagnostic, child.wait())?;
-        Ok::<_, std::io::Error>((audio, status))
-    })
-    .await;
-    let (audio, status) = match rendered {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(_)) => return Err(SpeechRenderError::Io),
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            return Err(SpeechRenderError::TimedOut);
-        }
-    };
-    if !status.success() {
-        return Err(SpeechRenderError::Failed);
-    }
-    if audio.is_empty() {
-        return Err(SpeechRenderError::Empty);
-    }
-    if u64::try_from(audio.len()).is_err() || audio.len() as u64 > SPEECH_AUDIO_BYTES {
-        return Err(SpeechRenderError::TooLarge);
-    }
-    Ok(audio)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SpeechRenderError {
-    Unavailable,
-    TimedOut,
-    Failed,
-    Empty,
-    TooLarge,
-    Io,
-}
-
-impl SpeechRenderError {
-    const fn status(self) -> StatusCode {
-        match self {
-            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-            Self::TimedOut => StatusCode::GATEWAY_TIMEOUT,
-            Self::Failed | Self::Empty | Self::TooLarge | Self::Io => StatusCode::BAD_GATEWAY,
-        }
-    }
-
-    const fn message(self) -> &'static str {
-        match self {
-            Self::Unavailable => "external speech backend is unavailable",
-            Self::TimedOut => "external speech backend timed out",
-            Self::Failed => "external speech backend failed",
-            Self::Empty => "external speech backend produced no audio",
-            Self::TooLarge => "external speech backend exceeded the audio limit",
-            Self::Io => "external speech backend I/O failed",
-        }
-    }
-}
-
-fn speech_error(status: StatusCode, message: impl Into<String>) -> Response {
-    let mut response = (status, message.into()).into_response();
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    install_browser_headers(&mut response);
-    response
-}
 
 fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
     let html = std::str::from_utf8(html).map_err(|_| "app unavailable: app.html was not UTF-8")?;

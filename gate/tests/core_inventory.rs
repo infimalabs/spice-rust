@@ -56,7 +56,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     let repository = git_repository("core-acquire-config-key-layer");
     repository.write(
         "spice-rust.toml",
-        &policy_document("[say]\ncommand = ['/usr/bin/say']\n"),
+        &policy_document("[proof]\nrunner = '/usr/bin/runner'\n"),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "pub fn app() {}\n");
@@ -68,7 +68,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
         CoreFinding::new(
             "forbidden-layer",
             None::<String>,
-            "tracked layer key say.command is packaged for the local layer, not tracked",
+            "tracked layer key proof.runner is packaged for the local layer, not tracked",
         )
         .expect("layer-policy evidence"),
     ]);
@@ -685,9 +685,9 @@ fn untracked_trust_repository(label: &str) -> Tree {
             "        class: Policy,\n",
             "        flag: None,\n",
             "    }\n",
-            "    fixed \"say.command\" {\n",
-            "        kind: StringList,\n",
-            "        builtin: Some(Builtin::Strings(&[])),\n",
+            "    fixed \"proof.runner\" {\n",
+            "        kind: String,\n",
+            "        builtin: Some(Builtin::Absent),\n",
             "        layers: LOCAL,\n",
             "        class: MachineLocal,\n",
             "        flag: None,\n",

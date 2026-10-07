@@ -95,7 +95,7 @@ pub use head::{
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
-    OperatorIdentity, Rejected, SpeechPlayback, SpeechRequest,
+    OperatorIdentity, Rejected, SpeechPlayback,
 };
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use media::{AgentMediaReference, Media, MediaError};

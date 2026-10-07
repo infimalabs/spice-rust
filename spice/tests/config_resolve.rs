@@ -81,16 +81,19 @@ fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority
 }
 
 #[test]
-fn worktree_voice_overrides_the_shared_tracked_voice() {
+fn worktree_voices_override_the_shared_tracked_voices() {
     let resolved = resolve(worktree_documents(
-        Some("[say]\nvoice = 'Zoe (Premium)'\n"),
-        Some("[say]\nvoice = 'Samantha'\n"),
+        Some("[say]\nvoices = ['Zoe (Premium)']\n"),
+        Some("[say]\nvoices = ['Samantha', 'English (United States)']\n"),
         None,
     ))
-    .expect("worktree voice resolves");
+    .expect("worktree voices resolve");
 
-    assert_eq!(resolved.root().say().voice(), "Samantha");
-    assert_eq!(path_source(&resolved, "say.voice"), ConfigSource::Worktree);
+    assert_eq!(
+        resolved.root().say().voices(),
+        ["Samantha", "English (United States)"]
+    );
+    assert_eq!(path_source(&resolved, "say.voices"), ConfigSource::Worktree);
 }
 
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
@@ -130,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 54);
+    assert_eq!(missing.provenance().len(), 52);
     assert!(
         missing
             .provenance()
@@ -198,66 +201,30 @@ fn disabling_builtins_without_a_command_refuses_at_the_authored_field() {
 }
 
 #[test]
-fn speech_backends_resolve_with_local_only_external_argv() {
+fn speech_resolves_from_tracked_settings_with_device_default_voice() {
     let disabled = resolve(documents(Some("[say]\nbackend = 'disabled'\n"), None))
         .expect("tracked disabled speech resolves");
     assert_eq!(
         disabled.root().say().backend(),
         serve::SpeechBackend::Disabled
     );
-    assert!(disabled.root().say().command().is_none());
     assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Tracked);
 
-    let system = resolve(documents(
-        Some("[say]\nvoice = 'Samantha'\nwords_per_minute = 205\n"),
-        None,
-    ))
-    .expect("tracked system speech resolves");
-    assert_eq!(system.root().say().voice(), "Samantha");
-    assert_eq!(system.root().say().words_per_minute(), 205);
+    let unset = resolve(documents(None, None)).expect("unset speech resolves");
+    assert_eq!(unset.root().say().backend(), serve::SpeechBackend::System);
+    assert!(unset.root().say().voices().is_empty());
 
-    let external = resolve(documents(
-        Some("[say]\nbackend = 'external'\n"),
-        Some(concat!(
-            "[say]\n",
-            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}']\n",
-            "content_type = 'audio/wav'\n",
-        )),
-    ))
-    .expect("tracked selection and local command resolve together");
-    assert_eq!(
-        external
-            .root()
-            .say()
-            .resolved_command()
-            .expect("external argv"),
-        ["espeak-ng", "--stdout", "-s", "175"]
-    );
-    assert_eq!(path_source(&external, "say.command"), ConfigSource::Local);
+    let system = resolve(documents(Some("[say]\nwords_per_minute = 205\n"), None))
+        .expect("tracked system speech resolves");
+    assert_eq!(system.root().say().words_per_minute(), 205);
 }
 
 #[test]
-fn speech_configuration_refuses_untrusted_or_malformed_execution() {
-    let tracked_command = resolve(documents(
-        Some("[say]\nbackend = 'external'\ncommand = ['espeak-ng']\n"),
-        None,
-    ))
-    .expect_err("tracked documents cannot install executable argv");
-    assert!(tracked_command.issues().iter().any(|issue| {
-        issue
-            .path()
-            .is_some_and(|path| path.to_string() == "say.command")
-            && issue.source() == ConfigSource::Tracked
-            && issue.kind() == IssueKind::Policy
-    }));
-
+fn speech_configuration_refuses_retired_or_malformed_settings() {
     for (document, path) in [
         ("[say]\nbackend = 'mystery'\n", "say.backend"),
-        ("[say]\nvoice = ''\n", "say.voice"),
-        (
-            "[say]\ncontent_type = 'audio/wav; charset=utf-8'\n",
-            "say.content_type",
-        ),
+        ("[say]\nbackend = 'external'\n", "say.backend"),
+        ("[say]\nvoices = ['Zoe', '']\n", "say.voices"),
         ("[say]\nwords_per_minute = 0\n", "say.words_per_minute"),
     ] {
         let error = resolve(documents(Some(document), None))
@@ -809,9 +776,8 @@ path = "locks/single.lock"
 rows = 50
 
 [say]
-backend = "external"
-voice = "Samantha"
-content_type = "audio/wav"
+backend = "disabled"
+voices = ["Samantha"]
 words_per_minute = 190
 
 [proof]
@@ -821,10 +787,7 @@ image = "sha256:4444444444444444444444444444444444444444444444444444444444444444
 #[test]
 fn tracked_document_can_address_every_registry_descriptor() {
     let local = format!(
-        concat!(
-            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
-            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
-        ),
+        "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
         absolute("container"),
         absolute("runner")
     );
@@ -836,10 +799,7 @@ fn tracked_document_can_address_every_registry_descriptor() {
 
     for row in resolved.provenance() {
         let path = row.path().to_string();
-        let expected = if matches!(
-            path.as_str(),
-            "say.command" | "proof.container" | "proof.runner"
-        ) {
+        let expected = if matches!(path.as_str(), "proof.container" | "proof.runner") {
             ConfigSource::Local
         } else {
             ConfigSource::Tracked
