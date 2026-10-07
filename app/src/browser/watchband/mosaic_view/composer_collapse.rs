@@ -321,9 +321,10 @@ fn sync_metrics(
             state.offset.min(maximum)
         }
     };
-    set_collapse(surface, scroller, state, requested);
-    // A resize changes the rest even when a fully revealed offset stays zero.
-    state.borrow_mut().place_rest();
+    if !set_collapse(surface, scroller, state, requested) {
+        // A resize changes the rest even when a fully revealed offset stays zero.
+        state.borrow_mut().place_rest();
+    }
 }
 
 /// Settle the offset. The absolute rest re-anchors only while exposure changes;
@@ -334,12 +335,15 @@ fn set_collapse(
     scroller: &HtmlElement,
     state: &SharedCollapse,
     requested: f64,
-) {
+) -> bool {
     let changed = update_collapse(state, requested);
     let uninitialized = !surface.has_attribute("data-composer-collapse");
     if changed || uninitialized {
         paint_collapse(surface, scroller, state);
         state.borrow_mut().place_rest();
+        true
+    } else {
+        false
     }
 }
 
