@@ -223,14 +223,18 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             </div>
             {controls}
             <p class="work-map-context">{render.state.lens.context()}</p>
-            if render.selection.tasks().len() > enrichment_roots && enrichment_roots > 0 {
-                <p class="work-map-bounds" role="status">
-                    {format!(
+            // The coverage slot stands whether or not the bound applies, so a
+            // board change crossing it never inserts a line above the graph.
+            <p class="work-map-bounds" role="status">
+                {if render.selection.tasks().len() > enrichment_roots && enrichment_roots > 0 {
+                    format!(
                         "Typed enrichment covers {enrichment_roots} of {} selected roots per request; every selected root remains in this graph.",
                         render.selection.tasks().len(),
-                    )}
-                </p>
-            }
+                    )
+                } else {
+                    "\u{a0}".to_owned()
+                }}
+            </p>
             <crate::browser::toast::Notice text={enrichment_problem(can_read, relations)} />
             if render.selection.is_empty() {
                 <div class="work-map-empty" role="status">
@@ -247,8 +251,14 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     matches!(relations, Some(TaskRelationsState::Unavailable { .. }))
                         .then(|| render.retry.clone()),
                 )}
-                {render_relationship_list(&presentation, render.work, render.selection, render.state.lens, &activate_task)}
-                {render_truncation(answer.and_then(|answer| answer.truncation.as_ref()), render.state)}
+                {render_relationship_list(
+                    &presentation,
+                    render.work,
+                    render.selection,
+                    render.state.lens,
+                    &activate_task,
+                    render_truncation(answer.and_then(|answer| answer.truncation.as_ref()), render.state),
+                )}
             } else {
                 <div class="work-map-problem" role="alert">
                     <h4>{"Relationship graph unavailable"}</h4>
@@ -281,7 +291,7 @@ fn enrichment_problem(can_read: bool, relations: Option<&TaskRelationsState>) ->
     )
 }
 
-/// Draw the graph. A first enrichment read holds the frame's ceiling until it
+/// Draw the graph inside its fixed frame, busy until the first enrichment read
 /// answers. Unavailable enrichment is absent content, so its Retry rests inside
 /// the graph's own reserved viewport rather than in flow.
 fn render_graph(
@@ -497,6 +507,7 @@ fn render_relationship_list(
     selection: &TaskOverviewSelection,
     active_lens: WorkMapLens,
     activate: &Callback<TaskStamp>,
+    truncation: Html,
 ) -> Html {
     let (title, note) = match active_lens {
         WorkMapLens::Dependency => (
@@ -516,48 +527,54 @@ fn render_relationship_list(
             "Durable lifecycle facts remain in source order",
         ),
     };
+    let rows = presentation
+        .nodes
+        .iter()
+        .map(|node| {
+            if let Some(task) = &node.task {
+                let activate = {
+                    let activate = activate.clone();
+                    let task = task.clone();
+                    Callback::from(move |_| activate.emit(task.clone()))
+                };
+                let tone = task_tone(work, task);
+                html! {
+                    <button
+                        key={node.id.clone()}
+                        type="button"
+                        class="work-map-task"
+                        data-task-stamp={task.to_string()}
+                        data-task-selected={selection.tasks().contains(task).to_string()}
+                        data-work-availability={tone.map(|tone| tone.availability)}
+                        data-work-disposition={tone.and_then(|tone| tone.disposition)}
+                        data-work-state={tone.map(|tone| tone.label)}
+                        onclick={activate}
+                    >
+                        <span>{node.kind}</span>
+                        <strong>{node.label.clone()}</strong>
+                        <small>{node.detail.clone()}</small>
+                    </button>
+                }
+            } else {
+                html! {
+                    <article key={node.id.clone()} class="work-map-fact">
+                        <span>{node.kind}</span>
+                        <strong>{node.label.clone()}</strong>
+                        <small>{node.detail.clone()}</small>
+                    </article>
+                }
+            }
+        })
+        .collect::<Html>();
     html! {
         <section class="work-map-list" aria-labelledby="work-map-list-title">
             <div class="work-map-heading">
                 <h3 id="work-map-list-title">{title}</h3>
                 <span>{note}</span>
             </div>
-            <div class="work-map-task-list">
-                {for presentation.nodes.iter().map(|node| {
-                    if let Some(task) = &node.task {
-                        let activate = {
-                            let activate = activate.clone();
-                            let task = task.clone();
-                            Callback::from(move |_| activate.emit(task.clone()))
-                        };
-                        let tone = task_tone(work, task);
-                        html! {
-                            <button
-                                key={node.id.clone()}
-                                type="button"
-                                class="work-map-task"
-                                data-task-stamp={task.to_string()}
-                                data-task-selected={selection.tasks().contains(task).to_string()}
-                                data-work-availability={tone.map(|tone| tone.availability)}
-                                data-work-disposition={tone.and_then(|tone| tone.disposition)}
-                                data-work-state={tone.map(|tone| tone.label)}
-                                onclick={activate}
-                            >
-                                <span>{node.kind}</span>
-                                <strong>{node.label.clone()}</strong>
-                                <small>{node.detail.clone()}</small>
-                            </button>
-                        }
-                    } else {
-                        html! {
-                            <article key={node.id.clone()} class="work-map-fact">
-                                <span>{node.kind}</span>
-                                <strong>{node.label.clone()}</strong>
-                                <small>{node.detail.clone()}</small>
-                            </article>
-                        }
-                    }
-                })}
+            <div class="work-map-list-scroll" tabindex="0" role="region" aria-labelledby="work-map-list-title">
+                <div class="work-map-task-list">{rows}</div>
+                {truncation}
             </div>
         </section>
     }
