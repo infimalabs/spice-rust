@@ -250,10 +250,13 @@ never performs this materialization.
 At request time, the `next` authority projection visits exactly the \(V\) live
 heads and performs one constant-time compact hash lookup for each of their
 \(E\) dependency edges, for \(O(V + E)\) projection work. Exact current
-ranking computes distinct downstream reachability for each candidate and has
-the separate worst-case bound \(R(V,E)=O(V(V+E))\). Selecting and returning the
-already-ranked head is \(O(1)\), and the wire result contains at most one task
-head bundle from the same snapshot barrier. Terminal completion replay probes
+ranking resolves stamps once, then uses dense integer adjacency for fixed-point
+priority propagation and each root's distinct downstream traversal; its
+worst-case bound is \(R(V,E)=O(V(V+E))\). The selection carries its frontier
+index, so accessing the selected head is \(O(1)\). Constructing and serializing
+that head is the unavoidable \(O(P)\) work for its statement, workflow, claim,
+and lease payload size \(P\); the wire result contains at most one such bundle
+from the same snapshot barrier. Terminal completion replay probes
 at most one immutable hash table per binary index level, \(O(\log T)\);
 unrelated commits share the index in \(O(1)\) instead of copying or scanning
 the \(T\) retained terminal entries. All request-time bounds are independent

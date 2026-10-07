@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use wire::{Actor, ClaimCell, ClaimDisposition, TaskStamp, TeamSubscription};
 
@@ -9,6 +9,7 @@ use crate::urgency::{Urgency, declared_priority};
 #[derive(Clone, Copy, Debug)]
 pub struct Selection<'a> {
     entry: &'a Entry,
+    entry_index: usize,
     urgency: Urgency,
     effective_priority: i64,
     downstream_weight: usize,
@@ -22,6 +23,12 @@ impl<'a> Selection<'a> {
     #[must_use]
     pub const fn entry(self) -> &'a Entry {
         self.entry
+    }
+
+    /// Position of the selected entry in the supplied frontier.
+    #[must_use]
+    pub const fn entry_index(self) -> usize {
+        self.entry_index
     }
 
     /// Scalar that ranked the selection.
@@ -135,22 +142,22 @@ fn candidates<'a>(
     environment: &wire::Environment,
     completed: &BTreeSet<TaskStamp>,
 ) -> Vec<Selection<'a>> {
-    let priorities = effective_priorities(entries);
-    let downstream = downstream_weights(entries);
+    let graph = RankingGraph::new(entries);
+    let priorities = effective_priorities(entries, &graph);
+    let downstream = downstream_weights(&graph);
     entries
         .iter()
-        .filter(|entry| selectable(entry, actor, subscription, completed))
-        .filter(|entry| environment_satisfied(entry, environment))
-        .map(|entry| {
-            let effective_priority = priorities
-                .get(entry.born())
-                .copied()
-                .unwrap_or_else(|| declared_priority(entry));
+        .enumerate()
+        .filter(|(_, entry)| selectable(entry, actor, subscription, completed))
+        .filter(|(_, entry)| environment_satisfied(entry, environment))
+        .map(|(entry_index, entry)| {
+            let node = graph.entry_nodes[entry_index];
             Selection {
                 entry,
+                entry_index,
                 urgency: Urgency::from_heads(entry),
-                effective_priority,
-                downstream_weight: downstream.get(entry.born()).copied().unwrap_or(0),
+                effective_priority: priorities[node],
+                downstream_weight: downstream[node],
                 last_resort: is_self_review(entry, actor) || is_released_by(entry, actor),
                 peer_occupied: peer_occupies(entries, entry, actor),
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
@@ -269,37 +276,83 @@ pub fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
         })
 }
 
-/// Effective priority for every entry after unsettled public dependents flow upstream.
+/// Dense live-graph indexes used by every repeated ranking traversal.
+///
+/// Stamp resolution and adjacency construction happen once. Traversals use
+/// integer positions only, so no ordered lookup sits inside a fixed-point or
+/// per-root graph walk.
+struct RankingGraph {
+    entry_nodes: Vec<usize>,
+    priority_edges: Vec<(usize, usize)>,
+    dependents: Vec<Vec<usize>>,
+}
+
+impl RankingGraph {
+    fn new(entries: &[Entry]) -> Self {
+        let mut by_stamp = (0..entries.len()).collect::<Vec<_>>();
+        by_stamp.sort_unstable_by(|left, right| {
+            entries[*left]
+                .born()
+                .cmp(entries[*right].born())
+                .then_with(|| left.cmp(right))
+        });
+        let mut entry_nodes = vec![0; entries.len()];
+        let mut nodes = 0;
+        for (position, entry_index) in by_stamp.iter().copied().enumerate() {
+            if position == 0
+                || entries[by_stamp[position - 1]].born() != entries[entry_index].born()
+            {
+                nodes += 1;
+            }
+            entry_nodes[entry_index] = nodes - 1;
+        }
+
+        let mut priority_edges = Vec::new();
+        let mut dependents = vec![Vec::new(); nodes];
+        for (entry_index, entry) in entries.iter().enumerate() {
+            if !unsettled_public(entry) {
+                continue;
+            }
+            let dependent = entry_nodes[entry_index];
+            for prerequisite in &entry.statement().dependencies {
+                let Ok(position) = by_stamp
+                    .binary_search_by(|candidate| entries[*candidate].born().cmp(prerequisite))
+                else {
+                    continue;
+                };
+                let prerequisite = entry_nodes[by_stamp[position]];
+                priority_edges.push((dependent, prerequisite));
+                dependents[prerequisite].push(dependent);
+            }
+        }
+        Self {
+            entry_nodes,
+            priority_edges,
+            dependents,
+        }
+    }
+}
+
+/// Effective priority for every task after unsettled public dependents flow upstream.
 ///
 /// Propagation walks dependency edges from dependent to prerequisite until a
-/// fixed point. Scores only rise through a finite priority set, so even a
-/// malformed cyclic graph terminates. `max` is commutative, which keeps the
-/// result independent of the supplied slice order.
-fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskStamp, i64> {
-    let mut priorities: BTreeMap<TaskStamp, i64> = BTreeMap::new();
-    for entry in entries {
-        let declared = declared_priority(entry);
-        priorities
-            .entry(entry.born().clone())
-            .and_modify(|current| *current = (*current).max(declared))
-            .or_insert(declared);
+/// fixed point. Scores only rise through paths among the finite live vertices,
+/// so at most \(V\) edge passes are required even for a malformed cyclic graph.
+/// `max` is commutative, which keeps the result independent of slice order.
+fn effective_priorities(entries: &[Entry], graph: &RankingGraph) -> Vec<i64> {
+    let mut priorities = vec![i64::MIN; graph.dependents.len()];
+    for (entry_index, entry) in entries.iter().enumerate() {
+        let priority = &mut priorities[graph.entry_nodes[entry_index]];
+        *priority = (*priority).max(declared_priority(entry));
     }
 
     loop {
         let mut changed = false;
-        for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
-            let inherited = priorities
-                .get(dependent.born())
-                .copied()
-                .unwrap_or_else(|| declared_priority(dependent));
-            for prerequisite in &dependent.statement().dependencies {
-                let Some(priority) = priorities.get_mut(prerequisite) else {
-                    continue;
-                };
-                if inherited > *priority {
-                    *priority = inherited;
-                    changed = true;
-                }
+        for &(dependent, prerequisite) in &graph.priority_edges {
+            let inherited = priorities[dependent];
+            if inherited > priorities[prerequisite] {
+                priorities[prerequisite] = inherited;
+                changed = true;
             }
         }
         if !changed {
@@ -308,46 +361,28 @@ fn effective_priorities(entries: &[Entry]) -> BTreeMap<TaskStamp, i64> {
     }
 }
 
-/// Count distinct unsettled public dependents reachable from every entry.
+/// Count distinct unsettled public dependents reachable from every live task.
 ///
-/// The reverse graph is derived entirely from the supplied heads. Filtering an
-/// edge at its dependent means a settled or hidden row ends that branch: work
-/// the allocator cannot release neither contributes weight nor acts as a bridge
-/// to public work beyond it. A per-root visited set both counts converging paths
-/// once and makes malformed cycles finite.
-fn downstream_weights(entries: &[Entry]) -> BTreeMap<TaskStamp, usize> {
-    let mut dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>> = BTreeMap::new();
-    for dependent in entries.iter().filter(|entry| unsettled_public(entry)) {
-        for prerequisite in &dependent.statement().dependencies {
-            dependents
-                .entry(prerequisite.clone())
-                .or_default()
-                .insert(dependent.born().clone());
+/// Reused dense visited and pending storage makes each root walk \(O(V+E)\).
+/// A visited bit both counts converging paths once and makes malformed cycles
+/// finite.
+fn downstream_weights(graph: &RankingGraph) -> Vec<usize> {
+    let mut weights = vec![0; graph.dependents.len()];
+    let mut visited = vec![false; graph.dependents.len()];
+    let mut pending = Vec::with_capacity(graph.dependents.len());
+    for (root, weight) in weights.iter_mut().enumerate() {
+        visited.fill(false);
+        pending.clear();
+        pending.extend(graph.dependents[root].iter().copied());
+        while let Some(dependent) = pending.pop() {
+            if dependent == root || std::mem::replace(&mut visited[dependent], true) {
+                continue;
+            }
+            *weight += 1;
+            pending.extend(graph.dependents[dependent].iter().copied());
         }
     }
-
-    entries
-        .iter()
-        .map(|entry| {
-            let root = entry.born();
-            let mut downstream = BTreeSet::new();
-            let mut pending = dependents
-                .get(root)
-                .into_iter()
-                .flatten()
-                .cloned()
-                .collect::<Vec<_>>();
-            while let Some(dependent) = pending.pop() {
-                if &dependent == root || !downstream.insert(dependent.clone()) {
-                    continue;
-                }
-                if let Some(transitive) = dependents.get(&dependent) {
-                    pending.extend(transitive.iter().cloned());
-                }
-            }
-            (root.clone(), downstream.len())
-        })
-        .collect()
+    weights
 }
 
 fn unsettled_public(entry: &Entry) -> bool {
