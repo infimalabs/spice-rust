@@ -7,9 +7,12 @@
 //! only moves the composer's rest, its place in the content, and only where the
 //! move cannot be seen: while the composer is fully revealed the rest follows
 //! the top edge, so scrolling on moves it at once, and while it is fully hidden
-//! the rest follows one composer height above, so scrolling back reveals it at
-//! once. Mosaic's own anchor correction, which keeps cards visually still,
-//! moves the rest with it so the composer stays still too.
+//! the rest follows one composer height and its painted continuation above, so
+//! scrolling back reveals it at once. The continuation is the frost CSS paints
+//! below the box; it counts as composer, so full collapse is never declared nor
+//! the rest moved while any of it is on screen. Mosaic's own anchor correction,
+//! which keeps cards visually still, moves the rest with it so the composer
+//! stays still too.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -25,7 +28,10 @@ const REST_EPSILON_PX: f64 = 0.001;
 
 struct CollapseState {
     offset: f64,
+    /// The composer's own height: the plane's spacer and the exposed extent.
     maximum: f64,
+    /// How far the composer's paint continues below its box.
+    overhang: f64,
     /// The plane scroll position the offset last followed.
     scroll_top: f64,
     /// `scrollTop` read through JavaScript keeps subpixel positions that the
@@ -47,12 +53,18 @@ impl CollapseState {
         Self {
             offset: 0.0,
             maximum: 0.0,
+            overhang: 0.0,
             scroll_top: 0.0,
             scroll_top_key: JsValue::from_str("scrollTop"),
             slot: None,
             rest: None,
             focused: false,
         }
+    }
+
+    /// The full collapse distance: the box and its painted continuation.
+    fn travel(&self) -> f64 {
+        self.maximum + self.overhang
     }
 
     fn plane_scroll_top(&self, scroller: &Element) -> f64 {
@@ -208,7 +220,7 @@ impl Registration {
             let requested = match event.key().as_str() {
                 _ if in_composer => return,
                 "Home" => 0.0,
-                "End" => key_state.borrow().maximum,
+                "End" => key_state.borrow().travel(),
                 _ => return,
             };
             set_collapse(&key_surface, &key_scroller, &key_state, requested);
@@ -288,7 +300,7 @@ fn follow_scroll(surface: &HtmlElement, scroller: &HtmlElement, state: &SharedCo
         let top = state.plane_scroll_top(scroller);
         let scrolled = top - state.scroll_top;
         state.scroll_top = top;
-        crate::mosaic::composer_collapse_offset(state.offset, state.maximum, scrolled, top)
+        crate::mosaic::composer_collapse_offset(state.offset, state.travel(), scrolled, top)
     };
     set_collapse(surface, scroller, state, requested);
 }
@@ -306,6 +318,7 @@ fn sync_metrics(
         return;
     }
     let maximum = f64::from(composer.offset_height());
+    let overhang = painted_overhang(composer);
     surface
         .style()
         .set_property("--team-composer-block", &format!("{maximum}px"))
@@ -313,18 +326,29 @@ fn sync_metrics(
     let requested = {
         let mut state = state.borrow_mut();
         let was_fully_collapsed = state.maximum > COLLAPSE_EPSILON_PX
-            && state.offset >= state.maximum - COLLAPSE_EPSILON_PX;
+            && state.offset >= state.travel() - COLLAPSE_EPSILON_PX;
         state.maximum = maximum;
+        state.overhang = overhang;
         if was_fully_collapsed {
-            maximum
+            state.travel()
         } else {
-            state.offset.min(maximum)
+            state.offset.min(state.travel())
         }
     };
     if !set_collapse(surface, scroller, state, requested) {
         // A resize changes the rest even when a fully revealed offset stays zero.
         state.borrow_mut().place_rest();
     }
+}
+
+/// The depth CSS declares for the composer's continuation below its box.
+fn painted_overhang(composer: &HtmlElement) -> f64 {
+    web_sys::window()
+        .and_then(|window| window.get_computed_style(composer).ok().flatten())
+        .and_then(|style| style.get_property_value("--team-composer-overhang").ok())
+        .and_then(|value| value.trim().strip_suffix("px")?.parse::<f64>().ok())
+        .filter(|depth| depth.is_finite() && *depth >= 0.0)
+        .unwrap_or(0.0)
 }
 
 /// Settle the offset. The absolute rest re-anchors only while exposure changes;
@@ -349,7 +373,7 @@ fn set_collapse(
 
 fn update_collapse(state: &SharedCollapse, requested: f64) -> bool {
     let mut state = state.borrow_mut();
-    let next = requested.clamp(0.0, state.maximum);
+    let next = requested.clamp(0.0, state.travel());
     if (next - state.offset).abs() <= f64::EPSILON {
         return false;
     }
@@ -375,19 +399,19 @@ fn paint_padding(scroller: &HtmlElement, state: &SharedCollapse) {
 
 fn paint_collapse(surface: &HtmlElement, scroller: &HtmlElement, state: &SharedCollapse) {
     paint_padding(scroller, state);
-    let (offset, maximum) = {
+    let (offset, maximum, travel) = {
         let state = state.borrow();
-        (state.offset, state.maximum)
+        (state.offset, state.maximum, state.travel())
     };
     surface
         .set_attribute("data-composer-collapse", &offset.to_string())
         .expect("the composer collapse diagnostic attribute is valid");
-    let fully_collapsed =
-        if maximum > COLLAPSE_EPSILON_PX && offset >= maximum - COLLAPSE_EPSILON_PX {
-            "true"
-        } else {
-            "false"
-        };
+    let fully_collapsed = if maximum > COLLAPSE_EPSILON_PX && offset >= travel - COLLAPSE_EPSILON_PX
+    {
+        "true"
+    } else {
+        "false"
+    };
     if surface
         .get_attribute("data-composer-fully-collapsed")
         .as_deref()

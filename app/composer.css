@@ -381,7 +381,10 @@
   display: flex; flex-direction: column; justify-content: flex-end;
   pointer-events: none;
 }
+/* The overhang is the paint's continuation below the box. Rust reads it, so
+   full collapse waits until the continuation has also left the plane. */
 .team-compose .team-composer {
+  --team-composer-overhang: 10px;
   position: sticky; bottom: 100%;
   isolation: isolate;
   flex: none; pointer-events: auto;
@@ -392,7 +395,7 @@
 .team-compose .team-composer::after {
   position: absolute;
   z-index: -1;
-  inset: 0 0 -10px;
+  inset: 0 0 calc(-1 * var(--team-composer-overhang));
   background:
     linear-gradient(
       to bottom,
@@ -403,10 +406,12 @@
     ),
     var(--overlay-veil);
   backdrop-filter: var(--overlay-frost);
-  -webkit-mask-image:
-    linear-gradient(to bottom, #000 0 calc(100% - 10px), transparent 100%);
-  mask-image:
-    linear-gradient(to bottom, #000 0 calc(100% - 10px), transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to bottom, #000 0 calc(100% - var(--team-composer-overhang)), transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom, #000 0 calc(100% - var(--team-composer-overhang)), transparent 100%
+  );
   content: "";
   pointer-events: none;
 }
@@ -416,10 +421,10 @@
 .team-composer .team-composer-controls::before {
   position: absolute;
   z-index: 0;
-  inset: 0 0 -10px;
+  inset: 0 0 calc(-1 * var(--team-composer-overhang));
   background: linear-gradient(
     to bottom,
-    var(--composer-triple-glass-paint) 0 calc(100% - 10px),
+    var(--composer-triple-glass-paint) 0 calc(100% - var(--team-composer-overhang)),
     transparent 100%
   );
   box-shadow: inset 0 var(--app-control-edge-width) 0 var(--control-line-soft);
@@ -440,9 +445,16 @@
 /* Cards raise themselves for hover, focus, selection, and nested tools; their
    track keeps every such layer below the composer. */
 .team-compose .lane-mosaic-track { z-index: 0; }
-/* The composer's bottom edge is the stream's top rule until it scrolls away. */
+/* The stream's top rule appears only once the composer and its continuation
+   have left the plane, and fades rather than switching on in one frame. */
+.team-compose .team-activity-grid {
+  transition: border-top-color var(--app-motion-settle) var(--app-ease-standard);
+}
 .team-compose:not([data-composer-fully-collapsed="true"]) .team-activity-grid {
   border-top-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .team-compose .team-activity-grid { transition: none; }
 }
 /* An empty team's plane is only its composer, with the notice below it. */
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane {
