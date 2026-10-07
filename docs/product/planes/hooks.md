@@ -234,8 +234,11 @@ ending remains unheard through the delivery grace, the keeper requests a lane
 wake; a successor receives the completion during startup catch-up.
 
 **Invariant —** This is lifecycle behavior, not an instruction to keep a turn
-open. An agent uses `job wait` when the result blocks current work; ending the
-turn neither cancels the job nor loses its completion.
+open. An agent uses `job wait` when a finite job's result blocks current work;
+ending the turn neither cancels the job nor loses its completion. A service is
+different: `job wait` requests its stop and joins that teardown only to the
+call's bound. Read its logs or exercise its served surface to establish
+readiness.
 
 **Invariant —** A job's ending is told once. An answer that reports how a
 job ended (the foreground result, or `job wait`, `job logs` or `job stop`

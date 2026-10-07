@@ -391,6 +391,14 @@ refused; commands are clipped to 200 bytes. A withheld page ends with
 the omission line, whose continuation is the job call
 `job op=history id=ID limit=N`, resuming at the first withheld job.
 
+`wait` has two lifecycle meanings distinguished by the job's launch contract.
+For a finite job it is a passive, bounded observation and leaves a still-running
+job alone. For a service it requests the same stop transition as `stop`, then
+joins that transition only through the requested wait timeout; a teardown that
+outlives the timeout remains in progress. Service readiness is established by
+reading its logs or exercising its served surface, never by waiting on its
+process. There is no separate process-exit operation.
+
 ---
 
 ## Extension surfaces
