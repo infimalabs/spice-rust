@@ -94,7 +94,7 @@ margin of its own.
 ## Team composer controls
 
 The 56px Send action occupies the top of an 80px control column, with the
-speech and allocation vertical ranges below it. Its label stays “Send”; color
+speech and allocation vertical ranges below it. Its label stays “SEND”; color
 and the adjacent allocation value distinguish Steer, Drive, and Drain. Hover,
 press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
