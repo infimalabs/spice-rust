@@ -66,7 +66,7 @@
 | An agent works without a shell command but continues non-shell tool calls | the supervisor still interrupts outstanding tool waits to deliver unheard direction | [Steering reaches the next admitted agent boundary](../invariants/identity.md#steering-reaches-the-next-admitted-agent-boundary) |
 | No command-driven supervisor is running | delivery waits while the durable directive remains live, and the next occupant's startup catch-up delivers it | [Steering reaches the next admitted agent boundary](../invariants/identity.md#steering-reaches-the-next-admitted-agent-boundary) |
 | An agent backgrounds long work and ends its turn | the turn exit vacates the lane while the detached keeper continues; an ending left unheard through the delivery grace requests a lane wake, and the successor receives the completion during startup catch-up | [Ending a turn vacates the lane](../invariants/lifecycle.md#lifecycle-ending-a-turn-vacates-the-lane) |
-| An agent has already-backgrounded work | it uses `job wait` when the result blocks current work; ending the turn neither cancels the job nor loses its eventual completion | [Background jobs survive turn exit](../invariants/lifecycle.md#lifecycle-background-jobs-survive-turn-exit) |
+| An agent has already-backgrounded work | it uses `job wait` when a finite job's result blocks current work; waiting on a service requests stop and joins only to the call's bound, while readiness is checked through logs or the served surface | [Background jobs survive turn exit](../invariants/lifecycle.md#lifecycle-background-jobs-survive-turn-exit) |
 
 ### Maxim bags
 
