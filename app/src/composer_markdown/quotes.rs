@@ -12,8 +12,6 @@ pub(super) fn expand<'a>(
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
     quote_depth: usize,
-    quote_block_steps: usize,
-    card_start: bool,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
         return events;
@@ -22,8 +20,6 @@ pub(super) fn expand<'a>(
     let mut event = 0;
     let mut presentation = 0;
     let mut raw_quote_depth = 0usize;
-    let mut root_raw_margin_suppressed = false;
-    let mut at_card_start = card_start;
     while event < events.len() {
         let node = structural_quote_target(&events[event..]).and_then(|target| {
             presentations
@@ -32,52 +28,19 @@ pub(super) fn expand<'a>(
         });
         let Some(node) = node else {
             match &events[event] {
-                MarkdownEvent::Start(Tag::BlockQuote(_)) => {
-                    if raw_quote_depth == 0 {
-                        root_raw_margin_suppressed = at_card_start;
-                    }
-                    raw_quote_depth += 1;
-                }
+                MarkdownEvent::Start(Tag::BlockQuote(_)) => raw_quote_depth += 1,
                 MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
                     raw_quote_depth = raw_quote_depth.saturating_sub(1);
-                    if raw_quote_depth == 0 {
-                        root_raw_margin_suppressed = false;
-                    }
                 }
                 _ => {}
             }
-            let preserves_card_start = matches!(
-                &events[event],
-                MarkdownEvent::Start(Tag::BlockQuote(_) | Tag::Paragraph)
-            ) || matches!(
-                &events[event],
-                MarkdownEvent::Text(text) if text.trim().is_empty()
-            );
-            at_card_start &= preserves_card_start;
             expanded.push(events[event].clone());
             event += 1;
             continue;
         };
-        let raw_quote_block_steps = raw_quote_depth * 2 - usize::from(root_raw_margin_suppressed);
-        let quote_card_block_steps = if at_card_start && raw_quote_depth == 0 {
-            1
-        } else {
-            2
-        };
         expanded.push(MarkdownEvent::InlineHtml(
-            render(
-                node,
-                agents,
-                sources,
-                super::QuoteLayout {
-                    depth: quote_depth + raw_quote_depth + 1,
-                    block_steps: quote_block_steps + raw_quote_block_steps + quote_card_block_steps,
-                    card_start: at_card_start,
-                },
-            )
-            .into(),
+            render(node, agents, sources, quote_depth + raw_quote_depth + 1).into(),
         ));
-        at_card_start = false;
         event += 3;
         presentation += 1;
     }
@@ -263,7 +226,7 @@ fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
-    layout: super::QuoteLayout,
+    quote_depth: usize,
 ) -> String {
     match presentation {
         QuotePresentation::Resolved {
@@ -287,7 +250,7 @@ fn render(
                     disposition,
                     task_tail,
                 },
-                layout,
+                quote_depth,
             );
             let accent = speaker_accent(author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));

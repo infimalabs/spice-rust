@@ -588,17 +588,14 @@
   content: "";
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
-/* The top-level island's flow footprint is exactly two lines of the hunk's
-   card prose (line-height 1.25). Quote depth alone cannot describe block
-   geometry: every shell contributes 4px padding, while only shells whose top
-   margin survives a first-child reset contribute another 4px. The renderer
-   records that cumulative step count independently from inline depth. A
-   card-leading chain then bridges its quoted 8.125px half-line rise to the
-   card's 9px inset for the one different final jump. This stays exact at
-   arbitrary depth and for mixed raw/authenticated quote trees. The trailing
-   flow margin remains based on each layer's half-line rise, so extra upward
-   travel releases prose width. The zero-width start prop still keeps image rows
-   below the first two lines. */
+/* The island moves rightward only: it docks against the card's or quote's
+   inline-end edge and starts level with its hunk's first line, so it never
+   reaches above into text it cannot reflow, such as an inner quote's last
+   line. Its flow footprint is two lines of the hunk's prose (line-height 1.25)
+   or the pair's own height where quoted type makes two lines shorter, so text
+   below always reflows beside it. The renderer records raw/authenticated quote
+   depth so the inline offset stays exact at arbitrary nesting. The zero-width
+   start prop still keeps image rows below the first two lines. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
@@ -606,14 +603,6 @@
 }
 .team-surface .mosaic-message-card .message-hunk > .message-controls-slot {
   --message-control-size: var(--app-header-control);
-  --message-control-rise: min(.5lh, var(--message-card-inset));
-  --message-control-card-start-adjust: 0px;
-  --message-control-block-offset:
-    calc(
-      var(--message-control-rise)
-      + var(--mosaic-quote-pad-block) * var(--message-quote-block-steps, 0)
-      + var(--message-control-card-start-adjust)
-    );
   --message-control-inline-offset:
     calc(
       var(--message-card-inset)
@@ -621,23 +610,9 @@
     );
   display: block;
   float: inline-end;
-  margin-block:
-    calc(-1 * var(--message-control-block-offset))
-    calc(2lh + var(--message-control-rise) - var(--message-control-size));
+  margin-block: 0 max(0px, 2lh - var(--message-control-size));
   margin-inline: .5rem calc(-1 * var(--message-control-inline-offset));
   line-height: 1.25;
-}
-.team-surface .mosaic-message-card
-  .message-controls-slot[data-message-card-start]:not([data-message-quote-depth="0"]) {
-  --message-control-card-start-adjust:
-    calc(var(--message-card-inset) - var(--message-control-rise));
-}
-/* Directly after a nested quote block the rise would lift a top-level island
-   into the quote's last line, so it starts level with its hunk and only floats
-   aside. The footprint stays two lines: the trailing margin absorbs the rise. */
-.team-surface .mosaic-message-card
-  blockquote + .message-hunk > .message-controls-slot[data-message-quote-depth="0"] {
-  --message-control-rise: 0px;
 }
 .team-surface .message-controls-slot > span { display: contents; }
 .team-surface .mosaic-message-card .message-controls-slot .message-controls {
@@ -648,10 +623,7 @@
 }
 /* Message card actions form one cutout rather than separate circles. The pair
    has no gap: Quote is square and Play rounds both inline-start corners into a
-   finger wherever content remains above it. Card-start metadata marks any
-   direct hunk or nested quote chain whose pair reaches the card top: both
-   controls leave their top edge open, Play loses its top-left radius, and Quote
-   rounds its top-right corner into the card's own curve.
+   finger. Every pair wears the same edges wherever it stands.
 
    Both controls leave their right edge open, so Quote's left edge is the pair's
    one seam and the depth-compensated pair meets the card's inline-end without
@@ -679,22 +651,6 @@
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action--speak {
   border-radius: var(--app-radius-circle) 0 0 var(--app-radius-circle);
-}
-/* A pair at the card top sits flush against the card's literal top edge. */
-.team-surface .mosaic-message-card
-  .message-controls-slot[data-message-card-start]
-  .app-card-action {
-  border-top: 0;
-}
-.team-surface .mosaic-message-card
-  .message-controls-slot[data-message-card-start]
-  .app-card-action:last-child {
-  border-start-end-radius: calc(2 * var(--mosaic-quote-radius));
-}
-.team-surface .mosaic-message-card
-  .message-controls-slot[data-message-card-start]
-  .app-card-action--speak {
-  border-top-left-radius: 0;
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active) {
   background: color-mix(in srgb, var(--app-card-action-accent) 10%, var(--message-stream-surface));

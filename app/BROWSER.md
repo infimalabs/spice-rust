@@ -236,14 +236,13 @@ contrasting label inside their frosted frame.
 
 Every attributable prose hunk owns one floating Quote/Play action island at its
 top inline-end. Attribution and prose remain in normal flow beside it. The
-renderer records exact raw/authenticated quote depth, cumulative block spacing,
-and card-leading ancestry as trusted metadata; CSS uses those values to dock the
-island against the card edge at arbitrary nesting depth without inline styles
-or finite depth selectors. A top-level island rises half a line into the card
-inset, except directly after a nested quote block: there it starts level with
-its hunk and only floats aside, so it never reaches the quote's last line or
-its task badges. A zero-width two-line prop keeps associated image rows below
-the controls.
+island moves rightward only: the renderer records exact raw/authenticated quote
+depth as trusted metadata, and CSS uses it to dock the island against the card
+edge at arbitrary nesting depth without inline styles or finite depth
+selectors. It never moves upward, so it starts level with its hunk's first
+line and cannot reach text it would not reflow, such as an inner quote's last
+line or task badges. Every pair wears the same edges wherever it stands. A
+zero-width two-line prop keeps associated image rows below the controls.
 
 Quote and Play form one 35px control pair with one internal seam and no outer
 right edge. Their fill follows the owning lane or quote accent, with neutral

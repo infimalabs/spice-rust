@@ -256,7 +256,7 @@ fn render_quote_card_body(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     attribution: image_flow::Attribution,
-    layout: QuoteLayout,
+    quote_depth: usize,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -267,16 +267,9 @@ fn render_quote_card_body(
         quote_sources,
         Finish::QuoteCard {
             attribution,
-            layout,
+            quote_depth,
         },
     )
-}
-
-#[derive(Clone, Copy)]
-struct QuoteLayout {
-    depth: usize,
-    block_steps: usize,
-    card_start: bool,
 }
 
 /// How a rendering presents its body.
@@ -288,7 +281,8 @@ enum Finish {
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
         attribution: image_flow::Attribution,
-        layout: QuoteLayout,
+        /// Quote shells around this card's hunks, raw and authenticated alike.
+        quote_depth: usize,
     },
 }
 
@@ -325,27 +319,11 @@ fn render(
         quote_sources,
     );
     let events = coalesce_text_events(events);
-    let QuoteLayout {
-        depth: quote_depth,
-        block_steps: quote_block_steps,
-        card_start,
-    } = match &finish {
-        Finish::QuoteCard { layout, .. } => *layout,
-        Finish::Received | Finish::ProseCard => QuoteLayout {
-            depth: 0,
-            block_steps: 0,
-            card_start: true,
-        },
+    let quote_depth = match &finish {
+        Finish::QuoteCard { quote_depth, .. } => *quote_depth,
+        Finish::Received | Finish::ProseCard => 0,
     };
-    let events = quotes::expand(
-        events,
-        quotes,
-        quote_agents,
-        quote_sources,
-        quote_depth,
-        quote_block_steps,
-        card_start,
-    );
+    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_count = markdown_image_only_count(&events, has_diagrams);
@@ -375,8 +353,6 @@ fn render(
         attribution.as_ref(),
         &quote_attributions,
         quote_depth,
-        quote_block_steps,
-        card_start,
     );
     let events = events.into_iter().flat_map(|event| match &event {
         MarkdownEvent::Start(Tag::CodeBlock(_)) => {
