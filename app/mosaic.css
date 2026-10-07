@@ -612,7 +612,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   .composer-shard--primary[data-broadcast-target-eligible="true"] {
   --composer-fill: color-mix(in srgb, var(--accent-slot, var(--accent)) 10%, transparent);
 }
-.team-surface .team-agent--vacant :is(.composer-shard-heading, textarea) {
+/* Opacity makes a stacking context, which would trap the open agent menu
+   below the dimmed textarea; a heading whose menu is open stays undimmed. */
+.team-surface .team-agent--vacant :is(.composer-shard-heading:not(:has(> .agent-menu[open])), textarea) {
   opacity: var(--inactive-lane-opacity);
 }
 
