@@ -192,6 +192,53 @@ pub struct TaskDetailClosure {
     pub claimed: Option<Actor>,
 }
 
+/// One workflow step on a task's history, read back from its lifecycle fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailStep {
+    /// Position of the step's fact.
+    pub position: crate::Seq,
+    /// Commit time recorded by the journal.
+    pub at: crate::Instant,
+    /// Principal that took the step.
+    pub author: Actor,
+    /// What the step recorded.
+    pub step: TaskStep,
+}
+
+/// What one workflow step recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TaskStep {
+    /// A claimed phase completed on its stated validation.
+    Done {
+        /// Phase the completion closed.
+        phase: crate::Phase,
+        /// Evidence the completion rests on.
+        validation: String,
+    },
+    /// The workflow advanced into a phase.
+    Phased {
+        /// Phase the workflow entered.
+        phase: crate::Phase,
+    },
+    /// A review verdict landed.
+    Reviewed {
+        /// How the review closed.
+        verdict: crate::body::Verdict,
+        /// A finding with its note, or a clean verdict's note.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        text: Option<String>,
+        /// Correction tasks the review linked.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        followups: Vec<crate::TaskStamp>,
+    },
+}
+
 /// One acknowledged steering directive on a task's history: a task or claim
 /// fact whose `ack:` origin names it, or a `steer::acked` fact by which the
 /// task's holder acknowledged operator steering while holding the task.
@@ -921,6 +968,10 @@ pub struct BoardAnswer {
     /// The operator's closure of each named task that was closed.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub closures: std::collections::BTreeMap<crate::TaskStamp, TaskDetailClosure>,
+    /// Workflow steps on the named tasks of a [`BoardRead::Tasks`] read that
+    /// asked for notes, each task's steps in ascending journal position.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub steps: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailStep>>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,

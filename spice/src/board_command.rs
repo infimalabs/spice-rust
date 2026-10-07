@@ -130,6 +130,8 @@ mod report;
 use report::read_report;
 mod steering_origin;
 use steering_origin::*;
+mod task_step;
+use task_step::*;
 mod taste_review;
 use taste_review::*;
 

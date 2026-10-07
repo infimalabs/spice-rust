@@ -135,6 +135,7 @@ fn validated_snapshot_from_with_occupant(
             notes: Default::default(),
             acknowledgments: Default::default(),
             closures: Default::default(),
+            steps: Default::default(),
             history: None,
             trust: positioned_trust(observed),
             appliance,
@@ -814,6 +815,7 @@ pub(super) fn read_board(
         snapshot.answer.notes = record.notes;
         snapshot.answer.acknowledgments = record.acknowledgments;
         snapshot.answer.closures = record.closures;
+        snapshot.answer.steps = record.steps;
     }
     snapshot.answer.history = history;
     snapshot_reply(
@@ -988,25 +990,55 @@ pub(super) fn read_ledger(
         .cloned()
         .collect();
     node.description = statement.description.clone().unwrap_or_default();
-    node.annotations = snapshot
+    let mut annotations = snapshot
         .facts
         .iter()
-        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
-        .filter(|noted| noted.task == statement.born)
-        .map(|noted| {
-            let read = lane_reader
-                .then(|| lane_audit(&noted.note))
-                .flatten()
-                .unwrap_or(noted.note);
-            note_annotation(&read)
+        .filter_map(|envelope| {
+            let noted = envelope.fact.read::<body::TaskNoted>()?;
+            (noted.task == statement.born).then_some((envelope.seq, noted.note))
         })
-        .collect();
+        .map(|(position, note)| {
+            let read = lane_reader
+                .then(|| lane_audit(&note))
+                .flatten()
+                .unwrap_or(note);
+            (position, note_annotation(&read))
+        })
+        .collect::<Vec<_>>();
+    annotations.extend(ledger_step_annotations(
+        &snapshot.facts,
+        &snapshot.answer,
+        &statement.born,
+    ));
+    annotations.sort_by_key(|(position, _)| *position);
+    node.annotations = annotations.into_iter().map(|(_, text)| text).collect();
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
             text: dialect::emit(&document),
         }),
     )
+}
+
+/// Each workflow step on `task` as the fenced annotation a ledger exports,
+/// keyed by journal position; applying a ledger recognizes exactly these.
+pub(super) fn ledger_step_annotations(
+    facts: &bus::TaskFacts,
+    board: &BoardAnswer,
+    task: &wire::TaskStamp,
+) -> Vec<(wire::Seq, String)> {
+    let named = std::collections::BTreeSet::from([task.clone()]);
+    let mut record = task_detail::task_record(facts, &named);
+    record
+        .steps
+        .remove(task)
+        .unwrap_or_default()
+        .iter()
+        .map(|step| {
+            let text = step_annotation(step, |stamp| stamp_name(board, stamp));
+            (step.position, note_annotation(&text))
+        })
+        .collect()
 }
 
 fn note_annotation(note: &str) -> String {

@@ -105,7 +105,9 @@ is absent or ambiguous, or no matching session declaration exists, the task
 renders the specific unavailability reason instead of inventing a lookup.
 
 The same compact view points to `spice doc ledger HANDLE` for current authored
-rationale and append-only notes. When a claim, completion, or review records a
+rationale, append-only notes, and workflow steps, and `spice task show HANDLE
+--history` carries the same steps under bounded pagination. When a claim,
+completion, or review records a
 Git boundary, the task renders its fact identity and a shell-executable
 `git show` command for the recorded claim head or integrated object. Git and
 transcript content remain in their native authorities; task rows carry only

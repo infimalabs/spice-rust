@@ -77,6 +77,8 @@ fn task_reviewed() -> body::TaskReviewed {
         reviewer: Actor::Operator,
         verdict: body::Verdict::Clean,
         finding: None,
+        note: None,
+        followups: Vec::new(),
         git: None,
         source: proven(),
     }

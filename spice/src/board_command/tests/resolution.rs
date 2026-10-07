@@ -521,6 +521,110 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
     clean(&root, bus);
 }
 
+/// A lane reads every workflow step on a task through `task show --history`:
+/// each phase's validation, each verdict with its note, and the corrections
+/// a finding linked, under the actors that took them.
+#[test]
+fn a_lane_reads_validation_and_review_evidence_through_task_show() {
+    let (root, bus, epoch, seats) = fixture("task-show-workflow-steps", 2);
+    authorize_lane_creation(&bus, epoch, &seats[1]);
+    let implementer = Actor::Lane(seats[0].lane);
+    let reviewer = Actor::Lane(seats[1].lane);
+    let accepted = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "STEP-step0001",
+        "Accepted with a note",
+        None,
+    );
+    advance_task_to_review(&bus, epoch, &seats[0], &implementer, &accepted);
+    claim_task(&bus, epoch, &seats[1], &reviewer, &accepted);
+    let held = board(&bus, epoch, reviewer.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::TaskReview,
+        progress_witnesses(
+            &held,
+            at(&held, &accepted),
+            seats[1].lane,
+            seats[1].occupant,
+            true,
+        )
+        .expect("held review has progress witnesses"),
+        &TaskReview {
+            task: accepted.clone(),
+            finding: "clean".to_owned(),
+            note: Some("checked the browser trace".to_owned()),
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+    let corrected = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "STEP-step0002",
+        "Returned with a finding",
+        None,
+    );
+    advance_task_to_review(&bus, epoch, &seats[0], &implementer, &corrected);
+    complete_review_with_finding(&bus, epoch, &seats[1], &reviewer, &corrected);
+
+    let tasks = [&accepted, &corrected].map(|task| task.born().expect("fixture stamp"));
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        implementer.clone(),
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: tasks.to_vec(),
+            dependencies: true,
+            claims: false,
+            notes: true,
+        },
+    )
+    else {
+        panic!("lane task read did not reply");
+    };
+    let show = |task: &TaskHandle, born: &wire::TaskStamp| {
+        task_show_with_origin(
+            &answer,
+            at(&answer, task),
+            &[],
+            TaskShowHistory {
+                steps: &answer.steps[born],
+                ..TaskShowHistory::default()
+            },
+            None,
+        )
+    };
+    let accepted_text = show(&accepted, &tasks[0]);
+    for expected in [
+        format!("{implementer} done todo\n    fixture completion"),
+        format!("{implementer} phased review"),
+        format!("{reviewer} reviewed clean\n    checked the browser trace"),
+    ] {
+        assert!(accepted_text.contains(&expected), "{accepted_text}");
+    }
+    let corrected_text = show(&corrected, &tasks[1]);
+    assert!(
+        corrected_text.contains(&format!(
+            "{reviewer} reviewed finding\n    missing negative-path evidence\n\n    \
+             recorded for the next authored correction\n    followups "
+        )),
+        "{corrected_text}"
+    );
+    assert!(corrected_text.contains("1kKRRsDP"), "{corrected_text}");
+    clean(&root, bus);
+}
+
 /// An unclean review remains pending behind its correction and blocks every dependent.
 #[test]
 fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {

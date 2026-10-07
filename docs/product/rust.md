@@ -186,7 +186,9 @@ not enter board heads. The dialect accepts only `design`, `plan`, `todo`,
 `verify`, and `review` in `Flow:`; that closed input grammar is separate from
 the board's open phase vocabulary. `doc ledger HANDLE` emits a
 dialect-representable current-task recovery view containing task prose, flow,
-authored tags, priority, and append-only notes. It is not an inverse family
+authored tags, priority, and append-only notes interleaved with workflow-step
+annotations (completion validations, phase advances, review verdicts), which
+apply recognizes rather than appending as notes. It is not an inverse family
 export; an unrepresentable current head set reports
 `doc::ledger-unrepresentable` rather than widening the dialect.
 

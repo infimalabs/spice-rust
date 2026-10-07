@@ -411,6 +411,8 @@ fn complete_review(bus: &Bus, task: &TaskStamp, lane: CanonicalUuid, verdict: wi
                 verdict,
                 finding: (verdict == wire::body::Verdict::Finding)
                     .then(|| "missing current coverage\n\nexercise the live refusal".to_owned()),
+                note: None,
+                followups: Vec::new(),
                 git: None,
                 source: wire::body::SourceBoundary::unrecorded(),
             },

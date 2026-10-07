@@ -571,13 +571,22 @@ fn acknowledged(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
     ))
 }
 
-/// Decide the verdict a review records and the finding text it carries.
+/// What one review verdict records: the verdict, a finding's text with its
+/// note, a clean verdict's note, and the corrections the review linked.
+struct ReviewRecord {
+    verdict: body::Verdict,
+    finding: Option<String>,
+    note: Option<String>,
+    followups: Vec<TaskStamp>,
+}
+
+/// Decide the verdict a review records and the text it carries.
 ///
 /// A finding that tracks nothing is refused here rather than written, so the
 /// change a reviewer asked for always has a task behind the reviewed one.
 fn review_verdict(
     review: &TaskReview,
-) -> Result<(body::Verdict, Option<String>), Outcome<CommandAnswer>> {
+) -> Result<(body::Verdict, Option<String>, Option<String>), Outcome<CommandAnswer>> {
     let verdict = if review_is_clean(&review.finding) {
         body::Verdict::Clean
     } else {
@@ -590,11 +599,48 @@ fn review_verdict(
             "track an unclean review with --then \"title=... | project=...\" or --followup HANDLE",
         ));
     }
-    let finding = (verdict == body::Verdict::Finding).then(|| match &review.note {
-        Some(note) if !note.trim().is_empty() => format!("{}\n\n{note}", review.finding),
-        _ => review.finding.clone(),
-    });
-    Ok((verdict, finding))
+    let note = review
+        .note
+        .as_ref()
+        .filter(|note| !note.trim().is_empty())
+        .cloned();
+    Ok(match verdict {
+        body::Verdict::Clean => (verdict, None, note),
+        body::Verdict::Finding => {
+            let finding = match note {
+                Some(note) => format!("{}\n\n{note}", review.finding),
+                None => review.finding.clone(),
+            };
+            (verdict, Some(finding), None)
+        }
+    })
+}
+
+/// Every correction this review links, in the order the reviewer named it:
+/// each new `--then` task, then each existing `--followup` a finding attached
+/// to `statement`, the reviewed task's statement after the review.
+fn review_followups(
+    review: &TaskReview,
+    verdict: body::Verdict,
+    statement: &TaskHead,
+) -> Vec<TaskStamp> {
+    let mut followups = review
+        .then
+        .iter()
+        .map(|followup| followup.task.clone())
+        .collect::<Vec<_>>();
+    if verdict == body::Verdict::Finding {
+        for born in review
+            .followup
+            .iter()
+            .filter_map(|handle| handle.born().ok())
+        {
+            if statement.dependencies.contains(&born) && !followups.contains(&born) {
+                followups.push(born);
+            }
+        }
+    }
+    followups
 }
 
 fn review_followup_creation(
@@ -616,8 +662,7 @@ struct PreparedReview {
     transition: board::Transition,
     at: Instant,
     source: body::SourceBoundary,
-    verdict: body::Verdict,
-    finding: Option<String>,
+    record: ReviewRecord,
     statement: TaskHead,
     origin: wire::Origin,
     git: Option<body::GitBoundary>,
@@ -637,12 +682,18 @@ fn prepare_review(
     let source = bus
         .source_boundary(&lane)
         .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
-    let (verdict, finding) = review_verdict(review)?;
+    let (verdict, finding, note) = review_verdict(review)?;
     let statement = match verdict {
         body::Verdict::Clean => entry.statement().clone(),
         body::Verdict::Finding => {
             correction_statement(&snapshot, command, entry, review, projects)?
         }
+    };
+    let record = ReviewRecord {
+        verdict,
+        finding,
+        note,
+        followups: review_followups(review, verdict, &statement),
     };
     let parent = task_origin(entry.born())?;
     let origin = resolve_creation_origin(None, command.actor(), &snapshot, Some(parent))?;
@@ -654,8 +705,7 @@ fn prepare_review(
         transition,
         at,
         source,
-        verdict,
-        finding,
+        record,
         statement,
         origin,
         git,
@@ -714,8 +764,7 @@ fn commit_review(
         transition,
         at,
         source,
-        verdict,
-        finding,
+        record,
         statement,
         origin,
         git,
@@ -731,11 +780,11 @@ fn commit_review(
     if let Some(creation) = &creation {
         creation.guard(&mut write);
     }
-    let reviewed =
-        match append_reviewed_fact(&mut write, command, &entry, verdict, finding, git, source) {
-            Ok(reviewed) => reviewed,
-            Err(outcome) => return outcome,
-        };
+    let verdict = record.verdict;
+    let reviewed = match append_reviewed_fact(&mut write, command, &entry, record, git, source) {
+        Ok(reviewed) => reviewed,
+        Err(outcome) => return outcome,
+    };
     let workflow = review_workflow(&entry, &transition, verdict);
     let mut claim = entry
         .claim()
@@ -788,8 +837,7 @@ fn append_reviewed_fact(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     entry: &Entry,
-    verdict: body::Verdict,
-    finding: Option<String>,
+    record: ReviewRecord,
     git: Option<body::GitBoundary>,
     source: body::SourceBoundary,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
@@ -798,8 +846,10 @@ fn append_reviewed_fact(
             body::TaskReviewed {
                 task: entry.born().clone(),
                 reviewer: command.actor().clone(),
-                verdict,
-                finding,
+                verdict: record.verdict,
+                finding: record.finding,
+                note: record.note,
+                followups: record.followups,
                 git,
                 source,
             },
@@ -1259,6 +1309,11 @@ fn append_doc_annotations(
         .filter(|noted| &noted.task == task)
         .map(|noted| noted.note)
         .collect::<std::collections::BTreeSet<_>>();
+    retained.extend(
+        ledger_step_annotations(&plan.snapshot.facts, &plan.snapshot.answer, task)
+            .into_iter()
+            .map(|(_, annotation)| annotation),
+    );
     for note in annotations {
         if !retained.insert(note.clone()) {
             continue;
