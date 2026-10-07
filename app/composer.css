@@ -609,6 +609,13 @@
   --message-control-card-start-adjust:
     calc(var(--message-card-inset) - var(--message-control-rise));
 }
+/* Directly after a nested quote block the rise would lift a top-level island
+   into the quote's last line, so it starts level with its hunk and only floats
+   aside. The footprint stays two lines: the trailing margin absorbs the rise. */
+.team-surface .mosaic-message-card
+  blockquote + .message-hunk > .message-controls-slot[data-message-quote-depth="0"] {
+  --message-control-rise: 0px;
+}
 .team-surface .message-controls-slot > span { display: contents; }
 .team-surface .mosaic-message-card .message-controls-slot .message-controls {
   float: none;
