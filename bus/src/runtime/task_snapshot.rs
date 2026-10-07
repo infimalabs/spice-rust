@@ -123,12 +123,12 @@ struct TerminalIndex {
 impl TerminalIndex {
     fn pushed(
         &self,
-        task: journal::crossing::TaskStamp,
+        task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
         seq: journal::crossing::Seq,
     ) -> Self {
         let mut levels = self.levels.to_vec();
-        let mut carry = HashMap::from([(TerminalKey::new(&task, operation), seq)]);
+        let mut carry = HashMap::from([(TerminalKey::new(task, operation), seq)]);
         let mut level = 0;
         loop {
             if level == levels.len() {
@@ -257,9 +257,9 @@ impl Indexes {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
             } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
                 if let Some(terminal) = done.terminal {
-                    next.terminals =
-                        next.terminals
-                            .pushed(done.task.clone(), terminal.operation, row.seq);
+                    next.terminals = next
+                        .terminals
+                        .pushed(&done.task, terminal.operation, row.seq);
                     next.retire_task_origin(&done.task);
                 }
             } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
