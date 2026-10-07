@@ -760,8 +760,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 
 /* The heading stays unpositioned so the open agent menu anchors to its shard.
-   Its permanent accent follows the content inset as a background stroke in the
-   transparent bottom border; active block-end accents remain full-width. */
+   Its 70% control tint supplies the second glass paint, while the permanent
+   accent follows the content inset; active block-end accents remain full-width. */
 .composer-shard-heading {
   --composer-heading-inline-start: 8px;
   --composer-heading-inline-end: 5px;
@@ -777,6 +777,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     left var(--composer-heading-inline-start) bottom 0 /
     calc(100% - var(--composer-heading-inline-start) - var(--composer-heading-inline-end)) 2px
     no-repeat border-box;
+  background-color: color-mix(in srgb, var(--control) 70%, transparent);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--app-status-line-font-size);
@@ -900,8 +901,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. The shared frost screen continues beneath the transparent control
-   frame; equal inline shadows lift it above the panels on either side. */
+   below. The shared frost screen continues beneath the tinted control frame;
+   equal inline shadows lift it above the panels on either side. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
@@ -910,7 +911,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   margin-block-start: 0; block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
-  background: transparent;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--control) 70%, transparent)
+      0 calc(100% - var(--app-status-line-band)),
+    transparent 100%
+  );
   box-shadow:
     -8px 0 14px -6px rgb(0 0 0 / 42%),
     8px 0 14px -6px rgb(0 0 0 / 42%);

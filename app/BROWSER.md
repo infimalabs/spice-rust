@@ -100,12 +100,16 @@ press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
-lane-accent tint when lit. Behind the entire form, one pointer-inert composited
-screen continues 10px over the message stream. The transparent control frame
-has equal soft elevation on both inline edges; together with the dimensional
-Send action and ranges, it reads as a raised bridge that adjacent panels can
-slide beneath. Sibling teams need no hard separator through this region because
-their glass, accents, and content already distinguish them. The screen owns the
+lane-accent tint when lit. Composer headings add a 70% theme-derived tint as a
+second glass paint while retaining their inset accent underlines. Behind the
+entire form, one pointer-inert composited screen continues 10px over the message
+stream. The control frame layers the same 70%
+theme-derived tint over that glass, then fades the tint to transparent across
+its final 30px. Equal soft elevation on both inline edges combines with the
+dimensional Send action and ranges, so the frame reads as a raised bridge that
+adjacent panels can slide beneath without ending at an opaque block. Sibling
+teams need no hard separator through this region because their glass, accents,
+and content already distinguish them. The screen owns the
 form glass, one complex theme-derived background, and one 10px frost filter. Its
 header edge eases from an opaque control line through stronger
 control color into ordinary glass. Its lower 20px strengthens toward the same
