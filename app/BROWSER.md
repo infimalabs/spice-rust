@@ -100,12 +100,18 @@ press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts share the
-lighter standard overlay glass and gain a 10% lane-accent tint when lit. The
-control column uses the exact status-line surface with no rule above Send, so
-the status and controls read as one L-shaped band. Member headings retain their
-accent underline, focused or broadcast drafts merge their full-width highlight,
-and vacant members mute content without changing the surface. The final edge
-above the message stream repeats the faint control edge at each shard's top.
+lighter standard overlay glass and gain a 10% lane-accent tint when lit. Their
+shared backplane strengthens toward the control surface across each heading
+and the final 20px, while its center remains ordinary glass. Below the member
+fields, a 10px pointer-inert continuation carries the same frost over the
+message stream and masks the whole layer to transparent; the control column
+keeps its hard edge and receives no fade. The shared control edge is an opaque
+theme-derived line, so the composer's bottom boundary and its other control
+consumers do not change color as content passes beneath them. The control
+column uses the exact status-line surface with no rule above Send, so status
+and controls read as one L-shaped band. Member headings retain their accent
+underline, focused or broadcast drafts merge their full-width highlight, and
+vacant members mute content without changing the surface.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
