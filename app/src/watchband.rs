@@ -661,6 +661,29 @@ pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> &'a 
         .unwrap_or(UNKNOWN_AGENT_LABEL)
 }
 
+/// A team's common name: the label of its lead agent.
+///
+/// Canonical member zero leads the team, so the name an operator already uses
+/// for that agent names the team. A team without members keeps its short
+/// identity.
+#[must_use]
+pub fn team_label(team: &LaneRow) -> String {
+    team.members.first().map_or_else(
+        || short(team.lane),
+        |lead| agent_message_label(&lead.worktree, lead.name.as_deref()).to_owned(),
+    )
+}
+
+/// The common name of one team among the current rows. A team no longer
+/// present keeps its short identity.
+#[must_use]
+pub fn team_label_in(lanes: &[LaneRow], team: CanonicalUuid) -> String {
+    lanes
+        .iter()
+        .find(|row| row.lane == team)
+        .map_or_else(|| short(team), team_label)
+}
+
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
     match activity {
@@ -1067,10 +1090,10 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        directive_context_prose, first_nonquoted_prose, lane_accent, swap_members,
+        directive_context_prose, first_nonquoted_prose, lane_accent, short, swap_members,
         task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
-        task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
-        ticker_chunks, tool_media_description, transfer_member,
+        task_remaining_label_deadline_millis, team_label_in, team_visual_weight,
+        ticker_accessible_label, ticker_chunks, tool_media_description, transfer_member,
     };
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
@@ -1145,6 +1168,28 @@ mod tests {
         assert_eq!(lane_accent(&lanes, id(2)), Some(1));
         assert_eq!(lane_accent(&lanes, id(3)), Some(2));
         assert_eq!(lane_accent(&lanes, id(4)), None);
+    }
+
+    #[test]
+    fn team_label_names_the_team_by_member_zero_not_its_identity() {
+        let mut lead = member(2);
+        lead.name = Some("Ash".to_owned());
+        let lanes = [
+            crate::runtime::LaneRow {
+                lane: id(10),
+                subscription: wire::intent::TeamLife::Steer,
+                members: vec![lead, member(1)],
+            },
+            crate::runtime::LaneRow {
+                lane: id(20),
+                subscription: wire::intent::TeamLife::Steer,
+                members: Vec::new(),
+            },
+        ];
+
+        assert_eq!(team_label_in(&lanes, id(10)), "Ash");
+        assert_eq!(team_label_in(&lanes, id(20)), short(id(20)));
+        assert_eq!(team_label_in(&lanes, id(30)), short(id(30)));
     }
 
     #[test]

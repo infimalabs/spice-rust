@@ -27,7 +27,7 @@ enum Subject {
 }
 
 /// Who a notice is attributed to.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Owner {
     Member(CanonicalUuid),
     Team(CanonicalUuid),
@@ -43,11 +43,11 @@ struct Notice {
     ended: Option<String>,
 }
 
-/// Every request's current notice, and the member labels they name.
+/// Every request's current notice, and the member and team labels they name.
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct Notices {
     notices: BTreeMap<Subject, Notice>,
-    labels: BTreeMap<CanonicalUuid, String>,
+    labels: BTreeMap<Owner, String>,
 }
 
 impl Notices {
@@ -78,16 +78,16 @@ impl Notices {
     }
 
     fn read_runtime(&mut self, runtime: &AppRuntime) {
-        for member in runtime
-            .lanes()
-            .into_iter()
-            .flat_map(|lanes| &lanes.lanes)
-            .flat_map(|team| &team.members)
-        {
-            self.labels.insert(
-                member.lane,
-                watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned(),
-            );
+        for team in runtime.lanes().into_iter().flat_map(|lanes| &lanes.lanes) {
+            self.labels
+                .insert(Owner::Team(team.lane), watchband::team_label(team));
+            for member in &team.members {
+                self.labels.insert(
+                    Owner::Member(member.lane),
+                    watchband::agent_message_label(&member.worktree, member.name.as_deref())
+                        .to_owned(),
+                );
+            }
         }
         for (lane, state) in runtime.member_controls() {
             if let Some(notice) = member_notice(lane, state) {
@@ -161,12 +161,12 @@ const fn answer_verbs(answer: wire::Answer) -> (&'static str, &'static str) {
     }
 }
 
-/// The notices last reported, and the label each member last carried so a
-/// removed member's outcome still names it.
+/// The notices last reported, and the label each member and team last carried
+/// so a removed owner's outcome still names it.
 #[derive(Default)]
 struct Reported {
     notices: BTreeMap<Subject, Notice>,
-    labels: BTreeMap<CanonicalUuid, String>,
+    labels: BTreeMap<Owner, String>,
 }
 
 impl Reported {
@@ -177,7 +177,7 @@ impl Reported {
             current
                 .labels
                 .iter()
-                .map(|(lane, label)| (*lane, label.clone())),
+                .map(|(owner, label)| (*owner, label.clone())),
         );
         let mut toasts = Vec::new();
         for (subject, notice) in &current.notices {
@@ -201,16 +201,18 @@ impl Reported {
     }
 
     fn attribute(&self, owner: Owner, text: &str) -> String {
+        let label = self.labels.get(&owner).cloned();
         match owner {
             Owner::Member(lane) => {
-                let label = self
-                    .labels
-                    .get(&lane)
-                    .cloned()
-                    .unwrap_or_else(|| watchband::short(lane));
-                format!("{label}: {text}")
+                format!(
+                    "{}: {text}",
+                    label.unwrap_or_else(|| watchband::short(lane))
+                )
             }
-            Owner::Team(team) => format!("Team {}: {text}", watchband::short(team)),
+            Owner::Team(team) => format!(
+                "Team {}: {text}",
+                label.unwrap_or_else(|| watchband::short(team))
+            ),
         }
     }
 }

@@ -180,7 +180,7 @@ fn render_team_toolbar(
         format!(
             "{} admitted agents; arrange team {}",
             standings.len(),
-            watchband::short(team.lane)
+            watchband::team_label(team)
         )
     } else {
         format!("{} admitted agents", standings.len())
@@ -191,6 +191,7 @@ fn render_team_toolbar(
         sender: render.sender,
         topology: &render.topology,
         topology_revision: render.topology_revision,
+        lanes: render.runtime.lanes().map_or(&[][..], |view| &view.lanes),
         can_arrange: render.can_arrange_teams,
     };
     let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);

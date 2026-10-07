@@ -78,6 +78,11 @@ exchanges exactly those two team positions. Either outer fifth joins into the
 team under the pointer: the receiver keeps its identity, primary composer, and
 member order, then receives the source members in their existing order.
 
+A team is named by its lead agent, canonical member zero, using the same label
+its messages carry: the configured name, else the worktree leaf. The task
+overview heading, arrangement targets, team menu, and team request toasts all
+use that name; only a team with no current members keeps its short id.
+
 Interactive joins stop at six members. A seventh-member edge target is shown
 as unavailable and sends no command. Press Enter or Space on the pip stack, or
 tap it, for the equivalent **Swap positions** and **Join into** menu. Every
