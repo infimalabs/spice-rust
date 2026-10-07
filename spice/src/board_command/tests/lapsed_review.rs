@@ -39,6 +39,13 @@ fn lapse_review_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskH
         })
         .expect("the lapse reaches the journal writer");
     lapsed.expect("the expired review claim lapses");
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("lapsed snapshot reads")
+            .task_head_update_visits(),
+        1,
+        "claim lapse updates one live head"
+    );
 }
 
 /// Win `task` for `seat` through the allocator, exactly as `task next` does.

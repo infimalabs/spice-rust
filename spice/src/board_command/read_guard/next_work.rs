@@ -23,7 +23,15 @@ pub(super) fn read_next_work(
             "a running resident has no current residency head",
         )
     })?;
-    let (entries, satisfied, origin_threads) =
+    if let Some(fault) = observed.allocation_fault() {
+        return Err(match fault {
+            bus::AllocationFault::ActiveTerminal { task } => protocol_fault(
+                "board::allocation-active-terminal",
+                &format!("terminal task {task} retains an active claim"),
+            ),
+        });
+    }
+    let (entries, satisfied, origin_threads, frontier_heads, _work) =
         project_frontier(observed, projects, residency.body())?;
 
     let mut held = entries.iter().enumerate().filter(|(_, entry)| {
@@ -44,7 +52,7 @@ pub(super) fn read_next_work(
     let environment = observed.environment();
     let state = if let Some((index, _)) = first_held {
         NextWorkState::Active {
-            task: next_task(indexed_task(observed, entries[index].born())?),
+            task: next_task(frontier_heads[index]),
         }
     } else if let Some(selected) = board::select_with_satisfied(
         &entries,
@@ -64,7 +72,7 @@ pub(super) fn read_next_work(
                 )
             })?;
         NextWorkState::Candidate {
-            task: next_task(indexed_task(observed, entries[index].born())?),
+            task: next_task(frontier_heads[index]),
         }
     } else {
         NextWorkState::Dry {
@@ -114,34 +122,60 @@ pub(super) fn read_next_work(
     })
 }
 
-type FrontierProjection = (
+type FrontierProjection<'a> = (
     Vec<Entry>,
     std::collections::BTreeSet<wire::TaskStamp>,
     Vec<String>,
+    Vec<&'a journal::TaskHeads>,
+    bus::AllocationWork,
 );
 
-fn project_frontier(
-    observed: &bus::TaskSnapshot,
+pub(in crate::board_command) fn project_frontier<'a>(
+    observed: &'a bus::TaskSnapshot,
     projects: &ProjectPolicy,
     residency: &wire::ResidencyHead,
-) -> Result<FrontierProjection, Outcome<CommandAnswer>> {
-    let frontier = observed.allocation_frontier();
+) -> Result<FrontierProjection<'a>, Outcome<CommandAnswer>> {
+    let allocation = observed.allocation_read();
+    let frontier = allocation.frontier();
     let mut entries = Vec::with_capacity(frontier.len());
     let mut satisfied = std::collections::BTreeSet::new();
     let mut origin_threads = Vec::with_capacity(frontier.len());
+    let mut frontier_heads = Vec::with_capacity(frontier.len());
+    let mut prior = None;
     for heads in frontier {
         let statement = heads.statement().body();
+        if matches!(
+            heads.workflow().body().status.as_str(),
+            "completed" | "deleted"
+        ) {
+            return Err(protocol_fault(
+                "board::allocation-index-invalid",
+                "live frontier contains a terminal workflow",
+            ));
+        }
+        if prior
+            .as_ref()
+            .is_some_and(|prior: &wire::TaskStamp| prior >= &statement.born)
+        {
+            return Err(protocol_fault(
+                "board::allocation-index-invalid",
+                "live frontier is not in unique task-stamp order",
+            ));
+        }
+        prior = Some(statement.born.clone());
         for dependency in &statement.dependencies {
-            if observed
+            if allocation
                 .dependency_standing(dependency)
                 .is_some_and(bus::DependencyStanding::is_settled)
             {
                 satisfied.insert(dependency.clone());
             }
         }
-        let explicit_release = heads
-            .claim()
-            .is_some_and(|claim| observed.facts().is_explicit_release(claim.position()));
+        let explicit_release = heads.claim().is_some_and(|claim| {
+            observed
+                .facts()
+                .is_explicit_release(&statement.born, claim.position())
+        });
         if observed.facts().has_invalid_creator_team(&statement.born) {
             return Err(protocol_fault(
                 "board::task-creator-team-invalid",
@@ -171,8 +205,10 @@ fn project_frontier(
             &handle,
         )?);
         entries.push(entry);
+        frontier_heads.push(heads);
     }
-    Ok((entries, satisfied, origin_threads))
+    let work = allocation.work();
+    Ok((entries, satisfied, origin_threads, frontier_heads, work))
 }
 
 fn next_task(heads: &journal::TaskHeads) -> NextWorkTask {
@@ -182,18 +218,6 @@ fn next_task(heads: &journal::TaskHeads) -> NextWorkTask {
         claim: heads.claim().map(positioned),
         lease: heads.lease().map(positioned),
     }
-}
-
-fn indexed_task<'a>(
-    observed: &'a bus::TaskSnapshot,
-    task: &wire::TaskStamp,
-) -> Result<&'a journal::TaskHeads, Outcome<CommandAnswer>> {
-    observed.task_heads(task).ok_or_else(|| {
-        protocol_fault(
-            "board::allocation-index-invalid",
-            "live frontier task is absent from current task heads",
-        )
-    })
 }
 
 fn dry_counts(

@@ -26,8 +26,12 @@ mod runtime {
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
 
     mod task_snapshot;
-    pub use task_snapshot::{TaskFacts, TaskOrigin, context_opening};
-    use task_snapshot::{TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot};
+    pub use task_snapshot::{
+        AllocationFault, AllocationRead, AllocationWork, TaskFacts, TaskOrigin, context_opening,
+    };
+    use task_snapshot::{
+        TaskHeadStore, TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot,
+    };
     mod transcript_sessions;
     use transcript_sessions::TranscriptSessionState;
     pub use transcript_sessions::{TranscriptSession, TranscriptSessions};
@@ -132,19 +136,18 @@ mod runtime {
     pub struct TaskSnapshot {
         cursor: Option<journal::crossing::Seq>,
         facts: TaskFacts,
-        tasks: Arc<[TaskHeads]>,
-        allocation_frontier: Arc<[usize]>,
+        tasks: TaskHeadStore,
+        allocation_frontier: Arc<[TaskHeads]>,
         dependency_standing:
-            Arc<std::collections::BTreeMap<journal::crossing::TaskStamp, DependencyStanding>>,
-        claim_head_cells: Arc<
-            std::collections::BTreeMap<
-                (journal::crossing::Actor, journal::crossing::Seq),
-                journal::crossing::ClaimCell,
-            >,
-        >,
+            Arc<std::collections::HashMap<journal::crossing::TaskStamp, DependencyStanding>>,
+        dependency_references: Arc<std::collections::HashMap<journal::crossing::TaskStamp, usize>>,
+        legacy_recent_claim_cells:
+            Arc<std::collections::HashMap<journal::crossing::Actor, journal::crossing::ClaimCell>>,
+        allocation_faults: Arc<[AllocationFault]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
         materialization_steps: u64,
+        task_head_update_visits: usize,
     }
 
     /// Incremental resident authority, one bounded pending-steering page, and
@@ -264,31 +267,31 @@ mod runtime {
 
         #[must_use]
         pub fn tasks(&self) -> &[TaskHeads] {
-            &self.tasks
+            self.tasks.tasks()
         }
 
-        /// Heads in the live allocation graph, plus any anomalous terminal row
-        /// that still carries an active claim.
+        /// Heads in the live allocation graph.
         ///
-        /// The index is built once when the resident advances its task
-        /// snapshot. A request therefore visits no unrelated terminal row.
+        /// The resident updates this compact slice only from moved heads. A
+        /// request therefore visits no unrelated terminal row.
         pub fn allocation_frontier(&self) -> impl ExactSizeIterator<Item = &TaskHeads> {
-            self.allocation_frontier.iter().map(|&index| {
-                self.tasks
-                    .get(index)
-                    .expect("validated allocation frontier index")
-            })
+            self.allocation_frontier.iter()
+        }
+
+        /// Instrument one bounded next-work traversal.
+        #[must_use]
+        pub fn allocation_read(&self) -> AllocationRead<'_> {
+            AllocationRead::new(self)
         }
 
         /// One exact current head bundle by durable task identity.
         #[must_use]
         pub fn task_heads(&self, task: &journal::crossing::TaskStamp) -> Option<&TaskHeads> {
-            self.tasks
+            self.tasks()
                 .binary_search_by(|heads| heads.statement().body().born.cmp(task))
                 .ok()
-                .map(|index| &self.tasks[index])
+                .map(|index| &self.tasks()[index])
         }
-
         /// Known standing for one dependency identity. `None` means the stamp
         /// is missing from authoritative task heads, not settled.
         #[must_use]
@@ -309,12 +312,14 @@ mod runtime {
             &self,
             actor: &journal::crossing::Actor,
         ) -> Option<journal::crossing::ClaimCell> {
-            let (claimed, cell) = self.facts.latest_claim(actor)?;
-            cell.or_else(|| {
-                self.claim_head_cells
-                    .get(&(actor.clone(), claimed))
-                    .cloned()
-            })
+            let (_claimed, cell) = self.facts.latest_claim(actor)?;
+            cell.or_else(|| self.legacy_recent_claim_cells.get(actor).cloned())
+        }
+
+        /// Inconsistency detected while maintaining the live allocation index.
+        #[must_use]
+        pub fn allocation_fault(&self) -> Option<&AllocationFault> {
+            self.allocation_faults.first()
         }
 
         /// Current trust heads captured at the same board barrier.
@@ -340,6 +345,12 @@ mod runtime {
         #[must_use]
         pub const fn materialization_steps(&self) -> u64 {
             self.materialization_steps
+        }
+
+        /// Changed task bundles visited while constructing this generation.
+        #[must_use]
+        pub const fn task_head_update_visits(&self) -> usize {
+            self.task_head_update_visits
         }
     }
 
@@ -1429,8 +1440,9 @@ mod runtime {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
-    AppHeads, BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError,
-    CommitOutcome, CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
-    MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts, TaskOrigin,
-    TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
+    AllocationFault, AllocationRead, AllocationWork, AppHeads, BroadcastSubscriber, Bus, BusError,
+    BusReadError, BusReader, BusVerifyError, CommitOutcome, CommitSubscriber, DependencyStanding,
+    JournalCommit, JournalTransaction, MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation,
+    SteeringSnapshot, TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions,
+    context_opening,
 };

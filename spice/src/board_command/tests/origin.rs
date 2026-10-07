@@ -631,6 +631,13 @@ fn complete_claimed_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &Ta
             operation: Some(completion_operation()),
         },
     ));
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("advanced snapshot reads")
+            .task_head_update_visits(),
+        1,
+        "phase completion updates one live head"
+    );
 }
 
 fn read_task(bus: &Bus, epoch: CanonicalUuid, task: &wire::TaskStamp) -> BoardAnswer {

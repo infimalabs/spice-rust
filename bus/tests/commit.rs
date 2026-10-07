@@ -4,9 +4,9 @@ use std::thread::{self, ThreadId};
 
 use bus::{Bus, CommitOutcome};
 use journal::crossing::{
-    Actor, CanonicalUuid, ClaimCell, Command, CommandKind, Digest, EnvironmentRequirements, Origin,
-    Phase, Producer, Seq, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
-    WorkflowHead, body, intent,
+    Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
+    EnvironmentRequirements, Origin, Phase, Producer, Seq, TaskHandle, TaskHead, TrustHead,
+    TrustState, WireVersion, Witness, WorkflowHead, body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -166,6 +166,11 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
     let second = committed(bus.commit(granted).expect("trust grant commits"));
     let after = bus.task_snapshot().expect("granted snapshot reads");
     assert_eq!(after.cursor(), second.cursor().position());
+    assert_eq!(
+        after.task_head_update_visits(),
+        0,
+        "trust-only authority movement reads and copies no task head"
+    );
     let after_target = trust_head(&after, &digest);
     assert_eq!(after_target.body().state, TrustState::Granted);
     assert_eq!(after.facts().latest_trust_digest("spice"), Some(&digest));
@@ -304,34 +309,177 @@ fn retained_fleet(retained: usize) -> (Bus, Seq) {
 }
 
 #[test]
-fn allocation_frontier_does_not_grow_with_unrelated_terminal_history() {
+fn allocation_work_and_one_head_update_ignore_unrelated_terminal_history() {
     const TERMINAL_TASKS: usize = 1_301;
-    let mut journal = Journal::in_memory().expect("in-memory authority");
-    journal
-        .apply(initial_write(
-            uuid(COMMAND_ONE),
-            Arc::new(Mutex::new(Vec::new())),
-        ))
-        .expect("live task commits");
-    let mut bulk = JournalWrite::new(
-        Actor::Operator,
-        "task:BUS-a1".parse().expect("origin"),
-        instant("2030-04-12T18:44:10.271Z"),
-        Producer::CommandDoor,
+    let observe = |terminal_tasks: usize| {
+        let mut journal = Journal::in_memory().expect("in-memory authority");
+        let initial = journal
+            .apply(initial_write(
+                uuid(COMMAND_ONE),
+                Arc::new(Mutex::new(Vec::new())),
+            ))
+            .expect("live task commits");
+        if terminal_tasks > 0 {
+            let mut bulk = JournalWrite::new(
+                Actor::Operator,
+                "task:BUS-a1".parse().expect("origin"),
+                instant("2030-04-12T18:44:10.271Z"),
+                Producer::CommandDoor,
+            );
+            let mut cause =
+                FactCause::Pending(append_retained_dependency(&mut bulk, initial.last()));
+            for index in 0..terminal_tasks {
+                cause = FactCause::Pending(append_retained_terminal(&mut bulk, index, cause));
+            }
+            journal.apply(bulk).expect("terminal history commits");
+        } else {
+            let mut dependency = JournalWrite::new(
+                Actor::Operator,
+                "task:BUS-a1".parse().expect("origin"),
+                instant("2030-04-12T18:44:10.271Z"),
+                Producer::CommandDoor,
+            );
+            append_retained_dependency(&mut dependency, initial.last());
+            journal
+                .apply(dependency)
+                .expect("dependency-bearing task commits");
+        }
+        let bus = Bus::start(journal).expect("dedicated writer starts");
+        let snapshot = bus.task_snapshot().expect("indexed snapshot reads");
+        let allocation = snapshot.allocation_read();
+        for heads in allocation.frontier() {
+            for dependency in &heads.statement().body().dependencies {
+                let _ = allocation.dependency_standing(dependency);
+            }
+        }
+        let work = allocation.work();
+        let retained_heads = snapshot.tasks().len();
+
+        let mut growth = JournalWrite::new(
+            Actor::Operator,
+            "task:BUS-a1".parse().expect("origin"),
+            instant("2030-04-12T18:44:12.271Z"),
+            Producer::CommandDoor,
+        );
+        append_retained_task(
+            &mut growth,
+            10_000,
+            FactCause::Existing(snapshot.cursor().expect("snapshot cursor")),
+        );
+        committed(bus.commit(growth).expect("one task head changes"));
+        let advanced = bus.task_snapshot().expect("delta snapshot reads");
+        let update_visits = advanced.task_head_update_visits();
+        bus.shutdown().expect("writer shuts down");
+        (work, retained_heads, update_visits)
+    };
+
+    let baseline = observe(0);
+    let retained = observe(TERMINAL_TASKS);
+    assert_eq!(
+        retained.0, baseline.0,
+        "the instrumented next-work traversal depends only on its fixed live graph"
     );
-    let mut cause = FactCause::Existing(Seq::new(1).expect("live task cause"));
-    for index in 0..TERMINAL_TASKS {
-        cause = FactCause::Pending(append_retained_terminal(&mut bulk, index, cause));
-    }
-    journal.apply(bulk).expect("terminal history commits");
+    assert_eq!(baseline.0.task_visits, 2);
+    assert_eq!(baseline.0.standing_lookups, 1);
+    assert_eq!(baseline.1, 2);
+    assert_eq!(retained.1, TERMINAL_TASKS + 2);
+    assert_eq!(
+        (baseline.2, retained.2),
+        (1, 1),
+        "one changed head stays one visited head despite retained terminal history"
+    );
+}
+
+#[test]
+fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    let task = journal::crossing::TaskStamp::for_micros(30_000).expect("terminal task stamp");
+    let task_phase = phase("todo");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d2");
+    let mut write = bare_write();
+    let added = write
+        .fact(
+            retained_added(task.clone(), 0, task_phase.clone()),
+            FactCause::Root,
+        )
+        .expect("task addition builds");
+    let head_task = task.clone();
+    write.task_head(added, move |seq| retained_task_head(head_task, 0, seq));
+    let done = write
+        .fact(
+            body::TaskDone {
+                task: task.clone(),
+                validation: "malformed terminal possession fixture".to_owned(),
+                terminal: None,
+                git: None,
+                source: body::SourceBoundary::Incomplete {
+                    reason: "in-process fixture".to_owned(),
+                },
+            },
+            FactCause::Pending(added),
+        )
+        .expect("completion builds");
+    write.workflow_head(task.clone(), done, {
+        let task_phase = task_phase.clone();
+        move |_| WorkflowHead {
+            flow: vec![task_phase.clone()],
+            phase: task_phase,
+            status: "completed".to_owned(),
+            review: "unassigned".to_owned(),
+            assignment: None,
+            deferral: None,
+            completion: Some(instant("2030-04-12T18:44:10.271Z")),
+            generation: 0,
+        }
+    });
+    let won = write
+        .fact(
+            body::ClaimWon {
+                task: task.clone(),
+                actor: Actor::Operator,
+                lane,
+                occupant,
+                epoch: uuid(COMMAND_ONE),
+                cell: Some(ClaimCell {
+                    project: "bus".to_owned(),
+                    phase: task_phase.clone(),
+                }),
+                until: instant("2030-04-12T18:54:10.271Z"),
+                git: None,
+                recovery: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            FactCause::Pending(done),
+        )
+        .expect("claim win builds");
+    write.claim_head(task.clone(), won, move |seq| ClaimHead {
+        actor: Actor::Operator,
+        fact: seq,
+        claimed: seq,
+        cell: ClaimCell {
+            project: "bus".to_owned(),
+            phase: task_phase,
+        },
+        lane,
+        occupant,
+        epoch: uuid(COMMAND_ONE),
+        recovery: None,
+        disposition: ClaimDisposition::Active,
+        acknowledged: 0,
+    });
+    journal.apply(write).expect("malformed authority commits");
     let bus = Bus::start(journal).expect("dedicated writer starts");
 
-    let snapshot = bus.task_snapshot().expect("indexed snapshot reads");
-    assert_eq!(snapshot.tasks().len(), TERMINAL_TASKS + 1);
+    let snapshot = bus.task_snapshot().expect("snapshot remains inspectable");
+    assert!(matches!(
+        snapshot.allocation_fault(),
+        Some(bus::AllocationFault::ActiveTerminal { task: observed }) if observed == &task
+    ));
     assert_eq!(
         snapshot.allocation_frontier().count(),
-        1,
-        "request-time allocation visits only the fixed live graph"
+        0,
+        "terminal possession is never returned as live work"
     );
     bus.shutdown().expect("writer shuts down");
 }
@@ -593,6 +741,35 @@ fn append_retained_task(
     let head_task = task.clone();
     write.task_head(pending, move |seq| {
         retained_task_head(head_task, index, seq)
+    });
+    write.workflow_head(task, pending, move |_| WorkflowHead {
+        flow: vec![task_phase.clone()],
+        phase: task_phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+        generation: 0,
+    });
+    pending
+}
+
+fn append_retained_dependency(write: &mut JournalWrite, cause: Seq) -> journal::PendingFact {
+    let task = journal::crossing::TaskStamp::for_micros(15_000).expect("dependent task stamp");
+    let missing =
+        journal::crossing::TaskStamp::for_micros(19_000).expect("missing dependency stamp");
+    let task_phase = phase("todo");
+    let mut added = retained_added(task.clone(), 15_000, task_phase.clone());
+    added.depends = vec![missing.clone()];
+    let pending = write
+        .fact(added, FactCause::Existing(cause))
+        .expect("dependent task addition builds");
+    let head_task = task.clone();
+    write.task_head(pending, move |seq| {
+        let mut head = retained_task_head(head_task, 15_000, seq);
+        head.dependencies = vec![missing];
+        head
     });
     write.workflow_head(task, pending, move |_| WorkflowHead {
         flow: vec![task_phase.clone()],

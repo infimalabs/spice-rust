@@ -531,6 +531,13 @@ fn carry_claim_and_assert_context(
         bus.commit(carry).expect("claim carry commits"),
         CommitOutcome::Committed(_)
     ));
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("carried snapshot reads")
+            .task_head_update_visits(),
+        1,
+        "claim carry updates one live head"
+    );
     let after_carry = board(bus, epoch, Actor::Operator);
     let carried_row = at(&after_carry, task);
     assert_ne!(
