@@ -1,16 +1,16 @@
-//! Private claimant reminders derived from task generation advances.
+//! Private claimant notices derived from task authority.
 //!
-//! The task journal is the authority: each active claim records the generation
-//! it acknowledged, and completion/review refuse while that claim trails. This
-//! projection only tells the exact claimant occupant to reclaim. It creates no
-//! steering directive or acknowledgment key; the detached occupant driver
-//! deduplicates repeated resident observations by task, claim, and generation.
+//! The task journal is the authority. A resident-minted claim is announced to
+//! its exact occupant, and each active claim records the task generation it
+//! acknowledged so later edits can require reclaim. These projections create
+//! no steering directive or acknowledgment key; the detached occupant driver
+//! deduplicates repeated resident observations by their authority identities.
 
 use journal::{JournalHead, TaskHeads};
 use wire::TaskHandle;
 
 use super::*;
-use crate::resident::supervisor::command::TaskGenerationNotice;
+use crate::resident::supervisor::command::{TaskAssignmentNotice, TaskGenerationNotice};
 
 /// Index rows one read returns while a claim trails its task.
 const ADVANCE_PAGE: usize = 64;
@@ -23,10 +23,38 @@ pub(super) fn reconcile(
     cursor: Option<Seq>,
     lifetime: Duration,
 ) -> CommandResult<bool> {
+    for (lane, notice) in assignment_notices(snapshot) {
+        super::super::supervisor::command::task_assignment(paths, lane, notice);
+    }
     for (lane, notice) in notices(bus, snapshot)? {
         super::super::supervisor::command::task_generation(paths, lane, notice);
     }
     super::review_feedback::reconcile(bus, paths, epoch, snapshot, cursor, lifetime)
+}
+
+fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskAssignmentNotice)> {
+    snapshot
+        .tasks()
+        .iter()
+        .filter_map(|heads| {
+            let claim = heads.claim()?.body();
+            if claim.disposition != ClaimDisposition::Active
+                || !crate::board_command::is_automatic_claim(claim, snapshot.facts())
+            {
+                return None;
+            }
+            let statement = heads.statement().body();
+            Some((
+                claim.lane,
+                TaskAssignmentNotice {
+                    occupant: claim.occupant,
+                    task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
+                    claim: claim.claimed.get(),
+                    phase: heads.workflow().body().phase.to_string(),
+                },
+            ))
+        })
+        .collect()
 }
 
 fn notices(

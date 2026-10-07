@@ -99,6 +99,12 @@ claim; the displaced occupant learns through an ownership refusal, not a
 fabricated inbox message. The lease and its exact opening and closing source
 boundaries keep claim context reconstructible.
 
+Asking for work while already holding a claim is an idempotent read: `task next`
+returns that handle, phase, and phase-specific continuation before consulting the
+allocator. When the resident creates an automatic claim, the exact occupant also
+receives a compact live assignment notice; repeated observations of the same
+claim do not repeat it, and the notice does not enter the steering inbox.
+
 **Value:** two agents never hold the same task, and the board self-heals from
 crashes without an operator sweep. Independent tasks can still meet at an
 explicit, recoverable baseline conflict.

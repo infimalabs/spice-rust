@@ -75,6 +75,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     misdirected: Mutex<BTreeSet<String>>,
     /// Latest claimed-task generation privately delivered to this occupant.
     task_generation: Mutex<Option<(String, u64, u64)>>,
+    /// Latest proactive task assignment privately delivered to this occupant.
+    task_assignment: Mutex<Option<(String, u64)>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -183,6 +185,8 @@ pub(in crate::resident) enum Kick {
     Narration(wire::body::NarrationProdded),
     /// A claimed task changed after this occupant's claim acknowledged it.
     TaskGeneration(TaskGenerationNotice),
+    /// A task the resident proactively assigned to this exact occupant.
+    TaskAssignment(TaskAssignmentNotice),
     /// Change one setting on this exact running occupant and answer through a
     /// one-shot callback door after the correlated provider response.
     Retune {
@@ -206,6 +210,16 @@ pub(in crate::resident) struct TaskGenerationNotice {
     pub(in crate::resident) change: String,
     pub(in crate::resident) editor: String,
     pub(in crate::resident) position: u64,
+}
+
+/// One private proactive-assignment notice, scoped to the claim's exact occupant.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct TaskAssignmentNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: String,
+    pub(in crate::resident) claim: u64,
+    pub(in crate::resident) phase: String,
 }
 impl<W: Write + Send + 'static> Driver<W> {
     /// Own a child's stdin, authenticated resident discovery, lane identity,
@@ -275,6 +289,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             seal,
             misdirected: Mutex::new(BTreeSet::new()),
             task_generation: Mutex::new(None),
+            task_assignment: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -425,6 +440,45 @@ impl<W: Write + Send + 'static> Driver<W> {
             if delivered.as_ref().is_some_and(|(task, claim, generation)| {
                 task == &notice.task && *claim == notice.claim && *generation == notice.generation
             }) {
+                *delivered = previous;
+            }
+        }
+    }
+
+    /// Tell this exact occupant about one resident-minted assignment.
+    fn deliver_task_assignment(&self, notice: &TaskAssignmentNotice) {
+        let previous = {
+            let mut delivered = self
+                .task_assignment
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered
+                .as_ref()
+                .is_some_and(|(task, claim)| task == &notice.task && *claim == notice.claim)
+            {
+                return;
+            }
+            delivered.replace((notice.task.clone(), notice.claim))
+        };
+        let message = format!(
+            "<system-notice>\nTask {} was assigned to this lane in phase {}. Continue \
+             this task now; run `spice task show {}` for its contract before asking \
+             the allocator for work. This is a private assignment notice; no \
+             acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+            notice.task, notice.phase, notice.task,
+        );
+        if self
+            .background(&format!("task:{}", notice.task), &message)
+            .is_err()
+        {
+            let mut delivered = self
+                .task_assignment
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered
+                .as_ref()
+                .is_some_and(|(task, claim)| task == &notice.task && *claim == notice.claim)
+            {
                 *delivered = previous;
             }
         }
@@ -1143,6 +1197,15 @@ pub(in crate::resident) fn task_generation(
     send(paths, lane, &Kick::TaskGeneration(notice));
 }
 
+/// Privately notify the exact occupant about a resident-minted assignment.
+pub(in crate::resident) fn task_assignment(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: TaskAssignmentNotice,
+) {
+    send(paths, lane, &Kick::TaskAssignment(notice));
+}
+
 /// Apply one setting change to the exact running occupant and wait for OMP's
 /// correlated response.
 ///
@@ -1291,6 +1354,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_generation(&notice);
                         }
                         Ok(Kick::TaskGeneration(_)) => {}
+                        Ok(Kick::TaskAssignment(notice)) if notice.occupant == occupant => {
+                            driver.deliver_task_assignment(&notice);
+                        }
+                        Ok(Kick::TaskAssignment(_)) => {}
                         Ok(Kick::Retune {
                             occupant: target,
                             request,
