@@ -1086,7 +1086,7 @@ fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
     }
 }
 
-fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
+pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
     if has_taste_review(&task.statement.body.tags) {
         return format!(
             "next: spice task modify {} --title \"...\"",

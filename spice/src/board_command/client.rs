@@ -233,52 +233,68 @@ pub(in crate::board_command) fn ledger_output(
 fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
     let mut drain = None;
     let outcome = retry_task_next(|| {
-        mutate_from_board(
+        let board = match current_board(repository, BoardRead::All { family: None }) {
+            Ok(board) => board,
+            Err(outcome) => return outcome,
+        };
+        match existing_claim_reply(&board) {
+            Ok(Some(reply)) => return Outcome::Reply(reply),
+            Ok(None) => {}
+            Err(outcome) => return outcome,
+        }
+        let entries = match actor_entries(&board) {
+            Ok(entries) => entries,
+            Err(outcome) => return outcome,
+        };
+        let subscription = match allocation_subscription(&board.residency.body, &board.principal) {
+            Ok(subscription) => subscription,
+            Err(outcome) => return outcome,
+        };
+        let environment = board.environment();
+        let selected = match board::select(
+            &entries,
+            &board.principal,
+            &subscription,
+            board.allocation_band,
+            board.recent_cell.as_ref(),
+            &environment,
+        ) {
+            Some(selected) => selected,
+            None => {
+                // The refusal stays typed for every caller; the readout is
+                // measured from this same snapshot for the rim to speak.
+                drain = drain_reply(&board).ok();
+                return refusal(
+                    "board::allocator-empty",
+                    None,
+                    "add or wake eligible work before requesting task next",
+                );
+            }
+        };
+        let task = selected.entry().handle().clone();
+        let heads = match task_heads(&board, &task) {
+            Ok(heads) => heads,
+            Err(outcome) => return outcome,
+        };
+        let (lane, occupant) = match actor_seat(&board) {
+            Ok(seat) => seat,
+            Err(outcome) => return outcome,
+        };
+        let rule = "next".parse::<Name>().expect("next is a wire name");
+        crate::command_client::execute_typed(
             repository,
             contract,
-            BoardRead::All { family: None },
-            |board| {
-                let entries = actor_entries(&board)?;
-                let subscription =
-                    allocation_subscription(&board.residency.body, &board.principal)?;
-                let environment = board.environment();
-                let selected = board::select(
-                    &entries,
-                    &board.principal,
-                    &subscription,
-                    board.allocation_band,
-                    board.recent_cell.as_ref(),
-                    &environment,
-                )
-                .ok_or_else(|| {
-                    // The refusal stays typed for every caller; the readout is
-                    // measured from this same snapshot for the rim to speak.
-                    drain = drain_reply(&board).ok();
-                    refusal(
-                        "board::allocator-empty",
-                        None,
-                        "add or wake eligible work before requesting task next",
-                    )
-                })?;
-                let task = selected.entry().handle().clone();
-                let heads = task_heads(&board, &task)?;
-                let (lane, occupant) = actor_seat(&board)?;
-                let rule = "next".parse::<Name>().expect("next is a wire name");
-                Ok((
-                    CommandKind::ClaimWin,
-                    vec![
-                        statement_witness(heads),
-                        workflow_witness(heads),
-                        claim_witness(heads),
-                        Witness::Eligibility { rule: rule.clone() },
-                        residency_witness(&board, lane, occupant),
-                    ],
-                    serde_json::to_value(ClaimWin {
-                        rule,
-                        recovery: None,
-                    })
-                    .expect("typed intent encodes"),
-                ))
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency_witness(&board, lane, occupant),
+            ],
+            &ClaimWin {
+                rule,
+                recovery: None,
             },
         )
     });
@@ -290,6 +306,53 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
             .and_then(|board| drain_reply(&board).ok());
     }
     TaskNext { outcome, drain }
+}
+
+/// Return the caller's existing assignment before consulting the allocator.
+///
+/// The reply is positioned at the board snapshot and commits nothing. An
+/// already-assigned lane therefore learns what it owns without racing a second
+/// read or asking the claim mutation path to rediscover the one-claim guard.
+pub(super) fn existing_claim_reply(
+    board: &BoardAnswer,
+) -> Result<Option<Reply<CommandAnswer>>, Outcome<CommandAnswer>> {
+    let entries = actor_entries(board)?;
+    let mut held = entries.iter().filter(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == board.principal && claim.disposition == ClaimDisposition::Active
+        })
+    });
+    let Some(entry) = held.next() else {
+        return Ok(None);
+    };
+    if held.next().is_some() {
+        return Err(protocol_fault(
+            "claim::active-ambiguous",
+            "one principal holds more than one active claim",
+        ));
+    }
+    let task = board
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.handle == *entry.handle())
+        .ok_or_else(|| {
+            protocol_fault(
+                "board::task-missing",
+                "an actor-routed claim has no board task",
+            )
+        })?;
+    let text = format!(
+        "claim {} phase:{}\nassigned to this lane: {}\n\
+         continuity: task next retained the existing assignment; no claim changed.\n{}",
+        entry.handle(),
+        entry.workflow().phase,
+        entry.statement().title,
+        next_command_line(board, task),
+    );
+    Ok(Some(Reply {
+        position: ReplyPosition::Snapshot(board.cursor),
+        body: CommandAnswer::Text(TextAnswer { text }),
+    }))
 }
 
 /// Whether an outcome is the typed refusal an exhausted allocator returns.

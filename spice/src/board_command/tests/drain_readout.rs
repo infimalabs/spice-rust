@@ -92,6 +92,13 @@ fn empty_drain_readout_counts_the_parked_board_like_task_status() {
         "a steered team drains empty by construction",
     );
 
+    assert!(
+        existing_claim_reply(&answer)
+            .expect("peer-only snapshot validates")
+            .is_none(),
+        "peer claims do not replace the allocator drain"
+    );
+
     let reply = drain_reply(&answer).expect("drained snapshot renders");
     assert_eq!(reply.position, ReplyPosition::Snapshot(answer.cursor));
     let readout = reply.body;
@@ -133,6 +140,43 @@ fn empty_drain_readout_counts_the_parked_board_like_task_status() {
     for line in ["active 1", "stale 1", "blocked 1", "waiting 1", "oops 1"] {
         assert!(status.lines().any(|seen| seen == line), "{line}: {status}");
     }
+    clean(&root, bus);
+}
+
+#[test]
+fn task_next_returns_the_callers_active_claim_before_allocator_drain() {
+    let (root, bus, epoch, seats) = fixture("task-next-existing-claim", 1);
+    let held = todo_task(&bus, epoch, "DRAIN-own00001", "Continue owned work");
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &held);
+    let mut answer = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    answer.actor_route.project = "another.private.route".to_owned();
+    answer.actor_route.origin_thread = "another-origin-thread".to_owned();
+    answer.project_policy.public_stems.clear();
+    assert!(
+        actor_rows(
+            &answer,
+            &actor_entries(&answer).expect("owned claim validates")
+        )
+        .is_empty(),
+        "the claim remains possession even when it is outside allocator routing",
+    );
+
+    let reply = existing_claim_reply(&answer)
+        .expect("owned claim snapshot validates")
+        .expect("owned claim returns a continuation");
+    assert_eq!(reply.position, ReplyPosition::Snapshot(answer.cursor));
+    let CommandAnswer::Text(text) = reply.body else {
+        panic!("owned claim continuation is not text")
+    };
+    assert_eq!(
+        text.text,
+        format!(
+            "claim {held} phase:todo\n\
+             assigned to this lane: Continue owned work\n\
+             continuity: task next retained the existing assignment; no claim changed.\n\
+             next: spice task done --validation \"...\""
+        )
+    );
     clean(&root, bus);
 }
 

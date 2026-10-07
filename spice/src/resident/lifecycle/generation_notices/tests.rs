@@ -123,6 +123,41 @@ fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
 }
 
 #[test]
+fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
+    let fixture = AdvisoryRtkFixture::new();
+    let (bus, task) = automatic_claimed_fixture(&fixture);
+    let snapshot = bus.task_snapshot().expect("automatic claim snapshot reads");
+    let claim = snapshot.tasks()[0].claim().expect("claim head").body();
+    let handle = TaskHandle::for_project("task.claim", &task).to_string();
+
+    let projected = assignment_notices(&snapshot);
+    assert_eq!(
+        projected,
+        [(
+            fixture.lane,
+            TaskAssignmentNotice {
+                occupant: fixture.occupant,
+                task: handle,
+                claim: claim.claimed.get(),
+                phase: "todo".to_owned(),
+            },
+        )],
+    );
+    assert_eq!(
+        assignment_notices(&snapshot),
+        projected,
+        "stable authority can be retried until the occupant driver receives it",
+    );
+
+    end_claim(&bus, &task);
+    assert!(
+        assignment_notices(&bus.task_snapshot().expect("released snapshot reads")).is_empty(),
+        "ended possession is not announced as an assignment",
+    );
+    finish(bus);
+}
+
+#[test]
 fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
     let fixture = AdvisoryRtkFixture::new();
     let (bus, _) = claimed_fixture(&fixture);
@@ -167,6 +202,26 @@ fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
 }
 
 fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
+    let at = now();
+    claimed_fixture_with_deadlines(
+        fixture,
+        shifted(at, -60),
+        shifted(at, 3_600),
+        shifted(at, 7_200),
+    )
+}
+
+fn automatic_claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
+    let at = now();
+    claimed_fixture_with_deadlines(fixture, at, shifted(at, 60), shifted(at, 3_600))
+}
+
+fn claimed_fixture_with_deadlines(
+    fixture: &AdvisoryRtkFixture,
+    start: Instant,
+    expiry: Instant,
+    maximum: Instant,
+) -> (Bus, TaskStamp) {
     let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     let row = LaneResidency {
@@ -188,8 +243,7 @@ fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
     let origin: Origin = format!("resident:{}", fixture.epoch)
         .parse()
         .expect("resident origin");
-    let now = now();
-    let mut write = JournalWrite::new(Actor::Spice, origin, now, Producer::CommandDoor);
+    let mut write = JournalWrite::new(Actor::Spice, origin, start, Producer::CommandDoor);
     let seated = write
         .fact(
             wire::body::UpSeated {
@@ -210,15 +264,7 @@ fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
     });
     committed(bus.commit(write).expect("resident seating commits"));
     let task: TaskStamp = "1kKRRsDQ".parse().expect("task stamp");
-    seed_task_claim(
-        &bus,
-        &task,
-        &row,
-        fixture.epoch,
-        shifted(now, -60),
-        shifted(now, 3_600),
-        shifted(now, 7_200),
-    );
+    seed_task_claim(&bus, &task, &row, fixture.epoch, start, expiry, maximum);
     (bus, task)
 }
 

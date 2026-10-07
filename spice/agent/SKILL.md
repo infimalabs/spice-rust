@@ -27,6 +27,11 @@ command that reads the rest. `spice session briefing` refreshes the page,
 session receives no page, since it still holds its context; run those commands
 only when a decision needs fresher state.
 
+When the resident proactively assigns work to the current occupant, it sends a
+compact private `<system-notice>` naming the task handle and phase and directing
+`spice task show HANDLE`. Continue that assignment immediately. The notice has
+no acknowledgment key and is not a briefing or steering delivery.
+
 A current operator direction answerable without commands takes precedence. If
 the page is missing on a fresh start or reads `# Spice briefing unavailable`,
 run `spice session briefing` and `spice task status` yourself; if either is

@@ -54,6 +54,7 @@
 | Label | Invariant |
 | --- | --- |
 | <a id="work-at-most-one-active-claim-per-actor"></a>**At most one active claim per actor** | At most one active claim per actor. |
+| <a id="work-task-next-honors-existing-possession-before-allocation"></a>**`task next` honors existing possession before allocation** | When its actor already holds exactly one active claim, `task next` reports that task's handle, current phase, and actionable continuation from the read snapshot. It neither enters allocation nor changes the claim, and therefore never describes the actor's own possession as peer-held or as an empty allocator. |
 | <a id="work-claiming-is-atomic"></a>**Claiming is atomic** | Claiming is atomic: `claim::won`, the active claim head and owner, and the lease are committed together, so no row projects active possession without an owner. |
 | <a id="work-claims-carry-a-bounded-lease-and-an-exact-source-boundary"></a>**Claims carry a bounded lease and an exact source boundary** | A claim records its bounded lease and the lane's exact accounted opening source boundary. Terminal evidence supplies the exact closing boundary. |
 | <a id="work-lapse-writes-lapsed-before-readiness-is-derived"></a>**Lapse writes `lapsed` before readiness is derived** | Claim lapse is a typed journal transaction that changes claim disposition from `active` to `lapsed`. Readers then derive readiness from every current eligibility predicate without rewriting claim history. |
