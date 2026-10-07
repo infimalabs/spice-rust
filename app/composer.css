@@ -394,13 +394,16 @@
   inset: auto var(--team-control-inline-size) -10px 0;
   height: 10px;
   background:
-    linear-gradient(color-mix(in srgb, var(--control) 52%, transparent) 0 0),
+    linear-gradient(color-mix(in srgb, var(--control) 52%, transparent) 0 100%),
     var(--overlay-veil);
   backdrop-filter: var(--overlay-frost);
   -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
   mask-image: linear-gradient(to bottom, #000, transparent);
   content: "";
   pointer-events: none;
+}
+.team-compose[data-composer-fully-collapsed="true"] .team-composer::after {
+  display: none;
 }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
