@@ -25,6 +25,53 @@ pub(super) fn completion_operation() -> CanonicalUuid {
     uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Expire a fixture claim the way the resident's lease timer does.
+///
+/// The timer runs `board::lapse::lapse` inside one bus transaction with the
+/// exact expiry the lease carries, so this is the production lapse rather than
+/// a hand-written claim head.
+pub(super) fn lapse_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) {
+    let held = board(bus, epoch, Actor::Lane(seat.lane));
+    let expiry = at(&held, task)
+        .lease
+        .as_ref()
+        .expect("a review claim carries its lease")
+        .body
+        .expiry;
+    let request = board::lapse::Request {
+        projects: ProjectPolicy::new(
+            ["board".to_owned(), "rim".to_owned()],
+            ["sandbox".to_owned()],
+            dialect::PROJECT_MIN_DEPTH as u64,
+            dialect::PROJECT_MAX_DEPTH as u64,
+        )
+        .expect("board command test project policy"),
+        command: completion_operation(),
+        occupant: seat.occupant,
+        epoch,
+        expiry,
+        at: expiry,
+        intent: TaskRef { task: task.clone() },
+    };
+    let lapsed = bus
+        .transact(move |journal| match board::lapse::lapse(journal, request) {
+            Ok(lapsed) => {
+                let (first, last) = (lapsed.first(), lapsed.last());
+                bus::JournalTransaction::committed(Ok(lapsed), first, last)
+            }
+            Err(error) => bus::JournalTransaction::settled(Err(error)),
+        })
+        .expect("the lapse reaches the journal writer");
+    lapsed.expect("the expired review claim lapses");
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("lapsed snapshot reads")
+            .task_head_update_visits(),
+        1,
+        "claim lapse updates one live head"
+    );
+}
+
 pub(super) fn stamp(text: &str) -> wire::TaskStamp {
     let value = text.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000

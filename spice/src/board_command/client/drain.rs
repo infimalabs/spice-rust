@@ -197,25 +197,6 @@ impl DrainReadout {
     }
 }
 
-/// Build the empty-drain reply from the board snapshot the allocator drained.
-///
-/// The counts come from the same snapshot and the same definitions as task
-/// status, positioned at the cursor of that snapshot. Rows the actor route
-/// rejects and a lane without an allocation subscription are refused exactly
-/// as the allocator itself refuses them.
-#[cfg(test)]
-pub(in crate::board_command) fn drain_reply(
-    board: &BoardAnswer,
-) -> Result<Reply<DrainReadout>, Outcome<CommandAnswer>> {
-    let entries = actor_entries(board)?;
-    let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
-    let rows = actor_rows(board, &entries);
-    Ok(Reply {
-        position: ReplyPosition::Snapshot(board.cursor),
-        body: DrainReadout::new(ParkedCounts::measure(&entries, &rows), subscription.policy),
-    })
-}
-
 /// One `task next` result: the allocator outcome, plus the readout prepared
 /// when the allocator drained empty so the rim can speak it for a steered lane.
 pub(crate) struct TaskNext {
