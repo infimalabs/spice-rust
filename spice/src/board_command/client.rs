@@ -316,13 +316,13 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
 pub(super) fn existing_claim_reply(
     board: &BoardAnswer,
 ) -> Result<Option<Reply<CommandAnswer>>, Outcome<CommandAnswer>> {
-    let entries = actor_entries(board)?;
-    let mut held = entries.iter().filter(|entry| {
-        entry.claim().is_some_and(|claim| {
-            claim.actor == board.principal && claim.disposition == ClaimDisposition::Active
+    let mut held = board.tasks.iter().filter(|task| {
+        task.claim.as_ref().is_some_and(|claim| {
+            claim.body.actor == board.principal
+                && claim.body.disposition == ClaimDisposition::Active
         })
     });
-    let Some(entry) = held.next() else {
+    let Some(task) = held.next() else {
         return Ok(None);
     };
     if held.next().is_some() {
@@ -331,22 +331,12 @@ pub(super) fn existing_claim_reply(
             "one principal holds more than one active claim",
         ));
     }
-    let task = board
-        .tasks
-        .iter()
-        .find(|task| task.statement.body.handle == *entry.handle())
-        .ok_or_else(|| {
-            protocol_fault(
-                "board::task-missing",
-                "an actor-routed claim has no board task",
-            )
-        })?;
     let text = format!(
         "claim {} phase:{}\nassigned to this lane: {}\n\
          continuity: task next retained the existing assignment; no claim changed.\n{}",
-        entry.handle(),
-        entry.workflow().phase,
-        entry.statement().title,
+        task.statement.body.handle,
+        task.workflow.body.phase,
+        task.presentation_title,
         next_command_line(board, task),
     );
     Ok(Some(Reply {
