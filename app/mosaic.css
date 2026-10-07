@@ -901,7 +901,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    submit, 1.6 times the 35px global action, leaves 12px on each side, as each
    16px track does within its 40px half. Its 68px row leaves 6px above and
    below. The shared frost screen continues beneath the transparent control
-   frame; only the inline inset shadow marks its joint with drafts. */
+   frame; equal inline shadows lift it above the panels on either side. */
 .team-composer .team-composer-controls {
   --team-control-item-height: 68px;
   --team-control-label-row: 14px;
