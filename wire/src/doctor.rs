@@ -68,9 +68,6 @@ pub enum SpiceVariable {
     /// Exact RTK executable selected for supervised shell rewriting.
     #[serde(rename = "SPICE_RS_RTK_EXECUTABLE")] // env-policy: allow
     RtkExecutable,
-    /// Originating worktree's `say.voice`, handed to an external speech renderer as data.
-    #[serde(rename = "SPICE_RS_SAY_VOICE")] // env-policy: allow
-    SayVoice,
     /// Session identity a lane pinned for a vendor that exports none of its own.
     #[serde(rename = "SPICE_RS_SESSION")] // env-policy: allow
     Session,
@@ -107,7 +104,6 @@ impl SpiceVariable {
         Self::PreCommitPaths,
         Self::PreCommitSource,
         Self::RtkExecutable,
-        Self::SayVoice,
         Self::Session,
         Self::WrapperSpice,
         Self::SourceStamp,
@@ -144,7 +140,6 @@ impl SpiceVariable {
             Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
             Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow
             Self::RtkExecutable => "SPICE_RS_RTK_EXECUTABLE", // env-policy: allow
-            Self::SayVoice => "SPICE_RS_SAY_VOICE", // env-policy: allow
             Self::Session => "SPICE_RS_SESSION", // env-policy: allow
             Self::WrapperSpice => "SPICE_RS_WRAPPER_SPICE", // env-policy: allow
             Self::SourceStamp => "SPICE_SOURCE_STAMP", // env-policy: allow

@@ -27,7 +27,6 @@ pub(super) async fn bind_test_server(
         capabilities,
         app.version(),
         app.source(),
-        speech(),
     ))
     .await
 }

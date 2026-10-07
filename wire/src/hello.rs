@@ -32,8 +32,8 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 11 carries each pending directive's lane-wake classification.
-    pub const CURRENT: Self = Self(11);
+    /// Version 12 carries each worktree's ordered speech voice list.
+    pub const CURRENT: Self = Self(12);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]
@@ -193,34 +193,16 @@ impl<'de> Deserialize<'de> for GravatarHash {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "backend", deny_unknown_fields)]
 pub enum SpeechPlayback {
-    /// Playback controls are absent and no renderer is reachable.
+    /// Playback controls are absent.
     Disabled {},
     /// The browser speaks through its system synthesis implementation.
     System {
-        /// Exact system voice name selected by configuration.
-        voice: String,
+        /// Voice names in preference order; a device speaks with the first one
+        /// it publishes.
+        voices: Vec<String>,
         /// Base speaking rate projected into the browser API.
         words_per_minute: u32,
     },
-    /// The browser requests rendered bytes from the same-origin endpoint.
-    External {
-        /// Media type the configured renderer promises to return.
-        content_type: String,
-        /// Base rate substituted into the server-owned argv contract.
-        words_per_minute: u32,
-        /// Whether this generation has a nonempty renderer argv.
-        available: bool,
-    },
-}
-
-/// One same-origin request for externally rendered speech audio.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SpeechRequest {
-    /// Rendered card text; executable selection remains server-owned.
-    pub text: String,
-    /// Canonical originating worktree whose admitted renderer configuration applies.
-    pub worktree: String,
 }
 
 /// The first frame of every socket.

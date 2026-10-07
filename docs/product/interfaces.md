@@ -528,12 +528,9 @@ flowchart TD
   TC --> Q["one global sequential queue"]
   CM --> Q
   NM --> Q
-  Q --> W["originating worktree's<br/>admitted speech contract"]
-  W --> B{"configured backend"}
-  B --> S["browser system synthesis<br/>callback-settled"]
-  B --> X["external rendering<br/>deadline-bounded"]
+  Q --> W["originating worktree's<br/>ordered say.voices"]
+  W --> S["browser system synthesis<br/>callback-settled"]
   S --> P["single-owner playback"]
-  X --> P
   P --> Q
 ```
 
@@ -544,7 +541,7 @@ Automatic narration admits each newly cursor-admitted message's complete text;
 it does not reinterpret ACKs or paragraph edges.
 
 **Invariant —** Every queued card or narration entry carries the admitted speech
-contract of the agent worktree that produced it. Worktree-scoped `say.voice`
+contract of the agent worktree that produced it. Worktree-scoped `say.voices`
 therefore changes voices between agents without creating another playback
 owner: the one global queue remains sequential and never overlaps utterances.
 
@@ -552,41 +549,24 @@ owner: the one global queue remains sequential and never overlaps utterances.
 reported as nonblocking `Speech unavailable` state and never blocks the visible
 stream — the transcript remains the record.
 
-**Invariant —** External rendering is deadline-bounded. Browser system
-synthesis instead settles on `onend` or `onerror`; if the browser emits neither,
-the active queue head remains until the operator uses the global stop.
+**Invariant —** Speech is the viewing browser's own system synthesis; nothing
+renders audio on the resident. An utterance settles on `onend` or `onerror`; if
+the browser emits neither, the active queue head remains until the operator
+uses the global stop. A failed utterance carries the browser's own error code.
 
-**Invariant —** A browser publishes its voice list asynchronously, so an empty
-list is a pre-publication state rather than a missing voice. A system request
-waits for `voiceschanged` under its own bound and then speaks once with the
-configured voice; a published list that omits that voice refuses while naming
-the voices the browser does offer, and no other voice is ever substituted.
-System synthesis runs on the viewing device, so a remote phone offers its own
-voices, not the resident's; the refusal says so and names the external backend
-as the remedy. While system synthesis plays, spice names the voice the browser
-reported and a failed utterance carries the browser's own error code.
-
-**Invariant —** External rendering writes the text to the machine-local
-`say.command` argv on stdin and plays its stdout. The argv's one slot,
-`{words_per_minute}`, resolves from the originating worktree's contract. That
-worktree's `say.voice` reaches the renderer only as the `SPICE_RS_SAY_VOICE`
-environment variable: it is tracked repository text, so it never becomes argv
-or shell text of the machine-local command. One renderer on the resident
-therefore keeps per-agent voices on every device. On macOS, `say` writes a
-file rather than stdout, so a working local configuration is:
+**Invariant —** `say.voices` is an ordered list of voice names. Each device
+speaks an agent's messages with the first name it publishes, and that agent
+keeps the voice for the rest of the page. An empty list, the default, speaks
+with the device's default voice. A browser publishes its voice list
+asynchronously, so an empty published list is a pre-publication state: the
+request waits for `voiceschanged` under its own bound. A published list holding
+none of the names refuses while naming the voices the browser does offer. List
+one name per device family, for example:
 
 ```toml
 [say]
-backend = "external"
-command = ["sh", "-c", 't=$(mktemp -d) && say -v "$SPICE_RS_SAY_VOICE" -r "$1" -f - -o "$t/s.m4a" --file-format=m4af --data-format=aac && cat "$t/s.m4a"; s=$?; rm -rf "$t"; exit $s', "say", "{words_per_minute}"]
-content_type = "audio/mp4"
+voices = ["Zoe (Premium)", "English (United States)"]
 ```
-
-AAC keeps a clip about a tenth the size of 16-bit WAV, so long messages stay
-inside the resident's 16 MiB clip limit and reach a phone quickly.
-
-**Invariant —** The clip is played back under the media type the backend
-declared, never a guessed one.
 
 ---
 

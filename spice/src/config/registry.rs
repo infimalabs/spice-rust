@@ -765,25 +765,11 @@ configuration_registry! {
         class: MachineLocal,
         flag: None,
     }
-    fixed "say.command" {
+    fixed "say.voices" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
-        layers: LOCAL,
-        class: MachineLocal,
-        flag: None,
-    }
-    fixed "say.voice" {
-        kind: String,
-        builtin: Some(Builtin::String(serve::speech::DEFAULT_VOICE)),
         layers: TRACKED_WORKTREE,
         class: WorktreeLocal,
-        flag: None,
-    }
-    fixed "say.content_type" {
-        kind: String,
-        builtin: Some(Builtin::String(serve::speech::DEFAULT_CONTENT_TYPE)),
-        layers: TRACKED_LOCAL,
-        class: MachineLocal,
         flag: None,
     }
     fixed "say.words_per_minute" {

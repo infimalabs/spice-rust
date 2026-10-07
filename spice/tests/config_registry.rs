@@ -592,9 +592,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "lock.<name>.shards",
     "serve.pack.rows",
     "say.backend",
-    "say.command",
-    "say.voice",
-    "say.content_type",
+    "say.voices",
     "say.words_per_minute",
     "proof.image",
     "proof.container",
@@ -707,7 +705,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         .collect::<Vec<_>>();
     assert_eq!(
         worktree,
-        ["vendor.omp.model", "vendor.omp.effort", "say.voice",]
+        ["vendor.omp.model", "vendor.omp.effort", "say.voices",]
     );
 
     let local = descriptors()
@@ -729,8 +727,6 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.<name>.shards",
             "serve.pack.rows",
             "say.backend",
-            "say.command",
-            "say.content_type",
             "say.words_per_minute",
             "proof.container",
             "proof.runner",
@@ -752,7 +748,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     for entry in descriptors() {
         let local_only = matches!(
             entry.template().as_str(),
-            "say.command" | "proof.container" | "proof.runner"
+            "proof.container" | "proof.runner"
         );
         assert_eq!(
             entry.layers().contains(&ConfigSource::Tracked),

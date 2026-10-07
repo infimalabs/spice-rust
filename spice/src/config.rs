@@ -168,7 +168,7 @@ impl Root {
         &self.serve
     }
 
-    /// Browser-owned speech playback and its optional local renderer.
+    /// Browser speech playback.
     #[must_use]
     pub const fn say(&self) -> &serve::SpeechConfig {
         &self.say

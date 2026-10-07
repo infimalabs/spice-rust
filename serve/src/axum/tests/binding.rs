@@ -15,7 +15,6 @@ async fn server_refuses_an_identity_for_another_app_generation_before_binding() 
         Capabilities::default(),
         version,
         app.source(),
-        speech(),
     ))
     .await
     .expect_err("mismatched app identity refuses");
@@ -109,7 +108,8 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         wire::decode(response_body(&admitted)).expect("bootstrap decodes");
     assert_eq!(bootstrap.endpoint, format!("http://{remote}"));
 
-    let rejected = remote_websocket(dial, &remote, None)
+    let local_origin = format!("http://{remote}");
+    let rejected = remote_websocket(dial, &remote, &local_origin, None)
         .await
         .expect_err("an unauthenticated remote socket is refused");
     assert!(
@@ -118,7 +118,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         "remote socket refusal is authentication-specific: {rejected:?}"
     );
     let capability = bootstrap.capability.to_string();
-    let mut socket = remote_websocket(dial, &remote, Some(&capability))
+    let mut socket = remote_websocket(dial, &remote, &local_origin, Some(&capability))
         .await
         .expect("the bootstrapped capability authenticates the remote socket");
     send_client(
@@ -144,20 +144,14 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     assert!(elsewhere.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
 
     // Same host, another site's origin: the check that survives the wildcard.
-    let body = wire::encode(&wire::SpeechRequest {
-        text: "spoken from somewhere else".to_owned(),
-        worktree: "/worktrees/speech".to_owned(),
-    })
-    .expect("request encodes");
-    let foreign = speech_request_to(
-        "/speech?auth=correct-horse-battery-staple",
-        dial,
-        &remote,
-        "https://attacker.example",
-        &body,
-    )
-    .await;
-    assert!(foreign.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
+    let foreign = remote_websocket(dial, &remote, "https://attacker.example", Some(&capability))
+        .await
+        .expect_err("a foreign origin is refused");
+    assert!(
+        matches!(&foreign, tokio_tungstenite::tungstenite::Error::Http(response)
+            if response.status() == StatusCode::FORBIDDEN),
+        "foreign-origin refusal is origin-specific: {foreign:?}"
+    );
 
     task.abort();
 }

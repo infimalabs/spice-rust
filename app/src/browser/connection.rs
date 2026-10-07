@@ -1247,50 +1247,6 @@ fn slice_is_empty<T>(value: &&[T]) -> bool {
     value.is_empty()
 }
 
-pub(super) async fn request_external_speech(
-    worktree: &str,
-    text: &str,
-    content_type: &str,
-) -> Result<Vec<u8>, String> {
-    let request = Request::post(&authenticated_path(
-        "/speech",
-        browser_auth_token()?.as_deref(),
-    ))
-    .json(&wire::SpeechRequest {
-        text: text.to_owned(),
-        worktree: worktree.to_owned(),
-    })
-    .map_err(|error| format!("speech request could not be encoded: {error}"))?;
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("speech request failed: {error}"))?;
-    if !response.ok() {
-        let status = response.status();
-        let detail = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "speech renderer returned no detail".to_owned());
-        return Err(bounded_speech_error(&format!(
-            "speech renderer returned {status}: {detail}"
-        )));
-    }
-    let actual = response.headers().get("content-type").unwrap_or_default();
-    if actual != content_type {
-        return Err(format!(
-            "speech renderer returned {actual:?}, expected {content_type:?}"
-        ));
-    }
-    let bytes = response
-        .binary()
-        .await
-        .map_err(|error| format!("speech audio response was invalid: {error}"))?;
-    if bytes.is_empty() {
-        return Err("speech renderer returned empty audio".to_owned());
-    }
-    Ok(bytes)
-}
-
 fn browser_auth_token() -> Result<Option<String>, String> {
     let Some(storage) = web_sys::window()
         .ok_or_else(|| "browser window is unavailable".to_owned())?
@@ -1313,14 +1269,6 @@ fn browser_auth_token() -> Result<Option<String>, String> {
 
 fn authenticated_path(path: &str, token: Option<&str>) -> String {
     token.map_or_else(|| path.to_owned(), |token| format!("{path}?auth={token}"))
-}
-
-fn bounded_speech_error(error: &str) -> String {
-    let mut end = error.len().min(240);
-    while !error.is_char_boundary(end) {
-        end -= 1;
-    }
-    error[..end].to_owned()
 }
 
 async fn send_typed<B: Serialize>(
