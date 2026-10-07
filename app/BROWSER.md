@@ -121,15 +121,19 @@ stronger control color
 into ordinary glass. The form has no physical lower edge or strengthening band;
 the ordinary veil simply continues 10px beyond it while a mask fades that
 continuation to transparent. No backdrop-filter boundary exists at the form
-edge. The static continuation remains after the form fully collapses, preventing
-a final visual snap. The shared control edge remains opaque and theme-derived
+edge. The continuation depth is declared once in CSS and counts as composer:
+collapse travels the measured height plus that depth, so the feather tapers out
+of view before the form is fully collapsed and tapers back in first on reveal.
+Only then does the message stream's top rule appear, fading in rather than
+switching on, and without motion under reduced motion. The shared control edge
+remains opaque and theme-derived
 for other control consumers. Member headings retain
 their accent underline, focused or broadcast drafts merge their full-width
 highlight, and vacant members mute content without changing the surface.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
-height remains both the collapse distance and the message-plane spacer. Between
+height remains the message-plane spacer and scroll padding. Between
 exposure edges, one fixed absolute rest lets native scroll carry the composer.
 At either edge sticky positioning owns continued motion without repeated layout
 writes; the first reversed delta reanchors the rest once, so reveal or collapse
