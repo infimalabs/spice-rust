@@ -300,7 +300,7 @@ fn render_direction(
         <button
             type="button"
             class="agent-menu-attention-chip"
-            aria-label={format!("Open {}'s oldest waiting direction in Work", item.label)}
+            aria-label={format!("Open {}'s oldest waiting direction in task overview", item.label)}
             title={preview.to_owned()}
             onclick={open}
         >

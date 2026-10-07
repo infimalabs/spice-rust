@@ -319,7 +319,7 @@ fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
                     type="button"
                     class="app-fact-link"
                     data-task-project-link={project.clone()}
-                    aria-label={format!("Show {project} in Work")}
+                    aria-label={format!("Show {project} in task overview")}
                     onclick={Callback::from(move |_| {
                         navigate.emit(navigation::Intent::Project(target.clone()));
                     })}

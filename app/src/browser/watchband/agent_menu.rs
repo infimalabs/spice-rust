@@ -143,29 +143,6 @@ pub(super) fn dismiss_others(event: MouseEvent) {
     }
 }
 
-/// Escape restores the composer and returns focus to the menu button.
-fn close_on_escape(event: KeyboardEvent) {
-    if event.key() != "Escape" {
-        return;
-    }
-    let Some(menu) = element_target(event.target())
-        .and_then(|target| target.closest(".agent-menu").ok().flatten())
-    else {
-        return;
-    };
-    event.prevent_default();
-    event.stop_propagation();
-    let _removed = menu.remove_attribute("open");
-    if let Some(summary) = menu
-        .query_selector(":scope > summary")
-        .ok()
-        .flatten()
-        .and_then(|summary| summary.dyn_into::<web_sys::HtmlElement>().ok())
-    {
-        let _focused = summary.focus();
-    }
-}
-
 /// The head's state and age on one line. The handle a working agent holds is
 /// the Task row's value, so the head names only the state.
 fn render_presence(
@@ -429,8 +406,9 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
     html! {
         <details
             class="agent-menu"
+            data-app-overlay-disclosure=""
             data-renewal-pending={renewal.pressed.to_string()}
-            onkeydown={Callback::from(close_on_escape)}
+            onkeydown={Callback::from(crate::browser::overlay::dismiss_disclosure_on_escape)}
         >
             <summary
                 class="agent-menu-button"
@@ -442,7 +420,7 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
                 </span>
             </summary>
             <div
-                class="agent-menu-panel"
+                class="agent-menu-panel app-overlay-panel app-overlay-panel--seated"
                 role="group"
                 aria-label={format!("{} menu", standing.label)}
                 data-agent-menu-lane={member.lane.to_string()}

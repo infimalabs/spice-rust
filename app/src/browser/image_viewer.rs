@@ -344,7 +344,7 @@ fn viewer(props: &ViewerProps) -> Html {
         }
     });
     html! {
-        <dialog ref={host} class="image-lightbox" aria-label="Full-size image">
+        <dialog ref={host} class="image-lightbox app-modal" aria-label="Full-size image">
             if *editing && let Some(image) = image {
                 <editor::Editor {image} onapply={apply} oncancel={cancel} {ondirty} />
             } else {
@@ -421,7 +421,7 @@ impl Presentation {
     ) -> Self {
         let returned = opener.clone();
         let closed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-            return_focus(&returned);
+            overlay::return_focus(&returned);
             dismissed.emit(());
         });
         let cancel_request = requested.clone();
@@ -482,15 +482,5 @@ impl Drop for Presentation {
             .dialog
             .remove_event_listener_with_callback("click", self.backdrop.as_ref().unchecked_ref());
         self.dialog.close();
-    }
-}
-
-fn return_focus(opener: &web_sys::Element) {
-    if overlay::returnable(opener)
-        && let Some(opener) = opener.dyn_ref::<web_sys::HtmlElement>()
-    {
-        let options = web_sys::FocusOptions::new();
-        options.set_prevent_scroll(true);
-        let _ = opener.focus_with_options(&options);
     }
 }

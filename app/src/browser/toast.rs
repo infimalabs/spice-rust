@@ -121,7 +121,7 @@ pub(super) fn render_toast(message: AttrValue, shown: bool, raised: Option<NodeR
     let popover = raised.is_some().then_some("manual");
     html! {
         <p
-            ref={raised.unwrap_or_default()} class="toast" role="status" {popover}
+            ref={raised.unwrap_or_default()} class="toast app-overlay-status" role="status" {popover}
             data-shown={shown.to_string()}
         >{message}</p>
     }
@@ -136,7 +136,7 @@ pub(super) fn render_raised_toast(
 ) -> Html {
     html! {
         <p
-            ref={node} class={classes!("toast", class)} role="status" popover="manual"
+            ref={node} class={classes!("toast", "app-overlay-status", class)} role="status" popover="manual"
             data-shown={shown.to_string()}
         >{message}</p>
     }

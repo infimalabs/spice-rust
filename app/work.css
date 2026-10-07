@@ -83,14 +83,6 @@
   white-space: nowrap;
 }
 .work-blocker-review-open { min-width: 7.5rem; }
-.work-blocker-review {
-  position: absolute;
-  z-index: 4;
-  inset: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  background: color-mix(in srgb, var(--panel) 97%, var(--page));
-}
 .work-blocker-review-body { gap: 18px; padding-block-end: 32px; }
 .work-blocker-review-intro { margin: 0; color: var(--muted); font-size: var(--app-type-body); line-height: 1.5; }
 .work-blocker-task {

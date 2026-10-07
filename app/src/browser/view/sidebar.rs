@@ -43,13 +43,13 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
         >
             <button
                 type="button"
-                class="app-sidebar-backdrop"
+                class="app-sidebar-backdrop app-overlay-veil"
                 aria-label={close_label.clone()}
                 onclick={close_click.clone()}
             ></button>
             <aside
                 ref={render.sheet_ref.clone()}
-                class="app-sidebar"
+                class="app-sidebar app-overlay-sheet"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="app-sidebar-title"

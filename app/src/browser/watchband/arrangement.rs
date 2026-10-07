@@ -40,7 +40,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
         .collect::<Vec<_>>();
     html! {
         <div
-            class="team-action-menu team-arrangement-menu"
+            class="team-action-menu team-arrangement-menu app-overlay-panel app-overlay-panel--popover"
             role="menu"
             aria-label={format!("Arrange team {}", watchband::team_label_in(context.lanes, team))}
         >

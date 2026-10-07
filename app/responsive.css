@@ -35,7 +35,6 @@
     gap: 7px;
     padding-inline: calc(8px + env(safe-area-inset-left, 0px)) var(--app-shell-edge-end);
   }
-  .split { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -46,22 +45,14 @@
 @media (max-width: 560px) {
   .app-resident-footer { gap: 6px; }
   .app-product-version--update { padding-inline: 5px; }
-  .workspace-tabs { margin-left: auto; }
-  .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
-  .workspace-tabs button::first-letter { font-size: var(--app-type-label); }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { --team-chamber-inset: 4px; }
-  .app-navigation { margin-inline: 4px; }
-  .app-option { padding-inline: 4px; }
-  .app-count-badge--option { display: none; }
   .team-task-member { max-width: 100%; }
   .team-job-table th:nth-child(1) { width: 5.5rem; }
   .team-job-table th:nth-child(2) { width: 3.5rem; }
   .team-job-table th:nth-child(4) { width: 4.5rem; }
   .team-job-table th,
   .team-job-table td { padding-inline: 6px; }
-  .page-heading { align-items: start; }
-  .page-heading h1 { font-size: var(--app-type-mobile-title); }
   th, td { padding: 10px; }
 }
 
@@ -123,8 +114,6 @@
     block-size: 7rem;
   }
   .work-blocker-review-open { grid-column: 1 / -1; width: 100%; }
-  .work-blocker-review-header { align-items: stretch; flex-direction: column; gap: 10px; }
-  .work-blocker-review-header button { width: 100%; }
   .work-blocker-card { grid-template-columns: 1fr; }
   .work-blocker-card > button { width: 100%; }
 }
