@@ -387,17 +387,6 @@
   color: var(--muted);
   font-size: .69rem;
 }
-.work-map-enrichment {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px 12px;
-  margin: 0;
-  color: var(--muted);
-  font-size: .72rem;
-}
-.work-map-enrichment--problem { color: var(--danger); }
-.work-map-enrichment small { flex-basis: 100%; }
 .work-map-empty {
   display: grid;
   gap: 3px;
@@ -435,7 +424,7 @@
 .work-overview-task-heading { margin-bottom: 16px; }
 .work-overview-task-heading h3 { margin: 2px 0 0; font-size: 1rem; line-height: 1.3; }
 .work-overview-task > .work-detail-content { padding: 0; }
-.work-overview-task > :is(.work-detail-loading, .work-detail-problem) { padding-block: 32px; }
+.work-overview-task > .work-detail-placeholder { padding-block: 32px; }
 .work-map-heading {
   display: flex;
   align-items: flex-start;
@@ -468,6 +457,9 @@
   width: min(100%, var(--work-map-diagram-inline, 100%));
   height: min(100%, var(--work-map-diagram-block, 100%));
 }
+/* Until enrichment answers, the board-only diagram would size the frame and
+   the answer would resize it again, so first load holds the ceiling. */
+.work-map-viewport:where([aria-busy="true"]) { height: clamp(18rem, 42vh, 28rem); }
 .work-map-viewport .mermaid-render > .message-image,
 .work-map-node-layer {
   transform-origin: center;
@@ -582,17 +574,11 @@
 .work-map-problem :is(h4, p) { margin: 0; }
 .work-map-problem p { color: var(--danger); }
 
-.work-detail-loading,
-.work-detail-problem { display: grid; justify-items: center; gap: 10px; padding: 56px 24px; text-align: center; }
-.work-detail-loading p,
-.work-detail-problem p { margin: 0; color: var(--muted); }
-.work-detail-spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-}
+/* Loading and unavailable detail reserve one viewport-capped footprint, since
+   loaded evidence is usually taller than the sheet, and carry no prose; the
+   problem itself toasts, and only its Retry stands at the top of the space. */
+.work-detail-placeholder { display: grid; place-items: start center; min-block-size: 60vh; padding: 56px 24px; }
+.work-map-retry { position: absolute; inset-block-start: 10px; inset-inline-end: 10px; z-index: 1; }
 .work-overview-jobs {
   margin: 0;
   padding: 20px 22px;

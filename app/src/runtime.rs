@@ -403,11 +403,6 @@ impl TaskRelationsState {
             Self::Loading | Self::Unavailable { .. } => None,
         }
     }
-
-    #[must_use]
-    pub const fn refreshing(&self) -> bool {
-        matches!(self, Self::Refreshing(_))
-    }
 }
 
 /// Browser-local progress for an actionable environmental blocker.
@@ -444,11 +439,6 @@ impl TaskDetailState {
             Self::Available(answer) | Self::Refreshing(answer) => Some(answer),
             Self::Loading | Self::Unavailable { .. } => None,
         }
-    }
-
-    #[must_use]
-    pub const fn refreshing(&self) -> bool {
-        matches!(self, Self::Refreshing(_))
     }
 
     /// Whether this settled state proves the durable task exists: an admitted

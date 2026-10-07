@@ -8,7 +8,6 @@ enum PendingFeedback {
     NoteReconciling { task: TaskStamp, subject: String },
     Closing { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
-    DetailRefresh { task: TaskStamp },
 }
 
 impl PendingFeedback {
@@ -17,8 +16,7 @@ impl PendingFeedback {
             Self::NoteSaving { task, .. }
             | Self::NoteReconciling { task, .. }
             | Self::Closing { task, .. }
-            | Self::Reconnecting { task }
-            | Self::DetailRefresh { task } => task,
+            | Self::Reconnecting { task } => task,
         }
     }
 
@@ -34,9 +32,6 @@ impl PendingFeedback {
             Self::Reconnecting { .. } => {
                 "Showing admitted detail while reconnecting. Updates and observations will resume when spice reconnects.".into()
             }
-            Self::DetailRefresh { .. } => {
-                "Refreshing task evidence without closing this detail.".into()
-            }
         }
     }
 
@@ -46,7 +41,7 @@ impl PendingFeedback {
                 Some(format!("Observation saved for {subject}.").into())
             }
             Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
-            Self::Reconnecting { .. } | Self::DetailRefresh { .. } => None,
+            Self::Reconnecting { .. } => None,
         }
     }
 }
@@ -127,15 +122,9 @@ fn feedback(state: &AppState) -> Feedback {
         .flat_map(|selection| selection.tasks())
         .find_map(|task| {
             let detail = runtime.and_then(|runtime| runtime.task_detail(task));
-            if matches!(&*state.connection, Connection::Offline(_))
-                && detail.and_then(TaskDetailState::answer).is_some()
-            {
-                Some(PendingFeedback::Reconnecting { task: task.clone() })
-            } else if matches!(detail, Some(TaskDetailState::Refreshing(_))) {
-                Some(PendingFeedback::DetailRefresh { task: task.clone() })
-            } else {
-                None
-            }
+            (matches!(&*state.connection, Connection::Offline(_))
+                && detail.and_then(TaskDetailState::answer).is_some())
+            .then(|| PendingFeedback::Reconnecting { task: task.clone() })
         });
     Feedback {
         pending: note_pending.or(surface_pending),

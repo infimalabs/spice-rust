@@ -311,12 +311,15 @@ region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
 Action-delivery refusals, composer refusals (image intake, a restored wake,
-unreserved renewal), best-effort speech failures, and transient overview
-refresh conditions use the shared root toast, above every destination and
-outside page flow, clearing after a fixed dwell. A condition toasts when it
-begins, not on every reconnect attempt. Validation, failures with an explicit
-retry, empty or unavailable local content, and durable degraded state stay
-beside what they qualify.
+unreserved renewal), best-effort speech failures, and overview problems
+(unavailable task detail or relationship enrichment, a capability without
+enrichment) use the shared root toast, above every destination and outside
+page flow, clearing after a fixed dwell. A condition toasts when it begins,
+not on every reconnect attempt. Replacing a retained read is routine and
+shows, toasts, and announces nothing; a first read holds its footprint with a
+prose-free placeholder. An in-place retry stands only where content is absent,
+inside that reserved footprint. Validation, empty local content, and durable
+degraded state stay beside what they qualify.
 
 ### The global Dash page
 

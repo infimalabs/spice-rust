@@ -14,8 +14,8 @@ admitted-board graph renders first, including every selected root, roots with
 no edges, and explicit outside-board or outside-selection neighbors. The same
 graph offers focused Dependency, Lineage, Reviews, and Lifecycle lenses.
 Dependency direction and typed depth/node controls bound optional resident
-enrichment without bounding the local selection; loading, refreshing,
-unavailable, retry, and explicit truncation/frontier states never replace or
+enrichment without bounding the local selection; first-load, unavailable,
+retry, and explicit truncation/frontier states never replace or
 silently omit selected roots. A node the open board lacks, such as a completed
 task, takes its handle, title, phase, and status from the same-stamp task in
 that one enrichment answer, in place; admitted rows stay authoritative, and
@@ -26,20 +26,28 @@ source order. Zoom, pan, reset, and task-node activation remain available
 without changing the selection. At 100% zoom a diagram draws at no more than
 its natural size, shrinking only to fit, and the graph frame shrinks to the
 diagram's natural height within its 18–28rem viewport-relative ceiling; zoom
-alone enlarges it. Each node's state badge straddles its top border so it never
+alone enlarges it. Until the first enrichment read answers, the frame holds
+that ceiling. Each node's state badge straddles its top border so it never
 covers the node's label.
 
 Every selected task then owns a full detail section below the graph. Current
 ownership and claim, task state and contract, project/team location, timestamps
 and lifecycle, origin and dependencies answer who, what, where, when, and why
 from live operational state. Evidence, blockers, relationships, provenance,
-activity, notes, loading, unavailable, and retry states appear simultaneously
+activity, notes, first-load, unavailable, and retry states appear simultaneously
 rather than behind tabs, pagination, or next/previous controls. Activating a
 selected graph node scrolls and moves focus to that task's detail section;
 activating a related external task follows that lead in the same overview.
 Escape, backdrop, and Close dismiss the overview and restore the prior focus
 when it still exists. Reduced-motion mode removes the sheet and graph
 transitions.
+
+Replacing a retained relationship or detail read keeps the admitted answer on
+screen and shows, toasts, and announces nothing. A first detail read holds a
+prose-free placeholder footprint. Unavailable detail or enrichment and a
+capability without enrichment toast once on the root toast when they begin;
+the only in-place trace is **Retry detail** inside the absent detail's
+placeholder or **Retry enrichment** inside the graph frame.
 
 ## Task blocker review
 
@@ -49,7 +57,7 @@ attention**; a clear selection pairs a quiet `✓` with **Ready to proceed**.
 The rail summarizes blockers across the complete selected set, including
 incomplete dependencies and unsatisfied typed environmental requirements.
 Both states occupy the same geometry, and asynchronous detail reads do not own
-the rail's data, so loading and refreshing task cards cannot move the graph or
+the rail's data, so loading and replacing task cards cannot move the graph or
 surrounding content.
 
 **Review blockers** opens a sheet-local overlay instead of adding a tab or
