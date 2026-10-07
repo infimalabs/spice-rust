@@ -600,7 +600,7 @@ impl TaskHeadStore {
         if self.deltas.len() >= TASK_HEAD_DELTA_CHUNKS_MAX
             || delta_heads > self.len.max(TASK_HEAD_DELTA_HEADS_MIN)
         {
-            let tasks = merge_task_head_sources([self.tasks(), moved.as_slice()], len);
+            let (tasks, _) = merge_task_head_sources([self.tasks(), moved.as_slice()], len);
             return Self::from_base(tasks);
         }
         let mut deltas = self.deltas.to_vec();
@@ -622,15 +622,13 @@ impl TaskHeadStore {
     pub(super) fn tasks(&self) -> &[journal::TaskHeads] {
         self.materialized
             .get_or_init(|| {
-                let tasks = merge_task_head_sources(
+                let (tasks, visits) = merge_task_head_sources(
                     std::iter::once(self.base.as_ref())
                         .chain(self.deltas.iter().map(|delta| delta.as_ref())),
                     self.len,
                 );
-                self.materialization_visits.store(
-                    self.base.len().saturating_add(self.delta_heads),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                self.materialization_visits
+                    .store(visits, std::sync::atomic::Ordering::Relaxed);
                 Arc::from(tasks)
             })
             .as_ref()
@@ -643,43 +641,44 @@ impl TaskHeadStore {
 }
 
 #[derive(Debug)]
-struct TaskHeadMergeCursor<'a> {
-    rows: &'a [journal::TaskHeads],
+struct SortedMergeCursor<'a, T, K> {
+    rows: &'a [T],
     position: usize,
     generation: usize,
+    key: for<'row> fn(&'row T) -> &'row K,
 }
 
-impl<'a> TaskHeadMergeCursor<'a> {
-    fn current(&self) -> &'a journal::TaskHeads {
+impl<'a, T, K> SortedMergeCursor<'a, T, K> {
+    fn current(&self) -> &'a T {
         &self.rows[self.position]
     }
 
-    fn stamp(&self) -> &'a journal::crossing::TaskStamp {
-        &self.current().statement().body().born
+    fn current_key(&self) -> &'a K {
+        (self.key)(self.current())
     }
 }
 
-impl PartialEq for TaskHeadMergeCursor<'_> {
+impl<T, K: Ord> PartialEq for SortedMergeCursor<'_, T, K> {
     fn eq(&self, other: &Self) -> bool {
-        self.stamp() == other.stamp()
+        self.current_key() == other.current_key()
             && self.generation == other.generation
             && self.position == other.position
     }
 }
 
-impl Eq for TaskHeadMergeCursor<'_> {}
+impl<T, K: Ord> Eq for SortedMergeCursor<'_, T, K> {}
 
-impl Ord for TaskHeadMergeCursor<'_> {
+impl<T, K: Ord> Ord for SortedMergeCursor<'_, T, K> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other
-            .stamp()
-            .cmp(self.stamp())
+            .current_key()
+            .cmp(self.current_key())
             .then_with(|| self.generation.cmp(&other.generation))
             .then_with(|| self.position.cmp(&other.position))
     }
 }
 
-impl PartialOrd for TaskHeadMergeCursor<'_> {
+impl<T, K: Ord> PartialOrd for SortedMergeCursor<'_, T, K> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -688,51 +687,152 @@ impl PartialOrd for TaskHeadMergeCursor<'_> {
 fn merge_task_head_sources<'a>(
     sources: impl IntoIterator<Item = &'a [journal::TaskHeads]>,
     expected_len: usize,
-) -> Vec<journal::TaskHeads> {
+) -> (Vec<journal::TaskHeads>, usize) {
+    merge_sorted_sources(sources, expected_len, |heads| {
+        &heads.statement().body().born
+    })
+}
+
+fn merge_sorted_sources<'a, T: Clone + 'a, K: Ord + 'a>(
+    sources: impl IntoIterator<Item = &'a [T]>,
+    expected_len: usize,
+    key: for<'row> fn(&'row T) -> &'row K,
+) -> (Vec<T>, usize) {
     let mut pending = std::collections::BinaryHeap::new();
     for (generation, rows) in sources.into_iter().enumerate() {
         debug_assert!(
             rows.windows(2)
-                .all(|pair| { pair[0].statement().body().born < pair[1].statement().body().born })
+                .all(|pair| { key(&pair[0]) < key(&pair[1]) })
         );
         if !rows.is_empty() {
-            pending.push(TaskHeadMergeCursor {
+            pending.push(SortedMergeCursor {
                 rows,
                 position: 0,
                 generation,
+                key,
             });
         }
     }
 
-    let mut tasks = Vec::with_capacity(expected_len);
+    let mut merged = Vec::with_capacity(expected_len);
+    let mut visits = 0_usize;
     while let Some(cursor) = pending.pop() {
-        let stamp = cursor.stamp();
+        visits = visits.saturating_add(1);
+        let current_key = cursor.current_key();
         let mut winner = cursor.current();
         let mut winner_generation = cursor.generation;
-        push_next_task_head(&mut pending, cursor);
-        while pending.peek().is_some_and(|next| next.stamp() == stamp) {
-            let duplicate = pending
-                .pop()
-                .expect("the matching task-head cursor is present");
+        push_next_sorted(&mut pending, cursor);
+        while pending
+            .peek()
+            .is_some_and(|next| next.current_key() == current_key)
+        {
+            let duplicate = pending.pop().expect("the matching cursor is present");
+            visits = visits.saturating_add(1);
             if duplicate.generation > winner_generation {
                 winner = duplicate.current();
                 winner_generation = duplicate.generation;
             }
-            push_next_task_head(&mut pending, duplicate);
+            push_next_sorted(&mut pending, duplicate);
         }
-        tasks.push(winner.clone());
+        merged.push(winner.clone());
     }
-    debug_assert_eq!(tasks.len(), expected_len);
-    tasks
+    debug_assert_eq!(merged.len(), expected_len);
+    (merged, visits)
 }
 
-fn push_next_task_head<'a>(
-    pending: &mut std::collections::BinaryHeap<TaskHeadMergeCursor<'a>>,
-    mut cursor: TaskHeadMergeCursor<'a>,
+fn push_next_sorted<'a, T, K: Ord>(
+    pending: &mut std::collections::BinaryHeap<SortedMergeCursor<'a, T, K>>,
+    mut cursor: SortedMergeCursor<'a, T, K>,
 ) {
     cursor.position += 1;
     if cursor.position < cursor.rows.len() {
         pending.push(cursor);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_sorted_sources;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct Row {
+        key: u8,
+        value: &'static str,
+    }
+
+    #[test]
+    fn sorted_merge_replaces_primed_rows_with_the_newest_generation() {
+        let base = [
+            Row {
+                key: 2,
+                value: "base two",
+            },
+            Row {
+                key: 4,
+                value: "base four",
+            },
+        ];
+        let older_delta = [
+            Row {
+                key: 1,
+                value: "older one",
+            },
+            Row {
+                key: 3,
+                value: "older three",
+            },
+        ];
+        let newest_delta = [
+            Row {
+                key: 1,
+                value: "newest one",
+            },
+            Row {
+                key: 4,
+                value: "newest four",
+            },
+        ];
+
+        let (primed, prime_visits) =
+            merge_sorted_sources([base.as_slice(), &older_delta], 4, |row| &row.key);
+        assert_eq!(prime_visits, base.len() + older_delta.len());
+        assert_eq!(
+            primed
+                .iter()
+                .map(|row| (row.key, row.value))
+                .collect::<Vec<_>>(),
+            [
+                (1, "older one"),
+                (2, "base two"),
+                (3, "older three"),
+                (4, "base four"),
+            ]
+        );
+
+        let (merged, visits) =
+            merge_sorted_sources([primed.as_slice(), &newest_delta], 4, |row| &row.key);
+        assert_eq!(
+            merged,
+            [
+                Row {
+                    key: 1,
+                    value: "newest one",
+                },
+                Row {
+                    key: 2,
+                    value: "base two",
+                },
+                Row {
+                    key: 3,
+                    value: "older three",
+                },
+                Row {
+                    key: 4,
+                    value: "newest four",
+                },
+            ]
+        );
+        assert_eq!(visits, primed.len() + newest_delta.len());
     }
 }
 
