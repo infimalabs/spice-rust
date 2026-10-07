@@ -923,7 +923,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   align-self: stretch;
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--app-highlight-source);
 }
 
 /* Why a submission was refused. Rendered only while one is outstanding, so
@@ -1366,7 +1366,7 @@ tbody tr:last-child td { border-bottom: 0; }
   overflow-y: auto;
   border-bottom: var(--app-edge);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
-  box-shadow: 0 8px 16px -12px rgb(0 0 0 / .6);
+  box-shadow: 0 8px 16px -12px color-mix(in srgb, var(--app-shadow-source) 60%, transparent);
 }
 .team-action {
   container-type: inline-size;
