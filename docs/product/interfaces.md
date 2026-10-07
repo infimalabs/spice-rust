@@ -578,9 +578,12 @@ file rather than stdout, so a working local configuration is:
 ```toml
 [say]
 backend = "external"
-command = ["sh", "-c", 't=$(mktemp -d) && say -v "$SPICE_RS_SAY_VOICE" -r "$1" -f - -o "$t/s.wav" --file-format=WAVE --data-format=LEI16@22050 && cat "$t/s.wav"; s=$?; rm -rf "$t"; exit $s', "say", "{words_per_minute}"]
-content_type = "audio/wav"
+command = ["sh", "-c", 't=$(mktemp -d) && say -v "$SPICE_RS_SAY_VOICE" -r "$1" -f - -o "$t/s.m4a" --file-format=m4af --data-format=aac && cat "$t/s.m4a"; s=$?; rm -rf "$t"; exit $s', "say", "{words_per_minute}"]
+content_type = "audio/mp4"
 ```
+
+AAC keeps a clip about a tenth the size of 16-bit WAV, so long messages stay
+inside the resident's 16 MiB clip limit and reach a phone quickly.
 
 **Invariant —** The clip is played back under the media type the backend
 declared, never a guessed one.
