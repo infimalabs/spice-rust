@@ -239,11 +239,13 @@ changed task head reuses those indexes in \(O(1)\).
 Complete-board consumers lazily materialize the ordered current heads from an
 immutable base plus at most 32 delta generations and at most
 \(\max(H,64)\) changed-head entries. Snapshot clones in the same generation
-share that materialization. Compaction establishes a new base when either
-bound is reached, so first-read work and resident storage are \(O(H + D)\) for
-that bounded delta \(D\), independent of the process-lifetime count \(C\) of
-head changes. Replacement preserves task-stamp order; `next` never performs
-this materialization.
+share that materialization. A bounded-source merge visits each base and delta
+entry once; its heap has at most 33 cursors, so first-read work is
+\(O(H + D)\), including additions ordered before every base head. Compaction
+establishes a new base when either bound is reached, keeping resident storage
+\(O(H + D)\) for that bounded delta \(D\), independent of the process-lifetime
+count \(C\) of head changes. Replacement preserves task-stamp order; `next`
+never performs this materialization.
 
 At request time, the `next` authority projection visits exactly the \(V\) live
 heads and performs one constant-time compact hash lookup for each of their
