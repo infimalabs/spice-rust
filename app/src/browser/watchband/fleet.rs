@@ -34,7 +34,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef) -> Html {
                 <header class="team-toolbar">
                     {view::chrome::render_empty_team_ticker()}
                     <span
-                        class="team-lights"
+                        class="app-status-band team-lights"
                         role="group"
                         aria-label="0 admitted agents"
                     ></span>
@@ -203,7 +203,7 @@ fn render_team_toolbar(
         let label = format!("{}: {}", standing.label, status.label());
         Some(html! {
             <span
-                class={classes!("agent-presence-indicator", "team-light", status.key())}
+                class={classes!("app-presence-pip", "app-presence-pip--status", status.key())}
                 role="img"
                 data-lane-light-target-id={member.lane.to_string()}
                 data-lane-status={status.key()}
@@ -227,7 +227,7 @@ fn render_team_toolbar(
             {render_team_rail(team.lane, render)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
             <span
-                class="team-lights"
+                class="app-status-band team-lights"
                 role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
                 aria-haspopup={can_arrange.then_some("menu")}
@@ -271,7 +271,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
         return Html::default();
     }
     html! {
-        <nav class="team-tasks" aria-label="Open tasks this team created or claims">
+        <nav class="app-horn-tabs team-tasks" aria-label="Open tasks this team created or claims">
             {render_team_total(team, &groups, render.navigate)}
             {for groups.iter().map(|group| render_team_task_group(team, group, render))}
         </nav>
@@ -302,11 +302,11 @@ fn render_team_total(
     html! {
         <span
             key="team-total"
-            class="task-pill task-pill--project task-pill--total"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
         >
             <button
-                class="task-pill-stem-target"
+                class="app-horn-tab__target"
                 type="button"
                 title={title.clone()}
                 aria-label={title}
@@ -350,18 +350,18 @@ fn render_team_task_group(
     html! {
         <span
             key={stem_key}
-            class="task-pill task-pill--project"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-task-stem={stem_label.clone()}
             data-task-visibility={visibility}
         >
             <button
-                class="task-pill-stem-target"
+                class="app-horn-tab__target"
                 type="button"
                 title={stem_aria_label.clone()}
                 aria-label={stem_aria_label}
                 onclick={open_stem}
             >
-                <span class="task-pill-stem">{stem_label}</span>
+                <span class="app-horn-tab__label">{stem_label}</span>
                 {view::chrome::render_task_count(counts)}
             </button>
             {for group.tasks().iter().copied().map(|task| render_team_task_handle(task, render))}
@@ -397,8 +397,9 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
         <button
             key={statement.born.to_string()}
             class={classes!(
-                "task-pill",
-                "task-pill-handle",
+                "app-horn-tab",
+                "app-horn-tab--up",
+                "app-horn-tab__handle",
                 (!matches!(availability, InFlight | Ready)).then_some("dormant"),
             )}
             type="button"

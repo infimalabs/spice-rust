@@ -75,7 +75,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
     html! {
         <aside
             ref={root}
-            class="team-composer-controls"
+            class="app-glass-control-surface team-composer-controls"
             data-speech-mode={props.speech}
             data-lifetime={props.lifetime}
             data-lifetime-pending={props.lifetime_pending.to_string()}
