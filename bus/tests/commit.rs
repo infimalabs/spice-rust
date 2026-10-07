@@ -391,6 +391,129 @@ fn allocation_work_and_one_head_update_ignore_unrelated_terminal_history() {
 }
 
 #[test]
+fn completion_terminal_lookup_probes_logarithmic_levels() {
+    const TERMINALS: usize = 1_301;
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let operation = uuid(COMMAND_ONE);
+    let mut cause = FactCause::Root;
+    for index in 0..TERMINALS {
+        let task = journal::crossing::TaskStamp::for_micros(
+            i64::try_from(index + 50_000).expect("terminal lookup moment"),
+        )
+        .expect("terminal lookup stamp");
+        let done = write
+            .fact(
+                body::TaskDone {
+                    task,
+                    validation: "terminal lookup fixture".to_owned(),
+                    terminal: Some(body::TaskCompletionTerminal {
+                        operation,
+                        status: "completed".to_owned(),
+                        guidance: None,
+                        next: None,
+                    }),
+                    git: None,
+                    source: body::SourceBoundary::Incomplete {
+                        reason: "in-process fixture".to_owned(),
+                    },
+                },
+                cause,
+            )
+            .expect("terminal lookup fact builds");
+        cause = FactCause::Pending(done);
+    }
+    journal.apply(write).expect("terminal lookup fleet commits");
+    let bus = Bus::start(journal).expect("dedicated writer starts");
+    let snapshot = bus.task_snapshot().expect("terminal index reads");
+    let oldest = journal::crossing::TaskStamp::for_micros(50_000).expect("oldest terminal stamp");
+    assert!(
+        snapshot
+            .facts()
+            .completion_terminal(&oldest, operation)
+            .is_some()
+    );
+    let probes = snapshot
+        .facts()
+        .completion_terminal_lookup_probes(&oldest, operation);
+    let logarithmic_bound = usize::BITS as usize - TERMINALS.leading_zeros() as usize;
+    assert!(
+        probes <= logarithmic_bound,
+        "{probes} probes exceeded {logarithmic_bound} immutable index levels",
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
+fn complete_head_materialization_is_shared_and_delta_bounded() {
+    const UPDATES: usize = 70;
+    const MAX_CURRENT_AND_DELTA_VISITS: usize = 65;
+    let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
+        .expect("dedicated writer starts");
+    committed(
+        bus.commit(initial_write(
+            uuid(COMMAND_ONE),
+            Arc::new(Mutex::new(Vec::new())),
+        ))
+        .expect("initial task commits"),
+    );
+    let initial = bus.task_snapshot().expect("initial snapshot reads");
+    let mut current = initial.tasks()[0].statement().body().clone();
+    for revision in 1..=UPDATES {
+        let snapshot = bus.task_snapshot().expect("prior generation reads");
+        let mut write = JournalWrite::new(
+            Actor::Operator,
+            "task:BUS-a1".parse().expect("origin"),
+            instant("2030-04-12T18:44:11.271Z"),
+            Producer::CommandDoor,
+        );
+        let edited = write
+            .fact(
+                body::TaskEdited {
+                    task: current.born.clone(),
+                    revision: u32::try_from(revision).expect("fixture revision"),
+                    dependencies: None,
+                    notice: None,
+                },
+                FactCause::Existing(snapshot.cursor().expect("prior cursor")),
+            )
+            .expect("task edit builds");
+        current.title = format!("Bounded revision {revision}");
+        let next = current.clone();
+        write.task_head(edited, move |position| TaskHead {
+            revision: position,
+            ..next
+        });
+        committed(bus.commit(write).expect("task edit commits"));
+    }
+
+    let snapshot = bus.task_snapshot().expect("delta generation reads");
+    assert_eq!(snapshot.task_head_materialization_visits(), 0);
+    let cloned = snapshot.clone();
+    assert_eq!(
+        snapshot.tasks()[0].statement().body().title,
+        format!("Bounded revision {UPDATES}")
+    );
+    let first_work = snapshot.task_head_materialization_visits();
+    assert!(
+        first_work <= MAX_CURRENT_AND_DELTA_VISITS,
+        "bounded deltas visited {first_work} heads for one current task",
+    );
+    assert_eq!(cloned.tasks(), snapshot.tasks());
+    assert_eq!(
+        cloned.task_head_materialization_visits(),
+        first_work,
+        "snapshot clones share one complete-head materialization",
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
 fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
     let mut journal = Journal::in_memory().expect("in-memory authority");
     let task = journal::crossing::TaskStamp::for_micros(30_000).expect("terminal task stamp");
