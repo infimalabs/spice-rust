@@ -1,4 +1,4 @@
-.work-detail-layer {
+.work-overview {
   min-width: 0;
   --work-in-flight: var(--accent);
   --work-ready: var(--focus);
@@ -17,7 +17,7 @@
 :is(.work-map-node-button, .work-map-task)[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
 :is(.work-map-node-button, .work-map-task)[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
 
-.work-detail-layer {
+.app-sidebar-layer {
   position: fixed;
   z-index: 80;
   inset: 0;
@@ -25,7 +25,7 @@
   justify-items: end;
 }
 
-.work-detail-backdrop {
+.app-sidebar-backdrop {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -41,7 +41,7 @@
   transition: opacity var(--app-motion-settle) var(--app-ease-standard);
 }
 
-.work-detail {
+.app-sidebar {
   position: relative;
   z-index: 1;
   width: min(46rem, calc(100vw - 3rem));
@@ -56,20 +56,20 @@
     opacity var(--app-motion-fast) var(--app-ease-standard),
     transform var(--app-motion-settle) var(--app-ease-standard);
 }
-.work-detail-frame { height: 100%; overflow: auto; overscroll-behavior: contain; }
+.app-sidebar-frame { height: 100%; overflow: auto; overscroll-behavior: contain; }
 
-.work-detail-layer[data-work-detail-state="open"] .work-detail-backdrop { opacity: 1; }
-.work-detail-layer[data-work-detail-state="open"] .work-detail {
+.app-sidebar-layer[data-sidebar-state="open"] .app-sidebar-backdrop { opacity: 1; }
+.app-sidebar-layer[data-sidebar-state="open"] .app-sidebar {
   opacity: 1;
   transform: translateX(0);
 }
 /* One blocker owns the veil and frost: a modal dialog above the sheet supplies both. */
-:root:has(dialog:modal) .work-detail-backdrop {
+:root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
   backdrop-filter: none;
 }
 
-.work-detail-header {
+.app-sidebar-header {
   position: sticky;
   z-index: 2;
   top: 0;
@@ -83,8 +83,8 @@
   backdrop-filter: blur(12px);
 }
 
-.work-detail-header h2 { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.25; }
-.work-detail-kicker {
+.app-sidebar-header h2 { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.25; }
+:is(.app-sidebar-kicker, .work-detail-kicker) {
   margin: 0;
   color: var(--accent);
   font-size: .67rem;
@@ -92,7 +92,7 @@
   letter-spacing: .09em;
   text-transform: uppercase;
 }
-.work-detail-close { flex: none; }
+.app-sidebar-close { flex: none; }
 
 
 .work-detail-content { display: grid; padding: 18px 22px 28px; }
@@ -513,11 +513,11 @@
 @media (prefers-reduced-motion: reduce) {
   .work-map-viewport .mermaid-render > .message-image,
   .work-map-node-layer,
-  .work-detail-backdrop,
-  .work-detail { transition: none; }
-  .work-detail-backdrop,
-  .work-detail { opacity: 1; }
-  .work-detail { transform: none; }
+  .app-sidebar-backdrop,
+  .app-sidebar { transition: none; }
+  .app-sidebar-backdrop,
+  .app-sidebar { opacity: 1; }
+  .app-sidebar { transform: none; }
 }
 .work-map-task-list {
   display: grid;

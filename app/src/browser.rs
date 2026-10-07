@@ -51,6 +51,7 @@ mod mermaid;
 mod navigation;
 mod overlay;
 mod sender;
+mod sidebar;
 mod speech_runtime;
 mod task_detail;
 mod task_feedback;
@@ -358,7 +359,8 @@ struct AppState {
     composer_drag: watchband::PrimaryComposerDragState,
     composer_slots: watchband::ComposerSlots,
     team_drag: watchband::TeamDragState,
-    work_detail: task_detail::Controls,
+    sidebar: sidebar::Controls,
+    task_detail: task_detail::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
@@ -385,12 +387,37 @@ impl AppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let select_task = self.navigate.reform(navigation::Intent::Task);
-        let open_overview = self.navigate.reform(navigation::Intent::Overview);
+        let navigate = {
+            let navigate = self.navigate.clone();
+            let return_focus_to = self.sidebar.return_focus_to.clone();
+            let sidebar_closed = self.sidebar.content.is_none();
+            Callback::from(move |intent: navigation::Intent| {
+                if sidebar_closed
+                    && matches!(
+                        intent,
+                        navigation::Intent::Work(_)
+                            | navigation::Intent::Task(_)
+                            | navigation::Intent::Overview(_)
+                    )
+                    && let Some(target) = sidebar::active_focus_target()
+                {
+                    return_focus_to.emit(target);
+                }
+                navigate.emit(intent);
+            })
+        };
+        let select_task = navigate.reform(navigation::Intent::Task);
+        let open_overview = navigate.reform(navigation::Intent::Overview);
         let open_message_task = self.open_message_task.clone();
+        let selected_task = self
+            .sidebar
+            .content
+            .as_ref()
+            .and_then(sidebar::Content::tasks)
+            .cloned();
         let retry_relations = task_relations::retry_callback(
             self.surface.clone(),
-            self.work_detail.selected.clone(),
+            selected_task,
             self.work_map.clone(),
         );
         let app = render_app(
@@ -399,7 +426,7 @@ impl AppState {
                 surface: &self.surface,
                 destination: self.destination,
                 card_target_notice,
-                navigate: &self.navigate,
+                navigate: &navigate,
                 app_menu_open: &self.app_menu_open,
                 identity: &self.identity,
                 app_update: &self.app_update,
@@ -413,24 +440,24 @@ impl AppState {
                 unsafe_intent: self.unsafe_intent,
                 sender: &self.sender,
                 agents: &self.agents,
-                selected_task: &self.work_detail.selected,
-                detail_presented: *self.work_detail.presented,
-                detail_closing: *self.work_detail.closing,
+                sidebar_content: &self.sidebar.content,
+                sidebar_presented: *self.sidebar.presented,
+                sidebar_closing: *self.sidebar.closing,
                 work_map: &self.work_map,
-                detail_close: &self.work_detail.close_ref,
-                detail_sheet: &self.work_detail.sheet_ref,
-                blocker_review: &self.work_detail.blocker_review,
-                blocker_review_button: &self.work_detail.blocker_review_button_ref,
-                blocker_review_close: &self.work_detail.blocker_review_close_ref,
-                notes: &self.work_detail.notes,
-                submit_note: self.work_detail.submit_note.clone(),
-                grant_trust: self.work_detail.grant_trust.clone(),
+                sidebar_close: &self.sidebar.close_ref,
+                sidebar_sheet: &self.sidebar.sheet_ref,
+                blocker_review: &self.task_detail.blocker_review,
+                blocker_review_button: &self.task_detail.blocker_review_button_ref,
+                blocker_review_close: &self.task_detail.blocker_review_close_ref,
+                notes: &self.task_detail.notes,
+                submit_note: self.task_detail.submit_note.clone(),
+                grant_trust: self.task_detail.grant_trust.clone(),
                 select_task,
                 open_overview,
                 open_message_task,
-                request_task: self.work_detail.request.clone(),
+                request_task: self.task_detail.request.clone(),
                 retry_relations,
-                close_task: self.work_detail.close.clone(),
+                close_sidebar: self.sidebar.close.clone(),
             },
             work.as_ref(),
         );
@@ -475,17 +502,22 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         local_selection.clone(),
         surface.clone(),
     );
-    let work_detail = task_detail::use_controls(
-        sender.clone(),
-        surface.clone(),
+    let sidebar = sidebar::use_controls(
         work_detail_mounted(&surface),
-        task_detail::Request {
-            selection: (*local_selection).clone(),
+        sidebar::Request {
+            content: (*local_selection).clone().map(sidebar::Content::Tasks),
             leaving: route.card_target().is_some(),
         },
         navigate.reform(|()| navigation::Intent::CloseTask),
     );
-    task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
+    let selected_task = sidebar
+        .content
+        .as_ref()
+        .and_then(sidebar::Content::tasks)
+        .cloned();
+    let task_detail =
+        task_detail::use_controls(sender.clone(), surface.clone(), selected_task.clone());
+    task_relations::use_request(&sender, &surface, selected_task, &work_map);
     let speech_status = use_state(SpeechStatus::default);
     let speech_owner = use_state(|| None::<SpeechOwner>);
     let speech_runtime = SpeechRuntime {
@@ -500,7 +532,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_owner);
     let agents = use_agent_controls(agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
-    let open_message_task = use_open_message_task(&navigate, &work_detail.return_focus_to);
+    let open_message_task = use_open_message_task(&navigate, &sidebar.return_focus_to);
     (
         AppState {
             connection,
@@ -522,7 +554,8 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             composer_drag,
             composer_slots,
             team_drag,
-            work_detail,
+            sidebar,
+            task_detail,
             work_map,
             speech_status,
             agents,
@@ -575,7 +608,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
             team_controls: state.team_controls.clone(),
             composer_drafts: state.composer_drafts.clone(),
             submissions: state.submissions.clone(),
-            notes: state.work_detail.notes.clone(),
+            notes: state.task_detail.notes.clone(),
             refusals: state.sender.refusals.clone(),
         },
     );
