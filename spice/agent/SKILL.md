@@ -88,6 +88,14 @@ command for more.
   nested under the lane's sole active claim. Synthesized guidance (taste
   reminders, command task hints, automatic amendments, review follow-up
   notices) neither requires nor authorizes a task.
+- A task records the need, why it matters, and the invariants that bound it;
+  the choices that solve it belong to whoever claims it. Leave unknowns open
+  rather than deciding them early. Write acceptance as observable properties
+  the claimant can drive and check on demand, never ambient activity to await
+  or a tolerance the content decides. A claimant causes the activity a check
+  needs instead of waiting for it, and names an inflection point that changes
+  the need, in its report or with `spice task modify`, rather than deciding it
+  silently.
 - Drain allocator work with `spice task next` until no work or a real blocker.
   `allocator-empty` ends only that pass; it does not discharge uncaptured
   operator direction or other turn obligations. Work only the assigned phase;
