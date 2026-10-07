@@ -450,6 +450,54 @@ fn completion_terminal_lookup_probes_logarithmic_levels() {
 }
 
 #[test]
+fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
+    let legacy: journal::crossing::TaskStamp = "00000001".parse().expect("legacy task stamp");
+    let current =
+        journal::crossing::TaskStamp::for_micros(legacy.micros()).expect("current task stamp");
+    assert_ne!(legacy, current);
+    let operation = uuid(COMMAND_ONE);
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let terminal = |task| body::TaskDone {
+        task,
+        validation: "stamp-width fixture".to_owned(),
+        terminal: Some(body::TaskCompletionTerminal {
+            operation,
+            status: "completed".to_owned(),
+            guidance: None,
+            next: None,
+        }),
+        git: None,
+        source: body::SourceBoundary::Incomplete {
+            reason: "in-process fixture".to_owned(),
+        },
+    };
+    let first = write
+        .fact(terminal(legacy.clone()), FactCause::Root)
+        .expect("legacy terminal builds");
+    write
+        .fact(terminal(current.clone()), FactCause::Pending(first))
+        .expect("current terminal builds");
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    let applied = journal.apply(write).expect("width boundary commits");
+    let bus = Bus::start(journal).expect("dedicated writer starts");
+    let snapshot = bus.task_snapshot().expect("terminal index reads");
+    assert_eq!(
+        snapshot.facts().completion_terminal(&legacy, operation),
+        Some(applied.first())
+    );
+    assert_eq!(
+        snapshot.facts().completion_terminal(&current, operation),
+        Some(applied.last())
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
 fn complete_head_materialization_is_shared_and_delta_bounded() {
     const UPDATES: usize = 70;
     const MAX_CURRENT_AND_DELTA_VISITS: usize = 65;

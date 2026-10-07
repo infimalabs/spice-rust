@@ -90,10 +90,29 @@ pub enum TaskOrigin {
 /// merges occupied levels like a binary carry, so unrelated commits share the
 /// whole index, insertion is amortized logarithmic, and lookup probes at most
 /// one hash table per level.
-type TerminalKey = (
-    journal::crossing::TaskStamp,
-    journal::crossing::CanonicalUuid,
-);
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct TerminalKey {
+    stamp: [u8; journal::crossing::TaskStamp::WIDTH],
+    stamp_len: u8,
+    operation: journal::crossing::CanonicalUuid,
+}
+
+impl TerminalKey {
+    fn new(
+        task: &journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+    ) -> Self {
+        let source = task.as_str().as_bytes();
+        let mut stamp = [0; journal::crossing::TaskStamp::WIDTH];
+        stamp[..source.len()].copy_from_slice(source);
+        Self {
+            stamp,
+            stamp_len: u8::try_from(source.len()).expect("task stamp width fits in one byte"),
+            operation,
+        }
+    }
+}
+
 type TerminalLevel = HashMap<TerminalKey, journal::crossing::Seq>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -109,7 +128,7 @@ impl TerminalIndex {
         seq: journal::crossing::Seq,
     ) -> Self {
         let mut levels = self.levels.to_vec();
-        let mut carry = HashMap::from([((task, operation), seq)]);
+        let mut carry = HashMap::from([(TerminalKey::new(&task, operation), seq)]);
         let mut level = 0;
         loop {
             if level == levels.len() {
@@ -121,7 +140,7 @@ impl TerminalIndex {
                 break;
             };
             let mut merged = HashMap::with_capacity(existing.len() + carry.len());
-            merged.extend(existing.iter().map(|(key, seq)| (key.clone(), *seq)));
+            merged.extend(existing.iter().map(|(key, seq)| (*key, *seq)));
             // A repeated operation is impossible in valid authority, but the
             // newest durable position still wins if malformed history carries
             // one; lower levels are always newer than higher levels.
@@ -147,7 +166,7 @@ impl TerminalIndex {
         task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
     ) -> (Option<journal::crossing::Seq>, usize) {
-        let key = (task.clone(), operation);
+        let key = TerminalKey::new(task, operation);
         let mut probes = 0;
         for level in self.levels.iter() {
             probes += 1;
