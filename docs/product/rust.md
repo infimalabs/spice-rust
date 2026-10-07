@@ -222,27 +222,40 @@ explicit full-board reads; scoped reads omit global allocator history rather
 than presenting partial history as complete.
 
 `task next` alone uses the `next` authority projection. A cold resident startup
-reads the \(H\) current task-head bundles once, stores that complete authority
-as an immutable base chunk, and builds a compact allocation index: the \(V\)
-open heads, reference counts and standing only for their \(E\) direct
-dependency edges, and origin evidence only for live tasks. Completed and
-deleted standing satisfy an edge; open standing and a stamp absent from
-authority block it.
+reads the \(H\) current task-head bundles once and builds both the complete
+current-head base and a compact allocation index: the \(V\) open heads,
+reference counts and standing only for their \(E\) direct dependency edges,
+and origin evidence only for live tasks. Completed and deleted standing satisfy
+an edge; open standing and a stamp absent from authority block it. Startup also
+rebuilds the completion index once from the \(T\) retained terminal-completion
+facts.
 
 After that rebuild, one snapshot generation reads only its \(\Delta\) changed
-task bundles and appends them as an immutable delta chunk; it neither traverses
-nor copies the \(H\) retained heads. A generation with changed task heads
-updates the compact frontier and edge maps in \(O(V + E + \Delta)\), including
-one indexed point read for a newly referenced dependency not among the changed
-heads. A commit with no changed task head reuses those indexes in \(O(1)\).
-Explicit complete-board consumers materialize and cache the ordered \(H\)-head
-view lazily; `next` never does.
+task bundles. A generation with changed task heads updates the compact frontier
+and edge maps in \(O(V + E + \Delta)\), including one indexed point read for a
+newly referenced dependency not among the changed heads. A commit with no
+changed task head reuses those indexes in \(O(1)\).
 
-At request time, `next` visits exactly the \(V\) live heads and performs one
-constant-time compact hash lookup for each of their \(E\) dependency edges.
-Origin and release evidence are also compact live-task hash lookups. Thus its
-projection work and wire result are \(O(V + E)\), independent of \(H\); it
-returns at most one task head bundle from the same snapshot barrier.
+Complete-board consumers lazily materialize the ordered current heads from an
+immutable base plus at most 32 delta generations and at most
+\(\max(H,64)\) changed-head entries. Snapshot clones in the same generation
+share that materialization. Compaction establishes a new base when either
+bound is reached, so first-read work and resident storage are \(O(H + D)\) for
+that bounded delta \(D\), independent of the process-lifetime count \(C\) of
+head changes. Replacement preserves task-stamp order; `next` never performs
+this materialization.
+
+At request time, the `next` authority projection visits exactly the \(V\) live
+heads and performs one constant-time compact hash lookup for each of their
+\(E\) dependency edges, for \(O(V + E)\) projection work. Exact current
+ranking computes distinct downstream reachability for each candidate and has
+the separate worst-case bound \(R(V,E)=O(V(V+E))\). Selecting and returning the
+already-ranked head is \(O(1)\), and the wire result contains at most one task
+head bundle from the same snapshot barrier. Terminal completion replay probes
+at most one immutable hash table per binary index level, \(O(\log T)\);
+unrelated commits share the index in \(O(1)\) instead of copying or scanning
+the \(T\) retained terminal entries. All request-time bounds are independent
+of terminal-history scans.
 
 Task-artifact commands remain daemonless. They read bounded current task-head
 pages and their reply cursor inside one read-only journal transaction, so

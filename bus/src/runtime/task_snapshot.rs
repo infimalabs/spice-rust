@@ -84,18 +84,20 @@ pub enum TaskOrigin {
     ResidencyIdentity(journal::crossing::CanonicalUuid),
 }
 
-/// Append-only completion-terminal lookup updated without copying old tasks.
+/// Persistent logarithmic completion-terminal lookup.
+///
+/// Each level is either empty or holds \(2^n\) insertions. Adding one terminal
+/// merges occupied levels like a binary carry, so unrelated commits share the
+/// whole index, insertion is amortized logarithmic, and lookup probes at most
+/// one hash table per level.
+type TerminalLevel = HashMap<
+    journal::crossing::TaskStamp,
+    HashMap<journal::crossing::CanonicalUuid, journal::crossing::Seq>,
+>;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct TerminalIndex {
-    tail: Option<Arc<TerminalChunk>>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct TerminalChunk {
-    prior: Option<Arc<TerminalChunk>>,
-    task: journal::crossing::TaskStamp,
-    operation: journal::crossing::CanonicalUuid,
-    seq: journal::crossing::Seq,
+    levels: Arc<[Option<Arc<TerminalLevel>>]>,
 }
 
 impl TerminalIndex {
@@ -105,13 +107,35 @@ impl TerminalIndex {
         operation: journal::crossing::CanonicalUuid,
         seq: journal::crossing::Seq,
     ) -> Self {
+        let mut levels = self.levels.to_vec();
+        let mut carry = HashMap::from([(task, HashMap::from([(operation, seq)]))]);
+        let mut level = 0;
+        loop {
+            if level == levels.len() {
+                levels.push(Some(Arc::new(carry)));
+                break;
+            }
+            let Some(existing) = levels[level].take() else {
+                levels[level] = Some(Arc::new(carry));
+                break;
+            };
+            let mut merged = HashMap::with_capacity(existing.len() + carry.len());
+            merged.extend(
+                existing
+                    .iter()
+                    .map(|(task, operations)| (task.clone(), operations.clone())),
+            );
+            // A repeated operation is impossible in valid authority, but the
+            // newest durable position still wins if malformed history carries
+            // one; lower levels are always newer than higher levels.
+            for (task, operations) in carry {
+                merged.entry(task).or_default().extend(operations);
+            }
+            carry = merged;
+            level += 1;
+        }
         Self {
-            tail: Some(Arc::new(TerminalChunk {
-                prior: self.tail.clone(),
-                task,
-                operation,
-                seq,
-            })),
+            levels: Arc::from(levels),
         }
     }
 
@@ -120,26 +144,26 @@ impl TerminalIndex {
         task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
-        let mut cursor = self.tail.as_deref();
-        while let Some(chunk) = cursor {
-            if &chunk.task == task && chunk.operation == operation {
-                return Some(chunk.seq);
-            }
-            cursor = chunk.prior.as_deref();
-        }
-        None
+        self.get_with_probes(task, operation).0
     }
-}
 
-impl Drop for TerminalIndex {
-    fn drop(&mut self) {
-        let mut tail = self.tail.take();
-        while let Some(chunk) = tail {
-            let Ok(TerminalChunk { prior, .. }) = Arc::try_unwrap(chunk) else {
-                break;
-            };
-            tail = prior;
+    fn get_with_probes(
+        &self,
+        task: &journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+    ) -> (Option<journal::crossing::Seq>, usize) {
+        let mut probes = 0;
+        for level in self.levels.iter() {
+            probes += 1;
+            if let Some(found) = level
+                .as_ref()
+                .and_then(|entries| entries.get(task))
+                .and_then(|operations| operations.get(&operation))
+            {
+                return (Some(*found), probes);
+            }
         }
+        (None, probes)
     }
 }
 
@@ -414,6 +438,19 @@ impl TaskFacts {
         self.indexes.terminals.get(task, operation)
     }
 
+    /// Immutable terminal-index levels probed by the same lookup.
+    ///
+    /// This deterministic work metric protects completion replay from silently
+    /// returning to a retained-history scan.
+    #[must_use]
+    pub fn completion_terminal_lookup_probes(
+        &self,
+        task: &journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+    ) -> usize {
+        self.indexes.terminals.get_with_probes(task, operation).1
+    }
+
     /// The newest claim one actor won: its position and claim-time cell.
     #[must_use]
     pub fn latest_claim(
@@ -504,33 +541,41 @@ impl Drop for TaskFacts {
     }
 }
 
-/// Persistent task heads: one immutable changed-head chunk per generation and
-/// one lazily materialized complete-board view.
+/// Maximum changed-head generations retained before one complete view becomes
+/// the next immutable base.
+const TASK_HEAD_DELTA_CHUNKS_MAX: usize = 32;
+/// Small stores may retain this many changed heads without premature churn.
+const TASK_HEAD_DELTA_HEADS_MIN: usize = 64;
+
+/// Persistent task heads with one shared complete-board materialization.
+///
+/// Snapshot clones share both the base/deltas and the generation's lazy cache.
+/// A bounded delta count and head count ensure a later complete read never
+/// replays process-lifetime history.
 #[derive(Debug)]
 pub(super) struct TaskHeadStore {
-    tail: Option<Arc<TaskHeadChunk>>,
+    base: Arc<[journal::TaskHeads]>,
+    deltas: Arc<[Arc<[journal::TaskHeads]>]>,
+    delta_heads: usize,
     len: usize,
-    materialized: std::sync::OnceLock<Arc<[journal::TaskHeads]>>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct TaskHeadChunk {
-    prior: Option<Arc<TaskHeadChunk>>,
-    changes: Box<[journal::TaskHeads]>,
+    materialized: Arc<std::sync::OnceLock<Arc<[journal::TaskHeads]>>>,
+    materialization_visits: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl TaskHeadStore {
     fn from_base(tasks: Vec<journal::TaskHeads>) -> Self {
-        let len = tasks.len();
+        let base: Arc<[journal::TaskHeads]> = Arc::from(tasks);
+        let materialized = Arc::new(std::sync::OnceLock::new());
+        materialized
+            .set(Arc::clone(&base))
+            .expect("a new task-head materialization is empty");
         Self {
-            tail: (!tasks.is_empty()).then(|| {
-                Arc::new(TaskHeadChunk {
-                    prior: None,
-                    changes: tasks.into_boxed_slice(),
-                })
-            }),
-            len,
-            materialized: std::sync::OnceLock::new(),
+            len: base.len(),
+            base,
+            deltas: Arc::from([]),
+            delta_heads: 0,
+            materialized,
+            materialization_visits: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -540,13 +585,24 @@ impl TaskHeadStore {
             carried.len = len;
             return carried;
         }
+        let delta_heads = self.delta_heads.saturating_add(moved.len());
+        if self.deltas.len() >= TASK_HEAD_DELTA_CHUNKS_MAX
+            || delta_heads > self.len.max(TASK_HEAD_DELTA_HEADS_MIN)
+        {
+            let mut tasks = self.tasks().to_vec();
+            apply_task_head_changes(&mut tasks, &moved);
+            debug_assert_eq!(tasks.len(), len);
+            return Self::from_base(tasks);
+        }
+        let mut deltas = self.deltas.to_vec();
+        deltas.push(Arc::from(moved));
         Self {
-            tail: Some(Arc::new(TaskHeadChunk {
-                prior: self.tail.clone(),
-                changes: moved.into_boxed_slice(),
-            })),
+            base: Arc::clone(&self.base),
+            deltas: Arc::from(deltas),
+            delta_heads,
             len,
-            materialized: std::sync::OnceLock::new(),
+            materialized: Arc::new(std::sync::OnceLock::new()),
+            materialization_visits: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -557,37 +613,45 @@ impl TaskHeadStore {
     pub(super) fn tasks(&self) -> &[journal::TaskHeads] {
         self.materialized
             .get_or_init(|| {
-                let mut chunks = Vec::new();
-                let mut cursor = self.tail.as_deref();
-                while let Some(chunk) = cursor {
-                    chunks.push(chunk.changes.as_ref());
-                    cursor = chunk.prior.as_deref();
+                let mut tasks = self.base.to_vec();
+                for changes in self.deltas.iter() {
+                    apply_task_head_changes(&mut tasks, changes);
                 }
-                chunks.reverse();
-                let mut tasks = Vec::with_capacity(self.len);
-                for changes in chunks {
-                    for heads in changes {
-                        let stamp = &heads.statement().body().born;
-                        match tasks.binary_search_by(|kept: &journal::TaskHeads| {
-                            kept.statement().body().born.cmp(stamp)
-                        }) {
-                            Ok(index) => tasks[index] = heads.clone(),
-                            Err(index) => tasks.insert(index, heads.clone()),
-                        }
-                    }
-                }
+                debug_assert_eq!(tasks.len(), self.len);
+                self.materialization_visits.store(
+                    self.base.len().saturating_add(self.delta_heads),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 Arc::from(tasks)
             })
             .as_ref()
+    }
+
+    pub(crate) fn materialization_visits(&self) -> usize {
+        self.materialization_visits
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+fn apply_task_head_changes(tasks: &mut Vec<journal::TaskHeads>, changes: &[journal::TaskHeads]) {
+    for heads in changes {
+        let stamp = &heads.statement().body().born;
+        match tasks.binary_search_by(|kept| kept.statement().body().born.cmp(stamp)) {
+            Ok(index) => tasks[index] = heads.clone(),
+            Err(index) => tasks.insert(index, heads.clone()),
+        }
     }
 }
 
 impl Clone for TaskHeadStore {
     fn clone(&self) -> Self {
         Self {
-            tail: self.tail.clone(),
+            base: Arc::clone(&self.base),
+            deltas: Arc::clone(&self.deltas),
+            delta_heads: self.delta_heads,
             len: self.len,
-            materialized: std::sync::OnceLock::new(),
+            materialized: Arc::clone(&self.materialized),
+            materialization_visits: Arc::clone(&self.materialization_visits),
         }
     }
 }
@@ -599,18 +663,6 @@ impl PartialEq for TaskHeadStore {
 }
 
 impl Eq for TaskHeadStore {}
-
-impl Drop for TaskHeadStore {
-    fn drop(&mut self) {
-        let mut tail = self.tail.take();
-        while let Some(chunk) = tail {
-            let Ok(TaskHeadChunk { prior, changes: _ }) = Arc::try_unwrap(chunk) else {
-                break;
-            };
-            tail = prior;
-        }
-    }
-}
 
 #[derive(Default)]
 pub(super) enum TaskSnapshotState {
@@ -907,10 +959,8 @@ fn rebuild_allocation_index(
         .indexes
         .claims
         .iter()
-        .filter_map(|(actor, (claimed, cell))| {
-            cell.is_none()
-                .then(|| ((actor.clone(), *claimed), actor.clone()))
-        })
+        .filter(|&(_, (_, cell))| cell.is_none())
+        .map(|(actor, (claimed, _))| ((actor.clone(), *claimed), actor.clone()))
         .collect::<HashMap<_, _>>();
     if !missing.is_empty() {
         for heads in tasks {
@@ -953,16 +1003,14 @@ fn advance_allocation_index(
     for heads in moved {
         let task = heads.statement().body().born.clone();
         faults.retain(|fault| fault.task() != &task);
-        match frontier.binary_search_by(|kept| kept.statement().body().born.cmp(&task)) {
-            Ok(index) => {
-                let old = frontier.remove(index);
-                remove_dependencies(
-                    &mut references,
-                    &mut standing,
-                    old.statement().body().dependencies.iter(),
-                );
-            }
-            Err(_) => {}
+        if let Ok(index) = frontier.binary_search_by(|kept| kept.statement().body().born.cmp(&task))
+        {
+            let old = frontier.remove(index);
+            remove_dependencies(
+                &mut references,
+                &mut standing,
+                old.statement().body().dependencies.iter(),
+            );
         }
         match task_standing(heads) {
             DependencyStanding::Open => {
