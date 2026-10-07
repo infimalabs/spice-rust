@@ -149,10 +149,12 @@ scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
 height remains both the collapse distance and the message-plane spacer. The app
 moves only the composer's resting place, and only while it rests fully shown
-or hidden, so reversing either way moves it at once. Focusing a collapsed
-draft reveals it without scrolling the plane, and the plane's scroll padding
-keeps browser-scrolled targets clear of the exposed composer only while focus
-is outside it.
+or hidden, so reversing either way moves it at once. Programmatic focus moves
+the caret without browser focus scrolling the viewport, team fleet, member
+strip, or message plane. The composer's existing focus transition still reveals
+a collapsed draft fully, and the plane's scroll padding keeps other
+browser-scrolled targets clear of the exposed composer only while focus is
+outside it.
 
 The range values sit outside their thumbs as one centered phrase. Quiet and
 Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain

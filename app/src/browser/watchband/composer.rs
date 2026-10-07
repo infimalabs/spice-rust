@@ -341,7 +341,9 @@ pub(super) fn focus_after_render(id: String) {
         else {
             return;
         };
-        let _ = textarea.focus();
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        let _ = textarea.focus_with_options(&options);
     });
 }
 
