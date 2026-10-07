@@ -43,9 +43,11 @@
   --message-rail: 4px;
   --quote-rail: 2px;
   /* The one treatment for anything shown over the interface: the page
-     beneath stays visible as frosted glass in either theme. Frost and veil
-     share legibility, so text stays readable without the frost
+     beneath stays visible as frosted glass in either theme. One standard
+     glass thickness is the shared primitive for denser layered surfaces.
+     Frost and veil share legibility, so text stays readable without the frost
      smearing edges or the veil darkening the glass toward opaque. */
+  --app-glass-thickness: 32%;
   --overlay-veil: rgb(21 27 21 / 20%);
   --overlay-frost: blur(10px) saturate(115%);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -75,7 +77,7 @@
     --accent-3: #e0734f;
     --accent-4: #5fd6d0;
     --accent-5: #d1a3ff;
-    --overlay-veil: rgb(0 0 0 / 35%);
+    --overlay-veil: rgb(0 0 0 / var(--app-glass-thickness));
 }
 
 * { box-sizing: border-box; }
