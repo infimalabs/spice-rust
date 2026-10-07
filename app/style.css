@@ -493,7 +493,12 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   text-transform: uppercase;
 }
 :is(.app-sidebar-close, .app-sheet-close) { flex: none; }
-.app-sheet-body { display: grid; padding: 18px 22px 28px; }
+.app-sheet-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  padding: 18px 22px 28px;
+}
 .app-sheet-identity {
   display: flex;
   flex-wrap: wrap;
@@ -1332,8 +1337,8 @@ tbody tr:last-child td { border-bottom: 0; }
   justify-content: space-between;
 }
 .app-team > header > div { display: grid; min-width: 0; gap: 2px; }
-.app-menu-panel .app-team-member {
-  grid-template-columns: 28px minmax(0, 1fr) 16px auto;
+.app-spice-sidebar-content .app-team-member {
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
 }
 
 /* Keep team overlays inside their own stacking context, below global chrome. */

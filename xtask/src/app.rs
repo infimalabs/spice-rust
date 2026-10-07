@@ -18,10 +18,11 @@ const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
 const APP_GENERATION_PLACEHOLDER: &str = "__SPICE_APP_GENERATION__";
 const GENERATED_MODULE_REFERENCES: usize = 2;
-const GENERATED_REFERENCES: [(&str, usize); 8] = [
+const GENERATED_REFERENCES: [(&str, usize); 9] = [
     ("/app.module", 2),
     ("/app_bg.wasm", 2),
     ("/style.css", 1),
+    ("/spice_sidebar.css", 1),
     ("/mosaic.css", 1),
     ("/chrome.css", 1),
     ("/composer.css", 1),

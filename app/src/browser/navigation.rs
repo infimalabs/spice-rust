@@ -26,7 +26,6 @@ pub(super) enum Intent {
     Overview(TaskOverviewSelection),
     /// Close the browser-local task overview.
     CloseTask,
-    Chat,
 }
 
 /// One route change the router applies to browser history.
@@ -55,7 +54,6 @@ pub(super) fn intent_callback(
     Callback::from(move |intent| {
         let step = match intent {
             Intent::Dash => route.show(AppDestination::Dash),
-            Intent::Chat => route.show(AppDestination::Chat),
             Intent::Work(scope) => {
                 local_selection.set(Some(
                     surface

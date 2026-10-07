@@ -342,20 +342,6 @@ impl SubmissionStatus {
         backend.iter().filter(|directive| directive.wakes).count() + self.uncovered(lane, backend)
     }
 
-    /// Every backend row plus predictions absent from their own lane's row.
-    pub(crate) fn total_pending<'a>(
-        &self,
-        backend: impl Iterator<Item = (CanonicalUuid, &'a [PendingDirective])>,
-    ) -> usize {
-        let backend = backend.collect::<BTreeMap<_, _>>();
-        backend.values().map(|pending| pending.len()).sum::<usize>()
-            + self
-                .rows
-                .keys()
-                .map(|lane| self.uncovered(*lane, backend.get(lane).copied().unwrap_or(&[])))
-                .sum::<usize>()
-    }
-
     fn uncovered(&self, lane: CanonicalUuid, backend: &[PendingDirective]) -> usize {
         let durable = backend
             .iter()
@@ -1139,11 +1125,6 @@ mod tests {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
         queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        let status = queue.status();
-        assert_eq!(
-            status.pending(uuid(LANE_A), &[]),
-            status.total_pending([(uuid(LANE_A), &[][..])].into_iter())
-        );
         accept(&mut queue, ID_A, "1kKey", Disposition::Live);
         assert!(queue.status().is_unsafe());
         assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");

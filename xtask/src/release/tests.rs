@@ -455,6 +455,7 @@ fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
         "app/composer.css",
         "app/mosaic.css",
         "app/responsive.css",
+        "app/spice_sidebar.css",
         "app/style.css",
         "app/work.css",
         "bin/spice",

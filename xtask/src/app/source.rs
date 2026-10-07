@@ -11,7 +11,7 @@ use super::AppBuildError;
 #[cfg(test)]
 mod modules;
 
-const SOURCE_FILES: [&str; 12] = [
+const SOURCE_FILES: [&str; 13] = [
     "Cargo.lock",
     "Cargo.toml",
     "rust-toolchain.toml",
@@ -21,6 +21,7 @@ const SOURCE_FILES: [&str; 12] = [
     "app/composer.css",
     "app/mosaic.css",
     "app/responsive.css",
+    "app/spice_sidebar.css",
     "app/style.css",
     "app/work.css",
     "wire/Cargo.toml",

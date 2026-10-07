@@ -1120,7 +1120,7 @@ fn only_a_team_stands_in_the_fleet_while_a_lone_seat_stays_in_the_topology() {
     // LANE_A sits alone under its own identity: the default seat every lane
     // starts in, not a team. TEAM_TWO holds one agent too, but under a distinct
     // identity, which is how "New team" and `lane add --team` create a team
-    // of one. The fleet, the arrangement targets, and the global menu all read
+    // of one. The fleet, the arrangement targets, and the Spice sidebar all read
     // the same rule, so a lone seat draws no surface while the topology still
     // restates it in full.
     let lanes = [

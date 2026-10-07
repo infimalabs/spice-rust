@@ -82,7 +82,7 @@ following `.app-horn-tab__handle` buttons open the exact task. Closing any
 overview returns focus to the control that opened it. Flag overflow scrolls
 inside its band without entering the status/pip row.
 
-The menu's unchanged Work action and the global total open every current task;
+The global total opens every current task;
 global stem controls open their complete visibility-qualified stems. Team
 membership is the team of the lane actively claiming a task, or no team when
 that lane is unteamed; otherwise its current creator team; otherwise its last

@@ -7,7 +7,7 @@ use wire::{Digest, Domain};
 
 use super::{Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Repository};
 
-pub(super) const ASSETS: [(Asset, &str); 9] = [
+pub(super) const ASSETS: [(Asset, &str); 10] = [
     (Asset::AppModule, "app.module"),
     (Asset::AppWasm, "app_bg.wasm"),
     (Asset::AppHtml, "app.html"),
@@ -15,6 +15,7 @@ pub(super) const ASSETS: [(Asset, &str); 9] = [
     (Asset::AppComposer, "composer.css"),
     (Asset::AppMosaic, "mosaic.css"),
     (Asset::AppResponsive, "responsive.css"),
+    (Asset::AppSpiceSidebar, "spice_sidebar.css"),
     (Asset::AppStyle, "style.css"),
     (Asset::AppWork, "work.css"),
 ];

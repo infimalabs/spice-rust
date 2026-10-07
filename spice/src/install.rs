@@ -924,6 +924,7 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         | Asset::AppComposer
         | Asset::AppMosaic
         | Asset::AppResponsive
+        | Asset::AppSpiceSidebar
         | Asset::AppStyle
         | Asset::AppWork
         | Asset::AppRenderer(_)

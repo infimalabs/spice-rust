@@ -1,76 +1,20 @@
-//! Chat-page team content for the global Spice menu.
+//! Spice sidebar content and team-arrangement controls.
 
 use web_sys::DragEvent;
 
-use super::chrome::axis_count;
 use super::*;
 use crate::watchband;
 
 const MEMBER_MIME: &str = "application/x-spice-team-member";
 
 pub(super) struct Context<'a> {
-    pub(super) cursor: &'a str,
-    pub(super) identity: Option<&'a AppIdentity>,
-    pub(super) update: Option<&'a AppUpdate>,
     pub(super) sender: &'a SenderHandle,
     pub(super) submissions: &'a SubmissionStatus,
 }
 
-pub(super) fn render(
-    destination: AppDestination,
-    runtime: Option<&AppRuntime>,
-    context: &Context<'_>,
-) -> Html {
-    match destination {
-        AppDestination::Dash => render_axis(
-            Axis::Topology,
-            axis_count(Axis::Topology, runtime),
-            runtime,
-            context,
-        ),
-        AppDestination::Chat => render_chat(runtime, context),
-    }
-}
-
-fn render_axis(
-    axis: Axis,
-    count: usize,
-    runtime: Option<&AppRuntime>,
-    context: &Context<'_>,
-) -> Html {
-    let (noun, description) = match axis {
-        Axis::Flow => (
-            "active tasks",
-            "Work follows ready, active, deferred, and completed work across projects.",
-        ),
-        Axis::Topology => (
-            "teams",
-            "Dash consolidates resident teams, seats, capabilities, and current ownership.",
-        ),
-    };
-    html! {
-        <div class="app-menu-page" data-menu-page={super::axis_label(axis)}>
-            {render_global_settings(runtime, context.sender)}
-            if axis == Axis::Topology {
-                {render_operator_settings(runtime, context.sender)}
-            }
-            <section class="app-menu-section app-menu-context">
-                <h2>{super::axis_label(axis)}</h2>
-                <div class="app-setting-row">
-                    <strong>{axis.question()}</strong>
-                    <span>{format!("{count} {noun}")}</span>
-                </div>
-                <p class="app-menu-context-copy">{description}</p>
-            </section>
-            {render_version_footer(context.cursor, context.identity, context.update)}
-        </div>
-    }
-}
-
-/// Until the resident and its agent state arrive, the same three sections
-/// stand inert with their empty lines saying what is awaited, so the footer and
-/// every section keep their place when teams land.
-fn render_chat(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
+/// Team arrangement stays structurally present while resident state loads, so
+/// admitted topology fills settled sections rather than moving the sidebar.
+pub(super) fn render_arrangement(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
     let lanes = runtime.and_then(AppRuntime::lanes);
     let awaited = match (runtime, lanes) {
         (None, _) => Some("Waiting for resident teams…"),
@@ -108,12 +52,11 @@ fn render_chat(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
         empty: awaited.unwrap_or("No unassigned agents"),
     };
     html! {
-        <div class="app-menu-page" data-menu-page="Chat">
-            {render_global_settings(runtime, context.sender)}
-            <section class="app-menu-section app-open-teams">
+        <>
+            <section class="app-sheet-section app-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_teams.is_empty() {
-                    <p class="app-menu-empty">{awaited.unwrap_or("No open teams")}</p>
+                    <p class="app-empty-state">{awaited.unwrap_or("No open teams")}</p>
                 } else {
                     {for grouped_teams.into_iter().map(|team| {
                         render_team(
@@ -138,12 +81,11 @@ fn render_chat(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
                 solo_member_ids,
                 &solo_render,
             )}
-            {render_version_footer(context.cursor, context.identity, context.update)}
-        </div>
+        </>
     }
 }
 
-fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let operator_name = settings.and_then(|settings| settings.operator_name.clone());
@@ -166,9 +108,9 @@ fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -
         }
     });
     html! {
-        <section class="app-menu-section app-menu-global">
-            <h2>{"Global"}</h2>
-            <div class="app-menu-global-controls">
+        <section class="app-sheet-section app-spice-settings">
+            <h2>{"Settings"}</h2>
+            <div class="app-spice-settings-controls">
                 <chrome::SettingToggle
                     label="Fast mode"
                     value={if settings.is_some() {
@@ -194,46 +136,59 @@ fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -
 }
 
 /// The cumulative plan-weighted weekly quota remaining across accounts, the
-/// figure the trigger's liquid level draws. Without a retained weekly figure
-/// the row keeps only its controls rather than showing a placeholder.
+/// figure the trigger's liquid level draws. The disabled readout remains while
+/// quota state loads so later admission cannot move the controls around it.
 fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
-    let Some(generation) = runtime.and_then(AppRuntime::quota) else {
-        return Html::default();
-    };
-    let Some(remaining) = generation
-        .last_good
-        .as_deref()
-        .and_then(crate::quota::weekly_remaining)
-    else {
-        return Html::default();
-    };
-    let stale = crate::quota::last_good_stale(generation);
-    let percentage = format!("{:.0}%", remaining * 100.0);
-    let title = if stale {
-        format!(
-            "Weekly quota {percentage} remaining across accounts ({})",
-            crate::quota::Condition::StaleLastGood.label()
+    let generation = runtime.and_then(AppRuntime::quota);
+    let remaining = generation
+        .and_then(|generation| generation.last_good.as_deref())
+        .and_then(crate::quota::weekly_remaining);
+    let stale = generation.is_some_and(crate::quota::last_good_stale);
+    let (value, title, state) = if let Some(remaining) = remaining {
+        let percentage = format!("{:.0}%", remaining * 100.0);
+        let title = if stale {
+            format!(
+                "Weekly quota {percentage} remaining across accounts ({})",
+                crate::quota::Condition::StaleLastGood.label()
+            )
+        } else {
+            format!("Weekly quota {percentage} remaining across accounts")
+        };
+        (percentage, title, "ready")
+    } else if runtime.is_none() {
+        (
+            "loading".to_owned(),
+            "Waiting for weekly quota".to_owned(),
+            "loading",
         )
     } else {
-        format!("Weekly quota {percentage} remaining across accounts")
+        (
+            "unavailable".to_owned(),
+            "Weekly quota is unavailable".to_owned(),
+            "unavailable",
+        )
     };
     html! {
         <span
-            class="app-readout-chip app-menu-capacity"
+            class="app-readout-chip app-spice-capacity"
+            data-state={state}
             data-quota-stale={stale.then_some("true")}
             aria-label={title.clone()}
             {title}
         >
             <strong>{"Quota left"}</strong>
-            <span>{percentage}{stale.then_some(" stale")}</span>
+            <span>{value}{stale.then_some(" stale")}</span>
         </span>
     }
 }
 
-/// The operator's identity and its override form. Until settings arrive the
-/// same summary and form stand disabled and say they are loading, so the
-/// sections below stay put when the identity lands.
-fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+/// The operator's avatar and override form. Until settings arrive the same
+/// form stands disabled and says it is loading, so later admission moves no
+/// section below it.
+pub(super) fn render_operator_settings(
+    runtime: Option<&AppRuntime>,
+    sender: &SenderHandle,
+) -> Html {
     const LOADING: &str = "loading";
     let settings = runtime.and_then(AppRuntime::settings);
     let unresolved = wire::OperatorIdentity::default();
@@ -246,16 +201,8 @@ fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle)
     let email = settings
         .and_then(|settings| settings.operator_email.clone())
         .unwrap_or_default();
-    let (summary_name, summary_email, name_placeholder, email_placeholder) = match settings {
+    let (name_placeholder, email_placeholder) = match settings {
         Some(_) => (
-            operator
-                .name
-                .clone()
-                .unwrap_or_else(|| "Operator".to_owned()),
-            operator
-                .email
-                .clone()
-                .unwrap_or_else(|| "No email configured".to_owned()),
             operator
                 .name
                 .clone()
@@ -265,12 +212,7 @@ fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle)
                 .clone()
                 .unwrap_or_else(|| "Git user.email is not set".to_owned()),
         ),
-        None => (
-            "Loading operator identity…".to_owned(),
-            LOADING.to_owned(),
-            LOADING.to_owned(),
-            LOADING.to_owned(),
-        ),
+        None => (LOADING.to_owned(), LOADING.to_owned()),
     };
     let source = |explicit: Option<&Option<String>>| match explicit {
         None => LOADING,
@@ -303,16 +245,11 @@ fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle)
         );
     });
     html! {
-        <section class="app-menu-section app-menu-operator" data-operator-member="">
+        <section class="app-sheet-section app-spice-operator" data-operator-member="">
             <h2>{"You"}</h2>
-            <div class="app-operator-summary">
+            <div class="app-spice-operator-identity">
                 {super::render_operator_avatar(operator)}
-                <div>
-                    <strong>{summary_name}</strong>
-                    <span>{summary_email}</span>
-                </div>
-            </div>
-            <form class="app-operator-form" {onsubmit}>
+                <form class="app-operator-form" {onsubmit}>
                 <label for="operator-name">
                     <span>{"Name"}</span>
                     <small>{name_source}</small>
@@ -340,7 +277,8 @@ fn render_operator_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle)
                 <button type="submit" class="app-compact-control" disabled={!enabled}>
                     {"Save identity"}
                 </button>
-            </form>
+                </form>
+            </div>
         </section>
     }
 }
@@ -354,6 +292,47 @@ fn input_value(id: &str) -> Option<String> {
         .map(|input| input.value())
 }
 
+pub(super) fn render_resident(
+    connection: &Connection,
+    runtime: Option<&AppRuntime>,
+    cursor: &str,
+    identity: Option<&AppIdentity>,
+    update: Option<&AppUpdate>,
+) -> Html {
+    let status = match connection {
+        Connection::Starting => "Starting Spice".to_owned(),
+        Connection::Connecting => "Opening current resident".to_owned(),
+        Connection::Online { .. } => "Connected".to_owned(),
+        Connection::Offline(reason) => format!("Reconnecting / {reason}"),
+    };
+    let epoch = runtime
+        .and_then(AppRuntime::lanes)
+        .map(|lanes| lanes.epoch.to_string())
+        .or_else(|| match connection {
+            Connection::Online { epoch } => Some(epoch.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "loading".to_owned());
+    html! {
+        <section
+            class="app-sheet-section app-spice-resident"
+            data-connection={connection.indicator_state()}
+        >
+            <h2>{"Resident"}</h2>
+            <dl class="app-spice-resident-facts">
+                <div>
+                    <dt>{"Status"}</dt>
+                    <dd>{status}</dd>
+                </div>
+                <div>
+                    <dt>{"Epoch"}</dt>
+                    <dd>{epoch}</dd>
+                </div>
+            </dl>
+            {render_version_footer(cursor, identity, update)}
+        </section>
+    }
+}
 fn render_version_footer(
     cursor: &str,
     identity: Option<&AppIdentity>,
@@ -401,7 +380,7 @@ fn render_version_footer(
         );
         html! {
             <button
-                class="app-menu-version app-menu-version--update app-compact-control"
+                class="app-product-version app-product-version--update app-compact-control"
                 type="button"
                 aria-label={update_accessible}
                 title={update_details}
@@ -416,14 +395,14 @@ fn render_version_footer(
                 data-app-update-generation={update.generation.to_string()}
                 onclick={reload}
             >
-                <span class="app-menu-version-label">{label}</span>
-                <span class="app-menu-version-indicator" aria-hidden="true">{"↻"}</span>
+                <span class="app-product-version-label">{label}</span>
+                <span class="app-product-version-indicator" aria-hidden="true">{"↻"}</span>
             </button>
         }
     } else {
         html! {
             <strong
-                class="app-menu-version"
+                class="app-product-version"
                 tabindex="0"
                 aria-label={accessible}
                 title={details}
@@ -438,11 +417,11 @@ fn render_version_footer(
         }
     };
     html! {
-        <footer class="app-menu-footer">
-            <div class="app-menu-version-group">
+        <footer class="app-resident-footer">
+            <div class="app-product-version-group">
                 {version}
             </div>
-            <span class="bar-meta app-menu-cursor" aria-label="Global cursor">
+            <span class="bar-meta app-resident-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
             </span>
         </footer>
@@ -652,7 +631,7 @@ fn render_new_team_drop(
     let ondrop = drop_into_new_team(sender.clone(), target, can_configure, topology_revision);
     html! {
         <section
-            class="app-menu-section app-team-drop"
+            class="app-sheet-section app-team-drop"
             data-drop-enabled={can_configure.to_string()}
             {ondragover}
             {ondrop}
@@ -687,7 +666,7 @@ fn render_solo_members_drop(
     );
     html! {
         <section
-            class="app-menu-section app-unassigned"
+            class="app-sheet-section app-unassigned"
             data-drop-enabled={render.can_configure.to_string()}
             {ondragover}
             {ondrop}
@@ -698,7 +677,7 @@ fn render_solo_members_drop(
             </header>
             <div class="app-team-members" data-team-drop="unassigned">
                 if members.is_empty() {
-                    <p class="app-menu-empty">{render.empty}</p>
+                    <p class="app-empty-state">{render.empty}</p>
                 } else {
                     {for members.iter().map(|member| {
                         render_member(

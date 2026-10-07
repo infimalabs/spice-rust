@@ -1,0 +1,311 @@
+.app-spice-sidebar-content {
+  --app-member-row: 58px;
+  --app-team-pad: 9px;
+  --app-team-gap: 8px;
+  --app-team-head: calc(2 * .64rem * 1.25 + 2px);
+  display: grid;
+  min-width: 0;
+}
+.app-spice-sidebar-content > .app-sheet-section {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+.app-spice-sidebar-content > .app-sheet-section > h2,
+.app-spice-sidebar-content > .app-sheet-section > header h2 {
+  margin: 0;
+  color: color-mix(in srgb, var(--muted) 84%, var(--ink));
+  font: 700 var(--app-type-menu-kicker)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.app-spice-sidebar-content > .app-sheet-section > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--muted);
+  font: var(--app-type-xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-spice-sidebar-content > .app-sheet-section > header > span {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-spice-settings-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.app-spice-operator-identity {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+.app-spice-operator .operator-avatar {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+  font-size: var(--app-type-label);
+}
+.app-operator-form { display: grid; grid-template-columns: 1fr auto; gap: 5px 8px; }
+.app-operator-form label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: var(--app-type-caption);
+}
+.app-operator-form label small {
+  font: var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+}
+.app-operator-form input {
+  grid-column: 1 / -1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-inset);
+  background: var(--panel);
+  color: var(--ink);
+  font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-operator-form input:focus { border-color: var(--focus); outline: 0; }
+.app-operator-form button { grid-column: 2; margin-top: 2px; }
+/* A read-only chip beside Fast mode: the cumulative weekly quota remaining.
+   It takes the row's spare width, so the controls keep their places. */
+.app-spice-capacity {
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: default;
+}
+.app-spice-capacity span { color: var(--ink); }
+.app-spice-capacity[data-state="loading"] span,
+.app-spice-capacity[data-state="unavailable"] span,
+.app-spice-capacity[data-quota-stale] span { color: var(--muted); }
+.app-spice-resident-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.app-spice-resident-facts > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-inset);
+  background: var(--control-surface-soft);
+}
+.app-spice-resident-facts dt {
+  color: var(--muted);
+  font: 700 var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.app-spice-resident-facts dd {
+  min-width: 0;
+  margin: 4px 0 0;
+  overflow: hidden;
+  font: var(--app-type-meta)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-spice-topology-placeholder {
+  min-height: 12rem;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-compact);
+  background: var(--control-surface-soft);
+}
+.app-resident-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 1px;
+  padding: 10px 3px 3px;
+  border-top: var(--app-edge-soft);
+  color: var(--muted);
+  font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-theme-selector { flex: 0 0 auto; }
+.app-theme-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.app-product-version {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-product-version--update {
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+  min-height: 23px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border-color: color-mix(in srgb, var(--focus) 56%, var(--line));
+  background: color-mix(in srgb, var(--control) 84%, var(--focus) 16%);
+  color: color-mix(in srgb, var(--focus) 78%, var(--ink));
+  font: 700 var(--app-type-state)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-product-version--update:hover { border-color: var(--focus); }
+.app-product-version-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-product-version-indicator {
+  flex: 0 0 auto;
+  font-size: var(--app-type-identity);
+  line-height: 1;
+}
+.app-product-version:focus-visible {
+  border-radius: var(--app-radius-micro);
+  outline: var(--app-focus-ring-width) solid var(--focus);
+  outline-offset: 2px;
+}
+.app-product-version-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.app-resident-cursor {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One agent row is the footprint the unassigned empty line reserves, and one
+   team of one agent is the footprint "No open teams" reserves, so the first
+   team or unassigned agent moves nothing below. An open team shows every
+   member: a larger team grows the section rather than hiding rows. */
+.app-open-teams { gap: 10px; }
+.app-team {
+  display: grid;
+  gap: var(--app-team-gap);
+  padding: var(--app-team-pad);
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-frame);
+  background: var(--control-surface-soft);
+}
+.app-team[data-drop-enabled="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
+}
+.app-team > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  min-width: 0;
+  min-block-size: var(--app-team-head);
+  gap: 10px;
+  color: var(--muted);
+  font: var(--app-type-caption)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-team > header > div {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+.app-team > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.app-team > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-team-members { display: grid; gap: 6px; }
+.app-team-member {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 9px;
+  min-height: var(--app-member-row);
+  padding: 8px 10px;
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-inset);
+  background: var(--control);
+  cursor: grab;
+}
+.app-team-member[draggable="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent-slot) 24%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control) 94%, var(--accent-slot) 6%);
+}
+.app-team-member[draggable="true"]:active { cursor: grabbing; }
+.app-team-member[aria-disabled="true"] { cursor: default; }
+.app-team-member[aria-disabled="true"] > :not(.app-presence-pip--member) { opacity: .66; }
+.app-member-copy { display: grid; min-width: 0; gap: 4px; }
+.app-member-copy strong {
+  overflow: hidden;
+  color: var(--accent-slot, var(--ink));
+  font-size: var(--app-type-identity);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-member-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--app-type-fact);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-member-drag { color: color-mix(in srgb, var(--muted) 78%, var(--accent-slot)); font-family: monospace; }
+.app-team-drop,
+.app-unassigned {
+  padding: 10px;
+  border: var(--app-control-edge-width) dashed var(--control-line-soft);
+  border-radius: var(--app-radius-frame);
+  background: var(--control-surface-soft);
+}
+.app-team-drop[data-drop-enabled="true"]:hover,
+.app-unassigned[data-drop-enabled="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
+}
+.app-team-drop[data-drop-enabled="false"],
+.app-unassigned[data-drop-enabled="false"] {
+  border-color: var(--control-line-soft);
+  background: var(--control-surface-soft);
+}
+.app-drop-target {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  border: var(--app-control-edge-width) dashed var(--control-line-soft);
+  border-radius: var(--app-radius-inset);
+  background: color-mix(in srgb, var(--control) 52%, transparent);
+  color: var(--muted);
+  font: 700 var(--app-type-fact)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.app-team-drop[data-drop-enabled="false"] .app-drop-target {
+  border-color: var(--line-soft);
+  color: var(--muted);
+}
+.app-empty-state { margin: 0; padding: 3px 1px; color: var(--muted); font-size: var(--app-type-sm); line-height: 1.4; }
+.app-open-teams > .app-empty-state {
+  min-block-size: calc(2 * (var(--app-team-pad) + 1px) + var(--app-team-head) + var(--app-team-gap) + var(--app-member-row));
+}
+.app-team-members > .app-empty-state { min-block-size: var(--app-member-row); }

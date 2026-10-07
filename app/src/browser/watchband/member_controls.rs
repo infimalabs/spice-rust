@@ -292,7 +292,7 @@ const fn on_off(enabled: bool) -> &'static str {
 }
 
 /// The per-seat fast-mode toggle. It shows the seat's next-launch value,
-/// which follows the spice menu's global setting unless pinned. A press pins
+/// which follows the Spice sidebar's Fast mode setting unless pinned. A press pins
 /// the opposite only while it differs from the global setting; landing back
 /// on the global value clears the pin, so the seat follows it again. A running
 /// OMP agent takes the change at once, and the status line keeps the running

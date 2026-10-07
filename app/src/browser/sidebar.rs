@@ -6,13 +6,22 @@ use crate::work::TaskOverviewSelection;
 /// The one content mounted in the app sidebar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Content {
+    Spice,
     Tasks(TaskOverviewSelection),
 }
 
 impl Content {
     pub(super) const fn tasks(&self) -> Option<&TaskOverviewSelection> {
         match self {
+            Self::Spice => None,
             Self::Tasks(selection) => Some(selection),
+        }
+    }
+
+    const fn focus_key(&self) -> Option<&'static str> {
+        match self {
+            Self::Spice => Some("spice"),
+            Self::Tasks(_) => None,
         }
     }
 }
@@ -25,15 +34,28 @@ struct ReturnFocus {
 
 impl ReturnFocus {
     fn new(target: web_sys::Element) -> Self {
+        // Yew delegates some click events through a non-focusable ancestor.
+        // The browser's active control is the authoritative launcher then.
+        let focusable = target
+            .dyn_ref::<web_sys::HtmlElement>()
+            .is_some_and(|element| element.tab_index() >= 0);
+        let target = if focusable {
+            target
+        } else {
+            active_focus_target().unwrap_or(target)
+        };
         let key = target.get_attribute(RETURN_FOCUS_KEY);
         Self { target, key }
     }
 
     fn resolve(self) -> Option<web_sys::Element> {
-        if overlay::returnable(&self.target) {
-            return Some(self.target);
-        }
-        let key = self.key?;
+        self.key
+            .as_deref()
+            .and_then(Self::resolve_key)
+            .or_else(|| overlay::returnable(&self.target).then_some(self.target))
+    }
+
+    fn resolve_key(key: &str) -> Option<web_sys::Element> {
         let document = web_sys::window()?.document()?;
         let candidates = document
             .query_selector_all("[data-sidebar-focus-key]")
@@ -42,7 +64,7 @@ impl ReturnFocus {
             .filter_map(|index| candidates.item(index))
             .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
             .find(|candidate| {
-                candidate.get_attribute(RETURN_FOCUS_KEY).as_deref() == Some(key.as_str())
+                candidate.get_attribute(RETURN_FOCUS_KEY).as_deref() == Some(key)
                     && overlay::returnable(candidate)
             })
     }
@@ -89,8 +111,12 @@ pub(super) fn use_controls(mounted: bool, requested: Request, close: Callback<()
             close.emit(());
         })
     };
-    let complete_close =
-        complete_close_callback(content.clone(), presented.clone(), closing.clone());
+    let complete_close = complete_close_callback(
+        content.clone(),
+        presented.clone(),
+        closing.clone(),
+        return_focus.clone(),
+    );
     let leave = leave_callback(
         content.clone(),
         presented.clone(),
@@ -108,7 +134,7 @@ pub(super) fn use_controls(mounted: bool, requested: Request, close: Callback<()
         sheet_ref.clone(),
         complete_close,
     );
-    use_focus(&content, mounted, close_ref.clone(), return_focus.clone());
+    use_focus(&content, mounted, close_ref.clone());
     overlay::use_escape_owner(
         content.is_some() && !*closing && mounted,
         request_close.clone(),
@@ -204,8 +230,26 @@ fn complete_close_callback(
     content: UseStateHandle<Option<Content>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
+    return_focus: Rc<RefCell<Option<ReturnFocus>>>,
 ) -> Callback<()> {
     Callback::from(move |()| {
+        let launcher = return_focus
+            .borrow_mut()
+            .take()
+            .and_then(ReturnFocus::resolve)
+            .or_else(|| {
+                content
+                    .as_ref()
+                    .and_then(Content::focus_key)
+                    .and_then(ReturnFocus::resolve_key)
+            });
+        if let Some(element) =
+            launcher.and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = element.focus_with_options(&options);
+        }
         presented.set(false);
         closing.set(false);
         content.set(None);
@@ -235,31 +279,15 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
     });
 }
 
-/// Focus enters the sidebar when it opens and returns to the surviving launcher
-/// after close. Content swaps leave focus inside the already-presented sheet.
+/// Focus enters the sidebar when it opens. Content swaps leave focus inside the
+/// already-presented sheet; close completion restores its surviving launcher.
 #[hook]
-fn use_focus(
-    content: &UseStateHandle<Option<Content>>,
-    mounted: bool,
-    close: NodeRef,
-    return_focus: Rc<RefCell<Option<ReturnFocus>>>,
-) {
+fn use_focus(content: &UseStateHandle<Option<Content>>, mounted: bool, close: NodeRef) {
     use_effect_with(content.is_some() && mounted, move |active| {
         if *active && let Some(button) = close.cast::<web_sys::HtmlElement>() {
             let options = web_sys::FocusOptions::new();
             options.set_prevent_scroll(true);
             let _ = button.focus_with_options(&options);
         }
-    });
-    use_effect_with((**content).clone(), move |content| {
-        if content.is_some() {
-            return;
-        }
-        let _ = return_focus
-            .borrow_mut()
-            .take()
-            .and_then(ReturnFocus::resolve)
-            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-            .is_some_and(|element| element.focus().is_ok());
     });
 }

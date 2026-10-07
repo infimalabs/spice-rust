@@ -122,10 +122,30 @@ pub(super) fn reduced_motion() -> bool {
 }
 
 const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
+fn transform_transition_running(element: &web_sys::Element) -> bool {
+    let Ok(get_animations) =
+        js_sys::Reflect::get(element.as_ref(), &JsValue::from_str("getAnimations"))
+    else {
+        return false;
+    };
+    let Ok(get_animations) = get_animations.dyn_into::<js_sys::Function>() else {
+        return false;
+    };
+    let Ok(animations) = get_animations.call0(element.as_ref()) else {
+        return false;
+    };
+    js_sys::Array::from(&animations).iter().any(|animation| {
+        js_sys::Reflect::get(&animation, &JsValue::from_str("transitionProperty"))
+            .ok()
+            .and_then(|property| property.as_string())
+            .as_deref()
+            == Some("transform")
+    })
+}
 
-/// Finish a closing layer when its own `transform` slide ends or is
-/// canceled, or at once when no rendered layer is left to run the slide.
-/// Completion always has an actual boundary; nothing waits on a clock.
+/// Finish a closing layer when its own `transform` slide ends or is canceled,
+/// or at once when no transform transition is running. Completion always has
+/// an actual boundary; nothing waits on a clock.
 #[hook]
 pub(super) fn use_close_transition(
     closing: bool,
@@ -133,42 +153,61 @@ pub(super) fn use_close_transition(
     layer: NodeRef,
     complete: Callback<()>,
 ) {
+    let closing_now = use_mut_ref(|| closing);
+    *closing_now.borrow_mut() = closing;
+    let finish_without_transition = complete.clone();
+    let transition_layer = layer.clone();
+    use_effect_with((closing, rendered), move |(closing, rendered)| {
+        let transition_running = *rendered
+            && transition_layer
+                .cast::<web_sys::Element>()
+                .is_some_and(|element| transform_transition_running(&element));
+        if *closing && !transition_running {
+            finish_without_transition.emit(());
+        }
+    });
     use_effect_with(
-        (closing, rendered, layer, complete),
-        move |(closing, rendered, layer, complete)| {
-            let element = (*closing && *rendered)
+        (rendered, layer, complete),
+        move |(rendered, layer, complete)| {
+            // Listen throughout presentation. Registering only after `closing`
+            // renders can miss a zero-duration or already-canceled transition.
+            let registration = rendered
                 .then(|| layer.cast::<web_sys::Element>())
                 .flatten()
-                .filter(|element| element.is_connected());
-            if *closing && element.is_none() {
-                complete.emit(());
-            }
-            let registration = element.and_then(|element| {
-                let target = element.clone();
-                let complete = complete.clone();
-                let callback =
-                    Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                        let property = js_sys::Reflect::get(
-                            event.as_ref(),
-                            &JsValue::from_str("propertyName"),
-                        )
-                        .ok()
-                        .and_then(|value| value.as_string());
-                        let from_layer = event
-                            .target()
-                            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                            .is_some_and(|element| element == target);
-                        if from_layer && property.as_deref() == Some("transform") {
-                            complete.emit(());
-                        }
-                    });
-                for kind in CLOSE_TRANSITION_EVENTS {
-                    element
-                        .add_event_listener_with_callback(kind, callback.as_ref().unchecked_ref())
-                        .ok()?;
-                }
-                Some((element, callback))
-            });
+                .filter(|element| element.is_connected())
+                .and_then(|element| {
+                    let target = element.clone();
+                    let complete = complete.clone();
+                    let closing_now = closing_now.clone();
+                    let callback =
+                        Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                            let property = js_sys::Reflect::get(
+                                event.as_ref(),
+                                &JsValue::from_str("propertyName"),
+                            )
+                            .ok()
+                            .and_then(|value| value.as_string());
+                            let from_layer = event
+                                .target()
+                                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                                .is_some_and(|element| element == target);
+                            if *closing_now.borrow()
+                                && from_layer
+                                && property.as_deref() == Some("transform")
+                            {
+                                complete.emit(());
+                            }
+                        });
+                    for kind in CLOSE_TRANSITION_EVENTS {
+                        element
+                            .add_event_listener_with_callback(
+                                kind,
+                                callback.as_ref().unchecked_ref(),
+                            )
+                            .ok()?;
+                    }
+                    Some((element, callback))
+                });
             move || {
                 if let Some((element, callback)) = registration {
                     for kind in CLOSE_TRANSITION_EVENTS {
