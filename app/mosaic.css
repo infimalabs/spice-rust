@@ -933,7 +933,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   isolation: isolate;
   background-color: var(--composer-triple-glass-paint);
   box-shadow:
-    inset 0 var(--app-control-edge-width) 0 var(--control-line-soft),
     -8px 0 14px -6px rgb(0 0 0 / 42%),
     8px 0 14px -6px rgb(0 0 0 / 42%);
 }
