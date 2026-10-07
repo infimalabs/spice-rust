@@ -1,6 +1,6 @@
 use super::{
-    AppDestination, AppRoute, CreatorContextTarget, RouteEvidence, normalize_app_location,
-    opening_auth_token, team_stream_card_target, team_stream_card_team,
+    AppRoute, CreatorContextTarget, RouteEvidence, normalize_app_location, opening_auth_token,
+    team_stream_card_target, team_stream_card_team,
 };
 
 const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
@@ -8,8 +8,7 @@ const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
 #[test]
 fn canonical_durable_routes_round_trip_exactly() {
     for (path, route) in [
-        ("/dash", AppRoute::Dash),
-        ("/chat", AppRoute::Chat { card: None }),
+        ("/chat", AppRoute::chat()),
         (
             "/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
             AppRoute::card(CARD.to_owned()).expect("fixture card"),
@@ -79,18 +78,17 @@ fn retired_or_malformed_locations_are_not_routes() {
 }
 
 #[test]
-fn app_locations_canonicalize_destination_spellings_without_changing_routes() {
-    for (hash, destination, replace) in [
-        ("#/chat", AppDestination::Chat, false),
-        ("#/dash", AppDestination::Dash, false),
-        ("", AppDestination::Chat, true),
-        ("#", AppDestination::Chat, true),
-        ("#/", AppDestination::Chat, true),
-        ("#dash", AppDestination::Dash, true),
-        ("#//dash/", AppDestination::Dash, true),
+fn app_locations_canonicalize_chat_spellings_without_a_notice() {
+    for (hash, replace) in [
+        ("#/chat", false),
+        ("", true),
+        ("#", true),
+        ("#/", true),
+        ("#chat", true),
+        ("#//chat/", true),
     ] {
         let location = normalize_app_location("", hash);
-        assert_eq!(location.route().app_destination(), destination, "{hash}");
+        assert_eq!(location.route(), &AppRoute::chat(), "{hash}");
         assert_eq!(location.needs_replace(), replace, "{hash}");
         assert_eq!(location.notice(), None, "{hash}");
     }
@@ -112,9 +110,12 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
         ("", "#/work/public/a%2f"),
         ("", "#/work/team/not-a-team"),
         ("", "#/work/teams/01234567-89ab-cdef-0123-456789abcdef"),
+        ("", "#/dash"),
+        ("", "#dash"),
+        ("", "#//dash/"),
     ] {
         let location = normalize_app_location(search, hash);
-        assert_eq!(location.route(), &AppRoute::Chat { card: None });
+        assert_eq!(location.route(), &AppRoute::chat());
         assert!(location.needs_replace());
         let notice = location.notice().expect("invalid input is named");
         assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
@@ -128,7 +129,7 @@ fn settled_missing_chat_card_rewrites_to_chat() {
     let (next, notice) = card
         .unavailable(RouteEvidence { card: Some(false) })
         .expect("missing card refuses");
-    assert_eq!(next, AppRoute::Chat { card: None });
+    assert_eq!(next, AppRoute::chat());
     assert!(notice.contains(CARD), "{notice}");
 }
 

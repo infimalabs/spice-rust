@@ -19,14 +19,6 @@ left team. It starts at the status row, continues to the fleet bottom, and
 takes no layout space; neither outer fleet edge is framed, so a lone team has
 no vertical border.
 
-Chat itself is never unmounted. Every other destination leaves the inactive
-agents workspace inert, `aria-hidden`, out of flow, and at
-`content-visibility: hidden` rather than `display: none`. It stays fixed below
-the commandbar with the same padding and frame edge it has when shown. It skips
-rendering but keeps that layout, so cards that arrive meanwhile are still
-measured, scroll positions hold, and returning to Chat reuses the layout without
-any plane, card, or team surface observing a resize. Browsers without
-`content-visibility` fall back to `display: none`.
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
 outer frame or shadow: the full-width task rail sits above the stream-surfaced
@@ -41,12 +33,13 @@ When a composer is fully collapsed, its bottom edge matches that status rule,
 visually bracketing the status row. Pips retain the unified presence palette:
 active, queued, waiting, and dim bound/unbound states remain distinguishable
 without encoding agent identity.
-The global Spice and Dash-avatar circles share one diameter and equal top,
-bottom, and outer-edge insets. Global and team-local work share one horned-tab
-construction on the composer's dark `--control` surface rather than the
-brighter message-stream surface. The global `.app-global-work-tabs` rail hangs
-its tabs from the window's top edge with rounded bottom corners; a team's task
-band stands its tabs on the status rule with rounded top corners. Each strip
+The global task strip and each team's task strip begin at the same 8px inline
+inset, while the Spice button retains its trailing command-bar inset. Global
+and team-local work share one horned-tab construction on the composer's dark
+`--control` surface rather than the brighter message-stream surface. The
+global `.app-global-work-tabs` rail hangs its tabs from the window's top edge
+with rounded bottom corners; a team's task band stands its tabs on the status
+rule with rounded top corners. Each strip
 leads with a badge-only total, identified by `data-work-scope`, one globally
 and one per team; its inline-start and inline-end rails take the message card's
 `--message-rail` width. Each following stem tab uses the nested quote's
@@ -92,10 +85,11 @@ always follows the resident's admitted offer order and may be explicitly empty.
 The overview contains the complete selected graph and task details plus the
 resident's running or awaiting-delivery jobs.
 
-Only Dash and Chat are durable routes. Work, task, and direction controls are
-browser-local overview actions: they neither create history entries nor claim a
-restorable URL. A stale former Work or Directions URL normalizes to Chat under
-the ordinary unavailable-location notice.
+Chat is the only durable surface, at `#/chat`; retained cards extend it with
+`/card/{target}`. Work, task, and direction controls are browser-local overview
+actions: they neither create history entries nor claim a restorable URL. Stale
+former Dash, Work, or Directions URLs normalize to Chat under the ordinary
+unavailable-location notice.
 
 The composer columns, speech and allocation sliders, and send controls retain
 their dimensions. Removing the standalone ticker row gives that block height

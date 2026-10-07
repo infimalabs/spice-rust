@@ -71,7 +71,6 @@ pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html
 pub(super) struct AppRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
-    pub destination: AppDestination,
     pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub spice_sidebar_open: bool,
@@ -116,17 +115,13 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
         .map(|lanes| lanes.topology_revision.to_string());
     html! {
         <div
-            class={classes!(
-                "shell",
-                (render.destination == AppDestination::Chat).then_some("shell--mosaic"),
-            )}
+            class="shell"
             data-topology-revision={topology_revision}
             data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}
         >
             {chrome::render_command_bar(chrome::CommandBarRender {
                 connection: render.connection,
-                destination: render.destination,
                 navigate: render.navigate,
                 spice_sidebar_open: render.spice_sidebar_open,
                 open_spice_sidebar: &render.open_spice_sidebar,
@@ -149,46 +144,13 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
     }
 }
 
-pub(super) fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
-    let mosaic_active = render.destination == AppDestination::Chat;
+fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     html! {
-        <>
-            <div
-                key="agents"
-                class="workspace mosaic-workspace"
-                aria-hidden={(!mosaic_active).to_string()}
-                inert={(!mosaic_active).then_some("true")}
-                data-active={mosaic_active.to_string()}
-            >
-                <main class="mosaic-content content">
-                    {watchband::render_team(render, work)}
-                </main>
-            </div>
-            if render.destination == AppDestination::Dash {
-                <div key="analytics" class="workspace">
-                    <main class="content">
-                        {render_analytics(render)}
-                    </main>
-                </div>
-            }
-        </>
-    }
-}
-
-fn render_analytics(render: &AppRender<'_>) -> Html {
-    let (summary, body) = render_topology(render);
-    html! {
-        <>
-            <div class="page-heading">
-                <div>
-                    <h1>{"Resident dashboard"}</h1>
-                    if let Some(summary) = summary {
-                        <p>{summary}</p>
-                    }
-                </div>
-            </div>
-            {body}
-        </>
+        <div class="workspace mosaic-workspace">
+            <main class="mosaic-content content">
+                {watchband::render_team(render, work)}
+            </main>
+        </div>
     }
 }
 
@@ -338,7 +300,7 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
             if lanes.lanes.is_empty() {
                 {empty("No agent lanes are connected.")}
             } else {
-                <div class="dash-overview-topology-groups">
+                <div class="app-spice-topology-groups">
                     {for teams.iter().map(|team| {
                         render_topology_group(
                             team_name(team),
@@ -359,180 +321,13 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
     }
 }
 
-/// The resident dashboard body and, once agent standings are held, the page
-/// summary over the same standings the topology section renders.
-fn render_topology(render: &AppRender<'_>) -> (Option<String>, Html) {
-    let surface = render.surface.read();
-    let Some(runtime) = surface.as_ref() else {
-        return (None, empty("No admitted topology is available."));
-    };
-    let identity_section = render_operator_and_resident(
-        runtime.settings(),
-        (**render.identity).as_ref(),
-        render.connection,
-    );
-    let Some(lanes) = runtime.lanes() else {
-        let body = html! {
-            <>
-                {identity_section}
-                {empty("No agent snapshot is available.")}
-            </>
-        };
-        return (None, body);
-    };
-    // The same join the chat's lane tiles read, over answers already held.
-    let waiting = runtime
-        .inbox()
-        .map(|inbox| inbox.lanes.as_slice())
-        .unwrap_or(&[]);
-    let tasks = runtime
-        .board()
-        .map(|board| board.tasks.as_slice())
-        .unwrap_or(&[]);
-    let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
-    for standing in &mut standings {
-        standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
-        standing.waking = member_waking(waiting, &render.submissions.status, standing.lane);
-    }
-    let live = standings
-        .iter()
-        .filter(|standing| standing.thread.is_some())
-        .count();
-    let holding = standings
-        .iter()
-        .filter(|standing| standing.handle.is_some())
-        .count();
-    let pending = standings
-        .iter()
-        .map(|standing| standing.pending)
-        .sum::<usize>();
-    let (teams, solos): (Vec<_>, Vec<_>) = lanes.lanes.iter().partition(|team| team.teamed());
-    let summary = format!(
-        "{}: {live} live, {}, {pending} pending",
-        topology_count(standings.len(), "agent", "agents"),
-        topology_count(holding, "holding a task", "holding tasks"),
-    );
-    let totals = [
-        topology_count(standings.len(), "agent", "agents"),
-        topology_count(teams.len(), "team", "teams"),
-        format!("{live} live"),
-        topology_count(holding, "holding a task", "holding tasks"),
-        format!("{pending} pending"),
-    ]
-    .join(" · ");
-    let quota = quota::render_dash(Some(runtime));
-    let body = html! {
-        <>
-            {identity_section}
-            <section class="section dash-overview-topology-section" aria-labelledby="resident-topology-heading">
-                <div class="section-heading">
-                    <h2 id="resident-topology-heading">{"Resident topology"}</h2>
-                    <span class="section-count">{totals}</span>
-                </div>
-                if lanes.lanes.is_empty() {
-                    {empty("No agent lanes are connected.")}
-                } else {
-                    <div class="dash-overview-topology-groups">
-                        {for teams.iter().map(|team| {
-                            render_topology_group(
-                                team_name(team),
-                                Some(team.lane),
-                                team_agents(team, &standings).collect(),
-                            )
-                        })}
-                        if !solos.is_empty() {
-                            {render_topology_group(
-                                "Independent".to_owned(),
-                                None,
-                                solos.iter().flat_map(|team| team_agents(team, &standings)).collect(),
-                            )}
-                        }
-                    </div>
-                }
-            </section>
-            {quota}
-        </>
-    };
-    (Some(summary), body)
-}
-
-/// A team's display name: its host's label, as Dash titles the team group, so
-/// pages addressed by the team's UUID name it the same way.
+/// A team's display name, shared by the topology summary and team-addressed
+/// pages.
 fn team_name(team: &crate::runtime::LaneRow) -> String {
     let host = team.host().map_or("Empty", |member| {
         crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
     });
     format!("{host} team")
-}
-
-fn render_operator_and_resident(
-    settings: Option<&wire::intent::GlobalSettingsAnswer>,
-    identity: Option<&AppIdentity>,
-    connection: &Connection,
-) -> Html {
-    let appliance = identity.map_or_else(
-        || "Loading".to_owned(),
-        |identity| identity.version.product.to_string(),
-    );
-    let (resident_status, resident_epoch, resident_epoch_title) = match connection {
-        Connection::Starting => ("Starting", "Pending".to_owned(), None),
-        Connection::Connecting => ("Connecting", "Pending".to_owned(), None),
-        Connection::Online { epoch } => (
-            "Online",
-            epoch.split('-').next().unwrap_or(epoch).to_owned(),
-            Some(epoch.clone()),
-        ),
-        Connection::Offline(_) => ("Reconnecting", "Unavailable".to_owned(), None),
-    };
-    html! {
-        <section class="section dash-overview-operator-section" data-operator-member="">
-            <div class="section-heading">
-                <h2>{"Operator & resident"}</h2>
-                <span class="section-count">{"Resident · "}{resident_status}</span>
-            </div>
-            <div class="dash-overview-identity-cards">
-                <article
-                    class="dash-overview-operator"
-                    data-operator-state={if settings.is_some() { "ready" } else { "loading" }}
-                >
-                    if let Some(settings) = settings {
-                        {render_operator_avatar(&settings.operator)}
-                        <div class="dash-overview-operator-identity">
-                            <h3>{settings.operator.name.as_deref().unwrap_or("Operator")}</h3>
-                            <p>{settings.operator.email.as_deref().unwrap_or("No email configured")}</p>
-                        </div>
-                    } else {
-                        <span
-                            class="operator-avatar"
-                            data-avatar-source="loading"
-                            aria-hidden="true"
-                        >{"…"}</span>
-                        <div class="dash-overview-operator-identity">
-                            <h3>{"Operator"}</h3>
-                            <p>{"Identity loading"}</p>
-                        </div>
-                    }
-                </article>
-                <article class="dash-overview-resident" aria-label="Resident details">
-                    <h3>{"Resident"}</h3>
-                    <dl class="dash-overview-agent-facts">
-                        <div>
-                            <dt>{"Status"}</dt>
-                            <dd>{resident_status}</dd>
-                        </div>
-                        <div>
-                            <dt>{"Appliance"}</dt>
-                            <dd>{appliance}</dd>
-                        </div>
-                        <div>
-                            <dt>{"Epoch"}</dt>
-                            <dd title={resident_epoch_title}>{resident_epoch}</dd>
-                        </div>
-                    </dl>
-                </article>
-            </div>
-        </section>
-    }
 }
 
 pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html {
@@ -596,7 +391,7 @@ fn render_topology_group(
     let linked = team.is_some();
     html! {
         <section
-            class="dash-overview-topology-group"
+            class="app-spice-topology-group"
             data-topology-group={team.map(|team| team.to_string())}
             data-group-kind={if team.is_some() { "team" } else { "independent" }}
             data-span={agents.len().clamp(1, TOPOLOGY_COLUMNS).to_string()}
@@ -605,7 +400,7 @@ fn render_topology_group(
                 {heading}
                 <span>{topology_count(agents.len(), "agent", "agents")}</span>
             </h3>
-            <div class="dash-overview-agent-list">
+            <div class="app-spice-topology-agent-list">
                 {for agents.into_iter().map(|(member, standing)| {
                     render_topology_agent(member, standing, linked)
                 })}
@@ -642,7 +437,7 @@ fn render_topology_agent(
     };
     html! {
         <@{tag}
-            class="dash-overview-agent"
+            class="app-spice-topology-agent"
             href={href}
             aria-label={label}
             data-accent={standing.accent.to_string()}
@@ -658,7 +453,7 @@ fn render_topology_agent(
                 }
             </header>
             <p>{format!("{} pending, {}", standing.pending, standing.liveness.as_str())}</p>
-            <p class="dash-overview-agent-task" title={standing.task_title.clone()}>{
+            <p class="app-spice-topology-agent-task" title={standing.task_title.clone()}>{
                 match (&standing.handle, &standing.phase) {
                     (Some(handle), Some(phase)) => format!("{handle}, {phase}"),
                     (Some(handle), None) => handle.clone(),
@@ -666,8 +461,8 @@ fn render_topology_agent(
                 }
             }</p>
             <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
-            <p class="dash-overview-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
-            {super::watchband::render_provider_emblem(standing, "dash", None)}
+            <p class="app-spice-topology-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
+            {super::watchband::render_provider_emblem(standing, "sidebar", None)}
         </@>
     }
 }

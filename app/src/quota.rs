@@ -664,7 +664,7 @@ mod tests {
         assert_eq!(
             stack.report_accents(snapshot.reports.len()),
             vec![Some(3), Some(2), Some(0), Some(1)],
-            "Dash cards keep the accents assigned to the same Spice-button layers"
+            "quota cards keep the accents assigned to the same Spice-button layers"
         );
     }
 

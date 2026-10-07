@@ -18,7 +18,7 @@ pub enum MemberPresenceState {
 }
 
 impl MemberPresenceState {
-    /// Stable machine spelling used by Dash hooks.
+    /// Stable machine spelling used by browser presentation hooks.
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {

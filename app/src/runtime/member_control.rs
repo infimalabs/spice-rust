@@ -1,5 +1,5 @@
-//! Lane commands the operator issues from one Dash member: the one in flight,
-//! and how the last one settled.
+//! Lane commands the operator issues for one resident member: the one in
+//! flight, and how the last one settled.
 //!
 //! A member runs at most one such command at a time. Its answer settles the
 //! exact request it carries, so a late answer to a command abandoned by a

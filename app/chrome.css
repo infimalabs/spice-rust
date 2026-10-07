@@ -6,7 +6,7 @@
   gap: 7px;
   padding-block: var(--app-commandbar-block-pad);
   padding-inline:
-    calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-left, 0px))
+    calc(8px + env(safe-area-inset-left, 0px))
     calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -15,30 +15,26 @@
 .commandbar--mosaic .bar-meta { font-size: var(--app-type-micro); }
 
 .shell {
-  /* The operator avatar and the Spice trigger are one circle size, share the
-     same block inset, and meet opposite chrome edges symmetrically. */
+  /* The Spice trigger retains the global control size and trailing inset. */
   --app-header-control: 35px;
   --app-shell-edge-inline: 10px;
-  --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
   --app-commandbar-block-pad: 8px;
-  /* The commandbar's height; inactive Chat sits exactly below it. */
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
-  --app-operator-link-margin-end: 8px;
   --app-commandbar-gap: 7px;
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }
 
-html:has(.shell--mosaic),
-body:has(.shell--mosaic),
-#app:has(> .shell--mosaic) {
+html:has(.shell),
+body:has(.shell),
+#app:has(> .shell) {
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
-.shell--mosaic {
+.shell {
   --app-frame-edge-block-end: 10px;
   position: fixed;
   inset: 0;
@@ -51,7 +47,7 @@ body:has(.shell--mosaic),
 .app-commandbar-content {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: auto minmax(0, 1fr) var(--app-header-control);
+  grid-template-columns: minmax(0, 1fr) var(--app-header-control);
   align-items: center;
   gap: var(--app-commandbar-gap);
   min-width: 0;
@@ -62,31 +58,11 @@ body:has(.shell--mosaic),
   border-radius: var(--app-radius-element);
 }
 
-/* The operator's face opens global Dash; it sits at the head of the bar beside
-   the aggregate Work count, the same circle as the Spice trigger. */
-.app-operator-link {
-  grid-area: 1 / 1;
-  display: inline-grid;
-  width: var(--app-header-control);
-  height: var(--app-header-control);
-  min-height: 0;
-  margin-inline: 0 var(--app-operator-link-margin-end);
-  padding: 0;
-  border: 0;
-  border-radius: var(--app-radius-circle);
-  background: none;
-}
-.app-operator-link .operator-avatar {
-  flex-basis: var(--app-header-control);
-  width: var(--app-header-control);
-  height: var(--app-header-control);
-  font-size: var(--app-type-meta);
-}
 
 /* The global work rail hangs horn tabs from the command bar's top edge. The
    material itself is shared in style.css with team-local work tabs. */
 .app-global-work-tabs {
-  grid-area: 1 / 2;
+  grid-area: 1 / 1;
   justify-self: start;
   align-self: start;
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));

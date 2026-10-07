@@ -237,35 +237,34 @@ instruction.
 
 ## UI components
 
-### The view rail
+### Chat locations
 
-Dash and Chat are the complete durable panel vocabulary, routed as `#/dash`
-and `#/chat`. Work remains a visible action, not a destination: it opens the
-browser-local task overview over the current panel. Global and team task
-controls derive an exact task set from the admitted board; opening or closing
-that overview does not write browser history.
+Chat is the only durable surface, routed as `#/chat`. Work remains a visible
+action, not a destination: it opens the browser-local task overview over Chat.
+Global and team task controls derive an exact task set from the admitted board;
+opening or closing that overview does not write browser history.
 
-Chat alone may add `/card/{target}`. A target is one segment with letters,
+Retained Chat cards add `/card/{target}`. A target is one segment with letters,
 digits, and `-`; any other spelling is refused. A missing or empty fragment, or
-stray slashes around a route, is replaced in place with the canonical route.
-An unknown route, a retired Work fragment, or a stray query opens Chat,
+stray slashes around Chat, is replaced in place with the canonical route. An
+unknown route, a retired Dash or Work fragment, or a stray query opens Chat,
 replaces the address with `#/chat`, and names the refused location in a toast.
 An authenticated remote opening first captures its one-time fragment into
 tab-local session storage, then makes the same `#/chat` replacement; bootstrap
 and speech reuse only that token, and route fragments are never credentials.
 
-Changing between Dash and Chat and following a Chat card each push one history
-entry. Back and Forward restore only those durable locations. A card outside
-retained Chat history is replaced with plain Chat and a toast names it; a
-transient read failure keeps the card location and its Retry. The team activity
-surface is a retained Chat card at `team-stream-{team}` while that team remains
-current and teamed; an unknown or independent lane is unavailable.
+Following a Chat card pushes one history entry. Back and Forward restore Chat
+and retained-card locations. A card outside retained Chat history is replaced
+with plain Chat and a toast names it; a transient read failure keeps the card
+location and its Retry. The team activity surface is a retained Chat card at
+`team-stream-{team}` while that team remains current and teamed; an unknown or
+independent lane is unavailable.
 
-Task overview selection, controls, map viewport, drafts, team arrangement,
-the Spice sidebar, speech, and narration are browser-local. Task overview and
-Spice content share one sidebar surface and swap without creating history.
-A durable route change closes task overview. Closing either sidebar content
-directly restores focus to its surviving launcher.
+Task overview selection, controls, map viewport, drafts, team arrangement, the
+Spice sidebar, speech, and narration are browser-local. Task overview and Spice
+content share one sidebar surface and swap without creating history. A card
+route closes task overview. Closing either sidebar content directly restores
+focus to its surviving launcher.
 Following a retained Chat quote is a history step, and Back returns to the
 linking card where the reader left it. A fresh card link brings its card into
 view and focus once Chat hydrates, holding it as older history loads until the
@@ -323,7 +322,7 @@ footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-f
 Action-delivery refusals, composer refusals (image intake, a restored wake,
 unreserved renewal), best-effort speech failures, and overview problems
 (unavailable task detail or relationship enrichment, a capability without
-enrichment) use the shared root toast, above every destination and outside
+enrichment) use the shared root toast above Chat and outside
 page flow, clearing after a fixed dwell. A condition toasts when it begins,
 not on every reconnect attempt. Replacing a retained read is routine and
 shows, toasts, and announces nothing; a first read holds its footprint with a
@@ -331,12 +330,12 @@ prose-free placeholder. An in-place retry stands only where content is absent,
 inside that reserved footprint. Validation, empty local content, and durable
 degraded state stay beside what they qualify.
 
-### The global Dash page
+### Sidebar topology and account detail
 
-Topology presents each team left to right in canonical order: member zero, the
-main agent, at the far-left origin, later members rightward. Chat presents that
-order from its right-side controls; neither changes identity, accent, keyboard
-order, or attribution.
+The Spice sidebar presents each team left to right in canonical order: member
+zero, the main agent, at the far-left origin, later members rightward. Chat
+projects that order from its right-side controls; neither changes identity,
+accent, keyboard order, or attribution.
 
 The first section pairs a compact operator identity row — the avatar carries the
 badge, which a Gravatar shows in a band across its lower third at the same size —
@@ -351,11 +350,10 @@ title, so a first account moves nothing below.
 
 ### The task overview
 
-The unchanged Work menu action, global task total, and global stem controls
-open one browser-local overview over whichever durable panel is current. The
-menu and total select every current open task; a stem selects every open task
-under that exact public or hidden stem. Team totals and team stems select the
-corresponding team-wide or team-and-stem set. A task handle selects exactly
+The global task total and global stem controls open one browser-local overview
+over Chat. The total selects every current open task; a stem selects every open
+task under that exact public or hidden stem. Team totals and team stems select
+the corresponding team-wide or team-and-stem set. A task handle selects exactly
 that task, a project fact selects its exact full dotted project, and a
 relationship control extends the current set with its target.
 

@@ -215,8 +215,8 @@ message-pinned quote composer. It occupies no layout space, accepts no pointer
 events, and sits behind the transparent textarea so selection, typing, pasted
 images, and quote controls retain the entire composer. Provider identity remains
 available through each emblem's accessible label, while repeated standalone pi
-marks use distinct SVG gradients. Dash agent tiles keep their full-size provider
-emblem.
+marks use distinct SVG gradients. Spice-sidebar agent tiles keep their full-size
+provider emblem.
 
 ## Annotation dismissal
 

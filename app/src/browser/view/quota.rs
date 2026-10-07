@@ -1,14 +1,6 @@
 use super::*;
 use crate::browser::clock::{Age, Countdown, local_date_millis};
 
-pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
-    render(
-        runtime,
-        "dash",
-        classes!("section", "dash-overview-quota-section"),
-    )
-}
-
 pub(super) fn render_sidebar(runtime: Option<&AppRuntime>) -> Html {
     render(
         runtime,
@@ -44,7 +36,7 @@ fn render(runtime: Option<&AppRuntime>, scope: &str, class: Classes) -> Html {
                     <strong>{presentation.condition.label()}</strong>
                     <span>{presentation.detail}</span>
                     if let Some(sampled_at) = presentation.sampled_at_ms {
-                        <span>{"Sample age "}<Age authored={sampled_at} class={classes!("dash-overview-quota-age")} title="Age of retained successful quota data" /></span>
+                        <span>{"Sample age "}<Age authored={sampled_at} class={classes!("app-quota-age")} title="Age of retained successful quota data" /></span>
                     }
                 </div>
             }
@@ -82,7 +74,7 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
     html! {
         <p class="quota-attempt" role="alert">
             {format!("Latest attempt: {}{exit}. ", crate::quota::failure_label(*kind))}
-            <Age authored={i64::try_from(*finished_at_ms).unwrap_or(i64::MAX)} class={classes!("dash-overview-quota-age")} title="Age of latest failed quota attempt" />
+            <Age authored={i64::try_from(*finished_at_ms).unwrap_or(i64::MAX)} class={classes!("app-quota-age")} title="Age of latest failed quota attempt" />
             {" ago"}
         </p>
     }
@@ -129,7 +121,7 @@ fn render_report(
                 <span class="quota-provider">{report.provider.clone()}</span>
                 <h4 id={heading}>{label.clone()}</h4>
                 {render_account_metadata(&report.account, &label)}
-                <Age authored={report.fetched_at_ms} class={classes!("dash-overview-quota-age")} title="Age of this provider report" />
+                <Age authored={report.fetched_at_ms} class={classes!("app-quota-age")} title="Age of this provider report" />
             </header>
             <ul class="quota-limit-list">
                 {for report.limits.iter().map(render_limit)}
@@ -208,7 +200,7 @@ fn render_reset(window: Option<&wire::QuotaWindow>) -> Html {
         Some(at) => {
             let exact = iso_time(at);
             let title = label.map_or_else(|| exact.clone(), |label| format!("{label} · {exact}"));
-            html! { <>{"resets "}<Countdown expiry={at} class={classes!("dash-overview-quota-age")} title={title} /></> }
+            html! { <>{"resets "}<Countdown expiry={at} class={classes!("app-quota-age")} title={title} /></> }
         }
         None => html! { {label.unwrap_or_default()} },
     }
@@ -262,7 +254,7 @@ fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Html {
                     {"expires "}
                     <Countdown
                         {expiry}
-                        class={classes!("dash-overview-quota-age")}
+                        class={classes!("app-quota-age")}
                         title={exact}
                     />
                 </span>
