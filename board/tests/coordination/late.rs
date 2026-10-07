@@ -378,6 +378,8 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
     let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
         .expect("reversed weighted candidate is ready");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
+    assert_eq!(selected.entry_index(), 1);
+    assert_eq!(selected_again.entry_index(), 2);
     assert_eq!(selected.downstream_weight(), 2);
     assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(

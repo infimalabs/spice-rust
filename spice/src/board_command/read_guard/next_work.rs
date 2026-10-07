@@ -63,16 +63,14 @@ pub(super) fn read_next_work(
         &environment,
         &satisfied,
     ) {
-        let index = entries
-            .binary_search_by(|entry| entry.born().cmp(selected.entry().born()))
-            .map_err(|_| {
-                protocol_fault(
-                    "board::allocation-index-invalid",
-                    "selected task is absent from the live frontier",
-                )
-            })?;
+        let heads = frontier_heads.get(selected.entry_index()).ok_or_else(|| {
+            protocol_fault(
+                "board::allocation-index-invalid",
+                "selected task position is absent from the live frontier",
+            )
+        })?;
         NextWorkState::Candidate {
-            task: next_task(frontier_heads[index]),
+            task: next_task(heads),
         }
     } else {
         NextWorkState::Dry {
