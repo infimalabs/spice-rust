@@ -6,6 +6,7 @@ use crate::work::{TaskOverviewSelection, WorkProjection};
 pub(super) mod chrome;
 mod quota;
 mod team_menu;
+mod work_blockers;
 mod work_detail;
 mod work_jobs;
 mod work_map;
@@ -91,8 +92,12 @@ pub(super) struct AppRender<'a> {
     pub work_map: &'a UseStateHandle<WorkMapState>,
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
+    pub blocker_review: &'a UseStateHandle<bool>,
+    pub blocker_review_button: &'a NodeRef,
+    pub blocker_review_close: &'a NodeRef,
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
+    pub grant_trust: Callback<task_detail::TrustGrantRequest>,
     pub select_task: Callback<wire::TaskStamp>,
     pub open_overview: Callback<TaskOverviewSelection>,
     pub open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
@@ -223,8 +228,12 @@ fn render_task_detail(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>)
         can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
         close_ref: render.detail_close,
         sheet_ref: render.detail_sheet,
+        blocker_review: render.blocker_review,
+        blocker_review_button_ref: render.blocker_review_button,
+        blocker_review_close_ref: render.blocker_review_close,
         notes: render.notes,
         submit_note: render.submit_note.clone(),
+        grant_trust: render.grant_trust.clone(),
         request_task: render.request_task.clone(),
         open_overview: render.open_overview.clone(),
         retry_relations: render.retry_relations.clone(),

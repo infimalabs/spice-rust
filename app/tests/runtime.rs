@@ -282,6 +282,21 @@ fn board_response(
     session: &Session,
     hidden_title: &str,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
+    board_response_with_requirements(
+        session,
+        hidden_title,
+        wire::EnvironmentRequirements::one(
+            wire::EnvironmentRequirement::journal_schema(2)
+                .expect("future fixture schema is positive"),
+        ),
+    )
+}
+
+fn board_response_with_requirements(
+    session: &Session,
+    hidden_title: &str,
+    requirements: wire::EnvironmentRequirements,
+) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
         recent_cell: None,
@@ -318,10 +333,7 @@ fn board_response(
                 "Visible allocator work",
                 "board.visibility",
                 Some("ack:1kQwPZtK"),
-                wire::EnvironmentRequirements::one(
-                    wire::EnvironmentRequirement::journal_schema(2)
-                        .expect("future fixture schema is positive"),
-                ),
+                requirements,
             ),
         ],
         history: None,
@@ -1200,4 +1212,52 @@ fn same_scope_reconnect_preserves_cursor_and_changed_scope_clears_it() {
     assert!(runtime.reconnect(&next_accepted));
     assert_eq!(runtime.resume(), None);
     assert_eq!(runtime.terminal(), None);
+}
+
+#[test]
+fn trust_grant_action_blocks_duplicates_but_allows_retry_after_failure() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .parse::<wire::Digest>()
+        .expect("fixture digest");
+    let task = fixture_stamp("PUBLIC-work1");
+    let revision = seq(1);
+    let board = board_response_with_requirements(
+        &session,
+        "Hidden fixture",
+        wire::EnvironmentRequirements::one(wire::EnvironmentRequirement::trust_grant(
+            digest.clone(),
+        )),
+    );
+    runtime.apply_board(&board);
+
+    assert!(!runtime.begin_trust_grant(&fixture_stamp("different-task"), revision, &digest));
+    assert!(!runtime.begin_trust_grant(&task, seq(2), &digest));
+    assert!(runtime.begin_trust_grant(&task, revision, &digest));
+    assert_eq!(
+        runtime.blocker_action(&digest),
+        Some(&app::BlockerActionState::Pending)
+    );
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
+
+    runtime.settle_trust_grant(digest.clone(), Some("resident refused approval".to_owned()));
+    assert_eq!(
+        runtime.blocker_action(&digest),
+        Some(&app::BlockerActionState::Failed(
+            "resident refused approval".to_owned()
+        ))
+    );
+    assert!(runtime.begin_trust_grant(&task, revision, &digest));
+
+    runtime.settle_trust_grant(digest.clone(), None);
+    assert_eq!(
+        runtime.blocker_action(&digest),
+        Some(&app::BlockerActionState::Approved)
+    );
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
+    runtime.apply_board(&board_response(&session, "Hidden fixture"));
+    assert_eq!(runtime.blocker_action(&digest), None);
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
 }

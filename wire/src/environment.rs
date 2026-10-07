@@ -231,6 +231,14 @@ impl Environment {
                 .map(|value| EnvironmentObservation::ApplianceVersion { value }),
         }
     }
+
+    /// Whether this environment contains a same-kind observation satisfying
+    /// one compiled requirement.
+    #[must_use]
+    pub fn satisfies(&self, requirement: &EnvironmentRequirement) -> bool {
+        self.observation(requirement)
+            .is_some_and(|observation| requirement.is_satisfied_by(&observation))
+    }
 }
 
 /// One typed observation from the environment being evaluated.
@@ -339,11 +347,9 @@ impl EnvironmentRequirements {
     /// compiled comparison.
     #[must_use]
     pub fn are_satisfied_by(&self, environment: &Environment) -> bool {
-        self.0.iter().all(|requirement| {
-            environment
-                .observation(requirement)
-                .is_some_and(|observation| requirement.is_satisfied_by(&observation))
-        })
+        self.0
+            .iter()
+            .all(|requirement| environment.satisfies(requirement))
     }
 
     /// Whether this conjunction contains a trust grant the environment does not satisfy.
@@ -351,9 +357,7 @@ impl EnvironmentRequirements {
     pub fn has_unsatisfied_trust_grant(&self, environment: &Environment) -> bool {
         self.0.iter().any(|requirement| {
             matches!(requirement, EnvironmentRequirement::TrustGrant { .. })
-                && environment
-                    .observation(requirement)
-                    .is_none_or(|observed| !requirement.is_satisfied_by(&observed))
+                && !environment.satisfies(requirement)
         })
     }
 

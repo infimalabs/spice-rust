@@ -454,6 +454,30 @@ quoted attributions, which follow their author's name the same way. On a card
 without a leading attribution, FINAL sits immediately before the producer name
 in the controls island.
 
+## Task blocker review
+
+Every task overview reserves one fixed-height **Needs attention** rail directly
+under its header. The rail summarizes blockers across the complete selected
+set, including incomplete dependencies and unsatisfied typed environmental
+requirements. A clear selection occupies the same rail geometry as a blocked
+selection, and asynchronous detail reads do not own its data, so loading and
+refreshing task cards cannot move the graph or surrounding content.
+
+**Review blockers** opens a sheet-local overlay instead of adding a tab or
+expanding the overview. The graph and task details remain mounted and inert
+behind it; the overlay has its own scroll range. Focus moves to **Back to
+overview**, Escape closes the blocker review before it closes the task
+overview, and closing the review returns focus to its launcher.
+
+Trust approval names one exact digest. The browser reserves that digest,
+revalidates the originating task stamp and statement revision immediately
+before dispatch, and sends the resident's existing pended-to-granted trust
+transition witness. The action stays disabled while pending and while the
+successful board refresh catches up. A refusal remains beside the digest with
+a retry action. Journal-schema and appliance-version blockers are framed in
+the same overlay without controls until real upgrade and reload operations
+exist; the app never renders a fake action for them.
+
 ## Profile app latency in Firefox
 
 The app exposes opt-in User Timing diagnostics without changing route parsing.

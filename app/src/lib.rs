@@ -94,6 +94,10 @@ pub(crate) enum PendingKind {
     ConsentRuling {
         request: wire::CanonicalUuid,
     },
+    /// One exact trust approval initiated from a current task requirement.
+    TrustGrant {
+        digest: wire::Digest,
+    },
     TaskDetail {
         task: wire::TaskStamp,
     },
@@ -141,9 +145,9 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    AppRuntime, BoardView, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, Stale,
-    StreamApplication, StreamDirective, StreamTerminal, TaskDetailState, TaskRelationsKey,
-    TaskRelationsState, stale_reads,
+    AppRuntime, BlockerActionState, BoardView, LaneActivity, LaneMember, LaneRow, LaneStatus,
+    LaneView, Stale, StreamApplication, StreamDirective, StreamTerminal, TaskDetailState,
+    TaskRelationsKey, TaskRelationsState, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

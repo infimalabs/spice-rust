@@ -19,6 +19,13 @@ pub(crate) enum ClientAction {
         request: wire::CanonicalUuid,
         answer: wire::Answer,
     },
+    /// Approve one exact executable digest required by a current task
+    /// statement. The statement identity is revalidated before dispatch.
+    TrustGrant {
+        task: TaskStamp,
+        revision: wire::Seq,
+        digest: wire::Digest,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         generation: u64,

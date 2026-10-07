@@ -15,7 +15,7 @@ use wire::intent::{
     VendorCatalogAnswer,
 };
 use wire::{
-    Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
+    Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, Digest, FactKind,
     MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, ViewSubject,
 };
 
@@ -100,6 +100,13 @@ impl BoardView {
             .body
             .requirements
             .are_satisfied_by(&self.environment)
+    }
+
+    /// Whether one typed requirement is satisfied by this snapshot's exact
+    /// environment.
+    #[must_use]
+    pub fn requirement_satisfied(&self, requirement: &wire::EnvironmentRequirement) -> bool {
+        self.environment.satisfies(requirement)
     }
 }
 
@@ -403,6 +410,14 @@ impl TaskRelationsState {
     }
 }
 
+/// Browser-local progress for an actionable environmental blocker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockerActionState {
+    Pending,
+    Approved,
+    Failed(String),
+}
+
 /// Capability-scoped state for one on-demand task detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskDetailState {
@@ -461,6 +476,7 @@ pub struct AppRuntime {
     lanes: ScopedValue<LaneView>,
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
+    blocker_actions: BTreeMap<Digest, BlockerActionState>,
     task_relations_revision: u64,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
@@ -504,6 +520,7 @@ impl AppRuntime {
             lanes: ScopedValue::new(accepted),
             task_details: BTreeMap::new(),
             task_relations: BTreeMap::new(),
+            blocker_actions: BTreeMap::new(),
             task_relations_revision: 0,
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
@@ -673,6 +690,67 @@ impl AppRuntime {
         self.task_details.insert(task, TaskDetailState::Loading);
     }
 
+    /// Current progress for one exact trust digest.
+    #[must_use]
+    pub fn blocker_action(&self, digest: &Digest) -> Option<&BlockerActionState> {
+        self.blocker_actions.get(digest)
+    }
+
+    /// Reserve one exact, current trust requirement for approval.
+    pub fn begin_trust_grant(
+        &mut self,
+        task: &wire::TaskStamp,
+        revision: Seq,
+        digest: &Digest,
+    ) -> bool {
+        if !self.trust_grant_is_current(task, revision, digest)
+            || matches!(
+                self.blocker_actions.get(digest),
+                Some(BlockerActionState::Pending | BlockerActionState::Approved)
+            )
+        {
+            return false;
+        }
+        self.blocker_actions
+            .insert(digest.clone(), BlockerActionState::Pending);
+        true
+    }
+
+    /// Whether the same statement revision still requires this exact digest.
+    #[must_use]
+    pub fn trust_grant_is_current(
+        &self,
+        task: &wire::TaskStamp,
+        revision: Seq,
+        digest: &Digest,
+    ) -> bool {
+        self.board().is_some_and(|board| {
+            board.tasks.iter().any(|row| {
+                row.statement.body.born == *task
+                    && row.statement.body.revision == revision
+                    && row
+                        .statement
+                        .body
+                        .requirements
+                        .as_slice()
+                        .iter()
+                        .any(|requirement| {
+                            matches!(
+                                requirement,
+                                wire::EnvironmentRequirement::TrustGrant { value }
+                                    if value == digest && !board.requirement_satisfied(requirement)
+                            )
+                        })
+            })
+        })
+    }
+
+    /// Settle one approval while the board refresh catches up.
+    pub fn settle_trust_grant(&mut self, digest: Digest, issue: Option<String>) {
+        let state = issue.map_or(BlockerActionState::Approved, BlockerActionState::Failed);
+        self.blocker_actions.insert(digest, state);
+    }
+
     /// Retain one affected detail while its replacement is requested.
     pub fn invalidate_task_detail(&mut self, task: &wire::TaskStamp) -> bool {
         let Some(detail) = self.task_details.get_mut(task) else {
@@ -834,9 +912,24 @@ impl AppRuntime {
 
     pub fn apply_board(&mut self, admitted: &Admitted<Response<BoardAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
-            runtime
-                .board
-                .replace(admitted.scope(), BoardView::from(answer));
+            let board = BoardView::from(answer);
+            runtime.blocker_actions.retain(|digest, _| {
+                board.tasks.iter().any(|task| {
+                    task.statement
+                        .body
+                        .requirements
+                        .as_slice()
+                        .iter()
+                        .any(|requirement| {
+                            matches!(
+                                requirement,
+                                wire::EnvironmentRequirement::TrustGrant { value }
+                                    if value == digest && !board.requirement_satisfied(requirement)
+                            )
+                        })
+                })
+            });
+            runtime.board.replace(admitted.scope(), board);
         });
     }
     /// Apply one correlated detail response without crossing capability scope.

@@ -200,7 +200,7 @@ async fn pump_session(
                     &principal,
                     data,
                     &mut writer,
-                    &handles.submissions,
+                    handles,
                     actions,
                 ).await?;
             },
@@ -244,13 +244,13 @@ async fn service_action_wake(
     principal: &Principal,
     data: &SurfaceData,
     writer: &mut SocketWriter,
-    submissions: &SubmissionHandle,
+    handles: &SurfaceHandles,
     actions: &ActionQueue,
 ) -> Result<(), String> {
     let Some(lease) = actions.lease() else {
         return Ok(());
     };
-    dispatch_client_action(principal, data, writer, actions, submissions, lease).await?;
+    dispatch_client_action(principal, data, writer, actions, handles, lease).await?;
     actions.rearm().map_err(|error| error.to_string())
 }
 
@@ -295,7 +295,7 @@ async fn dispatch_client_action(
     data: &SurfaceData,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
-    submissions: &SubmissionHandle,
+    handles: &SurfaceHandles,
     mut lease: ActionLease,
 ) -> Result<(), String> {
     if lease.action().is_topology_mutation() {
@@ -334,9 +334,11 @@ async fn dispatch_client_action(
                 Err(error)
             }
         }
+    } else if matches!(lease.action(), ClientAction::TrustGrant { .. }) {
+        dispatch_trust_grant(principal, data, writer, actions, handles, lease).await
     } else if matches!(lease.action(), ClientAction::DrainSubmissions) {
         drop(lease.commit());
-        drain_submissions(principal, writer, actions, submissions).await
+        drain_submissions(principal, writer, actions, &handles.submissions).await
     } else {
         if matches!(
             lease.action(),
@@ -347,7 +349,15 @@ async fn dispatch_client_action(
         ) {
             lease.prepare_pending_transfer();
         }
-        match dispatch_action(principal, writer, actions, submissions, lease.action()).await {
+        match dispatch_action(
+            principal,
+            writer,
+            actions,
+            &handles.submissions,
+            lease.action(),
+        )
+        .await
+        {
             Ok(Some(id)) => {
                 lease.commit_pending(id);
                 Ok(())
@@ -360,6 +370,65 @@ async fn dispatch_client_action(
                 lease.restore();
                 Err(error)
             }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_trust_grant(
+    principal: &Principal,
+    data: &SurfaceData,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    handles: &SurfaceHandles,
+    lease: ActionLease,
+) -> Result<(), String> {
+    let ClientAction::TrustGrant {
+        task,
+        revision,
+        digest,
+    } = lease.action()
+    else {
+        unreachable!("trust dispatch receives only a trust-grant action");
+    };
+    let current = data
+        .read()
+        .as_ref()
+        .is_some_and(|runtime| runtime.trust_grant_is_current(task, *revision, digest));
+    if !current {
+        if let Some(runtime) = data.write().as_mut() {
+            runtime.settle_trust_grant(
+                digest.clone(),
+                Some(
+                    "This task requirement changed before approval. Review the current blocker."
+                        .to_owned(),
+                ),
+            );
+        }
+        handles.surface.set(data.publication());
+        drop(lease.commit());
+        return Ok(());
+    }
+    match dispatch_action(
+        principal,
+        writer,
+        actions,
+        &handles.submissions,
+        lease.action(),
+    )
+    .await
+    {
+        Ok(Some(id)) => {
+            lease.commit_pending(id);
+            Ok(())
+        }
+        Ok(None) => {
+            drop(lease.commit());
+            Ok(())
+        }
+        Err(error) => {
+            lease.restore();
+            Err(error)
         }
     }
 }
@@ -786,6 +855,29 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
+        ClientAction::TrustGrant {
+            task: _,
+            digest,
+            revision: _,
+        } => send_typed(
+            principal,
+            writer,
+            actions,
+            PendingKind::TrustGrant {
+                digest: digest.clone(),
+            },
+            CommandKind::TrustGrant,
+            vec![Witness::Trust {
+                digest: digest.clone(),
+                standing: wire::TrustState::Pended,
+            }],
+            wire::intent::TrustRef {
+                digest: digest.clone(),
+                worktree: None,
+            },
+        )
+        .await
+        .map(Some),
         ClientAction::GlobalSettings(settings) => {
             send_global_settings(principal, writer, actions, settings)
                 .await
