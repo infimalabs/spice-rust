@@ -12,7 +12,7 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.commandbar--mosaic .bar-meta { font-size: .6rem; }
+.commandbar--mosaic .bar-meta { font-size: var(--app-type-micro); }
 
 .shell {
   /* The operator avatar and the Spice trigger are one circle size, share the
@@ -29,10 +29,6 @@
   --app-disclosure-gap: 7px;
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
-  /* A team's status line and each draft composer heading show the same agent
-     activity at one type size in one band height. */
-  --app-status-line-font-size: 12px;
-  --app-status-line-band: 30px;
 }
 
 html:has(.shell--mosaic),
@@ -92,106 +88,36 @@ body:has(.shell--mosaic),
   margin-inline: 0 var(--app-operator-link-margin-end);
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--app-radius-circle);
   background: none;
 }
 .app-operator-link .operator-avatar {
   flex-basis: var(--app-header-control);
   width: var(--app-header-control);
   height: var(--app-header-control);
-  font-size: .7rem;
+  font-size: var(--app-type-meta);
 }
 
-/* Task tabs. The global strip's stem roll-ups hang from the window's top
-   edge, rounded below; a team's stem groups stand on its status rule, rounded
-   above. Otherwise they are one horned tab: nested-quote rails on both sides
-   in --line, the colour of the status band's top rule the team tabs stand on,
-   tapering into 1em corners, with no edge along the glued side, all over the
-   composer's --control surface. Each strip leads with a badge-only total whose
-   rails take the message card's width. Tabs are --mosaic-gap apart and scroll
-   rather than wrap. Stem text is the muted neutral at reduced opacity. */
-.task-pill-strip {
+/* The global work rail hangs horn tabs from the command bar's top edge. The
+   material itself is shared in style.css with team-local work tabs. */
+.app-global-work-tabs {
   grid-area: 1 / 2;
   justify-self: start;
   align-self: start;
-  display: flex;
-  gap: var(--mosaic-gap);
-  max-width: 100%;
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
-  overflow-x: auto;
 }
-.task-pill {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  min-height: 21px;
-  padding: 0;
+.app-global-work-tabs > .app-horn-tab { padding-inline: 10px; }
+.app-global-status {
+  grid-area: 1 / 3;
+  min-width: 0;
+  max-width: min(22rem, 42vw);
+  overflow: hidden;
   color: var(--muted);
-  font: 500 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 500 var(--app-type-xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-:is(.task-pill-strip, .team-tasks) > .task-pill {
-  overflow: clip;
-  border: 0;
-  border-inline: var(--quote-rail) solid var(--line);
-  border-radius: 0 0 1em 1em;
-  background: var(--control);
-}
-.team-tasks > .task-pill { border-radius: 1em 1em 0 0; }
-:is(.task-pill-strip, .team-tasks) > :is(.task-pill--all, .task-pill--total) {
-  border-inline-width: var(--message-rail);
-}
-.task-pill .task-pill-stem {
-  color: var(--muted);
-  opacity: .72;
-}
-/* Every target mixes a 5% tint into --control and rises to 10% on hover. A
-   global tab is one target; a team tab is its stem target followed by every
-   matching task handle. Labels sit 8px apart and 10px in from either rail. */
-:is(.task-pill-strip > .task-pill, .task-pill--project > button) {
-  --task-tint: var(--muted);
-  background: color-mix(in srgb, var(--task-tint) 5%, var(--control));
-  color: var(--muted);
-}
-:is(.task-pill-strip > .task-pill, .task-pill--project > button):hover {
-  background: color-mix(in srgb, var(--task-tint) 10%, var(--control));
-}
-.task-pill-strip > .task-pill { padding-inline: 10px; }
-.task-pill--project { gap: 0; }
-.task-pill--project > button {
-  align-self: stretch;
-  min-height: 0;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 0;
-  font: inherit;
-}
-.task-pill--project > .task-pill-stem-target {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding-inline-start: 10px;
-}
-.task-pill--project > button:last-child { padding-inline-end: 10px; }
-/* A handle names the lane working it in its text and tint: the text mixes
-   that lane's accent toward ink, which keeps all six accents readable, and the
-   tint takes the accent. Unworked handles stay muted, weaker when dormant. */
-.task-pill-handle.dormant { color: color-mix(in srgb, var(--muted) 62%, transparent); }
-.task-pill-handle[data-accent] {
-  --task-tint: var(--accent-slot);
-  color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
-}
-/* Every count badge, global or team-local, uses one subdued neutral treatment;
-   the surrounding tab and handle retain their own state and owner signals. */
-.task-pill-count {
-  padding: 0 5px;
-  border-radius: var(--app-radius-pill);
-  background: var(--muted);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
-  color: var(--page);
-  font-size: 9px;
-}
-:is(.task-pill-strip, .team-tasks) :focus-visible { outline-offset: -2px; }
+.app-global-status[data-connection="reconnecting"] { color: var(--triage); }
 .app-menu { position: static; grid-row: 1; grid-column: -2; }
 .app-menu[open] { z-index: 2; }
 .app-menu > summary {
@@ -199,8 +125,8 @@ body:has(.shell--mosaic),
   --app-menu-border: color-mix(in srgb, var(--app-menu-edge) 68%, var(--line));
   --app-menu-surface: var(--control-surface-soft);
   position: relative; z-index: 2; display: grid; place-items: center; width: var(--app-header-control); height: var(--app-header-control); padding: 0;
-  border: 2px solid var(--app-menu-border);
-  border-radius: 50%; background: var(--app-menu-surface); color: var(--ink);
+  border: var(--app-focus-ring-width) solid var(--app-menu-border);
+  border-radius: var(--app-radius-circle); background: var(--app-menu-surface); color: var(--ink);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--app-menu-border) 28%, transparent);
   cursor: pointer; list-style: none;
 }
@@ -234,7 +160,7 @@ body:has(.shell--mosaic),
 }
 .app-menu-pepper {
   --app-pepper-halo: drop-shadow(0 0 1px var(--page)) drop-shadow(0 0 1px var(--page));
-  grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; filter: var(--app-pepper-halo);
+  grid-area: 1 / 1; position: relative; z-index: 1; font-size: var(--app-type-menu-icon); line-height: 1; filter: var(--app-pepper-halo);
 }
 .app-menu-quota { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .app-menu-quota-account { fill: var(--accent-slot); stroke: none; }
@@ -247,7 +173,7 @@ body:has(.shell--mosaic),
 }
 .app-menu > summary:not([data-connection="online"]) .app-menu-pepper { filter: grayscale(1) var(--app-pepper-halo); }
 .app-menu > summary:is([data-connection="starting"], [data-connection="connecting"], [data-connection="reconnecting"]) .app-menu-pepper {
-  animation: app-fast-mode-pulse 5s ease-in-out infinite;
+  animation: app-fast-mode-pulse var(--app-motion-pulse) ease-in-out infinite;
 }
 @keyframes app-fast-mode-pulse { 0%, 100% { opacity: 0; } 45% { opacity: .92; } }
 @media (prefers-reduced-motion: reduce) {
@@ -298,7 +224,7 @@ body:has(.shell--mosaic),
 .app-menu-section > header h2 {
   margin: 0;
   color: color-mix(in srgb, var(--muted) 84%, var(--ink));
-  font: 700 .63rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--app-type-menu-kicker)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -309,7 +235,7 @@ body:has(.shell--mosaic),
   gap: 12px;
   min-width: 0;
   color: var(--muted);
-  font: .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-menu-section > header > span {
   min-width: 0;
@@ -318,43 +244,6 @@ body:has(.shell--mosaic),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-menu-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 40px;
-  padding: 0 12px;
-  border: var(--app-control-edge);
-  border-radius: var(--app-radius-inset);
-  background: var(--control-surface-soft);
-  font-size: .74rem;
-}
-.app-menu-setting span { color: var(--muted); font-family: ui-monospace, monospace; }
-.app-menu-setting--action {
-  width: 100%;
-  color: inherit;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.app-menu-setting--action:hover {
-  border-color: var(--control-line-soft);
-  background: var(--control);
-}
-.app-menu-setting--action:focus-visible {
-  border-color: var(--focus);
-}
-.app-menu-setting--checked {
-  border-color: var(--control-line-soft);
-  background: var(--control);
-}
-.app-menu-setting--checked span { color: var(--ink); }
-.app-fast-setting.app-menu-setting--checked {
-  border-color: color-mix(in srgb, var(--warning) 58%, var(--control));
-  background: color-mix(in srgb, var(--control) 82%, var(--warning) 18%);
-}
-.app-fast-setting.app-menu-setting--checked span { color: var(--warning); font-weight: 600; }
-.app-menu-setting--action:disabled { cursor: wait; opacity: .58; }
 .app-menu-global-controls {
   display: flex;
   align-items: center;
@@ -385,7 +274,7 @@ body:has(.shell--mosaic),
   flex-basis: 38px;
   width: 38px;
   height: 38px;
-  font-size: .72rem;
+  font-size: var(--app-type-label);
 }
 .app-operator-summary > div { min-width: 0; }
 .app-operator-summary strong,
@@ -395,11 +284,11 @@ body:has(.shell--mosaic),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-operator-summary strong { font-size: .78rem; }
+.app-operator-summary strong { font-size: var(--app-type-body); }
 .app-operator-summary span {
   margin-top: 3px;
   color: var(--muted);
-  font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-operator-form { display: grid; grid-template-columns: 1fr auto; gap: 5px 8px; }
 .app-operator-form label {
@@ -407,10 +296,10 @@ body:has(.shell--mosaic),
   align-items: baseline;
   justify-content: space-between;
   color: var(--muted);
-  font-size: .64rem;
+  font-size: var(--app-type-caption);
 }
 .app-operator-form label small {
-  font: .58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: uppercase;
 }
 .app-operator-form input {
@@ -422,24 +311,15 @@ body:has(.shell--mosaic),
   border-radius: var(--app-radius-inset);
   background: var(--panel);
   color: var(--ink);
-  font: .7rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-operator-form input:focus { border-color: var(--focus); outline: 0; }
 .app-operator-form button { grid-column: 2; margin-top: 2px; }
-.app-fast-setting {
-  width: auto;
-  min-height: 34px;
-  gap: 14px;
-  padding-inline: 11px;
-}
 /* A read-only chip beside Fast mode: the cumulative weekly quota remaining.
    It takes the row's spare width, so the controls keep their places. */
 .app-menu-capacity {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 34px;
-  gap: 14px;
-  padding-inline: 11px;
   cursor: default;
 }
 .app-menu-capacity span { color: var(--ink); }
@@ -454,24 +334,9 @@ body:has(.shell--mosaic),
   padding: 10px 3px 3px;
   border-top: var(--app-edge-soft);
   color: var(--muted);
-  font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-theme-selector { flex: 0 0 auto; }
-.app-theme-option {
-  display: grid;
-  width: 28px;
-  min-height: 28px;
-  place-items: center;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-}
-.app-theme-option:hover { color: var(--ink); }
-.app-theme-option[aria-pressed="true"] {
-  background: var(--control);
-  color: var(--ink);
-  box-shadow: var(--app-selection-shadow);
-}
 .app-theme-icon {
   width: 15px;
   height: 15px;
@@ -501,7 +366,7 @@ body:has(.shell--mosaic),
   border-color: color-mix(in srgb, var(--focus) 56%, var(--line));
   background: color-mix(in srgb, var(--control) 84%, var(--focus) 16%);
   color: color-mix(in srgb, var(--focus) 78%, var(--ink));
-  font: 700 .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--app-type-state)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-menu-version--update:hover { border-color: var(--focus); }
 .app-menu-version-label {
@@ -512,12 +377,12 @@ body:has(.shell--mosaic),
 }
 .app-menu-version-indicator {
   flex: 0 0 auto;
-  font-size: .82rem;
+  font-size: var(--app-type-identity);
   line-height: 1;
 }
 .app-menu-version:focus-visible {
-  border-radius: 3px;
-  outline: 2px solid var(--focus);
+  border-radius: var(--app-radius-micro);
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }
 .app-menu-version-group {
@@ -544,7 +409,7 @@ body:has(.shell--mosaic),
 .app-menu-context-copy {
   margin: 0;
   color: var(--muted);
-  font-size: .7rem;
+  font-size: var(--app-type-meta);
   line-height: 1.5;
 }
 /* One agent row is the footprint the unassigned empty line reserves, and one
@@ -578,7 +443,7 @@ body:has(.shell--mosaic),
   min-block-size: var(--app-team-head);
   gap: 10px;
   color: var(--muted);
-  font: .64rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-caption)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-team > header > div {
   display: grid;
@@ -607,28 +472,19 @@ body:has(.shell--mosaic),
 }
 .app-team-member[draggable="true"]:active { cursor: grabbing; }
 .app-team-member[aria-disabled="true"] { cursor: default; }
-.app-team-member[aria-disabled="true"] > :not(.app-member-presence) { opacity: .66; }
-.app-member-presence {
-  width: 18px;
-  height: 18px;
-  border: 5px solid color-mix(in srgb, var(--agent-presence-color) 25%, var(--panel));
-  border-radius: 50%;
-  background: var(--agent-presence-color);
-  box-sizing: content-box;
-  opacity: var(--agent-presence-opacity);
-}
+.app-team-member[aria-disabled="true"] > :not(.app-presence-pip--member) { opacity: .66; }
 .app-member-copy { display: grid; min-width: 0; gap: 4px; }
 .app-member-copy strong {
   overflow: hidden;
   color: var(--accent-slot, var(--ink));
-  font-size: .82rem;
+  font-size: var(--app-type-identity);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .app-member-copy small {
   overflow: hidden;
   color: var(--muted);
-  font-size: .65rem;
+  font-size: var(--app-type-fact);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -636,7 +492,7 @@ body:has(.shell--mosaic),
 .app-team-drop,
 .app-unassigned {
   padding: 10px;
-  border: 1px dashed var(--control-line-soft);
+  border: var(--app-control-edge-width) dashed var(--control-line-soft);
   border-radius: var(--app-radius-frame);
   background: var(--control-surface-soft);
 }
@@ -654,11 +510,11 @@ body:has(.shell--mosaic),
   display: grid;
   min-height: 48px;
   place-items: center;
-  border: 1px dashed var(--control-line-soft);
+  border: var(--app-control-edge-width) dashed var(--control-line-soft);
   border-radius: var(--app-radius-inset);
   background: color-mix(in srgb, var(--control) 52%, transparent);
   color: var(--muted);
-  font: 700 .65rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--app-type-fact)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .04em;
   text-transform: uppercase;
 }
@@ -666,7 +522,7 @@ body:has(.shell--mosaic),
   border-color: var(--line-soft);
   color: var(--muted);
 }
-.app-menu-empty { margin: 0; padding: 3px 1px; color: var(--muted); font-size: .68rem; line-height: 1.4; }
+.app-menu-empty { margin: 0; padding: 3px 1px; color: var(--muted); font-size: var(--app-type-sm); line-height: 1.4; }
 .app-open-teams > .app-menu-empty {
   min-block-size: calc(2 * (var(--app-team-pad) + 1px) + var(--app-team-head) + var(--app-team-gap) + var(--app-member-row));
 }
@@ -699,11 +555,11 @@ body:has(.shell--mosaic),
   gap: 4px;
 }
 /* The lane toggle spans the panel like the effort rail above it. */
-.member-fast .app-fast-setting { width: 100%; }
+.member-fast .app-setting-toggle--fast { width: 100%; }
 .member-model label,
 .member-effort label {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--app-type-compact);
   letter-spacing: .05em;
   text-transform: uppercase;
 }

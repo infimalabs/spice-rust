@@ -48,12 +48,12 @@
   .app-menu-version--update { padding-inline: 5px; }
   .workspace-tabs { margin-left: auto; }
   .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
-  .workspace-tabs button::first-letter { font-size: .72rem; }
+  .workspace-tabs button::first-letter { font-size: var(--app-type-label); }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { --team-chamber-inset: 4px; }
   .app-navigation { margin-inline: 4px; }
   .app-option { padding-inline: 4px; }
-  .app-option-badge { display: none; }
+  .app-count-badge--option { display: none; }
   .team-task-member { max-width: 100%; }
   .team-job-table th:nth-child(1) { width: 5.5rem; }
   .team-job-table th:nth-child(2) { width: 3.5rem; }
@@ -61,7 +61,7 @@
   .team-job-table th,
   .team-job-table td { padding-inline: 6px; }
   .page-heading { align-items: start; }
-  .page-heading h1 { font-size: 1.35rem; }
+  .page-heading h1 { font-size: var(--app-type-mobile-title); }
   th, td { padding: 10px; }
   .dash-overview-topology-section .section-heading { align-items: start; flex-direction: column; gap: 4px; }
 }
@@ -71,16 +71,16 @@
 }
 
 @media (max-width: 920px) {
-  .work-detail-facts,
-  .work-detail-links { grid-template-columns: 1fr; }
+  .app-fact-grid,
+  .work-relationship-links { grid-template-columns: 1fr; }
   .work-map-task-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .app-sidebar { width: 100vw; }
   .app-sidebar-header,
-  .work-detail-content,
+  .app-sheet-header,
+  .app-sheet-body,
   .work-blocker-rail,
-  .work-blocker-review-header,
   .work-blocker-review-body,
   .work-overview-map,
   .work-overview-jobs,
@@ -97,8 +97,8 @@
   .work-map-heading { align-items: flex-start; flex-direction: column; }
   .work-map-heading > span { text-align: left; }
   .work-map-viewport { height: 18rem; }
-  .work-detail-identity { align-items: flex-start; flex-direction: column; }
-  .work-detail-identity button { width: 100%; }
+  .app-sheet-identity { align-items: flex-start; flex-direction: column; }
+  .app-sheet-identity button { width: 100%; }
   .work-blocker-rail {
     grid-template-columns: 1.75rem minmax(0, 1fr);
     block-size: 7rem;

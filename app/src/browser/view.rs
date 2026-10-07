@@ -59,7 +59,7 @@ pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html
     let label = status.label();
     html! {
         <span
-            class={classes!("agent-presence-indicator", "app-member-presence", status.key())}
+            class={classes!("app-presence-pip", "app-presence-pip--member", status.key())}
             role="img"
             data-lane-status={status.key()}
             aria-label={label}
@@ -558,7 +558,7 @@ fn render_topology_agent(
             }</p>
             <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
             <p class="dash-overview-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
-            {super::watchband::render_composer_vendor_icon(standing, "dash", None)}
+            {super::watchband::render_provider_emblem(standing, "dash", None)}
         </@>
     }
 }

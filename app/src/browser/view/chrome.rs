@@ -61,7 +61,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-expanded={(**render.menu_open).to_string()}
             >
                 {operator_link}
-                <nav class="task-pill-strip" aria-label="Open task stems">
+                <nav class="app-horn-tabs app-global-work-tabs" aria-label="Open task stems">
                     {all_work_pill}
                     {for stems.into_iter().map(|stem| {
                         render_stem_pill(stem, render.navigate)
@@ -169,7 +169,7 @@ fn navigation_option(
         >
             <span class="app-option-label">{label}</span>
             if let Some(count) = badge {
-                <span class="app-option-badge">{count}</span>
+                <span class="app-count-badge app-count-badge--option">{count}</span>
             }
         </button>
     }
@@ -308,7 +308,7 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
 /// One neutral open-task count badge shared by global and team-local roll-ups.
 pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
     html! {
-        <span class="task-pill-count">{counts.open().to_string()}</span>
+        <span class="app-count-badge">{counts.open().to_string()}</span>
     }
 }
 
@@ -327,7 +327,7 @@ fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Int
     html! {
         <button
             key="global-work"
-            class="task-pill task-pill--all"
+            class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}
             aria-label={title}
@@ -357,7 +357,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
     html! {
         <button
             key={identity.to_string()}
-            class="task-pill"
+            class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}
             aria-label={title}
@@ -366,7 +366,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
             data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
-            <span class="task-pill-stem">{identity.stem().to_owned()}</span>
+            <span class="app-horn-tab__label">{identity.stem().to_owned()}</span>
             {render_task_count(counts)}
         </button>
     }
@@ -419,7 +419,7 @@ pub(in crate::browser) fn render_team_ticker(
 /// team surface's pane where the first activity or team leaves it.
 pub(in crate::browser) fn render_empty_team_ticker() -> Html {
     html! {
-        <div class="ticker" aria-live="polite" data-empty="true"></div>
+        <div class="app-status-band app-status-text ticker" aria-live="polite" data-empty="true"></div>
     }
 }
 
@@ -455,7 +455,7 @@ fn ticker(
         watchband::ticker_accessible_label(&standing.label, class, &line, TICKER_SPOKEN_BUDGET);
     html! {
         <div
-            class={classes!("ticker", activity.class())}
+            class={classes!("app-status-band", "app-status-text", "ticker", activity.class())}
             aria-live="polite"
             aria-label={accessible_label}
             title={line}
@@ -542,8 +542,8 @@ fn card_actions(props: &CardActionsProps) -> Html {
         <span class="message-actions app-control-rail">
             <button
                 class={classes!(
-                    "card-action",
-                    "card-action--speak",
+                    "app-card-action",
+                    "app-card-action--speak",
                     speaking.then_some("active"),
                 )}
                 type="button" title={speech_label}
@@ -555,7 +555,7 @@ fn card_actions(props: &CardActionsProps) -> Html {
                 if speaking {
                     html! {
                         <svg
-                            class="card-action-icon"
+                            class="app-card-action__icon"
                             data-card-action-icon="stop"
                             width="15" height="15" viewBox="0 0 24 24"
                             aria-hidden="true" focusable="false"
@@ -566,7 +566,7 @@ fn card_actions(props: &CardActionsProps) -> Html {
                 } else {
                     html! {
                         <svg
-                            class="card-action-icon"
+                            class="app-card-action__icon"
                             data-card-action-icon="play"
                             width="15" height="15" viewBox="0 0 24 24"
                             aria-hidden="true" focusable="false"
@@ -578,10 +578,10 @@ fn card_actions(props: &CardActionsProps) -> Html {
             }</button>
             if let Some(quote) = quote {
                 <button
-                    class="card-action card-action--quote" type="button" title="Quote this message"
+                    class="app-card-action app-card-action--quote" type="button" title="Quote this message"
                     aria-label="Quote this message"
                     onclick={Callback::from(move |_| quote.emit(()))}
-                ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
+                ><span class="app-card-action__icon" aria-hidden="true">{"❝"}</span></button>
             }
         </span>
     }
@@ -593,6 +593,41 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
             text={AttrValue::from(text.to_owned())}
             correspondent={correspondent.clone()}
         />
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub(in crate::browser) struct SettingToggleProps {
+    pub(in crate::browser) label: AttrValue,
+    pub(in crate::browser) value: AttrValue,
+    pub(in crate::browser) checked: bool,
+    pub(in crate::browser) disabled: bool,
+    #[prop_or_default]
+    pub(in crate::browser) checkbox: bool,
+    #[prop_or_default]
+    pub(in crate::browser) title: Option<AttrValue>,
+    #[prop_or_default]
+    pub(in crate::browser) onclick: Option<Callback<MouseEvent>>,
+}
+
+/// One shared two-column setting toggle for global and member controls.
+#[function_component(SettingToggle)]
+pub(in crate::browser) fn setting_toggle(props: &SettingToggleProps) -> Html {
+    let state = props.checked.to_string();
+    html! {
+        <button
+            class="app-setting-row app-setting-toggle app-setting-toggle--fast"
+            type="button"
+            role={props.checkbox.then_some("menuitemcheckbox")}
+            aria-checked={props.checkbox.then(|| state.clone())}
+            aria-pressed={(!props.checkbox).then_some(state)}
+            disabled={props.disabled}
+            title={props.title.clone()}
+            onclick={props.onclick.clone()}
+        >
+            <strong>{props.label.clone()}</strong>
+            <span>{props.value.clone()}</span>
+        </button>
     }
 }
 
