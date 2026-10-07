@@ -40,12 +40,14 @@ transitions.
 
 ## Task blocker review
 
-Every task overview reserves one fixed-height **Needs attention** rail directly
-under its header. The rail summarizes blockers across the complete selected
-set, including incomplete dependencies and unsatisfied typed environmental
-requirements. A clear selection occupies the same rail geometry as a blocked
-selection, and asynchronous detail reads do not own its data, so loading and
-refreshing task cards cannot move the graph or surrounding content.
+Every task overview reserves one fixed-height status rail directly under its
+header. A blocked selection pairs the danger-styled `!` with **Needs
+attention**; a clear selection pairs a quiet `✓` with **Ready to proceed**.
+The rail summarizes blockers across the complete selected set, including
+incomplete dependencies and unsatisfied typed environmental requirements.
+Both states occupy the same geometry, and asynchronous detail reads do not own
+the rail's data, so loading and refreshing task cards cannot move the graph or
+surrounding content.
 
 **Review blockers** opens a sheet-local overlay instead of adding a tab or
 expanding the overview. The graph and task details remain mounted and inert
