@@ -77,7 +77,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     <header class="work-detail-header">
                         <div>
                             <p class="work-detail-kicker">{"Task overview"}</p>
-                            <h2 id="work-detail-title">{overview_title(render.selection)}</h2>
+                            <h2 id="work-detail-title">{overview_title(render.selection, render.lanes)}</h2>
                         </div>
                         <button
                             ref={render.close_ref.clone()}
@@ -143,11 +143,14 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     }
 }
 
-fn overview_title(selection: &TaskOverviewSelection) -> String {
+fn overview_title(selection: &TaskOverviewSelection, lanes: Option<&LaneView>) -> String {
     let count = selection.tasks().len();
+    let lanes = lanes.map_or(&[][..], |view| &view.lanes);
     format!(
         "{} · {count} {}",
-        selection.context().label(),
+        selection
+            .context()
+            .label(|team| crate::watchband::team_label_in(lanes, team)),
         if count == 1 { "task" } else { "tasks" },
     )
 }

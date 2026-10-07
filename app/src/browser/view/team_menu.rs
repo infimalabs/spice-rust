@@ -579,7 +579,7 @@ fn render_team(
         >
             <header>
                 <div>
-                    <strong>{format!("Team {}", watchband::short(team.lane))}</strong>
+                    <strong>{format!("Team {}", watchband::team_label(team))}</strong>
                     <span>{format!(
                         "open any member; {} agents open together",
                         team.members.len()

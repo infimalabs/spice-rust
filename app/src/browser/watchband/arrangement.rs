@@ -8,6 +8,8 @@ pub(super) struct Context<'a> {
     pub(super) sender: &'a SenderHandle,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
     pub(super) topology_revision: u64,
+    /// Current team rows, which name each team by its lead agent.
+    pub(super) lanes: &'a [crate::runtime::LaneRow],
     pub(super) can_arrange: bool,
 }
 
@@ -40,7 +42,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
         <div
             class="team-action-menu team-arrangement-menu"
             role="menu"
-            aria-label={format!("Arrange team {}", watchband::short(team))}
+            aria-label={format!("Arrange team {}", watchband::team_label_in(context.lanes, team))}
         >
             {for choices.into_iter().map(|(kind, verb, target, teams)| {
                 let sender = context.sender.clone();
@@ -69,7 +71,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                             controls.dispatch(TeamControlAction::CloseArrangement);
                         })}
                     >
-                        <span class="team-action-label">{format!("{verb} team {}", watchband::short(target))}</span>
+                        <span class="team-action-label">{format!("{verb} team {}", watchband::team_label_in(context.lanes, target))}</span>
                         <span class="team-action-detail">{
                             if kind == "join" && !enabled {
                                 "limited to six agents"
