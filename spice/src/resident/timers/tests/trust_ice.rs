@@ -63,6 +63,7 @@ fn ice_claim(fixture: &Fixture) {
             body::TaskEdited {
                 task: stamp.clone(),
                 revision: 2,
+                dependencies: None,
                 notice: None,
             },
             FactCause::Root,

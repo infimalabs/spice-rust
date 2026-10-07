@@ -256,6 +256,7 @@ fn publish_correction(
         body::TaskEdited {
             task: statement.born.clone(),
             revision,
+            dependencies: None,
             notice: None,
         },
         FactCause::Root,

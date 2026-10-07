@@ -791,18 +791,12 @@ impl AppRuntime {
     }
 
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn invalidate_task_relations(&mut self, relations: &BTreeSet<TaskRelationKind>) {
-        let mut invalidated = false;
-        self.task_relations.retain(|key, state| {
-            if !relations.contains(&key.relation) {
-                return true;
-            }
-            invalidated = true;
-            refresh_task_relations(state, true)
-        });
-        if invalidated {
-            self.task_relations_revision = self.task_relations_revision.saturating_add(1);
-        }
+    fn invalidate_task_relations(&mut self, changes: &[TaskRelationInvalidation]) {
+        invalidate_task_relation_states(
+            &mut self.task_relations,
+            &mut self.task_relations_revision,
+            changes,
+        );
     }
 
     #[must_use]
@@ -958,13 +952,16 @@ impl AppRuntime {
         self.task_details.insert(task.clone(), state);
     }
     /// Apply one correlated relationship answer without crossing request identity.
+    ///
+    /// Returns whether the visible relationship content changed. Snapshot
+    /// advancement alone is retained without scheduling a Yew publication.
     pub fn apply_task_relations(
         &mut self,
         key: &TaskRelationsKey,
         admitted: &Admitted<Response<TaskRelationsAnswer>>,
-    ) {
+    ) -> bool {
         if admitted.scope() != self.accepted.scope() {
-            return;
+            return false;
         }
         let state = match &admitted.get().outcome {
             Outcome::Reply(reply) if task_relations_match(key, &reply.body) => {
@@ -993,7 +990,13 @@ impl AppRuntime {
                 detail: Some(fault.detail.clone()),
             },
         };
+        let changed = !matches!(
+            (&state, self.task_relations.get(key).and_then(TaskRelationsState::answer)),
+            (TaskRelationsState::Available(next), Some(current))
+                if task_relations_content_eq(current, next)
+        );
         self.task_relations.insert(key.clone(), state);
+        changed
     }
 
     /// Apply a lane table only when its authority position does not move backwards.
@@ -1105,6 +1108,13 @@ fn task_relations_match(key: &TaskRelationsKey, answer: &TaskRelationsAnswer) ->
     })
 }
 
+fn task_relations_content_eq(left: &TaskRelationsAnswer, right: &TaskRelationsAnswer) -> bool {
+    left.roots == right.roots
+        && left.nodes == right.nodes
+        && left.edges == right.edges
+        && left.truncation == right.truncation
+}
+
 fn refresh_task_relations(state: &mut TaskRelationsState, in_flight_answers: bool) -> bool {
     match std::mem::replace(state, TaskRelationsState::Loading) {
         TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer) => {
@@ -1126,6 +1136,100 @@ fn refresh_task_detail(detail: &mut TaskDetailState) {
     };
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TaskRelationInvalidation {
+    kind: FactKind,
+    task: wire::TaskStamp,
+    dependency_targets: Vec<wire::TaskStamp>,
+    origin_target: Option<wire::TaskStamp>,
+}
+
+impl TaskRelationInvalidation {
+    fn from_fact(fact: &wire::StreamFact) -> Option<Self> {
+        let kind = fact.kind();
+        if kind.task_relation_kinds().is_empty() {
+            return None;
+        }
+        let task = fact.task()?;
+        let dependency_field = match kind {
+            FactKind::TaskAdded => Some("depends"),
+            FactKind::TaskEdited => Some("dependencies"),
+            _ => None,
+        };
+        let dependency_targets = dependency_field
+            .and_then(|field| fact.body().get(field))
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .map(|dependency| {
+                dependency
+                    .as_str()
+                    .expect("validated task relationship targets are strings")
+                    .parse()
+                    .expect("validated task relationship targets are task stamps")
+            })
+            .collect();
+        let origin_target = (kind == FactKind::TaskAdded)
+            .then(|| fact.origin().as_str().strip_prefix("task:"))
+            .flatten()
+            .and_then(|task| task.parse().ok());
+        Some(Self {
+            kind,
+            task,
+            dependency_targets,
+            origin_target,
+        })
+    }
+
+    #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+    fn affects(&self, key: &TaskRelationsKey, state: &TaskRelationsState) -> bool {
+        if !self.kind.task_relation_kinds().contains(&key.relation) {
+            return false;
+        }
+        let contains = |task: &wire::TaskStamp| {
+            state.answer().map_or_else(
+                || key.roots.contains(task),
+                |answer| {
+                    answer.nodes.iter().any(|node| {
+                        matches!(
+                            node,
+                            wire::intent::TaskRelationNode::Task { task: node_task, .. }
+                                if node_task == task
+                        )
+                    })
+                },
+            )
+        };
+        contains(&self.task)
+            || match key.relation {
+                TaskRelationKind::Dependency => self.dependency_targets.iter().any(contains),
+                TaskRelationKind::Origin => self.origin_target.as_ref().is_some_and(contains),
+                TaskRelationKind::Review
+                | TaskRelationKind::Lifecycle
+                | TaskRelationKind::Claim => false,
+            }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+fn invalidate_task_relation_states(
+    states: &mut BTreeMap<TaskRelationsKey, TaskRelationsState>,
+    revision: &mut u64,
+    changes: &[TaskRelationInvalidation],
+) {
+    let mut invalidated = false;
+    states.retain(|key, state| {
+        if !changes.iter().any(|change| change.affects(key, state)) {
+            return true;
+        }
+        invalidated = true;
+        refresh_task_relations(state, true)
+    });
+    if invalidated {
+        *revision = revision.saturating_add(1);
+    }
+}
+
 /// Which cached reads a batch of admitted facts has invalidated.
 ///
 /// The stream carries facts, not snapshots: it advances the journal cursor and
@@ -1145,18 +1249,16 @@ pub struct Stale {
     inbox: bool,
     consent: bool,
     task_details: BTreeSet<wire::TaskStamp>,
-    task_relation_kinds: BTreeSet<TaskRelationKind>,
+    task_relations: Vec<TaskRelationInvalidation>,
 }
 
 impl Stale {
     /// Widen this set by whatever one admitted fact invalidated.
-    /// The mapping is read off the kind's own wire spelling rather than
-    /// declared as a second table over [`FactKind`]. The vocabulary already
-    /// namespaces every kind — `steer::sent`, `lane::seated`, `task::added`,
-    /// `claim::won` — and that prefix is exactly the question "which read went
-    /// stale". Matching the variants one by one would be a second registry to
-    /// hold in step with the first, and the failure mode when it drifted would
-    /// be a new kind that silently refreshes nothing.
+    ///
+    /// The fact namespace selects broad snapshot reads here. Typed task
+    /// relationship semantics live on [`FactKind`] itself; keeping that finer
+    /// mapping on the closed vocabulary prevents a second app-local registry
+    /// from drifting when task facts are added.
     pub fn widen(&mut self, kind: FactKind) {
         match kind.as_str().split_once("::") {
             Some(("steer", _)) => {
@@ -1175,15 +1277,7 @@ impl Stale {
                 self.inbox = true;
             }
             Some(("consent", _)) => self.consent = true,
-            Some(("task", _)) => {
-                self.board = true;
-                self.task_relation_kinds.extend([
-                    TaskRelationKind::Origin,
-                    TaskRelationKind::Dependency,
-                    TaskRelationKind::Review,
-                    TaskRelationKind::Lifecycle,
-                ]);
-            }
+            Some(("task", _)) => self.board = true,
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
                 self.board = true;
@@ -1197,6 +1291,9 @@ impl Stale {
         self.widen(fact.kind());
         if let Some(task) = fact.task() {
             self.task_details.insert(task);
+        }
+        if let Some(change) = TaskRelationInvalidation::from_fact(fact) {
+            self.task_relations.push(change);
         }
     }
 
@@ -1213,9 +1310,9 @@ impl Stale {
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn resolve_task_relations(&mut self, runtime: &mut AppRuntime, changed: bool) {
         if changed {
-            runtime.invalidate_task_relations(&self.task_relation_kinds);
+            runtime.invalidate_task_relations(&self.task_relations);
         }
-        self.task_relation_kinds.clear();
+        self.task_relations.clear();
     }
 
     /// Affected open task details, in durable identity order.
@@ -1268,7 +1365,7 @@ impl Stale {
             || self.inbox
             || self.consent
             || !self.task_details.is_empty()
-            || !self.task_relation_kinds.is_empty()
+            || !self.task_relations.is_empty()
     }
 }
 /// Projects current-read invalidation from live facts or complete backlog tails, never history pages.
@@ -1287,6 +1384,9 @@ pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
 
 #[cfg(test)]
 mod topology_tests;
+
+#[cfg(test)]
+mod task_relation_tests;
 
 #[cfg(test)]
 mod task_detail_tests {

@@ -376,7 +376,10 @@ remain explicit. Typed relationship reads enrich Dependency, Lineage, Review,
 and Lifecycle lenses within their protocol root and node bounds, but those
 bounds never remove a selected root. Direction, depth, zoom, pan, reset,
 loading, refusal, retry, and truncation controls qualify only the enrichment
-they change.
+they change. A streamed task fact re-reads a cached lens only when it changes
+a displayed task or can add an edge into that graph; unrelated task activity
+does not refresh it. A response that advances only the journal snapshot does
+not publish another browser render.
 
 **Running jobs** follows the graph and represents every command the admitted
 lane table reports as running or awaiting delivery, independent of the task

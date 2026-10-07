@@ -458,6 +458,16 @@ pub struct TaskEdited {
     pub task: TaskStamp,
     /// Statement revision the edit produced.
     pub revision: u32,
+    /// Complete dependency set when this edit changed it.
+    ///
+    /// Ordinary statement edits and facts written before relationship-aware
+    /// invalidation omit this field.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub dependencies: Option<Vec<TaskStamp>>,
     /// Claimant notice authority recorded by an earlier build; never written.
     #[serde(
         default,
