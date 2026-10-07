@@ -99,19 +99,21 @@ and the adjacent allocation value distinguish Steer, Drive, and Drain. Hover,
 press, reduced-motion, ordinary-submit, and broadcast-preview states change
 paint only, never geometry.
 
-Member drafts and the control column are one zero-gap field. Drafts share the
-lighter standard overlay glass and gain a 10% lane-accent tint when lit. Their
-shared backplane strengthens toward the control surface across each heading
-and the final 20px, while its center remains ordinary glass. Below the member
-fields, a 10px pointer-inert continuation carries the same frost over the
-message stream and masks the whole layer to transparent; the control column
-keeps its hard edge and receives no fade. The shared control edge is an opaque
-theme-derived line, so the composer's bottom boundary and its other control
-consumers do not change color as content passes beneath them. The control
-column uses the exact status-line surface with no rule above Send, so status
-and controls read as one L-shaped band. Member headings retain their accent
-underline, focused or broadcast drafts merge their full-width highlight, and
-vacant members mute content without changing the surface.
+Member drafts and the control column are one zero-gap field. Drafts gain a 10%
+lane-accent tint when lit. Behind them, one pointer-inert composited screen
+spans the full member region and continues 10px over the message stream; the
+control column remains outside it. The screen owns the member glass, one
+complex theme-derived background, and one 10px frost filter. Its header edge
+eases from an opaque control line through stronger control color into ordinary
+glass. Its lower 20px strengthens toward the same opaque line at the form edge,
+then returns toward translucent frost while a mask fades the entire screen to
+transparent across the continuation. No backdrop-filter boundary exists at the
+form edge, and the only physical glass edge is fully masked out. The shared
+control edge remains opaque and theme-derived for other control consumers. The
+control column uses the exact status-line surface with no rule above Send, so
+status and controls read as one L-shaped band. Member headings retain their
+accent underline, focused or broadcast drafts merge their full-width highlight,
+and vacant members mute content without changing the surface.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer
