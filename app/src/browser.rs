@@ -396,8 +396,27 @@ impl AppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let select_task = self.navigate.reform(navigation::Intent::Task);
-        let open_overview = self.navigate.reform(navigation::Intent::Overview);
+        let navigate = {
+            let navigate = self.navigate.clone();
+            let return_focus_to = self.sidebar.return_focus_to.clone();
+            let sidebar_closed = self.sidebar.content.is_none();
+            Callback::from(move |intent: navigation::Intent| {
+                if sidebar_closed
+                    && matches!(
+                        intent,
+                        navigation::Intent::Work(_)
+                            | navigation::Intent::Task(_)
+                            | navigation::Intent::Overview(_)
+                    )
+                    && let Some(target) = sidebar::active_focus_target()
+                {
+                    return_focus_to.emit(target);
+                }
+                navigate.emit(intent);
+            })
+        };
+        let select_task = navigate.reform(navigation::Intent::Task);
+        let open_overview = navigate.reform(navigation::Intent::Overview);
         let open_message_task = self.open_message_task.clone();
         let selected_task = self
             .sidebar
@@ -416,7 +435,7 @@ impl AppState {
                 surface: &self.surface,
                 destination: self.destination,
                 card_target_notice,
-                navigate: &self.navigate,
+                navigate: &navigate,
                 app_menu_open: &self.app_menu_open,
                 identity: &self.identity,
                 app_update: &self.app_update,

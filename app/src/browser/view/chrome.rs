@@ -339,11 +339,13 @@ fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Int
     let navigate = navigate.clone();
     html! {
         <button
+            key="global-work"
             class="task-pill task-pill--all"
             type="button"
             title={title.clone()}
             aria-label={title}
             data-work-scope="all"
+            data-sidebar-focus-key="global-work"
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
         >
             {render_task_count(counts)}
@@ -357,6 +359,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
     let identity = stem.identity();
     let counts = stem.counts();
     let scope = WorkScope::Stem(identity.clone());
+    let focus_key = format!("global-work:{identity}");
     let title = format!(
         "{identity}: {} ready, {} active or in flight, {} blocked or deferred",
         counts.ready(),
@@ -373,6 +376,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
             aria-label={title}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
+            data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
             <span class="task-pill-stem">{identity.stem().to_owned()}</span>

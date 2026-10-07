@@ -309,6 +309,7 @@ fn render_team_total(
                 type="button"
                 title={title.clone()}
                 aria-label={title}
+                data-sidebar-focus-key={format!("team-work:{team}:all")}
                 onclick={open_team}
             >
                 {view::chrome::render_task_count(counts)}
@@ -327,6 +328,7 @@ fn render_team_task_group(
     let stem = group.stem().clone();
     let stem_label = stem.stem().to_owned();
     let stem_key = stem.to_string();
+    let focus_key = format!("team-work:{team}:stem:{stem_key}");
     let counts = group
         .tasks()
         .iter()
@@ -358,6 +360,7 @@ fn render_team_task_group(
                 type="button"
                 title={stem_aria_label.clone()}
                 aria-label={stem_aria_label}
+                data-sidebar-focus-key={focus_key}
                 onclick={open_stem}
             >
                 <span class="task-pill-stem">{stem_label}</span>
@@ -380,17 +383,11 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
         task.row().presentation_title(),
         availability.key(),
     );
+    let focus_key = format!("team-task:{}", statement.born);
     let open_task = {
-        let open = render.open_message_task.clone();
+        let select = render.select_task.clone();
         let born = statement.born.clone();
-        Callback::from(move |event: MouseEvent| {
-            if let Some(target) = event
-                .current_target()
-                .and_then(|target| target.dyn_into().ok())
-            {
-                open.emit((born.clone(), target));
-            }
-        })
+        Callback::from(move |_| select.emit(born.clone()))
     };
     html! {
         <button
@@ -405,6 +402,7 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
             aria-label={handle_label}
             data-availability={availability.key()}
             data-accent={owner_accent.map(|accent| accent.to_string())}
+            data-sidebar-focus-key={focus_key}
             onclick={open_task}
         >{statement.handle.to_string()}</button>
     }
