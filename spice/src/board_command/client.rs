@@ -118,8 +118,6 @@ mod read;
 pub(super) use read::*;
 mod drain;
 pub(super) use drain::actor_rows;
-#[cfg(test)]
-pub(super) use drain::drain_reply;
 pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
 mod recovery;
 use recovery::client_recover;
@@ -341,44 +339,6 @@ fn next_drain_readout(board: &BoardAnswer) -> Option<Reply<DrainReadout>> {
         position: ReplyPosition::Snapshot(board.cursor),
         body: DrainReadout::from_next(*counts, *team),
     })
-}
-
-/// Return the caller's existing assignment before consulting the allocator.
-///
-/// The reply is positioned at the board snapshot and commits nothing. An
-/// already-assigned lane therefore learns what it owns without racing a second
-/// read or asking the claim mutation path to rediscover the one-claim guard.
-#[cfg(test)]
-pub(super) fn existing_claim_reply(
-    board: &BoardAnswer,
-) -> Result<Option<Reply<CommandAnswer>>, Outcome<CommandAnswer>> {
-    let mut held = board.tasks.iter().filter(|task| {
-        task.claim.as_ref().is_some_and(|claim| {
-            claim.body.actor == board.principal
-                && claim.body.disposition == ClaimDisposition::Active
-        })
-    });
-    let Some(task) = held.next() else {
-        return Ok(None);
-    };
-    if held.next().is_some() {
-        return Err(protocol_fault(
-            "claim::active-ambiguous",
-            "one principal holds more than one active claim",
-        ));
-    }
-    let text = format!(
-        "claim {} phase:{}\nassigned to this lane: {}\n\
-         continuity: task next retained the existing assignment; no claim changed.\n{}",
-        task.statement.body.handle,
-        task.workflow.body.phase,
-        task.presentation_title,
-        next_command_line(board, task),
-    );
-    Ok(Some(Reply {
-        position: ReplyPosition::Snapshot(board.cursor),
-        body: CommandAnswer::Text(TextAnswer { text }),
-    }))
 }
 
 /// Whether an outcome is the typed refusal an exhausted allocator returns.
