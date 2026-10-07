@@ -16,7 +16,10 @@ graph offers focused Dependency, Lineage, Reviews, and Lifecycle lenses.
 Dependency direction and typed depth/node controls bound optional resident
 enrichment without bounding the local selection; loading, refreshing,
 unavailable, retry, and explicit truncation/frontier states never replace or
-silently omit selected roots.
+silently omit selected roots. A node the open board lacks, such as a completed
+task, takes its handle, title, phase, and status from the same-stamp task in
+that one enrichment answer, in place; admitted rows stay authoritative, and
+an identity the answer does not resolve stays Missing.
 Lineage preserves exact task, ACK, and origin identities. Review chains retain
 phase author → reviewer → verdict order. Lifecycle facts retain their durable
 source order. Zoom, pan, reset, and task-node activation remain available

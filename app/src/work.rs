@@ -5,6 +5,8 @@
 //! full-project grouping, relationship summaries, counts, board arrangements
 //! over the resident's offer order, and owner naming so consumers cannot drift.
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) mod lens;
 mod overview;
 mod relationship;
 pub use overview::{

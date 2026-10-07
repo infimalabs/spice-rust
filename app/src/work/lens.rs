@@ -1,4 +1,5 @@
-//! Typed relationship enrichment merged with the complete local root graph.
+//! Typed relationship enrichment merged with the complete local root graph:
+//! the overview's graph and relationship list.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
@@ -9,34 +10,34 @@ use wire::intent::{
 };
 use wire::{Actor, ClaimDisposition, TaskStamp, body::Verdict};
 
-use crate::work::{
+use super::{
     TaskOverviewGraph, TaskOverviewNode, TaskOverviewNodeKind, TaskOverviewSelection,
     WorkProjection, WorkRelationshipDirection,
 };
 
-pub(super) struct Presentation {
-    pub(super) nodes: Vec<Node>,
-    pub(super) edges: Vec<Edge>,
-    pub(super) source: String,
+pub(crate) struct Presentation {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) edges: Vec<Edge>,
+    pub(crate) source: String,
 }
 
-pub(super) struct Node {
-    pub(super) id: String,
-    pub(super) kind: &'static str,
-    pub(super) label: String,
-    pub(super) detail: String,
-    pub(super) task: Option<TaskStamp>,
+pub(crate) struct Node {
+    pub(crate) id: String,
+    pub(crate) kind: &'static str,
+    pub(crate) label: String,
+    pub(crate) detail: String,
+    pub(crate) task: Option<TaskStamp>,
     diagram: String,
-    pub(super) selected: bool,
+    pub(crate) selected: bool,
 }
 
-pub(super) struct Edge {
-    pub(super) from: usize,
-    pub(super) to: usize,
-    pub(super) label: &'static str,
+pub(crate) struct Edge {
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+    pub(crate) label: &'static str,
 }
 
-pub(super) fn project(
+pub(crate) fn project(
     local: &TaskOverviewGraph,
     work: &WorkProjection<'_>,
     answer: Option<&TaskRelationsAnswer>,
@@ -44,6 +45,14 @@ pub(super) fn project(
     direction: WorkRelationshipDirection,
     selection: &TaskOverviewSelection,
 ) -> Option<Presentation> {
+    let enriched = answer
+        .into_iter()
+        .flat_map(|answer| &answer.nodes)
+        .filter_map(|node| match node {
+            TaskRelationNode::Task { task, .. } => Some((task, node)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut identities = BTreeMap::new();
     let mut local_to_merged = BTreeMap::new();
     let mut nodes = Vec::new();
@@ -62,7 +71,8 @@ pub(super) fn project(
             index,
         );
         local_to_merged.insert(local_index, index);
-        nodes.push(present_local_node(node, index, work));
+        let enrichment = enriched.get(node.task()).copied();
+        nodes.push(present_local_node(node, index, work, enrichment));
     }
 
     let mut edge_keys = BTreeSet::new();
@@ -186,35 +196,52 @@ fn included_nodes(
     included
 }
 
-fn present_local_node(node: &TaskOverviewNode, index: usize, work: &WorkProjection<'_>) -> Node {
-    let row = node
+/// Present one node of the admitted-board graph. An admitted row is
+/// authoritative; a node the board lacks, such as a completed task, takes the
+/// same-stamp task from the typed enrichment answer when it has one.
+fn present_local_node(
+    node: &TaskOverviewNode,
+    index: usize,
+    work: &WorkProjection<'_>,
+    enrichment: Option<&TaskRelationNode>,
+) -> Node {
+    let resolved = node
         .task_index()
-        .map(|task_index| work.tasks()[task_index].row());
-    let label = row.map_or_else(
-        || node.task().to_string(),
-        |row| {
-            format!(
-                "{} · {}",
-                row.statement.body.handle,
-                compact(&row.presentation_title),
+        .map(|task_index| {
+            let row = work.tasks()[task_index].row();
+            (
+                format!(
+                    "{} · {}",
+                    row.statement.body.handle,
+                    compact(&row.presentation_title),
+                ),
+                format!("{} · {}", row.workflow.body.phase, row.workflow.body.status),
             )
-        },
-    );
-    let (kind, detail) = match (node.kind(), row) {
-        (TaskOverviewNodeKind::Selected, Some(row)) => (
-            "Selected task",
-            format!("{} · {}", row.workflow.body.phase, row.workflow.body.status),
-        ),
-        (TaskOverviewNodeKind::External, Some(row)) => (
-            "External dependency",
-            format!("{} · {}", row.workflow.body.phase, row.workflow.body.status),
-        ),
-        (TaskOverviewNodeKind::Missing, _) => (
+        })
+        .or_else(|| match enrichment {
+            Some(TaskRelationNode::Task {
+                handle,
+                title,
+                phase,
+                status,
+                ..
+            }) => Some((
+                format!("{handle} · {}", compact(title)),
+                format!("{phase} · {status}"),
+            )),
+            _ => None,
+        });
+    let (kind, label, detail) = match (resolved, node.kind()) {
+        (Some((label, detail)), _) if node.selected() => ("Selected task", label, detail),
+        (Some((label, detail)), _) => ("External dependency", label, detail),
+        (None, TaskOverviewNodeKind::Missing) => (
             "Missing task",
+            node.task().to_string(),
             "Missing from the admitted board snapshot".to_owned(),
         ),
-        (_, None) => (
+        (None, _) => (
             "Unavailable task",
+            node.task().to_string(),
             "Unavailable in the admitted board snapshot".to_owned(),
         ),
     };
@@ -390,7 +417,7 @@ fn compact_identity(identity: impl ToString) -> String {
     identity
 }
 
-pub(super) const fn edge_label(relation: TaskRelationKind) -> &'static str {
+pub(crate) const fn edge_label(relation: TaskRelationKind) -> &'static str {
     match relation {
         TaskRelationKind::Origin => "origin",
         TaskRelationKind::Dependency => "requires",
@@ -428,3 +455,6 @@ fn disposition_label(disposition: ClaimDisposition) -> &'static str {
         ClaimDisposition::Lapsed => "lapsed",
     }
 }
+
+#[cfg(test)]
+mod tests;
