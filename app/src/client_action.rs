@@ -37,10 +37,10 @@ pub(crate) enum ClientAction {
         team: CanonicalUuid,
         lane: CanonicalUuid,
         requested: bool,
-        /// The Dash member reservation this renewal settles, when one issued it.
+        /// The member reservation this renewal settles, when one issued it.
         member: Option<crate::runtime::MemberRequest>,
     },
-    /// Wake, drain, or remove one seat from its Dash member.
+    /// Wake, drain, or remove one resident member.
     LaneState {
         request: crate::runtime::MemberRequest,
     },

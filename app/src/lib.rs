@@ -13,8 +13,7 @@
 //! what crossed the door" is checked at compile time. The join to the third is
 //! the same one: a [`Principal`] comes from an admitted acceptance and from
 //! nowhere else, so a pane's authority class is the resident's answer rather
-//! than the app's assertion. [`view`] names the closed [`Axis`] vocabulary the
-//! app destinations stand on.
+//! than the app's assertion.
 //!
 //! Those three all face inward, holding or presenting what the resident said.
 //! [`compose`] is the one floor facing the other way, turning text an operator
@@ -110,11 +109,11 @@ pub(crate) enum PendingKind {
         requested: bool,
         member: Option<runtime::MemberRequest>,
     },
-    /// A Dash member's wake, drain, or remove.
+    /// A resident member's wake, drain, or remove.
     MemberLane {
         request: runtime::MemberRequest,
     },
-    /// A Dash member's launch-model change.
+    /// A resident member's launch-model change.
     LaneRetune {
         request: runtime::MemberRequest,
     },
@@ -151,4 +150,3 @@ pub use runtime::{
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{AppDestination, Axis};

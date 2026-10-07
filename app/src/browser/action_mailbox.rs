@@ -472,7 +472,7 @@ impl ClientAction {
 
     /// Coalescing identity of a composer renewal.
     ///
-    /// A Dash member renewal has none: its member reservation already admits
+    /// A member renewal has none: its reservation already admits
     /// one at a time, and coalescing it away would leave that reservation
     /// waiting for an answer that never comes.
     fn renewal_key(&self) -> Option<RenewalKey> {

@@ -401,19 +401,6 @@
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }
-/* Chat stays mounted and laid out behind every other destination. Inactive, it
-   skips rendering but keeps its layout in exactly its shown geometry, so
-   returning neither rebuilds the plane's layout nor reports new widths to its
-   observers; out of flow, it never extends the page beside it. */
-.mosaic-workspace[data-active="false"] {
-  position: fixed;
-  inset: var(--app-commandbar-block-size) 0 0;
-  z-index: -1;
-  content-visibility: hidden;
-}
-@supports not (content-visibility: hidden) {
-  .mosaic-workspace[data-active="false"] { display: none; }
-}
 
 .team-fleet {
   --team-surface-min-inline: 20em;

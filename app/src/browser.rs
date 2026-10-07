@@ -35,8 +35,7 @@ use crate::speech_queue::{
 use crate::view::{AppRoute, RouteEvidence};
 use crate::work::WorkProjection;
 use crate::{
-    AppDestination, AppRuntime, Principal, Session, SteerPane, StreamDirective, TaskDetailState,
-    stale_reads,
+    AppRuntime, Principal, Session, SteerPane, StreamDirective, TaskDetailState, stale_reads,
 };
 
 mod card_target;
@@ -335,16 +334,15 @@ fn route_notice(properties: &RouteNoticeProperties) -> Html {
 #[derive(Properties, PartialEq)]
 struct AppProperties {
     route: AppRoute,
-    navigate: Callback<navigation::Navigation>,
+    navigate: Callback<navigation::RouteRefusal>,
 }
 
 struct AppState {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     spice_sidebar_open: UseStateHandle<bool>,
-    destination: AppDestination,
     route: AppRoute,
-    route_navigate: Callback<navigation::Navigation>,
+    route_navigate: Callback<navigation::RouteRefusal>,
     card_target: Option<String>,
     card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
@@ -438,7 +436,6 @@ impl AppState {
             AppRender {
                 connection: &self.connection,
                 surface: &self.surface,
-                destination: self.destination,
                 card_target_notice,
                 navigate: &navigate,
                 spice_sidebar_open: *self.spice_sidebar_open,
@@ -511,12 +508,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let composer_drag = use_composer_drag(&surface);
     let composer_slots = watchband::use_composer_slots();
     let team_drag = use_team_drag(&surface);
-    let navigate = navigation::intent_callback(
-        route.clone(),
-        properties.navigate.clone(),
-        local_selection.clone(),
-        surface.clone(),
-    );
+    let navigate = navigation::intent_callback(local_selection.clone(), surface.clone());
     let requested_content = if *spice_sidebar_open {
         Some(sidebar::Content::Spice)
     } else {
@@ -569,7 +561,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             connection,
             surface,
             spice_sidebar_open,
-            destination: route.app_destination(),
             card_target: route.card_target().map(str::to_owned),
             route_navigate: properties.navigate.clone(),
             route,
@@ -647,16 +638,15 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
     use_speech_failure_toast(&state.speech_status);
-    let chat_visible = state.destination == AppDestination::Chat;
     card_target::use_target(
         state.card_target.clone(),
         &state.surface,
         &state.sender,
         state.card_target_status.clone(),
-        chat_visible,
+        true,
     );
-    use_mosaic_root_scroll(chat_visible);
-    watchband::use_team_arrangement_escape(&state.team_controls, chat_visible);
+    use_mosaic_root_scroll();
+    watchband::use_team_arrangement_escape(&state.team_controls, true);
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(
         state.team_fleet.clone(),
@@ -672,7 +662,7 @@ fn app(properties: &AppProperties) -> Html {
     state.render()
 }
 
-/// The detail layer renders over every destination once a board is available.
+/// The detail layer renders over Chat once a board is available.
 fn work_detail_mounted(surface: &SurfaceData) -> bool {
     surface
         .read()
@@ -721,14 +711,14 @@ fn use_local_overview(
 fn use_route_settlement(
     route: &AppRoute,
     surface: &SurfaceData,
-    navigate: Callback<navigation::Navigation>,
+    navigate: Callback<navigation::RouteRefusal>,
 ) {
     let evidence = RouteEvidence {
         card: card_target::use_retention(route.card_target(), surface),
     };
     use_effect_with((route.clone(), evidence), move |(route, evidence)| {
-        if let Some((next, notice)) = route.unavailable(*evidence) {
-            navigate.emit(navigation::Navigation::Refuse(next, notice));
+        if let Some((route, text)) = route.unavailable(*evidence) {
+            navigate.emit(navigation::RouteRefusal { route, text });
         }
     });
 }
@@ -813,7 +803,7 @@ fn clamp_fixed_mosaic_root(window: &web_sys::Window) {
     let Some(document) = window.document() else {
         return;
     };
-    let Ok(Some(shell)) = document.query_selector(".shell--mosaic") else {
+    let Ok(Some(shell)) = document.query_selector(".shell") else {
         return;
     };
     let fixed = window
@@ -831,32 +821,29 @@ fn clamp_fixed_mosaic_root(window: &web_sys::Window) {
 }
 
 #[hook]
-fn use_mosaic_root_scroll(mosaic: bool) {
-    use_effect_with(mosaic, move |mosaic| {
-        let registration = (*mosaic)
-            .then(|| {
-                let window = web_sys::window()?;
-                clamp_fixed_mosaic_root(&window);
-                let callback_window = window.clone();
-                let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-                    clamp_fixed_mosaic_root(&callback_window);
-                });
-                window
-                    .add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())
-                    .ok()?;
-                if window
-                    .add_event_listener_with_callback("scroll", callback.as_ref().unchecked_ref())
-                    .is_err()
-                {
-                    let _ = window.remove_event_listener_with_callback(
-                        "resize",
-                        callback.as_ref().unchecked_ref(),
-                    );
-                    return None;
-                }
-                Some((window, callback))
-            })
-            .flatten();
+fn use_mosaic_root_scroll() {
+    use_effect_with((), move |()| {
+        let registration = web_sys::window().and_then(|window| {
+            clamp_fixed_mosaic_root(&window);
+            let callback_window = window.clone();
+            let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                clamp_fixed_mosaic_root(&callback_window);
+            });
+            window
+                .add_event_listener_with_callback("resize", callback.as_ref().unchecked_ref())
+                .ok()?;
+            if window
+                .add_event_listener_with_callback("scroll", callback.as_ref().unchecked_ref())
+                .is_err()
+            {
+                let _ = window.remove_event_listener_with_callback(
+                    "resize",
+                    callback.as_ref().unchecked_ref(),
+                );
+                return None;
+            }
+            Some((window, callback))
+        });
         move || {
             if let Some((window, callback)) = registration {
                 for event in ["resize", "scroll"] {
@@ -952,7 +939,7 @@ fn empty(message: &'static str) -> Html {
 #[wasm_bindgen(start)]
 pub fn start() {
     if connection::capture_opening_auth_token().expect("capture app opening auth token") {
-        navigation::replace_location(&crate::view::AppRoute::destination(AppDestination::Chat));
+        navigation::replace_location(&crate::view::AppRoute::chat());
     }
     diagnostics::install();
     let root = web_sys::window()

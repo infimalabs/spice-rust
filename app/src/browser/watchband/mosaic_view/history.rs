@@ -167,8 +167,8 @@ impl HistoryPager {
         } {
             return;
         }
-        // A plane hidden behind another destination has no viewport: its
-        // zero extent is not a trailing edge, so it pages nothing until shown.
+        // A plane with no rendered viewport has no trailing edge, so it pages
+        // nothing until shown.
         if self.observed.client_height() == 0 {
             return;
         }

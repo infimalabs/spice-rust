@@ -1,105 +1,4 @@
-//! The derived task and team view axes and the app destinations over them.
-//!
-//! Flow and topology are the complete analytical view vocabulary. A new plane
-//! lands on one of these two rather than becoming a third view, and a feature
-//! that cannot make that mapping is a contract gap rather than a new axis. The
-//! set is closed for the same reason the command registry is: a match over it
-//! is exhaustive.
-
-/// The complete view vocabulary.
-///
-/// Each axis is a question one app destination answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Axis {
-    /// What work is moving?
-    Flow,
-    /// What is connected and possessed?
-    Topology,
-}
-
-impl Axis {
-    /// Every axis, in declaration order.
-    pub const ALL: &'static [Self] = &[Self::Flow, Self::Topology];
-
-    /// The rendered spelling of this axis.
-    ///
-    /// The match is exhaustive, so a new axis must state its spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Flow => "flow",
-            Self::Topology => "topology",
-        }
-    }
-
-    /// The question this axis answers.
-    #[must_use]
-    pub const fn question(self) -> &'static str {
-        match self {
-            Self::Flow => "What work is moving?",
-            Self::Topology => "What is connected and possessed?",
-        }
-    }
-}
-
-/// User-facing app destinations in their shared navigation order.
-///
-/// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary for global app controls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppDestination {
-    Dash,
-    Chat,
-}
-
-impl AppDestination {
-    /// Every durable global destination, left to right.
-    pub const ALL: [Self; 2] = [Self::Dash, Self::Chat];
-
-    /// Exact hash-history path for this destination.
-    #[must_use]
-    pub const fn path(self) -> &'static str {
-        match self {
-            Self::Dash => "/dash",
-            Self::Chat => "/chat",
-        }
-    }
-
-    /// Destination named by one exact hash-history path.
-    #[must_use]
-    pub fn from_path(path: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|destination| destination.path() == path)
-    }
-
-    /// Presentation label independent of internal protocol spelling.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Dash => "Dash",
-            Self::Chat => "Chat",
-        }
-    }
-
-    /// Analytical axis selected by this destination, absent for live agents.
-    #[must_use]
-    pub const fn axis(self) -> Option<Axis> {
-        match self {
-            Self::Dash => Some(Axis::Topology),
-            Self::Chat => None,
-        }
-    }
-
-    /// Accessible description shared by every navigation surface.
-    #[must_use]
-    pub const fn description(self) -> &'static str {
-        match self {
-            Self::Dash => "Dash for consolidated state, controls, and details",
-            Self::Chat => "Chat across persistent team agents",
-        }
-    }
-}
+//! Durable Chat locations and their retained-card targets.
 
 #[cfg(any(target_arch = "wasm32", test))]
 const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
@@ -204,22 +103,14 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
-/// One admitted durable app URL state.
+/// One admitted durable Chat URL state.
 ///
 /// Task overviews are browser-local overlays and therefore never refine this
 /// route or create history entries.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AppRoute {
-    Dash,
-    Chat { card: Option<String> },
-}
-
-/// One history transition a navigation makes.
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RouteStep {
-    Push(AppRoute),
+pub(crate) struct AppRoute {
+    card: Option<String>,
 }
 
 /// Settled evidence for the data a durable route names.
@@ -232,77 +123,55 @@ pub(crate) struct RouteEvidence {
 #[cfg(any(target_arch = "wasm32", test))]
 impl AppRoute {
     #[must_use]
-    pub(crate) const fn destination(destination: AppDestination) -> Self {
-        match destination {
-            AppDestination::Dash => Self::Dash,
-            AppDestination::Chat => Self::Chat { card: None },
-        }
+    pub(crate) const fn chat() -> Self {
+        Self { card: None }
     }
 
     pub(crate) fn card(target: String) -> Option<Self> {
-        valid_card_target(&target).then_some(Self::Chat { card: Some(target) })
+        valid_card_target(&target).then_some(Self { card: Some(target) })
     }
 
     /// Parse one exact canonical path; any other spelling is not a route.
     #[must_use]
     pub(crate) fn from_path(path: &str) -> Option<Self> {
         let mut segments = path.strip_prefix('/')?.split('/');
-        match segments.next()? {
-            "dash" => segments.next().is_none().then_some(Self::Dash),
-            "chat" => match (segments.next(), segments.next(), segments.next()) {
-                (None, ..) => Some(Self::Chat { card: None }),
-                (Some(CARD_SEGMENT), Some(target), None) => Self::card(target.to_owned()),
-                _ => None,
-            },
+        match (
+            segments.next()?,
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ) {
+            ("chat", None, None, None) => Some(Self::chat()),
+            ("chat", Some(CARD_SEGMENT), Some(target), None) => Self::card(target.to_owned()),
             _ => None,
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn app_destination(&self) -> AppDestination {
-        match self {
-            Self::Dash => AppDestination::Dash,
-            Self::Chat { .. } => AppDestination::Chat,
         }
     }
 
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn card_target(&self) -> Option<&str> {
-        match self {
-            Self::Chat { card } => card.as_deref(),
-            Self::Dash => None,
-        }
+        self.card.as_deref()
     }
 
     /// The one canonical path spelling this route.
     #[must_use]
     pub(crate) fn path(&self) -> String {
-        match self {
-            Self::Dash => AppDestination::Dash.path().to_owned(),
-            Self::Chat { card: None } => AppDestination::Chat.path().to_owned(),
-            Self::Chat { card: Some(card) } => format!("/chat/{CARD_SEGMENT}/{card}"),
-        }
-    }
-
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    /// Show one durable global destination: a new entry unless already there.
-    #[must_use]
-    pub(crate) fn show(&self, destination: AppDestination) -> Option<RouteStep> {
-        let next = Self::destination(destination);
-        (*self != next).then_some(RouteStep::Push(next))
+        self.card.as_ref().map_or_else(
+            || "/chat".to_owned(),
+            |card| format!("/chat/{CARD_SEGMENT}/{card}"),
+        )
     }
 
     /// Refuse a missing Chat card back to plain Chat.
     #[must_use]
     pub(crate) fn unavailable(&self, evidence: RouteEvidence) -> Option<(Self, String)> {
-        match self {
-            Self::Chat { card: Some(card) } if evidence.card == Some(false) => Some((
-                Self::destination(AppDestination::Chat),
+        let card = self.card.as_ref()?;
+        (evidence.card == Some(false)).then(|| {
+            (
+                Self::chat(),
                 format!("Linked card {card} is unavailable in retained Chat history; opened Chat."),
-            )),
-            Self::Dash | Self::Chat { .. } => None,
-        }
+            )
+        })
     }
 }
 
@@ -356,7 +225,7 @@ const OPENING_AUTH_TOKEN_MAX_BYTES: usize = 256;
 /// The one-time bearer token carried by an authenticated app opening.
 ///
 /// This mirrors the resident's published URL-safe token contract. Canonical
-/// routes contain a slash and shorthand destinations are below its minimum.
+/// routes contain a slash and shorthand route spellings are below its minimum.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
 pub(crate) fn opening_auth_token(hash: &str) -> Option<&str> {
@@ -373,7 +242,7 @@ pub(crate) fn app_auth_token_is_valid(token: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
 }
 
-/// Resolve a browser query and hash through the one app route grammar.
+/// Resolve a browser query and hash through the one Chat route grammar.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
 pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppLocation {
@@ -387,9 +256,10 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
                 notice: None,
             };
         }
-        if let Some(destination) = normalized_destination(fragment) {
+        let name = fragment.trim_matches('/');
+        if !name.contains('/') && matches!(name, "" | "chat") {
             return NormalizedAppLocation {
-                route: AppRoute::destination(destination),
+                route: AppRoute::chat(),
                 replace: true,
                 notice: None,
             };
@@ -397,22 +267,9 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
     }
 
     NormalizedAppLocation {
-        route: AppRoute::destination(AppDestination::Chat),
+        route: AppRoute::chat(),
         replace: true,
         notice: Some(format!("Unrecognized route `{search}{hash}`; opened Chat.")),
-    }
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn normalized_destination(fragment: &str) -> Option<AppDestination> {
-    let name = fragment.trim_matches('/');
-    if name.contains('/') {
-        return None;
-    }
-    match name {
-        "" | "chat" => Some(AppDestination::Chat),
-        "dash" => Some(AppDestination::Dash),
-        _ => None,
     }
 }
 

@@ -914,7 +914,7 @@ async fn dispatch_action(
     }
 }
 
-/// Wake, drain, or remove one seat on behalf of its Dash member.
+/// Wake, drain, or remove one resident member.
 async fn send_member_lane_state(
     principal: &Principal,
     writer: &mut SocketWriter,

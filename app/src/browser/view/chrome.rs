@@ -23,7 +23,6 @@ const TICKER_SPOKEN_BUDGET: usize = 160;
 /// The fixed command bar and its browser-local sidebar launcher.
 pub(super) struct CommandBarRender<'a> {
     pub(super) connection: &'a UseStateHandle<Connection>,
-    pub(super) destination: AppDestination,
     pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) spice_sidebar_open: bool,
     pub(super) open_spice_sidebar: &'a Callback<web_sys::Element>,
@@ -48,12 +47,10 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         .map(WorkProjection::counts)
         .filter(|counts| counts.has_open())
         .map(|counts| render_aggregate_pill(counts, render.navigate));
-    let operator_link = render_operator_link(&render, runtime);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
             <div class="app-commandbar-content">
-                {operator_link}
                 <nav class="app-horn-tabs app-global-work-tabs" aria-label="Open task stems">
                     {all_work_pill}
                     {for stems.into_iter().map(|stem| {
@@ -66,41 +63,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 {render_spice_button(&render, runtime, &connection_label)}
             </div>
         </header>
-    }
-}
-
-/// The operator's face at the head of the bar opens durable Dash; the aggregate
-/// count beside it opens the browser-local all-work overview. The face keeps
-/// its place and size while identity loads, so the pills after it never shift,
-/// and it looks the same on every route.
-fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
-    let operator = runtime
-        .and_then(AppRuntime::settings)
-        .map(|settings| &settings.operator);
-    let on_dash = render.destination == AppDestination::Dash;
-    let name = operator
-        .and_then(|operator| operator.name.as_deref())
-        .unwrap_or("Operator");
-    let label = format!("{name}: open Dash");
-    let navigate = render.navigate.clone();
-    html! {
-        <button
-            class="app-operator-link"
-            type="button"
-            title={label.clone()}
-            aria-label={label}
-            aria-current={on_dash.then_some("page")}
-            data-operator-state={if operator.is_some() { "ready" } else { "loading" }}
-            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Dash))}
-        >
-            if let Some(operator) = operator {
-                {super::render_operator_avatar(operator)}
-            } else {
-                <span class="operator-avatar" data-avatar-source="loading" aria-hidden="true">
-                    {"…"}
-                </span>
-            }
-        </button>
     }
 }
 

@@ -692,8 +692,8 @@ What the operator actually manipulates, stated as a component contract.
 ```mermaid
 block-beta
   columns 1
-  G["VIEW RAIL, Dash | Work overview action | Chat"]
-  C["CHAT VIEW, one always-mounted console per live team"]
+  G["GLOBAL, task overview action | Spice sidebar"]
+  C["CHAT, one always-mounted console per live team"]
   H["HEADER, lane lights | live status | contextual task sets"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
@@ -702,10 +702,9 @@ block-beta
 
 **Contract**
 
-- **The view rail separates location from overview.** Dash and Chat are the
-   complete durable destination vocabulary. Work is a browser-local task-set
-   action over the current destination; Flow and Topology remain the closed
-   analytical axes.
+- **Chat is the one durable surface.** Work opens a browser-local task set and
+  the Spice button opens browser-local resident controls; both occupy the same
+  sidebar without changing Chat's location.
 - **The team console is the unit of tiling in Agents.** Consoles sit side by
    side; each is the complete operator surface for one live team containing
    one or more member lanes. Adding an agent widens its team console through the
