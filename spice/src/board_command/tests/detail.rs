@@ -201,6 +201,8 @@ fn task_show_separates_current_context_and_bounded_history() {
         "handle ",
         "title Bound one task read",
         "project ",
+        "priority -",
+        "description:\n  -",
         "phase ",
         "status ",
         "claim ",
@@ -213,7 +215,6 @@ fn task_show_separates_current_context_and_bounded_history() {
         assert!(current.contains(required), "{current}");
     }
     for historical in [
-        "description ",
         "origin ",
         "creation_context ",
         "claim_context ",
@@ -284,6 +285,63 @@ fn task_show_separates_current_context_and_bounded_history() {
     clean(&root, bus);
 }
 
+/// The bare view prints the authored statement whole: a description past the
+/// text limit keeps every line, and context does not repeat statement fields.
+#[test]
+fn task_show_prints_the_authored_statement_whole() {
+    let (root, bus, epoch, _) = fixture("task-show-authored-statement", 0);
+    let task = add_born(
+        &bus,
+        epoch,
+        stamp("task-show-authored-statement"),
+        "Read the statement whole",
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let mut row = at(&answer, &task).clone();
+    let description = format!(
+        "First paragraph {}\n\n  indented second paragraph",
+        "x".repeat(300)
+    );
+    row.statement.body.description = Some(description);
+    row.statement.body.tags.push("priority:high".to_owned());
+    let show = |context: bool| {
+        task_show_bounded(
+            &answer,
+            &row,
+            &[],
+            TaskShowHistory::default(),
+            None,
+            &TaskShowOptions {
+                context,
+                history: false,
+                limit: None,
+                max_bytes: None,
+                max_text: None,
+                after: None,
+            },
+        )
+        .expect("task detail has no cursor")
+    };
+    let indented = format!(
+        "  First paragraph {}\n\n    indented second paragraph",
+        "x".repeat(300)
+    );
+    let current = show(false);
+    assert!(current.contains("priority high"), "{current}");
+    assert!(
+        current.contains(&format!("description:\n{indented}\nacceptance:")),
+        "{current}"
+    );
+    let context = show(true);
+    assert_eq!(
+        context.matches("indented second paragraph").count(),
+        1,
+        "{context}"
+    );
+    assert!(context.contains("tags -"), "{context}");
+    clean(&root, bus);
+}
+
 #[test]
 fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
     let (root, bus, epoch, _) = fixture("task-show-context-budget", 0);
@@ -310,7 +368,6 @@ fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
         },
     )
     .expect("first context page has no cursor");
-    assert!(!bounded.contains("description "), "{bounded}");
     assert!(
         bounded.contains("0 shown")
             && bounded.contains("continue: spice task show")
