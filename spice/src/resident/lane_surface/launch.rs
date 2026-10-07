@@ -220,7 +220,7 @@ fn launch_plan(
         let environment =
             crate::session_environment().rooted(repository.worktree_root().to_path_buf());
         prompt.push_str("\n\n");
-        prompt.push_str(&crate::session_command::lane_briefing(
+        prompt.push_str(&crate::session_command::lane_launch_briefing(
             &environment,
             lane,
             None,
