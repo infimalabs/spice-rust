@@ -1,14 +1,27 @@
-//! Stable task-overview home for environmental and dependency blockers.
+//! Stable task-overview home for walls only the operator can move.
 
 use super::*;
 use crate::runtime::BlockerActionState;
-use crate::work::{TaskOverviewSelection, WorkProjection, WorkTask};
+use crate::work::{
+    DependencyWall, DependencyWalls, TaskOverviewSelection, WorkProjection, WorkTask,
+};
+
+/// One selected task held by operator-only walls. Dependencies on work an
+/// agent can claim or is working are ordinary waits and never appear.
+struct WalledTask<'view, 'board> {
+    task: &'view WorkTask<'board>,
+    requirements: Vec<&'board wire::EnvironmentRequirement>,
+    dependencies: Vec<(&'board TaskStamp, DependencyWall<'board>)>,
+}
+
+impl WalledTask<'_, '_> {
+    fn count(&self) -> usize {
+        self.requirements.len() + self.dependencies.len()
+    }
+}
 
 pub(super) struct BlockerPresentation<'view, 'board> {
-    work: &'view WorkProjection<'board>,
-    selection: &'view TaskOverviewSelection,
-    board: Option<&'view crate::runtime::BoardView>,
-    task_count: usize,
+    tasks: Vec<WalledTask<'view, 'board>>,
     count: usize,
 }
 
@@ -19,32 +32,37 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
         runtime: Option<&'view AppRuntime>,
     ) -> Self {
         let board = runtime.and_then(AppRuntime::board);
-        let (count, task_count) = work
+        let mut walls = DependencyWalls::new(work);
+        let tasks = work
             .tasks()
             .iter()
-            .filter(|task| selection.tasks().contains(&task.row().statement.body.born))
-            .map(|task| {
-                task.blocked_dependencies().count()
-                    + task
-                        .row()
-                        .statement
-                        .body
-                        .requirements
-                        .as_slice()
-                        .iter()
-                        .filter(|requirement| requirement_blocked(board, requirement))
-                        .count()
+            .enumerate()
+            .filter(|(_, task)| selection.tasks().contains(&task.row().statement.body.born))
+            .map(|(index, task)| WalledTask {
+                task,
+                requirements: task
+                    .row()
+                    .statement
+                    .body
+                    .requirements
+                    .as_slice()
+                    .iter()
+                    .filter(|requirement| requirement_blocked(board, requirement))
+                    .collect(),
+                dependencies: task
+                    .dependencies()
+                    .iter()
+                    .filter_map(|dependency| {
+                        walls
+                            .wall(index, dependency)
+                            .map(|wall| (dependency.born(), wall))
+                    })
+                    .collect(),
             })
-            .fold((0, 0), |(count, task_count), blockers| {
-                (count + blockers, task_count + usize::from(blockers > 0))
-            });
-        Self {
-            work,
-            selection,
-            board,
-            count,
-            task_count,
-        }
+            .filter(|task| task.count() > 0)
+            .collect::<Vec<_>>();
+        let count = tasks.iter().map(WalledTask::count).sum();
+        Self { tasks, count }
     }
 
     pub(super) fn render_rail(&self, review: &UseStateHandle<bool>, launcher: &NodeRef) -> Html {
@@ -58,15 +76,15 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 } else {
                     "blockers"
                 },
-                self.task_count,
-                if self.task_count == 1 {
+                self.tasks.len(),
+                if self.tasks.len() == 1 {
                     "task"
                 } else {
                     "tasks"
                 },
             )
         } else {
-            "No active blockers in this selection.".to_owned()
+            "Nothing in this selection waits on you.".to_owned()
         };
         let open = {
             let review = review.clone();
@@ -160,16 +178,9 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 </header>
                 <div class="work-blocker-review-body">
                     <p class="work-blocker-review-intro">
-                        {"Resolve an actionable requirement here. Dependency and runtime requirements remain visible without offering controls that cannot help."}
+                        {"Only walls you must move appear here. Work waiting on tasks an agent can claim or is working proceeds on its own."}
                     </p>
-                    {for self.work.tasks().iter()
-                        .filter(|task| self.selection.tasks().contains(&task.row().statement.body.born))
-                        .filter(|task| {
-                            task.blocked_dependencies().next().is_some()
-                                || task.row().statement.body.requirements.as_slice().iter()
-                                    .any(|requirement| requirement_blocked(self.board, requirement))
-                        })
-                        .map(|task| render_task(task, self.board, runtime, can_grant, grant))}
+                    {for self.tasks.iter().map(|task| render_task(task, runtime, can_grant, grant))}
                 </div>
             </section>
         }
@@ -184,13 +195,12 @@ fn requirement_blocked(
 }
 
 fn render_task(
-    task: &WorkTask<'_>,
-    board: Option<&crate::runtime::BoardView>,
+    walled: &WalledTask<'_, '_>,
     runtime: Option<&AppRuntime>,
     can_grant: bool,
     grant: &Callback<task_detail::TrustGrantRequest>,
 ) -> Html {
-    let row = task.row();
+    let row = walled.task.row();
     let statement = &row.statement.body;
     html! {
         <article class="work-blocker-task" data-task-stamp={statement.born.to_string()}>
@@ -200,20 +210,68 @@ fn render_task(
                 <code>{statement.handle.to_string()}</code>
             </header>
             <div class="work-blocker-list">
-                {for statement.requirements.as_slice().iter()
-                    .filter(|requirement| requirement_blocked(board, requirement))
+                {for walled.requirements.iter()
                     .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
-                {for task.blocked_dependencies().map(|dependency| html! {
-                    <section class="work-blocker-card" data-blocker-kind="dependency">
-                        <div>
-                            <strong>{"Incomplete dependency"}</strong>
-                            <p>{format!("Task {} must complete before this task can proceed.", dependency.born())}</p>
-                        </div>
-                        <span class="work-blocker-state">{"Waiting"}</span>
-                    </section>
-                })}
+                {for walled.dependencies.iter().map(|(dependency, wall)| render_dependency(dependency, *wall))}
             </div>
         </article>
+    }
+}
+
+/// Name the task where the chain stops and why only the operator can move it.
+fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
+    let via = |task: &TaskStamp| {
+        if task == dependency {
+            format!("Task {task}")
+        } else {
+            format!("Task {dependency} waits on task {task}, which")
+        }
+    };
+    let (kind, title, reason, state) = match wall {
+        DependencyWall::Deferred(task) => (
+            "deferred",
+            "Deferred prerequisite",
+            format!(
+                "{} is deferred; no agent is offered it until it is woken.",
+                via(task)
+            ),
+            "Deferred",
+        ),
+        DependencyWall::Cycle(task) => (
+            "cycle",
+            "Dependency cycle",
+            format!(
+                "Task {dependency} leads back to task {task}; no agent can finish the chain until its dependencies change."
+            ),
+            "Cycle",
+        ),
+        DependencyWall::Unreachable(task) => (
+            "unreachable",
+            "Prerequisite cannot complete",
+            format!(
+                "{} was closed without completing, so the dependency must change.",
+                via(task)
+            ),
+            "Unreachable",
+        ),
+        DependencyWall::Environment(task) => (
+            "environment",
+            "Prerequisite needs the operator",
+            format!(
+                "{} needs a trust grant or upgrade only the operator can provide.",
+                via(task)
+            ),
+            "Operator required",
+        ),
+    };
+    html! {
+        <section class="work-blocker-card" data-blocker-kind={kind}>
+            <div>
+                <strong>{title}</strong>
+                <p>{reason}</p>
+            </div>
+            <span class="work-blocker-state">{state}</span>
+        </section>
     }
 }
 
@@ -232,7 +290,7 @@ fn render_requirement(
             <section class="work-blocker-card" data-blocker-kind="journal-schema">
                 <div>
                     <strong>{"Journal schema upgrade required"}</strong>
-                    <p>{format!("Requires schema {} or newer. Upgrade actions are not available in the app yet.", value)}</p>
+                    <p>{format!("Requires schema {value} or newer. Only the operator can upgrade the journal; upgrade actions are not available in the app yet.")}</p>
                 </div>
                 <span class="work-blocker-state">{"Upgrade required"}</span>
             </section>
@@ -241,7 +299,7 @@ fn render_requirement(
             <section class="work-blocker-card" data-blocker-kind="appliance-version">
                 <div>
                     <strong>{"Newer appliance required"}</strong>
-                    <p>{format!("Requires a version later than {value}. Reload and upgrade actions are not available in the app yet.")}</p>
+                    <p>{format!("Requires a version later than {value}. Only the operator can install it; reload and upgrade actions are not available in the app yet.")}</p>
                 </div>
                 <span class="work-blocker-state">{"Upgrade required"}</span>
             </section>
@@ -281,7 +339,7 @@ fn render_trust_requirement(
         <section class="work-blocker-card work-blocker-card--action" data-blocker-kind="trust-grant">
             <div>
                 <strong>{"Executable trust approval required"}</strong>
-                <p>{"Approve only if this exact configuration digest is expected for the producing worktree."}</p>
+                <p>{"Only the operator can trust executable configuration. Approve only if this exact digest is expected for the producing worktree."}</p>
                 <code title={digest.to_string()}>{digest.to_string()}</code>
                 if let Some(BlockerActionState::Failed(issue)) = state {
                     <p class="work-blocker-issue" role="alert">{issue.clone()}</p>

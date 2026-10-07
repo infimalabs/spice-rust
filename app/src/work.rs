@@ -9,6 +9,7 @@
 pub(crate) mod lens;
 mod overview;
 mod relationship;
+mod wall;
 pub use overview::{
     TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
     TaskOverviewNodeKind, TaskOverviewSelection,
@@ -19,6 +20,7 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
+pub use wall::{DependencyWall, DependencyWalls};
 #[cfg(test)]
 mod team_scope_tests;
 
@@ -249,7 +251,8 @@ pub struct WorkDependency<'a> {
     born: &'a TaskStamp,
     /// Resolved task index in [`WorkProjection::tasks`].
     task: Option<usize>,
-    /// Whether the dependency has a completion head.
+    /// Whether the dependency is settled: its row has a completion head, or the
+    /// open board omits it, which it does only for terminal prerequisites.
     satisfied: bool,
 }
 
@@ -339,12 +342,6 @@ impl<'a> WorkTask<'a> {
     #[must_use]
     pub fn dependents(&self) -> &[WorkDependent] {
         &self.dependents
-    }
-
-    pub fn blocked_dependencies(&self) -> impl Iterator<Item = &WorkDependency<'_>> {
-        self.dependencies
-            .iter()
-            .filter(|dependency| !dependency.satisfied)
     }
 
     /// The actor currently working this open task.
@@ -736,7 +733,7 @@ fn work_dependencies<'a>(
             WorkDependency {
                 born,
                 task,
-                satisfied: task.is_some_and(|dependency| {
+                satisfied: task.is_none_or(|dependency| {
                     board.tasks[dependency].workflow.body.completion.is_some()
                 }),
             }
@@ -876,7 +873,7 @@ fn classify(
     let dependency_blocked = task.statement.body.dependencies.iter().any(|dependency| {
         by_born
             .get(dependency)
-            .is_none_or(|&index| board.tasks[index].workflow.body.completion.is_none())
+            .is_some_and(|&index| board.tasks[index].workflow.body.completion.is_none())
     });
     if environment_blocked || dependency_blocked {
         WorkAvailability::Blocked

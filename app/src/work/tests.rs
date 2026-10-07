@@ -256,12 +256,13 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
     );
     let mut prerequisite = task(2, "graph.core");
     prerequisite.claim = Some(claim(&prerequisite, ClaimDisposition::Lapsed));
-    let missing = stamp(99);
+    // The open board omits only terminal rows, so an absent prerequisite settled.
+    let settled = stamp(99);
     let mut blocked = task(3, "graph.core");
     blocked.statement.body.dependencies = vec![
         complete.statement.body.born.clone(),
         prerequisite.statement.body.born.clone(),
-        missing.clone(),
+        settled.clone(),
     ];
     let mut freed = task(4, "graph.core");
     freed.claim = Some(claim(&freed, ClaimDisposition::Freed));
@@ -273,12 +274,14 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
     assert_eq!(projection.tasks[3].availability, WorkAvailability::Ready);
     assert_eq!(
         projection.tasks[2]
-            .blocked_dependencies()
-            .map(|dependency| (dependency.born, dependency.task))
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.born, dependency.task, dependency.satisfied))
             .collect::<Vec<_>>(),
         [
-            (&projection.tasks[1].row.statement.body.born, Some(1)),
-            (&missing, None),
+            (&projection.tasks[0].row.statement.body.born, Some(0), true),
+            (&projection.tasks[1].row.statement.body.born, Some(1), false),
+            (&settled, None, true),
         ]
     );
     assert_eq!(projection.tasks[1].dependents, [WorkDependent { task: 2 }]);
