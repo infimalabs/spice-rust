@@ -385,11 +385,10 @@
   position: sticky; bottom: 100%;
   isolation: isolate;
   flex: none; pointer-events: auto;
-  border-bottom: var(--app-control-edge);
 }
-/* One screen owns the full member backdrop and its lower fade. Keeping the
-   gradient, frost, and mask on one composited layer avoids a hard join between
-   two independently sampled pieces of glass. */
+/* One screen owns the full member backdrop and its masked continuation.
+   Keeping the gradient, frost, and mask on one composited layer avoids a hard
+   join between independently sampled pieces of glass. */
 .team-compose .team-composer::after {
   position: absolute;
   z-index: -1;
@@ -400,13 +399,7 @@
       var(--control-line-soft) 0,
       color-mix(in srgb, var(--control) 70%, transparent) 2px,
       color-mix(in srgb, var(--control) 52%, transparent) var(--app-status-line-band),
-      transparent calc(var(--app-status-line-band) + 20px),
-      transparent calc(100% - 30px),
-      color-mix(in srgb, var(--control) 52%, transparent) calc(100% - 18px),
-      var(--control-line-soft) calc(100% - 11px),
-      var(--control-line-soft) calc(100% - 10px),
-      color-mix(in srgb, var(--control) 52%, transparent) calc(100% - 6px),
-      color-mix(in srgb, var(--control) 52%, transparent) 100%
+      transparent calc(var(--app-status-line-band) + 20px)
     ),
     var(--overlay-veil);
   backdrop-filter: var(--overlay-frost);
