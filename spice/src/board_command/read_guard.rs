@@ -12,6 +12,7 @@ mod task_relations;
 pub(super) use task_relations::read_task_relations;
 mod task_timeline;
 pub(super) use task_timeline::read_task_timeline;
+mod next_work;
 mod task_selection;
 use context::{route_actor_identity, task_contexts, task_creator_teams, task_origin_threads};
 #[cfg(test)]
@@ -129,6 +130,7 @@ fn validated_snapshot_from_with_occupant(
             actor_route,
             allocation_band: allocation.band(),
             recent_cell,
+            next: None,
             tasks,
             offer: Vec::new(),
             origins: Default::default(),
@@ -754,6 +756,12 @@ pub(super) fn read_board(
         Ok(observed) => observed,
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
+    if matches!(read, BoardRead::Next) {
+        return match next_work::read_next_work(&observed, principal, projects, allocation) {
+            Ok(answer) => snapshot_reply(answer.cursor, CommandAnswer::Board(Box::new(answer))),
+            Err(outcome) => outcome,
+        };
+    }
     let TaskSelection {
         tasks: selected,
         evidence,

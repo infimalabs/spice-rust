@@ -117,8 +117,10 @@ pub(crate) use graph::{GraphView, graph_view};
 mod read;
 pub(super) use read::*;
 mod drain;
+pub(super) use drain::actor_rows;
+#[cfg(test)]
+pub(super) use drain::drain_reply;
 pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
-pub(super) use drain::{actor_rows, drain_reply};
 mod recovery;
 use recovery::client_recover;
 #[cfg(test)]
@@ -233,48 +235,35 @@ pub(in crate::board_command) fn ledger_output(
 fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
     let mut drain = None;
     let outcome = retry_task_next(|| {
-        let board = match current_board(repository, BoardRead::All { family: None }) {
+        let board = match current_board(repository, BoardRead::Next) {
             Ok(board) => board,
             Err(outcome) => return outcome,
         };
-        match existing_claim_reply(&board) {
-            Ok(Some(reply)) => return Outcome::Reply(reply),
-            Ok(None) => {}
-            Err(outcome) => return outcome,
-        }
-        let entries = match actor_entries(&board) {
-            Ok(entries) => entries,
-            Err(outcome) => return outcome,
+        let Some(next) = board.next.as_ref() else {
+            return protocol_fault(
+                "board::next-state-missing",
+                "a next-work board read returned no typed decision",
+            );
         };
-        let subscription = match allocation_subscription(&board.residency.body, &board.principal) {
-            Ok(subscription) => subscription,
-            Err(outcome) => return outcome,
-        };
-        let environment = board.environment();
-        let selected = match board::select(
-            &entries,
-            &board.principal,
-            &subscription,
-            board.allocation_band,
-            board.recent_cell.as_ref(),
-            &environment,
-        ) {
-            Some(selected) => selected,
-            None => {
-                // The refusal stays typed for every caller; the readout is
-                // measured from this same snapshot for the rim to speak.
-                drain = drain_reply(&board).ok();
+        let task = match next {
+            NextWorkState::Active { task } => {
+                return Outcome::Reply(existing_next_claim_reply(&board, task));
+            }
+            NextWorkState::Candidate { task } => task,
+            NextWorkState::Dry {
+                board: counts,
+                team,
+            } => {
+                drain = Some(Reply {
+                    position: ReplyPosition::Snapshot(board.cursor),
+                    body: DrainReadout::from_next(*counts, *team),
+                });
                 return refusal(
                     "board::allocator-empty",
                     None,
                     "add or wake eligible work before requesting task next",
                 );
             }
-        };
-        let task = selected.entry().handle().clone();
-        let heads = match task_heads(&board, &task) {
-            Ok(heads) => heads,
-            Err(outcome) => return outcome,
         };
         let (lane, occupant) = match actor_seat(&board) {
             Ok(seat) => seat,
@@ -286,9 +275,19 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
             contract,
             CommandKind::ClaimWin,
             vec![
-                statement_witness(heads),
-                workflow_witness(heads),
-                claim_witness(heads),
+                Witness::Task {
+                    task: task.statement.body.born.clone(),
+                    head: task.statement.position,
+                },
+                Witness::Workflow {
+                    task: task.statement.body.born.clone(),
+                    head: task.workflow.position,
+                    phase: task.workflow.body.phase.clone(),
+                },
+                Witness::Claim {
+                    task: task.statement.body.born.clone(),
+                    head: task.claim.as_ref().map(|head| head.position),
+                },
                 Witness::Eligibility { rule: rule.clone() },
                 residency_witness(&board, lane, occupant),
             ],
@@ -301,11 +300,47 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
     // The resident can also drain empty after the client selected a row that
     // moved under it; that answer arrives without a snapshot, so read one.
     if drain.is_none() && allocator_empty(&outcome) {
-        drain = current_board(repository, BoardRead::All { family: None })
+        drain = current_board(repository, BoardRead::Next)
             .ok()
-            .and_then(|board| drain_reply(&board).ok());
+            .and_then(|board| next_drain_readout(&board));
     }
     TaskNext { outcome, drain }
+}
+
+fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<CommandAnswer> {
+    let handle = TaskHandle::for_project(&task.statement.body.project, &task.statement.body.born);
+    let next = if has_taste_review(&task.statement.body.tags) {
+        format!("next: spice task modify {handle} --title \"...\"")
+    } else if task.workflow.body.phase.as_str() == "review" {
+        format!(
+            "next: spice task review {handle} --finding clean --note \"description current; ...\""
+        )
+    } else {
+        "next: spice task done --validation \"...\"".to_owned()
+    };
+    let text = format!(
+        "claim {handle} phase:{}\nassigned to this lane: {}\n\
+         continuity: task next retained the existing assignment; no claim changed.\n{next}",
+        task.workflow.body.phase, task.statement.body.title,
+    );
+    Reply {
+        position: ReplyPosition::Snapshot(board.cursor),
+        body: CommandAnswer::Text(TextAnswer { text }),
+    }
+}
+
+fn next_drain_readout(board: &BoardAnswer) -> Option<Reply<DrainReadout>> {
+    let NextWorkState::Dry {
+        board: counts,
+        team,
+    } = board.next.as_ref()?
+    else {
+        return None;
+    };
+    Some(Reply {
+        position: ReplyPosition::Snapshot(board.cursor),
+        body: DrainReadout::from_next(*counts, *team),
+    })
 }
 
 /// Return the caller's existing assignment before consulting the allocator.
@@ -313,6 +348,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
 /// The reply is positioned at the board snapshot and commits nothing. An
 /// already-assigned lane therefore learns what it owns without racing a second
 /// read or asking the claim mutation path to rediscover the one-claim guard.
+#[cfg(test)]
 pub(super) fn existing_claim_reply(
     board: &BoardAnswer,
 ) -> Result<Option<Reply<CommandAnswer>>, Outcome<CommandAnswer>> {

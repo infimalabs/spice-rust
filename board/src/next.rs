@@ -58,7 +58,40 @@ pub fn select<'a>(
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Option<Selection<'a>> {
-    let candidates = candidates(entries, actor, subscription, recent_cell, environment);
+    select_with_satisfied(
+        entries,
+        actor,
+        subscription,
+        band,
+        recent_cell,
+        environment,
+        &satisfied_tasks(entries),
+    )
+}
+
+/// Select from a live frontier using explicitly indexed settled dependencies.
+///
+/// A dependency absent from `satisfied` remains blocked. Callers may therefore
+/// omit terminal task heads while preserving the distinction between known
+/// completion or deletion and a stamp missing from authority.
+#[must_use]
+pub fn select_with_satisfied<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    satisfied: &BTreeSet<TaskStamp>,
+) -> Option<Selection<'a>> {
+    let candidates = candidates(
+        entries,
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+        satisfied,
+    );
     choose(&candidates, band).map(|index| candidates[index])
 }
 
@@ -77,7 +110,15 @@ pub fn offer_order<'a>(
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Vec<Selection<'a>> {
-    let mut remaining = candidates(entries, actor, subscription, recent_cell, environment);
+    let completed = satisfied_tasks(entries);
+    let mut remaining = candidates(
+        entries,
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+        &completed,
+    );
     let mut order = Vec::with_capacity(remaining.len());
     while let Some(index) = choose(&remaining, band) {
         order.push(remaining.swap_remove(index));
@@ -92,13 +133,13 @@ fn candidates<'a>(
     subscription: &TeamSubscription,
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
+    completed: &BTreeSet<TaskStamp>,
 ) -> Vec<Selection<'a>> {
-    let completed = satisfied_tasks(entries);
     let priorities = effective_priorities(entries);
     let downstream = downstream_weights(entries);
     entries
         .iter()
-        .filter(|entry| selectable(entry, actor, subscription, &completed))
+        .filter(|entry| selectable(entry, actor, subscription, completed))
         .filter(|entry| environment_satisfied(entry, environment))
         .map(|entry| {
             let effective_priority = priorities

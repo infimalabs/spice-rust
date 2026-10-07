@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::TeamLife;
 use crate::{Actor, TaskHandle};
 
 /// Largest terminal-task page one board read accepts.
@@ -45,7 +46,8 @@ pub struct TaskHistoryPage {
 
 /// Read an explicit projection of one authoritative board snapshot.
 ///
-/// `All` remains complete; `Open` and `History` name their exclusions explicitly.
+/// `All` remains complete; `Next`, `Open`, and `History` name their exclusions
+/// explicitly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BoardRead {
@@ -58,6 +60,8 @@ pub enum BoardRead {
         )]
         family: Option<String>,
     },
+    /// The allocator's bounded live-frontier decision for one principal.
+    Next,
     /// Every currently nonterminal task, without terminal history.
     Open,
     /// One bounded keyset page of terminal tasks.
@@ -811,6 +815,52 @@ pub struct BoardTask {
     pub parked_commits: Option<crate::body::TaskParkedCommits>,
 }
 
+/// Current heads needed to witness one `task next` decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NextWorkTask {
+    pub statement: Positioned<crate::TaskHead>,
+    pub workflow: Positioned<crate::WorkflowHead>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claim: Option<Positioned<crate::ClaimHead>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lease: Option<Positioned<crate::LeaseHead>>,
+}
+
+/// Exact pending-board classification when the allocator has no candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NextWorkCounts {
+    pub active: usize,
+    pub stale: usize,
+    pub blocked: usize,
+    pub waiting: usize,
+    pub oops: usize,
+}
+
+/// One closed allocator decision captured at the board snapshot barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NextWorkState {
+    /// The principal already owns this sole active claim.
+    Active { task: NextWorkTask },
+    /// The globally highest-ranked eligible task and its claim witnesses.
+    Candidate { task: NextWorkTask },
+    /// No task is eligible under this team policy and board standing.
+    Dry {
+        board: NextWorkCounts,
+        team: TeamLife,
+    },
+}
+
 /// Server-resolved public task route metadata for one board snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -936,6 +986,13 @@ pub struct BoardAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub recent_cell: Option<crate::ClaimCell>,
+    /// Typed allocator decision, present only for [`BoardRead::Next`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<NextWorkState>,
     /// Selected current task evidence; history pages are newest-workflow-first,
     /// while every other scope retains durable task-stamp order.
     pub tasks: Vec<BoardTask>,
