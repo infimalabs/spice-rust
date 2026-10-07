@@ -514,6 +514,51 @@ fn complete_head_materialization_is_shared_and_delta_bounded() {
 }
 
 #[test]
+fn additions_before_a_retained_base_materialize_in_linear_input_visits() {
+    const BASE_HEADS: usize = 129;
+    const ADDED_HEADS: usize = 32;
+    const EXPECTED_VISITS: usize = BASE_HEADS + ADDED_HEADS;
+    let (bus, mut cursor) = retained_fleet(BASE_HEADS);
+    let base = bus.task_snapshot().expect("base generation reads");
+    assert_eq!(base.tasks().len(), BASE_HEADS);
+
+    for addition in 0..ADDED_HEADS {
+        let mut write = JournalWrite::new(
+            Actor::Operator,
+            "task:BUS-a1".parse().expect("origin"),
+            instant("2030-04-12T18:44:13.271Z"),
+            Producer::CommandDoor,
+        );
+        let moment = i64::try_from(ADDED_HEADS - addition).expect("addition moment");
+        append_retained_task_at(
+            &mut write,
+            moment,
+            BASE_HEADS + addition,
+            FactCause::Existing(cursor),
+        );
+        cursor = Seq::new(committed(bus.commit(write).expect("leading task commits")).last())
+            .expect("committed cursor");
+        let generation = bus.task_snapshot().expect("delta generation reads");
+        assert_eq!(generation.cursor(), Some(cursor));
+    }
+
+    let snapshot = bus.task_snapshot().expect("complete generation reads");
+    let tasks = snapshot.tasks();
+    assert_eq!(tasks.len(), EXPECTED_VISITS);
+    assert!(
+        tasks
+            .windows(2)
+            .all(|pair| { pair[0].statement().body().born < pair[1].statement().body().born })
+    );
+    assert_eq!(
+        snapshot.task_head_materialization_visits(),
+        EXPECTED_VISITS,
+        "the bounded merge visits each base and delta input exactly once",
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
 fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
     let mut journal = Journal::in_memory().expect("in-memory authority");
     let task = journal::crossing::TaskStamp::for_micros(30_000).expect("terminal task stamp");
@@ -850,10 +895,21 @@ fn append_retained_task(
     index: usize,
     cause: FactCause,
 ) -> journal::PendingFact {
-    let task = journal::crossing::TaskStamp::for_micros(
+    append_retained_task_at(
+        write,
         i64::try_from(index + 1_000).expect("fleet moment"),
+        index,
+        cause,
     )
-    .expect("fleet stamp");
+}
+
+fn append_retained_task_at(
+    write: &mut JournalWrite,
+    moment: i64,
+    index: usize,
+    cause: FactCause,
+) -> journal::PendingFact {
+    let task = journal::crossing::TaskStamp::for_micros(moment).expect("fleet stamp");
     let task_phase = phase("todo");
     let pending = write
         .fact(

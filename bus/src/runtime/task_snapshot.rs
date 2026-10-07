@@ -581,9 +581,7 @@ impl TaskHeadStore {
         if self.deltas.len() >= TASK_HEAD_DELTA_CHUNKS_MAX
             || delta_heads > self.len.max(TASK_HEAD_DELTA_HEADS_MIN)
         {
-            let mut tasks = self.tasks().to_vec();
-            apply_task_head_changes(&mut tasks, &moved);
-            debug_assert_eq!(tasks.len(), len);
+            let tasks = merge_task_head_sources([self.tasks(), moved.as_slice()], len);
             return Self::from_base(tasks);
         }
         let mut deltas = self.deltas.to_vec();
@@ -605,11 +603,11 @@ impl TaskHeadStore {
     pub(super) fn tasks(&self) -> &[journal::TaskHeads] {
         self.materialized
             .get_or_init(|| {
-                let mut tasks = self.base.to_vec();
-                for changes in self.deltas.iter() {
-                    apply_task_head_changes(&mut tasks, changes);
-                }
-                debug_assert_eq!(tasks.len(), self.len);
+                let tasks = merge_task_head_sources(
+                    std::iter::once(self.base.as_ref())
+                        .chain(self.deltas.iter().map(|delta| delta.as_ref())),
+                    self.len,
+                );
                 self.materialization_visits.store(
                     self.base.len().saturating_add(self.delta_heads),
                     std::sync::atomic::Ordering::Relaxed,
@@ -625,13 +623,97 @@ impl TaskHeadStore {
     }
 }
 
-fn apply_task_head_changes(tasks: &mut Vec<journal::TaskHeads>, changes: &[journal::TaskHeads]) {
-    for heads in changes {
-        let stamp = &heads.statement().body().born;
-        match tasks.binary_search_by(|kept| kept.statement().body().born.cmp(stamp)) {
-            Ok(index) => tasks[index] = heads.clone(),
-            Err(index) => tasks.insert(index, heads.clone()),
+#[derive(Debug)]
+struct TaskHeadMergeCursor<'a> {
+    rows: &'a [journal::TaskHeads],
+    position: usize,
+    generation: usize,
+}
+
+impl<'a> TaskHeadMergeCursor<'a> {
+    fn current(&self) -> &'a journal::TaskHeads {
+        &self.rows[self.position]
+    }
+
+    fn stamp(&self) -> &'a journal::crossing::TaskStamp {
+        &self.current().statement().body().born
+    }
+}
+
+impl PartialEq for TaskHeadMergeCursor<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.stamp() == other.stamp()
+            && self.generation == other.generation
+            && self.position == other.position
+    }
+}
+
+impl Eq for TaskHeadMergeCursor<'_> {}
+
+impl Ord for TaskHeadMergeCursor<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .stamp()
+            .cmp(self.stamp())
+            .then_with(|| self.generation.cmp(&other.generation))
+            .then_with(|| self.position.cmp(&other.position))
+    }
+}
+
+impl PartialOrd for TaskHeadMergeCursor<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn merge_task_head_sources<'a>(
+    sources: impl IntoIterator<Item = &'a [journal::TaskHeads]>,
+    expected_len: usize,
+) -> Vec<journal::TaskHeads> {
+    let mut pending = std::collections::BinaryHeap::new();
+    for (generation, rows) in sources.into_iter().enumerate() {
+        debug_assert!(
+            rows.windows(2)
+                .all(|pair| { pair[0].statement().body().born < pair[1].statement().body().born })
+        );
+        if !rows.is_empty() {
+            pending.push(TaskHeadMergeCursor {
+                rows,
+                position: 0,
+                generation,
+            });
         }
+    }
+
+    let mut tasks = Vec::with_capacity(expected_len);
+    while let Some(cursor) = pending.pop() {
+        let stamp = cursor.stamp();
+        let mut winner = cursor.current();
+        let mut winner_generation = cursor.generation;
+        push_next_task_head(&mut pending, cursor);
+        while pending.peek().is_some_and(|next| next.stamp() == stamp) {
+            let duplicate = pending
+                .pop()
+                .expect("the matching task-head cursor is present");
+            if duplicate.generation > winner_generation {
+                winner = duplicate.current();
+                winner_generation = duplicate.generation;
+            }
+            push_next_task_head(&mut pending, duplicate);
+        }
+        tasks.push(winner.clone());
+    }
+    debug_assert_eq!(tasks.len(), expected_len);
+    tasks
+}
+
+fn push_next_task_head<'a>(
+    pending: &mut std::collections::BinaryHeap<TaskHeadMergeCursor<'a>>,
+    mut cursor: TaskHeadMergeCursor<'a>,
+) {
+    cursor.position += 1;
+    if cursor.position < cursor.rows.len() {
+        pending.push(cursor);
     }
 }
 
