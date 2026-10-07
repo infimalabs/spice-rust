@@ -111,14 +111,13 @@ adjacent panels can slide beneath without ending at an opaque block. Sibling
 teams need no hard separator through this region because their glass, accents,
 and content already distinguish them. The screen owns the
 form glass, one complex theme-derived background, and one 10px frost filter. Its
-header edge eases from an opaque control line through stronger
-control color into ordinary glass. Its lower 20px strengthens toward the same
-opaque line at the form edge, then returns toward translucent frost while a mask
-fades the entire screen to transparent across the continuation. No
-backdrop-filter boundary exists at the form edge, and the only physical glass
-edge is fully masked out. The 10px continuation remains after the form fully
-collapses, preventing a final visual snap. The shared control edge remains
-opaque and theme-derived for other control consumers. Member headings retain
+header edge eases from an opaque control line through stronger control color
+into ordinary glass. The form has no physical lower edge or strengthening band;
+the ordinary veil simply continues 10px beyond it while a mask fades that
+continuation to transparent. No backdrop-filter boundary exists at the form
+edge. The static continuation remains after the form fully collapses, preventing
+a final visual snap. The shared control edge remains opaque and theme-derived
+for other control consumers. Member headings retain
 their accent underline, focused or broadcast drafts merge their full-width
 highlight, and vacant members mute content without changing the surface.
 The composer rides in the Chat plane's own scroll content, so every engine's
