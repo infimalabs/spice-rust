@@ -101,16 +101,6 @@ impl Offered {
     }
 }
 
-fn close_confirmation(event: &MouseEvent) {
-    if let Some(confirm) = event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".member-confirm").ok().flatten())
-    {
-        let _removed = confirm.remove_attribute("open");
-    }
-}
-
 fn send(
     command: &Callback<(CanonicalUuid, MemberCommand)>,
     lane: CanonicalUuid,
@@ -118,7 +108,7 @@ fn send(
 ) -> Callback<MouseEvent> {
     let command = command.clone();
     Callback::from(move |event: MouseEvent| {
-        close_confirmation(&event);
+        crate::browser::overlay::dismiss_disclosure_from_click(&event);
         command.emit((lane, next.clone()));
     })
 }
@@ -133,7 +123,7 @@ fn confirmed(
     onclick: Callback<MouseEvent>,
 ) -> Html {
     html! {
-        <details class="member-confirm" data-member-control={key}>
+        <details class="member-confirm" data-app-overlay-disclosure="" data-member-control={key}>
             <summary class="agent-menu-action">{label.to_owned()}</summary>
             <div class="member-confirm-body">
                 <p>{question}</p>

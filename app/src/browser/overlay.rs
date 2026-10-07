@@ -107,6 +107,64 @@ pub(super) fn returnable(element: &web_sys::Element) -> bool {
             .is_some_and(|element| element.offset_width() > 0 || element.offset_height() > 0)
         && element.closest("[inert]").ok().flatten().is_none()
 }
+/// Return focus without moving the page, but only while the original control
+/// remains a rendered, non-inert member of this document.
+pub(super) fn return_focus(element: &web_sys::Element) {
+    if returnable(element)
+        && let Some(element) = element.dyn_ref::<web_sys::HtmlElement>()
+    {
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        let _ = element.focus_with_options(&options);
+    }
+}
+
+/// Close the innermost open disclosure containing this click. Confirmations
+/// use this after acting; focus follows the click rather than returning to the
+/// disclosure button.
+pub(super) fn dismiss_disclosure_from_click(event: &MouseEvent) {
+    if let Some(disclosure) = disclosure(event.target()) {
+        dismiss_disclosure(&disclosure, false);
+    }
+}
+
+/// Give nested disclosure surfaces one Escape order: confirmation, lane menu,
+/// then the document-level overlay stack.
+pub(super) fn dismiss_disclosure_on_escape(event: KeyboardEvent) {
+    if event.key() != "Escape"
+        || event.default_prevented()
+        || event.is_composing()
+        || event.repeat()
+    {
+        return;
+    }
+    let Some(disclosure) = disclosure(event.target()) else {
+        return;
+    };
+    event.prevent_default();
+    event.stop_propagation();
+    dismiss_disclosure(&disclosure, true);
+}
+
+fn disclosure(target: Option<web_sys::EventTarget>) -> Option<web_sys::Element> {
+    target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| {
+            target
+                .closest("[data-app-overlay-disclosure][open]")
+                .ok()
+                .flatten()
+        })
+}
+
+fn dismiss_disclosure(disclosure: &web_sys::Element, restore_focus: bool) {
+    let _ = disclosure.remove_attribute("open");
+    if restore_focus
+        && let Some(summary) = disclosure.query_selector(":scope > summary").ok().flatten()
+    {
+        return_focus(&summary);
+    }
+}
 
 /// Whether the operator asked for reduced motion. It removes slides, never
 /// the ownership or completion of the layer that would have slid.

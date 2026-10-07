@@ -156,7 +156,7 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
         };
         html! {
             <section
-                class="work-blocker-review"
+                class="work-blocker-review app-sheet-overlay"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-blocker-review-title"

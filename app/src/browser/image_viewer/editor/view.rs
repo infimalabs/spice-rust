@@ -20,7 +20,7 @@ pub(super) fn toolbar(
 ) -> Html {
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
-            <span class="image-annotation-tools app-control-rail">
+            <span class="image-annotation-tools app-control-rail app-overlay-control">
                 {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Arrow, "Arrow")].into_iter().map(|(value, label)| {
                     let tool = tool.clone();
                     html! { <button type="button" aria-pressed={(*tool == value).to_string()} disabled={busy} onclick={Callback::from(move |_| tool.set(value))}>{label}</button> }

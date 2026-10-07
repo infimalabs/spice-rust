@@ -111,12 +111,6 @@
 .markdown-body :is(th, td)[data-align="center"] { text-align: center; }
 .markdown-body :is(th, td)[data-align="right"] { text-align: right; }
 .markdown-body a { color: var(--accent); }
-.composer-send {
-  margin-left: auto;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--app-highlight-source);
-}
 
 .mosaic-message-card {
   --mosaic-image-size: 8.75rem;
@@ -317,15 +311,12 @@
 .mermaid-render[data-source-visible="true"] > .message-image { visibility: hidden; }
 .mermaid-source-body[hidden] { display: none; }
 .image-lightbox {
-  position: fixed; inset: 0; box-sizing: border-box; width: 100vw; height: 100vh;
-  max-width: none; max-height: none; margin: 0; padding: 16px;
-  border: 0; background: transparent; color: var(--ink);
+  padding: 16px;
 }
 .image-lightbox[open] {
   display: grid; grid-template: "actions" auto "image" minmax(0, 1fr) / minmax(0, 1fr);
   gap: 8px;
 }
-.image-lightbox::backdrop { background: var(--overlay-veil); backdrop-filter: var(--overlay-frost); }
 /* Sized to its content so every frosted pixel around it is the dialog, which closes on click. */
 .image-lightbox-image {
   grid-area: image; place-self: center; display: block; width: auto; height: auto; min-height: 0;
@@ -337,20 +328,11 @@
 .image-lightbox-actions {
   grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end;
 }
-.image-lightbox-actions.app-control-rail,
-.image-annotation-tools.app-control-rail {
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  box-shadow: var(--shadow);
-}
 .image-lightbox-actions.app-control-rail > button,
 .image-annotation-tools.app-control-rail > button { background: transparent; }
 .image-lightbox-actions.app-control-rail > button:not([aria-disabled="true"], :disabled):hover,
 .image-annotation-tools.app-control-rail > button:not([aria-disabled="true"], :disabled):hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.toast {
-  border: var(--app-edge); border-radius: var(--app-radius-pill);
-  background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-annotation-controls { justify-self: stretch; justify-content: space-between; gap: 8px; }
 .image-annotation-tools > button[aria-pressed="true"],
@@ -510,45 +492,6 @@
 }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
-
-.app-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
-
-.app-option {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 0;
-  min-height: 0;
-  padding: 4px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--app-type-status);
-  font-weight: 600;
-  line-height: 1.45;
-}
-.app-option:not(.selected, :disabled):hover { background: color-mix(in srgb, var(--control) 68%, transparent); color: var(--ink); }
-.app-option.selected {
-  background: var(--control);
-  color: var(--ink);
-  box-shadow: var(--app-selection-shadow);
-}
-.app-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A counted option centres its label alone and hangs its badge in the trailing
-   column, so a badge appearing, vanishing, or gaining a digit never moves the
-   label. The equal outer columns keep the label on the option's centre line. */
-.app-option--counted {
-  display: inline-grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
-}
-.app-option--counted > .app-option-label { grid-column: 2; }
-.app-option--counted > .app-count-badge--option { grid-column: 3; justify-self: start; }
-@container (max-width: 20rem) {
-  .app-option { gap: 2px; padding-inline: 3px; }
-  .app-count-badge--option { display: none; }
-}
 
 /* The status band's top rule matches the composer's bottom edge. The surface
    stops at the padding box so the translucent stroke retains the same
