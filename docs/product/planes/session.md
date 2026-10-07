@@ -137,12 +137,30 @@ of guessing a session.
 ### The briefing
 
 A briefing answers one question: what binds this lane now. It carries pending
-asks, this lane's claim and held-work posture, current repository and
-environment posture, typed unknowns, and the minimal live working set: the
-newest turn's counts and clipped prompt, the latest final answer, the newest
-compaction instant, and the exact `session sweep` and `session turns` commands
-that read everything else. It never replays completed turns or their tool
-traffic, however few compactions precede them.
+asks, this lane's claim with its flow, description, and acceptance, unclaimed
+pending work by phase beside the count of peer claims, current repository and
+environment posture, uncommitted paths and the newest commits, typed unknowns,
+the lane's most recently answered steering, and the minimal live working set:
+the newest turn's counts and clipped prompt, the latest final answer, one
+outcome line per turn since the compaction before the latest, the paths those
+turns touched, the newest compaction instant, and the exact `session sweep` and
+`session turns` commands that read everything else. It never replays dialogue
+or tool traffic.
+
+**Invariant —** Text form is one folded page of at most 9,600 bytes; `--json` keeps
+the typed rows. Sections are ranked once (steering, held claim, unknowns,
+board, posture, working state, turns, answered steering, touched paths), keep
+whole rows while they fit, and close with one line naming what was withheld and
+the exact command that reads it. A section that cannot start is named in the
+closing lines under `spice session briefing --json`.
+
+**Invariant —** The resident delivers the page itself: appended to the first
+prompt of a fresh session, and queued beside the replayed steering after every
+compaction. Ordinary turns, steering, and a resumed session carry no page. A
+supervisor reads its lane by identity, so the transcript it folds is the
+session the residency head records for the lane; a briefing that fails or
+outlives its deadline is delivered as a page naming the refusal and the
+commands that read the same ground.
 
 **Invariant —** Pending asks are their own bounded page (16 rows, 16 KiB,
 1 KiB of text per ask); when asks are withheld the page names

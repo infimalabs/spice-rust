@@ -50,9 +50,9 @@ pub(crate) fn classify(text: &str) -> MessageClassification {
         };
     }
 
-    if spans.iter().any(|span| span.kind == SpanKind::Scaffolding)
-        && spans.iter().all(|span| span.kind == SpanKind::Scaffolding)
-    {
+    // Nothing authored remains, so a skill link marks the whole message as
+    // bootstrap even when the resident framed a notice beside it.
+    if spans.iter().any(|span| span.kind == SpanKind::Scaffolding) {
         return MessageClassification {
             shape: MessageShape::Scaffolding,
             authored: None,
@@ -124,6 +124,12 @@ fn is_skill_link(line: &str) -> bool {
     let Some(target) = target.strip_suffix(')') else {
         return false;
     };
+    // CommonMark lets a destination sit in angle brackets; vendors use that
+    // form for absolute skill paths.
+    let target = target
+        .strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(target);
     !label.is_empty()
         && !target.is_empty()
         && !target.chars().any(char::is_whitespace)
@@ -420,6 +426,10 @@ mod tests {
             ("Please finish the task.", MessageShape::AuthoredAsk),
             (
                 "[$spice](.agents/skills/spice/SKILL.md)",
+                MessageShape::Scaffolding,
+            ),
+            (
+                "[$spice](</repo/.git/.spice-install/agents/skills/spice/SKILL.md>)\n\n<system-notice>\n# Spice briefing\n- held\n</system-notice>",
                 MessageShape::Scaffolding,
             ),
             (

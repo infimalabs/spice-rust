@@ -7,8 +7,11 @@ use journal::{JournalRead, JournalReader};
 use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
-use super::model::{AuthorityUnknown, HeldClaimView, HeldWorkView, LanePostureView, PostureView};
-use super::{Environment, source};
+use super::model::{
+    AuthorityUnknown, BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, PostureView,
+    RepositoryGlanceView, RetiredDirectionView,
+};
+use super::{Environment, glance, source};
 
 /// What currently binds this lane, read once from the journal.
 pub(crate) struct RecallAuthorities {
@@ -16,6 +19,9 @@ pub(crate) struct RecallAuthorities {
     pub(crate) asks: Option<Vec<PendingAsk>>,
     pub(crate) held_work: HeldWorkView,
     pub(crate) posture: Option<PostureView>,
+    pub(crate) directions: Vec<RetiredDirectionView>,
+    pub(crate) board: Option<BoardGlanceView>,
+    pub(crate) repository: Option<RepositoryGlanceView>,
     pub(crate) unknowns: Vec<AuthorityUnknown>,
 }
 
@@ -30,29 +36,51 @@ pub(crate) struct PendingAsk {
     pub(crate) expires: String,
 }
 
+/// How the reader names the seat whose authority it reads: the live vendor
+/// thread an agent's own tools carry, or the lane its supervisor drives.
+#[derive(Clone, Copy)]
+enum Seat<'a> {
+    Thread(&'a str),
+    Lane(wire::CanonicalUuid),
+}
+
+impl RecallAuthorities {
+    fn empty() -> Self {
+        Self {
+            asks: None,
+            held_work: HeldWorkView {
+                thread: None,
+                lane: None,
+                own_claim: None,
+                peer_claims: None,
+            },
+            posture: None,
+            directions: Vec::new(),
+            board: None,
+            repository: None,
+            unknowns: Vec::new(),
+        }
+    }
+}
+
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> RecallAuthorities {
-    let mut recall = RecallAuthorities {
-        asks: None,
-        held_work: HeldWorkView {
-            thread: None,
-            lane: None,
-            own_claim: None,
-            peer_claims: None,
-        },
-        posture: None,
-        unknowns: Vec::new(),
-    };
+    let mut recall = RecallAuthorities::empty();
 
     let thread = live_thread(environment, &mut recall);
     recall.held_work.thread.clone_from(&thread);
     observe_transcript_threads(sources, thread.as_deref(), &mut recall);
 
     if let Some(thread) = thread.as_deref() {
-        observe_current_authorities(thread, &mut recall, configuration);
+        observe_current_authorities(
+            Seat::Thread(thread),
+            environment,
+            &mut recall,
+            configuration,
+        );
     } else {
         unavailable_probes(
             &mut recall,
@@ -62,26 +90,46 @@ pub(crate) fn observe(
     recall
 }
 
+/// Read one lane's authority by its identity rather than a live thread.
+///
+/// A supervisor knows its lane before the vendor declares a session, so the
+/// thread it reports is whichever session the residency head records for the
+/// lane: the predecessor's at a fresh start, the current one afterwards.
+pub(crate) fn observe_lane(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> RecallAuthorities {
+    let mut recall = RecallAuthorities::empty();
+    observe_current_authorities(Seat::Lane(lane), environment, &mut recall, configuration);
+    recall
+}
+
 struct ObservedAuthorities {
     lane: Option<wire::LaneResidency>,
     residency_error: Option<AuthorityReadError>,
     ledger: Option<Result<steer::Ledger, AuthorityReadError>>,
     own_claim: Option<Result<Option<Entry>, AuthorityReadError>>,
     peer_claims: Option<Result<usize, AuthorityReadError>>,
+    directions: Option<Result<Vec<journal::RetiredSteering>, AuthorityReadError>>,
+    board: Option<Result<BoardGlanceView, AuthorityReadError>>,
 }
 
 fn observe_current_authorities(
-    thread: &str,
+    seat: Seat<'_>,
+    environment: &Environment,
     recall: &mut RecallAuthorities,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) {
-    let current = match std::env::current_dir() {
-        Ok(current) => current,
-        Err(error) => {
-            unknown(recall, "repository", "current-directory", &error);
-            unavailable_probes(recall, "current directory is unavailable");
-            return;
-        }
+    let Some(current) = environment.cwd.clone() else {
+        unknown(
+            recall,
+            "repository",
+            "current-directory",
+            &"the reading process has no working directory",
+        );
+        unavailable_probes(recall, "current directory is unavailable");
+        return;
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
@@ -106,6 +154,7 @@ fn observe_current_authorities(
             }),
         lane: None,
     });
+    recall.repository = Some(glance::repository(repository.worktree_root()));
     let state = match repository.admit_state() {
         Ok(state) => state,
         Err(error) => {
@@ -129,8 +178,8 @@ fn observe_current_authorities(
             return;
         }
     };
-    match reader.read_with(|read| read_authorities(read, thread, projects.as_ref())) {
-        Ok(observed) => apply_observed(recall, thread, observed),
+    match reader.read_with(|read| read_authorities(read, seat, projects.as_ref())) {
+        Ok(observed) => apply_observed(recall, seat, observed),
         Err(error) => {
             unknown(recall, "journal", "read-transaction", &error);
             unavailable_probes(recall, "journal read transaction failed");
@@ -169,7 +218,7 @@ impl Error for AuthorityReadError {}
 
 fn read_authorities(
     read: &JournalRead<'_>,
-    thread: &str,
+    seat: Seat<'_>,
     projects: Option<&board::ProjectPolicy>,
 ) -> Result<ObservedAuthorities, std::convert::Infallible> {
     let residency = read
@@ -182,7 +231,10 @@ fn read_authorities(
     let lane = residency
         .as_ref()
         .ok()
-        .and_then(|residency| lane_for_thread(residency, thread))
+        .and_then(|residency| match seat {
+            Seat::Thread(thread) => lane_for_thread(residency, thread),
+            Seat::Lane(lane) => residency.lanes.iter().find(|row| row.lane == lane),
+        })
         .cloned();
     let Some(lane) = lane else {
         return Ok(ObservedAuthorities {
@@ -191,6 +243,8 @@ fn read_authorities(
             ledger: None,
             own_claim: None,
             peer_claims: None,
+            directions: None,
+            board: None,
         });
     };
     let actor = Actor::Lane(lane.lane);
@@ -217,60 +271,44 @@ fn read_authorities(
     let peer_claims = read
         .active_claim_count_excluding(&actor)
         .map_err(AuthorityReadError::Journal);
+    let directions = read
+        .retired_steering(Some(lane.lane), glance::DIRECTION_ROWS)
+        .map_err(AuthorityReadError::Journal);
+    let board = glance::board(read).map_err(AuthorityReadError::Journal);
     Ok(ObservedAuthorities {
         lane: Some(lane),
         residency_error: residency.err(),
         ledger: Some(ledger),
         own_claim: Some(own_claim),
         peer_claims: Some(peer_claims),
+        directions: Some(directions),
+        board: Some(board),
     })
 }
 
-fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: ObservedAuthorities) {
+fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: ObservedAuthorities) {
     if let Some(error) = observed.residency_error {
         unknown(recall, "journal", "residency-head", &error);
-        unavailable_probe(
-            recall,
-            "steering",
-            "pending-thread-lane",
-            "the current residency head is unavailable",
-        );
-        unavailable_probe(
-            recall,
-            "board",
-            "exact-actor-claim",
-            "the current residency head is unavailable",
-        );
-        unavailable_probe(
-            recall,
-            "board",
-            "active-peer-count",
-            "the current residency head is unavailable",
-        );
+        unavailable_probes(recall, "the current residency head is unavailable");
         return;
     }
     let Some(lane) = observed.lane else {
-        unavailable_probe(
-            recall,
-            "steering",
-            "thread-lane",
-            &format!("no current lane session matches live thread {thread}"),
-        );
-        unavailable_probe(
-            recall,
-            "board",
-            "thread-actor",
-            &format!("no current lane session matches live thread {thread}"),
-        );
-        unavailable_probe(
-            recall,
-            "board",
-            "active-peer-count",
-            &format!("no current lane session matches live thread {thread}"),
-        );
+        let detail = match seat {
+            Seat::Thread(thread) => format!("no current lane session matches live thread {thread}"),
+            Seat::Lane(lane) => format!("the residency head records no lane {lane}"),
+        };
+        unavailable_probe(recall, "steering", "thread-lane", &detail);
+        unavailable_probe(recall, "board", "thread-actor", &detail);
+        unavailable_probe(recall, "board", "active-peer-count", &detail);
         return;
     };
     recall.held_work.lane = Some(lane.lane.to_string());
+    if recall.held_work.thread.is_none() {
+        recall.held_work.thread = lane
+            .session
+            .as_ref()
+            .and_then(|session| source::canonical_thread(&session.identity));
+    }
     if let Some(posture) = &mut recall.posture {
         posture.lane = Some(LanePostureView {
             worktree: lane.worktree.clone(),
@@ -324,6 +362,18 @@ fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: Observ
             Err(error) => unknown(recall, "board", "active-peer-count", &error),
         }
     }
+    if let Some(directions) = observed.directions {
+        match directions {
+            Ok(retired) => recall.directions = glance::directions(retired),
+            Err(error) => unknown(recall, "steering", "retired-direction", &error),
+        }
+    }
+    if let Some(board) = observed.board {
+        match board {
+            Ok(board) => recall.board = Some(board),
+            Err(error) => unknown(recall, "board", "glance", &error),
+        }
+    }
 }
 
 fn unavailable_probes(recall: &mut RecallAuthorities, detail: &str) {
@@ -341,15 +391,36 @@ fn unavailable_probe(recall: &mut RecallAuthorities, authority: &str, probe: &st
 }
 
 fn held_claim(entry: &Entry) -> HeldClaimView {
+    let statement = entry.statement();
     HeldClaimView {
         handle: entry.handle().to_string(),
-        project: entry.statement().project.clone(),
+        project: statement.project.clone(),
         phase: entry.workflow().phase.to_string(),
         status: entry.workflow().status.clone(),
-        title: entry.statement().title.clone(),
+        title: statement.title.clone(),
         lease_expiry: entry.lease().map(|lease| lease.expiry.to_string()),
+        flow: entry
+            .workflow()
+            .flow
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        description: statement
+            .description
+            .as_deref()
+            .map(|text| crate::read_page::clip(text, HELD_DESCRIPTION_BYTES)),
+        acceptance: statement
+            .acceptance
+            .iter()
+            .map(|row| crate::read_page::clip(row, HELD_ACCEPTANCE_BYTES))
+            .collect(),
     }
 }
+
+/// Bytes of the held task's description a briefing carries.
+const HELD_DESCRIPTION_BYTES: usize = 1200;
+/// Bytes of one held acceptance criterion a briefing carries.
+const HELD_ACCEPTANCE_BYTES: usize = 400;
 
 fn lane_for_thread<'a>(
     residency: &'a ResidencyHead,

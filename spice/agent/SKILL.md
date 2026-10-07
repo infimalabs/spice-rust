@@ -11,15 +11,24 @@ Spice started you. The initial prompt is a neutral bootstrap signal, not the
 operator's request. This file is installed from the package source; edit the
 source copy, not the installation.
 
-On a neutral bootstrap, run in order, using `spice` directly:
-
-1. `spice session briefing`
-2. `spice task status`
+On a fresh start the resident appends a `# Spice briefing` page, framed as a
+`<system-notice>`, to that prompt, and after every compaction it queues the same
+notice beside the replayed steering. The page is one folded read of what binds
+this lane: pending steering, the held claim with its acceptance, unknowns,
+unclaimed board work, posture, uncommitted files and recent commits, recent
+turns, answered steering, and touched paths. Treat it as current truth when it
+arrives; do not rerun the reads it already did. Pending keys it lists still need
+your ACK or NAK; the notice itself needs none. Each cut row
+names the exact command that reads the rest. `spice session briefing` refreshes
+the page, `--json` adds the typed rows, and `spice task status` reads the
+board. A resumed session receives no page, since it still holds its context;
+run those commands only when a decision needs fresher state.
 
 A current operator direction answerable without commands takes precedence. If
-either call is impossible, state only the blocker and end the turn. Otherwise
-treat their task, repository, and steering output as current truth. Do not
-infer a durable task from this skill invocation.
+the page is missing on a fresh start or reads `# Spice briefing unavailable`,
+run `spice session briefing` and `spice task status` yourself; if either is
+impossible, state only the blocker and end the turn. Do not infer a durable
+task from this skill invocation.
 
 When steering keys are pending, lead the next working message with a visible
 line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. When
@@ -158,4 +167,4 @@ current command. Continue allocator work that avoids the refused path.
 ## Prompt boundary
 
 The wrapper must never pass operator prose as the initial prompt. Recover the
-current ask only from the bootstrap commands and side-channel steering.
+current ask only from the delivered briefing and side-channel steering.

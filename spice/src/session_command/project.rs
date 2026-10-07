@@ -12,8 +12,8 @@ use super::dataset::{
 };
 use super::model::{
     ActivityView, CompactionRecord, CompactionView, DialogueLine, LiveTurnView, LiveView,
-    MessageRecord, MessageView, OutstandingAskView, Report, SliceView, SweepWindow, TurnRecord,
-    TurnView,
+    MessageRecord, MessageView, OutstandingAskView, RecentTurnView, Report, SliceView, SweepWindow,
+    TurnRecord, TurnView,
 };
 use super::source::ResolvedSource;
 use crate::read_page::{self as page, Page, Paged};
@@ -167,13 +167,30 @@ pub(crate) fn recall(
     authorities: RecallAuthorities,
 ) -> Result<Report, Refusal> {
     let horizon = dataset::recent_compaction_horizon(sources, 1, None)?;
+    // One compaction further back, so a briefing read right after a
+    // compaction still recalls the turns that compaction folded away.
+    let reach = dataset::recent_compaction_horizon(sources, RECENT_COMPACTIONS, None)?;
     let data = WindowScan::scan(
         sources,
-        horizon.start.as_deref(),
+        reach.start.as_deref(),
         None,
         &Filters::default(),
         WindowOptions::Live,
     )?;
+    let recent = data
+        .turns
+        .iter()
+        .rev()
+        .take(RECENT_TURNS)
+        .collect::<Vec<_>>();
+    let mut touched = Vec::<String>::new();
+    for turn in &recent {
+        for path in turn.view.touched_paths.iter().rev() {
+            if touched.len() < RECENT_PATHS && !touched.contains(path) {
+                touched.push(path.clone());
+            }
+        }
+    }
     let live = LiveView {
         turn: data.turns.last().map(|turn| LiveTurnView {
             start: turn.view.start.clone(),
@@ -194,6 +211,21 @@ pub(crate) fn recall(
             .find_map(|turn| turn.latest_final.as_deref())
             .map(|text| page::clip(text, LIVE_TEXT)),
         compacted: horizon.start,
+        recent: recent
+            .iter()
+            .map(|turn| RecentTurnView {
+                start: turn.view.start.clone(),
+                completed: turn.view.completed,
+                commands: turn.view.commands,
+                patches: turn.view.patches,
+                errors: turn.view.errors,
+                final_answer: turn
+                    .latest_final
+                    .as_deref()
+                    .map(|text| page::clip(text, RECENT_FINAL_TEXT)),
+            })
+            .collect(),
+        touched,
         history: ["sweep", "turns"]
             .into_iter()
             .map(|view| session_command(view, files, []))
@@ -223,16 +255,34 @@ pub(crate) fn recall(
                 .finish(|_| SpiceCommand::new("inbox", lane).expect("inbox is one Spice command")))
         })
         .transpose()?;
-    Ok(Report::Recall {
+    let mut report = Report::Recall {
         asks,
         held_work: authorities.held_work,
         posture: authorities.posture,
+        directions: authorities.directions,
+        board: authorities.board,
+        repository: authorities.repository,
         unknowns: authorities.unknowns,
         live,
         sources: data.sources,
         residues: data.residues.len(),
-    })
+        digest: String::new(),
+    };
+    let folded = super::digest::fold(&report, files);
+    if let Report::Recall { digest, .. } = &mut report {
+        *digest = folded;
+    }
+    Ok(report)
 }
+
+/// Compactions a briefing reaches back across for recent turns.
+const RECENT_COMPACTIONS: usize = 2;
+/// Recent turns a briefing recalls as outcomes.
+const RECENT_TURNS: usize = 6;
+/// Paths those turns touched that a briefing names.
+const RECENT_PATHS: usize = 16;
+/// Bytes of one recent turn's final answer.
+const RECENT_FINAL_TEXT: usize = 360;
 
 /// One row per compaction window, newest first, each summarizing its turns
 /// and naming the bounded read of them.

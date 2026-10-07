@@ -579,6 +579,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
                 paths.serve.clone(),
                 paths.steering_media.clone(),
                 request.lane,
+                repository.worktree_root().to_path_buf(),
                 terminal,
             );
             reporter.drive(Arc::clone(&driver));

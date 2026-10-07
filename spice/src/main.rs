@@ -462,9 +462,10 @@ impl NativeInvocation<'_> {
             | ["session", "thread"]
             | ["session", "timeline"]
             | ["session", "tokens"]
-            | ["session", "turns"] => deliver(
+            | ["session", "turns"] => deliver_with_reply_text(
                 &session_command::run(leaf, contract.path, &session_environment(), configuration),
                 form,
+                session_command::Report::text,
             ),
             ["lane"]
             | ["lane", "list"]

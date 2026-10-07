@@ -213,7 +213,19 @@ fn launch_plan(
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
         return Err(vendor_unsupported(name.as_str().to_owned()));
     };
-    let prompt = vendor.neutral_launch_prompt(&skill);
+    let mut prompt = vendor.neutral_launch_prompt(&skill);
+    // A fresh session starts with nothing but this turn, so the resident
+    // hands it the briefing itself; a resumed one already holds its context.
+    if pinned.resume.session_id().is_none() {
+        let environment =
+            crate::session_environment().rooted(repository.worktree_root().to_path_buf());
+        prompt.push_str("\n\n");
+        prompt.push_str(&crate::session_command::lane_briefing(
+            &environment,
+            lane,
+            None,
+        ));
+    }
     let plan = spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
