@@ -287,6 +287,12 @@ and its texture stays distinct from any desaturated layer. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
 
+Routine background work is silent and still. Connection lives in the button:
+starting, connecting, and reconnecting grey and slowly pulse its pepper, and the
+tab title and icon say `Loading` or `Disconnected`; no chrome prose appears
+beside it and nothing in the bar moves. A quota sample in flight changes no
+word, row, or layer; only a finished attempt changes what quota shows.
+
 Opening the menu states that same global figure in words: the Global row
 carries a read-only `Quota left` chip between Fast mode and the theme switch
 with the cumulative plan-weighted weekly percentage remaining. After a failed

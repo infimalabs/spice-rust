@@ -1,7 +1,6 @@
 use super::{
-    AppDestination, AppNotice, AppRoute, ConnectionStage, CreatorContextTarget, RouteEvidence,
-    app_notice, normalize_app_location, opening_auth_token, team_stream_card_target,
-    team_stream_card_team,
+    AppDestination, AppRoute, CreatorContextTarget, RouteEvidence, normalize_app_location,
+    opening_auth_token, team_stream_card_target, team_stream_card_team,
 };
 
 const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
@@ -192,29 +191,4 @@ fn creator_context_targets_round_trip_the_exact_source_boundary() {
         ),)
         .is_none()
     );
-}
-
-#[test]
-fn global_notice_yields_only_to_an_online_admitted_lane_snapshot() {
-    assert_eq!(
-        app_notice(ConnectionStage::Starting, true, true),
-        Some(AppNotice::LoadingApp)
-    );
-    assert_eq!(
-        app_notice(ConnectionStage::Connecting, true, true),
-        Some(AppNotice::OpeningResident)
-    );
-    assert_eq!(
-        app_notice(ConnectionStage::Offline, true, true),
-        Some(AppNotice::Reconnecting)
-    );
-    assert_eq!(
-        app_notice(ConnectionStage::Online, false, false),
-        Some(AppNotice::LoadingApp)
-    );
-    assert_eq!(
-        app_notice(ConnectionStage::Online, true, false),
-        Some(AppNotice::LoadingAgents)
-    );
-    assert_eq!(app_notice(ConnectionStage::Online, true, true), None);
 }

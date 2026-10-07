@@ -39,11 +39,6 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let status = crate::view::app_notice(
-        render.connection.stage(),
-        runtime.is_some(),
-        runtime.is_some_and(|runtime| runtime.lanes().is_some()),
-    );
     let stems = render
         .work
         .into_iter()
@@ -63,7 +58,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         <header class="commandbar commandbar--mosaic">
             <div
                 class="app-disclosure"
-                data-transient-status={status.is_some().to_string()}
                 data-expanded={(**render.menu_open).to_string()}
             >
                 {operator_link}
@@ -73,16 +67,9 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         render_stem_pill(stem, render.navigate)
                     })}
                 </nav>
-                if let Some(status) = status {
-                    <span
-                        class="app-global-status"
-                        role="status"
-                        aria-live="polite"
-                        data-connection={render.connection.indicator_state()}
-                    >{status.label()}</span>
-                } else {
-                    <span class="visually-hidden" role="status">{connection_label.clone()}</span>
-                }
+                // Connection is routine state: the Spice button, tab title, and
+                // icon carry it visibly; only assistive technology hears it.
+                <span class="visually-hidden" role="status">{connection_label.clone()}</span>
                 {render_app_menu(&render, runtime, &connection_label)}
             </div>
         </header>

@@ -101,62 +101,6 @@ impl AppDestination {
     }
 }
 
-/// Connection phase relevant to persistent app chrome.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectionStage {
-    Starting,
-    Connecting,
-    Online,
-    Offline,
-}
-
-/// Notice shown beside the global Spice control while the app cannot yet
-/// present a current admitted lane snapshot.
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AppNotice {
-    LoadingApp,
-    OpeningResident,
-    Reconnecting,
-    LoadingAgents,
-}
-
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-impl AppNotice {
-    #[must_use]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::LoadingApp => "Loading spice",
-            Self::OpeningResident => "Opening resident",
-            Self::Reconnecting => "Reconnecting",
-            Self::LoadingAgents => "Loading agents",
-        }
-    }
-}
-
-/// Select the one global notice that owns pre-lane and reconnect state.
-///
-/// Connectivity wins over hydration because a retained runtime may remain on
-/// screen through an outage. The online app yields the slot only after both its
-/// runtime and its lane snapshot have been admitted.
-#[cfg(any(target_arch = "wasm32", test))]
-#[must_use]
-pub(crate) const fn app_notice(
-    connection: ConnectionStage,
-    runtime_admitted: bool,
-    lanes_admitted: bool,
-) -> Option<AppNotice> {
-    match connection {
-        ConnectionStage::Starting => Some(AppNotice::LoadingApp),
-        ConnectionStage::Connecting => Some(AppNotice::OpeningResident),
-        ConnectionStage::Offline => Some(AppNotice::Reconnecting),
-        ConnectionStage::Online if !runtime_admitted => Some(AppNotice::LoadingApp),
-        ConnectionStage::Online if !lanes_admitted => Some(AppNotice::LoadingAgents),
-        ConnectionStage::Online => None,
-    }
-}
-
 #[cfg(any(target_arch = "wasm32", test))]
 const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
 
