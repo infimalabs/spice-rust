@@ -21,9 +21,9 @@ mod feedback;
 mod fleet;
 mod member_controls;
 mod mosaic_view;
+mod provider_emblem;
 mod state;
 mod team_drag;
-mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
@@ -41,10 +41,10 @@ use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 pub(crate) use mosaic_view::use_markdown_image_resolution_events;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
+pub(super) use provider_emblem::render_provider_emblem;
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
-pub(super) use vendor_icon::render_composer_vendor_icon;
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
@@ -889,7 +889,7 @@ fn render_composer_body(
                 drag_start,
                 drag_lost_capture,
             )}
-            {render_composer_vendor_icon(standing, "composer", None)}
+            {render_provider_emblem(standing, "composer", None)}
             <ComposerTextarea
                 key={draft.body.clone()}
                 id={primary_textarea_id(lane_key)}

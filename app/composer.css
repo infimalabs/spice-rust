@@ -8,12 +8,12 @@
   height: 22px;
   min-height: 22px;
   padding: 0;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 50%;
+  border: var(--app-control-edge-width) solid var(--control-line-soft);
+  border-radius: var(--app-radius-circle);
   background: var(--control-surface-soft);
   box-shadow: inset 0 0 0 1px var(--line-soft);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--app-type-prose);
   line-height: 1;
 }
 .composer-shard-heading > button:hover,
@@ -32,7 +32,7 @@
   color: var(--accent-slot, var(--accent));
 }
 .agent-menu-button:focus-visible {
-  outline: 2px solid var(--accent-slot, var(--accent));
+  outline: var(--app-focus-ring-width) solid var(--accent-slot, var(--accent));
   outline-offset: 1px;
 }
 /* Draft image chooser in the menu's own circle frame, centred in the
@@ -45,7 +45,7 @@
   flex: none;
   align-self: center;
   overflow: hidden;
-  font-size: 16px;
+  font-size: var(--app-type-copy);
 }
 @media (hover: none) and (pointer: coarse) {
   .composer-shard-image-attach { display: grid; }
@@ -88,7 +88,7 @@
   right: -2px;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--app-radius-circle);
   background: var(--accent-slot, var(--accent));
   box-shadow: 0 0 0 2px var(--panel);
   content: "";
@@ -117,10 +117,10 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-top: 1px solid var(--line-soft);
+  border-top: var(--app-control-edge-width) solid var(--line-soft);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
   color: var(--ink);
-  font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--app-type-small-copy)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .agent-menu-head {
   display: flex;
@@ -160,9 +160,9 @@
   min-width: 0;
   min-height: 24px;
   padding: 2px 4px 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 38%, var(--control-line-soft));
-  border-left: 2px solid var(--accent-slot, var(--accent));
-  border-radius: 3px;
+  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--accent-slot, var(--accent)) 38%, var(--control-line-soft));
+  border-left: var(--quote-rail) solid var(--accent-slot, var(--accent));
+  border-radius: var(--app-radius-micro);
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
   color: inherit;
   font: inherit;
@@ -174,7 +174,7 @@
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, var(--panel));
 }
 .agent-menu-attention-chip:focus-visible,
-.agent-menu-attention-rule:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.agent-menu-attention-rule:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
 .agent-menu-attention-copy {
   flex: 1 1 auto;
   min-width: 0;
@@ -189,11 +189,11 @@
   min-height: 0;
   height: 20px;
   padding: 0 7px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 2px;
+  border: var(--app-control-edge-width) solid var(--control-line-soft);
+  border-radius: var(--app-radius-focus);
   background: var(--panel);
   color: var(--ink);
-  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--app-type-compact)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
 }
 .agent-menu-attention-rule[data-answer="granted"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--control-line-soft)); }
@@ -205,7 +205,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--line-soft);
+  border-top: var(--app-control-edge-width) solid var(--line-soft);
 }
 /* Keys share one column sized to the longest label, OCCUPANT and WORKTREE;
    values truncate, and a meta, when a row has one, takes an implicit column
@@ -224,7 +224,7 @@
 .agent-menu-facts dt {
   inline-size: calc(8ch + .4em);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--app-type-compact);
   letter-spacing: .05em;
   text-transform: uppercase;
 }
@@ -292,8 +292,8 @@
   justify-content: center;
   min-height: 22px;
   padding: 0 7px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: var(--app-radius-control, 4px);
+  border: var(--app-control-edge-width) solid var(--control-line-soft);
+  border-radius: var(--app-radius-control);
   background: var(--control-surface-soft);
   color: var(--ink);
   font: inherit;
@@ -306,31 +306,13 @@
 }
 .agent-menu-action:disabled { cursor: not-allowed; opacity: .46; }
 .agent-menu-panel :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 1px;
 }
 
-.composer-vendor-icon {
-  width: 22px;
-  height: 22px;
-  cursor: help;
-  color: color-mix(in srgb, var(--ink) 86%, var(--control));
-  opacity: .74;
-}
-.composer-vendor-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
-.composer-vendor-badge--fast {
-  font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
-  font-size: 9px;
-  filter: drop-shadow(1px 1px .5px var(--control));
-}
-.composer-vendor-icon--anthropic {
-  color: color-mix(in srgb, #d97706 88%, var(--ink));
-  opacity: .72;
-}
-.composer-vendor-icon:not([data-composer-vendor-provider]) { opacity: .9; }
 
 /* Each provider mark is a behind-text watermark, not a heading control. */
-.composer-shard > .composer-vendor-icon {
+.composer-shard > .app-provider-emblem {
   position: absolute;
   right: 9px;
   bottom: 7px;
@@ -407,10 +389,14 @@
     var(--overlay-veil);
   backdrop-filter: var(--overlay-frost);
   -webkit-mask-image: linear-gradient(
-    to bottom, #000 0 calc(100% - var(--team-composer-overhang)), transparent 100%
+    to bottom,
+    var(--app-mask-opaque) 0 calc(100% - var(--team-composer-overhang)),
+    transparent 100%
   );
   mask-image: linear-gradient(
-    to bottom, #000 0 calc(100% - var(--team-composer-overhang)), transparent 100%
+    to bottom,
+    var(--app-mask-opaque) 0 calc(100% - var(--team-composer-overhang)),
+    transparent 100%
   );
   content: "";
   pointer-events: none;
@@ -424,7 +410,7 @@
   inset: 0 0 calc(-1 * var(--team-composer-overhang));
   background: linear-gradient(
     to bottom,
-    var(--composer-triple-glass-paint) 0 calc(100% - var(--team-composer-overhang)),
+    var(--app-control-glass-paint-strong) 0 calc(100% - var(--team-composer-overhang)),
     transparent 100%
   );
   box-shadow: inset 0 var(--app-control-edge-width) 0 var(--control-line-soft);
@@ -436,7 +422,7 @@
    elevation inside the next composer, where it paints as the preceding
    control frame's visible cast without changing either surface's geometry. */
 .team-surface + .team-surface .team-composer {
-  box-shadow: inset 8px 0 14px -6px rgb(0 0 0 / 42%);
+  box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
@@ -466,14 +452,14 @@
    leave both grid slots reserved, so neither the form nor the message plane
    reflows while the pointer crosses a neighbor. */
 .team-agents:has([data-composer-drag-source]) .team-agent {
-  transition: transform 130ms ease;
+  transition: transform var(--app-motion-drag) ease;
   will-change: transform;
 }
 .team-agent[data-composer-drag-source] {
   z-index: 2;
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   background: color-mix(in srgb, var(--control) 72%, transparent);
-  outline: 1px dashed color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
+  outline: var(--app-control-edge-width) dashed color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   outline-offset: -1px;
 }
 .team-agent[data-composer-drag-source] > .agent-composer-stack {
@@ -481,12 +467,12 @@
 }
 .team-agent[data-composer-drag-target] {
   z-index: 1;
-  box-shadow: 0 10px 24px color-mix(in srgb, #000 18%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--app-shadow-source) 18%, transparent);
 }
 /* Released over another team, the lifted composer moves its agent there; the
    destination is outlined instead of making room, since the agent appends. */
 .team-surface[data-composer-transfer-target] {
-  outline: 2px dashed color-mix(in srgb, var(--accent) 64%, var(--line));
+  outline: var(--app-focus-ring-width) dashed color-mix(in srgb, var(--accent) 64%, var(--line));
   outline-offset: -2px;
 }
 .composer-drag-ghost {
@@ -498,10 +484,10 @@
   min-width: 0;
   overflow: hidden;
   flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--line));
-  border-radius: 8px;
+  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--line));
+  border-radius: var(--app-radius-inset);
   background: var(--control);
-  box-shadow: 0 18px 42px color-mix(in srgb, #000 32%, transparent);
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--app-shadow-source) 32%, transparent);
   opacity: .98;
   pointer-events: none;
   transform: rotate(.35deg) scale(1.015);
@@ -518,21 +504,21 @@
 .team-lights[data-lane-drag-handle] { touch-action: none; }
 .team-surface[data-team-drag-source] { opacity: .38; }
 .team-surface[data-team-drop-target="swap"] {
-  outline: 3px solid var(--accent);
+  outline: var(--app-focus-ring-strong-width) solid var(--accent);
   outline-offset: -3px;
 }
 .team-surface[data-team-drop-target="join-left"] {
-  outline: 2px solid var(--accent);
+  outline: var(--app-focus-ring-width) solid var(--accent);
   outline-offset: -2px;
   box-shadow: inset 12px 0 0 color-mix(in srgb, var(--accent) 42%, transparent), var(--shadow);
 }
 .team-surface[data-team-drop-target="join-right"] {
-  outline: 2px solid var(--accent);
+  outline: var(--app-focus-ring-width) solid var(--accent);
   outline-offset: -2px;
   box-shadow: inset -12px 0 0 color-mix(in srgb, var(--accent) 42%, transparent), var(--shadow);
 }
 .team-surface[data-team-drop-blocked] {
-  outline: 3px dashed var(--danger);
+  outline: var(--app-focus-ring-strong-width) dashed var(--danger);
   outline-offset: -3px;
   cursor: not-allowed;
 }
@@ -547,7 +533,7 @@
   pointer-events: none;
   opacity: .84;
   transform: rotate(.75deg);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--app-shadow-source) 32%, transparent);
 }
 /* The content clips to the card's inner edge rather than its content box: it
    reaches through both block paddings and the inline-end padding, so an action
@@ -571,7 +557,7 @@
 .team-surface .mosaic-message-content > :is(.message-flow, .message-body) { align-self: start; }
 .team-surface .message-flow { display: flow-root; min-width: 0; }
 .team-surface .message-task-chip[role="button"]:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: var(--app-focus-ring-width) solid var(--ink);
   outline-offset: 2px;
 }
 /* Tables scroll inside their own box, like fenced code. The box contains its
@@ -685,44 +671,44 @@
   border: 0;
   background: transparent;
 }
-.team-surface .mosaic-message-card .message-actions > .card-action {
-  --card-action-accent: var(--accent-slot, var(--accent-neutral));
+.team-surface .mosaic-message-card .message-actions > .app-card-action {
+  --app-card-action-accent: var(--accent-slot, var(--accent-neutral));
   border: var(--app-control-edge-width) solid var(--message-stream-surface);
   border-right: 0;
   border-radius: 0;
-  background: color-mix(in srgb, var(--card-action-accent) 5%, var(--message-stream-surface));
+  background: color-mix(in srgb, var(--app-card-action-accent) 5%, var(--message-stream-surface));
   box-shadow: none;
   color: var(--muted);
 }
-.team-surface .mosaic-message-card .message-actions > .card-action--speak {
-  border-radius: 50% 0 0 50%;
+.team-surface .mosaic-message-card .message-actions > .app-card-action--speak {
+  border-radius: var(--app-radius-circle) 0 0 var(--app-radius-circle);
 }
 /* A pair at the card top sits flush against the card's literal top edge. */
 .team-surface .mosaic-message-card
   .message-controls-slot[data-message-card-start]
-  .card-action {
+  .app-card-action {
   border-top: 0;
 }
 .team-surface .mosaic-message-card
   .message-controls-slot[data-message-card-start]
-  .card-action:last-child {
+  .app-card-action:last-child {
   border-start-end-radius: calc(2 * var(--mosaic-quote-radius));
 }
 .team-surface .mosaic-message-card
   .message-controls-slot[data-message-card-start]
-  .card-action--speak {
+  .app-card-action--speak {
   border-top-left-radius: 0;
 }
-.team-surface .mosaic-message-card .message-actions > .card-action:is(:hover, :active, .active) {
-  background: color-mix(in srgb, var(--card-action-accent) 10%, var(--message-stream-surface));
+.team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active) {
+  background: color-mix(in srgb, var(--app-card-action-accent) 10%, var(--message-stream-surface));
   color: var(--ink);
 }
-.team-surface .message-controls-slot .card-action {
+.team-surface .message-controls-slot .app-card-action {
   width: var(--message-control-size);
   height: var(--message-control-size);
   font-size: calc(var(--message-control-size) * .4);
 }
-.team-surface .message-controls-slot .card-action > svg.card-action-icon {
+.team-surface .message-controls-slot .app-card-action > svg.app-card-action__icon {
   width: 62.5%;
   height: 62.5%;
 }
@@ -776,7 +762,7 @@
   border-left: var(--mosaic-quote-rail) solid var(--accent-neutral);
   border-radius: var(--mosaic-quote-radius);
   color: var(--muted);
-  font-size: .8125rem;
+  font-size: var(--app-type-prose);
 }
 .markdown-body :is(.message-quote-signoff, .message-signoff) {
   display: inline-flex;
@@ -971,8 +957,8 @@
   :focus-visible,
   :has(.message-image--openable:focus-visible)
 )::after {
-  border: 2px solid var(--focus);
-  border-inline-start-width: 4px;
+  border: var(--app-focus-ring-width) solid var(--focus);
+  border-inline-start-width: var(--message-rail);
 }
 .team-surface .mosaic-message-card--image-cover
   .message-image--openable:focus-visible :is(img, .message-image-status) {

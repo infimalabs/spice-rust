@@ -208,7 +208,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
         >
             <div class="work-map-heading">
                 <div>
-                    <p class="work-detail-kicker">{"Admitted board + typed enrichment"}</p>
+                    <p class="app-sheet-kicker">{"Admitted board + typed enrichment"}</p>
                     <h3 id="work-map-diagram-title">{format!("{} graph", render.state.lens.label())}</h3>
                 </div>
                 <span>{presentation.as_ref().map_or_else(

@@ -253,7 +253,7 @@ pub(super) fn render_media(media: &[wire::Media]) -> Html {
         return Html::default();
     }
     html! {
-        <section class="work-detail-section work-detail-media">
+        <section class="app-sheet-section app-sheet-media">
             <h3>{"Attachments"}</h3>
             <div class="message-attachments">
                 {for media.iter().map(|media| {
