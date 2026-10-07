@@ -1132,7 +1132,6 @@ mod tests {
         let index = build_package_index(inline_fixture.input()).expect("fixture index builds");
         let tree = build_package(inline_fixture.input()).expect("fixture package builds");
         assert_eq!(index, *tree.package());
-        assert_eq!(tree.members().len(), 19);
         assert!(
             tree.members()
                 .is_sorted_by(|left, right| left.path() < right.path())

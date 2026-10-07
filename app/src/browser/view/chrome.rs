@@ -17,23 +17,19 @@ use super::*;
 use crate::browser::clock::Age;
 use crate::watchband;
 use crate::work::{WorkCounts, WorkProjection, WorkScope};
-
 /// Characters the ticker's `aria-live` label announces.
 const TICKER_SPOKEN_BUDGET: usize = 160;
 
-/// The bar of view pills, each wearing what its axis currently counts.
+/// The fixed command bar and its browser-local sidebar launcher.
 pub(super) struct CommandBarRender<'a> {
     pub(super) connection: &'a UseStateHandle<Connection>,
     pub(super) destination: AppDestination,
     pub(super) navigate: &'a Callback<navigation::Intent>,
-    pub(super) menu_open: &'a UseStateHandle<bool>,
+    pub(super) spice_sidebar_open: bool,
+    pub(super) open_spice_sidebar: &'a Callback<web_sys::Element>,
     pub(super) work: Option<&'a WorkProjection<'a>>,
-    pub(super) identity: &'a UseStateHandle<Option<AppIdentity>>,
     pub(super) app_update: &'a UseStateHandle<Option<AppUpdate>>,
     pub(super) surface: &'a SurfaceData,
-    pub(super) cursor: &'a str,
-    pub(super) sender: &'a SenderHandle,
-    pub(super) submissions: &'a SubmissionStatus,
 }
 
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
@@ -56,10 +52,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
-            <div
-                class="app-disclosure"
-                data-expanded={(**render.menu_open).to_string()}
-            >
+            <div class="app-commandbar-content">
                 {operator_link}
                 <nav class="app-horn-tabs app-global-work-tabs" aria-label="Open task stems">
                     {all_work_pill}
@@ -70,7 +63,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 // Connection is routine state: the Spice button, tab title, and
                 // icon carry it visibly; only assistive technology hears it.
                 <span class="visually-hidden" role="status">{connection_label.clone()}</span>
-                {render_app_menu(&render, runtime, &connection_label)}
+                {render_spice_button(&render, runtime, &connection_label)}
             </div>
         </header>
     }
@@ -111,71 +104,7 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRunti
     }
 }
 
-/// The destination rail atop the Spice menu.
-///
-/// The open menu frame lies over the team surface beneath it, so this rail
-/// lands on the same compact control band.
-fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
-    html! {
-        <nav class="app-navigation app-control-rail app-option-rail" aria-label="Views">
-            {navigation_option(
-                render,
-                "Dash",
-                AppDestination::Dash.description(),
-                navigation::Intent::Dash,
-                render.destination == AppDestination::Dash,
-                watchband::badge(axis_count(Axis::Topology, runtime)),
-            )}
-            {navigation_option(
-                render,
-                "Work",
-                "Work across tasks, claims, deferrals, and reviews",
-                navigation::Intent::Work(WorkScope::AllOpen),
-                false,
-                watchband::badge(axis_count(Axis::Flow, runtime)),
-            )}
-            {navigation_option(
-                render,
-                "Chat",
-                AppDestination::Chat.description(),
-                navigation::Intent::Chat,
-                render.destination == AppDestination::Chat,
-                watchband::badge(waiting_directives(runtime, render.submissions)),
-            )}
-        </nav>
-    }
-}
-
-fn navigation_option(
-    render: &CommandBarRender<'_>,
-    label: &'static str,
-    title: &'static str,
-    intent: navigation::Intent,
-    selected: bool,
-    badge: Option<String>,
-) -> Html {
-    let navigate = render.navigate.clone();
-    let menu_open = render.menu_open.clone();
-    html! {
-        <button
-            class={classes!("app-option", "app-option--counted", selected.then_some("selected"))}
-            type="button"
-            aria-current={selected.then_some("page")}
-            {title}
-            onclick={Callback::from(move |_| {
-                navigate.emit(intent.clone());
-                app_menu::close(&menu_open);
-            })}
-        >
-            <span class="app-option-label">{label}</span>
-            if let Some(count) = badge {
-                <span class="app-count-badge app-count-badge--option">{count}</span>
-            }
-        </button>
-    }
-}
-
-fn render_app_menu(
+fn render_spice_button(
     render: &CommandBarRender<'_>,
     runtime: Option<&AppRuntime>,
     connection_label: &str,
@@ -183,13 +112,12 @@ fn render_app_menu(
     let fast_mode = runtime
         .and_then(AppRuntime::settings)
         .is_some_and(|settings| settings.fast_mode);
-    let menu_open = render.menu_open.clone();
     let update = (**render.app_update).as_ref();
     let trigger_label = match (update, fast_mode) {
-        (Some(_), true) => "Open spice menu - update available; fast mode on",
-        (Some(_), false) => "Open spice menu - update available",
-        (None, true) => "Open spice menu - fast mode on",
-        (None, false) => "Open spice menu",
+        (Some(_), true) => "Open Spice - update available; fast mode on",
+        (Some(_), false) => "Open Spice - update available",
+        (None, true) => "Open Spice - fast mode on",
+        (None, false) => "Open Spice",
     };
     let quota = quota_level(runtime);
     let edge_accent = match (fast_mode, update.is_some()) {
@@ -203,44 +131,35 @@ fn render_app_menu(
         None => format!("{trigger_label} - {connection_label}"),
     }
     .into();
-    let toggle = Callback::from(move |event: MouseEvent| {
-        event.prevent_default();
-        menu_open.set(!*menu_open);
+    let open = render.open_spice_sidebar.clone();
+    let onclick = Callback::from(move |event: MouseEvent| {
+        if let Some(target) = event
+            .current_target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        {
+            open.emit(target);
+        }
     });
     html! {
-        <details class="app-menu" open={**render.menu_open}>
-            <summary
-                data-accent={edge_accent.map(|accent| accent.to_string())}
-                data-connection={render.connection.indicator_state()}
-                data-quota-stale={quota.as_ref().is_some_and(|quota| quota.stale).then_some("true")}
-                aria-label={trigger_label.clone()}
-                aria-haspopup="menu"
-                aria-expanded={(**render.menu_open).to_string()}
-                title={trigger_label}
-                onclick={toggle}
-            >
-                <span class="app-menu-well" aria-hidden="true">
-                    {quota.as_ref().map(QuotaLevel::render)}
-                </span>
-                <span class="app-menu-pepper" aria-hidden="true">{"🌶️"}</span>
-            </summary>
-            <div class="app-menu-frame">
-                {render_navigation(render, runtime)}
-                <div class="app-menu-panel">
-                    {super::team_menu::render(
-                        render.destination,
-                        runtime,
-                        &super::team_menu::Context {
-                            cursor: render.cursor,
-                            identity: (**render.identity).as_ref(),
-                            update,
-                            sender: render.sender,
-                            submissions: render.submissions,
-                        },
-                    )}
-                </div>
-            </div>
-        </details>
+        <button
+            class="app-spice-button"
+            type="button"
+            data-accent={edge_accent.map(|accent| accent.to_string())}
+            data-connection={render.connection.indicator_state()}
+            data-quota-stale={quota.as_ref().is_some_and(|quota| quota.stale).then_some("true")}
+            data-sidebar-focus-key="spice"
+            aria-label={trigger_label.clone()}
+            aria-haspopup="dialog"
+            aria-expanded={render.spice_sidebar_open.to_string()}
+            aria-controls="app-sidebar-title"
+            title={trigger_label}
+            {onclick}
+        >
+            <span class="app-spice-well" aria-hidden="true">
+                {quota.as_ref().map(QuotaLevel::render)}
+            </span>
+            <span class="app-spice-pepper" aria-hidden="true">{"🌶️"}</span>
+        </button>
     }
 }
 
@@ -266,7 +185,7 @@ impl QuotaLevel<'_> {
                 surface = (surface - depth).max(0.0);
                 html! {
                     <rect
-                        class="app-menu-quota-account"
+                        class="app-spice-quota-account"
                         data-accent={(layer.accent % watchband::ACCENTS).to_string()}
                         x="0"
                         y={format!("{surface:.3}")}
@@ -277,7 +196,7 @@ impl QuotaLevel<'_> {
             })
             .collect::<Html>();
         html! {
-            <svg class="app-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+            <svg class="app-spice-quota-well" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
                 {layers}
             </svg>
         }
@@ -369,30 +288,6 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
             <span class="app-horn-tab__label">{identity.stem().to_owned()}</span>
             {render_task_count(counts)}
         </button>
-    }
-}
-
-/// Directives waiting across every lane, which is what the feed is for.
-fn waiting_directives(runtime: Option<&AppRuntime>, submissions: &SubmissionStatus) -> usize {
-    let waiting = runtime
-        .and_then(AppRuntime::inbox)
-        .map(|inbox| inbox.lanes.as_slice())
-        .unwrap_or(&[]);
-    submissions.total_pending(waiting.iter().map(|row| (row.lane, row.pending.as_slice())))
-}
-
-/// What one axis currently counts, or zero when its answer has not arrived.
-///
-/// Each count is the size of what that axis's own panes render, so a badge
-/// never advertises more than the pill leads to.
-pub(super) fn axis_count(axis: Axis, runtime: Option<&AppRuntime>) -> usize {
-    match axis {
-        Axis::Flow => runtime
-            .and_then(AppRuntime::board)
-            .map_or(0, |board| board.active_public_tasks().count()),
-        Axis::Topology => runtime
-            .and_then(AppRuntime::lanes)
-            .map_or(0, |lanes| lanes.lanes.len()),
     }
 }
 

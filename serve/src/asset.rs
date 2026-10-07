@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-static APP_ASSETS: [AppAsset; 9] = [
+static APP_ASSETS: [AppAsset; 10] = [
     AppAsset::new("/", wire::manifest::APP_HTML, "text/html; charset=utf-8"),
     AppAsset::new(
         "/app.module",
@@ -18,6 +18,11 @@ static APP_ASSETS: [AppAsset; 9] = [
     AppAsset::new(
         "/style.css",
         wire::manifest::APP_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/spice_sidebar.css",
+        wire::manifest::SPICE_SIDEBAR_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
@@ -856,6 +861,7 @@ mod tests {
                 ("/", "text/html; charset=utf-8"),
                 ("/app.module", "text/javascript; charset=utf-8"),
                 ("/style.css", "text/css; charset=utf-8"),
+                ("/spice_sidebar.css", "text/css; charset=utf-8"),
                 ("/mosaic.css", "text/css; charset=utf-8"),
                 ("/chrome.css", "text/css; charset=utf-8"),
                 ("/composer.css", "text/css; charset=utf-8"),
@@ -1010,6 +1016,7 @@ mod tests {
                 "composer.css",
                 "mosaic.css",
                 "responsive.css",
+                "spice_sidebar.css",
                 "style.css",
                 "work.css"
             ]

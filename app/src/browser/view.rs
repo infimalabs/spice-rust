@@ -6,7 +6,7 @@ use crate::work::{TaskOverviewSelection, WorkProjection};
 pub(super) mod chrome;
 mod quota;
 mod sidebar;
-mod team_menu;
+mod spice_sidebar;
 mod work_blockers;
 mod work_detail;
 mod work_jobs;
@@ -74,7 +74,8 @@ pub(super) struct AppRender<'a> {
     pub destination: AppDestination,
     pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
-    pub app_menu_open: &'a UseStateHandle<bool>,
+    pub spice_sidebar_open: bool,
+    pub open_spice_sidebar: Callback<web_sys::Element>,
     pub identity: &'a UseStateHandle<Option<AppIdentity>>,
     pub app_update: &'a UseStateHandle<Option<AppUpdate>>,
     pub team_controls: &'a UseReducerHandle<TeamControls>,
@@ -109,11 +110,6 @@ pub(super) struct AppRender<'a> {
 
 pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let surface = render.surface.read();
-    let cursor = surface
-        .as_ref()
-        .and_then(AppRuntime::resume)
-        .map(|cursor| cursor.seq.to_string())
-        .unwrap_or_else(|| "-".to_owned());
     let topology_revision = surface
         .as_ref()
         .and_then(AppRuntime::lanes)
@@ -131,15 +127,12 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
             {chrome::render_command_bar(chrome::CommandBarRender {
                 connection: render.connection,
                 destination: render.destination,
-                menu_open: render.app_menu_open,
                 navigate: render.navigate,
-                identity: render.identity,
+                spice_sidebar_open: render.spice_sidebar_open,
+                open_spice_sidebar: &render.open_spice_sidebar,
                 app_update: render.app_update,
                 work,
                 surface: render.surface,
-                cursor: &cursor,
-                sender: render.sender,
-                submissions: &render.submissions.status,
             })}
             {watchband::render_feedback(surface.as_ref(), render.team_controls)}
             if let Some(notice) = &render.card_target_notice {
@@ -199,13 +192,6 @@ fn render_analytics(render: &AppRender<'_>) -> Html {
     }
 }
 
-pub(super) const fn axis_label(axis: Axis) -> &'static str {
-    match axis {
-        Axis::Flow => "Work",
-        Axis::Topology => "Dash",
-    }
-}
-
 fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let sidebar_content = render.sidebar_content.as_ref();
     let Some(content) = sidebar_content.as_ref() else {
@@ -213,7 +199,12 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
     };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
+    let cursor = runtime
+        .and_then(AppRuntime::resume)
+        .map(|cursor| cursor.seq.to_string())
+        .unwrap_or_else(|| "-".to_owned());
     let content = match content {
+        super::sidebar::Content::Spice => render_spice_sidebar(render, runtime, &cursor),
         super::sidebar::Content::Tasks(selection) => {
             let Some(work) = work else {
                 return Html::default();
@@ -248,6 +239,124 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
         sheet_ref: render.sidebar_sheet,
         close: render.close_sidebar.clone(),
     })
+}
+fn render_spice_sidebar(
+    render: &AppRender<'_>,
+    runtime: Option<&AppRuntime>,
+    cursor: &str,
+) -> sidebar::Content {
+    let context = spice_sidebar::Context {
+        sender: render.sender,
+        submissions: &render.submissions.status,
+    };
+    let body = html! {
+        <div class="app-spice-sidebar-content">
+            {spice_sidebar::render_operator_settings(runtime, render.sender)}
+            {spice_sidebar::render_resident(
+                render.connection,
+                runtime,
+                cursor,
+                (**render.identity).as_ref(),
+                (**render.app_update).as_ref(),
+            )}
+            {spice_sidebar::render_global_settings(runtime, render.sender)}
+            {quota::render_sidebar(runtime)}
+            {render_spice_topology(render, runtime)}
+            {spice_sidebar::render_arrangement(runtime, &context)}
+        </div>
+    };
+    sidebar::Content {
+        label: "Spice".into(),
+        title: "Operator, resident & teams".into(),
+        body,
+        overlay: Html::default(),
+        overlay_open: false,
+        dismiss_overlay: None,
+    }
+}
+
+fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> Html {
+    let Some(lanes) = runtime.and_then(AppRuntime::lanes) else {
+        return html! {
+            <section
+                class="app-sheet-section app-spice-topology"
+                aria-labelledby="spice-resident-topology-heading"
+                data-state="loading"
+            >
+                <div class="section-heading">
+                    <h2 id="spice-resident-topology-heading">{"Resident topology"}</h2>
+                    <span class="section-count">{"Waiting for agent state…"}</span>
+                </div>
+                <div class="app-spice-topology-placeholder" aria-hidden="true"></div>
+            </section>
+        };
+    };
+    let waiting = runtime
+        .and_then(AppRuntime::inbox)
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
+    let tasks = runtime
+        .and_then(AppRuntime::board)
+        .map(|board| board.tasks.as_slice())
+        .unwrap_or(&[]);
+    let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
+    for standing in &mut standings {
+        standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
+        standing.waking = member_waking(waiting, &render.submissions.status, standing.lane);
+    }
+    let live = standings
+        .iter()
+        .filter(|standing| standing.thread.is_some())
+        .count();
+    let holding = standings
+        .iter()
+        .filter(|standing| standing.handle.is_some())
+        .count();
+    let pending = standings
+        .iter()
+        .map(|standing| standing.pending)
+        .sum::<usize>();
+    let (teams, solos): (Vec<_>, Vec<_>) = lanes.lanes.iter().partition(|team| team.teamed());
+    let totals = [
+        topology_count(standings.len(), "agent", "agents"),
+        topology_count(teams.len(), "team", "teams"),
+        format!("{live} live"),
+        topology_count(holding, "holding a task", "holding tasks"),
+        format!("{pending} pending"),
+    ]
+    .join(" · ");
+    html! {
+        <section
+            class="app-sheet-section app-spice-topology"
+            aria-labelledby="spice-resident-topology-heading"
+            data-state="ready"
+        >
+            <div class="section-heading">
+                <h2 id="spice-resident-topology-heading">{"Resident topology"}</h2>
+                <span class="section-count">{totals}</span>
+            </div>
+            if lanes.lanes.is_empty() {
+                {empty("No agent lanes are connected.")}
+            } else {
+                <div class="dash-overview-topology-groups">
+                    {for teams.iter().map(|team| {
+                        render_topology_group(
+                            team_name(team),
+                            Some(team.lane),
+                            team_agents(team, &standings).collect(),
+                        )
+                    })}
+                    if !solos.is_empty() {
+                        {render_topology_group(
+                            "Independent".to_owned(),
+                            None,
+                            solos.iter().flat_map(|team| team_agents(team, &standings)).collect(),
+                        )}
+                    }
+                </div>
+            }
+        </section>
+    }
 }
 
 /// The resident dashboard body and, once agent standings are held, the page

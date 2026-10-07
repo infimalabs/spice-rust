@@ -29,6 +29,7 @@ pub enum Asset {
     AppComposer,
     AppMosaic,
     AppResponsive,
+    AppSpiceSidebar,
     AppStyle,
     AppWork,
     AppRenderer(wire::manifest::renderer::File),

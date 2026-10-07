@@ -2,19 +2,36 @@ use super::*;
 use crate::browser::clock::{Age, Countdown, local_date_millis};
 
 pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
+    render(
+        runtime,
+        "dash",
+        classes!("section", "dash-overview-quota-section"),
+    )
+}
+
+pub(super) fn render_sidebar(runtime: Option<&AppRuntime>) -> Html {
+    render(
+        runtime,
+        "spice",
+        classes!("app-sheet-section", "app-spice-quota"),
+    )
+}
+
+fn render(runtime: Option<&AppRuntime>, scope: &str, class: Classes) -> Html {
+    let heading = format!("{scope}-provider-quota-heading");
     let Some(generation) = runtime.and_then(AppRuntime::quota) else {
-        return section_unavailable();
+        return section_unavailable(class, heading);
     };
     let presentation = crate::quota::present(generation);
     let snapshot = generation.last_good.as_deref();
     html! {
         <section
-            class="section dash-overview-quota-section"
-            aria-labelledby="provider-quota-heading"
+            {class}
+            aria-labelledby={heading.clone()}
             data-quota-state={presentation.condition.key()}
         >
             <div class="section-heading">
-                <h2 id="provider-quota-heading">{"Provider quota"}</h2>
+                <h2 id={heading}>{"Provider quota"}</h2>
                 if snapshot.is_some() {
                     <p class="quota-capacity" title="Weekly plan-weighted estimate across accounts · Free 0.2× · named $20 plans 1× · explicit 5× and OpenAI Pro Lite 5× · Pro/Max 20× by default">
                         <strong>{crate::quota::capacity_summary(generation)}</strong>
@@ -33,18 +50,18 @@ pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
             }
             {render_attempt(generation.latest_attempt.as_ref())}
             if let Some(snapshot) = snapshot {
-                {render_reports(snapshot)}
-                {render_accounts_without_usage(&snapshot.accounts_without_usage)}
-                {render_disabled(&snapshot.disabled_credentials)}
+                {render_reports(scope, snapshot)}
+                {render_accounts_without_usage(scope, &snapshot.accounts_without_usage)}
+                {render_disabled(scope, &snapshot.disabled_credentials)}
             }
         </section>
     }
 }
 
-fn section_unavailable() -> Html {
+fn section_unavailable(class: Classes, heading: String) -> Html {
     html! {
-        <section class="section dash-overview-quota-section" aria-labelledby="provider-quota-heading" data-quota-state="unavailable">
-            <div class="section-heading"><h2 id="provider-quota-heading">{"Provider quota"}</h2></div>
+        <section {class} aria-labelledby={heading.clone()} data-quota-state="unavailable">
+            <div class="section-heading"><h2 id={heading}>{"Provider quota"}</h2></div>
             <p class="quota-status" role="status">{"No admitted quota generation is available."}</p>
         </section>
     }
@@ -71,12 +88,13 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
     }
 }
 
-fn render_reports(snapshot: &wire::QuotaSnapshot) -> Html {
+fn render_reports(scope: &str, snapshot: &wire::QuotaSnapshot) -> Html {
+    let heading = format!("{scope}-quota-accounts-heading");
     let accents = crate::quota::weekly_quota_stack(snapshot)
         .map(|stack| stack.report_accents(snapshot.reports.len()));
     html! {
-        <section class="quota-detail-group" aria-labelledby="quota-accounts-heading">
-            <h3 id="quota-accounts-heading">{"Account limits"}</h3>
+        <section class="quota-detail-group" aria-labelledby={heading.clone()}>
+            <h3 id={heading}>{"Account limits"}</h3>
             if snapshot.reports.is_empty() {
                 <p class="quota-empty quota-account-empty">{"No account usage reports were returned."}</p>
             } else {
@@ -85,7 +103,7 @@ fn render_reports(snapshot: &wire::QuotaSnapshot) -> Html {
                         let accent = accents
                             .as_deref()
                             .and_then(|accents| accents[index]);
-                        render_report(index, report, accent)
+                        render_report(scope, index, report, accent)
                     })}
                 </div>
             }
@@ -93,8 +111,13 @@ fn render_reports(snapshot: &wire::QuotaSnapshot) -> Html {
     }
 }
 
-fn render_report(index: usize, report: &wire::QuotaReport, accent: Option<usize>) -> Html {
-    let heading = format!("quota-account-{index}");
+fn render_report(
+    scope: &str,
+    index: usize,
+    report: &wire::QuotaReport,
+    accent: Option<usize>,
+) -> Html {
+    let heading = format!("{scope}-quota-account-{index}");
     let label = crate::quota::account_label(&report.account);
     html! {
         <article
@@ -274,10 +297,11 @@ fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
     }
 }
 
-fn render_accounts_without_usage(accounts: &[wire::QuotaAccountWithoutUsage]) -> Html {
+fn render_accounts_without_usage(scope: &str, accounts: &[wire::QuotaAccountWithoutUsage]) -> Html {
+    let heading = format!("{scope}-quota-without-usage-heading");
     html! {
-        <section class="quota-detail-group" aria-labelledby="quota-without-usage-heading">
-            <h3 id="quota-without-usage-heading">{"Accounts lacking usage"}</h3>
+        <section class="quota-detail-group" aria-labelledby={heading.clone()}>
+            <h3 id={heading}>{"Accounts lacking usage"}</h3>
             if accounts.is_empty() {
                 <p class="quota-empty">{"None."}</p>
             } else {
@@ -289,10 +313,11 @@ fn render_accounts_without_usage(accounts: &[wire::QuotaAccountWithoutUsage]) ->
     }
 }
 
-fn render_disabled(credentials: &[wire::QuotaDisabledCredential]) -> Html {
+fn render_disabled(scope: &str, credentials: &[wire::QuotaDisabledCredential]) -> Html {
+    let heading = format!("{scope}-quota-disabled-heading");
     html! {
-        <section class="quota-detail-group" aria-labelledby="quota-disabled-heading">
-            <h3 id="quota-disabled-heading">{"Disabled credentials"}</h3>
+        <section class="quota-detail-group" aria-labelledby={heading.clone()}>
+            <h3 id={heading}>{"Disabled credentials"}</h3>
             if credentials.is_empty() {
                 <p class="quota-empty">{"None."}</p>
             } else {

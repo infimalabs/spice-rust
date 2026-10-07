@@ -35,11 +35,10 @@ use crate::speech_queue::{
 use crate::view::{AppRoute, RouteEvidence};
 use crate::work::WorkProjection;
 use crate::{
-    AppDestination, AppRuntime, Axis, Principal, Session, SteerPane, StreamDirective,
-    TaskDetailState, stale_reads,
+    AppDestination, AppRuntime, Principal, Session, SteerPane, StreamDirective, TaskDetailState,
+    stale_reads,
 };
 
-mod app_menu;
 mod card_target;
 mod clipboard;
 mod clock;
@@ -342,7 +341,7 @@ struct AppProperties {
 struct AppState {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
-    app_menu_open: UseStateHandle<bool>,
+    spice_sidebar_open: UseStateHandle<bool>,
     destination: AppDestination,
     route: AppRoute,
     route_navigate: Callback<navigation::Navigation>,
@@ -391,19 +390,34 @@ impl AppState {
             let navigate = self.navigate.clone();
             let return_focus_to = self.sidebar.return_focus_to.clone();
             let sidebar_closed = self.sidebar.content.is_none();
+            let spice_sidebar_open = self.spice_sidebar_open.clone();
             Callback::from(move |intent: navigation::Intent| {
+                let opens_tasks = matches!(
+                    intent,
+                    navigation::Intent::Work(_)
+                        | navigation::Intent::Task(_)
+                        | navigation::Intent::Overview(_)
+                );
                 if sidebar_closed
-                    && matches!(
-                        intent,
-                        navigation::Intent::Work(_)
-                            | navigation::Intent::Task(_)
-                            | navigation::Intent::Overview(_)
-                    )
+                    && opens_tasks
                     && let Some(target) = sidebar::active_focus_target()
                 {
                     return_focus_to.emit(target);
                 }
+                if opens_tasks {
+                    spice_sidebar_open.set(false);
+                }
                 navigate.emit(intent);
+            })
+        };
+        let open_spice_sidebar = {
+            let navigate = self.navigate.clone();
+            let open = self.spice_sidebar_open.clone();
+            let return_focus_to = self.sidebar.return_focus_to.clone();
+            Callback::from(move |target: web_sys::Element| {
+                return_focus_to.emit(target);
+                navigate.emit(navigation::Intent::CloseTask);
+                open.set(true);
             })
         };
         let select_task = navigate.reform(navigation::Intent::Task);
@@ -427,7 +441,8 @@ impl AppState {
                 destination: self.destination,
                 card_target_notice,
                 navigate: &navigate,
-                app_menu_open: &self.app_menu_open,
+                spice_sidebar_open: *self.spice_sidebar_open,
+                open_spice_sidebar,
                 identity: &self.identity,
                 app_update: &self.app_update,
                 team_controls: &self.team_controls,
@@ -474,7 +489,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let route = properties.route.clone();
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let app_menu_open = use_state(|| false);
+    let spice_sidebar_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
     let local_selection = use_local_overview(&route);
     let work_map = use_state(view::WorkMapState::default);
@@ -502,13 +517,29 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         local_selection.clone(),
         surface.clone(),
     );
+    let requested_content = if *spice_sidebar_open {
+        Some(sidebar::Content::Spice)
+    } else {
+        (*local_selection).clone().map(sidebar::Content::Tasks)
+    };
+    let close_sidebar = {
+        let spice_sidebar_open = spice_sidebar_open.clone();
+        let navigate = navigate.clone();
+        Callback::from(move |()| {
+            if *spice_sidebar_open {
+                spice_sidebar_open.set(false);
+            } else {
+                navigate.emit(navigation::Intent::CloseTask);
+            }
+        })
+    };
     let sidebar = sidebar::use_controls(
-        work_detail_mounted(&surface),
+        *spice_sidebar_open || work_detail_mounted(&surface),
         sidebar::Request {
-            content: (*local_selection).clone().map(sidebar::Content::Tasks),
+            content: requested_content,
             leaving: route.card_target().is_some(),
         },
-        navigate.reform(|()| navigation::Intent::CloseTask),
+        close_sidebar,
     );
     let selected_task = sidebar
         .content
@@ -537,7 +568,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         AppState {
             connection,
             surface,
-            app_menu_open,
+            spice_sidebar_open,
             destination: route.app_destination(),
             card_target: route.card_target().map(str::to_owned),
             route_navigate: properties.navigate.clone(),
@@ -625,7 +656,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         chat_visible,
     );
     use_mosaic_root_scroll(chat_visible);
-    app_menu::use_dismissal(state.app_menu_open.clone());
     watchband::use_team_arrangement_escape(&state.team_controls, chat_visible);
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(

@@ -137,14 +137,16 @@ fn app_operation_inventory(
         }
     }
     for (generation, assets) in &groups {
-        // work.css was introduced without changing the receipt schema. Old
-        // generations retain their original inventory, even inside a new plan;
-        // only the current generation of a new plan must carry the new file.
+        // Stylesheets introduced after the retained-generation protocol do not
+        // belong to older pages that never referenced them. Current
+        // generations remain complete; historical generations retain the
+        // exact inventory they were published with.
         let historical = content == GeneratedContentAuthority::HistoricalReceipt
             || *generation != current.as_str();
-        let missing = app::ASSETS
-            .iter()
-            .any(|(asset, _)| !assets.contains(asset) && !(historical && *asset == Asset::AppWork));
+        let missing = app::ASSETS.iter().any(|(asset, _)| {
+            !assets.contains(asset)
+                && !(historical && matches!(asset, Asset::AppSpiceSidebar | Asset::AppWork))
+        });
         let renderers = assets
             .iter()
             .filter(|asset| matches!(asset, Asset::AppRenderer(_)))

@@ -57,10 +57,11 @@ const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// Required shell files; generation-declared renderer files complete the inventory.
-pub const APP_FILES: [&str; 9] = [
+pub const APP_FILES: [&str; 10] = [
     APP_HTML,
     APP_MODULE,
     APP_STYLE,
+    SPICE_SIDEBAR_STYLE,
     MOSAIC_STYLE,
     CHROME_STYLE,
     COMPOSER_STYLE,
@@ -74,6 +75,8 @@ pub const APP_HTML: &str = "app.html";
 pub const APP_MODULE: &str = "app.module";
 /// Shared browser application stylesheet.
 pub const APP_STYLE: &str = "style.css";
+/// Spice sidebar and team-arrangement stylesheet.
+pub const SPICE_SIDEBAR_STYLE: &str = "spice_sidebar.css";
 /// Mosaic workspace stylesheet.
 pub const MOSAIC_STYLE: &str = "mosaic.css";
 /// Browser chrome stylesheet.

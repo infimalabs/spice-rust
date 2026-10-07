@@ -44,8 +44,8 @@
 }
 
 @media (max-width: 560px) {
-  .app-menu-footer { gap: 6px; }
-  .app-menu-version--update { padding-inline: 5px; }
+  .app-resident-footer { gap: 6px; }
+  .app-product-version--update { padding-inline: 5px; }
   .workspace-tabs { margin-left: auto; }
   .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
   .workspace-tabs button::first-letter { font-size: var(--app-type-label); }
@@ -97,6 +97,26 @@
   .work-map-heading { align-items: flex-start; flex-direction: column; }
   .work-map-heading > span { text-align: left; }
   .work-map-viewport { height: 18rem; }
+  .app-spice-quota .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .app-spice-quota .quota-limit-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .app-spice-quota .quota-limit {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(3rem, 1fr) max-content;
+    align-items: center;
+    gap: 3px 8px;
+    min-width: 0;
+  }
+  .app-spice-quota .quota-limit-reset {
+    grid-column: 1 / -1;
+    text-align: right;
+  }
   .app-sheet-identity { align-items: flex-start; flex-direction: column; }
   .app-sheet-identity button { width: 100%; }
   .work-blocker-rail {

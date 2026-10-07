@@ -262,14 +262,16 @@ surface is a retained Chat card at `team-stream-{team}` while that team remains
 current and teamed; an unknown or independent lane is unavailable.
 
 Task overview selection, controls, map viewport, drafts, team arrangement,
-speech, and narration are browser-local. A durable route change closes the
-overview. Closing it directly restores focus to its surviving launcher.
+the Spice sidebar, speech, and narration are browser-local. Task overview and
+Spice content share one sidebar surface and swap without creating history.
+A durable route change closes task overview. Closing either sidebar content
+directly restores focus to its surviving launcher.
 Following a retained Chat quote is a history step, and Back returns to the
 linking card where the reader left it. A fresh card link brings its card into
 view and focus once Chat hydrates, holding it as older history loads until the
 reader scrolls.
 
-### The Spice menu quota well
+### The Spice button quota well
 
 The Spice button divides global weekly capacity into account layers. Each
 account's layer height is its available contribution, so the stack shows global
@@ -286,6 +288,8 @@ hatch rather than bare page, so the well never reads as a hole in the button,
 and its texture stays distinct from any desaturated layer. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
+Pressing the Spice button opens that generic sidebar. Escape, its backdrop, and
+Close dismiss it and restore focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
 starting, connecting, and reconnecting grey and slowly pulse its pepper, and the
@@ -293,18 +297,18 @@ tab title and icon say `Loading` or `Disconnected`; no chrome prose appears
 beside it and nothing in the bar moves. A quota sample in flight changes no
 word, row, or layer; only a finished attempt changes what quota shows.
 
-Opening the menu states that same global figure in words: the Global row
-carries a read-only `Quota left` chip between Fast mode and the theme switch
-with the cumulative plan-weighted weekly percentage remaining. After a failed
-refresh it mutes and says `stale`; with no retained weekly figure the chip is
-rather than a placeholder.
+The open sidebar states that same global figure in words: Settings carries a
+read-only `Quota left` chip between Fast mode and the theme switch with the
+cumulative plan-weighted weekly percentage remaining. After a failed refresh
+it mutes and says `stale`; while no retained weekly figure exists, the same
+settled chip says `loading` or `unavailable`.
 
 Provider quota detail rows preserve each provider's authoritative remaining
 quantity. Percent limits label that capacity `N% full`; their filled segment
 starts at the left edge, so consumption exposes the track from the right.
 Counted limits retain their explicit remaining and total units.
 
-Inside the open menu, each open team shows every member row, so a team of one
+Inside the Spice sidebar, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,
 not a placeholder to hold. "No open teams" holds one team of one agent, "No
 unassigned agents" and an import menu's "No available agents" hold one agent

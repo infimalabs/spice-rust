@@ -69,7 +69,7 @@ pub(super) fn render_feedback(runtime: Option<&AppRuntime>, controls: &TeamContr
 /// composer and activity plane, however many independently steerable members
 /// the team contains. Only a team earns a surface: an agent seated alone under
 /// its own identity is not a formation, so it draws no surface here and stays
-/// reachable through the global menu instead.
+/// reachable through the Spice sidebar instead.
 pub(super) fn render_team(
     render: &view::AppRender<'_>,
     work: Option<&crate::work::WorkProjection<'_>>,
