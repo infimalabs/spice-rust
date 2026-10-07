@@ -21,7 +21,7 @@
         root.style.colorScheme = effective;
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = effective === "dark" ? "#101411" : "#f7f8f4";
-        document.querySelectorAll(".app-theme-option").forEach((button) => {
+        document.querySelectorAll(".app-choice-chip").forEach((button) => {
           button.setAttribute("aria-pressed", String(button.dataset.appTheme === next));
         });
       };

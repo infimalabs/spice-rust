@@ -1033,7 +1033,7 @@ pub(super) fn render_quote_shards(
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
-                        {render_composer_vendor_icon(standing, "composer", Some(quote_index))}
+                        {render_provider_emblem(standing, "composer", Some(quote_index))}
                         <ComposerTextarea
                             key={quote.body.clone()}
                             id={textarea_id}

@@ -324,21 +324,13 @@ fn render_fast_toggle(
     };
     html! {
         <div class="member-fast" data-member-control="fast">
-            <button
-                class={classes!(
-                    "app-menu-setting",
-                    "app-menu-setting--action",
-                    "app-fast-setting",
-                    next.unwrap_or(false).then_some("app-menu-setting--checked"),
-                )}
-                type="button"
-                aria-pressed={next.unwrap_or(false).to_string()}
+            <crate::browser::view::chrome::SettingToggle
+                label="Fast mode"
+                value={next.map_or("loading", on_off)}
+                checked={next.unwrap_or(false)}
                 disabled={busy || next.is_none()}
-                {onclick}
-            >
-                <strong>{"Fast mode"}</strong>
-                <span>{next.map_or("loading", on_off)}</span>
-            </button>
+                onclick={onclick}
+            />
             <p class="member-setting-status">{format!("Running: {running}; next launch: {next_label}")}</p>
         </div>
     }

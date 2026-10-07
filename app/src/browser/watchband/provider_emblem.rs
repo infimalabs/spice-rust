@@ -12,7 +12,7 @@ use crate::watchband::{self, Emblem, Provider, Standing};
 /// hidden, so a lane drawn on two surfaces would otherwise mint one id twice
 /// and `url(#id)` would resolve to the hidden copy. `instance` distinguishes
 /// repeated icons for one lane on the same surface.
-pub(in crate::browser) fn render_composer_vendor_icon(
+pub(in crate::browser) fn render_provider_emblem(
     standing: &Standing,
     surface: &'static str,
     instance: Option<usize>,
@@ -38,11 +38,11 @@ pub(in crate::browser) fn render_composer_vendor_icon(
     }
     let title = label.clone();
     let provider_class =
-        provider.map(|provider| format!("composer-vendor-icon--{}", provider.key()));
+        provider.map(|provider| format!("app-provider-emblem--{}", provider.key()));
     html! {
         <span
-            class={classes!("composer-vendor-icon", provider_class)}
-            data-composer-vendor-provider={provider.map(|provider| provider.key().to_owned())}
+            class={classes!("app-provider-emblem", provider_class)}
+            data-provider={provider.map(|provider| provider.key().to_owned())}
             {title}
             aria-label={label}
             role="img"
@@ -76,7 +76,7 @@ fn render_omp_mark(surface: &str, lane: CanonicalUuid, instance: Option<usize>) 
 fn render_fast_badge() -> Html {
     html! {
         <text
-            class="composer-vendor-badge--fast"
+            class="app-provider-emblem__fast"
             x="7"
             y="15"
             aria-hidden="true"

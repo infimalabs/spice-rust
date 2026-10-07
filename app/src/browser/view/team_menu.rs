@@ -56,7 +56,7 @@ fn render_axis(
             }
             <section class="app-menu-section app-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
-                <div class="app-menu-setting">
+                <div class="app-setting-row">
                     <strong>{axis.question()}</strong>
                     <span>{format!("{count} {noun}")}</span>
                 </div>
@@ -169,31 +169,23 @@ fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -
         <section class="app-menu-section app-menu-global">
             <h2>{"Global"}</h2>
             <div class="app-menu-global-controls">
-                <button
-                    class={classes!(
-                        "app-menu-setting",
-                        "app-menu-setting--action",
-                        "app-fast-setting",
-                        fast_mode.then_some("app-menu-setting--checked"),
-                    )}
-                    type="button"
-                    role="menuitemcheckbox"
-                    aria-checked={fast_mode.to_string()}
+                <chrome::SettingToggle
+                    label="Fast mode"
+                    value={if settings.is_some() {
+                        if fast_mode { "on" } else { "off" }
+                    } else {
+                        "loading"
+                    }}
+                    checked={fast_mode}
                     disabled={!enabled}
+                    checkbox={true}
                     title={if fast_mode {
                         "Fast mode is on for supported agents"
                     } else {
                         "Fast mode is off for supported agents"
                     }}
-                    {onclick}
-                >
-                    <strong>{"Fast mode"}</strong>
-                    <span>{if settings.is_some() {
-                        if fast_mode { "on" } else { "off" }
-                    } else {
-                        "loading"
-                    }}</span>
-                </button>
+                    onclick={onclick}
+                />
                 {render_capacity(runtime)}
                 {render_theme_selector()}
             </div>
@@ -227,7 +219,7 @@ fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     };
     html! {
         <span
-            class="app-menu-setting app-menu-capacity"
+            class="app-readout-chip app-menu-capacity"
             data-quota-stale={stale.then_some("true")}
             aria-label={title.clone()}
             {title}
@@ -533,7 +525,7 @@ fn render_theme_selector() -> Html {
                     let accessible = format!("Use {label} theme");
                     html! {
                         <button
-                            class="app-theme-option"
+                            class="app-choice-chip"
                             type="button"
                             aria-label={accessible}
                             title={format!("{label} theme")}
