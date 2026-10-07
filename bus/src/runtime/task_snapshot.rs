@@ -90,10 +90,11 @@ pub enum TaskOrigin {
 /// merges occupied levels like a binary carry, so unrelated commits share the
 /// whole index, insertion is amortized logarithmic, and lookup probes at most
 /// one hash table per level.
-type TerminalLevel = HashMap<
+type TerminalKey = (
     journal::crossing::TaskStamp,
-    HashMap<journal::crossing::CanonicalUuid, journal::crossing::Seq>,
->;
+    journal::crossing::CanonicalUuid,
+);
+type TerminalLevel = HashMap<TerminalKey, journal::crossing::Seq>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct TerminalIndex {
@@ -108,7 +109,7 @@ impl TerminalIndex {
         seq: journal::crossing::Seq,
     ) -> Self {
         let mut levels = self.levels.to_vec();
-        let mut carry = HashMap::from([(task, HashMap::from([(operation, seq)]))]);
+        let mut carry = HashMap::from([((task, operation), seq)]);
         let mut level = 0;
         loop {
             if level == levels.len() {
@@ -120,17 +121,11 @@ impl TerminalIndex {
                 break;
             };
             let mut merged = HashMap::with_capacity(existing.len() + carry.len());
-            merged.extend(
-                existing
-                    .iter()
-                    .map(|(task, operations)| (task.clone(), operations.clone())),
-            );
+            merged.extend(existing.iter().map(|(key, seq)| (key.clone(), *seq)));
             // A repeated operation is impossible in valid authority, but the
             // newest durable position still wins if malformed history carries
             // one; lower levels are always newer than higher levels.
-            for (task, operations) in carry {
-                merged.entry(task).or_default().extend(operations);
-            }
+            merged.extend(carry);
             carry = merged;
             level += 1;
         }
@@ -152,14 +147,11 @@ impl TerminalIndex {
         task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
     ) -> (Option<journal::crossing::Seq>, usize) {
+        let key = (task.clone(), operation);
         let mut probes = 0;
         for level in self.levels.iter() {
             probes += 1;
-            if let Some(found) = level
-                .as_ref()
-                .and_then(|entries| entries.get(task))
-                .and_then(|operations| operations.get(&operation))
-            {
+            if let Some(found) = level.as_ref().and_then(|entries| entries.get(&key)) {
                 return (Some(*found), probes);
             }
         }
