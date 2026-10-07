@@ -101,8 +101,18 @@ impl Drop for Scratch {
 const SEAL: &str = "Sk9DLj12R";
 
 fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc<Driver<Sink>> {
+    briefed_driver(sink, scratch, terminal, None)
+}
+
+/// A fixture driver whose lane briefing is `briefing`, read once per call.
+fn briefed_driver(
+    sink: Sink,
+    scratch: &Scratch,
+    terminal: Option<Terminal>,
+    briefing: Option<&'static str>,
+) -> Arc<Driver<Sink>> {
     let source = Arc::clone(&scratch.1);
-    Driver::with_inbox_reader(
+    Driver::with_readers(
         sink,
         move || {
             source
@@ -110,6 +120,7 @@ fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
         },
+        move || briefing.map(str::to_owned),
         SEAL.parse().expect("the fixture seal is key-shaped"),
         terminal,
     )
@@ -866,6 +877,45 @@ fn a_compaction_replays_pending_steering_and_says_nothing_over_an_empty_inbox() 
         ],
         "a context that dropped the telling gets the full telling plus recovery syntax",
     );
+}
+
+#[test]
+fn only_a_compaction_queues_the_briefing_beside_the_replayed_steering() {
+    const BRIEFING: &str = "# Spice briefing\n- held: none\n";
+    let briefing = |sequence: u64| serde_json::json!({"id": format!("spice-aside-{sequence}"), "type": "aside", "purpose": "briefing", "message": BRIEFING});
+    let scratch = Scratch::new("briefed");
+    let sink = Sink::default();
+    let driver = briefed_driver(sink.clone(), &scratch, None, Some(BRIEFING));
+
+    // Ordinary steering never carries the briefing.
+    scratch.publish(NEWS);
+    driver.deliver_inbox();
+    driver.deliver_inbox();
+    assert_eq!(sink.frames(), [steer(1, NEWS)]);
+
+    // A compaction replays the steering, then queues the briefing apart from it.
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    assert_eq!(
+        sink.answered(3),
+        [
+            steer(1, NEWS),
+            aside(2, &steer::inbox::post_compaction(NEWS)),
+            briefing(3),
+        ]
+    );
+
+    // Once read and with nothing pending, a later compaction still restores it.
+    driver.observe(&decoded(serde_json::to_vec(&serde_json::json!({
+        "type":"message_end", "message":{"role":"user","content":[{"type":"text","text":BRIEFING}]}
+    })).unwrap().as_slice()));
+    scratch.publish(b"");
+    driver.deliver_inbox();
+    let quiet = sink.frames().len();
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    let frames = sink.answered(quiet + 1);
+    assert_eq!(frames.len(), quiet + 1, "{frames:?}");
+    assert_eq!(frames[quiet]["purpose"], "briefing");
+    assert_eq!(frames[quiet]["message"], BRIEFING);
 }
 
 #[test]

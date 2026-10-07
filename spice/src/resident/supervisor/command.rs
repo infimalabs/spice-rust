@@ -39,10 +39,15 @@ const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One child's command stream and what has already been said on it.
 type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
+/// Composes the lane's folded briefing; `None` when there is none to give.
+type BriefingReader = Box<dyn Fn() -> Option<String> + Send + Sync>;
 
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
     read_inbox: InboxReader,
+    /// Read once per compaction, off the decoding path, since a briefing
+    /// scans the transcript and the journal.
+    read_briefing: BriefingReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -210,11 +215,13 @@ impl<W: Write + Send + 'static> Driver<W> {
         discovery: impl Into<PathBuf>,
         steering_media: PathBuf,
         lane: CanonicalUuid,
+        worktree: PathBuf,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
         let projector = media::Projector::new(steering_media, lane);
-        Self::with_inbox_reader(
+        let environment = crate::session_environment().rooted(worktree);
+        Self::with_readers(
             stdin,
             move || {
                 let inbox = crate::command_client::read_lane_inbox(&discovery, lane).ok()?;
@@ -235,20 +242,29 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .into_bytes(),
                 )
             },
+            move || {
+                Some(crate::session_command::lane_briefing(
+                    &environment,
+                    lane,
+                    None,
+                ))
+            },
             steer::Key::for_identity(lane),
             terminal,
         )
     }
 
-    fn with_inbox_reader(
+    fn with_readers(
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
+        read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
         seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         Arc::new(Self {
             stdin: Mutex::new(Some(stdin)),
             read_inbox: Box::new(read_inbox),
+            read_briefing: Box::new(read_briefing),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
@@ -500,6 +516,25 @@ impl<W: Write + Send + 'static> Driver<W> {
     fn steer(&self, message: &str) -> io::Result<()> {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         self.write(&vendor::omp::steer_request(sequence, message))
+    }
+
+    /// Queue the lane's briefing beside the replayed steering once a
+    /// compaction has dropped the context it would have been read in.
+    ///
+    /// The briefing is composed on its own thread: it scans the transcript
+    /// and the journal, and the decoding path must keep reading events.
+    fn deliver_briefing(self: &Arc<Self>) {
+        let driver = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("spice-supervisor-briefing".to_owned())
+            .spawn(move || {
+                if let Some(briefing) = (driver.read_briefing)() {
+                    let _ = driver.background("briefing", &briefing);
+                }
+            });
+        if let Err(error) = spawned {
+            eprintln!("spice supervisor: briefing thread unavailable: {error}");
+        }
     }
 
     /// Replace one queued notice without interrupting model or tool work.
@@ -814,6 +849,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             delivered.take();
             drop(delivered);
             self.interject(InboxDelivery::PostCompaction);
+            self.deliver_briefing();
             self.reasoning_reminder
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)

@@ -14,11 +14,13 @@ use wire::{Outcome, Refusal, Reply, ReplyPosition};
 mod authority;
 mod context;
 mod dataset;
+pub(crate) mod digest;
+mod glance;
 mod model;
 pub(crate) mod project;
 mod source;
 
-use model::Report;
+pub(crate) use model::Report;
 
 /// Resolve one known vendor thread to its preserved transcript.
 ///
@@ -115,6 +117,85 @@ impl Environment {
             temp,
         }
     }
+
+    /// The same ambient session state, asked from another working directory:
+    /// a supervisor reads its lane's transcript as that lane's worktree files it.
+    pub(crate) fn rooted(mut self, cwd: PathBuf) -> Self {
+        self.cwd = Some(cwd);
+        self
+    }
+}
+
+/// Wall time a supervisor waits for its lane's briefing before it hands the
+/// agent the refusal instead.
+const LANE_BRIEFING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The folded briefing a supervisor hands its lane's agent at a seat start,
+/// framed as a private resident notice so transcript readers never take it for
+/// an authored ask.
+///
+/// The seat is the lane rather than a live thread: the transcript read is the
+/// session the residency head records for the lane. Any failure still yields
+/// a page, one that names the refusal and the commands that read the rest.
+pub(crate) fn lane_briefing(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> String {
+    let context = DeadlineContext {
+        action: "briefing".to_owned(),
+        requested: vec![format!("lane {lane}")],
+        budget: LANE_BRIEFING_DEADLINE,
+    };
+    let environment = environment.clone();
+    let configuration = configuration.cloned();
+    let started = std::time::Instant::now();
+    let built = run_deadline(&context, started, move |sender| {
+        let report = lane_recall(&environment, lane, configuration.as_ref());
+        let _ = sender.send(DeadlineEvent::Complete(report, std::time::Instant::now()));
+    });
+    let page = match built {
+        Ok(Report::Recall { digest, .. }) => digest,
+        Ok(_) => unreachable!("lane recall builds only a briefing"),
+        Err(refusal) => digest::refused(&refusal),
+    };
+    format!("<system-notice>\n{}\n</system-notice>", page.trim_end())
+}
+
+fn lane_recall(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<Report, Refusal> {
+    let mut authorities = authority::observe_lane(environment, lane, configuration);
+    let seat = authorities.held_work.thread.clone().zip(
+        authorities
+            .posture
+            .as_ref()
+            .and_then(|posture| posture.lane.as_ref())
+            .map(|lane| lane.vendor.clone()),
+    );
+    let mut files = Vec::new();
+    if let Some((thread, vendor)) = seat {
+        let resolved = vendor
+            .parse::<wire::Name>()
+            .map_err(|error| error.to_string())
+            .and_then(|vendor| vendor_thread_transcript(&thread, &vendor, environment));
+        match resolved {
+            Ok((path, _)) => files.push(path.display().to_string()),
+            Err(detail) => authorities.unknowns.push(model::AuthorityUnknown {
+                authority: "transcript".to_owned(),
+                probe: "lane-thread".to_owned(),
+                detail,
+            }),
+        }
+    }
+    let sources = if files.is_empty() {
+        Vec::new()
+    } else {
+        source::resolve_inputs(&files, environment)?
+    };
+    project::recall(&sources, &files, authorities)
 }
 
 pub(crate) fn run(

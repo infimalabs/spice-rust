@@ -1,0 +1,621 @@
+//! The briefing as one folded page: what binds the lane first, then the
+//! least working set that lets it resume, under one fixed byte ceiling.
+//!
+//! Sections are ranked once, here. Each keeps whole rows while they fit and
+//! then names its continuation, so what folds away is always one exact
+//! command from the page. A section that cannot start at all is named in the
+//! closing lines. Text rows are whitespace-collapsed before they arrive, so
+//! every row is one line and the ceiling is a byte count of what the agent
+//! reads.
+
+use std::collections::BTreeSet;
+use std::fmt::Write as _;
+
+use super::model::{
+    BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, PostureView,
+    Report, RepositoryGlanceView, RetiredDirectionView,
+};
+
+/// Ceiling on one folded briefing, in bytes.
+pub(crate) const BRIEFING_BYTES: usize = 9_600;
+/// Room every section keeps so a cut can still name its continuation.
+const FOLD_BYTES: usize = 320;
+/// Bytes one row keeps before it is cut.
+const ROW_BYTES: usize = 1_100;
+
+const REFRESH: &str = "spice session briefing";
+const TYPED: &str = "spice session briefing --json";
+const STATUS: &str = "spice task status";
+const INBOX: &str = "spice inbox";
+
+/// Fold one briefing report into its page; any other report folds to nothing.
+pub(super) fn fold(report: &Report, files: &[String]) -> String {
+    let Report::Recall {
+        asks,
+        held_work,
+        posture,
+        directions,
+        board,
+        repository,
+        unknowns,
+        live,
+        residues,
+        ..
+    } = report
+    else {
+        return String::new();
+    };
+    // The transcript the page was read from, so a continuation reads the
+    // same thread whichever process runs it.
+    let history = |view: &str| -> String {
+        wire::SpiceCommand::new(
+            "session",
+            std::iter::once(view).chain(files.iter().map(String::as_str)),
+        )
+        .map_or_else(
+            |_| format!("spice session {view}"),
+            |command| command.to_string(),
+        )
+    };
+    let sweep = format!("{} --limit 4", history("sweep"));
+    let mut page = Page::new(header(held_work, live, files, *residues), &sweep);
+
+    // An empty inbox says nothing; an unread one says so.
+    match asks {
+        Some(asks) => {
+            let more = asks.omission.as_ref().map_or_else(
+                || INBOX.to_owned(),
+                |omission| omission.continuation.to_string(),
+            );
+            let total = asks
+                .omission
+                .as_ref()
+                .map_or(asks.rows.len(), |omission| omission.population);
+            page.section(
+                "Pending steering (answer every key)",
+                asks.rows.iter().map(ask).collect(),
+                total,
+                &more,
+            );
+        }
+        None => page.whole(
+            "Pending steering",
+            vec!["unread; see Unknown".to_owned()],
+            INBOX,
+        ),
+    }
+    page.whole(
+        "Held claim",
+        held(held_work.own_claim.as_ref()),
+        "spice task show HANDLE",
+    );
+    page.whole(
+        "Unknown",
+        unknowns
+            .iter()
+            .map(|row| format!("{}/{}: {}", row.authority, row.probe, row.detail))
+            .collect(),
+        TYPED,
+    );
+    if let Some(board) = board {
+        page.whole(
+            "Board",
+            vec![board_row(board, held_work.peer_claims)],
+            STATUS,
+        );
+    }
+    page.whole("Posture", posture_rows(posture.as_ref()), TYPED);
+    if let Some(repository) = repository {
+        let (dirty, total) = uncommitted(repository);
+        page.section("Uncommitted", dirty, total, "git status --short");
+        page.whole("Commits", repository.commits.clone(), "git log --oneline");
+    }
+    let mut seen = BTreeSet::new();
+    page.whole("Latest turn", latest(live, &mut seen), &history("turns"));
+    page.whole(
+        "Recent turns, newest first",
+        recent(live, &mut seen),
+        &sweep,
+    );
+    page.whole(
+        "Recently answered steering, newest first",
+        directions.iter().map(direction).collect(),
+        INBOX,
+    );
+    page.whole(
+        "Recently touched paths",
+        live.touched.clone(),
+        &history("commands"),
+    );
+    page.finish()
+}
+
+/// The page a supervisor hands its agent when the briefing itself failed.
+pub(crate) fn refused(refusal: &wire::Refusal) -> String {
+    let detail = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::detail)
+        .map_or_else(String::new, |detail| format!(": {detail}"));
+    clip_row(format!(
+        "# Spice briefing unavailable\n{}{detail}\nRead the same ground with `{REFRESH}`, `{STATUS}`, and `{INBOX}`.\n",
+        refusal.reason()
+    ))
+}
+
+struct Page {
+    text: String,
+    /// Closing lines naming the refresh commands, always kept whole.
+    refresh: String,
+    limit: usize,
+    folded: Vec<&'static str>,
+}
+
+impl Page {
+    fn new(header: String, sweep: &str) -> Self {
+        let refresh = format!(
+            "\n## Refresh\n- this page: `{REFRESH}`; typed rows: `{TYPED}`\n- board and claim: `{STATUS}`; steering: `{INBOX}`\n- older turns: `{sweep}`\n"
+        );
+        Self {
+            limit: BRIEFING_BYTES.saturating_sub(refresh.len() + FOLD_BYTES),
+            text: header,
+            refresh,
+            folded: Vec::new(),
+        }
+    }
+
+    /// Every row of a section whose rows are its whole population.
+    fn whole(&mut self, title: &'static str, rows: Vec<String>, more: &str) {
+        let total = rows.len();
+        self.section(title, rows, total, more);
+    }
+
+    /// Rows while they fit, then one line naming what was withheld and the
+    /// command that reads it. `total` counts rows a source already withheld.
+    fn section(&mut self, title: &'static str, rows: Vec<String>, total: usize, more: &str) {
+        if rows.is_empty() {
+            return;
+        }
+        let heading = format!("\n## {title}\n");
+        if self.text.len() + heading.len() + FOLD_BYTES > self.limit {
+            self.folded.push(title);
+            return;
+        }
+        self.text.push_str(&heading);
+        let mut shown = 0;
+        for row in rows {
+            let row = clip_row(row);
+            if self.text.len() + row.len() + 3 + FOLD_BYTES > self.limit {
+                break;
+            }
+            let _ = writeln!(self.text, "- {row}");
+            shown += 1;
+        }
+        if shown < total {
+            let fold = clip_fold(format!("- … {} more: `{more}`", total - shown));
+            let _ = writeln!(self.text, "{fold}");
+        }
+    }
+
+    fn finish(mut self) -> String {
+        self.text.push_str(&self.refresh);
+        if !self.folded.is_empty() {
+            let line = clip_fold(format!(
+                "- folded away: {} — `{TYPED}`",
+                self.folded.join("; ")
+            ));
+            let _ = writeln!(self.text, "{line}");
+        }
+        self.text
+    }
+}
+
+fn header(held_work: &HeldWorkView, live: &LiveView, files: &[String], residues: usize) -> String {
+    let mut header = String::from("# Spice briefing\n");
+    let mut facts = Vec::new();
+    if let Some(lane) = &held_work.lane {
+        facts.push(format!("lane {lane}"));
+    }
+    if let Some(thread) = &held_work.thread {
+        facts.push(format!("thread {thread}"));
+    }
+    if let Some(compacted) = &live.compacted {
+        facts.push(format!("last compaction {compacted}"));
+    }
+    if residues > 0 {
+        facts.push(format!("{residues} unreadable transcript records"));
+    }
+    if let [file] = files {
+        facts.push(format!("transcript {file}"));
+    } else if !files.is_empty() {
+        facts.push(format!("{} transcripts", files.len()));
+    }
+    if !facts.is_empty() {
+        let _ = writeln!(header, "{}", clip_row(facts.join(" · ")));
+    }
+    header
+}
+
+fn ask(row: &OutstandingAskView) -> String {
+    let attachments = if row.attachments.is_empty() {
+        String::new()
+    } else {
+        format!(" [{} attachments]", row.attachments.len())
+    };
+    format!(
+        "{} ({}, authored {}){attachments}: {}",
+        row.key, row.stage, row.authored, row.text
+    )
+}
+
+fn held(claim: Option<&HeldClaimView>) -> Vec<String> {
+    let Some(claim) = claim else {
+        return vec!["none; take work with `spice task next`".to_owned()];
+    };
+    let mut rows = vec![format!(
+        "{} [{}] {}: {}",
+        claim.handle, claim.project, claim.phase, claim.title
+    )];
+    let lease = claim
+        .lease_expiry
+        .as_ref()
+        .map_or_else(String::new, |expiry| format!("; lease until {expiry}"));
+    rows.push(format!(
+        "{} in flow {}{lease}",
+        claim.status,
+        claim.flow.join(" → ")
+    ));
+    if let Some(description) = &claim.description {
+        rows.push(format!("description: {description}"));
+    }
+    rows.extend(
+        claim
+            .acceptance
+            .iter()
+            .enumerate()
+            .map(|(index, row)| format!("accept {}: {row}", index + 1)),
+    );
+    rows
+}
+
+fn posture_rows(posture: Option<&PostureView>) -> Vec<String> {
+    let Some(posture) = posture else {
+        return Vec::new();
+    };
+    let mut rows = vec![format!(
+        "worktree {} on {}",
+        posture.worktree,
+        posture.head.as_deref().unwrap_or("an unreadable HEAD")
+    )];
+    if posture.cwd != posture.worktree {
+        rows.push(format!("cwd {}", posture.cwd));
+    }
+    if let Some(lane) = &posture.lane {
+        rows.push(format!(
+            "lane {} {}, {} {}",
+            lane.disposition,
+            lane.life,
+            lane.vendor,
+            lane.model.as_deref().unwrap_or("default model")
+        ));
+    }
+    rows
+}
+
+fn uncommitted(repository: &RepositoryGlanceView) -> (Vec<String>, usize) {
+    if let Some(error) = &repository.unreadable {
+        return (vec![format!("unreadable: {error}")], 1);
+    }
+    if repository.dirty_total == 0 {
+        return (vec!["clean".to_owned()], 1);
+    }
+    (repository.dirty.clone(), repository.dirty_total)
+}
+
+fn latest(live: &LiveView, seen: &mut BTreeSet<String>) -> Vec<String> {
+    let mut rows = Vec::new();
+    if let Some(turn) = &live.turn {
+        rows.push(format!(
+            "{} {}: {}",
+            turn.start,
+            if turn.completed { "completed" } else { "open" },
+            counts(turn.commands, turn.patches, turn.errors)
+        ));
+        if let Some(prompt) = &turn.prompt {
+            rows.push(format!("prompt: {prompt}"));
+        }
+    }
+    if let Some(answer) = &live.latest_final {
+        seen.insert(normalized(&answer.text));
+        rows.push(format!("last answer: {answer}"));
+    }
+    rows
+}
+
+fn recent(live: &LiveView, seen: &mut BTreeSet<String>) -> Vec<String> {
+    live.recent
+        .iter()
+        .skip(usize::from(live.turn.is_some()))
+        .map(|turn| {
+            let answer = turn
+                .final_answer
+                .as_ref()
+                .filter(|answer| seen.insert(normalized(&answer.text)))
+                .map_or_else(String::new, |answer| format!(" — {answer}"));
+            format!(
+                "{} {}{answer}",
+                turn.start,
+                counts(turn.commands, turn.patches, turn.errors)
+            )
+        })
+        .collect()
+}
+
+fn counts(commands: u64, patches: u64, errors: u64) -> String {
+    format!("{commands} commands, {patches} patches, {errors} errors")
+}
+
+fn direction(row: &RetiredDirectionView) -> String {
+    format!(
+        "{} {} (authored {}): {}",
+        row.key, row.disposition, row.published, row.text
+    )
+}
+
+fn board_row(board: &BoardGlanceView, peer_claims: Option<usize>) -> String {
+    let unclaimed = if board.unclaimed.is_empty() {
+        "no unclaimed pending work".to_owned()
+    } else {
+        format!(
+            "unclaimed pending: {}",
+            board
+                .unclaimed
+                .iter()
+                .map(|(phase, count)| format!("{phase} {count}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let peers = peer_claims.map_or_else(
+        || "peer claims unknown".to_owned(),
+        |count| format!("{count} peer claims"),
+    );
+    let partial = if board.partial {
+        "; scan stopped early"
+    } else {
+        ""
+    };
+    format!("{unclaimed}; {peers}{partial}")
+}
+
+/// Casefolded, whitespace-collapsed text, so one answer is shown once.
+fn normalized(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn clip_row(row: String) -> String {
+    clip(row, ROW_BYTES)
+}
+
+fn clip_fold(row: String) -> String {
+    clip(row, FOLD_BYTES - 1)
+}
+
+fn clip(mut row: String, bytes: usize) -> String {
+    if row.len() > bytes {
+        let end = row.floor_char_boundary(bytes - '…'.len_utf8());
+        row.truncate(end);
+        row.push('…');
+    }
+    row
+}
+
+#[cfg(test)]
+mod tests {
+    use wire::output::{Bounded, clip};
+
+    use super::super::model::{
+        BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, RecentTurnView,
+        Report, RepositoryGlanceView, RetiredDirectionView,
+    };
+    use super::{BRIEFING_BYTES, fold};
+
+    fn text(bytes: usize) -> wire::output::ClippedText {
+        clip(&"word ".repeat(bytes / 5), bytes)
+    }
+
+    /// A briefing whose every section holds `rows` rows of about `bytes`.
+    fn recall(rows: usize, bytes: usize) -> Report {
+        Report::Recall {
+            asks: Some(Bounded {
+                rows: (0..rows)
+                    .map(|index| OutstandingAskView {
+                        directive: format!("d{index}"),
+                        key: format!("key{index}"),
+                        stage: "new".to_owned(),
+                        text: text(bytes),
+                        attachments: Vec::new(),
+                        authored: "2026-01-01T00:00:00Z".to_owned(),
+                        expires: "never".to_owned(),
+                    })
+                    .collect(),
+                omission: None,
+            }),
+            held_work: HeldWorkView {
+                thread: Some("thread".to_owned()),
+                lane: Some("lane".to_owned()),
+                own_claim: Some(HeldClaimView {
+                    handle: "TASK-held".to_owned(),
+                    project: "p".to_owned(),
+                    phase: "todo".to_owned(),
+                    status: "pending".to_owned(),
+                    title: "held title".to_owned(),
+                    lease_expiry: None,
+                    flow: vec!["todo".to_owned(), "review".to_owned()],
+                    description: Some(text(bytes)),
+                    acceptance: (0..rows).map(|_| text(bytes)).collect(),
+                }),
+                peer_claims: Some(rows),
+            },
+            posture: None,
+            directions: (0..rows)
+                .map(|index| RetiredDirectionView {
+                    key: format!("old{index}"),
+                    disposition: "acked".to_owned(),
+                    published: "2026-01-01T00:00:00Z".to_owned(),
+                    text: text(bytes),
+                })
+                .collect(),
+            board: Some(BoardGlanceView {
+                unclaimed: vec![("todo".to_owned(), rows)],
+                partial: false,
+            }),
+            repository: Some(RepositoryGlanceView {
+                dirty: (0..rows).map(|index| format!(" M file{index}")).collect(),
+                dirty_total: rows,
+                commits: (0..rows)
+                    .map(|index| format!("abc{index} subject"))
+                    .collect(),
+                unreadable: None,
+            }),
+            unknowns: Vec::new(),
+            live: LiveView {
+                turn: None,
+                latest_final: None,
+                compacted: None,
+                recent: (0..rows)
+                    .map(|index| RecentTurnView {
+                        start: format!("2026-01-01T00:00:{index:02}Z"),
+                        completed: true,
+                        commands: 1,
+                        patches: 1,
+                        errors: 0,
+                        final_answer: Some(text(bytes)),
+                    })
+                    .collect(),
+                touched: (0..rows).map(|index| format!("src/{index}.rs")).collect(),
+                history: Vec::new(),
+            },
+            sources: Vec::new(),
+            residues: 0,
+            digest: String::new(),
+        }
+    }
+
+    /// Lines naming withheld rows, each with the exact command that reads them.
+    fn folds(page: &str) -> Vec<&str> {
+        page.lines()
+            .filter(|line| line.starts_with("- … "))
+            .collect()
+    }
+
+    #[test]
+    fn a_small_briefing_is_whole_but_names_rows_its_source_withheld() {
+        let mut report = recall(2, 40);
+        let page = fold(&report, &[]);
+        assert!(folds(&page).is_empty(), "{page}");
+        assert!(!page.contains("folded away"), "{page}");
+
+        let Report::Recall { repository, .. } = &mut report else {
+            unreachable!()
+        };
+        repository.as_mut().expect("fixture repository").dirty_total = 5;
+        assert_eq!(
+            folds(&fold(&report, &[])),
+            ["- … 3 more: `git status --short`"]
+        );
+    }
+
+    #[test]
+    fn an_oversized_briefing_folds_under_its_ceiling_and_names_every_cut() {
+        for (rows, bytes) in [(8, 400), (16, 1024), (64, 2000)] {
+            let page = fold(&recall(rows, bytes), &["/t/x.jsonl".to_owned()]);
+            assert!(
+                page.len() <= BRIEFING_BYTES,
+                "{rows}x{bytes}: {}",
+                page.len()
+            );
+            // Every cut names a command, and every section either appears
+            // or is listed as folded away under the typed read.
+            for line in folds(&page) {
+                assert!(
+                    line.contains("more: `spice ") || line.contains("more: `git "),
+                    "{line}"
+                );
+            }
+            for title in ["Recent turns", "Recently touched paths"] {
+                assert!(
+                    page.contains(&format!("## {title}")) || page.contains("folded away"),
+                    "{rows}x{bytes}: {title} vanished\n{page}"
+                );
+            }
+            assert!(page.ends_with('\n'));
+            assert!(page.contains("`spice session sweep /t/x.jsonl --limit 4`"));
+        }
+    }
+
+    #[test]
+    fn an_unread_inbox_is_not_an_empty_inbox() {
+        let mut report = recall(1, 40);
+        let Report::Recall { asks, .. } = &mut report else {
+            unreachable!()
+        };
+        asks.as_mut().expect("fixture asks").rows.clear();
+        assert!(!fold(&report, &[]).contains("## Pending steering"));
+
+        let Report::Recall { asks, .. } = &mut report else {
+            unreachable!()
+        };
+        *asks = None;
+        assert!(fold(&report, &[]).contains("## Pending steering\n- unread; see Unknown\n"));
+    }
+
+    #[test]
+    fn binding_authority_outranks_working_set() {
+        let page = fold(&recall(64, 2000), &[]);
+        let steering = page.find("## Pending steering").expect("steering leads");
+        let held = page.find("## Held claim").expect("held work survives");
+        assert!(steering < held);
+        assert!(page.contains("key0 (new"), "the first ask is shown: {page}");
+        assert!(page.contains("TASK-held [p] todo: held title"));
+        // Pressure folds the lowest-ranked sections first.
+        assert!(page.contains("folded away"), "{page}");
+        assert!(!page.contains("## Recently touched paths"));
+    }
+
+    #[test]
+    fn one_answer_is_shown_once() {
+        let mut report = recall(1, 40);
+        let Report::Recall { live, .. } = &mut report else {
+            unreachable!()
+        };
+        live.recent[0].final_answer = Some(clip("the one distinctive answer", 80));
+        let answer = live.recent[0].final_answer.clone();
+        live.latest_final = answer.clone();
+        live.recent.insert(
+            0,
+            RecentTurnView {
+                start: "later".to_owned(),
+                completed: false,
+                commands: 0,
+                patches: 0,
+                errors: 0,
+                final_answer: None,
+            },
+        );
+        live.turn = Some(super::super::model::LiveTurnView {
+            start: "later".to_owned(),
+            end: None,
+            completed: false,
+            commands: 0,
+            patches: 0,
+            errors: 0,
+            prompt: None,
+        });
+        let page = fold(&report, &[]);
+        let answer = answer.expect("fixture answer").text;
+        assert_eq!(page.matches(answer.as_str()).count(), 1, "{page}");
+    }
+}

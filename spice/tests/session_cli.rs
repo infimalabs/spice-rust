@@ -104,8 +104,6 @@ fn reply_forms_in(
     let text = invoke_in(current_dir, argv, environment);
     assert_eq!(text.code, Some(0), "text stderr: {}", utf8(&text.err));
     assert!(text.err.is_empty(), "successful text reply has no stderr");
-    let body: Value = serde_json::from_slice(&text.out).expect("text form is the typed body");
-    assert_eq!(body["session"], expected);
 
     let mut structured_argv = vec!["--json".to_owned()];
     structured_argv.extend_from_slice(argv);
@@ -128,9 +126,25 @@ fn reply_forms_in(
     let envelope: Value =
         serde_json::from_slice(&structured.out).expect("structured form is an outcome DTO");
     assert_eq!(envelope["kind"], "reply");
-    assert_eq!(envelope["body"], body, "both forms cross the same DTO");
+    let body = envelope["body"].clone();
+    assert_eq!(body["session"], expected);
+    if expected == "recall" {
+        // The briefing speaks its folded page; JSON keeps the typed rows.
+        assert!(
+            text.out.len() <= BRIEFING_BYTES,
+            "the folded briefing stays under its ceiling: {}",
+            text.out.len()
+        );
+        assert!(serde_json::from_slice::<Value>(&text.out).is_err());
+    } else {
+        let typed: Value = serde_json::from_slice(&text.out).expect("text form is the typed body");
+        assert_eq!(typed, body, "both forms cross the same DTO");
+    }
     body
 }
+
+/// The folded briefing's byte ceiling.
+const BRIEFING_BYTES: usize = 9_600;
 
 fn refusal(argv: &[String], environment: &[(&str, String)], expected_reason: &str) -> Value {
     let mut structured_argv = vec!["--json".to_owned()];

@@ -353,6 +353,48 @@ pub(crate) struct HeldClaimView {
     pub(crate) status: String,
     pub(crate) title: String,
     pub(crate) lease_expiry: Option<String>,
+    /// The phases the task walks, so the held phase reads in its sequence.
+    pub(crate) flow: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<ClippedText>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) acceptance: Vec<ClippedText>,
+}
+
+/// One operator direction this lane already retired, newest first: context
+/// for what the lane was asked, never pending authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetiredDirectionView {
+    pub(crate) key: String,
+    pub(crate) disposition: String,
+    pub(crate) published: String,
+    pub(crate) text: ClippedText,
+}
+
+/// Shared work no actor holds, by phase; peers' own work stays a count in
+/// held work, since another agent's task is not this agent's business.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BoardGlanceView {
+    /// Pending unclaimed tasks per phase, in phase-name order.
+    pub(crate) unclaimed: Vec<(String, usize)>,
+    /// Whether the scan stopped at its page ceiling before the whole board.
+    pub(crate) partial: bool,
+}
+
+/// The checkout's working state: uncommitted paths and the newest commits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepositoryGlanceView {
+    /// `git status --porcelain` rows, at most the glance's ceiling.
+    pub(crate) dirty: Vec<String>,
+    pub(crate) dirty_total: usize,
+    /// `git log --oneline` rows, newest first.
+    pub(crate) commits: Vec<String>,
+    /// Why `git` could not read the checkout; the rows are then empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unreadable: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -415,7 +457,27 @@ pub(crate) struct LiveView {
     pub(crate) turn: Option<LiveTurnView>,
     pub(crate) latest_final: Option<ClippedText>,
     pub(crate) compacted: Option<String>,
+    /// Turns since the compaction before the latest, newest first, so a
+    /// briefing read after a compaction still shows what it folded away.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) recent: Vec<RecentTurnView>,
+    /// Paths those turns touched, most recently touched first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) touched: Vec<String>,
     pub(crate) history: Vec<SpiceCommand>,
+}
+
+/// One recent turn as its outcome: what it did and what it last said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RecentTurnView {
+    pub(crate) start: String,
+    pub(crate) completed: bool,
+    pub(crate) commands: u64,
+    pub(crate) patches: u64,
+    pub(crate) errors: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) final_answer: Option<ClippedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -457,11 +519,21 @@ pub(crate) enum Report {
         asks: Option<Bounded<OutstandingAskView>>,
         held_work: HeldWorkView,
         posture: Option<PostureView>,
+        /// Operator direction this lane already retired, newest first.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        directions: Vec<RetiredDirectionView>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        board: Option<BoardGlanceView>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repository: Option<RepositoryGlanceView>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         unknowns: Vec<AuthorityUnknown>,
         live: LiveView,
         sources: Vec<SourceView>,
         residues: usize,
+        /// The folded text page an agent reads; JSON keeps the typed rows.
+        #[serde(skip)]
+        digest: String,
     },
     Sweep {
         sources: Vec<SourceView>,
@@ -540,6 +612,16 @@ pub(crate) enum Report {
     },
     /// A page written whole to the file its `--export` named.
     Exported { export: Export },
+}
+
+impl Report {
+    /// The briefing's folded page; every other report speaks its typed body.
+    pub(crate) fn text(&self) -> Option<&str> {
+        match self {
+            Self::Recall { digest, .. } => Some(digest),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]

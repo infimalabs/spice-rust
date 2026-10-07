@@ -542,7 +542,7 @@ fn ensure_context(
         )));
     }
     let text = format!(
-        "Renewal successor context: previous agent thread {}. Resolve its transcript with `spice session thread {}`; then run `spice session briefing PATH` and `spice session sweep PATH --limit 4` using the returned transcript path before continuing.",
+        "Renewal successor context: previous agent thread {}. Your launch briefing names the transcript it read; when that is not this thread, resolve it with `spice session thread {}` and run `spice session briefing PATH` and `spice session sweep PATH --limit 4` on the returned path before continuing.",
         predecessor.thread, predecessor.thread,
     );
     let (mut proposal, published) = super::super::steering::internal_write(epoch)?;
