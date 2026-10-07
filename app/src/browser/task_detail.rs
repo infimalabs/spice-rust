@@ -3,6 +3,13 @@
 use super::*;
 use crate::browser::clock::{TaskTimePresentation, task_time};
 use crate::work::TaskOverviewSelection;
+
+#[derive(Clone)]
+pub(super) struct TrustGrantRequest {
+    pub task: TaskStamp,
+    pub revision: wire::Seq,
+    pub digest: wire::Digest,
+}
 pub(super) struct Controls {
     pub selected: UseStateHandle<Option<TaskOverviewSelection>>,
     pub presented: UseStateHandle<bool>,
@@ -11,11 +18,15 @@ pub(super) struct Controls {
     pub sheet_ref: NodeRef,
     /// Override the captured launch control with a stable surviving element.
     pub return_focus_to: Callback<web_sys::Element>,
+    pub blocker_review: UseStateHandle<bool>,
+    pub blocker_review_button_ref: NodeRef,
+    pub blocker_review_close_ref: NodeRef,
     pub notes: NoteComposers,
     /// Read one task again without changing the selected set.
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
+    pub grant_trust: Callback<TrustGrantRequest>,
 }
 
 /// The overview the current view asks for: currently a route's singular task,
@@ -45,6 +56,9 @@ pub(super) fn use_controls(
     let closing = use_state_eq(|| false);
     let close_ref = use_node_ref();
     let sheet_ref = use_node_ref();
+    let blocker_review = use_state_eq(|| false);
+    let blocker_review_button_ref = use_node_ref();
+    let blocker_review_close_ref = use_node_ref();
     let notes = NoteComposers {
         state: use_mut_ref(BTreeMap::new),
         published: use_state(BTreeMap::new),
@@ -60,9 +74,14 @@ pub(super) fn use_controls(
     );
     let request_close = {
         let closing = closing.clone();
+        let blocker_review = blocker_review.clone();
         Callback::from(move |()| {
-            closing.set(true);
-            close.emit(());
+            if *blocker_review {
+                blocker_review.set(false);
+            } else {
+                closing.set(true);
+                close.emit(());
+            }
         })
     };
     let complete_close =
@@ -81,6 +100,10 @@ pub(super) fn use_controls(
         &selected,
         closing.clone(),
     );
+    {
+        let blocker_review = blocker_review.clone();
+        use_effect_with((*selected).clone(), move |_| blocker_review.set(false));
+    }
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
@@ -98,6 +121,11 @@ pub(super) fn use_controls(
         sheet_ref.clone(),
         return_focus.clone(),
     );
+    use_blocker_review_focus(
+        *blocker_review,
+        blocker_review_button_ref.clone(),
+        blocker_review_close_ref.clone(),
+    );
     overlay::use_escape_owner(
         selected.is_some() && !*closing && mounted,
         request_close.clone(),
@@ -106,7 +134,8 @@ pub(super) fn use_controls(
         let return_focus = return_focus.clone();
         Callback::from(move |target| *return_focus.borrow_mut() = Some(target))
     };
-    let submit_note = note_submit_callback(sender, surface, notes.clone());
+    let submit_note = note_submit_callback(sender.clone(), surface.clone(), notes.clone());
+    let grant_trust = trust_grant_callback(sender, surface);
     Controls {
         selected,
         presented,
@@ -114,11 +143,52 @@ pub(super) fn use_controls(
         close_ref,
         return_focus_to,
         sheet_ref,
+        blocker_review,
+        blocker_review_button_ref,
+        blocker_review_close_ref,
         notes,
         request,
         close: request_close,
         submit_note,
+        grant_trust,
     }
+}
+
+fn trust_grant_callback(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+) -> Callback<TrustGrantRequest> {
+    Callback::from(move |request: TrustGrantRequest| {
+        let reserved = {
+            let mut data = surface.write();
+            data.as_mut().is_some_and(|runtime| {
+                runtime.begin_trust_grant(&request.task, request.revision, &request.digest)
+            })
+        };
+        if !reserved {
+            return;
+        }
+        surface.set(surface.publication());
+        if !admit_action(
+            &sender,
+            ClientAction::TrustGrant {
+                task: request.task,
+                revision: request.revision,
+                digest: request.digest.clone(),
+            },
+        ) {
+            if let Some(runtime) = surface.write().as_mut() {
+                runtime.settle_trust_grant(
+                    request.digest,
+                    Some(
+                        "The browser could not queue this approval. Retry when connected."
+                            .to_owned(),
+                    ),
+                );
+            }
+            surface.set(surface.publication());
+        }
+    })
 }
 
 /// Follow the requested task set: show it, read every task once a runtime
@@ -261,6 +331,27 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
                 let _ = window.cancel_animation_frame(frame);
                 drop(callback);
             }
+        }
+    });
+}
+
+/// Move focus into the sheet-local blocker review and back to its launcher.
+#[hook]
+fn use_blocker_review_focus(open: bool, launcher: NodeRef, close: NodeRef) {
+    let prior = use_mut_ref(|| false);
+    use_effect_with(open, move |open| {
+        let target = if *open {
+            close.cast::<web_sys::HtmlElement>()
+        } else if *prior.borrow() {
+            launcher.cast::<web_sys::HtmlElement>()
+        } else {
+            None
+        };
+        *prior.borrow_mut() = *open;
+        if let Some(target) = target {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = target.focus_with_options(&options);
         }
     });
 }

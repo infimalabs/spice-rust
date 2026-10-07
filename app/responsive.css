@@ -79,6 +79,9 @@
   .work-detail { width: 100vw; }
   .work-detail-header,
   .work-detail-content,
+  .work-blocker-rail,
+  .work-blocker-review-header,
+  .work-blocker-review-body,
   .work-overview-map,
   .work-overview-jobs,
   .work-overview-details { padding-inline: 14px; }
@@ -96,4 +99,13 @@
   .work-map-viewport { height: 18rem; }
   .work-detail-identity { align-items: flex-start; flex-direction: column; }
   .work-detail-identity button { width: 100%; }
+  .work-blocker-rail {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    block-size: 7rem;
+  }
+  .work-blocker-review-open { grid-column: 1 / -1; width: 100%; }
+  .work-blocker-review-header { align-items: stretch; flex-direction: column; gap: 10px; }
+  .work-blocker-review-header button { width: 100%; }
+  .work-blocker-card { grid-template-columns: 1fr; }
+  .work-blocker-card > button { width: 100%; }
 }

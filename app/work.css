@@ -46,7 +46,7 @@
   z-index: 1;
   width: min(46rem, calc(100vw - 3rem));
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   border: 0;
   border-left: var(--app-control-edge);
   background: color-mix(in srgb, var(--panel) 96%, var(--page));
@@ -56,6 +56,7 @@
     opacity var(--app-motion-fast) var(--app-ease-standard),
     transform var(--app-motion-settle) var(--app-ease-standard);
 }
+.work-detail-frame { height: 100%; overflow: auto; overscroll-behavior: contain; }
 
 .work-detail-layer[data-work-detail-state="open"] .work-detail-backdrop { opacity: 1; }
 .work-detail-layer[data-work-detail-state="open"] .work-detail {
@@ -177,15 +178,105 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.work-detail-blockers {
-  margin: 14px 0 0;
-  padding: 9px 11px;
-  border-radius: var(--app-radius-compact);
-  background: var(--accent-soft);
+.work-blocker-rail {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  block-size: 4.5rem;
+  padding: 9px 22px;
+  border-bottom: var(--app-edge-soft);
+  background: var(--control-surface-soft);
   color: var(--muted);
-  font-size: .75rem;
 }
-.work-detail-blockers.active { background: var(--danger-soft); color: var(--danger); }
+.work-blocker-rail.active {
+  background: color-mix(in srgb, var(--danger-soft) 76%, var(--panel));
+  color: var(--ink);
+}
+.work-blocker-rail-mark {
+  display: grid;
+  place-items: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-radius: 50%;
+  color: var(--muted);
+  font: 800 .78rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.work-blocker-rail.active .work-blocker-rail-mark {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.work-blocker-rail-copy { display: grid; min-width: 0; gap: 2px; }
+.work-blocker-rail-copy strong { font-size: .76rem; }
+.work-blocker-rail-copy span {
+  overflow: hidden;
+  font-size: .68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-blocker-review-open { min-width: 7.5rem; }
+.work-blocker-review {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--panel) 97%, var(--page));
+}
+.work-blocker-review-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  border-bottom: var(--app-control-edge);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+.work-blocker-review-header h2 { margin: 2px 0 0; font-size: 1.15rem; line-height: 1.25; }
+.work-blocker-review-body { display: grid; gap: 18px; padding: 18px 22px 32px; }
+.work-blocker-review-intro { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.5; }
+.work-blocker-task {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-inset);
+  background: var(--control-surface-soft);
+}
+.work-blocker-task > header { min-width: 0; }
+.work-blocker-task h3 { margin: 2px 0 3px; font-size: .92rem; line-height: 1.3; }
+.work-blocker-task code { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
+.work-blocker-list { display: grid; gap: 8px; }
+.work-blocker-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px;
+  border-left: 3px solid var(--warning);
+  border-radius: var(--app-radius-compact);
+  background: var(--panel);
+}
+.work-blocker-card--action { border-left-color: var(--danger); }
+.work-blocker-card strong { font-size: .78rem; }
+.work-blocker-card p { margin: 4px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
+.work-blocker-card code { display: block; margin-top: 7px; font-size: .66rem; overflow-wrap: anywhere; }
+.work-blocker-card > button { align-self: center; min-width: 8.75rem; }
+.work-blocker-state {
+  color: var(--warning);
+  font-size: .66rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+.work-blocker-issue { color: var(--danger) !important; }
+.work-blocker-progress { color: var(--accent) !important; }
 
 .work-detail-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .work-detail-link {

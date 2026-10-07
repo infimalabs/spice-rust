@@ -20,8 +20,12 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub can_close: bool,
     pub close_ref: &'a NodeRef,
     pub sheet_ref: &'a NodeRef,
+    pub blocker_review: &'a UseStateHandle<bool>,
+    pub blocker_review_button_ref: &'a NodeRef,
+    pub blocker_review_close_ref: &'a NodeRef,
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
+    pub grant_trust: Callback<task_detail::TrustGrantRequest>,
     pub request_task: Callback<TaskStamp>,
     pub open_overview: Callback<TaskOverviewSelection>,
     pub retry_relations: Callback<MouseEvent>,
@@ -39,6 +43,11 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     };
     let focus_task = focus_task_callback();
     let count = render.selection.tasks().len();
+    let blockers = super::work_blockers::BlockerPresentation::new(
+        render.work,
+        render.selection,
+        render.runtime,
+    );
     html! {
         <div
             class="work-detail-layer"
@@ -60,61 +69,75 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 data-task-count={count.to_string()}
                 data-task-stamps={render.selection.tasks().iter().map(ToString::to_string).collect::<Vec<_>>().join(" ")}
             >
-                <header class="work-detail-header">
-                    <div>
-                        <p class="work-detail-kicker">{"Task overview"}</p>
-                        <h2 id="work-detail-title">{overview_title(render.selection)}</h2>
-                    </div>
-                    <button
-                        ref={render.close_ref.clone()}
-                        type="button"
-                        class="work-detail-close app-compact-control"
-                        aria-label="Close task overview"
-                        onclick={close_click}
-                    >{"Close"}</button>
-                </header>
-                {work_map::render(work_map::WorkMapRender {
-                    selection: render.selection,
-                    state: render.map,
-                    focus_task: focus_task.clone(),
-                    open_overview: render.open_overview.clone(),
-                    work: render.work,
-                    runtime: render.runtime,
-                    retry: render.retry_relations.clone(),
-                })}
-                if let Some(lanes) = render.lanes {
-                    {super::work_jobs::render(&lanes.lanes)}
-                }
-                <section class="work-overview-details" aria-labelledby="work-overview-details-title">
-                    <div class="work-map-heading">
-                        <h3 id="work-overview-details-title">{"Task details"}</h3>
-                        <span>{format!("{count} selected")}</span>
-                    </div>
-                    if render.selection.is_empty() {
-                        <p class="work-map-empty">{"No task details exist for this selection."}</p>
-                    } else {
-                        {for render.selection.tasks().iter().map(|task| {
-                            let detail = render.runtime.and_then(|runtime| runtime.task_detail(task));
-                            html! {
-                                <article
-                                    key={task.to_string()}
-                                    class="work-overview-task"
-                                    data-task-stamp={task.to_string()}
-                                    tabindex="-1"
-                                    aria-labelledby={format!("work-overview-task-title-{task}")}
-                                >
-                                    <div class="work-overview-task-heading">
-                                        <p class="work-detail-kicker">{"Selected task"}</p>
-                                        <h3 id={format!("work-overview-task-title-{task}")}>
-                                            {detail_title(detail, task)}
-                                        </h3>
-                                    </div>
-                                    {render_detail_body(&render, task, detail, &focus_task)}
-                                </article>
-                            }
-                        })}
+                <div
+                    class="work-detail-frame"
+                    inert={(**render.blocker_review).then_some("true")}
+                    aria-hidden={(**render.blocker_review).to_string()}
+                >
+                    <header class="work-detail-header">
+                        <div>
+                            <p class="work-detail-kicker">{"Task overview"}</p>
+                            <h2 id="work-detail-title">{overview_title(render.selection)}</h2>
+                        </div>
+                        <button
+                            ref={render.close_ref.clone()}
+                            type="button"
+                            class="work-detail-close app-compact-control"
+                            aria-label="Close task overview"
+                            onclick={close_click}
+                        >{"Close"}</button>
+                    </header>
+                    {blockers.render_rail(render.blocker_review, render.blocker_review_button_ref)}
+                    {work_map::render(work_map::WorkMapRender {
+                        selection: render.selection,
+                        state: render.map,
+                        focus_task: focus_task.clone(),
+                        open_overview: render.open_overview.clone(),
+                        work: render.work,
+                        runtime: render.runtime,
+                        retry: render.retry_relations.clone(),
+                    })}
+                    if let Some(lanes) = render.lanes {
+                        {super::work_jobs::render(&lanes.lanes)}
                     }
-                </section>
+                    <section class="work-overview-details" aria-labelledby="work-overview-details-title">
+                        <div class="work-map-heading">
+                            <h3 id="work-overview-details-title">{"Task details"}</h3>
+                            <span>{format!("{count} selected")}</span>
+                        </div>
+                        if render.selection.is_empty() {
+                            <p class="work-map-empty">{"No task details exist for this selection."}</p>
+                        } else {
+                            {for render.selection.tasks().iter().map(|task| {
+                                let detail = render.runtime.and_then(|runtime| runtime.task_detail(task));
+                                html! {
+                                    <article
+                                        key={task.to_string()}
+                                        class="work-overview-task"
+                                        data-task-stamp={task.to_string()}
+                                        tabindex="-1"
+                                        aria-labelledby={format!("work-overview-task-title-{task}")}
+                                    >
+                                        <div class="work-overview-task-heading">
+                                            <p class="work-detail-kicker">{"Selected task"}</p>
+                                            <h3 id={format!("work-overview-task-title-{task}")}>
+                                                {detail_title(detail, task)}
+                                            </h3>
+                                        </div>
+                                        {render_detail_body(&render, task, detail, &focus_task)}
+                                    </article>
+                                }
+                            })}
+                        }
+                    </section>
+                </div>
+                {blockers.render_review(
+                    render.runtime,
+                    render.blocker_review,
+                    render.blocker_review_close_ref,
+                    render.runtime.is_some_and(|runtime| runtime.offers(wire::CommandKind::TrustGrant)),
+                    &render.grant_trust,
+                )}
             </aside>
         </div>
     }
@@ -244,7 +267,6 @@ fn render_available(
                     {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
                 </dl>
                 {render_possession(row, render)}
-                {render_blockers(projected)}
             </section>
             <section class="work-detail-section">
                 <h3>{"Relationships"}</h3>
@@ -474,23 +496,6 @@ fn render_possession(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_
             </dl>
         </div>
     }
-}
-
-fn render_blockers(task: Option<&WorkTask<'_>>) -> Html {
-    let Some(task) = task else {
-        return html! { <p class="muted">{"Blocker projection is unavailable in the current board snapshot."}</p> };
-    };
-    let dependencies = task.blocked_dependencies().count();
-    let environment = task.environment_blocked();
-    let summary = match (dependencies, environment) {
-        (0, false) => "No active blockers.".to_owned(),
-        (0, true) => "Environmental requirements are not satisfied.".to_owned(),
-        (count, false) => format!("{count} incomplete dependencies."),
-        (count, true) => {
-            format!("{count} incomplete dependencies and unsatisfied environmental requirements.")
-        }
-    };
-    html! { <p class={classes!("work-detail-blockers", (dependencies > 0 || environment).then_some("active"))}>{summary}</p> }
 }
 
 fn render_relationships(

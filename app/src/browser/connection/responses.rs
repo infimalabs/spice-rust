@@ -340,6 +340,9 @@ fn apply_mutating_response(
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
             apply_submission_response(session, handles, id, lane, bytes)?,
         ),
+        PendingKind::TrustGrant { digest } => {
+            apply_trust_grant_response(session, runtime, digest, bytes)?
+        }
         PendingKind::Note { task, text, after } => {
             apply_note_response(session, handles, runtime, task, text, after, bytes)?
         }
@@ -348,6 +351,31 @@ fn apply_mutating_response(
         }
         _ => unreachable!("read and mutation response partitions are closed"),
     })
+}
+
+fn apply_trust_grant_response(
+    session: &Session,
+    runtime: &mut AppRuntime,
+    digest: wire::Digest,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<wire::intent::TrustAnswer>> =
+        admit_response(session, bytes)?;
+    let issue = match &admitted.get().outcome {
+        wire::Outcome::Reply(reply)
+            if reply.body.digest == digest && reply.body.standing == wire::TrustState::Granted =>
+        {
+            None
+        }
+        wire::Outcome::Reply(reply) => Some(format!(
+            "The resident answered for {} at {:?}; expected {digest} at granted.",
+            reply.body.digest, reply.body.standing,
+        )),
+        outcome => outcome_issue("Trust was not granted", outcome),
+    };
+    let refresh = issue.is_none();
+    runtime.settle_trust_grant(digest, issue);
+    Ok(CommandApplication::ordinary(refresh))
 }
 
 fn apply_note_response(

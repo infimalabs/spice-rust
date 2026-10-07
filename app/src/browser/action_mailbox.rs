@@ -213,6 +213,7 @@ impl PendingKind {
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
+            | Self::TrustGrant { .. }
             | Self::LaneRenewal { .. }
             | Self::MemberLane { .. }
             | Self::LaneRetune { .. }
@@ -444,6 +445,7 @@ impl ClientAction {
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
+            | Self::TrustGrant { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
             | Self::LaneState { .. }
