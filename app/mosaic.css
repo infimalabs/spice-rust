@@ -890,16 +890,37 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer :is(.team-send, .team-turbo)[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
 /* A round button lights only when pressing it does something. SEND fills
-   with one equal-area ring per agent a press would reach, member zero at the
-   core, under the shared gloss, its word on a flat plate set into the rings.
+   with a seamed pinwheel, one equal slice per agent a press would reach, under
+   a smooth raised dome; its word is inked straight into the dome in the page
+   color. Pressing pops the dome down, and its fold shows as a bright circle
+   near the rim until release.
    Raised states use distinct team accents: TURBO wears the reddish accent,
    while each slider's maximum stop keeps the second accent, blue. Unlit, both
    buttons keep the raised knob in the neutral surface of the resting QUIET thumb. */
-.team-composer .team-send[data-lit="true"] { border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-send-rings); }
+.team-composer .team-send[data-lit="true"] {
+  /* The knob face's own 150° light, laid over the slices, then a soft rim. */
+  --team-send-dome:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--app-highlight-source) 20%, transparent) 0%,
+      color-mix(in srgb, var(--app-highlight-source) 4%, transparent) 46%,
+      transparent 68%,
+      color-mix(in srgb, var(--app-shadow-source) 24%, transparent) 100%),
+    radial-gradient(circle closest-side, transparent 66%, color-mix(in srgb, var(--app-shadow-source) 26%, transparent));
+  border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent);
+  background: var(--team-send-dome), var(--team-send-pinwheel);
+}
 .team-composer .team-send[data-lit="true"] .team-send-word {
-  position: relative; z-index: 1; padding: 3px 4px;
-  border: 1px solid color-mix(in srgb, var(--muted) 55%, var(--app-shadow-source)); border-radius: var(--app-radius-pill);
-  background: var(--muted); color: var(--page);
+  position: relative; z-index: 1;
+  color: var(--page); text-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 34%, transparent);
+}
+.team-composer .team-send[data-lit="true"]:not(:disabled):active {
+  background:
+    radial-gradient(circle closest-side,
+      transparent 70%,
+      color-mix(in srgb, var(--app-shadow-source) 10%, transparent) 77%,
+      color-mix(in srgb, var(--app-highlight-source) 26%, transparent) 82.5%,
+      transparent 87%),
+    var(--team-send-dome), var(--team-send-pinwheel);
 }
 .team-composer .team-turbo[data-lit="true"] {
   --control-state-accent: var(--accent-3);

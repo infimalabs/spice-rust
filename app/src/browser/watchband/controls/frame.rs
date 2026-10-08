@@ -104,16 +104,16 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         Vec::new()
     };
     {
-        // The rings are a gradient over the lit accents; the app CSP refuses
+        // The pinwheel is a gradient over the lit accents; the app CSP refuses
         // style attributes, so the value reaches the button through CSSOM.
         let send = send.clone();
         use_effect_with(lit.clone(), move |lit| {
             if let Some(button) = send.cast::<web_sys::HtmlElement>() {
                 let style = button.style();
                 let _ = if lit.is_empty() {
-                    style.remove_property("--team-send-rings").map(drop)
+                    style.remove_property("--team-send-pinwheel").map(drop)
                 } else {
-                    style.set_property("--team-send-rings", &rings(lit))
+                    style.set_property("--team-send-pinwheel", &pinwheel(lit))
                 };
             }
         });
@@ -138,7 +138,6 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
                 class="team-send"
                 type="submit"
                 data-lit={(!lit.is_empty()).to_string()}
-                data-rings={lit.len().to_string()}
                 disabled={idle || !props.ready}
                 {title}
             ><span class="team-send-word">{"Send"}</span></button>
@@ -147,26 +146,28 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
     }
 }
 
-/// Concentric bands filling the button, member zero at the core. Every band
-/// holds an equal share of the face's area, so band `k` ends at `sqrt(k/n)` of
-/// the radius; a hairline seam opens each outer band, so neighbours read as
-/// separate rings even when two members share an accent.
-fn rings(accents: &[usize]) -> String {
-    let count = accents.len() as f64;
-    let mut gradient = String::from("radial-gradient(circle closest-side");
+/// Angular width of the seam that opens each pinwheel slice.
+const SEAM_DEGREES: f64 = 1.4;
+
+/// One equal slice per member in its accent, clockwise in member order from
+/// the left edge, so a pair splits the face into upper and lower halves. A
+/// darker seam opens each slice, so neighbours read as separate even when two
+/// members share an accent; a lone member fills the face whole.
+fn pinwheel(accents: &[usize]) -> String {
+    if let [accent] = accents {
+        return format!("var(--accent-{accent})");
+    }
+    let slice = 360.0 / accents.len() as f64;
+    let mut gradient = String::from("conic-gradient(from -90deg");
     for (index, accent) in accents.iter().enumerate() {
-        let inner = (index as f64 / count).sqrt() * 100.0;
-        let outer = ((index + 1) as f64 / count).sqrt() * 100.0;
-        if index == 0 {
-            let _ = write!(gradient, ", var(--accent-{accent}) 0 {outer:.2}%");
-        } else {
-            let _ = write!(
-                gradient,
-                ", color-mix(in srgb, var(--accent-{accent}) 55%, var(--app-shadow-source)) \
-                 {inner:.2}% calc({inner:.2}% + 1px)\
-                 , var(--accent-{accent}) calc({inner:.2}% + 1px) {outer:.2}%"
-            );
-        }
+        let start = index as f64 * slice;
+        let seam = start + SEAM_DEGREES;
+        let end = start + slice;
+        let _ = write!(
+            gradient,
+            ", color-mix(in srgb, var(--accent-{accent}) 50%, var(--app-shadow-source)) \
+             {start:.2}deg {seam:.2}deg, var(--accent-{accent}) {seam:.2}deg {end:.2}deg"
+        );
     }
     gradient.push(')');
     gradient
