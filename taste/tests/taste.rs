@@ -1,9 +1,6 @@
 use gate::PolicyContext;
 use listen::{Event, Locus, Prose, ProseRole, Usage};
-use taste::{
-    Bag, REMINDER_MARKER, Taste, Trigger, TriggerError, bag_identity, is_reminder_echo,
-    normalize_prose, reminder_identity, reminder_text,
-};
+use taste::{Bag, Taste, Trigger, TriggerError, bag_identity, normalize_prose, reminder_identity};
 use wire::FactKind;
 
 const BEHAVIOR: &str = include_str!("fixtures/behavior.txt");
@@ -109,19 +106,6 @@ fn bag_identity_covers_ordered_names_triggers_and_vendors() {
         reminder_identity(&"fallbacks".parse().expect("taste name"), BEHAVIOR),
         "bag and prose identities occupy distinct domains"
     );
-}
-
-#[test]
-fn the_reserved_marker_classifies_echo_before_matching_and_preserves_guidance() {
-    let message = "Keep one deterministic path.";
-    let rendered = reminder_text(message);
-
-    assert_eq!(rendered, "[TASTE] Keep one deterministic path.");
-    assert_eq!(rendered.strip_prefix("[TASTE] "), Some(message));
-    assert!(rendered.starts_with(REMINDER_MARKER));
-    assert!(is_reminder_echo(&rendered));
-    assert!(is_reminder_echo(&format!("> quoted {rendered}")));
-    assert!(!is_reminder_echo("ordinary prose about taste"));
 }
 
 #[test]

@@ -155,10 +155,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
         .revise_presentation(
             lane,
             message.locus,
-            "accepted presentation".to_owned(),
-            None,
-            Vec::new(),
-            Vec::new(),
+            serve::stream::MessagePresentation::plain("accepted presentation".to_owned()),
         )
         .expect("accepted card has a later presentation");
     tape.tee(APPEND).expect("another durable card is captured");

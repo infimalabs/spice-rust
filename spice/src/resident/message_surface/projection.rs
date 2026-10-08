@@ -286,11 +286,8 @@ pub(super) fn publish_agent_event(
 struct ProjectedEvent {
     activity: AgentActivityKind,
     locus: listen::Locus,
-    text: String,
+    presentation: serve::stream::MessagePresentation,
     provider_error: Option<wire::AgentProviderError>,
-    classifications: Vec<wire::MessageClassification>,
-    acknowledgement: Option<wire::MessageAcknowledgement>,
-    directive_contexts: Vec<wire::MessageDirective>,
     automatic_speech: Option<wire::AutomaticSpeech>,
     media: Vec<wire::Media>,
 }
@@ -319,11 +316,14 @@ fn project_agent_event(
     let ProjectedEvent {
         activity,
         locus,
-        text,
+        presentation:
+            serve::stream::MessagePresentation {
+                text,
+                acknowledgement,
+                classifications,
+                directive_contexts,
+            },
         provider_error,
-        classifications,
-        acknowledgement,
-        directive_contexts,
         automatic_speech,
         media,
     } = projected;
@@ -403,11 +403,8 @@ fn project_event_body(
         return Ok(Some(ProjectedEvent {
             activity: AgentActivityKind::Prose,
             locus: prose.locus,
-            text: presented.text,
-            acknowledgement: presented.acknowledgement,
+            presentation: presented,
             provider_error: None,
-            classifications: presented.classifications,
-            directive_contexts: presented.directive_contexts,
             automatic_speech,
             media: prose.media.clone(),
         }));
@@ -421,10 +418,7 @@ fn project_event_body(
                 activity: AgentActivityKind::Tool,
                 locus: tool.locus,
                 provider_error: None,
-                text,
-                acknowledgement: None,
-                classifications: Vec::new(),
-                directive_contexts: Vec::new(),
+                presentation: serve::stream::MessagePresentation::plain(text),
                 automatic_speech: None,
                 media,
             }
@@ -436,32 +430,28 @@ fn project_event_body(
             activity: AgentActivityKind::Reasoning,
             provider_error: None,
             locus: *locus,
-            text: reasoning_preview(parts),
-            acknowledgement: None,
-            classifications: Vec::new(),
-            directive_contexts: Vec::new(),
+            presentation: serve::stream::MessagePresentation::plain(reasoning_preview(parts)),
             automatic_speech: None,
             media: Vec::new(),
         },
         listen::Event::Compaction(compaction) => ProjectedEvent {
             activity: AgentActivityKind::Compaction,
             locus: compaction.locus,
-            text: compaction
-                .summary
-                .clone()
-                .filter(|summary| !summary.trim().is_empty())
-                .unwrap_or_else(|| "Context compacted".to_owned()),
+            presentation: serve::stream::MessagePresentation::plain(
+                compaction
+                    .summary
+                    .clone()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .unwrap_or_else(|| "Context compacted".to_owned()),
+            ),
             provider_error: None,
-            acknowledgement: None,
-            classifications: Vec::new(),
-            directive_contexts: Vec::new(),
             automatic_speech: None,
             media: Vec::new(),
         },
         listen::Event::Failure(failure) => ProjectedEvent {
             activity: AgentActivityKind::Failure,
             locus: failure.locus,
-            text: failure.message.clone(),
+            presentation: serve::stream::MessagePresentation::plain(failure.message.clone()),
             provider_error: failure
                 .provider
                 .as_ref()
@@ -471,9 +461,6 @@ fn project_event_body(
                     http_status: provider.http_status,
                     retryable: provider.retryable,
                 }),
-            acknowledgement: None,
-            classifications: Vec::new(),
-            directive_contexts: Vec::new(),
             automatic_speech: None,
             media: Vec::new(),
         },
@@ -481,14 +468,11 @@ fn project_event_body(
             activity: AgentActivityKind::SignOut,
             provider_error: None,
             locus: sign_out.locus,
-            text: format!(
+            presentation: serve::stream::MessagePresentation::plain(format!(
                 "{}\n\nSign in from a terminal with `{}`.",
                 sign_out.message.trim_end(),
                 sign_out.login
-            ),
-            acknowledgement: None,
-            classifications: Vec::new(),
-            directive_contexts: Vec::new(),
+            )),
             automatic_speech: None,
             media: Vec::new(),
         },
@@ -524,7 +508,10 @@ fn project_prose_presentation(
     prose: &listen::Prose,
     steering: Option<&PresentationDirectives>,
     event: PresentationEvent,
-) -> CommandResult<(PresentedMessageText, Option<wire::AutomaticSpeech>)> {
+) -> CommandResult<(
+    serve::stream::MessagePresentation,
+    Option<wire::AutomaticSpeech>,
+)> {
     let presented = present_steering_acknowledgements(&prose.text, steering, event)?;
     let automatic_speech = automatic_speech::classify(prose, steering, event);
     Ok((presented, automatic_speech))

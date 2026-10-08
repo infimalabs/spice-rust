@@ -281,9 +281,9 @@ sizes; prose wraps beside it and narrow rows shrink images evenly.
 Every attributable run between nested quote blocks is one speaker-owned hunk.
 The hunk starts with that source's control island, relative age, name, and one
 segmented classification pill. The pill orders ACK or NAK first, FINAL second
-when present, then TASTE, REVIEW, and BROADCAST roles; each segment keeps its
-own authenticated color and interaction. Ordinary prose begins immediately
-after that compact attribution sequence on the same line.
+when present, then the BROADCAST role; each segment keeps its own
+authenticated color and interaction. Ordinary prose begins immediately after
+that compact attribution sequence on the same line.
 Acknowledgment is one authenticated message disposition, not a source-text
 marker. Every direct hunk owned by the answering speaker mounts the same ACK or
 NAK segment in its signoff, including each resumed hunk around nested quotes;
@@ -291,6 +291,11 @@ quote-owned hunks do not inherit it. Pending settlement revises those repeated
 segments on the existing card without adding prose or changing hunk geometry.
 Literal `[ACK]`, `[ACK PENDING]`, and `[NAK]` text remains ordinary Markdown
 when no authenticated directive owns it.
+TASTE and REVIEW belong to the directive the resident sent, not to the card
+answering it. A quoted directive context whose typed provenance is a taste
+reminder or review feedback wears exactly one such pill right after its own
+source age and name, where its words begin. Literal `[TASTE]` or `[REVIEW]`
+in any prose remains ordinary Markdown.
 
 When that opening run continues into another paragraph, the later paragraph
 keeps the ordinary Markdown paragraph gap; making the first paragraph inline

@@ -76,16 +76,14 @@ fn math_aliases_preserve_code_escaped_literals_and_authenticated_ranges() {
     assert!(literals.html.contains("<code>\\(x\\) $$y$$</code>"));
     assert!(literals.html.contains("\\[not math\\]"));
 
-    let quoted = render_received_with_fixture_classifications(
-        "> \\[x^2\\]\n>\n> [REVIEW] Keep the current path.",
-        TestClassifications {
-            reviews: 1,
-            ..TestClassifications::default()
-        },
-    );
+    let quoted =
+        render_received_with_broadcasts("> \\[x^2\\]\n>\n> [BROADCAST] Keep the current path.", 1);
     assert!(quoted.html.contains("class=\"math math-display\""));
     assert_eq!(
-        quoted.html.matches("class=\"message-review-pill\"").count(),
+        quoted
+            .html
+            .matches("class=\"message-broadcast-pill\"")
+            .count(),
         1
     );
 }
@@ -204,14 +202,15 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     let media =
         Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=").expect("fixture media");
     let markdown = format!(
-        "{}\n\n> [REVIEW] remains literal.\n\n> [REVIEW] is authenticated.",
+        "{}\n\n> [BROADCAST] remains literal.\n\n> [BROADCAST] is authenticated.",
         media.reference_markdown().expect("media reference")
     );
-    let start = markdown.rfind("[REVIEW]").expect("second marker exists");
+    let start = markdown.rfind("[BROADCAST]").expect("second marker exists");
     let classification = MessageClassification {
         start: u32::try_from(start).expect("fixture offset fits"),
-        end: u32::try_from(start + wire::stream::REVIEW_MARKER.len()).expect("fixture offset fits"),
-        kind: MessageClassificationKind::Review,
+        end: u32::try_from(start + wire::stream::BROADCAST_MARKER.len())
+            .expect("fixture offset fits"),
+        kind: MessageClassificationKind::Broadcast,
     };
 
     let classifications = [classification];
@@ -231,106 +230,38 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     assert_eq!(
         rendered
             .html
-            .matches("class=\"message-review-pill\"")
+            .matches("class=\"message-broadcast-pill\"")
             .count(),
         1
     );
-    assert!(rendered.html.contains("[REVIEW] remains literal."));
+    assert!(rendered.html.contains("[BROADCAST] remains literal."));
     assert!(rendered.html.contains("is authenticated."));
 }
 
 #[test]
-fn authenticated_classification_markers_become_inline_pills() {
-    let rendered = render_received_with_fixture_classifications(
-        "> [REVIEW] APP-1kKRRsDR\n>\n\
-             > > missing current coverage\n>\n\
-             > Keep working the current task.\n\n\
-             [REVIEW] Ordinary prose remains unchanged.\n\n\
-             > [REVIEW] A second quoted marker remains unchanged.\n\n\
-             > `[REVIEW]` remains inline code.\n\n\
-             > ```text\n> [REVIEW] remains fenced code\n> ```\n\n\
+fn review_and_taste_words_are_ordinary_markdown() {
+    let rendered = render_received_with_broadcasts(
+        "> APP-1kKRRsDR\n>\n\
+             > > missing current coverage\n\n\
+             > [REVIEW] Quoted prose is not metadata.\n\n\
              > [TASTE] compatibility: Keep one tested path.\n\n\
-             > > [TASTE] fallbacks: Nested guidance keeps its own accent.\n\n\
-             > [TASTE] polling: Wait for completion.\n\n\
-             > [BROADCAST] Send this to every occupied agent.\n\n\
-             ACK: ordinary [TASTE] prose stays text.",
-        TestClassifications {
-            tastes: 3,
-            broadcasts: 1,
-            reviews: 1,
-        },
-    );
-    assert!(!rendered.html.contains("compatibility:"));
-    assert!(!rendered.html.contains("fallbacks:"));
-    assert!(!rendered.html.contains("polling:"));
-    assert!(rendered.html.contains("Keep one tested path."));
-    assert!(
-        rendered
-            .html
-            .contains("Nested guidance keeps its own accent.")
-    );
-    assert!(rendered.html.contains("Wait for completion."));
-    assert!(rendered.html.contains("data-task-handle=\"APP-1kKRRsDR\""));
-    assert!(rendered.html.contains("missing current coverage"));
-    assert!(rendered.html.contains("Keep working the current task."));
-    assert!(!rendered.html.contains("[REVIEW] APP-1kKRRsDR"));
-    assert!(
-        rendered
-            .html
-            .contains("[REVIEW] Ordinary prose remains unchanged.")
-    );
-    assert!(
-        rendered
-            .html
-            .contains("[REVIEW] A second quoted marker remains unchanged.")
-    );
-    assert!(rendered.html.contains("<code>[REVIEW]</code>"));
-    assert!(rendered.html.contains("[REVIEW] remains fenced code"));
-    assert!(rendered.html.contains("class=\"message-review-pill\""));
-    assert!(
-        rendered
-            .html
-            .contains("aria-label=\"Review classification\">REVIEW</span>")
-    );
-    assert_eq!(rendered.html.matches("message-review-pill").count(), 1);
-
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-broadcast-pill\"")
-            .count(),
+             > [BROADCAST] Send this to every occupied agent.",
         1,
     );
-
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-taste-pill\"")
-            .count(),
-        3,
-        "{}",
-        rendered.html,
-    );
-    assert_eq!(
-        rendered
-            .html
-            .matches("aria-label=\"Taste classification\">TASTE</span>")
-            .count(),
-        3,
-    );
+    assert!(rendered.html.contains("data-task-handle=\"APP-1kKRRsDR\""));
     assert!(
         rendered
-            .html
-            .contains("ACK: ordinary [TASTE] prose stays text.")
-    );
-
-    let unauthenticated = render_received("> [REVIEW] Quoted prose is not metadata.");
-    assert!(!unauthenticated.html.contains("message-review-pill"));
-    assert!(
-        unauthenticated
             .html
             .contains("[REVIEW] Quoted prose is not metadata.")
     );
+    assert!(
+        rendered
+            .html
+            .contains("[TASTE] compatibility: Keep one tested path.")
+    );
+    assert!(!rendered.html.contains("message-review-pill"));
+    assert!(!rendered.html.contains("message-taste-pill"));
+    assert_eq!(rendered.html.matches("message-broadcast-pill").count(), 1);
 }
 
 #[test]
@@ -339,14 +270,11 @@ fn broadcast_marker_is_idempotent_and_requires_authenticated_quote_metadata() {
     assert_eq!(marked, "[BROADCAST] Send this to every occupied agent.");
     assert_eq!(mark_broadcast(&marked), marked);
 
-    let classified = render_received_with_fixture_classifications(
+    let classified = render_received_with_broadcasts(
         "> [BROADCAST] Send this to every occupied agent.\n\n\
              > [BROADCAST] A second marker remains literal.\n\n\
              `[BROADCAST]` remains code.",
-        TestClassifications {
-            broadcasts: 1,
-            ..TestClassifications::default()
-        },
+        1,
     );
     assert_eq!(
         classified
@@ -390,38 +318,6 @@ fn acknowledgement_markers_remain_ordinary_markdown() {
     assert!(rendered.html.contains("[ACK PENDING] Direct prose."));
     assert!(rendered.html.contains("<code>[NAK]</code>"));
     assert!(rendered.html.contains("[ACK] fenced code"));
-}
-
-#[test]
-fn taste_metadata_neither_overreaches_nor_decorates_code() {
-    let one = render_received_with_tastes(
-        "> `[TASTE]` remains code.\n\n\
-             > [TASTE] first.\n\n\
-             > [TASTE] second remains literal.",
-        1,
-    );
-    assert_eq!(one.html.matches("class=\"message-taste-pill\"").count(), 1);
-    assert!(one.html.contains("<code>[TASTE]</code>"));
-    assert!(one.html.contains("[TASTE] second remains literal."));
-
-    let none = render_received_with_tastes("> [TASTE] untouched.", 0);
-    assert!(!none.html.contains("message-taste-pill"));
-    assert!(none.html.contains("[TASTE] untouched."));
-
-    let token = render_received_with_tastes("> [TASTE]ful is not a marker.", 1);
-    assert!(!token.html.contains("message-taste-pill"));
-    assert!(token.html.contains("[TASTE]ful is not a marker."));
-
-    let prefixed =
-        render_received_with_tastes("> prefix[TASTE] stays text.\n\n> [TASTE] actual.", 1);
-    assert_eq!(
-        prefixed
-            .html
-            .matches("class=\"message-taste-pill\"")
-            .count(),
-        1,
-    );
-    assert!(prefixed.html.contains("prefix[TASTE] stays text."));
 }
 
 #[test]

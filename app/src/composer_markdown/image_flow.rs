@@ -21,21 +21,25 @@ pub(super) struct Attribution {
     pub(super) controls_target: String,
     /// Source age and name, or the containing card's Yew signoff slot.
     pub(super) signoff: String,
-    /// Source disposition following its name.
+    /// Settled disposition of a quoted source, repeated with every signoff.
     pub(super) disposition: String,
+    /// The quoted directive's own kind, leading only the hunk where its words
+    /// begin.
+    pub(super) badge: String,
     /// Board provenance following the attributed layer's final word once.
     pub(super) task_tail: String,
 }
 
 impl Attribution {
-    fn lead_html(&self, quote_depth: usize) -> String {
+    fn lead_html(&self, quote_depth: usize, opening: bool) -> String {
         format!(
             "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
              data-message-quote-depth=\"{quote_depth}\"></span>\
-             <p class=\"message-attribution\">{}{}</p>",
+             <p class=\"message-attribution\">{}{}{}</p>",
             super::escape_html_attribute(&self.controls_target),
             self.signoff,
             self.disposition,
+            if opening { self.badge.as_str() } else { "" },
         )
     }
 }
@@ -148,6 +152,7 @@ fn lay_out_hunks<'a>(
     let mut events = Vec::new();
     let mut hunk = Vec::new();
     let mut hunk_tail = None;
+    let mut opened = false;
     for (index, (kind, block)) in blocks.into_iter().enumerate() {
         if matches!(kind, Block::Quote | Block::QuoteCard) {
             push_hunk(
@@ -156,6 +161,7 @@ fn lay_out_hunks<'a>(
                 attribution,
                 hunk_tail.take(),
                 quote_depth,
+                &mut opened,
             );
             events.extend(block);
         } else {
@@ -165,7 +171,14 @@ fn lay_out_hunks<'a>(
             hunk.push((kind, block));
         }
     }
-    push_hunk(&mut events, &mut hunk, attribution, hunk_tail, quote_depth);
+    push_hunk(
+        &mut events,
+        &mut hunk,
+        attribution,
+        hunk_tail,
+        quote_depth,
+        &mut opened,
+    );
     if tail.is_none() && !attribution.task_tail.is_empty() {
         events.push(MarkdownEvent::Html(
             format!(
@@ -207,21 +220,24 @@ fn last_word_end(block: &[MarkdownEvent<'_>]) -> Option<usize> {
 }
 
 /// Emit one hunk. `tail` names the hunk block and event position after which
-/// the speaker's board provenance follows its final word.
+/// the speaker's board provenance follows its final word; `opened` records
+/// whether an earlier hunk of this layer already led with the opening badge.
 fn push_hunk<'a>(
     events: &mut Vec<MarkdownEvent<'a>>,
     hunk: &mut Vec<(Block, Vec<MarkdownEvent<'a>>)>,
     attribution: &Attribution,
     tail: Option<(usize, usize)>,
     quote_depth: usize,
+    opened: &mut bool,
 ) {
     if hunk.is_empty() {
         return;
     }
     events.push(MarkdownEvent::Html(HUNK_OPEN.into()));
     events.push(MarkdownEvent::Html(
-        attribution.lead_html(quote_depth).into(),
+        attribution.lead_html(quote_depth, !*opened).into(),
     ));
+    *opened = true;
     let mut stacks = Vec::new();
     let mut content = Vec::new();
     for (index, (kind, mut block)) in hunk.drain(..).enumerate() {

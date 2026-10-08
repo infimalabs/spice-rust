@@ -8,13 +8,6 @@ use gate::{Applicability, PolicyContext, PolicyResolveError, RuleId, ScopeSelect
 use listen::{Event, Locus};
 use wire::{Digest, Domain, Name};
 
-/// Reserved prefix carried by every resident-authored taste reminder.
-///
-/// Runtime recognition checks for this exact marker before consulting the
-/// configured bag. That makes quoted or repeated reminder prose inert without
-/// teaching any individual taste about the messages other tastes emit.
-pub const REMINDER_MARKER: &str = "[TASTE]";
-
 /// One admitted candidate selector.
 ///
 /// Matching is case-insensitive over alphabetic words. Whitespace in a phrase
@@ -152,18 +145,6 @@ fn frame_count(framed: &mut Vec<u8>, count: usize) {
 fn frame_text(framed: &mut Vec<u8>, text: &str) {
     frame_count(framed, text.len());
     framed.extend_from_slice(text.as_bytes());
-}
-
-/// Whether authored prose is a reminder echo rather than a fresh candidate.
-#[must_use]
-pub fn is_reminder_echo(prose: &str) -> bool {
-    prose.contains(REMINDER_MARKER)
-}
-
-/// Render one actionable reminder without rewriting configured content.
-#[must_use]
-pub fn reminder_text(message: &str) -> String {
-    format!("{REMINDER_MARKER} {message}")
 }
 
 fn prose_tokens(text: &str) -> (Vec<Option<String>>, Vec<(usize, usize)>) {

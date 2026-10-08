@@ -737,6 +737,8 @@
 .markdown-body .message-attribution > :is(.message-quote-signoff, .message-signoff) {
   margin: 0;
 }
+/* A quoted directive's badge shares the signoff's type scale. */
+.markdown-body .message-attribution > .message-classification-group { font-size: .8125em; }
 /* The age keeps a natural word space before the name it dates. */
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;

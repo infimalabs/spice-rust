@@ -892,7 +892,7 @@ fn candidates_with_provenance(
                     line: checked_locus(hit.line())?,
                     column: checked_locus(hit.column())?,
                 },
-                text: taste::reminder_text(hit.message()),
+                text: hit.message().to_owned(),
             });
         }
     }
@@ -904,7 +904,7 @@ fn authored_prose(prose: &listen::Prose, provenance: &TasteDirectiveProvenance) 
     let mut eligible = String::with_capacity(authored.len());
     for terminated in authored.split_inclusive('\n') {
         let line = terminated.strip_suffix('\n').unwrap_or(terminated);
-        let quoted = line.trim_start().starts_with('>') || taste::is_reminder_echo(line);
+        let quoted = line.trim_start().starts_with('>');
         if !quoted {
             let response = steer::ack::scan::scan_acknowledgements(line, provenance)
                 .into_iter()

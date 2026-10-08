@@ -618,19 +618,24 @@ struct ClassificationMetrics {
 
 impl ClassificationMetrics {
     fn from_message(message: &wire::AgentMessage) -> Self {
-        let mut metrics = Self::default();
+        let badge_count = |badge| {
+            message
+                .directive_contexts
+                .iter()
+                .filter(|context| context.badge == Some(badge))
+                .count()
+        };
+        let mut metrics = Self {
+            tastes: badge_count(wire::DirectiveBadge::Taste),
+            broadcasts: message.classifications.len(),
+            reviews: badge_count(wire::DirectiveBadge::Review),
+            ..Self::default()
+        };
         match message.acknowledgement {
             Some(wire::MessageAcknowledgement::Acknowledged) => metrics.acknowledgements = 1,
             Some(wire::MessageAcknowledgement::Pending) => metrics.pending = 1,
             Some(wire::MessageAcknowledgement::Declined) => metrics.declines = 1,
             None => {}
-        }
-        for classification in &message.classifications {
-            match classification.kind {
-                wire::MessageClassificationKind::Taste => metrics.tastes += 1,
-                wire::MessageClassificationKind::Broadcast => metrics.broadcasts += 1,
-                wire::MessageClassificationKind::Review => metrics.reviews += 1,
-            }
         }
         metrics
     }

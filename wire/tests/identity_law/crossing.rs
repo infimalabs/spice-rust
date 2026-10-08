@@ -75,18 +75,19 @@ fn cover_environment_requirements() {
 }
 
 fn cover_message_classifications() {
-    let classification = |kind: MessageClassificationKind| MessageClassification {
-        start: 2,
-        end: 2 + u32::try_from(kind.marker().len()).expect("marker fits the wire range"),
-        kind,
-    };
     law(
         "MessageClassification",
-        &[
-            classification(MessageClassificationKind::Taste),
-            classification(MessageClassificationKind::Broadcast),
-            classification(MessageClassificationKind::Review),
-        ],
+        &[0, 2].map(|start| MessageClassification {
+            start,
+            end: start
+                + u32::try_from(MessageClassificationKind::Broadcast.marker().len())
+                    .expect("marker fits the wire range"),
+            kind: MessageClassificationKind::Broadcast,
+        }),
+    );
+    law(
+        "DirectiveBadge",
+        &[DirectiveBadge::Review, DirectiveBadge::Taste],
     );
     law(
         "MessageAcknowledgement",
@@ -840,12 +841,12 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             activity: AgentActivityKind::Prose,
             final_answer: false,
             acknowledgement: Some(MessageAcknowledgement::Acknowledged),
-            text: "[TASTE] settled".to_owned(),
+            text: "[BROADCAST] settled".to_owned(),
             provider_error: None,
             classifications: vec![MessageClassification {
                 start: 0,
-                end: 7,
-                kind: MessageClassificationKind::Taste,
+                end: 11,
+                kind: MessageClassificationKind::Broadcast,
             }],
             quote_target: Some(wire::QuoteTarget::Tape {
                 lane: first_id,
@@ -856,7 +857,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                     length: 3,
                     event: 4,
                 },
-                digest: wire::QuoteTarget::text_digest("[TASTE] settled"),
+                digest: wire::QuoteTarget::text_digest("[BROADCAST] settled"),
             }),
             directive_contexts: vec![wire::MessageDirective {
                 start: 0,
@@ -867,6 +868,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 },
                 actor: wire::Actor::Operator,
                 authored: at("2030-04-12T18:44:08.000Z"),
+                badge: Some(DirectiveBadge::Taste),
             }],
             quotes: Vec::new(),
             automatic_speech: None,

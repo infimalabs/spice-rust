@@ -1389,9 +1389,10 @@ a.relative-age {
   --message-inline-pill-accent: var(--accent);
   justify-content: flex-start;
 }
-/* The speaker's classifications form one segmented pill. Each segment keeps
-   its authenticated color while sharing one outer silhouette and type scale. */
-.team-surface .message-signoff .message-classification-group > :is(
+/* The speaker's classifications form one segmented pill, as does a quoted
+   directive's own kind beside its source. Each segment keeps its
+   authenticated color while sharing one outer silhouette and type scale. */
+.team-surface :is(.message-signoff, .message-attribution) .message-classification-group > :is(
   .message-ack-pill,
   .message-final-pill,
   .message-taste-pill,
@@ -1421,17 +1422,15 @@ a.relative-age {
   --message-inline-pill-accent: var(--accent-1);
 }
 @media (prefers-color-scheme: light) {
-  .team-surface .message-taste-pill:not(.markdown-body blockquote *) {
+  .team-surface .message-taste-pill {
     --message-inline-pill-accent: color-mix(in srgb, var(--accent-2) 90%, var(--ink));
   }
-  .team-surface .message-review-pill:not(.markdown-body blockquote *) {
+  .team-surface .message-review-pill {
     --message-inline-pill-accent: color-mix(in srgb, var(--accent-1) 90%, var(--ink));
   }
 }
 .team-surface .markdown-body blockquote .message-ack-pill,
-.team-surface .markdown-body blockquote .message-taste-pill,
-.team-surface .markdown-body blockquote .message-broadcast-pill,
-.team-surface .markdown-body blockquote .message-review-pill {
+.team-surface .markdown-body blockquote .message-broadcast-pill {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
 }
@@ -1442,7 +1441,7 @@ a.relative-age {
   .mosaic-message-card[data-agent-activity="prose"]
   .markdown-body
   .message-hunk-content
-  :is(.message-ack-pill, .message-taste-pill, .message-review-pill, .message-broadcast-pill) {
+  :is(.message-ack-pill, .message-broadcast-pill) {
   display: none;
 }
 /* Card footer actions share one compact control treatment. */

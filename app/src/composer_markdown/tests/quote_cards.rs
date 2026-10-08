@@ -407,6 +407,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         quote_target: context,
         actor: wire::Actor::Operator,
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+        badge: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
     let index = BTreeMap::from([
@@ -546,6 +547,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             quote_target: steering_target(key, quoted),
             actor: wire::Actor::Operator,
             authored: authored.parse().expect("fixture instant"),
+            badge: None,
         }
     };
     let directives = [
@@ -631,4 +633,63 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             && answer_attributions[2] < third_words,
         "{html}"
     );
+}
+
+/// A quoted resident directive wears its typed kind once, in its own opening
+/// attribution where its words begin; resumed hunks after a nested quote and
+/// the answering card do not repeat it, and literal markers stay text.
+#[test]
+fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
+    let review = "> APP-1kKRRsDR\n>\n> > [REVIEW] missing coverage\n>\n> Verbalize the finding.";
+    let plain = "> Keep one path.";
+    let markdown = format!("{review}\n\n{plain}\n\nInternalized.");
+    let directive = |key, quoted: &str, badge| {
+        let start = markdown.find(quoted).expect("fixture quote");
+        MessageDirective {
+            start: u32::try_from(start).expect("fixture offset fits"),
+            end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
+            quote_target: steering_target(key, quoted),
+            actor: wire::Actor::Spice,
+            authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+            badge,
+        }
+    };
+    let directives = [
+        directive("dTVQdQfLx", review, Some(wire::DirectiveBadge::Review)),
+        directive("dTVQdQfLy", plain, None),
+    ];
+    let sources = directives
+        .iter()
+        .map(|directive| {
+            (
+                directive.quote_target.to_string(),
+                QuoteSource::directive(directive),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &directives,
+        &[],
+        &QuoteAgents::new(),
+        &sources,
+    )
+    .html;
+
+    assert_eq!(
+        html.matches("class=\"message-review-pill\"").count(),
+        1,
+        "{html}"
+    );
+    assert!(!html.contains("message-taste-pill"), "{html}");
+    let signoff = html.find("message-quote-signoff").expect("quote signoff");
+    let badge = html.find("class=\"message-review-pill\"").expect("badge");
+    let handle = html.find("APP-1kKRRsDR").expect("task handle");
+    let plain_words = html.find("Keep one path.").expect("plain quote");
+    assert!(
+        signoff < badge && badge < handle && handle < plain_words,
+        "{html}"
+    );
+    assert!(html.contains("[REVIEW] missing coverage"), "{html}");
 }
