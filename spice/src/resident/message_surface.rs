@@ -533,21 +533,23 @@ fn present_steering_acknowledgements(
     let Some(steering) = steering else {
         return Ok(PresentedMessageText {
             text: text.to_owned(),
+            acknowledgement: None,
             classifications: Vec::new(),
             directive_contexts: Vec::new(),
         });
     };
     let presented = present_steering_acknowledgements_with_directives(text, steering, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
-    let classifications =
-        hydrate_message_classifications(&presented, message_badges(text, Some(steering), event))
-            .map_err(|detail| {
-                store_fault("serve::message-steering-presentation-invalid", &detail)
-            })?;
+    let classifications = hydrate_message_classifications(
+        &presented.text,
+        message_badges(text, Some(steering), event),
+    )
+    .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let directive_contexts = hydrate_directive_contexts(&presented, steering)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     Ok(PresentedMessageText {
         text: presented.text,
+        acknowledgement: presented.acknowledgement,
         classifications,
         directive_contexts,
     })
@@ -555,6 +557,7 @@ fn present_steering_acknowledgements(
 
 struct PresentedMessageText {
     text: String,
+    acknowledgement: Option<wire::MessageAcknowledgement>,
     classifications: Vec<wire::MessageClassification>,
     directive_contexts: Vec<wire::MessageDirective>,
 }
@@ -852,22 +855,16 @@ impl From<ClassificationCounts> for RemainingClassifications {
     }
 }
 
-/// Classify the markers a presented message carries.
+/// Classify source markers a presented message carries.
 ///
-/// Each answer marker the resident wrote at the head of a response is exact by
-/// construction. Flavor markers sit one quote level down, opening the quoted
-/// directive text, and are bounded by the counts this answer's recognized keys
-/// earned. Each level below that is the history a quoted directive carried,
-/// and within a directive context the resident inserted every level repeats
-/// the same rule on its own lines: an acknowledgement, pending, or decline
-/// marker opening a line is the pill an earlier presentation showed. Those
-/// historical pills never draw on the live counts, and the same words anywhere
-/// the agent wrote them stay literal.
+/// Flavor markers sit inside quoted directive text and are bounded by the
+/// counts this answer's recognized keys earned. Identical words anywhere the
+/// agent wrote them stay literal. Acknowledgment disposition is independent of
+/// source ranges and never enters this collection.
 fn hydrate_message_classifications(
-    presented: &Presentation,
+    text: &str,
     counts: ClassificationCounts,
 ) -> Result<Vec<wire::MessageClassification>, String> {
-    let text = presented.text.as_str();
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -879,22 +876,8 @@ fn hydrate_message_classifications(
     let mut quote_depth = 0usize;
     let mut code_block = false;
     let mut image_depth = 0usize;
-    let mut opens_line = false;
-    let mut classifications = presented
-        .markers
-        .iter()
-        .map(|marker| (marker.start, marker.kind))
-        .collect::<Vec<_>>();
+    let mut classifications = Vec::new();
     for (event, source) in Parser::new_ext(text, options).into_offset_iter() {
-        let line_start = std::mem::replace(
-            &mut opens_line,
-            matches!(
-                event,
-                MarkdownEvent::Start(Tag::Paragraph)
-                    | MarkdownEvent::SoftBreak
-                    | MarkdownEvent::HardBreak
-            ),
-        );
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
@@ -917,20 +900,7 @@ fn hydrate_message_classifications(
         let source_tail = text
             .get(source.start..)
             .ok_or_else(|| "Markdown source offset is not UTF-8 aligned".to_owned())?;
-        let historical = quote_depth > 1
-            && line_start
-            && presented
-                .contexts
-                .iter()
-                .any(|context| context.range.contains(&source.start));
-        let kind = if historical {
-            historical_classification(source_tail)
-        } else {
-            None
-        };
-        let Some(kind) =
-            kind.or_else(|| live_classification(source_tail, quote_depth, &mut remaining))
-        else {
+        let Some(kind) = live_classification(source_tail, quote_depth, &mut remaining) else {
             continue;
         };
         classifications.push((source.start, kind));
@@ -1002,18 +972,6 @@ fn live_classification(
         }
     }
     take_classification(source_tail, Kind::Taste, &mut remaining.tastes).then_some(Kind::Taste)
-}
-
-/// A marker an earlier presentation settled, carried in quoted history.
-fn historical_classification(source_tail: &str) -> Option<wire::MessageClassificationKind> {
-    use wire::MessageClassificationKind as Kind;
-    [
-        Kind::AcknowledgementPending,
-        Kind::Decline,
-        Kind::Acknowledgement,
-    ]
-    .into_iter()
-    .find(|kind| take_classification(source_tail, *kind, &mut 1))
 }
 
 fn take_classification(

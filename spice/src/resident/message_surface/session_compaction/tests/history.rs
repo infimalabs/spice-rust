@@ -84,6 +84,7 @@ fn page_boundary_marker() -> wire::AgentMessage {
         observed: None,
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
+        acknowledgement: None,
         text: "page boundary".to_owned(),
         provider_error: None,
         classifications: Vec::new(),

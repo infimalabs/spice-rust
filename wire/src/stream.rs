@@ -150,19 +150,6 @@ mod peer_reply_control_tests {
 
 /// Canonical semantic prefix carried by every taste steering directive.
 pub const TASTE_MARKER: &str = "[TASTE]";
-/// Canonical semantic prefix the resident places on every ordinary directive
-/// quoted as acknowledged context inside an agent message presentation.
-pub const ACK_MARKER: &str = "[ACK]";
-/// Canonical semantic prefix the resident places on an ordinary directive an
-/// agent acknowledged in prose while the journal still holds its key pending.
-/// The plain ACK marker replaces it once the key retires through steer::acked,
-/// so a spoken acknowledgment never reads as credit before the journal grants it.
-pub const ACK_PENDING_MARKER: &str = "[ACK PENDING]";
-/// Canonical semantic prefix the resident places on an ordinary directive the
-/// agent declined. A decline answers the operator as surely as credit does, so
-/// the quoted context carries its own marker instead of reading as prose the
-/// lane never answered.
-pub const NAK_MARKER: &str = "[NAK]";
 
 /// Newest messages every surface keeps for each agent, whatever else it drops.
 ///
@@ -325,8 +312,36 @@ pub enum AutomaticSpeechKind {
     Acknowledgement,
 }
 
-/// One resident-authenticated semantic marker at an exact byte range in the
-/// presented message text.
+/// Authenticated acknowledgment disposition for one presented agent message.
+/// This belongs to the answering speaker, independently of source text and
+/// quote ranges. A decline wins over a pending acknowledgment, which wins over
+/// a settled acknowledgment when one message answers multiple directives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MessageAcknowledgement {
+    /// At least one positively answered directive has not retired yet.
+    Pending,
+    /// Every positively answered directive represented by this disposition has
+    /// retired.
+    Acknowledged,
+    /// At least one directive was explicitly declined.
+    Declined,
+}
+
+impl MessageAcknowledgement {
+    /// Stable mixed-header precedence used by resident presentation.
+    #[must_use]
+    pub const fn precedence(self) -> u8 {
+        match self {
+            Self::Acknowledged => 0,
+            Self::Pending => 1,
+            Self::Declined => 2,
+        }
+    }
+}
+
+/// One resident-authenticated source classification at an exact byte range in
+/// the presented message text.
 ///
 /// The resident owns both classification and placement. A consumer may replace
 /// only this exact range after validating it against [`Self::kind`]; identical
@@ -400,16 +415,10 @@ pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> 
             .all(|pair| pair[0].end <= pair[1].start)
 }
 
-/// Semantic presentation authenticated by the resident for one exact marker.
+/// Semantic source-marker presentation authenticated by the resident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MessageClassificationKind {
-    /// Positively acknowledged ordinary directive.
-    Acknowledgement,
-    /// Ordinary directive acknowledged in prose but not yet retired.
-    AcknowledgementPending,
-    /// Ordinary directive explicitly declined by the agent.
-    Decline,
     /// Confirmed taste guidance.
     Taste,
     /// Broadcast steering.
@@ -423,9 +432,6 @@ impl MessageClassificationKind {
     #[must_use]
     pub const fn marker(self) -> &'static str {
         match self {
-            Self::Acknowledgement => ACK_MARKER,
-            Self::AcknowledgementPending => ACK_PENDING_MARKER,
-            Self::Decline => NAK_MARKER,
             Self::Taste => TASTE_MARKER,
             Self::Broadcast => BROADCAST_MARKER,
             Self::Review => REVIEW_MARKER,
@@ -636,6 +642,15 @@ pub struct AgentMessage {
     /// Whether the vendor explicitly marked this prose as the final answer.
     #[serde(default, skip_serializing_if = "is_false")]
     pub final_answer: bool,
+    /// Resident-authenticated acknowledgment disposition for this answer.
+    ///
+    /// The absent wire spelling means the message answered no owned directive.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub acknowledgement: Option<MessageAcknowledgement>,
     /// Visible assistant prose, provider failure, concise tool preview, or
     /// boundary label.
     pub text: String,
@@ -787,6 +802,7 @@ mod message_retention_tests {
             observed: None,
             activity: AgentActivityKind::Prose,
             final_answer: false,
+            acknowledgement: None,
             text: "fixture".to_owned(),
             provider_error: None,
             classifications: Vec::new(),

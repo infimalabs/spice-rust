@@ -520,6 +520,7 @@ enum MessageMutation {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     },
@@ -648,12 +649,19 @@ impl MessagePublisher {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, MessagePublishError> {
         let batch = self.batch()?;
-        let changed =
-            batch.revise_presentation(lane, locus, text, classifications, directive_contexts)?;
+        let changed = batch.revise_presentation(
+            lane,
+            locus,
+            text,
+            acknowledgement,
+            classifications,
+            directive_contexts,
+        )?;
         if changed {
             batch.commit()?;
         }
@@ -700,6 +708,7 @@ impl MessageBatch {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, MessagePublishError> {
@@ -717,6 +726,7 @@ impl MessageBatch {
             lane,
             locus,
             text.clone(),
+            acknowledgement,
             classifications.clone(),
             directive_contexts.clone(),
         )?
@@ -727,6 +737,7 @@ impl MessageBatch {
             lane,
             locus,
             text,
+            acknowledgement,
             classifications,
             directive_contexts,
         });
@@ -866,6 +877,7 @@ impl MessageMutation {
                 lane,
                 locus,
                 text,
+                acknowledgement,
                 classifications,
                 directive_contexts,
             } => revise_presented_message(
@@ -873,6 +885,7 @@ impl MessageMutation {
                 *lane,
                 *locus,
                 text.clone(),
+                *acknowledgement,
                 classifications.clone(),
                 directive_contexts.clone(),
             )
@@ -982,6 +995,7 @@ fn revise_presented_message(
     lane: wire::CanonicalUuid,
     locus: wire::MessageLocus,
     text: String,
+    acknowledgement: Option<wire::MessageAcknowledgement>,
     classifications: Vec<wire::MessageClassification>,
     directive_contexts: Vec<wire::MessageDirective>,
 ) -> Result<Option<AgentMessage>, MessagePublishError> {
@@ -995,12 +1009,14 @@ fn revise_presented_message(
         return Err(MessagePublishError::IdentityConflict);
     }
     if existing.text == text
+        && existing.acknowledgement == acknowledgement
         && existing.classifications == classifications
         && existing.directive_contexts == directive_contexts
     {
         return Ok(None);
     }
     existing.text = text;
+    existing.acknowledgement = acknowledgement;
     existing.classifications = classifications;
     existing.directive_contexts = directive_contexts;
     Ok(Some(existing.clone()))

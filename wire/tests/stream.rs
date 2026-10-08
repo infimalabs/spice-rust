@@ -1,8 +1,8 @@
 use wire::{
     Actor, AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech,
-    AutomaticSpeechKind, CanonicalUuid, Envelope, Fact, MessageClassification,
-    MessageClassificationKind, MessageLocus, Packed, StreamAdmissionError, StreamCursor,
-    StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
+    AutomaticSpeechKind, CanonicalUuid, Envelope, Fact, MessageAcknowledgement, MessageLocus,
+    Packed, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
+    ViewSubject, WireVersion,
 };
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -29,6 +29,7 @@ fn prose_message() -> AgentMessage {
         observed: None,
         activity: AgentActivityKind::Prose,
         final_answer: false,
+        acknowledgement: None,
         text: "settled".to_owned(),
         provider_error: None,
         classifications: Vec::new(),
@@ -350,44 +351,31 @@ fn turn_activity_has_one_explicit_wire_shape() {
 }
 
 #[test]
-fn message_classifications_encode_exact_ordered_source_ranges() {
-    let text = "> [ACK PENDING] Keep the current path.".to_owned();
-    let classification = MessageClassification {
-        start: 2,
-        end: 15,
-        kind: MessageClassificationKind::AcknowledgementPending,
-    };
+fn message_acknowledgement_has_one_offset_free_wire_shape() {
     let pending = AgentMessage {
-        text: text.clone(),
-        classifications: vec![classification],
+        text: "[ACK] remains ordinary prose.".to_owned(),
+        acknowledgement: Some(MessageAcknowledgement::Pending),
         ..prose_message()
     };
-    assert!(wire::valid_message_classifications(
-        &text,
-        &pending.classifications
-    ));
-    let encoded = wire::encode(&pending).expect("pending classification encodes");
+    assert!(pending.classifications.is_empty());
+
+    let encoded = wire::encode(&pending).expect("pending acknowledgement encodes");
+    assert!(String::from_utf8_lossy(&encoded).contains(r#""acknowledgement":"pending""#));
+    let decoded = wire::decode::<AgentMessage>(&encoded).expect("pending acknowledgement decodes");
     assert_eq!(
-        wire::decode::<AgentMessage>(&encoded)
-            .expect("pending classification decodes")
-            .classifications,
-        [classification],
+        decoded.acknowledgement,
+        Some(MessageAcknowledgement::Pending)
     );
+    assert_eq!(decoded.text, "[ACK] remains ordinary prose.");
+
+    let mut explicit_null = serde_json::to_value(prose_message()).expect("prose becomes JSON");
+    explicit_null["acknowledgement"] = serde_json::Value::Null;
     assert!(
-        !wire::valid_message_classifications(
-            &text,
-            &[MessageClassification {
-                start: 3,
-                end: 16,
-                kind: MessageClassificationKind::AcknowledgementPending,
-            }]
-        ),
-        "a shifted range cannot authenticate neighboring text"
-    );
-    assert!(
-        !wire::stream::ACK_PENDING_MARKER.starts_with(wire::stream::ACK_MARKER)
-            && !wire::stream::ACK_MARKER.starts_with(wire::stream::ACK_PENDING_MARKER),
-        "neither acknowledgement marker reads as a prefix of the other"
+        wire::decode::<AgentMessage>(
+            &serde_json::to_vec(&explicit_null).expect("explicit-null prose encodes")
+        )
+        .is_err(),
+        "absence has one spelling"
     );
 }
 

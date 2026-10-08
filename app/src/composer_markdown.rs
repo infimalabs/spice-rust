@@ -604,18 +604,6 @@ fn classification_pill_html(kind: MessageClassificationKind) -> String {
         MessageClassificationKind::Review => review_pill_html(),
         MessageClassificationKind::Broadcast => broadcast_pill_html(),
         MessageClassificationKind::Taste => taste_pill_html(),
-        MessageClassificationKind::Acknowledgement => {
-            acknowledgement_pill_html("ack", "acked", "Acknowledgement classification", "ACK")
-        }
-        MessageClassificationKind::AcknowledgementPending => acknowledgement_pill_html(
-            "ack-pending",
-            "pending",
-            "Acknowledgement awaiting retirement",
-            "ACK",
-        ),
-        MessageClassificationKind::Decline => {
-            acknowledgement_pill_html("nak", "declined", "Declined classification", "NAK")
-        }
     }
 }
 
@@ -625,9 +613,6 @@ struct TestClassifications {
     reviews: u32,
     tastes: u32,
     broadcasts: u32,
-    acknowledgements: u32,
-    pending: u32,
-    declines: u32,
 }
 
 #[cfg(test)]
@@ -635,20 +620,10 @@ fn render_received_with_fixture_classifications(
     markdown: &str,
     requested: TestClassifications,
 ) -> RenderedMarkdown {
-    let ordinary = requested
-        .acknowledgements
-        .saturating_sub(requested.tastes)
-        .saturating_sub(requested.broadcasts);
     let requested = [
         (MessageClassificationKind::Review, requested.reviews),
         (MessageClassificationKind::Taste, requested.tastes),
         (MessageClassificationKind::Broadcast, requested.broadcasts),
-        (
-            MessageClassificationKind::AcknowledgementPending,
-            requested.pending,
-        ),
-        (MessageClassificationKind::Decline, requested.declines),
-        (MessageClassificationKind::Acknowledgement, ordinary),
     ];
     let mut classifications = requested
         .into_iter()
@@ -749,15 +724,6 @@ fn review_pill_html() -> String {
         .to_owned()
 }
 
-fn acknowledgement_pill_html(
-    classification: &str,
-    acknowledgement: &str,
-    label: &str,
-    text: &str,
-) -> String {
-    acknowledgement_pill_html_with_attributes(classification, acknowledgement, label, text, "")
-}
-
 fn acknowledgement_pill_html_with_attributes(
     classification: &str,
     acknowledgement: &str,
@@ -773,29 +739,14 @@ fn acknowledgement_pill_html_with_attributes(
 }
 /// Whether two rendered messages have identical measured content.
 ///
-/// Pending-to-acknowledged settlement changes only attributes on the same
-/// fixed-width ACK pill. Normalize that state transition while retaining every
-/// geometry-bearing distinction, including a declined NAK label.
+/// Message-level acknowledgment badges are mounted in hunk signoffs, outside
+/// this rendered Markdown, so settlement leaves this geometry unchanged.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn same_measured_shape(left: &RenderedMarkdown, right: &RenderedMarkdown) -> bool {
-    measured_html(&left.html) == measured_html(&right.html)
+    left.html == right.html
         && left.image_only == right.image_only
         && left.image_count == right.image_count
         && left.diagrams == right.diagrams
-}
-
-fn measured_html(html: &str) -> std::borrow::Cow<'_, str> {
-    let pending = acknowledgement_pill_html(
-        "ack-pending",
-        "pending",
-        "Acknowledgement awaiting retirement",
-        "ACK",
-    );
-    if !html.contains(&pending) {
-        return std::borrow::Cow::Borrowed(html);
-    }
-    let acknowledged =
-        acknowledgement_pill_html("ack", "acked", "Acknowledgement classification", "ACK");
-    std::borrow::Cow::Owned(html.replace(&pending, &acknowledged))
 }
 
 fn markdown_image_only_count(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> usize {

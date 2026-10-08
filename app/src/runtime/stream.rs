@@ -640,6 +640,7 @@ mod message_retention_tests {
             observed: None,
             activity: AgentActivityKind::Prose,
             final_answer: false,
+            acknowledgement: None,
             text: offset.to_string(),
             provider_error: None,
             classifications: Vec::new(),

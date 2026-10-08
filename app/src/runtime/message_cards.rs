@@ -40,6 +40,7 @@ struct MessageCardFingerprint<'a> {
     prose_origin: Option<&'a wire::MessageProseOrigin>,
     provider_error: Option<&'a wire::AgentProviderError>,
     classifications: &'a [wire::MessageClassification],
+    acknowledgement: Option<wire::MessageAcknowledgement>,
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
     media: &'a [wire::Media],
@@ -68,6 +69,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         prose_origin: message.prose_origin.as_ref(),
         provider_error: message.provider_error.as_ref(),
         classifications: &message.classifications,
+        acknowledgement: message.acknowledgement,
         automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
         media: &message.media,
@@ -342,6 +344,7 @@ mod tests {
             observed: None,
             activity,
             final_answer: false,
+            acknowledgement: None,
             text: offset.to_string(),
             provider_error: None,
             classifications: Vec::new(),
@@ -466,24 +469,27 @@ mod tests {
     }
 
     #[test]
-    fn semantic_classifications_replace_the_same_live_card_identity() {
+    fn semantic_acknowledgement_revises_the_same_live_card_identity() {
         let mut cards = MessageCards::default();
-        let ordinary = message(1, AgentActivityKind::Prose);
-        cards.snapshot(10, std::slice::from_ref(&ordinary));
+        let mut pending = message(1, AgentActivityKind::Prose);
+        pending.acknowledgement = Some(wire::MessageAcknowledgement::Pending);
+        cards.snapshot(10, std::slice::from_ref(&pending));
 
-        let mut classified = ordinary;
-        classified.text = "[ACK] accepted".to_owned();
-        classified.classifications = vec![wire::MessageClassification {
-            start: 0,
-            end: 5,
-            kind: wire::MessageClassificationKind::Acknowledgement,
-        }];
-        assert!(cards.merge(std::iter::once(&classified)));
+        let mut acknowledged = pending.clone();
+        acknowledged.acknowledgement = Some(wire::MessageAcknowledgement::Acknowledged);
+        assert!(cards.merge(std::iter::once(&acknowledged)));
         assert_eq!(cards.entries().len(), 1);
         assert_eq!(
-            cards.entries()[0].classifications,
-            classified.classifications
+            cards.entries()[0].acknowledgement,
+            acknowledged.acknowledgement
         );
+
+        let mut declined = acknowledged;
+        declined.acknowledgement = Some(wire::MessageAcknowledgement::Declined);
+        assert!(cards.merge(std::iter::once(&declined)));
+        assert_eq!(cards.entries().len(), 1);
+        assert_eq!(cards.entries()[0].acknowledgement, declined.acknowledgement);
+        assert_eq!(cards.entries()[0].text, pending.text);
         assert!(cards.entries()[0].automatic_speech.is_none());
     }
 

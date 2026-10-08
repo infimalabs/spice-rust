@@ -1,16 +1,16 @@
 //! Acknowledgement headers rewritten into quoted directive context.
 //!
-//! An assistant header such as `ACK KEY: applied` presents as the directive it
+//! An assistant header such as `ACK KEY: applied` presents the directive it
 //! names, quoted verbatim above the response prose, whenever the journal
-//! allocated that key: a bare key is useless to the operator. The response
-//! then opens with one marker for the whole header, beside the speaking agent:
-//! the plain ACK marker once the journal retired the header's ordinary keys for
-//! this lane, including responses from later transcript sources, the pending
-//! marker while one is still held, and NAK for a refusal. A key this response
-//! did not answer -- another lane's, source-bound review feedback from another
-//! source, or an answer the journal recorded otherwise -- quotes its directive
-//! without earning a marker. Only a token no directive owns stays literal.
-//! Presentation never grants a repeated response retirement, a badge, or
+//! allocated that key: a bare key is useless to the operator. One authenticated
+//! message disposition records what the whole answer earned: acknowledged once
+//! ordinary keys retire, pending while one remains held, and declined when any
+//! owned header refuses its directive. The disposition is independent of the
+//! presented prose and directive ranges. A key this response did not answer --
+//! another lane's, source-bound review feedback from another source, or an
+//! answer the journal recorded otherwise -- quotes its directive without
+//! earning a disposition. Only a token no directive owns stays literal.
+//! Presentation never grants repeated response retirement, a disposition, or
 //! automatic-speech authority.
 
 use std::ops::Range;
@@ -24,13 +24,6 @@ pub(super) struct PresentedDirectiveContext {
     pub(super) range: Range<usize>,
 }
 
-/// One answer marker the resident itself wrote at the head of a response.
-#[derive(Debug)]
-pub(super) struct PresentedMarker {
-    pub(super) start: usize,
-    pub(super) kind: wire::MessageClassificationKind,
-}
-
 /// One presented message and the quote blocks the resident itself wrote into it.
 #[derive(Debug)]
 pub(super) struct Presentation {
@@ -38,9 +31,9 @@ pub(super) struct Presentation {
     /// Exact directive contexts in source order. Quotation nested inside them
     /// is operator-authored journal text; anything outside them is agent prose.
     pub(super) contexts: Vec<PresentedDirectiveContext>,
-    /// Answer markers in source order, each opening the response after its
-    /// header's contexts. The same words the agent wrote stay literal.
-    pub(super) markers: Vec<PresentedMarker>,
+    /// Authenticated disposition of the whole answer. Mixed headers use
+    /// declined, then pending, then acknowledged precedence.
+    pub(super) acknowledgement: Option<wire::MessageAcknowledgement>,
 }
 
 pub(super) fn present_steering_acknowledgements_with_directives(
@@ -51,7 +44,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     let standing = EventDirectives { directives, event };
     let mut rendered = String::new();
     let mut contexts = Vec::new();
-    let mut markers = Vec::new();
+    let mut answer_disposition: Option<wire::MessageAcknowledgement> = None;
     let mut cursor = 0;
     let mut changed = false;
     let mut capitalize_body = false;
@@ -60,7 +53,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         let packet = classify_packet(&standing, acknowledgement.recognitions);
         // Every allocated key a header names presents its directive; a header
         // whose tokens name no directive stays the agent's literal prose.
-        if packet.recognized.is_empty() && packet.contexts.is_empty() {
+        if packet.states.is_empty() && packet.contexts.is_empty() {
             continue;
         }
         let start = presentation_framing_start(text, cursor, acknowledgement.start);
@@ -89,40 +82,38 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             }
             rendered.push_str("\n\n");
         }
-        let marker = packet_marker(&packet);
-        if let Some(kind) = marker {
-            markers.push(PresentedMarker {
-                start: rendered.len(),
-                kind,
-            });
-            rendered.push_str(kind.marker());
+        let disposition = packet_acknowledgement(&packet);
+        if let Some(disposition) = disposition
+            && answer_disposition
+                .is_none_or(|current| disposition.precedence() > current.precedence())
+        {
+            answer_disposition = Some(disposition);
         }
         cursor = end;
         if packet.missed.is_empty() {
             cursor = skip_horizontal_space(text, cursor);
-            capitalize_body = true;
-            if marker.is_some() {
-                let first = text
-                    .get(cursor..)
-                    .and_then(|tail| tail.split('\n').next())
-                    .unwrap_or_default();
-                if opens_paragraph_text(first) {
-                    rendered.push(' ');
-                } else if !first.is_empty() {
-                    rendered.push_str("\n\n");
-                }
+            if !packet.contexts.is_empty() {
+                cursor = skip_line_breaks(text, cursor);
             }
+            capitalize_body = true;
         } else {
-            // A marker the resident wrote already says ACK or NAK; otherwise
-            // the header's literal word stays with the tokens it failed to own.
-            if marker.is_none() {
+            // An authenticated disposition removes the authored ACK or NAK;
+            // otherwise the header's literal word stays with tokens it failed
+            // to own.
+            if disposition.is_none() {
                 let literal = packet
                     .marker
                     .ok_or_else(|| "presented acknowledgment header lost its marker".to_owned())?;
                 rendered.push_str(acknowledgement_marker(literal)?);
             }
             for token in packet.missed {
-                rendered.push(' ');
+                if rendered
+                    .chars()
+                    .next_back()
+                    .is_some_and(|character| !character.is_whitespace())
+                {
+                    rendered.push(' ');
+                }
                 rendered.push_str(&token);
             }
             if let Some(separator) = separator {
@@ -143,7 +134,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         return Ok(Presentation {
             text: text.to_owned(),
             contexts,
-            markers,
+            acknowledgement: answer_disposition,
         });
     }
     let source = text
@@ -153,7 +144,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     Ok(Presentation {
         text: rendered,
         contexts,
-        markers,
+        acknowledgement: answer_disposition,
     })
 }
 
@@ -194,9 +185,10 @@ pub(super) enum ContextState {
 struct ClassifiedPacket {
     /// Disposition the header's marker spells.
     marker: Option<wire::Disposition>,
-    recognized: Vec<(steer::Key, wire::Disposition)>,
+    /// States authenticated by this event, including non-authored system keys
+    /// and the lane seal, which deliberately have no quoted context.
+    states: Vec<ContextState>,
     contexts: Vec<(steer::Key, ContextState)>,
-    bare_acknowledgement: bool,
     missed: Vec<String>,
 }
 
@@ -206,9 +198,8 @@ fn classify_packet(
 ) -> ClassifiedPacket {
     let mut packet = ClassifiedPacket {
         marker: None,
-        recognized: Vec::new(),
+        states: Vec::new(),
         contexts: Vec::new(),
-        bare_acknowledgement: false,
         missed: Vec::new(),
     };
     for recognition in recognitions {
@@ -222,15 +213,9 @@ fn classify_packet(
         packet.marker.get_or_insert(disposition);
         let presents = standing.presents(&key, disposition, recognition.locus);
         if presents {
-            packet.bare_acknowledgement |=
-                disposition == wire::Disposition::Acked && standing.is_lane_seal(&key);
-            if !packet
-                .recognized
-                .iter()
-                .any(|known| known == &(key.clone(), disposition))
-            {
-                packet.recognized.push((key.clone(), disposition));
-            }
+            packet
+                .states
+                .push(standing.context_state(&key, disposition));
         }
         if standing.authored(&key) {
             if !packet.contexts.iter().any(|(known, _)| known == &key) {
@@ -339,6 +324,19 @@ fn skip_horizontal_space(text: &str, mut cursor: usize) -> usize {
     cursor
 }
 
+fn skip_line_breaks(text: &str, mut cursor: usize) -> usize {
+    while let Some(tail) = text.get(cursor..) {
+        if tail.starts_with("\r\n") {
+            cursor += 2;
+        } else if tail.starts_with('\n') || tail.starts_with('\r') {
+            cursor += 1;
+        } else {
+            break;
+        }
+    }
+    cursor
+}
+
 fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str, String> {
     match disposition {
         wire::Disposition::Acked => Ok("ACK"),
@@ -352,48 +350,24 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
     }
 }
 
-/// The one marker a header's response opens with.
+/// The one disposition a header contributes to its containing message.
 ///
 /// Every quoted directive decides it, regardless of flavor: a refusal is an
-/// answer the operator must see at a glance, so NAK wins; a key the journal
-/// still holds reads pending, so spoken acknowledgement never reads as credit
-/// before steer::acked lands; otherwise retired keys read ACK. Flavor badges
-/// remain independent classifications and follow this disposition in the UI.
+/// answer the operator must see at a glance, so declined wins; a key the
+/// journal still holds reads pending, so spoken acknowledgement never reads as
+/// credit before steer::acked lands; otherwise retired keys read acknowledged.
 /// A bare acknowledgement of the lane seal quotes nothing and still answers.
-fn packet_marker(packet: &ClassifiedPacket) -> Option<wire::MessageClassificationKind> {
-    use wire::MessageClassificationKind as Kind;
-    let states = packet
-        .contexts
-        .iter()
-        .map(|(_, state)| *state)
-        .collect::<Vec<_>>();
-    if states.contains(&ContextState::Declined) {
-        Some(Kind::Decline)
-    } else if states.contains(&ContextState::Pending) {
-        Some(Kind::AcknowledgementPending)
-    } else if states.contains(&ContextState::Acknowledged) || packet.bare_acknowledgement {
-        Some(Kind::Acknowledgement)
+fn packet_acknowledgement(packet: &ClassifiedPacket) -> Option<wire::MessageAcknowledgement> {
+    use wire::MessageAcknowledgement as Acknowledgement;
+    if packet.states.contains(&ContextState::Declined) {
+        Some(Acknowledgement::Declined)
+    } else if packet.states.contains(&ContextState::Pending) {
+        Some(Acknowledgement::Pending)
+    } else if packet.states.contains(&ContextState::Acknowledged) {
+        Some(Acknowledgement::Acknowledged)
     } else {
         None
     }
-}
-
-fn opens_paragraph_text(line: &str) -> bool {
-    if line.starts_with("    ") || line.starts_with('\t') {
-        return false;
-    }
-    let line = line.trim_start();
-    let Some(first) = line.chars().next() else {
-        return false;
-    };
-    if first.is_ascii_digit() {
-        let after_digits = line.trim_start_matches(|character: char| character.is_ascii_digit());
-        return !after_digits.starts_with(['.', ')']);
-    }
-    !matches!(
-        first,
-        '>' | '#' | '-' | '+' | '*' | '`' | '~' | '|' | '<' | '_'
-    )
 }
 
 fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {

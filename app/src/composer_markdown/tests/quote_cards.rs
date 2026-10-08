@@ -527,34 +527,55 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
 }
 
 /// Hunk ownership is the renderer's durable layout contract: controls and
-/// attribution lead every direct run, images precede its prose, a nested quote
-/// owns its own lead, and the surrounding speaker resumes afterward.
+/// attribution lead every direct run, each quote owns its lead, and the
+/// surrounding speaker restarts after every interruption. The browser mounts
+/// the message's semantic badges through each direct hunk's signoff slot.
 #[test]
-fn attribution_hunks_restart_around_quotes_and_lead_with_their_images() {
-    let quoted = "> quoted words";
-    let markdown =
-        format!("first answer\n\n![first](a.png)\n\n{quoted}\n\nsecond answer\n\n![second](b.png)");
-    let quote_start = markdown.find(quoted).expect("fixture quote");
-    let directive = MessageDirective {
-        start: u32::try_from(quote_start).expect("fixture offset fits"),
-        end: u32::try_from(quote_start + quoted.len()).expect("fixture offset fits"),
-        quote_target: steering_target("dTVQdQfLx", quoted),
-        actor: wire::Actor::Operator,
-        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+fn attribution_hunks_restart_after_more_than_one_quote() {
+    let first_quote = "> first quoted words";
+    let second_quote = "> second quoted words";
+    let markdown = format!(
+        "first answer\n\n![first](a.png)\n\n{first_quote}\n\n\
+         second answer\n\n![second](b.png)\n\n{second_quote}\n\nthird answer"
+    );
+    let directive = |key, quoted: &str, authored: &str| {
+        let start = markdown.find(quoted).expect("fixture quote");
+        MessageDirective {
+            start: u32::try_from(start).expect("fixture offset fits"),
+            end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
+            quote_target: steering_target(key, quoted),
+            actor: wire::Actor::Operator,
+            authored: authored.parse().expect("fixture instant"),
+        }
     };
-    let target = directive.quote_target.to_string();
-    let sources = BTreeMap::from([(target.clone(), QuoteSource::directive(&directive))]);
+    let directives = [
+        directive("dTVQdQfLx", first_quote, "1970-01-01T00:00:01.000Z"),
+        directive("dTVQdQfLy", second_quote, "1970-01-01T00:00:02.000Z"),
+    ];
+    let targets = directives
+        .iter()
+        .map(|directive| directive.quote_target.to_string())
+        .collect::<Vec<_>>();
+    let sources = directives
+        .iter()
+        .map(|directive| {
+            (
+                directive.quote_target.to_string(),
+                QuoteSource::directive(directive),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let html = render_prose_card(
         &markdown,
         &[],
-        &[directive],
+        &directives,
         &[],
         &QuoteAgents::new(),
         &sources,
     )
     .html;
 
-    assert_eq!(html.matches("class=\"message-hunk\"").count(), 3, "{html}");
+    assert_eq!(html.matches("class=\"message-hunk\"").count(), 5, "{html}");
     let answer_controls = html
         .match_indices("data-message-controls=\"\"")
         .map(|(position, _)| position)
@@ -563,48 +584,51 @@ fn attribution_hunks_restart_around_quotes_and_lead_with_their_images() {
         .match_indices(SIGNOFF_SLOT)
         .map(|(position, _)| position)
         .collect::<Vec<_>>();
-    assert_eq!(answer_controls.len(), 2, "{html}");
+    assert_eq!(answer_controls.len(), 3, "{html}");
     assert_eq!(
         html.matches("data-message-quote-depth=\"0\"").count(),
-        2,
+        3,
         "{html}"
     );
     assert_eq!(
         html.matches("data-message-quote-depth=\"1\"").count(),
-        1,
+        2,
         "{html}"
     );
-    assert_eq!(answer_attributions.len(), 2, "{html}");
+    assert_eq!(answer_attributions.len(), 3, "{html}");
 
-    let first_image = html.find("src=\"a.png\"").expect("first image");
     let first_words = html.find("first answer").expect("first answer");
-    let quote_controls = html
+    let first_quote_controls = html
         .find(&format!(
             "data-message-controls=\"{}\"",
-            escape_html_attribute(&target)
+            escape_html_attribute(&targets[0])
         ))
-        .expect("quote controls");
-    let quote_age = html
-        .find("data-quote-age-authored=\"1000\"")
-        .expect("quote age");
-    let quote_words = html.find("quoted words").expect("quote words");
-    let quote_task = html
-        .find("data-quote-tasks=\"dTVQdQfLx\"")
-        .expect("quote task provenance");
-    let second_image = html.find("src=\"b.png\"").expect("second image");
+        .expect("first quote controls");
+    let first_quote_words = html.find("first quoted words").expect("first quote words");
     let second_words = html.find("second answer").expect("second answer");
+    let second_quote_controls = html
+        .find(&format!(
+            "data-message-controls=\"{}\"",
+            escape_html_attribute(&targets[1])
+        ))
+        .expect("second quote controls");
+    let second_quote_words = html
+        .find("second quoted words")
+        .expect("second quote words");
+    let third_words = html.find("third answer").expect("third answer");
     assert!(
         answer_controls[0] < answer_attributions[0]
-            && answer_attributions[0] < first_image
-            && first_image < first_words
-            && first_words < quote_controls
-            && quote_controls < quote_age
-            && quote_age < quote_words
-            && quote_words < quote_task
-            && quote_task < answer_controls[1]
+            && answer_attributions[0] < first_words
+            && first_words < first_quote_controls
+            && first_quote_controls < first_quote_words
+            && first_quote_words < answer_controls[1]
             && answer_controls[1] < answer_attributions[1]
-            && answer_attributions[1] < second_image
-            && second_image < second_words,
+            && answer_attributions[1] < second_words
+            && second_words < second_quote_controls
+            && second_quote_controls < second_quote_words
+            && second_quote_words < answer_controls[2]
+            && answer_controls[2] < answer_attributions[2]
+            && answer_attributions[2] < third_words,
         "{html}"
     );
 }

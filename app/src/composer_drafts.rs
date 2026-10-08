@@ -489,6 +489,7 @@ mod tests {
             observed: None,
             activity: wire::AgentActivityKind::Prose,
             final_answer: false,
+            acknowledgement: None,
             text: "quoted prose".to_owned(),
             provider_error: None,
             classifications: Vec::new(),

@@ -279,6 +279,14 @@ segmented classification pill. The pill orders ACK or NAK first, FINAL second
 when present, then TASTE, REVIEW, and BROADCAST roles; each segment keeps its
 own authenticated color and interaction. Ordinary prose begins immediately
 after that compact attribution sequence on the same line.
+Acknowledgment is one authenticated message disposition, not a source-text
+marker. Every direct hunk owned by the answering speaker mounts the same ACK or
+NAK segment in its signoff, including each resumed hunk around nested quotes;
+quote-owned hunks do not inherit it. Pending settlement revises those repeated
+segments on the existing card without adding prose or changing hunk geometry.
+Literal `[ACK]`, `[ACK PENDING]`, and `[NAK]` text remains ordinary Markdown
+when no authenticated directive owns it.
+
 When that opening run continues into another paragraph, the later paragraph
 keeps the ordinary Markdown paragraph gap; making the first paragraph inline
 for attribution does not collapse the boundary between them.
