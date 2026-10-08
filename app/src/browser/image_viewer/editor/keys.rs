@@ -1,4 +1,4 @@
-//! Keyboard commands on the focused annotation stage.
+//! Keyboard commands anywhere in the annotation editor.
 
 use super::*;
 
@@ -33,7 +33,9 @@ pub(super) fn handle(
             dimensions,
         );
     }
-    if !handled && idle && !modified && key == "Enter" {
+    // Enter edits a selected label only from the canvas; on a focused toolbar
+    // control it keeps its native activation.
+    if !handled && idle && !modified && key == "Enter" && from_stage(event) {
         handled = label::reopen(session);
     }
     if !handled && let Some(shortcut) = shortcut(&key, modified, event.alt_key()) {
@@ -52,6 +54,14 @@ pub(super) fn handle(
         event.stop_propagation();
         session.repaint.emit(());
     }
+}
+
+fn from_stage(event: &KeyboardEvent) -> bool {
+    event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(".image-annotation-stage").ok().flatten())
+        .is_some()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
