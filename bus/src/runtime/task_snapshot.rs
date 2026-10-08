@@ -260,7 +260,11 @@ impl Indexes {
                     next.terminals = next
                         .terminals
                         .pushed(&done.task, terminal.operation, row.seq);
-                    next.retire_task_origin(&done.task);
+                    // A phase advance also records a terminal answer, but its task stays
+                    // allocatable in the next phase and keeps its creation origin.
+                    if terminal.status == "completed" {
+                        next.retire_task_origin(&done.task);
+                    }
                 }
             } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
                 next.retire_task_origin(&deleted.task);
