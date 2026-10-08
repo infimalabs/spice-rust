@@ -22,6 +22,8 @@ pub(in crate::browser::watchband) struct SendSlot {
     pub reachable: bool,
     /// A quote or image is drafted, which sends without any text.
     pub attached: bool,
+    /// A keyboard broadcast from this team fans out to this member.
+    pub broadcast: bool,
 }
 
 #[derive(Properties, PartialEq)]
@@ -104,18 +106,33 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
     } else {
         Vec::new()
     };
+    // Recipients of a keyboard broadcast, which never depend on drafts.
+    let broadcast = props
+        .slots
+        .iter()
+        .filter(|slot| slot.broadcast)
+        .map(|slot| slot.accent)
+        .collect::<Vec<_>>();
     {
-        // The pinwheel is a gradient over the lit accents; the app CSP refuses
-        // style attributes, so the value reaches the button through CSSOM.
+        // Each face is a gradient over its recipients' accents; the app CSP
+        // refuses style attributes, so the values reach the button through
+        // CSSOM. The broadcast face is published beside the ordinary one and
+        // CSS selects it while a broadcast preview is held, so pressing and
+        // releasing the modifiers changes no state here.
         let send = send.clone();
-        use_effect_with(lit.clone(), move |lit| {
+        use_effect_with((lit.clone(), broadcast), move |(lit, broadcast)| {
             if let Some(button) = send.cast::<web_sys::HtmlElement>() {
                 let style = button.style();
-                let _ = if lit.is_empty() {
-                    style.remove_property("--team-send-pinwheel").map(drop)
-                } else {
-                    style.set_property("--team-send-pinwheel", &pinwheel(lit))
-                };
+                for (property, accents) in [
+                    ("--team-send-pinwheel", lit),
+                    ("--team-send-broadcast-pinwheel", broadcast),
+                ] {
+                    let _ = if accents.is_empty() {
+                        style.remove_property(property).map(drop)
+                    } else {
+                        style.set_property(property, &pinwheel(accents))
+                    };
+                }
             }
         });
     }

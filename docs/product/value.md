@@ -621,7 +621,10 @@ until release. Until the team is fully idle, `Send` unlit by an empty draft
 keeps the full-opacity raised knob in the neutral surface of the resting quiet
 thumb; only its color mutes, while command-modifier and focus rings still show
 around it. With no running agent and no draft, the knob recedes to a depressed
-face.
+face. While the keyboard broadcast preview is held from an eligible primary
+composer, `Send` instead shows the same pinwheel over every occupied member the
+broadcast would reach, whatever the drafts hold; releasing it restores the
+ordinary face.
 Raised states use distinct team accents. The first round button reads `TURBO`
 while the team's fast-mode flag is on: a second internal accent layer deepens
 its red under the glass without casting a halo beyond the rim. Otherwise it
