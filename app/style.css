@@ -456,19 +456,15 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-overlay-status { border-radius: var(--app-radius-overlay); }
 
 /* One side view serves every sidebar. Content chooses a standard width, and
-   the view materializes in place over the frosted veil: its surface's material
-   and content fade in while it settles from just under full scale around its
-   origin, the launcher's twin when it has one and its top inline-end corner
-   otherwise. The twin stands beside the surface, outside every transform, so
-   it never moves, resizes, or rerasterizes. The surface's scale ending is the
-   close boundary. */
+   the view and its frosted veil simply fade in and out; nothing moves or
+   scales. The launcher's twin stands beside the faded surface, so it never
+   changes. The surface's fade ending is the close boundary. */
 .app-sidebar-layer {
   --app-side-view-small: 28rem;
   --app-side-view-large: 46rem;
   --app-side-view-gutter: 3rem;
   --app-side-view-width: var(--app-side-view-large);
-  --app-side-view-rest: .965;
-  --app-side-view-ease: cubic-bezier(.2, .8, .2, 1);
+  --app-side-view-fade: opacity var(--app-motion-settle) var(--app-ease-standard);
   position: fixed;
   z-index: 80;
   inset: 0;
@@ -487,10 +483,9 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   border-radius: 0;
   box-shadow: none;
   cursor: default;
-  transition: opacity var(--app-motion-settle) var(--app-side-view-ease);
+  transition: var(--app-side-view-fade);
 }
 .app-sidebar {
-  --app-side-view-origin: 100% 0;
   position: relative;
   z-index: 1;
   width: min(var(--app-side-view-width), calc(100vw - var(--app-side-view-gutter)));
@@ -501,31 +496,15 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   position: relative;
   height: 100%;
   overflow: hidden;
-  transform-origin: var(--app-side-view-origin);
-  transition:
-    transform var(--app-motion-settle) var(--app-side-view-ease),
-    background-color var(--app-motion-fast) var(--app-side-view-ease),
-    border-color var(--app-motion-fast) var(--app-side-view-ease);
+  transition: var(--app-side-view-fade);
 }
 .app-sidebar-frame {
   height: 100%;
   overflow: auto;
   overscroll-behavior: contain;
 }
-.app-sidebar-frame,
-.app-sidebar-overlay-slot { transition: opacity var(--app-motion-fast) var(--app-side-view-ease); }
-.app-sidebar-layer[data-sidebar-state="open"] :is(.app-sidebar-frame, .app-sidebar-overlay-slot) { transition-delay: 40ms; }
 @media (prefers-reduced-motion: no-preference) {
-  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar-backdrop,
-  .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-frame, .app-sidebar-overlay-slot) { opacity: 0; }
-  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar-surface {
-    border-color: transparent;
-    background-color: transparent;
-    transform: scale(var(--app-side-view-rest));
-  }
-}
-.app-sidebar-layer[data-sidebar-anchored] .app-sidebar {
-  --app-side-view-origin: calc(100% - var(--app-spice-anchor-inset-inline) - var(--app-header-control) / 2) calc(var(--app-spice-anchor-inset-block) + var(--app-header-control) / 2);
+  .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface) { opacity: 0; }
 }
 .app-spice-sidebar-anchor {
   position: absolute;

@@ -294,16 +294,16 @@ and its texture stays distinct from any desaturated layer. The button's
 two-pixel ring and shadow are neutral, reddish for Fast mode whether or not an
 app update is available, and blue for an update alone; quota colors never change.
 Every sidebar is one side view in a standard width: the Spice sidebar takes
-the small width and task overview the large one. A side view materializes in
-place over the frosted veil, its material and content fading in as it settles
-from just under full scale, and dissolves the same way on close, without motion
-when reduced motion is requested. Pressing the Spice button opens that view
+the small width and task overview the large one. A side view and its frosted
+veil simply fade in on open and fade out on close, with no movement or
+scaling, and appear and leave at once when reduced motion is requested.
+Pressing the Spice button opens that view
 around the button: the fixed 34-pixel square trigger stays circular with its
 inline center over the shared 80-pixel pip and composer-control column, and its
 block center halfway between the global and team task-tab rows. One pip
 therefore sits exactly beneath it while larger pip sets spread around the same
-axis. The trigger remains unmoved and unscaled above the sheet beside the quota
-percentage while the view forms behind it. Pressing the button again, Escape,
+axis. The trigger remains unmoved and unfaded above the sheet beside the quota
+percentage while the view fades in behind it. Pressing the button again, Escape,
 or the backdrop closes it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:

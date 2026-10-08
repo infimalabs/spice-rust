@@ -27,9 +27,9 @@ pub(super) struct Content {
     pub overlay_open: bool,
     pub dismiss_overlay: Option<Callback<()>>,
     /// The launcher's twin, standing over the launcher's own place and closing
-    /// the sidebar in place of the Close button. It sits beside the scaling
-    /// surface rather than inside it, so the view forms around a trigger that
-    /// never moves. It carries the sidebar's close ref and close callback.
+    /// the sidebar in place of the Close button. It sits beside the fading
+    /// surface rather than inside it, so the trigger never changes while the
+    /// view appears. It carries the sidebar's close ref and close callback.
     pub anchor: Option<Html>,
 }
 
