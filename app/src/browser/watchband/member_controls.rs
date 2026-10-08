@@ -295,7 +295,7 @@ fn next_fast_label(own: bool, team: bool, global: Option<bool>) -> String {
 
 /// The per-member fast-mode toggle. It shows and flips this member's own
 /// flag. Fast mode is additive, so the status line's next launch also runs
-/// fast while the team's TURBO or the Spice sidebar's Fast mode is on. A
+/// fast while the team's TURBO or the Spice sidebar's global TURBO is on. A
 /// running OMP agent whose effective value changes takes it at once, and the
 /// status line keeps the running value separate in case it did not.
 fn render_fast_toggle(
@@ -368,24 +368,19 @@ pub(super) fn render_turbo(
             );
         })
     };
-    let word = if engaged { "Turbo" } else { "Basic" };
+    let title = if engaged {
+        "Turbo: every agent in this team runs in fast mode"
+    } else {
+        "Basic: press to run every agent in this team in fast mode"
+    };
     html! {
-        <button
-            type="button"
-            class="team-turbo"
-            data-lit={engaged.to_string()}
-            aria-label={word}
-            aria-pressed={engaged.to_string()}
-            title={if engaged {
-                "Turbo: every agent in this team runs in fast mode"
-            } else {
-                "Basic: press to run every agent in this team in fast mode"
-            }}
+        <crate::browser::view::chrome::TurboButton
+            class={classes!("team-turbo")}
+            {engaged}
             disabled={!can_configure}
-            onclick={onclick}
-        >
-            {super::controls::fit_word(word)}
-        </button>
+            {title}
+            {onclick}
+        />
     }
 }
 

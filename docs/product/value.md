@@ -632,12 +632,15 @@ Raised states use distinct team accents. The first round button reads `TURBO`
 while the team's fast-mode flag is on: a second internal accent layer deepens
 its red under the glass without casting a halo beyond the rim. Otherwise it
 reads `BASIC` in the same neutral raised knob. Each range's maximum stop,
-narrate and drain, keeps the second accent, blue. A press of `TURBO` flips that
-team flag, which the resident keeps
-across restarts. Fast mode is additive: a member launches in fast mode exactly
-when its own flag, its team's flag, or the global setting is on, so turning one
-level off never slows a member another level still enables. Running OMP agents
-whose effective value changes take it at once. The draft field is one glass
+narrate and drain, keeps the second accent, blue. Pressing the composer's
+`TURBO` flips that team flag, which the resident keeps across restarts. The
+Settings section in the Spice side view uses the same `TURBO`/`BASIC` button,
+material, and pressed-state convention to flip the global flag; it remains
+disabled until settings have loaded and the resident offers that command.
+Fast mode is additive: a member launches in fast mode exactly when its own flag,
+its team's flag, or the global setting is on, so turning one level off never
+slows a member another level still enables. Running OMP agents whose effective
+value changes take it at once. The draft field is one glass
 thickness. One inherited depth parameter drives the shared control-glass paint:
 headers use its default two thicknesses, while the control frame overrides it
 to three. Each surface receives that paint once, so the moving page stays

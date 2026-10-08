@@ -874,7 +874,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
 /* One colored-glass recipe keeps every stateful knob cohesive and tactile. */
-.team-composer :is(.team-send, .team-turbo, .team-slider) {
+:is(.team-composer :is(.team-send, .team-slider), .app-turbo-button) {
   --team-knob-surface: var(--control-state-accent, var(--accent));
   --team-knob-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-knob-surface) 68%, var(--app-shadow-source));
   --team-knob-highlight: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%);
@@ -890,7 +890,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-knob-ink-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 34%, transparent);
   --team-knob-lift: var(--team-knob-rim), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
 }
-.team-composer :is(.team-send, .team-turbo, .team-menu) {
+:is(.team-composer :is(.team-send, .team-menu), .app-turbo-button) {
   --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent; --team-knob-rim: inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 30%, transparent);
   position: relative; display: grid; place-items: center; overflow: hidden;
   place-self: center; width: var(--team-knob-size); min-width: var(--team-knob-size); max-width: var(--team-knob-size); height: var(--team-knob-size); min-height: var(--team-knob-size); margin: 0; padding: 0;
@@ -899,17 +899,17 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; cursor: pointer; }
+.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; }
+.app-spice-turbo { --team-knob-size: var(--app-round-control-size); }
+.app-turbo-button { cursor: pointer; }
 .team-composer .team-menu { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 2; border: var(--app-control-edge-width) solid var(--control-line-soft); background: var(--control-surface-soft); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--muted); cursor: pointer; }
 .team-composer .team-menu:not(:disabled):is(:hover, :active, :focus-visible, [aria-expanded="true"]) { border-color: var(--accent-slot, var(--accent)); background: var(--control); color: var(--accent-slot, var(--accent)); }
-.team-composer .team-send {
-  --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1;
-}
-.team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
-.team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
-.team-composer :is(.team-send, .team-turbo):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
-.team-composer :is(.team-send, .team-turbo)[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
-.team-composer :is(.team-send, .team-turbo):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
+.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1; }
+:is(.team-composer .team-send, .app-turbo-button)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
+:is(.team-composer .team-send, .app-turbo-button):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
+:is(.team-composer .team-send, .app-turbo-button):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
+:is(.team-composer .team-send, .app-turbo-button)[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
+:is(.team-composer .team-send, .app-turbo-button):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
 /* SEND's pinwheel lights only for actual recipients. Dome and ink stay tactile
    while the team runs; only a lit press depresses them. */
 .team-composer .team-send[data-lit="true"] {
@@ -929,13 +929,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
       transparent 87%),
     var(--team-knob-glass), var(--team-send-pinwheel);
 }
-.team-composer .team-turbo[data-lit="true"] {
-  --control-state-accent: var(--accent-3);
-  --team-knob-accent-glass: linear-gradient(color-mix(in srgb, var(--accent-3) 42%, transparent), color-mix(in srgb, var(--accent-3) 42%, transparent));
-}
-.team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { --control-state-accent: var(--muted); }
+.app-turbo-button[data-lit="true"] { --control-state-accent: var(--accent-3); --team-knob-accent-glass: linear-gradient(color-mix(in srgb, var(--accent-3) 42%, transparent), color-mix(in srgb, var(--accent-3) 42%, transparent)); }
+:is(.team-composer .team-send, .app-turbo-button):not([data-lit="true"]) { --control-state-accent: var(--muted); }
 .team-composer :is(.team-send, .team-menu):disabled { opacity: 1; }
-.team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
+.app-turbo-button:disabled { cursor: not-allowed; filter: saturate(.55); opacity: .58; }
+.app-turbo-button .fit-word { inline-size: 22px; block-size: 8px; }
 .fit-word {
   display: block; overflow: hidden; pointer-events: none;
   fill: currentColor; filter: drop-shadow(var(--team-knob-ink-shadow)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;

@@ -491,24 +491,19 @@ pub(in crate::browser) struct SettingToggleProps {
     pub(in crate::browser) checked: bool,
     pub(in crate::browser) disabled: bool,
     #[prop_or_default]
-    pub(in crate::browser) checkbox: bool,
-    #[prop_or_default]
     pub(in crate::browser) title: Option<AttrValue>,
     #[prop_or_default]
     pub(in crate::browser) onclick: Option<Callback<MouseEvent>>,
 }
 
-/// One shared two-column setting toggle for global and member controls.
+/// One two-column setting toggle for a member's own fast-mode flag.
 #[function_component(SettingToggle)]
 pub(in crate::browser) fn setting_toggle(props: &SettingToggleProps) -> Html {
-    let state = props.checked.to_string();
     html! {
         <button
             class="app-setting-row app-setting-toggle app-setting-toggle--fast"
             type="button"
-            role={props.checkbox.then_some("menuitemcheckbox")}
-            aria-checked={props.checkbox.then(|| state.clone())}
-            aria-pressed={(!props.checkbox).then_some(state)}
+            aria-pressed={props.checked.to_string()}
             disabled={props.disabled}
             title={props.title.clone()}
             onclick={props.onclick.clone()}
@@ -516,6 +511,51 @@ pub(in crate::browser) fn setting_toggle(props: &SettingToggleProps) -> Html {
             <strong>{props.label.clone()}</strong>
             <span>{props.value.clone()}</span>
         </button>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub(in crate::browser) struct TurboButtonProps {
+    #[prop_or_default]
+    pub(in crate::browser) class: Classes,
+    #[prop_or_default]
+    pub(in crate::browser) label: Option<AttrValue>,
+    pub(in crate::browser) engaged: bool,
+    pub(in crate::browser) disabled: bool,
+    pub(in crate::browser) title: AttrValue,
+    pub(in crate::browser) onclick: Callback<MouseEvent>,
+}
+
+/// One shared TURBO/BASIC state button for team and global fast mode.
+#[function_component(TurboButton)]
+pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
+    let word = if props.engaged { "Turbo" } else { "Basic" };
+    let label = props.label.clone().unwrap_or_else(|| AttrValue::from(word));
+    html! {
+        <button
+            type="button"
+            class={classes!("app-turbo-button", props.class.clone())}
+            data-lit={props.engaged.to_string()}
+            aria-label={label}
+            aria-pressed={props.engaged.to_string()}
+            title={props.title.clone()}
+            disabled={props.disabled}
+            onclick={props.onclick.clone()}
+        >
+            {fit_word(word)}
+        </button>
+    }
+}
+
+/// One control word drawn to fill its box exactly: every word occupies the
+/// same physical width and height, squeezed or stretched to fit.
+pub(in crate::browser) fn fit_word(word: &'static str) -> Html {
+    html! {
+        <svg class="fit-word" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+            <text x="0" y="13" font-size="15" textLength="100" lengthAdjust="spacingAndGlyphs">
+                {word}
+            </text>
+        </svg>
     }
 }
 

@@ -581,7 +581,7 @@ fn speech_slider(
                 aria-label={format!("Speech mode: {}", speech.label())}
                 oninput={oninput}
             />
-            {fit_word(speech.label())}
+            {crate::browser::view::chrome::fit_word(speech.label())}
         </label>
     }
 }
@@ -620,20 +620,7 @@ fn lifetime_slider(
                 onchange={onchange}
                 onblur={cancel_preview}
             />
-            {fit_word(selected.label())}
+            {crate::browser::view::chrome::fit_word(selected.label())}
         </label>
-    }
-}
-
-/// One control word drawn to fill its box exactly: every word occupies the
-/// same physical width and height, squeezed or stretched to fit, so a long
-/// word and a short one read as equal labels on equal buttons.
-pub(super) fn fit_word(word: &'static str) -> Html {
-    html! {
-        <svg class="fit-word" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
-            <text x="0" y="13" font-size="15" textLength="100" lengthAdjust="spacingAndGlyphs">
-                {word}
-            </text>
-        </svg>
     }
 }
