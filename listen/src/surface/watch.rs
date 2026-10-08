@@ -4,8 +4,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use super::{
-    Mode, Observation, RetroSession, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
-    SurfaceResidue, SurfaceToolMoment, discover, surface_scan,
+    Mode, Observation, RetroSession, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceResidue,
+    SurfaceToolMoment, discover, surface_scan,
 };
 use wire::output::Budget;
 
@@ -471,13 +471,7 @@ fn clip_event(event: &mut SurfaceEvent, budget: Budget, withheld: &mut usize) {
                 clip_field(phase, budget, withheld);
             }
         }
-        SurfaceEvent::Reasoning {
-            content: SurfaceReasoning::Plain { lines },
-        } => {
-            for line in lines {
-                clip_field(line, budget, withheld);
-            }
-        }
+        SurfaceEvent::Reasoning { .. } => {}
         SurfaceEvent::Tool { call_id, moment } => {
             clip_field(call_id, budget, withheld);
             match moment {

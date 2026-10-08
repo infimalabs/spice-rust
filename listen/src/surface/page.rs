@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use tape::SourceId;
 use wire::output::{Admission, Bounded, Budget, Resume};
 
-use super::{
-    Observation, SurfaceError, SurfaceEvent, SurfaceReasoning, SurfaceResidue, SurfaceToolMoment,
-};
+use super::{Observation, SurfaceError, SurfaceEvent, SurfaceResidue, SurfaceToolMoment};
 use crate::{
     Checkpoint, Dialect, EventKind, Position, Record, RecordPayload, Span, TailBudget, TailWork,
     scan_before, scan_tail,
@@ -492,13 +490,7 @@ fn clip_event(event: &mut SurfaceEvent, budget: Budget, withheld: &mut usize) {
                 clip_field(phase, budget, withheld);
             }
         }
-        SurfaceEvent::Reasoning {
-            content: SurfaceReasoning::Plain { lines },
-        } => {
-            for line in lines {
-                clip_field(line, budget, withheld);
-            }
-        }
+        SurfaceEvent::Reasoning { .. } => {}
         SurfaceEvent::Tool { call_id, moment } => {
             clip_field(call_id, budget, withheld);
             match moment {

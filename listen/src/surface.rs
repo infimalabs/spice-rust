@@ -227,21 +227,28 @@ impl fmt::Display for SurfaceEvent {
 }
 
 /// Stable reasoning representation.
+///
+/// Watch and retro output lands in whatever context runs them, and a provider
+/// refuses a request that carries another session's reasoning, so a surface
+/// marks that reasoning occurred and how much there was without its text.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "form", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SurfaceReasoning {
-    /// Plain reasoning lines.
-    Plain {
-        /// Lines reported by the vendor.
-        lines: Vec<String>,
+    /// Reasoning the vendor reported, its text withheld.
+    Withheld {
+        /// UTF-8 bytes of reasoning text withheld.
+        bytes: u64,
     },
 }
 
 impl From<&ReasoningContent> for SurfaceReasoning {
     fn from(content: &ReasoningContent) -> Self {
         match content {
-            ReasoningContent::Plain(lines) => Self::Plain {
-                lines: lines.clone(),
+            ReasoningContent::Plain(lines) => Self::Withheld {
+                bytes: lines
+                    .iter()
+                    .map(|line| u64::try_from(line.len()).unwrap_or(u64::MAX))
+                    .fold(0, u64::saturating_add),
             },
         }
     }
@@ -250,7 +257,7 @@ impl From<&ReasoningContent> for SurfaceReasoning {
 impl fmt::Display for SurfaceReasoning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Plain { lines } => write!(formatter, "plain lines={lines:?}"),
+            Self::Withheld { bytes } => write!(formatter, "withheld bytes={bytes}"),
         }
     }
 }
