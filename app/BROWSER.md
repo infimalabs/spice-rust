@@ -102,11 +102,12 @@ margin of its own.
 
 ## Team composer controls
 
-The 56px Send action occupies the top of an 80px control column, with the
-speech and allocation vertical ranges below it. Its label stays “SEND”; color
-and the adjacent allocation value distinguish Steer, Drive, and Drain. Hover,
-press, reduced-motion, ordinary-submit, and broadcast-preview states change
-paint only, never geometry.
+The 34px Turbo action leads in the top-left 40px grid slot, leaving three
+pixels above and beside it. The 56px Send action follows, centered in a
+full-width 62px row; speech and allocation ranges split the remaining height.
+Its label stays “SEND”; color and the adjacent allocation value distinguish
+Steer, Drive, and Drain. Hover, press, reduced-motion, ordinary-submit, and
+broadcast-preview states change paint only, never geometry.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
@@ -119,11 +120,11 @@ holds it through the full height of the neighboring text areas. That paint
 fades smoothly across the 10px continuation below instead of exposing the
 stream inside the frame. The continuation itself paints its opaque 1px top
 inset rule above the control paint, using the shared backdrop edge color so the
-boundary remains continuous. Equal soft elevation
-appears on both inline sides; at a team boundary the following composer carries
-the otherwise-clipped right cast, letting either neighbor read beneath the
-raised controls without moving either surface. Sibling teams need no hard
-separator because their glass, accents, and content already distinguish them.
+boundary remains continuous. Equal soft elevation appears on both inline
+sides; at a team boundary the following composer carries the otherwise-clipped
+right cast, letting either neighbor read beneath the raised controls without
+moving either surface. The faint sibling separator continues that internal
+boundary through the message plane without painting either browser edge.
 The screen owns the form glass, one complex theme-derived background, and one
 10px frost filter. Its header edge eases from an opaque control line through
 stronger control color

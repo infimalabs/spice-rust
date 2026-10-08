@@ -132,6 +132,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             data-lifetime-pending={props.lifetime_pending.to_string()}
             data-idle={idle.to_string()}
         >
+            {props.turbo.clone()}
             <button
                 ref={send}
                 class="team-send"
@@ -141,7 +142,6 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
                 disabled={idle || !props.ready}
                 {title}
             >{"Send"}</button>
-            {props.turbo.clone()}
             {props.children.clone()}
         </aside>
     }
