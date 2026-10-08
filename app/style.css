@@ -517,14 +517,17 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-sidebar-layer[data-sidebar-anchored][data-sidebar-state="open"] .app-sidebar {
   clip-path: circle(142% at var(--app-sidebar-anchor-x) var(--app-sidebar-anchor-y));
 }
-.app-sidebar > .app-spice-button {
+.app-spice-sidebar-anchor {
   position: absolute;
   z-index: 3;
   top: var(--app-commandbar-block-pad);
   inset-inline-end: var(--app-commandbar-inset-end);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
-  padding-inline-end: calc(var(--app-commandbar-inset-end) + var(--app-header-control) + 12px);
+  padding-inline-end: calc(var(--app-commandbar-inset-end) + var(--app-header-control) + 4ch + 28px);
 }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
@@ -822,8 +825,7 @@ a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) 
 .app-spice-topology-agent-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .8; }
 .app-spice-topology-agent .app-provider-emblem { position: absolute; right: 8px; bottom: 8px; width: 18px; height: 18px; }
 .app-spice-quota .section-heading { align-items: baseline; }
-.quota-capacity { margin: 0; color: var(--muted); font-size: var(--app-type-body); }
-.quota-capacity strong { color: var(--ink); font-size: var(--app-type-section); }
+.app-spice-quota > .quota-detail-group:first-of-type { margin-top: 0; }
 .quota-status {
   display: flex;
   align-items: baseline;
@@ -920,8 +922,8 @@ a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) 
 .quota-meter-track { fill: color-mix(in srgb, var(--muted) 22%, transparent); }
 .quota-meter-fill { fill: color-mix(in srgb, var(--ink) 40%, var(--muted)); }
 .quota-limit[data-limit-status] .quota-meter-fill { fill: var(--triage); }
-.quota-limit-amount { font-variant-numeric: tabular-nums; text-align: right; }
-.quota-limit-reset { color: var(--muted); }
+.quota-limit-amount { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.quota-limit-reset { color: var(--muted); text-align: right; white-space: nowrap; }
 .quota-reset-credits { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 0; color: var(--muted); font-size: var(--app-type-meta); }
 .quota-reset-credits strong { color: var(--ink); }
 .quota-reset-credit { display: flex; flex: 0 0 100%; align-items: center; min-width: 0; max-width: 100%; height: 13px; gap: 4px; }

@@ -115,16 +115,6 @@ pub(crate) fn account_label(account: &wire::QuotaAccount) -> String {
         .unwrap_or_else(|| "Redacted account".to_owned())
 }
 
-pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
-    let Some(snapshot) = generation.last_good.as_ref() else {
-        return present(generation).condition.label().to_owned();
-    };
-    weekly_remaining(snapshot).map_or_else(
-        || "No provider capacity reported".to_owned(),
-        |remaining| format!("{:.0}% remaining", remaining * 100.0),
-    )
-}
-
 /// Whether retained quota data outlived a failed refresh. An in-flight refresh
 /// keeps the retained figure steady instead of flashing on every sample.
 pub(crate) fn last_good_stale(generation: &QuotaGeneration) -> bool {
@@ -523,22 +513,6 @@ mod tests {
         generation.latest_attempt = Some(QuotaAttempt::Succeeded { finished_at_ms: 30 });
         assert_eq!(unchanged_by_refresh(&mut generation), Condition::Current);
         assert!(present(&generation).fresh);
-    }
-
-    #[test]
-    fn aggregate_uses_plan_capacity_and_only_each_accounts_weekly_window() {
-        let generation = QuotaGeneration {
-            generation: 4,
-            refreshing: false,
-            last_good: Some(Arc::new(snapshot())),
-            latest_attempt: Some(QuotaAttempt::Failed {
-                finished_at_ms: 40,
-                kind: QuotaFailureKind::Timeout,
-                exit_code: None,
-            }),
-        };
-        assert_eq!(capacity_summary(&generation), "50% remaining");
-        assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
 
     #[test]
