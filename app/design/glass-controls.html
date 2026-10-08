@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glass controls — spice design study</title>
+<link rel="stylesheet" href="glass-controls.css">
+<script type="module" src="glass-controls.mjs"></script>
+</head>
+<body>
+<header class="page-head">
+  <div><p class="eyebrow">SPICE / CONTROL STUDIES</p><h1>Small panel. Real glass.</h1><p class="intro">Six directions. Two sliders. Three buttons. Nothing outside the control panel changes.</p></div>
+  <fieldset class="size-picker"><legend>Preview scale</legend><button type="button" data-scale="1" aria-pressed="false">Actual · 80 × 160</button><button type="button" data-scale="2" aria-pressed="true">Detail · 2×</button></fieldset>
+</header>
+<main id="studies" aria-label="Glass control panel concepts"></main>
+<footer>
+  <p>Standalone visual studies, not connected to a resident. Try BASIC / TURBO, the menu, SEND, and both sliders. Every action stays in this page.</p>
+  <p>References: <a href="https://codepen.io/Petr-Knoll/pen/QwWLZdx">Petr Knoll · Glass Button</a> / <a href="https://freefrontend.com/css-liquid-glass/">Liquid glass collection</a>. Optical vocabulary: transparent faces, opposing rim highlights, inset lens shading, blurred transmitted background. CodePen’s live preview requires security verification; its source was not available for direct inspection.</p>
+  <p>Recommendation: <strong>01 Clear lens</strong> for continuity with the current hamburger; <strong>06 Split rail</strong> for the strongest layout departure. No SVG displacement shaders here: the glass is CSS, with a solid fallback when backdrop filtering is unavailable.</p>
+</footer>
+<template id="panel-template">
+  <div class="panel">
+    <button class="glass turbo" type="button" aria-label="Enable turbo" aria-pressed="false"><span>BASIC</span></button>
+    <button class="glass menu" type="button" aria-label="Team menu" aria-expanded="false"><span class="hamburger" aria-hidden="true"><i></i><i></i><i></i></span></button>
+    <button class="glass send" type="button" aria-label="Preview send"><span>SEND</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-3-6-6-1Zm6 1 8-8"/></svg></button>
+    <label class="slider speech"><span class="groove" aria-hidden="true"><span class="glass flyer"><span>BRIEF</span></span></span><input type="range" min="0" max="2" step="1" value="1" aria-label="Speech mode" aria-valuetext="Brief"></label>
+    <label class="slider life"><span class="groove" aria-hidden="true"><span class="glass flyer"><span>STEER</span></span></span><input type="range" min="0" max="2" step="1" value="0" aria-label="Allocation mode" aria-valuetext="Steer"></label>
+    <div class="menu-popover" hidden><strong>Team menu</strong><span>Arrange · Members · Model</span><small>Visual preview only</small></div>
+  </div>
+</template>
+</body>
+</html>
