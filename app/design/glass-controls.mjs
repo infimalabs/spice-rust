@@ -1,10 +1,7 @@
 const concepts = [
-  { key: 'smoke', name: 'Smoked optical', note: 'Round smoked-glass buttons on a clear rail chassis. Central SEND; two lower flyers.' },
-  { key: 'pearl', name: 'Smoked pearl', note: 'The final pearl treatment: restrained sheen, aligned rims, neutral glass faces.' },
-  { key: 'frost', name: 'Frosted instrument', note: 'Round optical keys in one softly etched panel. The quietest complete-panel finish.' },
-  { key: 'flush', name: 'Flush etched glass', note: 'Flat transparent faces, etched circular rims. No raised dome or floating shadow.' },
-  { key: 'inset', name: 'Recessed pearl', note: 'A shallow glass well. Pearl catches the inner lower edge, not a raised outer lip.' },
-  { key: 'home', name: 'Home lens', note: 'Phone home-button direction: a clear circular inset with a fine ring and quiet surface.' },
+  { key: 'pearl', name: 'Smoked pearl', note: 'Smoked glass with a restrained pearl sheen. One optical edge, not nested ridges.' },
+  { key: 'frost', name: 'Frosted instrument', note: 'Softly diffused glass in a sharp-corner panel. Round keys and pill-shaped flyers.' },
+  { key: 'flush', name: 'Flush etched glass', note: 'The flush direction: flat transmitted glass at rest, a clear tactile depression on press.' },
 ];
 const speechModes = ['Quiet', 'Brief', 'Narrate'];
 const allocationModes = ['Steer', 'Auto', 'Drain'];
@@ -49,6 +46,24 @@ for (const state of previewStates) {
 }
 for (const panel of studies.querySelectorAll('.panel')) {
   setPreviewState(panel, 'one');
+}
+
+for (const concept of concepts) {
+  const study = document.createElement('article');
+  study.className = `study ${concept.key}`;
+  study.innerHTML = `<div class="study-head"><h3>${concept.name}</h3><p>Released / held. Same glass, different contact depth.</p></div><div class="pair"></div><div class="state" role="status">Local press comparison · no commands sent</div>`;
+  for (const held of [false, true]) {
+    const scene = document.createElement('div');
+    scene.className = 'scene dark';
+    scene.innerHTML = `<div class="mount"></div><span class="mode-label">${held ? 'Held down' : 'Released'}</span>`;
+    const content = template.content.cloneNode(true);
+    const panel = content.querySelector('.panel');
+    setPreviewState(panel, 'one');
+    panel.dataset.held = String(held);
+    scene.querySelector('.mount').append(content);
+    study.querySelector('.pair').append(scene);
+  }
+  document.querySelector('#press-matrix').append(study);
 }
 
 function setPreviewState(panel, key) {
@@ -107,8 +122,7 @@ for (const panel of document.querySelectorAll('.panel')) {
   const send = panel.querySelector('.send');
   send.addEventListener('click', () => {
     status.textContent = 'SEND pressed · preview only, nothing sent';
-    send.classList.add('pressed');
-    setTimeout(() => send.classList.remove('pressed'), 180);
+    // Native :active owns depression; release restores the optical surface.
   });
   for (const [selector, modes] of [['.speech', speechModes], ['.life', allocationModes]]) {
     const slider = panel.querySelector(selector);
