@@ -1,10 +1,10 @@
 const concepts = [
-  { key: 'pearl', name: 'Smoked pearl', note: 'Smoked glass with a restrained pearl sheen. One optical edge, not nested ridges.' },
-  { key: 'frost', name: 'Frosted instrument', note: 'Softly diffused glass in a sharp-corner panel. Round keys and pill-shaped flyers.' },
-  { key: 'flush', name: 'Flush etched glass', note: 'The flush direction: flat transmitted glass at rest, a clear tactile depression on press.' },
+  { key: 'pearl', name: 'Smoked pearl', note: 'Reference-only alternative. Smoked glass with a restrained pearl sheen and one optical edge.' },
+  { key: 'frost', name: 'Frosted instrument', note: 'Reference-only alternative. Softly diffused glass in the same sharp-corner panel.' },
+  { key: 'flush', name: 'Flush etched glass', note: 'Shipped production panel: flat transmitted glass at rest, a clear tactile depression on press.' },
 ];
-const speechModes = ['Quiet', 'Brief', 'Narrate'];
-const allocationModes = ['Steer', 'Auto', 'Drain'];
+const speechModes = ['Quiet', 'Speak', 'Narrate'];
+const allocationModes = ['Steer', 'Drive', 'Drain'];
 const template = document.querySelector('#panel-template');
 const studies = document.querySelector('#studies');
 
@@ -32,11 +32,11 @@ const previewStates = [
   { key: 'off', name: 'Totally off', note: 'No agents running. The whole panel rests; SEND is unavailable.' },
   { key: 'idle', name: 'Running · no text', note: 'The panel is awake. No draft is available, so SEND stays quiet.' },
   { key: 'one', name: 'Text · one agent', note: 'One recipient, one accent rim. SEND is available.' },
-  { key: 'many', name: 'Text · N agents', note: 'Four recipients shown. A segmented rim, not a multicolored face.' },
+  { key: 'many', name: 'Text · N agents', note: 'Four recipients shown. A segmented two-pixel rim, not a multicolored face.' },
 ];
 for (const state of previewStates) {
   const study = document.createElement('article');
-  study.className = 'study pearl';
+  study.className = 'study flush';
   study.innerHTML = `<div class="study-head"><h3>${state.name}</h3><p>${state.note}</p></div><div class="scene dark"><div class="mount"></div><span class="mode-label">Dark</span></div><div class="state" role="status">Local state preview · no commands sent</div>`;
   const content = template.content.cloneNode(true);
   const panel = content.querySelector('.panel');
