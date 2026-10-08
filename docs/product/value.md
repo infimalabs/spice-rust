@@ -647,18 +647,19 @@ Command-modifier and focus rings remain visible around admitted actions.
 
 While the keyboard broadcast preview is held from an eligible primary composer,
 `Send` replaces the ordinary recipient rim and count with those of every
-occupied member the broadcast would reach, whatever the drafts hold; releasing
-the modifiers restores the ordinary face. Team `TURBO` uses a red edge while
-engaged and otherwise reads `BASIC` on the same neutral Flush face. The range
-flyers use muted edges for Quiet and Steer, the active accent for Speak and
-Drive, and blue for Narrate and Drain. Pressing the composer's `TURBO` flips
-that team flag, which the resident keeps across restarts.
+occupied member the broadcast would reach, whatever the drafts hold. Its command
+ring takes no single accent: the recipients' light combines into the theme's ink
+signal, near white on dark glass and near black on light. Releasing the
+modifiers restores the ordinary face. Team `TURBO` keeps its lettering in both
+states, muted when off and brighter with a neutral glass wash when on, without a
+colored edge; the range flyers keep neutral edges at every stop. Pressing the
+composer's `TURBO` flips that team flag, which the resident keeps across
+restarts.
 
-The Settings section in the Spice side view uses the same neutral 34px Flush
-etched-glass face for its separately admitted global `TURBO`/`BASIC` control.
-`TURBO` lights the red edge without filling the face; `BASIC` keeps the neutral
-edge. The control remains disabled until settings have loaded and the resident
-offers that command.
+The Settings section in the Spice side view gives its separately admitted global
+`TURBO` control the same neutral 34px Flush etched-glass face and on/off
+lettering. The control remains disabled until settings have loaded and the
+resident offers that command.
 Fast mode is additive: a member launches in fast mode exactly when its own flag,
 its team's flag, or the global setting is on, so turning one level off never
 slows a member another level still enables. Running OMP agents whose effective
