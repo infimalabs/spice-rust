@@ -5,9 +5,7 @@
   min-height: var(--app-commandbar-block-size);
   gap: 7px;
   padding-block: var(--app-commandbar-block-pad);
-  padding-inline:
-    calc(8px + env(safe-area-inset-left, 0px))
-    calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
+  padding-inline: calc(8px + env(safe-area-inset-left, 0px)) var(--app-commandbar-inset-end);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -20,6 +18,9 @@
   --app-shell-edge-inline: 10px;
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
+  /* The Spice button's distance from the right edge, shared by the command
+     bar and the anchored Spice sidebar standing over it. */
+  --app-commandbar-inset-end: calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
   --app-commandbar-block-pad: 8px;
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-commandbar-gap: 7px;

@@ -293,8 +293,11 @@ hatch rather than bare page, so the well never reads as a hole in the button,
 and its texture stays distinct from any desaturated layer. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available app update, and red for both; quota colors never change.
-Pressing the Spice button opens that generic sidebar. Escape, its backdrop, and
-Close dismiss it and restore focus to the button.
+Pressing the Spice button opens that generic sidebar, which forms around the
+button: the button stays in place above the sheet, which grows out of the
+button's circle and shrinks back into it on close, without motion when reduced
+motion is requested. Pressing the button again, Escape, or the backdrop closes
+it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
 starting, connecting, and reconnecting grey and slowly pulse its pepper, and the

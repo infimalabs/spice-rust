@@ -9,6 +9,10 @@ pub(super) struct Content {
     pub overlay: Html,
     pub overlay_open: bool,
     pub dismiss_overlay: Option<Callback<()>>,
+    /// The launcher's twin, standing over the launcher's own place and closing
+    /// the sidebar in place of the Close button; the sheet forms around it. It
+    /// carries the sidebar's close ref and close callback.
+    pub anchor: Option<Html>,
 }
 
 pub(super) struct SidebarRender<'a> {
@@ -35,10 +39,12 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
         "opening"
     };
     let close_label = format!("Close {}", render.content.label.to_lowercase());
+    let anchored = render.content.anchor.is_some();
     html! {
         <div
             class="app-sidebar-layer"
             data-sidebar-state={state}
+            data-sidebar-anchored={anchored.then_some("true")}
             inert={render.closing.then_some("true")}
         >
             <button
@@ -54,6 +60,7 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
                 aria-modal="true"
                 aria-labelledby="app-sidebar-title"
             >
+                {render.content.anchor.unwrap_or_default()}
                 <div
                     class="app-sidebar-frame"
                     inert={render.content.overlay_open.then_some("true")}
@@ -64,13 +71,15 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
                             <p class="app-sidebar-kicker">{render.content.label}</p>
                             <h2 id="app-sidebar-title">{render.content.title}</h2>
                         </div>
-                        <button
-                            ref={render.close_ref.clone()}
-                            type="button"
-                            class="app-sidebar-close app-compact-control"
-                            aria-label={close_label}
-                            onclick={close_click}
-                        >{"Close"}</button>
+                        if !anchored {
+                            <button
+                                ref={render.close_ref.clone()}
+                                type="button"
+                                class="app-sidebar-close app-compact-control"
+                                aria-label={close_label}
+                                onclick={close_click}
+                            >{"Close"}</button>
+                        }
                     </header>
                     {render.content.body}
                 </div>

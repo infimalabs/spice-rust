@@ -106,6 +106,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
         overlay,
         overlay_open: **render.blocker_review,
         dismiss_overlay,
+        anchor: None,
     }
 }
 

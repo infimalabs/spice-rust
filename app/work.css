@@ -365,6 +365,7 @@
   .app-sidebar-backdrop,
   .app-sidebar { opacity: 1; }
   .app-sidebar { transform: none; }
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar { clip-path: none; transition: none; }
 }
 .work-map-task-list {
   display: grid;

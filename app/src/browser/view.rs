@@ -227,6 +227,14 @@ fn render_spice_sidebar(
             {spice_sidebar::render_arrangement(runtime, &context)}
         </div>
     };
+    let anchor = chrome::render_spice_button(chrome::SpiceButton {
+        connection: render.connection,
+        app_update: (**render.app_update).as_ref(),
+        runtime,
+        place: chrome::SpicePlace::Anchor,
+        node_ref: render.sidebar_close.clone(),
+        onclick: render.close_sidebar.reform(|_: MouseEvent| ()),
+    });
     sidebar::Content {
         label: "Spice".into(),
         title: "Operator, resident & teams".into(),
@@ -234,6 +242,7 @@ fn render_spice_sidebar(
         overlay: Html::default(),
         overlay_open: false,
         dismiss_overlay: None,
+        anchor: Some(anchor),
     }
 }
 
