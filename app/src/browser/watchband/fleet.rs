@@ -271,9 +271,11 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
         return Html::default();
     }
     html! {
-        <nav class="app-horn-tabs team-tasks" aria-label="Open tasks this team created or claims">
+        <nav class="team-task-rail" aria-label="Open tasks this team created or claims">
             {render_team_total(team, &groups, render.navigate)}
-            {for groups.iter().map(|group| render_team_task_group(team, group, render))}
+            <div class="app-horn-tabs team-tasks">
+                {for groups.iter().map(|group| render_team_task_group(team, group, render))}
+            </div>
         </nav>
     }
 }
