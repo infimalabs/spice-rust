@@ -522,12 +522,20 @@ contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
 those bytes is not a new steering send.
 
 **Draft image annotations.** Open a pasted or dropped lane/quote attachment,
-then choose **Annotate** in its full-size preview. **Rectangle** and **Arrow**
-draw red marks in original-image coordinates; **Select** moves a mark and its
-two handles adjust rectangle corners or arrow endpoints. Selected marks can
-be moved with arrow keys (Shift moves ten pixels), removed with **Delete** or
-Backspace, and undone/redone with the toolbar or Command/Control+Z and
-Shift+Command/Control+Z. An interrupted pointer gesture is discarded.
+then choose **Annotate** in its full-size preview. **Rectangle**, **Line**,
+and **Arrow** draw red marks in original-image coordinates. A line or arrow
+routes straight; hold Shift while drawing to snap it to 45° steps, Alt/Option
+to route an axis-aligned elbow, or Command/Control to bend a curve, and the
+arrowhead follows the final segment. The route button cycles the selected
+line or arrow (or the next one drawn) through Straight, Elbow, and Curve for
+touch use. **Text** places a label at the pressed point: Enter or leaving the
+field keeps it, Escape abandons it, and an empty label is discarded;
+double-click a label or press Enter on a selected one to edit it again.
+**Select** moves a mark, and the two handles adjust rectangle corners or line
+and arrow endpoints. Selected marks can be moved with arrow keys (Shift moves
+ten pixels), removed with **Delete** or Backspace, and undone/redone with the
+toolbar or Command/Control+Z and Shift+Command/Control+Z. An interrupted
+pointer gesture is discarded.
 
 **Apply** replaces that exact draft attachment with a native-resolution PNG.
 The draft retains the original raster and editable shape list, so reopening

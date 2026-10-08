@@ -340,13 +340,26 @@
   background: var(--accent); color: var(--on-accent, var(--panel));
 }
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
+/* Wide enough for its longest route word, so cycling never reflows the rail. */
+.image-annotation-tools > .image-annotation-route { min-inline-size: 9ch; }
 .image-annotation-stage { grid-area: image; min-width: 0; min-height: 0; outline: none; }
 .image-annotation-stage:focus-visible { outline: var(--app-focus-ring-width) solid var(--accent); outline-offset: 2px; }
 .image-annotation-svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 .image-annotation-svg--draw { cursor: crosshair; }
 .image-annotation-hit { fill: transparent; stroke: transparent; stroke-width: 20px; vector-effect: non-scaling-stroke; cursor: move; }
+/* A routed mark is hit along its stroke only, never across the area a curve
+   or elbow encloses. */
+path.image-annotation-hit { fill: none; }
 .image-annotation-mark { pointer-events: none; stroke-linejoin: round; }
 .image-annotation-handle { fill: var(--app-highlight-source); stroke: var(--app-annotation-danger); stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: crosshair; }
+.image-annotation-outline { fill: none; stroke: var(--app-annotation-danger); stroke-width: 1.5px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+/* Sized in image pixels through the SVG viewBox; the size arrives by CSSOM. */
+.image-annotation-label-field {
+  box-sizing: border-box; display: block; width: 100%; height: 100%; margin: 0; padding: 0 calc(var(--annotation-label-size) / 4);
+  border: 1.5px dashed var(--app-annotation-danger); border-radius: 0; outline: none;
+  background: color-mix(in srgb, var(--app-shadow-source) 35%, transparent); color: #ef4444;
+  font: 700 var(--annotation-label-size)/1 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
 .image-annotation-loading { text-align: center; color: var(--muted); }
 /* Out of flow, so showing or clearing a result never moves what is beneath it. */
 .toast {

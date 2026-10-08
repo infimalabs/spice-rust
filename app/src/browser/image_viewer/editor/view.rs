@@ -7,24 +7,38 @@ pub(super) struct Actions {
     pub(super) undo: Callback<MouseEvent>,
     pub(super) redo: Callback<MouseEvent>,
     pub(super) delete: Callback<MouseEvent>,
+    pub(super) route: Callback<MouseEvent>,
     pub(super) cancel: Callback<MouseEvent>,
     pub(super) apply: Callback<MouseEvent>,
 }
 
+/// The drawing tools, the route control, then history. The route control
+/// cycles the selected line or arrow's route, or the route new ones start
+/// with, for pointers without modifier keys; it stays in place, disabled,
+/// while neither applies so the rail never reflows.
 pub(super) fn toolbar(
     tool: &UseStateHandle<Tool>,
+    route: Route,
     busy: bool,
     ready: bool,
     history: &History,
     actions: Actions,
 ) -> Html {
+    let selected_route = history
+        .selected
+        .and_then(|index| history.shapes.get(index))
+        .filter(|shape| shape.kind.routed())
+        .map(|shape| shape.route);
+    let routing = selected_route.is_some() || matches!(**tool, Tool::Line | Tool::Arrow);
+    let shown = selected_route.unwrap_or(route);
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
             <span class="image-annotation-tools app-control-rail app-overlay-control">
-                {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Arrow, "Arrow")].into_iter().map(|(value, label)| {
+                {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Line, "Line"), (Tool::Arrow, "Arrow"), (Tool::Text, "Text")].into_iter().map(|(value, label)| {
                     let tool = tool.clone();
                     html! { <button type="button" aria-pressed={(*tool == value).to_string()} disabled={busy} onclick={Callback::from(move |_| tool.set(value))}>{label}</button> }
                 })}
+                <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} title="Route: Straight, Elbow (Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees" onclick={actions.route}>{shown.label()}</button>
                 <button type="button" disabled={busy || !history.can_undo()} onclick={actions.undo}>{"Undo"}</button>
                 <button type="button" disabled={busy || !history.can_redo()} onclick={actions.redo}>{"Redo"}</button>
                 <button type="button" disabled={busy || history.selected.is_none()} onclick={actions.delete}>{"Delete"}</button>
@@ -53,18 +67,40 @@ pub(super) fn marks(
         1.0
     };
     let handle_radius = (8.0 / scale).to_string();
+    let typing = session
+        .label
+        .borrow()
+        .as_ref()
+        .map(|typing| (typing.index, typing.serial));
+    // Every mark is keyed so a label entry, keyed by its own serial, mounts a
+    // fresh field even where an abandoned label stood.
     html! {
         {for history.shapes.iter().enumerate().map(|(index, shape)| {
             let selected = history.selected == Some(index);
+            if let Some((_, serial)) = typing.filter(|(typing, _)| *typing == index) {
+                return html! {
+                    <g key={format!("label-{serial}")} data-annotation-shape={index.to_string()} data-selected="true">
+                        <label::Field session={session.clone()} shape={shape.clone()} {dimensions} />
+                    </g>
+                };
+            }
             let session = session.clone();
             let focused = Callback::from(move |_: FocusEvent| {
                 session.history.borrow_mut().selected = Some(index);
                 session.repaint.emit(());
             });
+            let (low, high) = shape.bounds();
+            let name = if shape.kind == Kind::Text {
+                format!("Text {}: {}", index + 1, shape.text)
+            } else {
+                format!("{} {}", shape.kind.label(), index + 1)
+            };
             html! {
-                <g data-annotation-shape={index.to_string()} data-selected={selected.to_string()} tabindex="0" role="button" aria-label={format!("{} {}", if shape.kind == Kind::Rectangle { "Rectangle" } else { "Arrow" }, index + 1)} onfocus={focused}>
-                    {shape::render(*shape, stroke)}
-                    if selected {
+                <g key={index.to_string()} data-annotation-shape={index.to_string()} data-selected={selected.to_string()} tabindex="0" role="button" aria-label={name} onfocus={focused}>
+                    {shape::render(shape, stroke)}
+                    if selected && shape.kind == Kind::Text {
+                        <rect class="image-annotation-outline" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} />
+                    } else if selected {
                         {for [("start", shape.start), ("end", shape.end)].into_iter().map(|(handle, point)| html! {
                             <circle class="image-annotation-handle" data-annotation-handle={handle} cx={point.x.to_string()} cy={point.y.to_string()} r={handle_radius.clone()} />
                         })}

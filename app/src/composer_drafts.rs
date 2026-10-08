@@ -946,7 +946,7 @@ mod tests {
 #[cfg(test)]
 mod image_tests {
     use super::*;
-    use crate::image_annotation::{Kind, Point};
+    use crate::image_annotation::{Kind, Point, Route};
 
     #[test]
     fn edits_own_one_paste_and_revision_and_survive_refusal_restoration() {
@@ -962,11 +962,12 @@ mod image_tests {
             DraftImage::new(first, original.clone()),
             DraftImage::new(second, original.clone()),
         ];
-        let shapes = Rc::new(vec![Shape {
-            kind: Kind::Rectangle,
-            start: Point { x: 2, y: 3 },
-            end: Point { x: 20, y: 30 },
-        }]);
+        let shapes = Rc::new(vec![Shape::new(
+            Kind::Rectangle,
+            Route::Straight,
+            Point { x: 2, y: 3 },
+            Point { x: 20, y: 30 },
+        )]);
         assert!(store.apply_image("lane", None, second, 0, marked.clone(), shapes.clone()));
         assert_eq!(*store.image("lane", None, first).unwrap().media, original);
         assert_eq!(

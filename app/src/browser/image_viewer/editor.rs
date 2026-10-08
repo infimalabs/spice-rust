@@ -1,11 +1,12 @@
 use super::*;
 use crate::composer_drafts::DraftImage;
-use crate::image_annotation::{Editor as History, Kind, Point, Shape};
+use crate::image_annotation::{Editor as History, Kind, Point, Route, Shape, snapped};
 use std::cell::{Cell, RefCell};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 mod export;
 mod keys;
+mod label;
 mod pointer;
 mod shape;
 mod view;
@@ -14,10 +15,12 @@ mod view;
 enum Tool {
     Select,
     Rectangle,
+    Line,
     Arrow,
+    Text,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Motion {
     Draw(usize),
     Move(usize, Shape, Point),
@@ -30,6 +33,8 @@ struct Gesture {
     pointer: i32,
     motion: Motion,
     before: Vec<Shape>,
+    /// The toolbar route when the press began; modifiers override it live.
+    route: Route,
 }
 
 pub(super) struct Applied {
@@ -52,6 +57,8 @@ pub(super) struct EditorProps {
 struct Session {
     history: Rc<RefCell<History>>,
     gesture: Rc<RefCell<Option<Gesture>>>,
+    /// The label whose text is being typed, with the marks before it began.
+    label: Rc<RefCell<Option<label::Typing>>>,
     /// Pointer capture can retarget a gesture's generated click to the SVG
     /// root. That click belongs to the edit, not to the surrounding backdrop.
     gesture_click: Rc<RefCell<bool>>,
@@ -62,6 +69,7 @@ impl PartialEq for Session {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.history, &other.history)
             && Rc::ptr_eq(&self.gesture, &other.gesture)
+            && Rc::ptr_eq(&self.label, &other.label)
             && Rc::ptr_eq(&self.gesture_click, &other.gesture_click)
             && self.repaint == other.repaint
     }
@@ -153,11 +161,59 @@ fn use_history_command(session: Session, command: fn(&mut History)) -> Callback<
     })
 }
 
+/// The toolbar route control: it cycles the selected line or arrow's route
+/// as one edit, or else the route the next line or arrow starts with.
+#[hook]
+fn use_route_command(session: Session, route: UseStateHandle<Route>) -> Callback<MouseEvent> {
+    use_callback((session, route), |_: MouseEvent, (session, route)| {
+        let next = {
+            let mut history = session.history.borrow_mut();
+            pointer::cancel(&mut history, &mut session.gesture.borrow_mut());
+            let selected = history
+                .selected
+                .filter(|index| history.shapes[*index].kind.routed());
+            match selected {
+                Some(index) => {
+                    let before = history.shapes.clone();
+                    let next = history.shapes[index].route.next();
+                    history.shapes[index].route = next;
+                    history.commit(before);
+                    next
+                }
+                None => route.next(),
+            }
+        };
+        route.set(next);
+        session.repaint.emit(());
+    })
+}
+
+#[derive(Clone, PartialEq)]
 struct Export {
     busy: UseStateHandle<bool>,
     issue: UseStateHandle<AttrValue>,
     alive: Rc<Cell<bool>>,
     onapply: Callback<Applied>,
+}
+
+/// The Apply command: it exports the current marks unless an export or a
+/// gesture is already in progress.
+#[hook]
+fn use_apply_command(
+    session: Session,
+    base: UseStateHandle<DraftImage>,
+    export: Export,
+) -> Callback<MouseEvent> {
+    use_callback(
+        (session, base, export),
+        |_: MouseEvent, (session, base, export)| {
+            if *export.busy || session.gesture.borrow().is_some() {
+                return;
+            }
+            let shapes = Rc::new(session.history.borrow().shapes.clone());
+            apply(base, shapes, export.clone());
+        },
+    )
 }
 
 /// Flatten the marks onto the frozen original at its native size and hand the
@@ -191,48 +247,48 @@ fn apply(base: &DraftImage, shapes: Rc<Vec<Shape>>, export: Export) {
     });
 }
 
-#[function_component(Editor)]
-pub(super) fn editor(props: &EditorProps) -> Html {
-    // Freeze the opening revision; a later draft change cannot silently become
-    // the base of this editing session or claim its pending export.
-    let base = use_state(|| props.image.clone());
-    let source = use_memo(base.original.clone(), |image| {
-        AttrValue::from(image.data_url.clone())
-    });
-    let refresh = use_force_update();
-    let session = Session {
-        history: use_mut_ref(|| History::new((*base.shapes).clone())),
-        gesture: use_mut_ref(|| None::<Gesture>),
-        gesture_click: use_mut_ref(|| false),
-        repaint: use_callback((), move |(), ()| refresh.force_update()),
-    };
-    let tool = use_state_eq(|| Tool::Rectangle);
-    let issue = use_state_eq(AttrValue::default);
-    let busy = use_state_eq(|| false);
-    let alive = use_mut_ref(|| Rc::new(Cell::new(true)));
-    let dimensions = use_natural_size(source.clone(), issue.clone(), alive.borrow().clone());
-    let surface = use_node_ref();
-    let viewport = use_stage(surface.clone());
-    let svg = use_node_ref();
-    let canvas = pointer::DrawingSurface {
-        svg: svg.clone(),
-        dimensions,
-    };
-    let idle = !*busy;
+/// The stage and canvas event handlers of one editing session.
+struct CanvasHandlers {
+    down: Callback<PointerEvent>,
+    moved: Callback<PointerEvent>,
+    up: Callback<PointerEvent>,
+    interrupted: Callback<PointerEvent>,
+    backdrop: Callback<MouseEvent>,
+    reopen: Callback<MouseEvent>,
+    keyboard: Callback<KeyboardEvent>,
+}
+
+/// Pointer and keyboard input reaches the session only while no export is
+/// running; moves, releases and interruptions always finish a gesture.
+#[hook]
+fn use_canvas_handlers(
+    canvas: pointer::DrawingSurface,
+    surface: NodeRef,
+    session: Session,
+    tool: Tool,
+    route: Route,
+    idle: bool,
+) -> CanvasHandlers {
     let down = use_callback(
         (
             canvas.clone(),
-            surface.clone(),
+            surface,
             session.clone(),
-            *tool,
+            (tool, route),
             idle,
         ),
-        |event: PointerEvent, (canvas, surface, session, tool, idle)| {
+        |event: PointerEvent, (canvas, surface, session, (tool, route), idle)| {
             if *idle {
-                pointer::down(&event, canvas, surface, session, *tool);
+                pointer::down(&event, canvas, surface, session, *tool, *route);
             }
         },
     );
+    let reopen = use_callback(session.clone(), |event: MouseEvent, session| {
+        if label::reopen(session) {
+            event.prevent_default();
+            session.repaint.emit(());
+        }
+    });
     let moved = use_callback(
         (canvas.clone(), session.clone()),
         |event: PointerEvent, (canvas, session)| pointer::moved(&event, canvas, session),
@@ -245,7 +301,7 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         pointer::interrupted(&event, session)
     });
     let keyboard = use_callback(
-        (session.clone(), dimensions, idle),
+        (session.clone(), canvas.dimensions, idle),
         |event: KeyboardEvent, (session, dimensions, idle)| {
             if *idle {
                 keys::handle(&event, session, *dimensions);
@@ -253,37 +309,70 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         },
     );
     let backdrop = use_callback(
-        (svg.clone(), session.clone()),
+        (canvas.svg, session),
         |event: MouseEvent, (svg, session)| pointer::backdrop(&event, svg, session),
+    );
+    CanvasHandlers {
+        down,
+        moved,
+        up,
+        interrupted,
+        backdrop,
+        reopen,
+        keyboard,
+    }
+}
+
+#[function_component(Editor)]
+pub(super) fn editor(props: &EditorProps) -> Html {
+    // Freeze the opening revision; a later draft change cannot silently become
+    // the base of this editing session or claim its pending export.
+    let base = use_state(|| props.image.clone());
+    let source = use_memo(base.original.clone(), |image| {
+        AttrValue::from(image.data_url.clone())
+    });
+    let refresh = use_force_update();
+    let session = Session {
+        history: use_mut_ref(|| History::new((*base.shapes).clone())),
+        gesture: use_mut_ref(|| None::<Gesture>),
+        label: use_mut_ref(|| None::<label::Typing>),
+        gesture_click: use_mut_ref(|| false),
+        repaint: use_callback((), move |(), ()| refresh.force_update()),
+    };
+    let tool = use_state_eq(|| Tool::Rectangle);
+    let route = use_state_eq(Route::default);
+    let issue = use_state_eq(AttrValue::default);
+    let busy = use_state_eq(|| false);
+    let alive = use_mut_ref(|| Rc::new(Cell::new(true)));
+    let dimensions = use_natural_size(source.clone(), issue.clone(), alive.borrow().clone());
+    let surface = use_node_ref();
+    let viewport = use_stage(surface.clone());
+    let svg = use_node_ref();
+    let on = use_canvas_handlers(
+        pointer::DrawingSurface {
+            svg: svg.clone(),
+            dimensions,
+        },
+        surface.clone(),
+        session.clone(),
+        *tool,
+        *route,
+        !*busy,
     );
     let actions = view::Actions {
         undo: use_history_command(session.clone(), History::undo),
         redo: use_history_command(session.clone(), History::redo),
         delete: use_history_command(session.clone(), History::delete),
-        cancel: use_callback(props.oncancel.clone(), |_: MouseEvent, cancel| {
-            cancel.emit(())
-        }),
-        apply: use_callback(
-            (
-                session.clone(),
-                base.clone(),
-                busy.clone(),
-                issue.clone(),
-                alive.clone(),
-                props.onapply.clone(),
-            ),
-            |_: MouseEvent, (session, base, busy, issue, alive, onapply)| {
-                if **busy || session.gesture.borrow().is_some() {
-                    return;
-                }
-                let shapes = Rc::new(session.history.borrow().shapes.clone());
-                let export = Export {
-                    busy: busy.clone(),
-                    issue: issue.clone(),
-                    alive: alive.borrow().clone(),
-                    onapply: onapply.clone(),
-                };
-                apply(base, shapes, export);
+        route: use_route_command(session.clone(), route.clone()),
+        cancel: props.oncancel.reform(|_: MouseEvent| ()),
+        apply: use_apply_command(
+            session.clone(),
+            base.clone(),
+            Export {
+                busy: busy.clone(),
+                issue: issue.clone(),
+                alive: alive.borrow().clone(),
+                onapply: props.onapply.clone(),
             },
         ),
     };
@@ -297,11 +386,11 @@ pub(super) fn editor(props: &EditorProps) -> Html {
     }
     html! {
         <>
-            {view::toolbar(&tool, *busy, ready, &history, actions)}
-            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. Select marks to move; drag handles to adjust; arrow keys move the selected mark." onkeydown={keyboard}>
+            {view::toolbar(&tool, *route, *busy, ready, &history, actions)}
+            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow, Shift snaps to 45 degrees, Alt turns elbows, and Command or Control curves." onkeydown={on.keyboard}>
                 if ready {
                     <svg ref={svg} class={classes!("image-annotation-svg", (*tool != Tool::Select).then_some("image-annotation-svg--draw"))} viewBox={format!("0 0 {} {}", dimensions.0, dimensions.1)} preserveAspectRatio="xMidYMid meet"
-                        onpointerdown={down} onpointermove={moved} onpointerup={up} onpointercancel={interrupted.clone()} onlostpointercapture={interrupted} onclick={backdrop}>
+                        onpointerdown={on.down} onpointermove={on.moved} onpointerup={on.up} onpointercancel={on.interrupted.clone()} onlostpointercapture={on.interrupted} onclick={on.backdrop} ondblclick={on.reopen} oncontextmenu={Callback::from(|event: MouseEvent| event.prevent_default())}>
                         <image href={(*source).clone()} x="0" y="0" width={dimensions.0.to_string()} height={dimensions.1.to_string()} />
                         {view::marks(&session, &history, dimensions, viewport)}
                     </svg>
