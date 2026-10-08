@@ -845,12 +845,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
 /* A round button lights only when pressing it does something. SEND fills
    with one concentric ring per agent a press would reach, member zero at the
-   core, under the shared gloss; TURBO glows in the warning color. Unlit, both
-   are flat and uncolored, while the command and focus rings still show. */
+   core, under the shared gloss. Raised states take the team accents in order
+   after green: TURBO and each slider's maximum stop wear the second, blue.
+   Unlit, both buttons are flat and uncolored, while the command and focus
+   rings still show. */
 .team-composer .team-send[data-lit="true"] { border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-send-rings); }
 .team-composer .team-turbo[data-lit="true"] {
-  --control-state-accent: var(--warning);
-  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--warning) 75%, transparent);
+  --control-state-accent: var(--accent-1);
+  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-1) 75%, transparent);
 }
 .team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { border: var(--app-control-edge-width) solid var(--line); background: var(--control); box-shadow: var(--team-send-command-ring); color: var(--muted); }
 .team-composer :is(.team-send, .team-turbo):not([data-lit="true"])::before { content: none; }
@@ -905,7 +907,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
 }
 .team-slider.armed { --control-state-accent: var(--muted); }
-.team-slider.maxed { --control-state-accent: var(--warning); }
+.team-slider.maxed { --control-state-accent: var(--accent-1); }
 .team-send {
   min-width: 6ch;
   flex: 0 0 var(--team-control-item-height);
