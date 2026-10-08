@@ -166,8 +166,8 @@ fn dismiss_disclosure(disclosure: &web_sys::Element, restore_focus: bool) {
     }
 }
 
-/// Whether the operator asked for reduced motion. It removes slides, never
-/// the ownership or completion of the layer that would have slid.
+/// Whether the operator asked for reduced motion. It removes fades, never
+/// the ownership or completion of the layer that would have faded.
 pub(super) fn reduced_motion() -> bool {
     web_sys::window()
         .and_then(|window| {
@@ -180,10 +180,9 @@ pub(super) fn reduced_motion() -> bool {
 }
 
 const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
-/// A side view leaves by settling back to its resting scale (`transform`);
-/// its material and content fades never bound completion.
+/// A side view leaves when its surface's fade (`opacity`) ends.
 fn closes_layer(property: Option<&str>) -> bool {
-    property == Some("transform")
+    property == Some("opacity")
 }
 fn close_transition_running(element: &web_sys::Element) -> bool {
     let Ok(get_animations) =
@@ -207,9 +206,9 @@ fn close_transition_running(element: &web_sys::Element) -> bool {
     })
 }
 
-/// Finish a closing layer when its own slide or shrink ends or is canceled,
-/// or at once when no such transition is running. Completion always has an
-/// actual boundary; nothing waits on a clock.
+/// Finish a closing layer when its own fade ends or is canceled, or at once
+/// when no such transition is running. Completion always has an actual
+/// boundary; nothing waits on a clock.
 #[hook]
 pub(super) fn use_close_transition(
     closing: bool,
