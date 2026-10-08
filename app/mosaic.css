@@ -425,7 +425,7 @@ path.image-annotation-hit { fill: none; }
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
   --team-pip-gap: 0;
-  --team-control-inline-size: 80px;
+  --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
   /* The composer controls keep a fixed right-edge column below the full-width
      task rail and inline status band. */

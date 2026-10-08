@@ -16,15 +16,18 @@
   /* SPICE and the composer's TURBO button share one round-control diameter. */
   --app-round-control-size: 34px;
   --app-header-control: var(--app-round-control-size);
+  --app-team-control-inline-size: 80px;
   --app-shell-edge-inline: 10px;
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  /* The Spice button's distance from the right edge, shared by the command
-     bar and the anchored Spice sidebar standing over it. */
   --app-commandbar-inset-end: calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
   --app-commandbar-block-pad: 8px;
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-commandbar-gap: 7px;
+  /* The trigger centers over the pip/control column and halfway between the
+     upper global tabs and lower team tabs. Their equal tab heights cancel. */
+  --app-spice-anchor-inset-block: calc((var(--app-commandbar-block-size) + var(--app-status-line-band) - var(--app-header-control)) / 2);
+  --app-spice-anchor-inset-inline: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2 + env(safe-area-inset-right, 0px));
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }
@@ -92,6 +95,11 @@ body:has(.shell),
   color: var(--ink);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--app-spice-border) 28%, transparent);
   cursor: pointer;
+}
+.commandbar--mosaic .app-commandbar-content > .app-spice-button {
+  position: absolute;
+  top: var(--app-spice-anchor-inset-block);
+  inset-inline-end: var(--app-spice-anchor-inset-inline);
 }
 .app-spice-button:hover,
 .app-spice-button:focus-visible {

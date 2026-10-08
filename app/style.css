@@ -523,13 +523,13 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   }
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar {
-  --app-side-view-origin: calc(100% - var(--app-commandbar-inset-end) - var(--app-header-control) / 2) calc(var(--app-commandbar-block-pad) + var(--app-header-control) / 2);
+  --app-side-view-origin: calc(100% - var(--app-spice-anchor-inset-inline) - var(--app-header-control) / 2) calc(var(--app-spice-anchor-inset-block) + var(--app-header-control) / 2);
 }
 .app-spice-sidebar-anchor {
   position: absolute;
   z-index: 3;
-  top: var(--app-commandbar-block-pad);
-  inset-inline-end: var(--app-commandbar-inset-end);
+  top: var(--app-spice-anchor-inset-block);
+  inset-inline-end: var(--app-spice-anchor-inset-inline);
   display: grid;
   grid-template-columns: auto var(--app-header-control);
   align-items: center;
@@ -538,7 +538,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   transition: transform var(--app-motion-settle) var(--app-side-view-ease);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
-  padding-inline-end: calc(var(--app-commandbar-inset-end) + var(--app-header-control) + 4ch + 28px);
+  padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 4ch + 28px);
 }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
