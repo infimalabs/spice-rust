@@ -83,12 +83,17 @@ fn cover_message_classifications() {
     law(
         "MessageClassification",
         &[
-            classification(MessageClassificationKind::Acknowledgement),
-            classification(MessageClassificationKind::AcknowledgementPending),
-            classification(MessageClassificationKind::Decline),
             classification(MessageClassificationKind::Taste),
             classification(MessageClassificationKind::Broadcast),
             classification(MessageClassificationKind::Review),
+        ],
+    );
+    law(
+        "MessageAcknowledgement",
+        &[
+            MessageAcknowledgement::Pending,
+            MessageAcknowledgement::Acknowledged,
+            MessageAcknowledgement::Declined,
         ],
     );
     law(
@@ -832,12 +837,13 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             observed: None,
             activity: AgentActivityKind::Prose,
             final_answer: false,
-            text: "[ACK] settled".to_owned(),
+            acknowledgement: Some(MessageAcknowledgement::Acknowledged),
+            text: "[TASTE] settled".to_owned(),
             provider_error: None,
             classifications: vec![MessageClassification {
                 start: 0,
-                end: 5,
-                kind: MessageClassificationKind::Acknowledgement,
+                end: 7,
+                kind: MessageClassificationKind::Taste,
             }],
             quote_target: Some(wire::QuoteTarget::Tape {
                 lane: first_id,
@@ -848,7 +854,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                     length: 3,
                     event: 4,
                 },
-                digest: wire::QuoteTarget::text_digest("[ACK] settled"),
+                digest: wire::QuoteTarget::text_digest("[TASTE] settled"),
             }),
             directive_contexts: vec![wire::MessageDirective {
                 start: 0,
@@ -881,6 +887,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             observed: None,
             activity: AgentActivityKind::Tool,
             final_answer: false,
+            acknowledgement: None,
             text: "Bash".to_owned(),
             provider_error: None,
             classifications: Vec::new(),
@@ -910,6 +917,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             observed: None,
             activity: AgentActivityKind::Compaction,
             final_answer: false,
+            acknowledgement: None,
             text: "Context compacted".to_owned(),
             provider_error: None,
             classifications: Vec::new(),
@@ -999,6 +1007,7 @@ fn stream_data_samples(
         observed: None,
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
+        acknowledgement: None,
         text: "older retained prose".to_owned(),
         provider_error: None,
         classifications: Vec::new(),

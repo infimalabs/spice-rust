@@ -119,14 +119,14 @@ pub use reply::{
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
-    MESSAGE_FLOOR, MessageBoundary, MessageClassification, MessageClassificationKind,
-    MessageDirective, MessageHistoryCursor, MessageLocus, MessageProseOrigin,
-    PEER_REPLY_CONTROL_PREFIX, PeerAnswer, REVIEW_FEEDBACK_CONTROL_PREFIX, StreamAdmissionError,
-    StreamCursor, StreamFact, StreamFrame, StreamLaneSeated, StreamRequest, TranscriptGeneration,
-    TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject, parse_peer_reply_control,
-    parse_review_feedback_control, peer_reply_control, review_feedback_control,
-    superseded_boundaries, superseded_prose, valid_message_classifications,
-    valid_message_directives,
+    MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,
+    MessageClassificationKind, MessageDirective, MessageHistoryCursor, MessageLocus,
+    MessageProseOrigin, PEER_REPLY_CONTROL_PREFIX, PeerAnswer, REVIEW_FEEDBACK_CONTROL_PREFIX,
+    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamLaneSeated, StreamRequest,
+    TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
+    parse_peer_reply_control, parse_review_feedback_control, peer_reply_control,
+    review_feedback_control, superseded_boundaries, superseded_prose,
+    valid_message_classifications, valid_message_directives,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, OOPS_STEM, Phase, PhaseError, TaskHandle,

@@ -156,6 +156,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
             lane,
             message.locus,
             "accepted presentation".to_owned(),
+            None,
             Vec::new(),
             Vec::new(),
         )
@@ -986,17 +987,11 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     append_hidden_tool_horizon(&mut hidden);
     tape.tee(&hidden)
         .expect("the hidden startup horizon is captured");
-    let pending = concat!(
+    let presented = concat!(
         "> First direction.\n\n",
-        "[ACK PENDING] Nope 1kQwPZtM: One response.\n",
+        "Nope 1kQwPZtM: One response.\n",
         "> Second direction.\n\n",
-        "[NAK] Unsafe."
-    );
-    let acknowledged = concat!(
-        "> First direction.\n\n",
-        "[ACK] Nope 1kQwPZtM: One response.\n",
-        "> Second direction.\n\n",
-        "[NAK] Unsafe."
+        "Unsafe."
     );
 
     let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
@@ -1011,16 +1006,16 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         &live,
         epoch,
         test_uuid(30),
-        pending,
-        wire::stream::ACK_PENDING_MARKER,
+        presented,
+        wire::MessageAcknowledgement::Declined,
     );
     restore_mixed_acknowledgement_message(
         &bus,
         &paths,
         epoch,
         test_uuid(31),
-        pending,
-        wire::stream::ACK_PENDING_MARKER,
+        presented,
+        wire::MessageAcknowledgement::Declined,
     );
     let state = std::sync::Mutex::new(state);
 
@@ -1032,8 +1027,8 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         &live,
         epoch,
         test_uuid(32),
-        pending,
-        wire::stream::ACK_PENDING_MARKER,
+        presented,
+        wire::MessageAcknowledgement::Declined,
     );
 
     // steer::acked lands for the acknowledged key: the live card and every
@@ -1045,8 +1040,8 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         &live,
         epoch,
         test_uuid(33),
-        acknowledged,
-        wire::stream::ACK_MARKER,
+        presented,
+        wire::MessageAcknowledgement::Declined,
     );
     drop(live);
     for generation in 0..2 {
@@ -1055,8 +1050,8 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
             &paths,
             epoch,
             test_uuid(34 + generation),
-            acknowledged,
-            wire::stream::ACK_MARKER,
+            presented,
+            wire::MessageAcknowledgement::Declined,
         );
     }
 
@@ -1141,9 +1136,10 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
         .filter(|message| message.activity.is_prose())
         .map(|message| message.text.as_str())
         .collect::<Vec<_>>();
+    assert_eq!(cards, ["> First direction.\n\nApplied, checking the log"]);
     assert_eq!(
-        cards,
-        ["> First direction.\n\n[ACK PENDING] Applied, checking the log"]
+        generation.messages[0].acknowledgement,
+        Some(wire::MessageAcknowledgement::Pending)
     );
 
     drop(live);
@@ -1190,7 +1186,7 @@ fn restore_mixed_acknowledgement_message(
     epoch: CanonicalUuid,
     request: CanonicalUuid,
     expected: &str,
-    marker: &str,
+    acknowledgement: wire::MessageAcknowledgement,
 ) {
     let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
@@ -1208,7 +1204,7 @@ fn restore_mixed_acknowledgement_message(
     )
     .expect("mixed acknowledgements restore");
     assert!(diagnostic.is_empty());
-    assert_mixed_acknowledgement_message(&source, epoch, request, expected, marker);
+    assert_mixed_acknowledgement_message(&source, epoch, request, expected, acknowledgement);
 }
 
 fn assert_mixed_acknowledgement_message(
@@ -1216,7 +1212,7 @@ fn assert_mixed_acknowledgement_message(
     epoch: CanonicalUuid,
     request: CanonicalUuid,
     expected: &str,
-    marker: &str,
+    acknowledgement: wire::MessageAcknowledgement,
 ) {
     let accepted = wire::Accepted {
         wire: wire::WireVersion::CURRENT,
@@ -1245,32 +1241,13 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(messages[0].text, expected);
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
     assert!(!messages[0].text.contains("NAK 1kQwPZtL"));
+    assert!(!messages[0].text.contains("[ACK"));
+    assert!(!messages[0].text.contains("[NAK"));
+    assert!(messages[0].classifications.is_empty());
     assert_eq!(
-        messages[0]
-            .text
-            .matches(&format!("{marker} Nope 1kQwPZtM"))
-            .count(),
-        1
-    );
-    assert_eq!(messages[0].text.matches("[NAK] Unsafe.").count(), 1);
-    assert_eq!(messages[0].text.matches("[ACK").count(), 1);
-    let first_kind = if marker == wire::stream::ACK_MARKER {
-        wire::MessageClassificationKind::Acknowledgement
-    } else {
-        wire::MessageClassificationKind::AcknowledgementPending
-    };
-    assert!(wire::valid_message_classifications(
-        &messages[0].text,
-        &messages[0].classifications
-    ));
-    assert_eq!(
-        messages[0]
-            .classifications
-            .iter()
-            .map(|classification| classification.kind)
-            .collect::<Vec<_>>(),
-        [first_kind, wire::MessageClassificationKind::Decline],
-        "the exact classifications agree with the card text"
+        messages[0].acknowledgement,
+        Some(acknowledgement),
+        "one authenticated disposition carries the mixed-header precedence"
     );
     assert_eq!(messages[0].text.matches("Nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);

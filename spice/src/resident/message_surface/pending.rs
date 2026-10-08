@@ -84,6 +84,7 @@ pub(in crate::resident) trait PresentationPublisher {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, serve::stream::MessagePublishError>;
@@ -95,10 +96,19 @@ impl PresentationPublisher for serve::stream::MessagePublisher {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, serve::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
+        Self::revise_presentation(
+            self,
+            lane,
+            locus,
+            text,
+            acknowledgement,
+            classifications,
+            directive_contexts,
+        )
     }
 }
 
@@ -108,10 +118,19 @@ impl PresentationPublisher for serve::stream::MessageBatch {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
+        acknowledgement: Option<wire::MessageAcknowledgement>,
         classifications: Vec<wire::MessageClassification>,
         directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, serve::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
+        Self::revise_presentation(
+            self,
+            lane,
+            locus,
+            text,
+            acknowledgement,
+            classifications,
+            directive_contexts,
+        )
     }
 }
 
@@ -186,6 +205,7 @@ fn present_again(
             card.lane,
             card.locus,
             presented.text.clone(),
+            presented.acknowledgement,
             presented.classifications.clone(),
             presented.directive_contexts.clone(),
         )
@@ -194,6 +214,7 @@ fn present_again(
         && prose.published.locus == card.locus
     {
         prose.published.text.clone_from(&presented.text);
+        prose.published.acknowledgement = presented.acknowledgement;
         prose
             .published
             .classifications
@@ -203,6 +224,7 @@ fn present_again(
             .directive_contexts
             .clone_from(&presented.directive_contexts);
         prose.terminal.text = presented.text;
+        prose.terminal.acknowledgement = presented.acknowledgement;
         prose.terminal.classifications = presented.classifications;
         prose.terminal.directive_contexts = presented.directive_contexts;
     }

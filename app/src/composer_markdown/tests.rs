@@ -77,14 +77,17 @@ fn math_aliases_preserve_code_escaped_literals_and_authenticated_ranges() {
     assert!(literals.html.contains("\\[not math\\]"));
 
     let quoted = render_received_with_fixture_classifications(
-        "> \\[x^2\\]\n>\n> [ACK] Keep the current path.",
+        "> \\[x^2\\]\n>\n> [REVIEW] Keep the current path.",
         TestClassifications {
-            acknowledgements: 1,
+            reviews: 1,
             ..TestClassifications::default()
         },
     );
     assert!(quoted.html.contains("class=\"math math-display\""));
-    assert_eq!(quoted.html.matches("class=\"message-ack-pill\"").count(), 1);
+    assert_eq!(
+        quoted.html.matches("class=\"message-review-pill\"").count(),
+        1
+    );
 }
 
 #[test]
@@ -201,14 +204,14 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     let media =
         Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=").expect("fixture media");
     let markdown = format!(
-        "{}\n\n> [ACK] remains literal.\n\n> [ACK] is authenticated.",
+        "{}\n\n> [REVIEW] remains literal.\n\n> [REVIEW] is authenticated.",
         media.reference_markdown().expect("media reference")
     );
-    let start = markdown.rfind("[ACK]").expect("second marker exists");
+    let start = markdown.rfind("[REVIEW]").expect("second marker exists");
     let classification = MessageClassification {
         start: u32::try_from(start).expect("fixture offset fits"),
-        end: u32::try_from(start + wire::stream::ACK_MARKER.len()).expect("fixture offset fits"),
-        kind: MessageClassificationKind::Acknowledgement,
+        end: u32::try_from(start + wire::stream::REVIEW_MARKER.len()).expect("fixture offset fits"),
+        kind: MessageClassificationKind::Review,
     };
 
     let classifications = [classification];
@@ -226,10 +229,13 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     assert!(wire::valid_message_classifications(&expanded, &remapped));
     let rendered = render_received_with_classifications(&expanded, &remapped);
     assert_eq!(
-        rendered.html.matches("class=\"message-ack-pill\"").count(),
+        rendered
+            .html
+            .matches("class=\"message-review-pill\"")
+            .count(),
         1
     );
-    assert!(rendered.html.contains("[ACK] remains literal."));
+    assert!(rendered.html.contains("[REVIEW] remains literal."));
     assert!(rendered.html.contains("is authenticated."));
 }
 
@@ -249,12 +255,9 @@ fn authenticated_classification_markers_become_inline_pills() {
              > [BROADCAST] Send this to every occupied agent.\n\n\
              ACK: ordinary [TASTE] prose stays text.",
         TestClassifications {
-            acknowledgements: 0,
             tastes: 3,
             broadcasts: 1,
             reviews: 1,
-            pending: 0,
-            declines: 0,
         },
     );
     assert!(!rendered.html.contains("compatibility:"));
@@ -374,227 +377,19 @@ fn broadcast_marker_is_idempotent_and_requires_authenticated_quote_metadata() {
 }
 
 #[test]
-fn acknowledged_context_markers_render_static_pills_inside_the_quote() {
-    let rendered = render_received_with_fixture_classifications(
-        "> [ACK] Keep the current path.\n\n\
-             Applied.\n\n\
-             > [ACK] A second marker remains literal.\n\n\
-             [ACK] Ordinary prose remains literal.\n\n\
-             > `[ACK]` remains inline code.\n\n\
-             > ```text\n> [ACK] remains fenced code\n> ```",
-        TestClassifications {
-            acknowledgements: 1,
-            ..TestClassifications::default()
-        },
+fn acknowledgement_markers_remain_ordinary_markdown() {
+    let rendered = render_received(
+        "> [ACK] Quoted marker.\n\n\
+         [ACK PENDING] Direct prose.\n\n\
+         > `[NAK]` inline code.\n\n\
+         > ```text\n> [ACK] fenced code\n> ```",
     );
-    assert_eq!(
-        rendered.html.matches("class=\"message-ack-pill\"").count(),
-        1
-    );
-    assert!(rendered.html.contains("data-acknowledgement=\"acked\""));
-    let pill = rendered
-        .html
-        .find("class=\"message-ack-pill\"")
-        .expect("acknowledgement pill renders synchronously");
-    let quote = rendered
-        .html
-        .find("<blockquote>")
-        .expect("quoted context renders");
-    assert!(
-        quote < pill,
-        "the pill nests inside the quote: {}",
-        rendered.html
-    );
-    assert!(
-        rendered
-            .html
-            .contains("<span class=\"message-ack-label\">ACK</span></span> Keep the current path.")
-    );
-    assert!(
-        rendered
-            .html
-            .contains("[ACK] A second marker remains literal.")
-    );
-    assert!(
-        rendered
-            .html
-            .contains("[ACK] Ordinary prose remains literal.")
-    );
-    assert!(rendered.html.contains("<code>[ACK]</code>"));
-    assert!(rendered.html.contains("[ACK] remains fenced code"));
 
-    let unclassified = render_received("> [ACK] Remains ordinary quoted prose.");
-    assert!(!unclassified.html.contains("message-ack-pill"));
-    assert!(
-        unclassified
-            .html
-            .contains("[ACK] Remains ordinary quoted prose.")
-    );
-}
-
-#[test]
-fn bare_acknowledged_context_marker_heads_a_nested_operator_quote() {
-    let rendered = render_received_with_fixture_classifications(
-        "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
-        TestClassifications {
-            acknowledgements: 1,
-            ..TestClassifications::default()
-        },
-    );
-    assert_eq!(
-        rendered.html.matches("class=\"message-ack-pill\"").count(),
-        1
-    );
-    assert!(
-        rendered
-            .html
-            .contains("<span class=\"message-ack-label\">ACK</span></span></p>")
-    );
-    assert!(
-        rendered.html.contains(
-            "<blockquote>\n<p>The original assertion remains visible.</p>\n</blockquote>"
-        )
-    );
-    assert!(rendered.html.contains("<p>approved</p>"));
-}
-
-#[test]
-fn a_marker_quoted_back_from_another_card_never_takes_this_classification() {
-    let rendered = render_received_with_fixture_classifications(
-        "> > > [ACK] Tell me what the task is even about\n\
-             > > \n\
-             > > GIT-dSfJfCXfp is the task-git admission-depth task.\n\
-             >\n\
-             > [ACK] Delete it\n\n\
-             Deleting GIT-dSfJfCXfp as directed.",
-        TestClassifications {
-            acknowledgements: 1,
-            ..TestClassifications::default()
-        },
-    );
-    assert_eq!(
-        rendered.html.matches("class=\"message-ack-pill\"").count(),
-        1
-    );
-    assert!(
-        rendered
-            .html
-            .contains("<span class=\"message-ack-label\">ACK</span></span> Delete it</p>"),
-        "the pill lands on the operator's own words: {}",
-        rendered.html
-    );
-    assert!(
-        rendered
-            .html
-            .contains("[ACK] Tell me what the task is even about"),
-        "the deeper marker stays literal: {}",
-        rendered.html
-    );
-}
-
-#[test]
-fn flavored_acknowledgements_keep_their_own_pill_as_the_mark() {
-    let rendered = render_received_with_fixture_classifications(
-        "> [TASTE] polling: Wait for completion.\n\n\
-             > [BROADCAST] Send this to every occupied agent.\n\n\
-             > [ACK] Stray marker stays literal.",
-        TestClassifications {
-            acknowledgements: 2,
-            tastes: 1,
-            broadcasts: 1,
-            reviews: 0,
-            pending: 0,
-            declines: 0,
-        },
-    );
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-taste-pill\"")
-            .count(),
-        1
-    );
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-broadcast-pill\"")
-            .count(),
-        1
-    );
     assert!(!rendered.html.contains("message-ack-pill"));
-    assert!(rendered.html.contains("[ACK] Stray marker stays literal."));
-
-    let mixed = render_received_with_fixture_classifications(
-        "> [TASTE] polling: Wait for completion.\n\n> [ACK] Keep the current path.",
-        TestClassifications {
-            acknowledgements: 2,
-            tastes: 1,
-            ..TestClassifications::default()
-        },
-    );
-    assert_eq!(
-        mixed.html.matches("class=\"message-taste-pill\"").count(),
-        1
-    );
-    assert_eq!(mixed.html.matches("class=\"message-ack-pill\"").count(), 1);
-}
-
-#[test]
-fn acknowledgement_receipts_keep_one_stable_measured_shape() {
-    let render = |marker, requested| {
-        render_received_with_fixture_classifications(
-            &format!(
-                "> {marker} Keep the current path.\n\n\
-                     ```mermaid\n\
-                     graph LR\n\
-                       A[Receipt] --> B[Stable card]\n\
-                     ```"
-            ),
-            requested,
-        )
-    };
-    let pending = render(
-        "[ACK PENDING]",
-        TestClassifications {
-            pending: 1,
-            ..TestClassifications::default()
-        },
-    );
-    let retired = render(
-        "[ACK]",
-        TestClassifications {
-            acknowledgements: 1,
-            ..TestClassifications::default()
-        },
-    );
-    let declined = render(
-        "[NAK]",
-        TestClassifications {
-            declines: 1,
-            ..TestClassifications::default()
-        },
-    );
-
-    assert!(pending.html.contains("data-acknowledgement=\"pending\""));
-    assert!(retired.html.contains("data-acknowledgement=\"acked\""));
-    assert!(declined.html.contains("data-acknowledgement=\"declined\""));
-    assert!(same_measured_shape(&pending, &retired));
-    assert!(
-        !same_measured_shape(&pending, &declined),
-        "NAK carries distinct measured text"
-    );
-    assert_eq!(
-        pending.html.matches("class=\"message-ack-pill\"").count(),
-        1
-    );
-    assert_eq!(
-        pending.diagrams,
-        vec!["graph LR\nA[Receipt] --> B[Stable card]\n"]
-    );
-    assert_eq!(pending.diagrams, retired.diagrams);
-    assert_eq!(pending.diagrams, declined.diagrams);
-    assert_eq!(pending.image_only, retired.image_only);
-    assert_eq!(pending.image_only, declined.image_only);
+    assert!(rendered.html.contains("[ACK] Quoted marker."));
+    assert!(rendered.html.contains("[ACK PENDING] Direct prose."));
+    assert!(rendered.html.contains("<code>[NAK]</code>"));
+    assert!(rendered.html.contains("[ACK] fenced code"));
 }
 
 #[test]

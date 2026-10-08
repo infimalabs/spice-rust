@@ -617,17 +617,16 @@ struct ClassificationMetrics {
 }
 
 impl ClassificationMetrics {
-    fn from_classifications(classifications: &[wire::MessageClassification]) -> Self {
+    fn from_message(message: &wire::AgentMessage) -> Self {
         let mut metrics = Self::default();
-        for classification in classifications {
+        match message.acknowledgement {
+            Some(wire::MessageAcknowledgement::Acknowledged) => metrics.acknowledgements = 1,
+            Some(wire::MessageAcknowledgement::Pending) => metrics.pending = 1,
+            Some(wire::MessageAcknowledgement::Declined) => metrics.declines = 1,
+            None => {}
+        }
+        for classification in &message.classifications {
             match classification.kind {
-                wire::MessageClassificationKind::Acknowledgement => {
-                    metrics.acknowledgements += 1;
-                }
-                wire::MessageClassificationKind::AcknowledgementPending => {
-                    metrics.pending += 1;
-                }
-                wire::MessageClassificationKind::Decline => metrics.declines += 1,
                 wire::MessageClassificationKind::Taste => metrics.tastes += 1,
                 wire::MessageClassificationKind::Broadcast => metrics.broadcasts += 1,
                 wire::MessageClassificationKind::Review => metrics.reviews += 1,
@@ -677,7 +676,7 @@ fn agent_message_presentation<'a>(
     let footer_label =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_boundary = message.activity.is_boundary();
-    let classifications = ClassificationMetrics::from_classifications(&message.classifications);
+    let classifications = ClassificationMetrics::from_message(message);
     // A tool card is its image. The resident's preview line stays on the wire
     // for the ticker and the hook, but here it becomes the image's description
     // rather than visible words, and the resident withholds it altogether when
