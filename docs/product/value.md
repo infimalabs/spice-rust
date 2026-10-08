@@ -325,10 +325,11 @@ Counted limits retain their explicit remaining and total units. A
 provider-reported raw credit balance appears on its own account row as
 **Credits**, separate from time-window quota and banked reset grants; balances
 are never inferred, combined across accounts, or treated as API-dollar credit.
-A balance is OMP's normalized windowless limit whose `credits` amount reports
-what remains and no total; windowed or capped credit allowances stay meters.
-OpenAI Codex balances appear only once the installed OMP normalizes the
-provider's credit balance that way. Each limit row keeps
+A balance is OMP's normalized `balance`-scoped windowless limit whose `credits`
+amount reports what remains and no total; windowed, differently scoped, or
+capped credit allowances stay meters. OpenAI Codex balances appear only once
+the installed OMP normalizes the provider's credit balance that way. Each limit
+row keeps
 its amount and compact reset cadence beside the meter at ordinary and narrow
 sidebar widths; a long limit name wraps rather than forcing horizontal
 overflow.

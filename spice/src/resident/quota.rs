@@ -620,6 +620,7 @@ impl Limit {
     /// credit allowances stay quota meters.
     fn is_credit_balance(&self) -> bool {
         self.window.is_none()
+            && self.scope.window_id.as_deref() == Some("balance")
             && self.amount.unit.eq_ignore_ascii_case("credits")
             && self.amount.remaining.is_some()
             && self.amount.limit.is_none()
@@ -966,6 +967,11 @@ mod tests {
           "scope": { "provider": "openai-codex", "windowId": "1w" },
           "window": { "id": "1w", "label": "1 week", "durationMs": 604800000 },
           "amount": { "used": 40, "limit": 100, "remaining": 60, "unit": "credits" }
+        }, {
+          "id": "openai-codex:credits:reserve",
+          "label": "Credit reserve",
+          "scope": { "provider": "openai-codex", "windowId": "reserve" },
+          "amount": { "remaining": 25, "unit": "credits" }
         }]
       }],
       "accountsWithoutUsage": [{
@@ -1116,8 +1122,13 @@ mod tests {
         assert!(snapshot.reports[1].limits.is_empty());
         assert_eq!(snapshot.reports[2].credit_balance, None);
         assert_eq!(
-            snapshot.reports[2].limits[0].id, "openai-codex:credits:1w",
-            "a windowed credits allowance stays a quota meter"
+            snapshot.reports[2]
+                .limits
+                .iter()
+                .map(|limit| limit.id.as_str())
+                .collect::<Vec<_>>(),
+            ["openai-codex:credits:1w", "openai-codex:credits:reserve"],
+            "windowed and differently scoped credit allowances stay quota meters"
         );
         assert_eq!(
             snapshot.reports[0]
