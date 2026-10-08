@@ -97,9 +97,10 @@ its messages carry: the configured name, else the worktree leaf. The task
 overview heading, arrangement targets, team menu, and team request toasts all
 use that name; only a team with no current members keeps its short id.
 
-Sibling teams share one faint internal rule from the composer through the
-message plane. A single team has no rule, and the fleet never paints one
-against either browser edge.
+Sibling teams share one faint internal rule through the message plane. It
+starts below the composer block and its painted continuation, so it never runs
+beside or above the controls. A single team has no rule, and the fleet never
+paints one against either browser edge.
 
 Interactive joins stop at six members. A seventh-member edge target is shown
 as unavailable and sends no command. Press Enter or Space on the pip stack, or

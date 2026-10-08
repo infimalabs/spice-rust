@@ -15,9 +15,9 @@ retains relative age, lane-status class, agent/tool/command prefix and accent,
 accessible label, and live-region semantics; an empty fleet has no pip reserve
 and keeps the full surfaced status slot without inventing status.
 Adjacent teams share one faint vertical seam on the physical-right edge of the
-left team. It starts at the status row, continues to the fleet bottom, and
-takes no layout space; neither outer fleet edge is framed, so a lone team has
-no vertical border.
+left team. It starts below the composer block and its painted continuation,
+continues to the fleet bottom, and takes no layout space; neither outer fleet
+edge is framed, so a lone team has no vertical border.
 
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no

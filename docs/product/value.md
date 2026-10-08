@@ -645,8 +645,9 @@ thickness. One inherited depth parameter drives the shared control-glass paint:
 headers use its default two thicknesses, while the control frame overrides it
 to three. Each surface receives that paint once, so the moving page stays
 visible through it. The controls continuation has neither a top divider nor an
-attached perpendicular rule; soft lateral shadows still separate sibling
-teams, and the adjacent member-header rules remain visible. The frame uses the
+attached perpendicular rule; soft lateral shadows separate sibling composers,
+the sibling seam starts only below the continuation, and the adjacent
+member-header rules remain visible. The frame uses the
 same restrained corners as the adjacent draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
