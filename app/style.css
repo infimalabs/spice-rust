@@ -81,24 +81,8 @@
   --app-highlight-source: #fff;
   --app-mask-opaque: #000;
   --app-sheet-frost: blur(12px);
-  --app-control-glass-paint: color-mix(
-    in srgb,
-    var(--control) min(
-      100%,
-      calc(var(--app-glass-thickness) + var(--app-glass-thickness))
-    ),
-    transparent
-  );
-  --app-control-glass-paint-strong: color-mix(
-    in srgb,
-    var(--control) min(
-      100%,
-      calc(
-        var(--app-glass-thickness) + var(--app-glass-thickness) +
-        var(--app-glass-thickness)
-      )
-    ),
-    transparent
+  --app-control-glass-depth: calc(
+    var(--app-glass-thickness) + var(--app-glass-thickness)
   );
   /* A single image alone in a lane message card; task cards cap at the same size. */
   --mosaic-image-large-size: 15.75rem;
@@ -303,7 +287,13 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   height: var(--app-presence-pip-size);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.app-glass-control-surface { background-color: var(--app-control-glass-paint-strong); }
+.app-glass-control-surface {
+  --app-control-glass-paint: color-mix(
+    in srgb,
+    var(--control) min(100%, var(--app-control-glass-depth)),
+    transparent
+  );
+}
 .app-status-band {
   border-block-start: var(--app-edge);
   background: var(--message-stream-surface, var(--control-surface-soft)) padding-box;

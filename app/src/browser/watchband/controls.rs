@@ -473,6 +473,7 @@ pub(super) fn render_team_controls(
     team_controls: &UseReducerHandle<TeamControls>,
     set_automatic_speech: &Callback<(String, bool)>,
     sender: &SenderHandle,
+    can_arrange: bool,
     can_configure: bool,
     ready: bool,
     dormant: bool,
@@ -490,6 +491,28 @@ pub(super) fn render_team_controls(
         sender.clone(),
     );
     let cancel_life_preview = cancel_life_preview_callback(team, team_controls.clone());
+    let menu = {
+        let controls = team_controls.clone();
+        html! {
+            <button
+                class="team-menu"
+                type="button"
+                disabled={!can_arrange}
+                aria-label="Team menu"
+                aria-haspopup="menu"
+                aria-expanded={control.arrangement_open.to_string()}
+                title={can_arrange.then_some("Arrange this team")}
+                onclick={Callback::from(move |event: MouseEvent| {
+                    event.stop_propagation();
+                    controls.dispatch(TeamControlAction::ToggleArrangement { team });
+                })}
+            >
+                <span class="composer-menu-icon" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                </span>
+            </button>
+        }
+    };
     html! {
         <ControlsFrame
             {dormant}
@@ -500,6 +523,7 @@ pub(super) fn render_team_controls(
             lifetime={selected.label()}
             lifetime_pending={control.pending_life.is_some()}
             {turbo}
+            {menu}
         >
             {speech_slider(
                 team,
