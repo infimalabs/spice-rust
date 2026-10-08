@@ -6,7 +6,7 @@ fn open(lane: &Path) -> gix::Repository {
     gix::open_opts(lane, gix::open::Options::isolated()).expect("open lane repository")
 }
 
-fn head_commit(lane: &Path) -> String {
+pub(super) fn head_commit(lane: &Path) -> String {
     open(lane).head_id().expect("lane HEAD").to_string()
 }
 
@@ -69,7 +69,7 @@ fn assert_clean(lane: &Path) {
     assert!(!lane.join("untracked.bin").exists());
 }
 
-fn issue_git<B: Serialize>(
+pub(super) fn issue_git<B: Serialize>(
     bus: &Bus,
     repository: &Repository,
     epoch: CanonicalUuid,
@@ -170,7 +170,7 @@ fn claimed_commits(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> (Strin
 /// The bare repository borrows the lane's objects through alternates, so
 /// nothing is copied and no Git process publishes: the result is what
 /// `push -u origin HEAD` to a fresh bare remote leaves behind.
-fn track_origin(lane: &Path, origin: &Path) {
+pub(super) fn track_origin(lane: &Path, origin: &Path) {
     gix::ThreadSafeRepository::init_opts(
         origin,
         gix::create::Kind::Bare,
@@ -205,7 +205,7 @@ fn track_origin(lane: &Path, origin: &Path) {
 }
 
 /// Bind the seat's lane to a fresh one-commit repository and return it with its HEAD.
-fn bind_lane(
+pub(super) fn bind_lane(
     root: &Path,
     bus: &Bus,
     epoch: CanonicalUuid,

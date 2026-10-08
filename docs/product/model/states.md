@@ -94,13 +94,13 @@ mutating Git subset of those publications, never a workflow status.
 
 ### Closed loop: The plan phase is prepended, not requested
 
-A task captured with no acceptance criteria and no named flow is neither refused
+A task created with no acceptance criteria and no named flow is neither refused
 nor filed vague. A **plan phase** is prepended to its flow, and that phase cannot
 be closed until the missing acceptance exists somewhere.
 
 ```mermaid
 flowchart TD
-  C["capture request"] --> Q{"acceptance supplied<br/>or flow named?"}
+  C["task creation request"] --> Q{"acceptance supplied<br/>or flow named?"}
   Q -- yes --> S["file stated task<br/>workflow.status = pending"]
   Q -- no --> P["prepend plan phase<br/>workflow.status = pending"]
   P --> I{"implementation attempted<br/>under active plan claim?"}
@@ -115,7 +115,7 @@ flowchart TD
 
 **Invariant —** Absence of acceptance is treated as **unfinished thinking, not
 as an error**. The system prepends the step that produces the missing thing
-rather than refusing the capture, because refusing at capture time discards the
+rather than refusing creation, because refusing at creation time discards the
 request along with the ambiguity.
 
 **Invariant —** The plan phase closes only when acceptance exists — on the task
@@ -141,6 +141,30 @@ name is one nonempty lowercase ASCII word, and the current phase must be a
 member of that declared flow. There is no global phase enumeration or slot
 ceiling. The task-document station vocabulary is a separate interface, not the
 board's phase grammar.
+
+### Closed loop: Capturing committed implementation is one ownership transaction
+
+New-task `task capture` is distinct from ordinary task creation. Its local
+commits already are implementation, so the command removes a default leading
+`plan` phase and atomically publishes `TaskAdded`, `ClaimWon`, and the exact Git
+boundary for the first non-plan phase. The lane never owns a plan claim carrying
+those commits.
+
+```mermaid
+flowchart TD
+  C["inspect clean lane<br/>with loose commits"] --> T{"task prose<br/>passes taste policy?"}
+  T -- no --> R["refuse; write nothing<br/>commits remain on lane"]
+  T -- yes --> A{"claim and Git<br/>preparation admit?"}
+  A -- no --> R
+  A -- yes --> W["one guarded transaction<br/>task + claim + Git boundary"]
+  W --> I["first non-plan phase<br/>owns captured commits"]
+```
+
+**Invariant —** No refusal after task preparation may leave a created task
+without its claim or Git boundary. This capture-specific path does not weaken
+the ordinary rule that vague task creation begins in `plan`, and it does not
+bypass taste authority: a required taste review is a zero-write refusal because
+planning and captured implementation cannot occupy the same claim.
 
 ### Closed loop: Claim
 

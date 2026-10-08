@@ -151,9 +151,10 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
         }),
         // Board work is somebody's: a lane nobody sits in holds no claim.
         Witness::Residency { occupant: None, .. } => false,
-        Witness::Eligibility { rule } => {
-            matches!(rule.as_str(), "next" | "capture" | "steal" | "recover")
-        }
+        Witness::Eligibility { rule } => matches!(
+            rule.as_str(),
+            "next" | "capture" | CAPTURE_WORK_RULE | "steal" | "recover"
+        ),
         Witness::Preview { .. } => true,
         Witness::Barrier { name, digest } => {
             name.as_str() == "board"

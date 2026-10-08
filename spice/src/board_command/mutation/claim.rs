@@ -142,9 +142,14 @@ pub(super) fn prepare_capture_claim(
     snapshot: &ValidatedSnapshot,
     selected: &Entry,
 ) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
-    let capture_witness = command.expected().iter().any(
-        |witness| matches!(witness, Witness::Eligibility { rule } if rule.as_str() == "capture"),
-    );
+    let captures_work = captures_implementation(command);
+    let capture_witness = command.expected().iter().any(|witness| {
+        matches!(
+            witness,
+            Witness::Eligibility { rule }
+                if matches!(rule.as_str(), "capture" | CAPTURE_WORK_RULE)
+        )
+    });
     if !capture_witness {
         return Err(protocol_fault(
             "claim::capture-eligibility-witness",
@@ -164,17 +169,15 @@ pub(super) fn prepare_capture_claim(
             "atomically claim only a public, ready task whose environment requirements and dependencies are satisfied",
         ));
     }
-    // Atomic mutations share capture's named-task eligibility and residency
-    // authority, but record the clean claim boundary used by allocator claims
-    // rather than requiring loose commits to capture.
-    let mut grant = claim_grant(
-        bus,
-        command,
-        repository,
-        snapshot,
-        selected,
-        Possession::Next,
-    )?;
+    // Ordinary add-and-claim records the clean allocator boundary. Compound
+    // capture instead adopts the loose commits already inspected by its client;
+    // both decisions still commit with task creation under one journal guard.
+    let possession = if captures_work {
+        Possession::Capture
+    } else {
+        Possession::Next
+    };
+    let mut grant = claim_grant(bus, command, repository, snapshot, selected, possession)?;
     let prepared_git = grant.prepared_git.take();
     Ok(PreparedClaim {
         grant,

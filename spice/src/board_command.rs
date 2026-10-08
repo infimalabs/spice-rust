@@ -73,6 +73,9 @@ pub(crate) use spice::claim_lease::{
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
+/// Eligibility rule for atomically creating and claiming a task around the
+/// lane's existing local commits.
+const CAPTURE_WORK_RULE: &str = "capturework";
 fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
     let command = wire::SpiceCommand::new("task", ["status"])
         .expect("task status is a structural Spice recovery command");

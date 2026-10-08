@@ -220,7 +220,7 @@ fn create_task<B: serde::Serialize>(
     if let Err(outcome) = validate_acceptance(&add.acceptance) {
         return outcome;
     }
-    let (flow, dependency_witnesses) = match task_flow_for_dependencies(add, &snapshot) {
+    let (flow, dependency_witnesses) = match task_flow_for_dependencies(command, add, &snapshot) {
         Ok(observation) => observation,
         Err(outcome) => return outcome,
     };
@@ -241,6 +241,13 @@ fn create_task<B: serde::Serialize>(
         Err(outcome) => return outcome,
     };
     let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
+    if taste_review_required && captures_implementation(command) {
+        return refusal(
+            "task::capture-taste-review",
+            Some("captured implementation requires taste-reviewed task prose".to_owned()),
+            "correct the capture title and retry; no task or claim was created and the local commits remain on this lane",
+        );
+    }
     if taste_review_required {
         prepend_plan(&mut prepared.flow);
         prepared.phase = prepared.flow[0].clone();
@@ -500,11 +507,34 @@ fn prepare_task(
     })
 }
 
+fn captures_implementation(command: &wire::AdmittedCommand) -> bool {
+    command.expected().iter().any(|witness| {
+        matches!(
+            witness,
+            Witness::Eligibility { rule } if rule.as_str() == CAPTURE_WORK_RULE
+        )
+    })
+}
+
 fn task_flow_for_dependencies(
+    command: &wire::AdmittedCommand,
     add: &TaskAdd,
     snapshot: &ValidatedSnapshot,
 ) -> Result<(Vec<wire::Phase>, Vec<Witness>), Outcome<CommandAnswer>> {
     let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
+    if captures_implementation(command) {
+        let implementation = flow
+            .iter()
+            .position(|phase| phase.as_str() != "plan")
+            .ok_or_else(|| {
+                refusal(
+                    "task::capture-flow-missing",
+                    None,
+                    "captured commits require an implementation phase after planning",
+                )
+            })?;
+        flow.drain(..implementation);
+    }
     let dependencies = add
         .depends
         .iter()
