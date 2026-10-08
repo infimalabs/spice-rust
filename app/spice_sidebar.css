@@ -139,6 +139,8 @@
   color: var(--muted);
   font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* Appearance is one row under the header: kicker left, selector right. */
+.app-spice-sidebar-content > .app-spice-appearance { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .app-theme-selector { flex: 0 0 auto; }
 .app-theme-icon {
   width: 15px;

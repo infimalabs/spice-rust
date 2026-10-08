@@ -123,7 +123,6 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
                     }}
                     onclick={onclick}
                 />
-                {render_theme_selector()}
             </div>
         </section>
     }
@@ -452,60 +451,64 @@ fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation
     }
 }
 
-fn render_theme_selector() -> Html {
+/// The one theme selector, first in the view so appearance stays at hand.
+pub(super) fn render_appearance() -> Html {
     let selected = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
         .and_then(|root| root.get_attribute("data-app-theme"))
         .unwrap_or_else(|| "system".to_owned());
     html! {
-        <div class="app-control-rail app-theme-selector" role="group" aria-label="Theme">
-            {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
-                .into_iter()
-                .map(|(mode, label)| {
-                    let choose = Callback::from(move |_| {
-                        let Some(window) = web_sys::window() else { return; };
-                        let Ok(setter) = js_sys::Reflect::get(
-                            &window,
-                            &JsValue::from_str("__spiceAppSetTheme"),
-                        ) else { return; };
-                        let Ok(setter) = setter.dyn_into::<js_sys::Function>() else { return; };
-                        let _ = setter.call1(&JsValue::NULL, &JsValue::from_str(mode));
-                    });
-                    let icon = match mode {
-                        "light" => html! {
-                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <circle cx="12" cy="12" r="3.25"></circle>
-                                <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.28 5.28 6.7 6.7M17.3 17.3l1.42 1.42M18.72 5.28 17.3 6.7M6.7 17.3l-1.42 1.42"></path>
-                            </svg>
-                        },
-                        "system" => html! {
-                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <rect x="3.25" y="4.5" width="17.5" height="13" rx="1.8"></rect>
-                                <path d="M8.5 21h7M12 17.5V21"></path>
-                            </svg>
-                        },
-                        "dark" => html! {
-                            <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8a8.7 8.7 0 1 0 11.5 11.5Z"></path>
-                            </svg>
-                        },
-                        _ => unreachable!("app theme modes are closed"),
-                    };
-                    let accessible = format!("Use {label} theme");
-                    html! {
-                        <button
-                            class="app-choice-chip"
-                            type="button"
-                            aria-label={accessible}
-                            title={format!("{label} theme")}
-                            aria-pressed={(selected == mode).to_string()}
-                            data-app-theme={mode}
-                            onclick={choose}
-                        >{icon}</button>
-                    }
-                })}
-        </div>
+        <section class="app-sheet-section app-spice-appearance">
+            <h2>{"Appearance"}</h2>
+            <div class="app-control-rail app-theme-selector" role="group" aria-label="Theme">
+                {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
+                    .into_iter()
+                    .map(|(mode, label)| {
+                        let choose = Callback::from(move |_| {
+                            let Some(window) = web_sys::window() else { return; };
+                            let Ok(setter) = js_sys::Reflect::get(
+                                &window,
+                                &JsValue::from_str("__spiceAppSetTheme"),
+                            ) else { return; };
+                            let Ok(setter) = setter.dyn_into::<js_sys::Function>() else { return; };
+                            let _ = setter.call1(&JsValue::NULL, &JsValue::from_str(mode));
+                        });
+                        let icon = match mode {
+                            "light" => html! {
+                                <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <circle cx="12" cy="12" r="3.25"></circle>
+                                    <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.28 5.28 6.7 6.7M17.3 17.3l1.42 1.42M18.72 5.28 17.3 6.7M6.7 17.3l-1.42 1.42"></path>
+                                </svg>
+                            },
+                            "system" => html! {
+                                <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <rect x="3.25" y="4.5" width="17.5" height="13" rx="1.8"></rect>
+                                    <path d="M8.5 21h7M12 17.5V21"></path>
+                                </svg>
+                            },
+                            "dark" => html! {
+                                <svg class="app-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8a8.7 8.7 0 1 0 11.5 11.5Z"></path>
+                                </svg>
+                            },
+                            _ => unreachable!("app theme modes are closed"),
+                        };
+                        let accessible = format!("Use {label} theme");
+                        html! {
+                            <button
+                                class="app-choice-chip"
+                                type="button"
+                                aria-label={accessible}
+                                title={format!("{label} theme")}
+                                aria-pressed={(selected == mode).to_string()}
+                                data-app-theme={mode}
+                                onclick={choose}
+                            >{icon}</button>
+                        }
+                    })}
+            </div>
+        </section>
     }
 }
 
