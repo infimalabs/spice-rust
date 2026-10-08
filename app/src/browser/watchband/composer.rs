@@ -697,6 +697,7 @@ fn agent_message_presentation<'a>(
     } = crate::composer_markdown::expand_media_payloads(
         shown_text,
         &message.media,
+        &message.markdown_images,
         &message.classifications,
         &message.directive_contexts,
     )
@@ -738,13 +739,14 @@ fn agent_message_presentation<'a>(
         && rendered_markdown.diagrams.is_empty()
         && rendered_markdown.image_count + unlinked_media.len() == 1;
     let lone_tool_image = is_tool && single_image_cover && unlinked_media.len() == 1;
+    let control_text = if is_tool { "" } else { message.text.as_str() };
     let message_controls::MessageChrome {
         signoff,
         controls,
         corner,
     } = message_controls::render_message_chrome(
         props,
-        &shown_text,
+        control_text,
         is_prose,
         lone_tool_image,
         correspondent,

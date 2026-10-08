@@ -56,16 +56,18 @@ fn has_external_media(event: &listen::Event) -> bool {
 fn resolve_set(
     root: &Path,
     media: &mut Vec<wire::Media>,
-    external: &mut Vec<listen::ExternalMedia>,
+    external: &mut [listen::ExternalMedia],
 ) -> Result<(), ResolveError> {
-    let observed = media
-        .len()
-        .checked_add(external.len())
-        .unwrap_or(usize::MAX);
+    let unresolved = external
+        .iter()
+        .filter(|reference| !reference.is_resolved())
+        .count();
+    let observed = media.len().checked_add(unresolved).unwrap_or(usize::MAX);
     if observed > wire::media::MAX_MEDIA_ITEMS {
         return Err(ResolveError::Invalid {
             digest: external
-                .first()
+                .iter()
+                .find(|reference| !reference.is_resolved())
                 .map_or_else(|| "-".to_owned(), |reference| reference.sha256().to_owned()),
             source: wire::media::MediaError::Count {
                 observed,
@@ -73,20 +75,96 @@ fn resolve_set(
             },
         });
     }
-    let mut resolved = Vec::with_capacity(external.len());
-    for reference in external.iter() {
-        resolved.push(resolve_one(root, reference)?);
+    for reference in external
+        .iter_mut()
+        .filter(|reference| !reference.is_resolved())
+    {
+        let resolved = resolve_one(root, reference)?;
+        if !reference.admit_resolution(resolved.content, resolved.bytes) {
+            return Err(ResolveError::Provenance {
+                digest: reference.sha256().to_owned(),
+            });
+        }
+        media.push(resolved.media);
     }
-    media.extend(resolved);
-    external.clear();
     Ok(())
 }
 
+struct ResolvedMedia {
+    media: wire::Media,
+    content: wire::Digest,
+    bytes: u64,
+}
+
+/// Compact identity retained after one provider image passes source admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProviderMediaIdentity {
+    sha256: String,
+    content: wire::Digest,
+    name: String,
+    content_type: String,
+    bytes: u64,
+}
+
+impl ProviderMediaIdentity {
+    pub(crate) fn from_media(media: &wire::Media) -> Result<Self, ResolveError> {
+        let bytes = media
+            .decoded_bytes()
+            .map_err(|source| ResolveError::Invalid {
+                digest: "-".to_owned(),
+                source,
+            })?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        Ok(Self {
+            sha256,
+            content: wire::Digest::compute(wire::Domain::MediaContent, &bytes),
+            name: media.name.clone(),
+            content_type: media.content_type.clone(),
+            bytes: u64::try_from(bytes.len()).expect("admitted media length fits u64"),
+        })
+    }
+
+    pub(crate) fn from_external(reference: &listen::ExternalMedia) -> Option<Self> {
+        Some(Self {
+            sha256: reference.sha256().to_owned(),
+            content: reference.content_identity()?.clone(),
+            name: reference.name().to_owned(),
+            content_type: reference.content_type().to_owned(),
+            bytes: reference.bytes()?,
+        })
+    }
+
+    pub(crate) fn reacquire(&self, transcript: &Path) -> Result<wire::Media, ResolveError> {
+        let root = media_root(transcript).ok_or_else(|| ResolveError::Root {
+            transcript: transcript.to_path_buf(),
+        })?;
+        let resolved = resolve_blob(&root, &self.sha256, &self.name, &self.content_type)?;
+        if resolved.content != self.content || resolved.bytes != self.bytes {
+            return Err(ResolveError::Provenance {
+                digest: self.sha256.clone(),
+            });
+        }
+        Ok(resolved.media)
+    }
+}
 fn resolve_one(
     root: &Path,
     reference: &listen::ExternalMedia,
-) -> Result<wire::Media, ResolveError> {
-    let digest = reference.sha256();
+) -> Result<ResolvedMedia, ResolveError> {
+    resolve_blob(
+        root,
+        reference.sha256(),
+        reference.name(),
+        reference.content_type(),
+    )
+}
+
+fn resolve_blob(
+    root: &Path,
+    digest: &str,
+    name: &str,
+    content_type: &str,
+) -> Result<ResolvedMedia, ResolveError> {
     let path = root.join(digest);
     let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
         if source.kind() == std::io::ErrorKind::NotFound {
@@ -143,11 +221,18 @@ fn resolve_one(
             observed: format!("{observed:x}"),
         });
     }
-    wire::Media::from_bytes(reference.name(), reference.content_type(), &bytes).map_err(|source| {
+    let content = wire::Digest::compute(wire::Domain::MediaContent, &bytes);
+    let byte_count = u64::try_from(bytes.len()).expect("admitted media length fits u64");
+    let media = wire::Media::from_bytes(name, content_type, &bytes).map_err(|source| {
         ResolveError::Invalid {
             digest: digest.to_owned(),
             source,
         }
+    })?;
+    Ok(ResolvedMedia {
+        media,
+        content,
+        bytes: byte_count,
     })
 }
 
@@ -214,6 +299,9 @@ pub(crate) enum ResolveError {
         digest: String,
         source: wire::media::MediaError,
     },
+    Provenance {
+        digest: String,
+    },
 }
 
 impl ResolveError {
@@ -226,11 +314,17 @@ impl ResolveError {
             Self::Size { .. } => "media-blob-size-invalid",
             Self::Digest { .. } => "media-blob-digest-mismatch",
             Self::Invalid { .. } => "media-blob-content-invalid",
+            Self::Provenance { .. } => "media-blob-provenance-invalid",
         }
     }
 
     pub(crate) const fn recovery(&self) -> &'static str {
-        "restore the exact regular OMP blob beneath its session state root; surrounding typed history remains available"
+        match self {
+            Self::Provenance { .. } => "restore one complete source-bound OMP media identity",
+            _ => {
+                "restore the exact regular OMP blob beneath its session state root; surrounding typed history remains available"
+            }
+        }
     }
 }
 
@@ -281,6 +375,10 @@ impl fmt::Display for ResolveError {
                     "OMP media blob {digest} is not admitted media: {source}"
                 )
             }
+            Self::Provenance { digest } => write!(
+                formatter,
+                "OMP media blob {digest} could not retain its admitted content identity"
+            ),
         }
     }
 }

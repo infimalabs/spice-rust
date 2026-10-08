@@ -166,6 +166,8 @@ pub struct ExternalMedia {
     name: String,
     content_type: String,
     sha256: String,
+    content: Option<wire::Digest>,
+    bytes: Option<u64>,
 }
 
 impl ExternalMedia {
@@ -185,6 +187,36 @@ impl ExternalMedia {
     #[must_use]
     pub fn sha256(&self) -> &str {
         &self.sha256
+    }
+
+    /// Domain-separated identity of the admitted decoded bytes, once resolved.
+    #[must_use]
+    pub const fn content_identity(&self) -> Option<&wire::Digest> {
+        self.content.as_ref()
+    }
+
+    /// Exact admitted decoded byte count, once resolved.
+    #[must_use]
+    pub const fn bytes(&self) -> Option<u64> {
+        self.bytes
+    }
+
+    /// Whether the source-aware consumer admitted this provider reference.
+    #[must_use]
+    pub const fn is_resolved(&self) -> bool {
+        self.content.is_some() && self.bytes.is_some()
+    }
+
+    /// Retain the admitted byte identity beside this provider reference.
+    ///
+    /// Returns `false` rather than replacing an earlier or incomplete identity.
+    pub fn admit_resolution(&mut self, content: wire::Digest, bytes: u64) -> bool {
+        if bytes == 0 || bytes > wire::media::MAX_MEDIA_BYTES as u64 || self.is_resolved() {
+            return false;
+        }
+        self.content = Some(content);
+        self.bytes = Some(bytes);
+        true
     }
 
     pub(crate) fn admit(
@@ -213,6 +245,8 @@ impl ExternalMedia {
             name,
             content_type,
             sha256: sha256.to_owned(),
+            content: None,
+            bytes: None,
         })
     }
 }

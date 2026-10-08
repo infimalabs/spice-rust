@@ -18,6 +18,7 @@ use super::{
 mod acknowledgement;
 mod automatic_speech;
 mod backlog;
+mod media_hydration;
 mod pending;
 mod projection;
 mod prose_stream;
@@ -107,6 +108,7 @@ impl<'a> CaptureViews<'a> {
 #[derive(Debug, Default)]
 pub(in crate::resident) struct MessageState {
     previews: CallPreviews,
+    media_hydration: media_hydration::MediaHydration,
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
@@ -451,7 +453,9 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
         state.accounting = held;
         state.observations.extend(observations);
     }
-    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)
+    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)?;
+    lock_state(views.state)?.media_hydration.clear_lane(lane);
+    Ok(())
 }
 
 struct AgentRecord<'a> {
@@ -463,6 +467,7 @@ struct AgentRecord<'a> {
     events: &'a [(u32, &'a listen::Event)],
     observed: Option<wire::Instant>,
     unavailable_tool_terminals: &'a [String],
+    transcript: Option<&'a std::path::Path>,
 }
 
 struct AgentEvent<'a> {

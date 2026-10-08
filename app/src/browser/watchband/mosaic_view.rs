@@ -148,6 +148,7 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         || left.unavailable_tool_terminals != right.unavailable_tool_terminals
         || left.boundary != right.boundary
         || left.media != right.media
+        || left.markdown_images != right.markdown_images
     {
         return false;
     }

@@ -221,6 +221,7 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     } = expand_media_payloads(
         &markdown,
         std::slice::from_ref(&media),
+        &[],
         &classifications,
         &[],
     )
@@ -236,6 +237,55 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     );
     assert!(rendered.html.contains("[BROADCAST] remains literal."));
     assert!(rendered.html.contains("is authenticated."));
+}
+
+#[test]
+fn authenticated_path_binding_preserves_alt_title_and_annotation_ranges() {
+    let media = Media::from_base64("provider-name.png", "image/png", "iVBORw0KGgo=")
+        .expect("fixture media");
+    let binding = wire::MarkdownImageBinding {
+        destination: "/tmp/capture_(1).png".to_owned(),
+        media: media.clone(),
+    };
+    let markdown = "![authored alt](/tmp/capture_(1).png \"Authored title\")\n\n\
+                    [ordinary link](/tmp/capture_(1).png)\n\n\
+                    > [BROADCAST] remains authenticated.";
+    let start = markdown.rfind("[BROADCAST]").expect("marker exists");
+    let classifications = [MessageClassification {
+        start: u32::try_from(start).expect("fixture offset fits"),
+        end: u32::try_from(start + wire::stream::BROADCAST_MARKER.len())
+            .expect("fixture offset fits"),
+        kind: MessageClassificationKind::Broadcast,
+    }];
+
+    let ExpandedMedia {
+        markdown: expanded,
+        classifications: remapped,
+        ..
+    } = expand_media_payloads(
+        markdown,
+        &[],
+        std::slice::from_ref(&binding),
+        &classifications,
+        &[],
+    )
+    .expect("bound image expands");
+    assert!(expanded.contains(&format!(
+        "![authored alt]({} \"Authored title\")",
+        media.data_url
+    )));
+    assert!(expanded.contains("[ordinary link](/tmp/capture_(1).png)"));
+    assert!(wire::valid_message_classifications(&expanded, &remapped));
+    let rendered = render_received_with_classifications(&expanded, &remapped);
+    assert!(rendered.html.contains("alt=\"authored alt\""));
+    assert!(rendered.html.contains("title=\"Authored title\""));
+    assert_eq!(
+        rendered
+            .html
+            .matches("class=\"message-broadcast-pill\"")
+            .count(),
+        1
+    );
 }
 
 #[test]

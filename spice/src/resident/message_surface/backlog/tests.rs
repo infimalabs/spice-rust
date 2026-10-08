@@ -89,6 +89,7 @@ fn a_settled_turn_materializes_history_as_one_final_card() {
         "018f82d4-6f59-7d06-92e3-bce9131163ef"
             .parse()
             .expect("fixture author"),
+        None,
         &messages,
         &mut reader,
         &mut diagnostic,
@@ -101,6 +102,111 @@ fn a_settled_turn_materializes_history_as_one_final_card() {
     assert_eq!(collected[0].text, "settled final");
     assert!(collected[0].final_answer);
     fs::remove_dir_all(root).expect("final history fixture cleanup");
+}
+
+#[test]
+fn cold_replay_reconstructs_a_source_bound_image_path_binding() {
+    use sha2::Digest as _;
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-media-hydration-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let tape_root = root.join("tape");
+    let tape = tape::Tape::open(&tape_root).expect("media replay tape opens");
+    let bytes = b"\x89PNG\r\n\x1a\ncold-replay";
+    let media =
+        wire::Media::from_bytes("provider.png", "image/png", bytes).expect("fixture image admits");
+    let payload = media
+        .data_url
+        .split_once(";base64,")
+        .expect("canonical data URL")
+        .1;
+    let rows = [
+        serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "call-image",
+                    "name": "read",
+                    "arguments": {"i": "Reading image", "path": "/tmp/cold.png"}
+                }],
+                "stopReason": "toolUse"
+            }
+        }),
+        serde_json::json!({
+            "type": "message",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call-image",
+                "content": [
+                    {"type": "text", "text": "Read image file [image/png]"},
+                    {"type": "image", "data": payload, "mimeType": "image/png"}
+                ],
+                "isError": false
+            }
+        }),
+        serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "text",
+                    "text": "![cold proof](/tmp/cold.png \"Cold title\")"
+                }],
+                "stopReason": "stop"
+            }
+        }),
+    ];
+    let contents = rows
+        .into_iter()
+        .map(|row| format!("{row}\n"))
+        .collect::<String>();
+    tape.tee(contents.as_bytes())
+        .expect("media replay records are durable");
+
+    let transcript = root.join(".omp/agent/sessions/team").join("thread.jsonl");
+    fs::create_dir_all(transcript.parent().expect("transcript parent"))
+        .expect("session fixture creates");
+    fs::write(&transcript, b"").expect("session transcript writes");
+    let blobs = root.join(".omp/agent/blobs");
+    fs::create_dir_all(&blobs).expect("blob fixture creates");
+    let sha256 = format!("{:x}", sha2::Sha256::digest(bytes));
+    fs::write(blobs.join(sha256), bytes).expect("provider blob writes");
+
+    let scan = listen::scan(&tape_root, listen::Dialect::Omp, None).expect("media replay scans");
+    let messages = CollectedMessages::new(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
+    let mut reader = BacklogReader::default();
+    let mut diagnostic = Vec::new();
+    publish_scan(
+        scan,
+        "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("fixture lane"),
+        "018f82d4-6f59-7d06-92e3-bce9131163ef"
+            .parse()
+            .expect("fixture author"),
+        Some(&transcript),
+        &messages,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("media replay materializes");
+
+    assert!(diagnostic.is_empty());
+    let collected = messages.inner.into_inner().expect("history lock").messages;
+    let prose = collected
+        .iter()
+        .find(|message| message.text.contains("cold proof"))
+        .expect("assistant image prose projects");
+    assert_eq!(prose.markdown_images.len(), 1);
+    assert_eq!(prose.markdown_images[0].destination, "/tmp/cold.png");
+    assert_eq!(prose.markdown_images[0].media.identity(), media.identity());
+    fs::remove_dir_all(root).expect("media replay fixture cleanup");
 }
 
 #[test]
@@ -137,6 +243,7 @@ fn assert_replay_boundary(contents: &str) {
         "018f82d4-6f59-7d06-92e3-bce9131163ef"
             .parse()
             .expect("fixture author"),
+        None,
         &messages,
         &mut reader,
         &mut diagnostic,
@@ -274,6 +381,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        markdown_images: Vec::new(),
     };
     MergedHistoryFixture {
         root,
@@ -748,6 +856,7 @@ fn card_at(member: u64, second: usize) -> wire::AgentMessage {
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        markdown_images: Vec::new(),
     }
 }
 
@@ -1101,6 +1210,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        markdown_images: Vec::new(),
     };
     (root, history, lane, future)
 }

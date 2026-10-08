@@ -98,7 +98,7 @@ pub use hello::{
     OperatorIdentity, Rejected, SpeechPlayback,
 };
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
-pub use media::{AgentMediaReference, Media, MediaError};
+pub use media::{AgentMediaReference, MarkdownImageBinding, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use quota::{
     QuotaAccount, QuotaAccountWithoutUsage, QuotaAmount, QuotaAttempt, QuotaCapacity,

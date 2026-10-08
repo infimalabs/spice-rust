@@ -44,6 +44,7 @@ struct MessageCardFingerprint<'a> {
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
     media: &'a [wire::Media],
+    markdown_images: &'a [wire::MarkdownImageBinding],
 }
 
 fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
@@ -73,6 +74,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
         media: &message.media,
+        markdown_images: &message.markdown_images,
     })
 }
 
@@ -355,6 +357,7 @@ mod tests {
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         }
     }
 

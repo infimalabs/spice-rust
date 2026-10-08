@@ -20,6 +20,7 @@ pub(in crate::resident) fn publish_agent_messages(
                 .expect("fixture tape source is canonical"),
         ),
         None,
+        None,
     )
 }
 
@@ -30,6 +31,7 @@ pub(super) fn publish_agent_messages_in(
     steering: Option<&PresentationDirectives>,
     source: Option<CanonicalUuid>,
     observed: Option<wire::Instant>,
+    transcript: Option<&std::path::Path>,
 ) -> CommandResult<()> {
     let Some(context) = record.decoded.context() else {
         return Ok(());
@@ -58,6 +60,7 @@ pub(super) fn publish_agent_messages_in(
             context,
             events: &events,
             observed,
+            transcript,
             unavailable_tool_terminals: &[],
         },
         state,
@@ -95,23 +98,22 @@ pub(super) fn publish_agent_record(
         if matches!(decoded, listen::Event::StreamedProse(_)) && prose_origin.is_none() {
             continue;
         }
-        let Some(projected) = project_agent_event(
-            AgentEvent {
-                lane: record.lane,
-                author: record.author,
-                source: record.source,
-                ordinal,
-                decoded,
-                authored: record.context.timestamp.as_deref(),
-                observed: record.observed,
-                observations: &state.observations,
-                unavailable_tool_terminals: record.unavailable_tool_terminals,
-                prose_origin,
-                suppress_intent,
-            },
-            &mut state.previews,
-            steering,
-        )?
+        let event = AgentEvent {
+            lane: record.lane,
+            author: record.author,
+            source: record.source,
+            ordinal,
+            decoded,
+            authored: record.context.timestamp.as_deref(),
+            observed: record.observed,
+            observations: &state.observations,
+            unavailable_tool_terminals: record.unavailable_tool_terminals,
+            prose_origin,
+            suppress_intent,
+        };
+        let markdown_images = state.media_hydration.observe(&event, record.transcript);
+        let Some(projected) =
+            project_agent_event(event, &mut state.previews, steering, markdown_images)?
         else {
             continue;
         };
@@ -246,6 +248,7 @@ fn publish_turn_boundary(
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         },
     )
 }
@@ -277,7 +280,7 @@ pub(super) fn publish_agent_event(
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
-    if let Some(projected) = project_agent_event(event, previews, steering)? {
+    if let Some(projected) = project_agent_event(event, previews, steering, Vec::new())? {
         publish_message(publisher, projected.published)?;
     }
     Ok(())
@@ -296,6 +299,7 @@ fn project_agent_event(
     event: AgentEvent<'_>,
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
+    markdown_images: Vec<wire::MarkdownImageBinding>,
 ) -> CommandResult<Option<ProjectedMessage>> {
     let Some(projected) = project_event_body(&event, previews, steering)? else {
         return Ok(None);
@@ -339,6 +343,8 @@ fn project_agent_event(
         .flatten();
     wire::media::validate_media(&media)
         .map_err(|error| store_fault("serve::message-media-invalid", &error.to_string()))?;
+    wire::media::validate_markdown_image_bindings(&markdown_images)
+        .map_err(|error| store_fault("serve::message-media-invalid", &error.to_string()))?;
     let locus = wire::MessageLocus {
         member: locus.member,
         offset: locus.offset,
@@ -367,6 +373,7 @@ fn project_agent_event(
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         boundary: event_boundary(decoded),
         media,
+        markdown_images,
     };
     let pending = pending_presentation(decoded, steering, presentation_event, published.locus);
     let terminal = terminal_prose_card(&published, decoded, steering, presentation_event);
