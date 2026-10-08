@@ -593,8 +593,10 @@ first slot; its second stays available for the team menu. Each range runs left
 to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside a
 neutral 76 × 26 pill groove: two pixels of clearance above and below, and two
 pixels of panel inset at each end. Every current-value word is drawn to fill its
-thumb, so every value occupies the same width. Send, the round buttons, and the
-thumbs share one tactile face whose color carries state. `Send` lights only when
+thumb, so every value occupies the same width. Thumb state color ends at its
+border; neutral depth remains, but no state casts light into the groove. Send,
+the round buttons, and the thumbs share one tactile face whose color carries
+state. `Send` lights only when
 a press would submit something: it fills with a pinwheel of one equal slice per
 agent that would receive a message, in that agent's accent and in mathematical
 order: the first agent opens at the right edge and the rest follow
