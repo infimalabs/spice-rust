@@ -13,8 +13,9 @@
 .commandbar--mosaic .bar-meta { font-size: var(--app-type-micro); }
 
 .shell {
-  /* The Spice trigger retains the global control size and trailing inset. */
-  --app-header-control: 35px;
+  /* SPICE and the composer's TURBO button share one round-control diameter. */
+  --app-round-control-size: 34px;
+  --app-header-control: var(--app-round-control-size);
   --app-shell-edge-inline: 10px;
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
