@@ -11,7 +11,7 @@ mod pointer;
 mod shape;
 mod view;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tool {
     Select,
     Rectangle,
@@ -81,6 +81,17 @@ impl PartialEq for Session {
             && Rc::ptr_eq(&self.gesture_click, &other.gesture_click)
             && self.repaint == other.repaint
     }
+}
+
+#[derive(Clone, PartialEq)]
+struct KeyboardCommands {
+    tool: Callback<Tool>,
+    route: Callback<()>,
+    color: Callback<Color>,
+    cancel: Callback<()>,
+    apply: Callback<()>,
+    route_enabled: bool,
+    apply_enabled: bool,
 }
 
 impl Session {
@@ -191,8 +202,8 @@ fn use_tool_command(session: Session, tool: UseStateHandle<Tool>) -> Callback<To
 /// The toolbar route control: it cycles the selected line or arrow's route
 /// as one edit, or else the route the next line or arrow starts with.
 #[hook]
-fn use_route_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<MouseEvent> {
-    use_callback((session, pen), |_: MouseEvent, (session, pen)| {
+fn use_route_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<()> {
+    use_callback((session, pen), |(), (session, pen)| {
         let route = {
             let mut history = session.history.borrow_mut();
             pointer::cancel(&mut history, &mut session.gesture.borrow_mut());
@@ -254,17 +265,14 @@ fn use_apply_command(
     session: Session,
     base: UseStateHandle<DraftImage>,
     export: Export,
-) -> Callback<MouseEvent> {
-    use_callback(
-        (session, base, export),
-        |_: MouseEvent, (session, base, export)| {
-            if *export.busy || session.gesture.borrow().is_some() {
-                return;
-            }
-            let shapes = Rc::new(session.history.borrow().shapes.clone());
-            apply(base, shapes, export.clone());
-        },
-    )
+) -> Callback<()> {
+    use_callback((session, base, export), |(), (session, base, export)| {
+        if *export.busy || session.gesture.borrow().is_some() {
+            return;
+        }
+        let shapes = Rc::new(session.history.borrow().shapes.clone());
+        apply(base, shapes, export.clone());
+    })
 }
 
 /// Flatten the marks onto the frozen original at its native size and hand the
@@ -306,7 +314,6 @@ struct CanvasHandlers {
     interrupted: Callback<PointerEvent>,
     backdrop: Callback<MouseEvent>,
     reopen: Callback<MouseEvent>,
-    keyboard: Callback<KeyboardEvent>,
 }
 
 /// Pointer and keyboard input reaches the session only while no export is
@@ -345,14 +352,6 @@ fn use_canvas_handlers(
     let interrupted = use_callback(session.clone(), |event: PointerEvent, session| {
         pointer::interrupted(&event, session)
     });
-    let keyboard = use_callback(
-        (session.clone(), canvas.dimensions, idle),
-        |event: KeyboardEvent, (session, dimensions, idle)| {
-            if *idle {
-                keys::handle(&event, session, *dimensions);
-            }
-        },
-    );
     let backdrop = use_callback(
         (canvas.svg, session),
         |event: MouseEvent, (svg, session)| pointer::backdrop(&event, svg, session),
@@ -364,7 +363,6 @@ fn use_canvas_handlers(
         interrupted,
         backdrop,
         reopen,
-        keyboard,
     }
 }
 
@@ -404,27 +402,57 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         *pen,
         !*busy,
     );
-    let actions = view::Actions {
-        tool: use_tool_command(session.clone(), tool.clone()),
-        undo: use_history_command(session.clone(), History::undo),
-        redo: use_history_command(session.clone(), History::redo),
-        delete: use_history_command(session.clone(), History::delete),
-        route: use_route_command(session.clone(), pen.clone()),
-        color: use_color_command(session.clone(), pen.clone()),
-        cancel: props.oncancel.reform(|_: MouseEvent| ()),
-        apply: use_apply_command(
-            session.clone(),
-            base.clone(),
-            Export {
-                busy: busy.clone(),
-                issue: issue.clone(),
-                alive: alive.borrow().clone(),
-                onapply: props.onapply.clone(),
-            },
-        ),
-    };
+    let tool_command = use_tool_command(session.clone(), tool.clone());
+    let undo_command = use_history_command(session.clone(), History::undo);
+    let redo_command = use_history_command(session.clone(), History::redo);
+    let delete_command = use_history_command(session.clone(), History::delete);
+    let route_command = use_route_command(session.clone(), pen.clone());
+    let color_command = use_color_command(session.clone(), pen.clone());
+    let apply_command = use_apply_command(
+        session.clone(),
+        base.clone(),
+        Export {
+            busy: busy.clone(),
+            issue: issue.clone(),
+            alive: alive.borrow().clone(),
+            onapply: props.onapply.clone(),
+        },
+    );
     let ready = dimensions.0 > 0 && dimensions.1 > 0;
     let history = session.history.borrow();
+    let route_enabled = history
+        .selected
+        .is_some_and(|index| history.shapes[index].kind.routed())
+        || matches!(*tool, Tool::Line | Tool::Arrow);
+    let keyboard = use_callback(
+        (
+            session.clone(),
+            dimensions,
+            !*busy,
+            KeyboardCommands {
+                tool: tool_command.clone(),
+                route: route_command.clone(),
+                color: color_command.clone(),
+                cancel: props.oncancel.clone(),
+                apply: apply_command.clone(),
+                route_enabled,
+                apply_enabled: !*busy && ready,
+            },
+        ),
+        |event: KeyboardEvent, (session, dimensions, idle, commands)| {
+            keys::handle(&event, session, *dimensions, *idle, commands);
+        },
+    );
+    let actions = view::Actions {
+        tool: tool_command,
+        undo: undo_command,
+        redo: redo_command,
+        delete: delete_command,
+        route: route_command.reform(|_: MouseEvent| ()),
+        color: color_command,
+        cancel: props.oncancel.reform(|_: MouseEvent| ()),
+        apply: apply_command.reform(|_: MouseEvent| ()),
+    };
     let dirty = history.differs_from(base.shapes.as_ref());
     super::super::use_unsafe_intent_guard(dirty);
     {
@@ -432,9 +460,9 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         use_effect_with(dirty, move |dirty| ondirty.emit(*dirty));
     }
     html! {
-        <>
+        <div class="image-annotation-editor" onkeydown={keyboard}>
             {view::toolbar(*tool, *pen, *busy, ready, &history, actions)}
-            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow, Shift snaps to 45 degrees, Alt turns elbows, and Command or Control curves." onkeydown={on.keyboard}>
+            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. V selects; R draws rectangles; L draws lines; A draws arrows; T places text; G cycles routing; 1 through 6 choose colours. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow, Shift snaps to 45 degrees, Alt turns elbows, and Command or Control curves.">
                 if ready {
                     <svg ref={svg} class={classes!("image-annotation-svg", (*tool != Tool::Select).then_some("image-annotation-svg--draw"))} viewBox={format!("0 0 {} {}", dimensions.0, dimensions.1)} preserveAspectRatio="xMidYMid meet"
                         onpointerdown={on.down} onpointermove={on.moved} onpointerup={on.up} onpointercancel={on.interrupted.clone()} onlostpointercapture={on.interrupted} onclick={on.backdrop} ondblclick={on.reopen} oncontextmenu={Callback::from(|event: MouseEvent| event.prevent_default())}>
@@ -446,6 +474,6 @@ pub(super) fn editor(props: &EditorProps) -> Html {
                 }
             </div>
             if !issue.is_empty() { <p class="toast" role="status">{(*issue).clone()}</p> }
-        </>
+        </div>
     }
 }

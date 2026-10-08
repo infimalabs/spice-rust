@@ -542,34 +542,39 @@ contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
 those bytes is not a new steering send.
 
 **Draft image annotations.** Open a pasted or dropped lane/quote attachment,
-then choose **Annotate** in its full-size preview. **Rectangle**, **Line**,
-and **Arrow** draw marks in original-image coordinates. The toolbar palette
-(red, yellow, green, blue, black, white) sets the colour of new marks; choosing
-a colour while a mark is selected recolours it as one undoable edit, and
+then choose **Annotate** in its full-size preview. The toolbar keeps **Cancel**
+and **Apply** together at the upper right while the editing controls wrap
+independently. **Rectangle**, **Line**, and **Arrow** draw marks in
+original-image coordinates; `V`, `R`, `L`, `A`, and `T` choose Select,
+Rectangle, Line, Arrow, and Text from anywhere in the editor except an active
+text field. The fixed palette (red, yellow, green, blue, black, white) sets the
+colour of new marks, and keys `1` through `6` select those swatches in order.
+Choosing a colour while a mark is selected recolours it as one undoable edit;
 taking up a different tool lets go of the selection so the palette sets up the
 next mark. Labels carry a contrasting halo in every colour, so they read on
-light and dark images, and Apply exports each mark in its on-screen colour. A
-line or arrow
-routes straight; hold Shift while drawing to snap it to 45° steps, Alt/Option
-to route an axis-aligned elbow, or Command/Control to bend a curve, and the
-arrowhead follows the final segment. The route button cycles the selected
-line or arrow (or the next one drawn) through Straight, Elbow, and Curve for
-touch use. **Text** places a label at the pressed point: Enter or leaving the
-field keeps it, Escape abandons it, and an empty label is discarded;
+light and dark images, and Apply exports each mark in its on-screen colour.
+
+A line or arrow routes straight; hold Shift while drawing to snap it to 45°
+steps, Alt/Option to route an axis-aligned elbow, or Command/Control to bend a
+curve, and the arrowhead follows the final segment. The route button or `G`
+cycles the selected line or arrow—or the next one drawn—through Straight,
+Elbow, and Curve. **Text** places a label at the pressed point: Enter or leaving
+the field keeps it, Escape abandons it, and an empty label is discarded;
 double-click a label or press Enter on a selected one to edit it again.
 **Select** moves a mark, and the two handles adjust rectangle corners or line
-and arrow endpoints. Selected marks can be moved with arrow keys (Shift moves
-ten pixels), removed with **Delete** or Backspace, and undone/redone with the
-toolbar or Command/Control+Z and Shift+Command/Control+Z. An interrupted
-pointer gesture is discarded.
+and arrow endpoints. Selected marks move with arrow keys (Shift moves ten
+pixels), are removed with Delete or Backspace, and use Command/Control+Z,
+Shift+Command/Control+Z, or Command/Control+Y for undo and redo. Escape cancels
+an active label, gesture, or selection first; another Escape leaves annotation
+mode. An interrupted pointer gesture is discarded.
 
-**Apply** replaces that exact draft attachment with a native-resolution PNG.
-The draft retains the original raster and editable shape list, so reopening
-**Annotate** edits the marks, colours included, without drawing over
-previously flattened marks.
-**Cancel**, closing the preview, or leaving its owning composer discards
-unapplied edits. Identical pasted images are separate edit targets; a removed,
-submitted, or superseded attachment cannot receive a stale export.
+**Apply**, or Command/Control+Enter, replaces that exact draft attachment with
+a native-resolution PNG. The draft retains the original raster and editable
+shape list, so reopening **Annotate** edits the marks, colours included, without
+drawing over previously flattened marks. **Cancel**, closing the preview, or
+leaving its owning composer discards unapplied edits. Identical pasted images
+are separate edit targets; a removed, submitted, or superseded attachment
+cannot receive a stale export.
 
 Original pixels and marks survive optimistic-send refusal restoration, but
 remain browser-local draft state: reloading the page does not persist them.
