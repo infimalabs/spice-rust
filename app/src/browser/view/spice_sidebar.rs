@@ -251,8 +251,13 @@ pub(super) fn render_operator_settings(
                     autocomplete="email"
                     disabled={!enabled}
                 />
-                <button type="submit" class="app-compact-control" disabled={!enabled}>
-                    {"Save identity"}
+                <button
+                    type="submit"
+                    class="app-compact-control"
+                    aria-label="Save identity"
+                    disabled={!enabled}
+                >
+                    {"Save"}
                 </button>
                 </form>
             </div>

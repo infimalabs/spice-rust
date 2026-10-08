@@ -65,9 +65,11 @@
   height: 40px;
   font-size: var(--app-type-label);
 }
+/* Two field rows; the save action stands beside both instead of taking a
+   row of its own. */
 .app-operator-form {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 5px 10px;
   min-width: 0;
@@ -87,7 +89,7 @@
   font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-operator-form input:focus { border-color: var(--focus); outline: 0; }
-.app-operator-form button { grid-column: 2; justify-self: end; }
+.app-operator-form button { grid-column: 3; grid-row: 1 / span 2; }
 /* The fixed-width weekly percentage sits immediately beside the Spice button
    without moving it as quota state loads or becomes unavailable. */
 .app-spice-capacity {
