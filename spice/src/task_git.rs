@@ -353,7 +353,19 @@ fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Erro
 
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
-    prepare_claim_observed(repository, || Ok(()), |_| Ok(()))
+    prepare_claim_observed(repository, LooseCommits::Refuse, || Ok(()), |_| Ok(()))
+}
+
+/// Measure a named claim, adopting loose commits or advancing a clean lane.
+///
+/// Explicit capture and steal use the allocator's opening-boundary transaction,
+/// but unlike allocation they may intentionally attach already-committed work.
+pub fn prepare_explicit_claim(repository: &Repository) -> Result<ClaimPreparation, Error> {
+    let boundary = prepare_claim_observed(repository, LooseCommits::Adopt, || Ok(()), |_| Ok(()))?;
+    Ok(ClaimPreparation {
+        boundary,
+        restore: None,
+    })
 }
 /// Claim-side Git work prepared before the guarded claim fact commits.
 #[derive(Debug)]
@@ -461,8 +473,15 @@ pub fn prepare_task_claim(
 /// different fetch, ancestry, fast-forward, or boundary law. Recovery's
 /// preflight rechecks its sealed authority after target resolution and before
 /// either the fetch or a no-remote boundary is published.
+#[derive(Clone, Copy)]
+enum LooseCommits {
+    Refuse,
+    Adopt,
+}
+
 fn prepare_claim_observed(
     repository: &Repository,
+    loose_commits: LooseCommits,
     mut preflight: impl FnMut() -> Result<(), Error>,
     mut observe: impl FnMut(&GitBoundary) -> Result<(), Error>,
 ) -> Result<GitBoundary, Error> {
@@ -489,20 +508,31 @@ fn prepare_claim_observed(
     let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
     let ahead = ahead_count(root, &target.baseline)?;
     if ahead != 0 {
-        return Err(Error::refusal(
-            "git::claim-loose-commits",
-            format!(
-                concat!(
-                    "the lane has {ahead} local commit(s) outside a ",
-                    "claimed task boundary",
+        if matches!(loose_commits, LooseCommits::Refuse) {
+            return Err(Error::refusal(
+                "git::claim-loose-commits",
+                format!(
+                    concat!(
+                        "the lane has {ahead} local commit(s) outside a ",
+                        "claimed task boundary",
+                    ),
+                    ahead = ahead
                 ),
-                ahead = ahead
-            ),
-            concat!(
-                "run task capture for those commits before ",
-                "requesting task next",
-            ),
-        ));
+                concat!(
+                    "run task capture for those commits before ",
+                    "requesting task next",
+                ),
+            ));
+        }
+        let captured = boundary(
+            before.clone(),
+            before,
+            Some(&target.baseline),
+            Some(upstream_head),
+            ahead,
+        );
+        observe(&captured)?;
+        return Ok(captured);
     }
     let planned = boundary(
         upstream_head.clone(),

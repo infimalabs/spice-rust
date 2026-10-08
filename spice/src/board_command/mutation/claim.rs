@@ -728,20 +728,17 @@ pub(in crate::board_command) fn claim_git_boundary(
     let lane = task_repository(snapshot, command, resident)?;
     let parked = task_parked_commits(snapshot, selected.born());
     let result = match possession {
-        Possession::Capture if parked.is_none() => {
-            spice::task_git::capture(&lane).map(|capture| ClaimGit {
-                boundary: capture.boundary,
-                prepared: None,
+        Possession::Capture if parked.is_none() => spice::task_git::prepare_explicit_claim(&lane)
+            .map(|prepared| ClaimGit {
+                boundary: prepared.boundary.clone(),
+                prepared: Some(prepared),
+            }),
+        Possession::Steal => {
+            spice::task_git::prepare_explicit_claim(&lane).map(|prepared| ClaimGit {
+                boundary: prepared.boundary.clone(),
+                prepared: Some(prepared),
             })
         }
-        Possession::Steal => match spice::task_git::capture(&lane) {
-            Ok(capture) => Ok(ClaimGit {
-                boundary: capture.boundary,
-                prepared: None,
-            }),
-            Err(error) if error.reason() == "git::nothing-to-capture" => return Ok(None),
-            Err(error) => Err(error),
-        },
         Possession::Next | Possession::Capture => {
             spice::task_git::prepare_task_claim(&lane, parked).map(|prepared| ClaimGit {
                 boundary: prepared.boundary.clone(),

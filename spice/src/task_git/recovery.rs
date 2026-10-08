@@ -347,6 +347,7 @@ pub fn synchronize_recovery(
     let mut journaled = manifest;
     let boundary = prepare_claim_observed(
         repository,
+        LooseCommits::Refuse,
         || verify_synchronization_identity(repository, &sealed),
         |boundary| {
             journaled.state = RecoveryState::Syncing {
@@ -405,6 +406,7 @@ fn resume_synchronization(
         let sealed = manifest.clone();
         let resumed = prepare_claim_observed(
             repository,
+            LooseCommits::Refuse,
             || verify_synchronization_identity(repository, &sealed),
             |_| Ok(()),
         )?;

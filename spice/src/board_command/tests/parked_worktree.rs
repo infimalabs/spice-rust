@@ -425,6 +425,75 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
     }
 }
 
+#[test]
+fn named_clean_plan_claims_record_their_opening_and_complete_in_place() {
+    for rule in ["capture", "steal"] {
+        let (root, bus, epoch, seats) = fixture(&format!("clean-plan-{rule}"), 2);
+        let seat = &seats[0];
+        let actor = Actor::Lane(seat.lane);
+        let (lane, repository, opening) = bind_lane(&root, &bus, epoch, seat);
+        track_origin(&lane, &root.join("origin.git"));
+        let task = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            rule,
+            "Organize the named plan",
+            "board.test",
+            Some("plan,todo"),
+            &["implementation contract ready"],
+        );
+        if rule == "steal" {
+            capture_for(&bus, epoch, &seats[1], &task);
+        }
+
+        let visible = board(&bus, epoch, actor.clone());
+        let heads = at(&visible, &task);
+        let rule_name: Name = rule.parse().expect("named claim rule");
+        assert_committed(issue_git(
+            &bus,
+            &repository,
+            epoch,
+            actor.clone(),
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility {
+                    rule: rule_name.clone(),
+                },
+                residency(&visible, seat),
+            ],
+            &ClaimWin {
+                rule: rule_name,
+                recovery: None,
+            },
+        ));
+
+        let claimed = board(&bus, epoch, actor.clone());
+        let heads = at(&claimed, &task);
+        let claim = heads.claim.as_ref().expect("named claim head");
+        assert_eq!(claim.body.actor, actor);
+        assert_eq!(claim.body.epoch, epoch);
+        assert_eq!(claim.body.acknowledged, heads.workflow.body.generation);
+        let boundary = &heads
+            .git_context
+            .as_ref()
+            .expect("named claim records its Git opening")
+            .boundary;
+        assert_eq!(boundary.head, opening);
+        assert_eq!(boundary.integrated, opening);
+        assert_eq!(boundary.local_commits, 0);
+
+        release("plan", &bus, &repository, epoch, seat, &task);
+        let advanced = board(&bus, epoch, actor);
+        assert_eq!(at(&advanced, &task).workflow.body.phase.as_str(), "todo");
+        assert_eq!(head_commit(&lane), opening);
+        clean(&root, bus);
+    }
+}
+
 /// A resident-minted claim inherits released commits like an allocator claim,
 /// and a launch that never starts parks them again rather than stranding them
 /// on the lane, so each claim carries the work exactly once.

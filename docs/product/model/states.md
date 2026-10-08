@@ -197,6 +197,13 @@ flowchart LR
 owner, and its lease are committed together. A row can never project active
 possession with no owner.
 
+**Invariant —** Every repository-backed claim win records the new holder's
+measured opening Git boundary. Named capture and steal use the same clean-lane
+synchronization as allocator possession; capture may instead adopt the lane's
+intentional loose commits. A steal never reuses the displaced holder's opening.
+Consequently an untouched named plan can close in place, while dirty work or a
+moved `HEAD` still fails the plan boundary.
+
 **Invariant —** Lapse is a typed journal transition, not an allocator inference.
 It changes the exact disposition to `lapsed`; ordinary allocation then derives
 readiness again from all current predicates. Explicit release analogously writes
