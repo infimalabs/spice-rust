@@ -162,6 +162,21 @@ fn a_new_operator_direction_releases_the_vendor_hold() {
             .directives,
         [uuid(11)]
     );
+    let unchanged = fixture
+        .bus
+        .task_snapshot()
+        .expect("unchanged snapshot reads");
+    lifecycle
+        .projection
+        .advance(&unchanged, &projects())
+        .expect("unchanged projection advances");
+    assert!(
+        !lifecycle
+            .release_changed_vendor_hold(&fixture.bus, epoch(), &unchanged)
+            .expect("unchanged input reconciles"),
+        "the still-pending refused direction is unchanged input and keeps the hold"
+    );
+    assert!(lifecycle.held_until(lane()).is_some());
 
     committed(
         fixture
