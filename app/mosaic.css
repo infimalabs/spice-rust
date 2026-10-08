@@ -845,6 +845,16 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
+/* Flush button material is shared by the primary panel and the separately
+   admitted global fast-mode control. */
+.team-composer .team-composer-controls,
+.app-spice-settings .app-spice-turbo {
+  --team-control-face: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 8.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
+  --team-control-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 24%, transparent);
+  --team-control-rest: inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
+  --team-control-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
+  --team-control-rim-width: 2px;
+}
 /* The sharp 80 × 160 panel holds two round utility buttons, central SEND,
    and two pill flyers. Range rows receive the remaining height. */
 .team-composer .team-composer-controls {
@@ -859,11 +869,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-slider-thumb-inline: 46px;
   --team-slider-thumb-block: 22px;
   --team-slider-thumb-inset: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
-  --team-control-face: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 8.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
-  --team-control-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 24%, transparent);
-  --team-control-rest: inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
-  --team-control-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
-  --team-control-rim-width: 2px;
   position: relative; display: grid; row-gap: var(--team-control-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0; padding-block-start: var(--team-control-gap); block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-button-size) var(--team-control-send-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
@@ -873,37 +878,17 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     -8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent),
     8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* The global fast-mode button has its own material, outside primary controls. */
+/* Global TURBO keeps its own admission and layout while reusing the production
+   Flush face, edge, contact, and selected-state treatment below. */
 .app-spice-settings .app-spice-turbo {
-  --team-knob-size: var(--app-round-control-size); --team-send-command-ring: 0 0 0 0 transparent;
-  --team-knob-surface: var(--control-state-accent, var(--accent));
-  --team-knob-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-knob-surface) 68%, var(--app-shadow-source));
-  --team-knob-highlight: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%);
-  --team-knob-face: linear-gradient(150deg, color-mix(in srgb, var(--team-knob-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-knob-surface) 96%, var(--app-highlight-source)) 46%, var(--team-knob-surface) 68%, color-mix(in srgb, var(--team-knob-surface) 76%, var(--app-shadow-source)) 100%);
-  --team-knob-glass: linear-gradient(150deg, color-mix(in srgb, var(--app-highlight-source) 20%, transparent) 0%, color-mix(in srgb, var(--app-highlight-source) 4%, transparent) 46%, transparent 68%, color-mix(in srgb, var(--app-shadow-source) 24%, transparent) 100%), radial-gradient(ellipse closest-side, transparent 66%, color-mix(in srgb, var(--app-shadow-source) 26%, transparent));
-  --team-knob-accent-glass: linear-gradient(transparent, transparent);
-  --team-knob-rim: inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 30%, transparent);
-  --team-knob-ink-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 34%, transparent);
-  --team-knob-lift: var(--team-knob-rim), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
-  position: relative; display: grid; place-items: center; overflow: hidden;
-  place-self: center; width: var(--team-knob-size); min-width: var(--team-knob-size); max-width: var(--team-knob-size); height: var(--team-knob-size); min-height: var(--team-knob-size); margin: 0; padding: 0;
-  border: var(--team-knob-edge); border-radius: var(--app-radius-circle);
-  background: var(--team-knob-glass), var(--team-knob-accent-glass), var(--team-knob-face);
-  box-shadow: var(--team-send-command-ring), var(--team-knob-lift); color: var(--page); cursor: pointer;
-  font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0);
-  transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
+  --team-control-button-size: var(--app-round-control-size);
+  --team-send-command-ring: 0 0 0 0 transparent;
+  --inactive-lane-opacity: .72;
 }
-.app-spice-turbo::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
-.app-spice-turbo:not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
-.app-spice-turbo:not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
-.app-spice-turbo[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
-.app-spice-turbo:not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); }
-.app-spice-turbo[data-lit="true"] { --control-state-accent: var(--accent-3); --team-knob-accent-glass: linear-gradient(color-mix(in srgb, var(--accent-3) 42%, transparent), color-mix(in srgb, var(--accent-3) 42%, transparent)); }
-.app-spice-turbo:not([data-lit="true"]) { --control-state-accent: var(--muted); }
-.app-spice-turbo:disabled { cursor: not-allowed; filter: saturate(.55); opacity: .58; }
 .app-turbo-button .fit-word { inline-size: 22px; block-size: 8px; }
-/* Primary controls are transmitted glass, with no opaque accent face or dome. */
-.team-composer :is(.team-send, .team-turbo, .team-menu) {
+/* Flush controls are transmitted glass, with no opaque accent face or dome. */
+.team-composer :is(.team-send, .team-turbo, .team-menu),
+.app-spice-settings .app-spice-turbo {
   --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
   position: relative; display: grid; place-items: center; overflow: hidden; place-self: center;
   width: var(--team-control-button-size); min-width: var(--team-control-button-size); max-width: var(--team-control-button-size); height: var(--team-control-button-size); min-height: var(--team-control-button-size); margin: 0; padding: 0;
@@ -918,11 +903,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   grid-row: 2; grid-column: 1 / -1;
   width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size);
 }
-.team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
-.team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):is(:active, [data-touch-contact]) {
+.team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):hover,
+.app-spice-settings .app-spice-turbo:not(:disabled):hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
+.team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):is(:active, [data-touch-contact]),
+.app-spice-settings .app-spice-turbo:not(:disabled):active {
   transform: translateY(1.5px); box-shadow: var(--team-send-command-ring), var(--team-control-contact);
 }
-.team-composer .team-turbo[data-lit="true"] { border-color: var(--accent-3); }
+.team-composer .team-turbo[data-lit="true"],
+.app-spice-settings .app-spice-turbo[data-lit="true"] { border-color: var(--accent-3); }
 .team-composer .team-menu[aria-expanded="true"] { border-color: var(--focus); }
 .team-composer .team-send::before {
   position: absolute; inset: 0; border-radius: inherit; opacity: 0; content: ""; pointer-events: none;
@@ -939,8 +927,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer :is(.team-send-recipient-count, .team-send-broadcast-count) { position: absolute; bottom: 7px; z-index: 1; color: var(--muted); font: 600 6px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .team-composer .team-send-broadcast-count { display: none; }
 .team-composer .team-turbo:disabled,
-.team-composer .team-menu:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
-.team-composer .fit-word { filter: none; }
+.team-composer .team-menu:disabled,
+.app-spice-settings .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
+.team-composer .fit-word,
+.app-spice-settings .app-spice-turbo .fit-word { filter: none; }
 .fit-word {
   display: block; overflow: hidden; pointer-events: none;
   fill: currentColor; filter: drop-shadow(var(--team-knob-ink-shadow)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
@@ -1014,10 +1004,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* With no agent running and nothing drafted, the team's knobs step back like
    an inactive lane without compositing their shared field surface. */
-.team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider) {
+.team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
+.app-spice-settings .app-spice-turbo {
   transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-@media (prefers-reduced-motion: reduce) { .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider) { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
+  .app-spice-settings .app-spice-turbo { transition: none; }
+}
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
 .team-composer .team-composer-controls[data-idle="true"] > :is(.team-turbo, .team-menu, .team-slider) { filter: saturate(.55); }
 .team-composer .team-composer-controls[data-idle="true"] .team-send:disabled {

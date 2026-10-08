@@ -654,9 +654,10 @@ flyers use muted edges for Quiet and Steer, the active accent for Speak and
 Drive, and blue for Narrate and Drain. Pressing the composer's `TURBO` flips
 that team flag, which the resident keeps across restarts.
 
-The Settings section in the Spice side view uses an independently styled
-`TURBO`/`BASIC` button with its existing raised colored-glass appearance to flip
-the global flag; it remains disabled until settings have loaded and the resident
+The Settings section in the Spice side view uses the same neutral 34px Flush
+etched-glass face for its separately admitted global `TURBO`/`BASIC` control.
+`TURBO` lights the red edge without filling the face; `BASIC` keeps the neutral
+edge. The control remains disabled until settings have loaded and the resident
 offers that command.
 Fast mode is additive: a member launches in fast mode exactly when its own flag,
 its team's flag, or the global setting is on, so turning one level off never
