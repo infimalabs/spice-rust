@@ -55,10 +55,12 @@ unworked handles are muted, dormant ones weaker. A handle a lane is working
 names that lane in its text, the lane accent mixed 55% toward `--ink`, and in a
 5% tint of the accent mixed into `--control`; unworked targets tint in
 `--muted`. In-flight handles are not dimmed, because text and tint carry
-ownership. Every target rises to a 10% tint on hover. Labels sit 10px in from
-either rail: the stem starts and the last handle ends with 10px, and every
-other join has 8px on each side. An 8px outer inset keeps the team flags off
-the browser edge, and adjacent tabs in either strip are separated by the
+ownership. Every target rises to a 10% tint on hover; keyboard focus uses the
+same neutral muted outline in both strips rather than an accent colour. Labels
+sit 10px in from either rail: the stem starts and the last handle ends with
+10px, and every other join has 8px on each side. An 8px outer inset keeps the
+team flags off the browser edge, and adjacent tabs in either strip are
+separated by the
 message stream's inter-lane `--mosaic-gap`; team flags never join the status
 rule below. The team total's sole badge counts every task the band shows, which
 is the sum of the stem badges and the number of handles. Activating it opens

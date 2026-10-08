@@ -252,7 +252,10 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   --app-horn-tab-tint: var(--accent-slot);
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
-.app-horn-tabs :focus-visible { outline-offset: -2px; }
+.app-horn-tabs :focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--muted);
+  outline-offset: -2px;
+}
 .app-count-badge {
   padding: 0 5px;
   border-radius: var(--app-radius-pill);
