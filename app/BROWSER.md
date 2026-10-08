@@ -149,8 +149,10 @@ The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
 Round 34px BASIC/TURBO and team-menu buttons share the first row; round 56px SEND
 sits in the middle, above two pill-shaped slider flyers. Faces transmit the
 neutral background, with fine etched edges and no opaque recipient-color fill,
-domes, or nested ridges. Global-menu TURBO and task-observation Add/Close retain
-their independent appearances outside the primary panel.
+domes, or nested ridges. The Settings global-menu BASIC/TURBO control reuses the
+same neutral 34px Flush face and lights only its red edge when engaged, while
+remaining its own separately admitted control outside the primary panel.
+Task-observation Add/Close retain their independent appearance.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
 for one recipient, equal separated arcs for several. Its small count follows
