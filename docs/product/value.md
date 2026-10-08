@@ -298,10 +298,13 @@ the small width and task overview the large one. A side view materializes in
 place over the frosted veil, its material and content fading in as it settles
 from just under full scale, and dissolves the same way on close, without motion
 when reduced motion is requested. Pressing the Spice button opens that view
-around the button: the fixed square trigger stays circular, unmoved, and
-unscaled above the sheet, beside the quota percentage, while the view forms
-behind it. Pressing the button again, Escape, or the backdrop closes it and
-restores focus to the button.
+around the button: the fixed 34-pixel square trigger stays circular with its
+inline center over the shared 80-pixel pip and composer-control column, and its
+block center halfway between the global and team task-tab rows. One pip
+therefore sits exactly beneath it while larger pip sets spread around the same
+axis. The trigger remains unmoved and unscaled above the sheet beside the quota
+percentage while the view forms behind it. Pressing the button again, Escape,
+or the backdrop closes it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
 starting, connecting, and reconnecting grey and slowly pulse its pepper, and the
