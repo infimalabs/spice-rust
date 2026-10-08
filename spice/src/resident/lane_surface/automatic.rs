@@ -48,7 +48,8 @@ pub(super) fn wake(
         Ok(resume) => resume,
         Err(outcome) => return outcome,
     };
-    let fast_mode = match super::super::settings_surface::lane_fast_mode(bus, row) {
+    let fast_mode = match super::super::settings_surface::lane_fast_mode(bus, observed.body(), row)
+    {
         Ok(fast_mode) => fast_mode,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -354,7 +355,7 @@ fn admit_automatic_wake(
     } else {
         launch_resume(paths, &row)?
     };
-    let fast_mode = super::super::settings_surface::lane_fast_mode(bus, &row)?;
+    let fast_mode = super::super::settings_surface::lane_fast_mode(bus, observed.body(), &row)?;
     Ok(WakeAdmission {
         expected_cursor,
         observed,

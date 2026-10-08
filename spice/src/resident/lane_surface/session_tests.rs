@@ -82,7 +82,7 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: Some(fixture.occupant),
         lineage: vec![fixture.occupant],
         capabilities: Vec::new(),

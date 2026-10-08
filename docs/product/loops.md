@@ -419,19 +419,22 @@ flowchart LR
    the agent's action menu carries it, so the request stays visible after the
    drawer that placed it closes.
 - Model, effort, and fast mode are seat authority. `lane model ID [MODEL]`,
-  `lane effort ID [EFFORT]`, and `lane fast ID [on|off]` topology-guard and
-  journal the value every future launch reads; omission restores vendor
-  configuration, or for fast mode the global setting. Lane rows report the
-  running `model`/`effort`/`fast_mode` separately from
-  `seat_model`/`seat_effort`/`seat_fast_mode`. A command-driven OMP occupant
-  is asked only after the seat commits, and its running value changes only
-  after the exact correlated `set_model`, `set_thinking_level`, or
-  `set_fast_mode` response succeeds, journaled against the then-current head
-  while the same occupant still runs. Live model selection requires explicit
-  `provider/model`; bare models, model and effort clears, unsupported
-  occupants, refusals, and interrupted RPC retain the running value. A
-  cleared fast-mode seat still asks for the global setting, and omp refuses
-  to enable fast mode on a model without a priority tier. An OMP launch states
+  `lane effort ID [EFFORT]`, and `lane fast ID on|off` topology-guard and
+  journal the value every future launch reads; model and effort omission
+  restores vendor configuration. Fast mode is additive: a launch runs fast when
+  the seat's flag, its team's flag (`TeamConfigure.fast_mode`, kept on the
+  residency head's team subscription), or the global setting is on. Lane rows
+  report the running `model`/`effort`/`fast_mode` separately from
+  `seat_model`/`seat_effort`/`seat_fast_mode`; a team or seat change that flips
+  a running OMP occupant's effective fast mode asks it live. A command-driven
+  OMP occupant is asked only after the seat or team commits, and its running
+  value changes only after the exact correlated `set_model`,
+  `set_thinking_level`, or `set_fast_mode` response succeeds, journaled against
+  the then-current head while the same occupant still runs. Live model
+  selection requires explicit `provider/model`; bare models, model and effort
+  clears, unsupported occupants, refusals, and interrupted RPC retain the
+  running value. Omp refuses to enable fast mode on a model without a priority
+  tier. An OMP launch states
   its seat effort through that same `set_thinking_level` command at open,
   before the first turn and over the level a resumed session restores; its
   model still rides `--model`, because omp's live `set_model` admits no bare

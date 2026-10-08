@@ -360,7 +360,7 @@ impl TeamLife {
     }
 }
 
-/// Change the task-allocation lifetime shared by one app team.
+/// Change one app team's task-allocation lifetime, fast-mode flag, or members.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamConfigure {
@@ -386,6 +386,17 @@ pub struct TeamConfigure {
         deserialize_with = "crate::optional::present"
     )]
     pub life: Option<TeamLife>,
+    /// Replacement team fast-mode flag, or absent to preserve it.
+    ///
+    /// The flag is additive: every member runs fast while it is on, and
+    /// turning it off leaves members fast whose own flag or the global
+    /// setting still enables it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_mode: Option<bool>,
 }
 
 /// One app team and the seated lanes it holds, in operator order.
@@ -517,25 +528,20 @@ pub struct LaneEffortRetune {
     pub effort: Option<String>,
 }
 
-/// State whether one seated lane launches in fast mode.
+/// Turn one seated lane's own fast-mode flag on or off.
 ///
-/// A named disposition pins the seat. Absence returns future launches to the
-/// global fast-mode setting.
+/// The flag is additive with the lane's team flag and the global setting, so
+/// turning it off leaves the lane fast while either of those is on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneFastRetune {
     /// Topology revision observed before this retune was requested.
     pub topology_revision: u64,
-    /// Seated member whose next launch changes.
+    /// Seated member whose own flag changes.
     pub lane: CanonicalUuid,
-    /// Fast-mode disposition this seat names, absent to follow the global
-    /// setting.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub fast_mode: Option<bool>,
+    /// Whether this lane itself enables fast mode.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
 }
 
 /// Select one lane's continuity account, or the operator-wide account.
@@ -1079,16 +1085,12 @@ pub struct LaneAnswerRow {
     /// Whether the declared occupant runs in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,
-    /// Fast-mode disposition this seat pins for the launches it governs,
-    /// absent when the seat follows the global setting.
+    /// Whether this lane's own flag enables fast mode.
     ///
-    /// `fast_mode` reports the running process; this reports the next launch.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub seat_fast_mode: Option<bool>,
+    /// `fast_mode` reports the running process; the next launch runs fast
+    /// when this flag, the team's flag, or the global setting is on.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub seat_fast_mode: bool,
     /// Observable GIT-04 outcome for the declared occupant launch.
     #[serde(
         default,

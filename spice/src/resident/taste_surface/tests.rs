@@ -114,7 +114,7 @@ impl Fixture {
                 vendor,
                 model: None,
                 effort: None,
-                fast_mode: None,
+                fast_mode: false,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],
@@ -124,6 +124,7 @@ impl Fixture {
             subscriptions: vec![wire::TeamSubscription {
                 team: lane,
                 policy: wire::intent::TeamLife::Drive,
+                fast_mode: false,
             }],
             renewals: Vec::new(),
         });

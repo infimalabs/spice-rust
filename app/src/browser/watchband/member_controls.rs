@@ -281,12 +281,23 @@ const fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 
-/// The per-seat fast-mode toggle. It shows the seat's next-launch value,
-/// which follows the Spice sidebar's Fast mode setting unless pinned. A press pins
-/// the opposite only while it differs from the global setting; landing back
-/// on the global value clears the pin, so the seat follows it again. A running
-/// OMP agent takes the change at once, and the status line keeps the running
-/// value separate in case it did not.
+/// What one member's next launch runs, naming the level that turns fast mode
+/// on when it is not the member's own flag.
+fn next_fast_label(own: bool, team: bool, global: Option<bool>) -> String {
+    match (own, team, global) {
+        (true, _, _) => "on".to_owned(),
+        (false, true, _) => "on (team)".to_owned(),
+        (false, false, Some(true)) => "on (global)".to_owned(),
+        (false, false, Some(false)) => "off".to_owned(),
+        (false, false, None) => "loading".to_owned(),
+    }
+}
+
+/// The per-member fast-mode toggle. It shows and flips this member's own
+/// flag. Fast mode is additive, so the status line's next launch also runs
+/// fast while the team's TURBO or the Spice sidebar's Fast mode is on. A
+/// running OMP agent whose effective value changes takes it at once, and the
+/// status line keeps the running value separate in case it did not.
 fn render_fast_toggle(
     runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
@@ -294,70 +305,69 @@ fn render_fast_toggle(
     command: &Callback<(CanonicalUuid, MemberCommand)>,
 ) -> Html {
     let global = runtime.settings().map(|settings| settings.fast_mode);
-    let next = member.seat_fast_mode.or(global);
+    let team = runtime
+        .lanes()
+        .and_then(|view| {
+            view.lanes
+                .iter()
+                .find(|team| team.member(member.lane).is_some())
+        })
+        .is_some_and(|team| team.fast_mode);
     let lane = member.lane;
-    let onclick = next.map(|enabled| {
+    let own = member.seat_fast_mode;
+    let onclick = {
         let command = command.clone();
-        let fast_mode = Some(!enabled).filter(|target| global != Some(*target));
         Callback::from(move |event: MouseEvent| {
             event.stop_propagation();
-            command.emit((lane, MemberCommand::RetuneFast { fast_mode }));
+            command.emit((lane, MemberCommand::RetuneFast { fast_mode: !own }));
         })
-    });
+    };
     let running = member
         .occupant
         .map_or("not running", |_| on_off(member.fast_mode));
-    let next_label = match (member.seat_fast_mode, global) {
-        (Some(enabled), _) => on_off(enabled).to_owned(),
-        (None, Some(enabled)) => format!("{} (global)", on_off(enabled)),
-        (None, None) => "global".to_owned(),
-    };
+    let next = next_fast_label(own, team, global);
     html! {
         <div class="member-fast" data-member-control="fast">
             <crate::browser::view::chrome::SettingToggle
                 label="Fast mode"
-                value={next.map_or("loading", on_off)}
-                checked={next.unwrap_or(false)}
-                disabled={busy || next.is_none()}
-                onclick={onclick}
+                value={on_off(own)}
+                checked={own}
+                disabled={busy}
+                onclick={Some(onclick)}
             />
-            <p class="member-setting-status">{format!("Running: {running}; next launch: {next_label}")}</p>
+            <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
         </div>
     }
 }
 
-/// The team's fast-mode button. It reads TURBO while every member's next
-/// launch runs in fast mode and BASIC otherwise. A press moves every member
-/// that differs to the other posture under the per-seat toggle's pinning rule,
-/// so a seat that lands on the global setting follows it again; running OMP
-/// agents take the change at once.
+/// The team's fast-mode button. It reads TURBO while the team's own fast-mode
+/// flag is on and BASIC otherwise, and a press flips that flag. Fast mode is
+/// additive, so BASIC never turns off a member whose own flag or the global
+/// setting keeps it fast; running OMP agents whose effective value changes
+/// take it at once.
 pub(super) fn render_turbo(
-    runtime: &AppRuntime,
-    members: &[crate::runtime::LaneMember],
-    command: &Callback<(CanonicalUuid, MemberCommand)>,
+    team: &crate::runtime::LaneRow,
+    topology_revision: u64,
+    sender: &SenderHandle,
+    can_configure: bool,
 ) -> Html {
-    let global = runtime.settings().map(|settings| settings.fast_mode);
-    let next = |member: &crate::runtime::LaneMember| member.seat_fast_mode.or(global);
-    let engaged = members.iter().all(|member| next(member) == Some(true));
-    let busy = members.iter().any(|member| {
-        runtime
-            .member_control(member.lane)
-            .and_then(MemberControlState::pending)
-            .is_some()
-    });
-    let target = !engaged;
-    let retunes = members
-        .iter()
-        .filter(|member| next(member) != Some(target))
-        .map(|member| member.lane)
-        .collect::<Vec<_>>();
-    let fast_mode = Some(target).filter(|target| global != Some(*target));
-    let command = command.clone();
-    let onclick = Callback::from(move |_: MouseEvent| {
-        for lane in &retunes {
-            command.emit((*lane, MemberCommand::RetuneFast { fast_mode }));
-        }
-    });
+    let engaged = team.fast_mode;
+    let onclick = {
+        let sender = sender.clone();
+        let team = team.lane;
+        Callback::from(move |_: MouseEvent| {
+            admit_action(
+                &sender,
+                ClientAction::ConfigureTeam {
+                    topology_revision,
+                    team,
+                    member: None,
+                    life: None,
+                    fast_mode: Some(!engaged),
+                },
+            );
+        })
+    };
     let word = if engaged { "Turbo" } else { "Basic" };
     html! {
         <button
@@ -371,7 +381,7 @@ pub(super) fn render_turbo(
             } else {
                 "Basic: press to run every agent in this team in fast mode"
             }}
-            disabled={busy || global.is_none() || !runtime.offers(CommandKind::LaneFastRetune)}
+            disabled={!can_configure}
             onclick={onclick}
         >
             {super::controls::fit_word(word)}

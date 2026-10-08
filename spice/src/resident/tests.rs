@@ -554,7 +554,7 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
@@ -575,10 +575,12 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
             wire::TeamSubscription {
                 team,
                 policy: wire::intent::TeamLife::Drive,
+                fast_mode: false,
             },
             wire::TeamSubscription {
                 team: sibling,
                 policy: wire::intent::TeamLife::Steer,
+                fast_mode: false,
             },
         ]
     );
@@ -676,6 +678,7 @@ fn team_configuration_changes_only_the_typed_lifetime() {
         team,
         member: None,
         life: Some(wire::intent::TeamLife::Drain),
+        fast_mode: None,
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -710,6 +713,7 @@ fn team_configuration_changes_only_the_typed_lifetime() {
         vec![wire::TeamSubscription {
             team,
             policy: wire::intent::TeamLife::Drain,
+            fast_mode: false,
         }]
     );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));

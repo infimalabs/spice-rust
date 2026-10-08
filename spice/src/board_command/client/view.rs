@@ -364,6 +364,7 @@ impl Standings {
             .unwrap_or(wire::TeamSubscription {
                 team: CanonicalUuid::new(uuid::Uuid::nil()),
                 policy: wire::intent::TeamLife::Drain,
+                fast_mode: false,
             });
         let rank = board::offer_order(
             entries,

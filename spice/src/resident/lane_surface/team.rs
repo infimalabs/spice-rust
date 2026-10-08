@@ -1,7 +1,7 @@
 //! The two writes that address app teams rather than the seats in them.
 //!
 //! [`configure`] names one team and changes it: its task-allocation
-//! lifetime, and at most one member's home. [`arrange`] names no team in
+//! lifetime, its fast-mode flag, and at most one member's home. [`arrange`] names no team in
 //! particular and restates the whole topology at once, rewriting both the order
 //! teams stand in and which team each lane belongs to, since dropping a
 //! team onto another is the same durable write as reordering two.
@@ -31,12 +31,16 @@ struct ConfiguredTeam {
     membership: Option<MembershipChange>,
     previous: wire::TeamSubscription,
     life: wire::intent::TeamLife,
+    fast_mode: bool,
     sources: Vec<wire::body::LaneSourceBoundary>,
     next: wire::ResidencyHead,
     answer: LaneAnswer,
+    flips: Vec<super::retune::FastFlip>,
 }
 
-/// Commit one task-allocation lifetime and optional member move.
+/// Commit one task-allocation lifetime, fast-mode flag, and optional member
+/// move, then ask running OMP members whose effective fast mode flipped to
+/// follow it.
 ///
 /// `drain` here is a policy spelling. Occupant teardown remains exclusively
 /// owned by `lane::state { action: drain }`, so this transaction changes no
@@ -84,7 +88,16 @@ pub(in crate::resident) fn configure(
     if let Some(life) = request.life {
         subscription.policy = life;
     }
+    if let Some(fast_mode) = request.fast_mode {
+        subscription.fast_mode = fast_mode;
+    }
     let configured_life = subscription.policy;
+    let configured_fast = subscription.fast_mode;
+    let global_fast = match super::super::settings_surface::fast_mode(bus) {
+        Ok(fast_mode) => fast_mode,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -99,6 +112,7 @@ pub(in crate::resident) fn configure(
     };
     commit_configured(
         bus,
+        paths,
         epoch,
         command,
         request,
@@ -107,15 +121,18 @@ pub(in crate::resident) fn configure(
             membership,
             previous,
             life: configured_life,
+            fast_mode: configured_fast,
             sources,
             next,
             answer: lane_answer,
+            flips,
         },
     )
 }
 
 fn commit_configured(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &TeamConfigure,
@@ -144,6 +161,8 @@ fn commit_configured(
                 .and_then(|change| change.source_rekeyed_to),
             from: configured.previous.policy,
             life: configured.life,
+            from_fast_mode: configured.previous.fast_mode,
+            fast_mode: configured.fast_mode,
             sources: configured.sources,
         },
         FactCause::Existing(observed.position()),
@@ -166,16 +185,18 @@ fn commit_configured(
     ) {
         return typed_store_fault("team::receipt-invalid", &error.to_string());
     }
-    match commit(bus, write) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::Lane(Box::new(configured.answer)),
+    let committed = match commit(bus, write) {
+        Ok(committed) => committed,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    super::retune::apply_fast_flips(bus, paths, epoch, command, configured.flips);
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange {
+            first: seq(committed.first()),
+            last: seq(committed.last()),
         }),
-        Err(outcome) => typed_outcome(outcome),
-    }
+        body: CommandAnswer::Lane(Box::new(configured.answer)),
+    })
 }
 
 fn previous_subscription(
@@ -465,7 +486,7 @@ fn inherited_split_subscriptions(
         };
         inherited.push(wire::TeamSubscription {
             team: team.team,
-            policy: subscription.policy,
+            ..subscription.clone()
         });
     }
     Ok(inherited)
@@ -555,11 +576,51 @@ fn admit_arrangement(
     Ok(())
 }
 
+/// The residency head one admitted arrangement produces.
+fn arranged_head(
+    observed: &wire::ResidencyHead,
+    request: &TeamArrange,
+    topology_revision: u64,
+    inherited_subscriptions: Vec<wire::TeamSubscription>,
+) -> Result<wire::ResidencyHead, Outcome<CommandAnswer>> {
+    let mut next = observed.clone();
+    next.topology_revision = topology_revision;
+    let mut arranged = Vec::with_capacity(next.lanes.len());
+    for team in &request.teams {
+        for lane in &team.lanes {
+            let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
+                return Err(typed_store_fault(
+                    "team::arrangement-lane-lost",
+                    "an admitted arrangement named a lane the residency head no longer holds",
+                ));
+            };
+            let mut row = row.clone();
+            row.team = team.team;
+            arranged.push(row);
+        }
+    }
+    next.lanes = arranged;
+    // A team the arrangement emptied keeps no durable subscription: leaving
+    // one behind would silently re-apply that policy to a later lineage seated
+    // under the same identity.
+    next.subscriptions.retain(|subscription| {
+        request
+            .teams
+            .iter()
+            .any(|team| team.team == subscription.team)
+    });
+    next.subscriptions.extend(inherited_subscriptions);
+    next.subscriptions
+        .sort_by_key(|subscription| subscription.team);
+    Ok(next)
+}
+
 /// Commit one complete app team arrangement.
 ///
 /// This is the durable end of both drag gestures. Reordering the teams and
 /// joining two of them differ only in the arrangement the operator sends, so
-/// they commit through one law and one fact rather than racing two.
+/// they commit through one law and one fact rather than racing two. A lane
+/// that lands in a team with another fast-mode flag follows it live.
 pub(in crate::resident) fn arrange(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -585,35 +646,20 @@ pub(in crate::resident) fn arrange(
         Ok(subscriptions) => subscriptions,
         Err(outcome) => return outcome,
     };
-    let mut next = observed.body().clone();
-    next.topology_revision = topology_revision;
-    let mut arranged = Vec::with_capacity(next.lanes.len());
-    for team in &request.teams {
-        for lane in &team.lanes {
-            let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
-                return typed_store_fault(
-                    "team::arrangement-lane-lost",
-                    "an admitted arrangement named a lane the residency head no longer holds",
-                );
-            };
-            let mut row = row.clone();
-            row.team = team.team;
-            arranged.push(row);
-        }
-    }
-    next.lanes = arranged;
-    // A team the arrangement emptied keeps no durable subscription: leaving
-    // one behind would silently re-apply that policy to a later lineage seated
-    // under the same identity.
-    next.subscriptions.retain(|subscription| {
-        request
-            .teams
-            .iter()
-            .any(|team| team.team == subscription.team)
-    });
-    next.subscriptions.extend(inherited_subscriptions);
-    next.subscriptions
-        .sort_by_key(|subscription| subscription.team);
+    let next = match arranged_head(
+        observed.body(),
+        request,
+        topology_revision,
+        inherited_subscriptions,
+    ) {
+        Ok(next) => next,
+        Err(outcome) => return outcome,
+    };
+    let global_fast = match super::super::settings_surface::fast_mode(bus) {
+        Ok(fast_mode) => fast_mode,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
     let teams = standings(&next.lanes);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
@@ -662,14 +708,16 @@ pub(in crate::resident) fn arrange(
     ) {
         return typed_store_fault("team::receipt-invalid", &error.to_string());
     }
-    match commit(bus, write) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::Lane(Box::new(lane_answer)),
+    let committed = match commit(bus, write) {
+        Ok(committed) => committed,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    super::retune::apply_fast_flips(bus, paths, epoch, command, flips);
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange {
+            first: seq(committed.first()),
+            last: seq(committed.last()),
         }),
-        Err(outcome) => typed_outcome(outcome),
-    }
+        body: CommandAnswer::Lane(Box::new(lane_answer)),
+    })
 }

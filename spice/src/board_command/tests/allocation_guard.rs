@@ -64,7 +64,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
             vendor: "omp".parse().expect("reseat fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(seat.occupant),
             lineage: vec![seat.occupant],
             capabilities: vec![seat.occupant],
@@ -77,6 +77,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
             policy: wire::intent::TeamLife::Drain,
+            fast_mode: false,
         })
         .collect::<Vec<_>>();
     let origin = format!("resident:{epoch}")

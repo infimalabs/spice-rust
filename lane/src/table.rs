@@ -126,7 +126,7 @@ impl Seat {
             vendor: self.vendor.clone(),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: self.occupant,
             lineage: self.lineage.clone(),
             capabilities: vec![self.capability],

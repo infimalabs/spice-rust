@@ -848,7 +848,11 @@ pub(super) fn startup_subscriptions(
                         "a legacy team lane has no closed task-allocation lifetime",
                     )
                 })?;
-                Ok(wire::TeamSubscription { team, policy })
+                Ok(wire::TeamSubscription {
+                    team,
+                    policy,
+                    fast_mode: false,
+                })
             })
             .collect();
     }

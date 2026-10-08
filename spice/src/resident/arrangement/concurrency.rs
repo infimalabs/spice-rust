@@ -51,6 +51,7 @@ impl Arranged {
             team,
             member: None,
             life: Some(life),
+            fast_mode: None,
         };
         let command = Command {
             v: wire::WireVersion::CURRENT,
@@ -88,6 +89,7 @@ impl Arranged {
             team,
             member: Some(member),
             life: None,
+            fast_mode: None,
         };
         let command = Command {
             v: wire::WireVersion::CURRENT,

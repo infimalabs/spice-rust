@@ -488,6 +488,7 @@ async fn send_topology_as(
             team,
             member,
             life,
+            fast_mode,
         } => {
             send_untracked_as(
                 principal,
@@ -500,6 +501,7 @@ async fn send_topology_as(
                     team: *team,
                     member: *member,
                     life: *life,
+                    fast_mode: *fast_mode,
                 },
             )
             .await

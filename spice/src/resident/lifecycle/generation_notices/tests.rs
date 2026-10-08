@@ -233,7 +233,7 @@ fn claimed_fixture_with_deadlines(
         vendor: fixture.vendor.clone(),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: Some(fixture.occupant),
         lineage: vec![fixture.occupant],
         capabilities: vec![fixture.capability],

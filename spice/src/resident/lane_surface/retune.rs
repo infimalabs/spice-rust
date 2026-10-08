@@ -86,12 +86,10 @@ impl Selection<'_> {
         }
     }
 
-    /// The live change this selection asks of the running occupant, if any.
-    ///
-    /// A fast-mode seat that returns to the global setting still names a
-    /// concrete disposition, so `global_fast` resolves it; model and effort
-    /// clears keep the running value.
-    fn live_request(self, row: &wire::LaneResidency, global_fast: bool) -> Option<LiveRetune> {
+    /// The live model or effort change this selection asks of the running
+    /// occupant, if any. Clears keep the running value; fast mode is
+    /// resolved across its levels by [`fast_flips`] instead.
+    fn live_request(self, row: &wire::LaneResidency) -> Option<LiveRetune> {
         if row.vendor.as_str() != "omp" || row.occupant.is_none() {
             return None;
         }
@@ -117,11 +115,84 @@ impl Selection<'_> {
                     model: model.to_owned(),
                 })
             }
-            Self::Fast(request) => {
-                let enabled = request.fast_mode.unwrap_or(global_fast);
-                (launch.fast_mode != enabled).then_some(LiveRetune::Fast { enabled })
-            }
+            Self::Fast(_) => None,
         }
+    }
+}
+
+/// One live fast-mode change a running OMP member owes after a write.
+pub(super) struct FastFlip {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    live: LiveRetune,
+}
+
+/// The live fast-mode changes owed by one residency write.
+///
+/// A member owes one only when the write flips its effective fast mode,
+/// resolved additively across its own flag, its team's flag, and the global
+/// setting, and its running OMP launch does not already match the new value.
+pub(super) fn fast_flips(
+    before: &wire::ResidencyHead,
+    after: &wire::ResidencyHead,
+    global: bool,
+) -> Vec<FastFlip> {
+    after
+        .lanes
+        .iter()
+        .filter_map(|row| {
+            let enabled = after.fast_mode(row, global);
+            let prior = before.lanes.iter().find(|prior| prior.lane == row.lane)?;
+            if before.fast_mode(prior, global) == enabled || row.vendor.as_str() != "omp" {
+                return None;
+            }
+            let occupant = row.occupant?;
+            let launch = row.session.as_ref()?.launch.as_ref()?;
+            (launch.fast_mode != enabled).then_some(FastFlip {
+                lane: row.lane,
+                occupant,
+                live: LiveRetune::Fast { enabled },
+            })
+        })
+        .collect()
+}
+
+/// Ask each running member for its owed fast-mode change and journal every
+/// change its provider confirms. The write that owed them is already durable.
+pub(super) fn apply_fast_flips(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    flips: Vec<FastFlip>,
+) {
+    for flip in flips {
+        apply_live(
+            bus,
+            paths,
+            epoch,
+            command,
+            flip.lane,
+            flip.occupant,
+            &flip.live,
+        );
+    }
+}
+
+fn apply_live(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    live: &LiveRetune,
+) {
+    if matches!(
+        super::super::supervisor::command::retune(paths, lane, occupant, live.clone()),
+        Ok(LiveRetuneResult::Applied)
+    ) {
+        record_runtime(bus, epoch, command, lane, occupant, live);
     }
 }
 
@@ -224,12 +295,14 @@ fn change(
             Ok(revision) => revision,
             Err(outcome) => return outcome,
         };
-    let global_fast = match selection {
-        Selection::Fast(_) => match super::super::settings_surface::fast_mode(bus) {
+    let flips_owed = matches!(selection, Selection::Fast(_));
+    let global_fast = if flips_owed {
+        match super::super::settings_surface::fast_mode(bus) {
             Ok(fast_mode) => fast_mode,
             Err(outcome) => return typed_outcome(outcome),
-        },
-        Selection::Model(_) | Selection::Effort(_) => false,
+        }
+    } else {
+        false
     };
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
@@ -241,7 +314,12 @@ fn change(
         return missing_lane(selection.lane());
     };
     let seat_fact = selection.replace_seat(row);
-    let live = selection.live_request(row, global_fast).zip(row.occupant);
+    let live = selection.live_request(row).zip(row.occupant);
+    let flips = if flips_owed {
+        fast_flips(observed.body(), &next, global_fast)
+    } else {
+        Vec::new()
+    };
     let answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -292,19 +370,18 @@ fn change(
     // is exactly this transaction's receipt, so a retried command replays it
     // unchanged; a confirmed runtime change is a later residency fact that
     // lane reads observe.
-    if let Some((live, occupant)) = live
-        && matches!(
-            super::super::supervisor::command::retune(
-                paths,
-                selection.lane(),
-                occupant,
-                live.clone()
-            ),
-            Ok(LiveRetuneResult::Applied)
-        )
-    {
-        record_runtime(bus, epoch, command, selection.lane(), occupant, &live);
+    if let Some((live, occupant)) = live {
+        apply_live(
+            bus,
+            paths,
+            epoch,
+            command,
+            selection.lane(),
+            occupant,
+            &live,
+        );
     }
+    apply_fast_flips(bus, paths, epoch, command, flips);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
         body: CommandAnswer::Lane(Box::new(answer)),

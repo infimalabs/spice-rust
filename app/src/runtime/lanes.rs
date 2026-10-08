@@ -78,6 +78,8 @@ pub struct LaneRow {
     pub lane: CanonicalUuid,
     /// Authoritative task-allocation lifetime for this team.
     pub subscription: wire::intent::TeamLife,
+    /// Whether this team enables fast mode for every member.
+    pub fast_mode: bool,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
 }
@@ -101,9 +103,9 @@ pub struct LaneMember {
     pub seat_effort: Option<String>,
     /// Whether the running occupant runs in fast mode.
     pub fast_mode: bool,
-    /// Fast mode this seat pins for its next launch, absent when the seat
-    /// follows the global setting.
-    pub seat_fast_mode: Option<bool>,
+    /// Whether this member's own flag enables fast mode. Its next launch runs
+    /// fast when this, its team's flag, or the global setting is on.
+    pub seat_fast_mode: bool,
     pub occupant: Option<CanonicalUuid>,
     pub session: Option<String>,
     pub disposition: String,
@@ -225,7 +227,7 @@ impl From<&LaneAnswer> for LaneView {
         for subscription in &answer.subscriptions {
             assert!(
                 subscriptions
-                    .insert(subscription.team, subscription.policy)
+                    .insert(subscription.team, subscription)
                     .is_none(),
                 "an admitted lane answer names one policy per team"
             );
@@ -263,11 +265,13 @@ impl From<&LaneAnswer> for LaneView {
             if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
                 team.members.push(member);
             } else {
+                let subscription = subscriptions
+                    .get(&lane.team)
+                    .expect("an admitted lane answer names every team policy");
                 teams.push(LaneRow {
                     lane: lane.team,
-                    subscription: *subscriptions
-                        .get(&lane.team)
-                        .expect("an admitted lane answer names every team policy"),
+                    subscription: subscription.policy,
+                    fast_mode: subscription.fast_mode,
                     members: vec![member],
                 });
             }
@@ -306,11 +310,13 @@ mod tests {
                 LaneRow {
                     lane: team,
                     subscription: wire::intent::TeamLife::Steer,
+                    fast_mode: false,
                     members: vec![member(first), member(second)],
                 },
                 LaneRow {
                     lane: independent,
                     subscription: wire::intent::TeamLife::Steer,
+                    fast_mode: false,
                     members: vec![member(independent)],
                 },
             ],
@@ -339,7 +345,7 @@ mod tests {
             effort: None,
             seat_effort: None,
             fast_mode: false,
-            seat_fast_mode: None,
+            seat_fast_mode: false,
             occupant: None,
             session: None,
             disposition: "ready".to_owned(),

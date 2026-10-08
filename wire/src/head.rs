@@ -681,14 +681,10 @@ pub struct LaneResidency {
         deserialize_with = "crate::optional::present"
     )]
     pub effort: Option<String>,
-    /// Fast-mode disposition selected for this seat, absent when the global
-    /// fast-mode setting governs.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub fast_mode: Option<bool>,
+    /// Whether this lane itself enables fast mode. Fast mode is additive: the
+    /// lane runs fast when this, its team's flag, or the global setting is on.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
     /// Current occupant, absent between seats.
     #[serde(
         default,
@@ -723,6 +719,9 @@ pub struct TeamSubscription {
     pub team: CanonicalUuid,
     /// Authoritative task-selection policy for the entire team.
     pub policy: crate::intent::TeamLife,
+    /// Whether this team enables fast mode for every member it holds.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
 }
 
 impl TeamSubscription {
@@ -748,6 +747,7 @@ impl TeamSubscription {
         Self {
             team: self.team,
             policy,
+            fast_mode: self.fast_mode,
         }
     }
 }
@@ -804,6 +804,21 @@ impl ResidencyHead {
             .iter()
             .filter(move |row| row.team == team)
             .map(|row| row.lane)
+    }
+
+    /// Whether one lane's occupant launches in fast mode.
+    ///
+    /// Fast mode is additive across its three levels: the lane runs fast when
+    /// its own flag, its team's flag, or the global setting enables it, and no
+    /// level can switch it off for another.
+    #[must_use]
+    pub fn fast_mode(&self, row: &LaneResidency, global: bool) -> bool {
+        global
+            || row.fast_mode
+            || self
+                .subscriptions
+                .iter()
+                .any(|subscription| subscription.team == row.team && subscription.fast_mode)
     }
 }
 

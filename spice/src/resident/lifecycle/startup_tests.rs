@@ -75,7 +75,7 @@ fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent
         vendor,
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
@@ -87,7 +87,11 @@ fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent
         state: wire::ResidentState::Seated,
         topology_revision: 1,
         lanes,
-        subscriptions: vec![wire::TeamSubscription { team, policy }],
+        subscriptions: vec![wire::TeamSubscription {
+            team,
+            policy,
+            fast_mode: false,
+        }],
         renewals: Vec::new(),
     });
     commit(bus, proposal).expect("fixture residency commits");

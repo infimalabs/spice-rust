@@ -124,10 +124,14 @@ pub(super) fn fast_mode(bus: &Bus) -> CommandResult<bool> {
         .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))
 }
 
-/// Resolve one seat's fast mode for its next occupant launch: the seat's own
-/// disposition when it names one, otherwise the global setting.
-pub(super) fn lane_fast_mode(bus: &Bus, row: &wire::LaneResidency) -> CommandResult<bool> {
-    row.fast_mode.map_or_else(|| fast_mode(bus), Ok)
+/// Resolve one seat's fast mode for its next occupant launch: on when its own
+/// flag, its team's flag, or the global setting enables it.
+pub(super) fn lane_fast_mode(
+    bus: &Bus,
+    head: &wire::ResidencyHead,
+    row: &wire::LaneResidency,
+) -> CommandResult<bool> {
+    Ok(head.fast_mode(row, fast_mode(bus)?))
 }
 
 /// Read the current global settings at one immutable journal horizon.

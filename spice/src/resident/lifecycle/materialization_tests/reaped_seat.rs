@@ -321,7 +321,7 @@ pub(super) fn occupied_seed_with_session(
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(9)],
@@ -331,6 +331,7 @@ pub(super) fn occupied_seed_with_session(
         subscriptions: vec![wire::TeamSubscription {
             team: team(),
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         }],
         renewals: Vec::new(),
     });

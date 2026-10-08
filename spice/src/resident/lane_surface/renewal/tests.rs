@@ -497,7 +497,7 @@ fn seeded(
             vendor,
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: occupied.then_some(occupant),
             lineage: vec![occupant],
             capabilities: vec![capability],
@@ -507,6 +507,7 @@ fn seeded(
         subscriptions: vec![wire::TeamSubscription {
             team: lane,
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         }],
         renewals: renewal.into_iter().collect(),
     });

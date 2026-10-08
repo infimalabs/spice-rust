@@ -1,4 +1,4 @@
-//! Retuning durable seat model, effort, and fast-mode selections.
+//! Retuning durable seat model, effort, and additive fast-mode selections.
 //!
 //! Every selection is the launcher's authoritative input across relaunch,
 //! recovery, and succession. A running occupant changes only after its
@@ -135,32 +135,75 @@ impl Seated {
         (command, request)
     }
 
-    fn fast_command(
-        &self,
-        id: u8,
-        fast_mode: Option<bool>,
-        topology_revision: u64,
-    ) -> (wire::AdmittedCommand, wire::intent::LaneFastRetune) {
+    fn retune_fast(&self, id: u8, fast_mode: bool) -> Outcome<CommandAnswer> {
         let request = wire::intent::LaneFastRetune {
-            topology_revision,
+            topology_revision: self.head().topology_revision,
             lane: self.lane,
             fast_mode,
         };
-        let command = Command {
+        let command = self.operator_command(id, CommandKind::LaneFastRetune, &request);
+        super::super::lane_surface::retune_fast(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
+    }
+
+    /// Turn the fixture lane's own team fast-mode flag on or off.
+    fn team_fast(&self, id: u8, fast_mode: bool) -> Outcome<CommandAnswer> {
+        let request = wire::intent::TeamConfigure {
+            topology_revision: self.head().topology_revision,
+            team: self.lane,
+            member: None,
+            life: None,
+            fast_mode: Some(fast_mode),
+        };
+        let command = self.operator_command(id, CommandKind::TeamConfigure, &request);
+        super::super::lane_surface::configure(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
+    }
+
+    fn operator_command(
+        &self,
+        id: u8,
+        kind: CommandKind,
+        request: &impl serde::Serialize,
+    ) -> wire::AdmittedCommand {
+        Command {
             v: wire::WireVersion::CURRENT,
             id: test_uuid(id),
             epoch: self.epoch,
-            kind: CommandKind::LaneFastRetune,
+            kind,
             expected: Vec::new(),
-            body: serde_json::to_value(&request).expect("lane fast retune encodes"),
+            body: serde_json::to_value(request).expect("operator command encodes"),
         }
         .admit(&wire::Accepted {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
         })
-        .expect("operator fast retune admits");
-        (command, request)
+        .expect("operator command admits")
+    }
+
+    /// Whether the fixture lane's next launch runs in fast mode.
+    fn next_fast(&self) -> bool {
+        let head = self.head();
+        let row = head
+            .lanes
+            .iter()
+            .find(|row| row.lane == self.lane)
+            .expect("the seeded lane stays seated");
+        super::super::settings_surface::lane_fast_mode(&self.bus, &head, row)
+            .expect("fast mode resolves")
     }
 
     fn head(&self) -> wire::ResidencyHead {
@@ -290,14 +333,13 @@ impl Seated {
             .and_then(|session| session.launch.clone())
     }
 
-    /// Retune fast mode while a fixture OMP door answers the one kick it
-    /// receives with `disposition`, returning the command's outcome and the
-    /// live setting the kick asked for.
+    /// Run `act` while a fixture OMP door answers the one kick it receives
+    /// with `disposition`, returning the outcome and the live setting the
+    /// kick asked for.
     #[cfg(unix)]
-    fn retune_fast_live(
+    fn live(
         &self,
-        id: u8,
-        fast_mode: Option<bool>,
+        act: impl FnOnce() -> Outcome<CommandAnswer>,
         disposition: serde_json::Value,
     ) -> (Outcome<CommandAnswer>, serde_json::Value) {
         use std::os::unix::net::UnixDatagram;
@@ -305,7 +347,6 @@ impl Seated {
         let door = crate::resident::supervisor::command::kick_path(&self.paths, self.lane);
         let _ = std::fs::remove_file(&door);
         let listener = UnixDatagram::bind(&door).expect("fixture kick door binds");
-        let (command, request) = self.fast_command(id, fast_mode, self.head().topology_revision);
         let (outcome, asked) = std::thread::scope(|scope| {
             let door = scope.spawn(move || {
                 let mut bytes = [0u8; 4096];
@@ -325,18 +366,33 @@ impl Seated {
                     .expect("reply sends");
                 kick["retune"].clone()
             });
-            let outcome = super::super::lane_surface::retune_fast(
-                &self.bus,
-                &self.paths,
-                self.epoch,
-                &self.seats,
-                &command,
-                &request,
-            );
+            let outcome = act();
             (outcome, door.join().expect("fixture door answers"))
         });
         let _ = std::fs::remove_file(&door);
         (outcome, asked)
+    }
+
+    /// Run `act` with the fixture OMP door bound and require that it owed the
+    /// running occupant no live change.
+    #[cfg(unix)]
+    fn quiet(&self, act: impl FnOnce() -> Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
+        use std::os::unix::net::UnixDatagram;
+
+        let door = crate::resident::supervisor::command::kick_path(&self.paths, self.lane);
+        let _ = std::fs::remove_file(&door);
+        let listener = UnixDatagram::bind(&door).expect("fixture kick door binds");
+        let outcome = act();
+        listener
+            .set_nonblocking(true)
+            .expect("fixture door turns nonblocking");
+        let kicked = listener.recv(&mut [0u8; 1]);
+        let _ = std::fs::remove_file(&door);
+        assert!(
+            kicked.is_err_and(|error| error.kind() == std::io::ErrorKind::WouldBlock),
+            "a write that flips no effective fast mode asks the occupant nothing"
+        );
+        outcome
     }
 }
 
@@ -558,87 +614,55 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
     fixture.release();
 }
 
-/// A fast-mode seat is next-launch authority; a cleared seat still names a
-/// concrete running disposition, the global setting, and only a confirmed
-/// provider answer moves the running value.
+/// Fast mode is additive across the lane and team flags: a member runs fast
+/// while either enables it, and turning one off never turns off a lane the
+/// other still enables. Only a write that flips the effective value asks the
+/// running occupant, and only a confirmed answer moves its running value.
 #[cfg(unix)]
 #[test]
-fn fast_retune_applies_the_resolved_disposition_live_and_a_refusal_keeps_the_running_value() {
-    let fixture = Seated::new("lane-fast-live");
+fn fast_mode_is_additive_across_lane_and_team_and_only_a_flip_reaches_the_occupant() {
+    let fixture = Seated::new("lane-fast-additive");
     fixture.declare_launch("low");
-    assert!(
-        !fixture.running().expect("declared launch").fast_mode,
-        "the fixture launch runs without fast mode"
-    );
+    assert!(!fixture.next_fast(), "no level enables fast mode yet");
 
-    let (outcome, asked) =
-        fixture.retune_fast_live(4, Some(true), serde_json::json!({"disposition": "applied"}));
+    let (_, asked) = fixture.live(
+        || fixture.retune_fast(4, true),
+        serde_json::json!({"disposition": "applied"}),
+    );
     assert_eq!(
         asked,
         serde_json::json!({"setting": "fast", "enabled": true})
     );
-    let rows = committed_rows(outcome);
-    let row = rows
-        .iter()
-        .find(|row| row.lane == fixture.lane)
-        .expect("the retuned lane is in the answer");
-    assert_eq!(row.seat_fast_mode, Some(true));
+    assert!(fixture.next_fast());
     assert!(
         fixture.running().expect("declared launch").fast_mode,
         "the confirmed change is running"
     );
-    let seat = |fixture: &Seated| {
-        fixture
-            .head()
-            .lanes
-            .iter()
-            .find(|row| row.lane == fixture.lane)
-            .expect("the seeded lane stays seated")
-            .fast_mode
-    };
-    assert_eq!(seat(&fixture), Some(true));
 
-    // Clearing the seat follows the global setting, which is off here, so the
-    // running occupant is asked to turn fast mode off; it refuses.
-    let (outcome, asked) = fixture.retune_fast_live(
-        5,
-        None,
+    committed_rows(fixture.quiet(|| fixture.team_fast(5, true)));
+    let rows = committed_rows(fixture.quiet(|| fixture.retune_fast(6, false)));
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the retuned lane is in the answer");
+    assert!(!row.seat_fast_mode, "the lane's own flag is off");
+    assert!(
+        fixture.next_fast(),
+        "the team flag keeps the lane fast after its own flag turns off"
+    );
+
+    let (_, asked) = fixture.live(
+        || fixture.team_fast(7, false),
         serde_json::json!({"disposition": "refused", "detail": "unavailable"}),
     );
     assert_eq!(
         asked,
         serde_json::json!({"setting": "fast", "enabled": false})
     );
-    let rows = committed_rows(outcome);
-    let row = rows
-        .iter()
-        .find(|row| row.lane == fixture.lane)
-        .expect("the cleared lane is in the answer");
-    assert_eq!(row.seat_fast_mode, None);
-    assert_eq!(
-        seat(&fixture),
-        None,
-        "the seat advances despite the refusal"
-    );
+    assert!(!fixture.next_fast(), "no level enables fast mode any more");
     assert!(
         fixture.running().expect("declared launch").fast_mode,
         "a refused live change leaves the running value untouched"
-    );
-    let fast_facts = fixture
-        .bus
-        .fact_snapshot()
-        .expect("retuned journal reads")
-        .facts()
-        .iter()
-        .filter(|fact| fact.fact.kind() == wire::FactKind::LaneFastRetuned)
-        .map(|fact| serde_json::Value::Object(fact.fact.body().clone()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        fast_facts,
-        vec![
-            serde_json::json!({"lane": fixture.lane.to_string(), "fast_mode": true}),
-            serde_json::json!({"lane": fixture.lane.to_string(), "from": true}),
-        ],
     );
     fixture.release();
 }

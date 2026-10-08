@@ -1363,7 +1363,7 @@ fn seat_backlog_residency(
                 vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
-                fast_mode: None,
+                fast_mode: false,
                 occupant: None,
                 lineage: vec![author],
                 capabilities: Vec::new(),

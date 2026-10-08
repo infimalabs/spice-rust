@@ -342,8 +342,8 @@ fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
     )
 }
 
-/// State whether one seated lane's next launch runs in fast mode; omission
-/// returns the seat to the global setting.
+/// Turn one seated lane's own fast-mode flag on or off. The lane still runs
+/// fast while its team's flag or the global setting is on.
 fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let Some(id) = matches.get_one::<String>("ID") else {
         return protocol_fault(
@@ -362,7 +362,9 @@ fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Comm
     let body = LaneFastRetune {
         topology_revision,
         lane,
-        fast_mode: matches.get_one::<String>("on|off").map(|mode| mode == "on"),
+        fast_mode: matches
+            .get_one::<String>("on|off")
+            .is_some_and(|mode| mode == "on"),
     };
     command_client::execute(
         serve,

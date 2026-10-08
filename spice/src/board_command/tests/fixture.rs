@@ -140,7 +140,7 @@ pub(super) fn fixture(
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(seat.occupant),
             lineage: vec![seat.occupant],
             capabilities: vec![uuid(number * 100 + index as u64 + 50)],
@@ -153,6 +153,7 @@ pub(super) fn fixture(
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
             policy: wire::intent::TeamLife::Drain,
+            fast_mode: false,
         })
         .collect::<Vec<_>>();
     let origin = format!("resident:{epoch}")

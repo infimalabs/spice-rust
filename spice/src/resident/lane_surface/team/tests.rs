@@ -16,7 +16,7 @@ fn lane(lane: u8, team: u8) -> wire::LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
@@ -43,6 +43,7 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
             .map(|team| wire::TeamSubscription {
                 team: uuid(team),
                 policy: TeamLife::Drive,
+                fast_mode: false,
             })
             .collect(),
         renewals: Vec::new(),

@@ -799,6 +799,7 @@ fn send_member(
             team,
             member: Some(member),
             life: None,
+            fast_mode: None,
         },
     )
 }

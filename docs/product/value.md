@@ -597,13 +597,15 @@ equal share of the face's area, in that agent's accent with member zero at the
 core, its word on a flat plate set into the rings. Unlit, it keeps the raised
 knob in the neutral surface of the resting quiet thumb; the command-modifier and
 focus rings still show around it. Raised states use distinct team accents: the
-first round button reads `TURBO`, lit in the reddish accent while every member
-of the team launches in fast mode, and `BASIC`, in the same neutral raised knob,
+first round button reads `TURBO`, lit in the reddish accent while the team's
+own fast-mode flag is on, and `BASIC`, in the same neutral raised knob,
 otherwise; each range's maximum stop, narrate and drain, keeps the second
-accent, blue. A press of `TURBO`
-moves every member to the other posture under the per-seat pinning rule, and
-running OMP agents take it at once. The frame uses the same restrained corners
-as the adjacent draft rather than pill geometry.
+accent, blue. A press of `TURBO` flips that team flag, which the resident keeps
+across restarts. Fast mode is additive: a member launches in fast mode exactly
+when its own flag, its team's flag, or the global setting is on, so turning one
+level off never slows a member another level still enables. Running OMP agents
+whose effective value changes take it at once. The frame uses the same
+restrained corners as the adjacent draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.

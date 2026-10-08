@@ -88,27 +88,17 @@ pub struct LaneEffortRetuned {
     )]
     pub effort: Option<String>,
 }
-/// A seated lane's fast-mode disposition changed for its next launch.
+/// A seated lane's own fast-mode flag changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneFastRetuned {
-    /// Seated member whose next launch changes.
+    /// Seated member whose own flag changed.
     pub lane: CanonicalUuid,
-    /// Fast-mode disposition the seat carried before this transaction, absent
-    /// when it followed the global setting.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub from: Option<bool>,
-    /// Fast-mode disposition the seat carries after this transaction, absent
-    /// when the seat now follows the global setting.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub fast_mode: Option<bool>,
+    /// The lane's own flag before this transaction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub from: bool,
+    /// The lane's own flag after this transaction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
 }
 
 /// A running occupant confirmed a live provider retune.
@@ -159,6 +149,12 @@ pub struct TeamConfigured {
     pub from: crate::intent::TeamLife,
     /// Authoritative task-allocation lifetime after this transaction.
     pub life: crate::intent::TeamLife,
+    /// Team fast-mode flag before this transaction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub from_fast_mode: bool,
+    /// Authoritative team fast-mode flag after this transaction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
     /// Boundary for the moved member, when one moved and is actively claimed.
     ///
     /// Empty for a policy-only change, which moves no member and so crosses no

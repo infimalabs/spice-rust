@@ -605,7 +605,7 @@ fn cover_residency_heads() {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: true,
         occupant: Some(second_uuid),
         lineage: vec![first_uuid],
         capabilities: vec![second_uuid],
@@ -635,7 +635,7 @@ fn cover_residency_heads() {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
@@ -650,10 +650,12 @@ fn cover_residency_heads() {
     let drive = TeamSubscription {
         team: first_uuid,
         policy: wire::intent::TeamLife::Drive,
+        fast_mode: true,
     };
     let steer = TeamSubscription {
         team: second_uuid,
         policy: wire::intent::TeamLife::Steer,
+        fast_mode: false,
     };
     law("TeamSubscription", &[drive.clone(), steer.clone()]);
     law(

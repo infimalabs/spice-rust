@@ -652,7 +652,11 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             .map(|entry| entry.handle().to_string())
             .collect::<BTreeSet<_>>()
     };
-    let subscription = |policy| wire::TeamSubscription { team: lane, policy };
+    let subscription = |policy| wire::TeamSubscription {
+        team: lane,
+        policy,
+        fast_mode: false,
+    };
 
     assert_eq!(
         handles(&subscription(wire::intent::TeamLife::Steer)),
