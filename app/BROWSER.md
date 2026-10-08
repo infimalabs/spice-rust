@@ -168,13 +168,14 @@ removes transitions, not contact feedback. Held ordinary-submit modifiers add a
 focused-agent command ring; a held broadcast uses its occupied recipients' rim
 and count while retaining the neutral face.
 
-Vacant members do not create broadcast recipients. An empty vacant composer
-also contributes no ordinary SEND rim arc: when no member has sendable content,
-the button removes its recipient-rim paint and count while retaining the neutral
-face. When occupied composers do hold content, only reachable recipients supply
-the equal perimeter arcs and accessible count. The rim is paint on the one SEND
-button, never a set of per-recipient hover targets, so adding or removing a
-vacant member cannot add an arc, seam, label, or hit region.
+Vacant members do not create broadcast recipients, and an empty vacant composer
+contributes no ordinary SEND rim arc: when no member has sendable content, the
+button removes its recipient-rim paint and count while retaining the neutral
+face. Ordinary arcs and the accessible count come only from reachable members
+holding sendable content; a vacant member joins them only when it holds a draft
+that a press would wake it to receive. The rim is paint on the one SEND button,
+never a set of per-recipient hover targets, so an empty vacant member adds no
+arc, seam, label, or hit region.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
