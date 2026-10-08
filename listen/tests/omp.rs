@@ -588,7 +588,7 @@ fn withheld_records_carry_no_reasoning_in_any_omp_shape() {
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET plan","thinkingSignature":"SECRET-sig"},{"type":"text","text":"visible"}]}}"#,
         r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"SECRET step","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET step"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET step"}]}}"#,
         r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"SECRET whole"}}"#,
-        r#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":"SECRET-opaque"},{"type":"text","text":"visible"}]}]}"#,
+        r#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"redactedThinking","data":"SECRET-opaque"},{"type":"text","text":"visible"}]}]}"#,
     ];
     for record in carriers {
         let withheld =
@@ -599,7 +599,7 @@ fn withheld_records_carry_no_reasoning_in_any_omp_shape() {
             "{withheld}"
         );
         assert!(
-            withheld.contains(WITHHELD_REASONING) || record.contains("redacted_thinking"),
+            withheld.contains(WITHHELD_REASONING) || record.contains("redactedThinking"),
             "{withheld}"
         );
     }
