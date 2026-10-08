@@ -593,9 +593,10 @@ current value as a word drawn to fill it, so every value occupies the same
 width. Send, the round buttons, and the thumbs share one tactile face whose
 color carries state. `Send` lights only when a press would submit something:
 it fills with a pinwheel of one equal slice per agent that would receive a
-message, in that agent's accent and clockwise in member order from the left
-edge, with a darker seam opening each slice so two agents sharing an accent
-stay distinct. A smooth raised dome shades the pinwheel, and its word is inked
+message, in that agent's accent and in mathematical order: the first agent
+opens at the right edge and the rest follow counterclockwise, with a darker
+seam opening each slice so two agents sharing an accent stay distinct. A
+smooth raised dome shades the pinwheel, and its word is inked
 straight into the dome in the page color, with no plate. Pressing a lit `Send`
 pops the dome down, and its fold shows as a bright circle around the word until
 release. Unlit, it keeps the raised knob in the

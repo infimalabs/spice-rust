@@ -149,24 +149,28 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
 /// Angular width of the seam that opens each pinwheel slice.
 const SEAM_DEGREES: f64 = 1.4;
 
-/// One equal slice per member in its accent, clockwise in member order from
-/// the left edge, so a pair splits the face into upper and lower halves. A
-/// darker seam opens each slice, so neighbours read as separate even when two
-/// members share an accent; a lone member fills the face whole.
+/// One equal slice per member in its accent, in mathematical order: the first
+/// member opens at the right edge and the rest follow counterclockwise, so a
+/// pair splits the face into upper and lower halves. A darker seam opens each
+/// slice, so neighbours read as separate even when two members share an
+/// accent; a lone member fills the face whole.
 fn pinwheel(accents: &[usize]) -> String {
     if let [accent] = accents {
         return format!("var(--accent-{accent})");
     }
+    // CSS sweeps clockwise from its origin, so lay the members out in reverse
+    // from the right edge and put each seam where its counterclockwise slice opens.
     let slice = 360.0 / accents.len() as f64;
-    let mut gradient = String::from("conic-gradient(from -90deg");
-    for (index, accent) in accents.iter().enumerate() {
-        let start = index as f64 * slice;
-        let seam = start + SEAM_DEGREES;
+    let mut gradient = String::from("conic-gradient(from 90deg");
+    for (position, accent) in accents.iter().rev().enumerate() {
+        let start = position as f64 * slice;
         let end = start + slice;
+        let seam = end - SEAM_DEGREES;
         let _ = write!(
             gradient,
-            ", color-mix(in srgb, var(--accent-{accent}) 50%, var(--app-shadow-source)) \
-             {start:.2}deg {seam:.2}deg, var(--accent-{accent}) {seam:.2}deg {end:.2}deg"
+            ", var(--accent-{accent}) {start:.2}deg {seam:.2}deg, \
+             color-mix(in srgb, var(--accent-{accent}) 50%, var(--app-shadow-source)) \
+             {seam:.2}deg {end:.2}deg"
         );
     }
     gradient.push(')');
