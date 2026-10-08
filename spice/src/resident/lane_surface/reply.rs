@@ -110,6 +110,7 @@ fn answer_at(
                 bound: row.session.is_some(),
                 disposition: row.disposition.clone(),
                 liveness,
+                hold: None,
                 jobs: Vec::new(),
             })
         })

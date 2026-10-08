@@ -108,6 +108,7 @@ pub(crate) fn observe_lane(
 struct ObservedAuthorities {
     lane: Option<wire::LaneResidency>,
     residency_error: Option<AuthorityReadError>,
+    hold: Option<Result<Option<wire::body::LaneHeld>, AuthorityReadError>>,
     ledger: Option<Result<steer::Ledger, AuthorityReadError>>,
     own_claim: Option<Result<Option<Entry>, AuthorityReadError>>,
     peer_claims: Option<Result<usize, AuthorityReadError>>,
@@ -241,6 +242,7 @@ fn read_authorities(
             lane: None,
             residency_error: residency.err(),
             ledger: None,
+            hold: None,
             own_claim: None,
             peer_claims: None,
             directions: None,
@@ -248,6 +250,9 @@ fn read_authorities(
         });
     };
     let actor = Actor::Lane(lane.lane);
+    let hold = read
+        .current_lane_hold(lane.lane)
+        .map_err(AuthorityReadError::Journal);
     let ledger = crate::steering_read::pending(read, Some(lane.lane))
         .map_err(AuthorityReadError::Journal)
         .and_then(|heads| {
@@ -279,6 +284,7 @@ fn read_authorities(
         lane: Some(lane),
         residency_error: residency.err(),
         ledger: Some(ledger),
+        hold: Some(hold),
         own_claim: Some(own_claim),
         peer_claims: Some(peer_claims),
         directions: Some(directions),
@@ -309,6 +315,17 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
             .as_ref()
             .and_then(|session| source::canonical_thread(&session.identity));
     }
+    let hold = observed.hold.and_then(|hold| match hold {
+        Ok(Some(held)) => Some(wire::intent::LaneHold {
+            evidence: held.evidence,
+            until: held.until,
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            unknown(recall, "journal", "current-lane-hold", &error);
+            None
+        }
+    });
     if let Some(posture) = &mut recall.posture {
         posture.lane = Some(LanePostureView {
             worktree: lane.worktree.clone(),
@@ -316,6 +333,7 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
             life: lane.life.clone(),
             vendor: lane.vendor.to_string(),
             model: lane.model.clone(),
+            hold,
         });
     }
 

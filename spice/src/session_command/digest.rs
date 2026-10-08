@@ -297,6 +297,9 @@ fn posture_rows(posture: Option<&PostureView>) -> Vec<String> {
             lane.vendor,
             lane.model.as_deref().unwrap_or("default model")
         ));
+        if let Some(hold) = &lane.hold {
+            rows.push(format!("hold until {}: {}", hold.until, hold.evidence));
+        }
     }
     rows
 }
@@ -417,8 +420,9 @@ mod tests {
     use wire::output::{Bounded, clip};
 
     use super::super::model::{
-        BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, RecentTurnView,
-        Report, RepositoryGlanceView, RetiredDirectionView,
+        BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, LiveView,
+        OutstandingAskView, PostureView, RecentTurnView, Report, RepositoryGlanceView,
+        RetiredDirectionView,
     };
     use super::{BRIEFING_BYTES, fold};
 
@@ -583,6 +587,45 @@ mod tests {
         // Pressure folds the lowest-ranked sections first.
         assert!(page.contains("folded away"), "{page}");
         assert!(!page.contains("## Recently touched paths"));
+    }
+
+    #[test]
+    fn a_current_lane_hold_is_visible_in_the_briefing_until_resumed() {
+        let mut report = recall(1, 40);
+        let hold_evidence = "occupant ended on a vendor error: provider refused this turn";
+        let Report::Recall { posture, .. } = &mut report else {
+            unreachable!()
+        };
+        *posture = Some(PostureView {
+            cwd: "/worktree".to_owned(),
+            worktree: "/worktree".to_owned(),
+            head: Some("main".to_owned()),
+            lane: Some(LanePostureView {
+                worktree: "/worktree".to_owned(),
+                disposition: "vacant".to_owned(),
+                life: "drive".to_owned(),
+                vendor: "omp".to_owned(),
+                model: None,
+                hold: Some(wire::intent::LaneHold {
+                    evidence: hold_evidence.to_owned(),
+                    until: "2026-10-08T22:30:00.000Z".parse().expect("fixture instant"),
+                }),
+            }),
+        });
+
+        let held = fold(&report, &[]);
+        assert!(held.contains(hold_evidence), "{held}");
+        assert!(held.contains("2026-10-08T22:30:00.000Z"), "{held}");
+
+        let Report::Recall { posture, .. } = &mut report else {
+            unreachable!()
+        };
+        posture
+            .as_mut()
+            .and_then(|posture| posture.lane.as_mut())
+            .expect("fixture lane posture")
+            .hold = None;
+        assert!(!fold(&report, &[]).contains(hold_evidence));
     }
 
     #[test]

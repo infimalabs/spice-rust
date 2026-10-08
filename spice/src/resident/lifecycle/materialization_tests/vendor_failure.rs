@@ -75,6 +75,21 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
         None,
         "the exit is still accounted"
     );
+    let (_, lane_read) = crate::resident::lane_surface::current_answer(
+        &fixture.bus,
+        &fixture.paths,
+        epoch(),
+        &Seats::new(),
+    )
+    .expect("operator lane read projects the hold");
+    assert_eq!(
+        lane_read.lanes[0].hold,
+        Some(wire::intent::LaneHold {
+            evidence: held.evidence.clone(),
+            until: held.until,
+        }),
+        "the operator lane read carries the journaled deadline and evidence"
+    );
     let projection = fixture.projection();
     let snapshot = fixture.bus.task_snapshot().expect("vacant snapshot reads");
     let holds = replay_holds(fixture.bus.fact_snapshot().expect("facts read").facts());
@@ -99,6 +114,20 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
             held.until,
             held.evidence
         )
+    );
+    lifecycle
+        .operator_wake(&fixture.bus, epoch(), lane())
+        .expect("operator wake releases the hold");
+    let (_, resumed_read) = crate::resident::lane_surface::current_answer(
+        &fixture.bus,
+        &fixture.paths,
+        epoch(),
+        &Seats::new(),
+    )
+    .expect("operator lane read projects the resumed lane");
+    assert_eq!(
+        resumed_read.lanes[0].hold, None,
+        "the operator lane read drops a released hold"
     );
     fixture.finish();
 }
