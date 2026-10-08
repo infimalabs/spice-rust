@@ -102,6 +102,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     sidebar::Content {
         label: "Task overview".into(),
         title: overview_title(render.selection, render.lanes).into(),
+        width: sidebar::Width::Large,
         body,
         overlay,
         overlay_open: **render.blocker_review,

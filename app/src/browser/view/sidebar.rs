@@ -2,15 +2,32 @@
 
 use super::*;
 
+/// Standard side-view widths. Content takes the one its layout needs.
+#[derive(Clone, Copy)]
+pub(super) enum Width {
+    Small,
+    Large,
+}
+
+impl Width {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Large => "large",
+        }
+    }
+}
+
 pub(super) struct Content {
     pub label: AttrValue,
     pub title: AttrValue,
+    pub width: Width,
     pub body: Html,
     pub overlay: Html,
     pub overlay_open: bool,
     pub dismiss_overlay: Option<Callback<()>>,
     /// The launcher's twin, standing over the launcher's own place and closing
-    /// the sidebar in place of the Close button; the sheet forms around it. It
+    /// the sidebar in place of the Close button; the view forms around it. It
     /// carries the sidebar's close ref and close callback.
     pub anchor: Option<Html>,
 }
@@ -44,6 +61,7 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
         <div
             class="app-sidebar-layer"
             data-sidebar-state={state}
+            data-sidebar-width={render.content.width.as_str()}
             data-sidebar-anchored={anchored.then_some("true")}
             inert={render.closing.then_some("true")}
         >

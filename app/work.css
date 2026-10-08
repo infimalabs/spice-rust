@@ -359,13 +359,7 @@
 .mermaid-render[data-source-visible="true"] > .work-map-node-layer { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .work-map-viewport .mermaid-render > .message-image,
-  .work-map-node-layer,
-  .app-sidebar-backdrop,
-  .app-sidebar { transition: none; }
-  .app-sidebar-backdrop,
-  .app-sidebar { opacity: 1; }
-  .app-sidebar { transform: none; }
-  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar { clip-path: none; transition: none; }
+  .work-map-node-layer { transition: none; }
 }
 .work-map-task-list {
   display: grid;

@@ -180,10 +180,10 @@ pub(super) fn reduced_motion() -> bool {
 }
 
 const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
-/// A sheet leaves by sliding (`transform`) or by shrinking back into its
-/// anchor (`clip-path`); its opacity fade never bounds completion.
+/// A side view leaves by settling back to its resting scale (`transform`);
+/// its material and content fades never bound completion.
 fn closes_layer(property: Option<&str>) -> bool {
-    matches!(property, Some("transform" | "clip-path"))
+    property == Some("transform")
 }
 fn close_transition_running(element: &web_sys::Element) -> bool {
     let Ok(get_animations) =
