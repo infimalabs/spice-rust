@@ -342,6 +342,16 @@
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
 /* Wide enough for its longest route word, so cycling never reflows the rail. */
 .image-annotation-tools > .image-annotation-route { min-inline-size: 9ch; }
+/* The palette is one rail cell of compact swatches; the chosen one is ringed. */
+.image-annotation-palette { display: flex; align-items: stretch; flex: 0 0 auto; }
+.image-annotation-palette > .image-annotation-swatch {
+  display: grid; place-items: center; min-width: 0; margin: 0; padding: 0 6px;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: pointer;
+}
+.image-annotation-swatch > svg { display: block; inline-size: 1.15em; block-size: 1.15em; border-radius: 50%; }
+.image-annotation-swatch:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.image-annotation-swatch[aria-pressed="true"] > svg { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+.image-annotation-swatch:disabled { opacity: .45; cursor: default; }
 .image-annotation-stage { grid-area: image; min-width: 0; min-height: 0; outline: none; }
 .image-annotation-stage:focus-visible { outline: var(--app-focus-ring-width) solid var(--accent); outline-offset: 2px; }
 .image-annotation-svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
@@ -357,7 +367,7 @@ path.image-annotation-hit { fill: none; }
 .image-annotation-label-field {
   box-sizing: border-box; display: block; width: 100%; height: 100%; margin: 0; padding: 0 calc(var(--annotation-label-size) / 4);
   border: 1.5px dashed var(--app-annotation-danger); border-radius: 0; outline: none;
-  background: color-mix(in srgb, var(--app-shadow-source) 35%, transparent); color: #ef4444;
+  background: color-mix(in srgb, var(--annotation-label-halo) 55%, transparent); color: var(--annotation-label-ink);
   font: 700 var(--annotation-label-size)/1 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 .image-annotation-loading { text-align: center; color: var(--muted); }

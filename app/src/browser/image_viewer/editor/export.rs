@@ -27,8 +27,8 @@ pub(super) async fn render(
     context.set_line_join("round");
     context.set_line_cap("round");
     for shape in shapes {
-        context.set_stroke_style_str("#ef4444");
-        context.set_fill_style_str("#ef4444");
+        context.set_stroke_style_str(shape.color.ink());
+        context.set_fill_style_str(shape.color.ink());
         context.set_line_width(stroke);
         match shape.kind {
             Kind::Rectangle => {
@@ -80,7 +80,7 @@ pub(super) async fn render(
                 );
                 context.set_font(&label::font(size));
                 context.set_text_baseline("alphabetic");
-                context.set_stroke_style_str("#ffffff");
+                context.set_stroke_style_str(shape.color.halo());
                 context.set_line_width(label::halo(size));
                 context.stroke_text(&shape.text, x, y)?;
                 context.fill_text(&shape.text, x, y)?;

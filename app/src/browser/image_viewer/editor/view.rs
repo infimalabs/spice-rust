@@ -4,41 +4,53 @@ use super::*;
 use crate::image_annotation::stroke_width;
 
 pub(super) struct Actions {
+    pub(super) tool: Callback<Tool>,
     pub(super) undo: Callback<MouseEvent>,
     pub(super) redo: Callback<MouseEvent>,
     pub(super) delete: Callback<MouseEvent>,
     pub(super) route: Callback<MouseEvent>,
+    pub(super) color: Callback<Color>,
     pub(super) cancel: Callback<MouseEvent>,
     pub(super) apply: Callback<MouseEvent>,
 }
 
-/// The drawing tools, the route control, then history. The route control
-/// cycles the selected line or arrow's route, or the route new ones start
-/// with, for pointers without modifier keys; it stays in place, disabled,
-/// while neither applies so the rail never reflows.
+/// The drawing tools, the route control, the palette, then history. The route
+/// control cycles the selected line or arrow's route, or the route new ones
+/// start with, for pointers without modifier keys; it stays in place,
+/// disabled, while neither applies so the rail never reflows. The palette
+/// shows the selected mark's colour, or else the colour new marks take.
 pub(super) fn toolbar(
-    tool: &UseStateHandle<Tool>,
-    route: Route,
+    tool: Tool,
+    pen: Pen,
     busy: bool,
     ready: bool,
     history: &History,
     actions: Actions,
 ) -> Html {
-    let selected_route = history
-        .selected
-        .and_then(|index| history.shapes.get(index))
+    let selected = history.selected.and_then(|index| history.shapes.get(index));
+    let selected_route = selected
         .filter(|shape| shape.kind.routed())
         .map(|shape| shape.route);
-    let routing = selected_route.is_some() || matches!(**tool, Tool::Line | Tool::Arrow);
-    let shown = selected_route.unwrap_or(route);
+    let routing = selected_route.is_some() || matches!(tool, Tool::Line | Tool::Arrow);
+    let shown = selected_route.unwrap_or(pen.route);
+    let ink = selected.map_or(pen.color, |shape| shape.color);
+    let swatches = Color::ALL.into_iter().map(|color| {
+        let choose = actions.color.reform(move |_: MouseEvent| color);
+        html! {
+            <button type="button" class="image-annotation-swatch" aria-pressed={(color == ink).to_string()} aria-label={format!("Colour: {}", color.label())} title={color.label()} disabled={busy} onclick={choose}>
+                <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill={color.ink()} stroke={color.halo()} stroke-width="1.5" /></svg>
+            </button>
+        }
+    });
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
             <span class="image-annotation-tools app-control-rail app-overlay-control">
                 {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Line, "Line"), (Tool::Arrow, "Arrow"), (Tool::Text, "Text")].into_iter().map(|(value, label)| {
-                    let tool = tool.clone();
-                    html! { <button type="button" aria-pressed={(*tool == value).to_string()} disabled={busy} onclick={Callback::from(move |_| tool.set(value))}>{label}</button> }
+                    let choose = actions.tool.reform(move |_: MouseEvent| value);
+                    html! { <button type="button" aria-pressed={(tool == value).to_string()} disabled={busy} onclick={choose}>{label}</button> }
                 })}
                 <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} title="Route: Straight, Elbow (Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees" onclick={actions.route}>{shown.label()}</button>
+                <span class="image-annotation-palette" role="group" aria-label="Mark colour">{for swatches}</span>
                 <button type="button" disabled={busy || !history.can_undo()} onclick={actions.undo}>{"Undo"}</button>
                 <button type="button" disabled={busy || !history.can_redo()} onclick={actions.redo}>{"Redo"}</button>
                 <button type="button" disabled={busy || history.selected.is_none()} onclick={actions.delete}>{"Delete"}</button>

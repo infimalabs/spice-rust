@@ -1,6 +1,6 @@
 use super::*;
 use crate::composer_drafts::DraftImage;
-use crate::image_annotation::{Editor as History, Kind, Point, Route, Shape, snapped};
+use crate::image_annotation::{Color, Editor as History, Kind, Point, Route, Shape, snapped};
 use std::cell::{Cell, RefCell};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -18,6 +18,14 @@ enum Tool {
     Line,
     Arrow,
     Text,
+}
+
+/// What the next mark is drawn with: the route a line or arrow starts with
+/// and the colour of every new mark.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Pen {
+    route: Route,
+    color: Color,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -161,12 +169,31 @@ fn use_history_command(session: Session, command: fn(&mut History)) -> Callback<
     })
 }
 
+/// The toolbar tool choice. Taking up a different tool lets go of the
+/// selected mark, so the route and palette controls then set up the next mark
+/// rather than restyling the last one.
+#[hook]
+fn use_tool_command(session: Session, tool: UseStateHandle<Tool>) -> Callback<Tool> {
+    use_callback((session, tool), |value: Tool, (session, tool)| {
+        if **tool == value {
+            return;
+        }
+        {
+            let mut history = session.history.borrow_mut();
+            pointer::cancel(&mut history, &mut session.gesture.borrow_mut());
+            history.selected = None;
+        }
+        tool.set(value);
+        session.repaint.emit(());
+    })
+}
+
 /// The toolbar route control: it cycles the selected line or arrow's route
 /// as one edit, or else the route the next line or arrow starts with.
 #[hook]
-fn use_route_command(session: Session, route: UseStateHandle<Route>) -> Callback<MouseEvent> {
-    use_callback((session, route), |_: MouseEvent, (session, route)| {
-        let next = {
+fn use_route_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<MouseEvent> {
+    use_callback((session, pen), |_: MouseEvent, (session, pen)| {
+        let route = {
             let mut history = session.history.borrow_mut();
             pointer::cancel(&mut history, &mut session.gesture.borrow_mut());
             let selected = history
@@ -175,15 +202,37 @@ fn use_route_command(session: Session, route: UseStateHandle<Route>) -> Callback
             match selected {
                 Some(index) => {
                     let before = history.shapes.clone();
-                    let next = history.shapes[index].route.next();
-                    history.shapes[index].route = next;
+                    let route = history.shapes[index].route.next();
+                    history.shapes[index].route = route;
                     history.commit(before);
-                    next
+                    route
                 }
-                None => route.next(),
+                None => pen.route.next(),
             }
         };
-        route.set(next);
+        pen.set(Pen { route, ..**pen });
+        session.repaint.emit(());
+    })
+}
+
+/// The toolbar colour control: it recolours the selected mark as one edit
+/// and becomes the colour of the next mark drawn.
+#[hook]
+fn use_color_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<Color> {
+    use_callback((session, pen), |color: Color, (session, pen)| {
+        {
+            let mut history = session.history.borrow_mut();
+            pointer::cancel(&mut history, &mut session.gesture.borrow_mut());
+            if let Some(index) = history
+                .selected
+                .filter(|index| history.shapes[*index].color != color)
+            {
+                let before = history.shapes.clone();
+                history.shapes[index].color = color;
+                history.commit(before);
+            }
+        }
+        pen.set(Pen { color, ..**pen });
         session.repaint.emit(());
     })
 }
@@ -266,20 +315,14 @@ fn use_canvas_handlers(
     surface: NodeRef,
     session: Session,
     tool: Tool,
-    route: Route,
+    pen: Pen,
     idle: bool,
 ) -> CanvasHandlers {
     let down = use_callback(
-        (
-            canvas.clone(),
-            surface,
-            session.clone(),
-            (tool, route),
-            idle,
-        ),
-        |event: PointerEvent, (canvas, surface, session, (tool, route), idle)| {
+        (canvas.clone(), surface, session.clone(), (tool, pen), idle),
+        |event: PointerEvent, (canvas, surface, session, (tool, pen), idle)| {
             if *idle {
-                pointer::down(&event, canvas, surface, session, *tool, *route);
+                pointer::down(&event, canvas, surface, session, *tool, *pen);
             }
         },
     );
@@ -340,7 +383,7 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         repaint: use_callback((), move |(), ()| refresh.force_update()),
     };
     let tool = use_state_eq(|| Tool::Rectangle);
-    let route = use_state_eq(Route::default);
+    let pen = use_state_eq(Pen::default);
     let issue = use_state_eq(AttrValue::default);
     let busy = use_state_eq(|| false);
     let alive = use_mut_ref(|| Rc::new(Cell::new(true)));
@@ -356,14 +399,16 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         surface.clone(),
         session.clone(),
         *tool,
-        *route,
+        *pen,
         !*busy,
     );
     let actions = view::Actions {
+        tool: use_tool_command(session.clone(), tool.clone()),
         undo: use_history_command(session.clone(), History::undo),
         redo: use_history_command(session.clone(), History::redo),
         delete: use_history_command(session.clone(), History::delete),
-        route: use_route_command(session.clone(), route.clone()),
+        route: use_route_command(session.clone(), pen.clone()),
+        color: use_color_command(session.clone(), pen.clone()),
         cancel: props.oncancel.reform(|_: MouseEvent| ()),
         apply: use_apply_command(
             session.clone(),
@@ -386,7 +431,7 @@ pub(super) fn editor(props: &EditorProps) -> Html {
     }
     html! {
         <>
-            {view::toolbar(&tool, *route, *busy, ready, &history, actions)}
+            {view::toolbar(*tool, *pen, *busy, ready, &history, actions)}
             <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow, Shift snaps to 45 degrees, Alt turns elbows, and Command or Control curves." onkeydown={on.keyboard}>
                 if ready {
                     <svg ref={svg} class={classes!("image-annotation-svg", (*tool != Tool::Select).then_some("image-annotation-svg--draw"))} viewBox={format!("0 0 {} {}", dimensions.0, dimensions.1)} preserveAspectRatio="xMidYMid meet"

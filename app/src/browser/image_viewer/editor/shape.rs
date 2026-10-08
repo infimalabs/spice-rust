@@ -1,15 +1,13 @@
 use super::*;
 
-const INK: &str = "#ef4444";
-const HALO: &str = "#ffffff";
-
 pub(super) fn render(shape: &Shape, stroke: f64) -> Html {
+    let ink = shape.color.ink();
     match shape.kind {
         Kind::Rectangle => {
             let (low, high) = shape.bounds();
             html! {
                 <>
-                    <rect class="image-annotation-mark" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} fill="none" stroke={INK} stroke-width={stroke.to_string()} />
+                    <rect class="image-annotation-mark" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} fill="none" stroke={ink} stroke-width={stroke.to_string()} />
                     <rect class="image-annotation-hit" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} />
                 </>
             }
@@ -19,9 +17,9 @@ pub(super) fn render(shape: &Shape, stroke: f64) -> Html {
             let head = (shape.kind == Kind::Arrow).then(|| shape.arrowhead(stroke));
             html! {
                 <>
-                    <path class="image-annotation-mark" d={path.clone()} fill="none" stroke={INK} stroke-width={stroke.to_string()} stroke-linecap="round" />
+                    <path class="image-annotation-mark" d={path.clone()} fill="none" stroke={ink} stroke-width={stroke.to_string()} stroke-linecap="round" />
                     if let Some(head) = head {
-                        <polygon fill={INK} points={format!("{},{} {},{} {},{}", head[0].0, head[0].1, head[1].0, head[1].1, head[2].0, head[2].1)} />
+                        <polygon fill={ink} points={format!("{},{} {},{} {},{}", head[0].0, head[0].1, head[1].0, head[1].1, head[2].0, head[2].1)} />
                     }
                     <path class="image-annotation-hit" d={path} />
                 </>
@@ -32,7 +30,7 @@ pub(super) fn render(shape: &Shape, stroke: f64) -> Html {
             let size = shape.end.y - shape.start.y;
             html! {
                 <>
-                    <text class="image-annotation-mark" x={shape.start.x.to_string()} y={label_baseline(shape).to_string()} font-size={size.to_string()} font-weight="700" font-family={label::family()} fill={INK} stroke={HALO} stroke-width={label::halo(size).to_string()} stroke-linejoin="round" paint-order="stroke">{shape.text.to_string()}</text>
+                    <text class="image-annotation-mark" x={shape.start.x.to_string()} y={label_baseline(shape).to_string()} font-size={size.to_string()} font-weight="700" font-family={label::family()} fill={ink} stroke={shape.color.halo()} stroke-width={label::halo(size).to_string()} stroke-linejoin="round" paint-order="stroke">{shape.text.to_string()}</text>
                     <rect class="image-annotation-hit" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} />
                 </>
             }
