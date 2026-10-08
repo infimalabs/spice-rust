@@ -11,32 +11,39 @@ Spice started you. The initial prompt is a neutral bootstrap signal, not the
 operator's request. This file is installed from the package source; edit the
 source copy, not the installation.
 
-On a fresh start the resident appends a `# Spice briefing` page, framed as a
-`<system-notice>`, to that prompt, and after every compaction it queues the same
-notice beside the replayed steering. When allocation assigned the lane before
-its agent came online, the fresh notice begins with `# Task already assigned`;
-continue that named task rather than asking the allocator for work first. This
-assignment banner is startup-only. The briefing page is one folded read of what
-binds this lane: pending steering, the held claim with its acceptance, unknowns,
-unclaimed board work, posture, uncommitted files and recent commits, recent
-turns, answered steering, and touched paths. Treat it as current truth when it
-arrives; do not rerun the reads it already did. Pending keys it lists still need
-your ACK or NAK; the notice itself needs none. Each cut row names the exact
-command that reads the rest. `spice session briefing` refreshes the page,
-`--json` adds the typed rows, and `spice task status` reads the board. A resumed
-session receives no page, since it still holds its context; run those commands
-only when a decision needs fresher state.
+The resident delivers the briefing whenever it judges you need it. On a fresh
+start it appends a `# Spice briefing` page, framed as a `<system-notice>`, to
+that prompt, and after every compaction it queues the same notice beside the
+replayed steering. When allocation assigned the lane before its agent came
+online, the fresh notice begins with `# Task already assigned`; continue that
+named task rather than asking the allocator for work first. This assignment
+banner is startup-only. The briefing page is one folded read of what binds this
+lane: pending steering, the held claim with its acceptance, unknowns, unclaimed
+board work, posture, uncommitted files and recent commits, recent turns,
+answered steering, and touched paths. Treat it as current truth as of the
+instant it was read: the start, or the compaction. A compaction's page is
+composed while you keep working and can arrive after further tool calls, so
+anything you did since that instant is newer than the page. Do not rerun the
+reads it already did. Pending keys it lists still need your ACK or NAK; the
+notice itself needs none. Each cut row names the exact command that reads the
+rest.
+
+A resumed seat still holds its context, so instead of the page it receives a
+short `# Seat resumed` notice naming the held claim and how many steering keys
+are pending; continue from your context. Reading more at any other time is your
+call: `spice session briefing` refreshes the page, `--json` adds the typed
+rows, `spice task status` reads the board, and `spice task next` asks the
+allocator for work.
 
 When the resident proactively assigns work to the current occupant, it sends a
 compact private `<system-notice>` naming the task handle and phase and directing
 `spice task show HANDLE`. Continue that assignment immediately. The notice has
 no acknowledgment key and is not a briefing or steering delivery.
 
-A current operator direction answerable without commands takes precedence. If
-the page is missing on a fresh start or reads `# Spice briefing unavailable`,
-run `spice session briefing` and `spice task status` yourself; if either is
-impossible, state only the blocker and end the turn. Do not infer a durable
-task from this skill invocation.
+A current operator direction answerable without commands takes precedence. A
+page that reads `# Spice briefing unavailable` names its refusal and the
+commands that read the same ground. Do not infer a durable task from this skill
+invocation.
 
 When steering keys are pending, lead the next working message with a visible
 line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. When

@@ -38,6 +38,9 @@ pub(in crate::resident) struct OccupantLaunchRequest<'a> {
 struct Selection<'a> {
     vendor: &'a wire::Name,
     lane: CanonicalUuid,
+    /// Whether the request named no session to resume. omp pins a minted
+    /// session for a fresh start too, so this is read before pinning.
+    fresh: bool,
     pinned: Pinned,
     fast_mode: bool,
     model: Option<&'a str>,
@@ -71,6 +74,7 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
+    let fresh = resume.session_id().is_none();
     let pinned = if name.as_str() == vendor::OMP.name() {
         pin_omp(
             paths,
@@ -88,6 +92,7 @@ pub(in crate::resident) fn occupant_launch(
     let selection = Selection {
         vendor: name,
         lane,
+        fresh,
         pinned,
         fast_mode,
         model,
@@ -182,6 +187,7 @@ fn launch_plan(
     let Selection {
         vendor: name,
         lane,
+        fresh,
         pinned,
         fast_mode,
         model,
@@ -215,17 +221,15 @@ fn launch_plan(
     };
     let mut prompt = vendor.neutral_launch_prompt(&skill);
     // A fresh session starts with nothing but this turn, so the resident
-    // hands it the briefing itself; a resumed one already holds its context.
-    if pinned.resume.session_id().is_none() {
-        let environment =
-            crate::session_environment().rooted(repository.worktree_root().to_path_buf());
-        prompt.push_str("\n\n");
-        prompt.push_str(&crate::session_command::lane_launch_briefing(
-            &environment,
-            lane,
-            None,
-        ));
-    }
+    // hands it the briefing itself; a resumed one already holds its context
+    // and learns only that it resumed, what it holds, and what is pending.
+    let session = crate::session_environment().rooted(repository.worktree_root().to_path_buf());
+    prompt.push_str("\n\n");
+    prompt.push_str(&if fresh {
+        crate::session_command::lane_launch_briefing(&session, lane, None)
+    } else {
+        crate::session_command::lane_resume_notice(&session, lane, None)
+    });
     let plan = spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
