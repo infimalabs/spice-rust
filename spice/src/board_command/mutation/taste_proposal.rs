@@ -98,10 +98,11 @@ pub(in crate::board_command) fn taste_proposal_add(
         Ok(creation) => creation,
         Err(outcome) => return outcome,
     };
-    let (flow, dependency_witnesses) = match task_flow_for_dependencies(&normalized, &snapshot) {
-        Ok(observation) => observation,
-        Err(outcome) => return outcome,
-    };
+    let (flow, dependency_witnesses) =
+        match task_flow_for_dependencies(command, &normalized, &snapshot) {
+            Ok(observation) => observation,
+            Err(outcome) => return outcome,
+        };
     let mut prepared = match prepare_task(
         command,
         &normalized,

@@ -199,6 +199,70 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
 }
 
 #[test]
+fn compound_capture_taste_review_refuses_before_creating_task_or_claim() {
+    let (root, bus, epoch, seats) = fixture("taste-review-capture", 1);
+    let repository = configured_repository(&root, &["delay"]);
+    let seat = &seats[0];
+    authorize_lane_creation(&bus, epoch, seat);
+    let actor = Actor::Lane(seat.lane);
+    let before = board(&bus, epoch, actor.clone());
+    let born = stamp("TASTE-capture1");
+    let handle = TaskHandle::for_project("board.test", &born);
+    let facts_before = bus
+        .fact_snapshot()
+        .expect("taste-review facts read")
+        .facts()
+        .len();
+    let outcome = issue_repository(
+        &bus,
+        &repository,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence { task: born },
+            Witness::Eligibility {
+                rule: CAPTURE_WORK_RULE
+                    .parse()
+                    .expect("capturework is a wire name"),
+            },
+            residency(&before, seat),
+        ],
+        &TaskAdd {
+            title: "Delay the captured implementation".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("ack:1kLGp2NJ".parse().expect("fixture steering origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: true,
+        },
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::capture-taste-review"),
+        "taste-required compound capture must refuse: {outcome:?}",
+    );
+    assert_eq!(
+        bus.fact_snapshot()
+            .expect("taste-review facts read")
+            .facts()
+            .len(),
+        facts_before,
+    );
+    assert!(
+        board(&bus, epoch, actor)
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.handle != handle),
+        "refused compound capture must not leave a task",
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn modification_rechecks_the_complete_current_policy_before_clearing() {
     let (root, bus, epoch, _seats) = fixture("taste-review-recheck", 0);
     let repository = configured_repository(&root, &["delay"]);

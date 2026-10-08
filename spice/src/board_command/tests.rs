@@ -1036,6 +1036,7 @@ use dependencies::{dependency_witnesses, todo_task};
 
 // The empty-drain readout a steered lane receives measures the parked board
 // with the same split task status reports, so both are pinned on one board.
+mod capture_creation;
 mod drain_readout;
 mod task_creation_flow;
 mod wake_claim;

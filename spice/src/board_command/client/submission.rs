@@ -94,10 +94,7 @@ pub(super) fn client_capture(
                 }
             }
         }
-        None => match capture_new_task(repository, matches, stealing) {
-            Ok(task) => task,
-            Err(outcome) => return outcome,
-        },
+        None => return capture_new_task(repository, matches, stealing),
     };
     let read = BoardRead::Tasks {
         tasks: vec![
@@ -137,30 +134,36 @@ fn capture_new_task(
     repository: &Repository,
     matches: &ArgMatches,
     stealing: bool,
-) -> Result<TaskHandle, Outcome<CommandAnswer>> {
+) -> Outcome<CommandAnswer> {
     if stealing {
-        return Err(refusal(
+        return refusal(
             "task::steal-handle-missing",
             None,
             "name the HANDLE of the claim to steal; a new task has no holder",
-        ));
+        );
     }
     let Some(project) = matches.get_one::<String>("project").cloned() else {
-        return Err(refusal(
+        return refusal(
             "task::capture-project-missing",
             None,
             "supply --project when task capture mints a new task",
-        ));
+        );
     };
-    let candidate = spice::task_git::capture(repository).map_err(task_git_outcome)?;
+    let candidate = match spice::task_git::capture(repository) {
+        Ok(candidate) => candidate,
+        Err(error) => return task_git_outcome(error),
+    };
     let title = matches
         .get_one::<String>("title")
         .cloned()
         .unwrap_or(candidate.subject);
-    let origin = parse_origin(matches)?;
+    let origin = match parse_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     let add_contract =
         crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
-    match submit_task_add(
+    match submit_captured_task(
         repository,
         add_contract,
         TaskAdd {
@@ -172,19 +175,28 @@ fn capture_new_task(
             origin,
             flow: None,
             depends: Vec::new(),
-            claim: false,
+            claim: true,
         },
     ) {
         Outcome::Reply(Reply {
-            body: CommandAnswer::Task(answer),
-            ..
-        }) => Ok(answer.task),
-        Outcome::Reply(_) => Err(protocol_fault(
+            position,
+            body: CommandAnswer::Task(mut answer),
+        }) => match answer.claim.take() {
+            Some(claim) => Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Claim(claim),
+            }),
+            None => protocol_fault(
+                "task::capture-add-claim-missing",
+                "atomic capture task creation returned no claim",
+            ),
+        },
+        Outcome::Reply(_) => protocol_fault(
             "task::capture-add-answer",
-            "task add returned another answer shape",
-        )),
-        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
-        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+            "atomic capture task creation returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
     }
 }
 
@@ -237,6 +249,23 @@ pub(crate) fn submit_task_add(
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
+    submit_task_add_with_rule(repository, contract, body, "capture")
+}
+
+fn submit_captured_task(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
+    submit_task_add_with_rule(repository, contract, body, CAPTURE_WORK_RULE)
+}
+
+fn submit_task_add_with_rule(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+    claim_rule: &str,
+) -> Outcome<CommandAnswer> {
     let steering_origin = match steering_origin_key(body.origin.as_ref()) {
         Ok(key) => key,
         Err(outcome) => return outcome,
@@ -251,7 +280,7 @@ pub(crate) fn submit_task_add(
             if body.claim {
                 let (lane, occupant) = actor_seat(&board)?;
                 expected.push(Witness::Eligibility {
-                    rule: "capture".parse().expect("capture is a wire name"),
+                    rule: claim_rule.parse().expect("claim rule is a wire name"),
                 });
                 expected.push(residency_witness(&board, lane, occupant));
             }
