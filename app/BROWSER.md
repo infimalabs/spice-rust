@@ -164,7 +164,11 @@ Task-observation Add/Close retain their independent appearance.
 Slider flyers and their riding labels settle together over 180ms; their words
 crossfade over 120ms. The native ranges retain their stops and hit targets,
 including the 2px endpoint inset. Lettering has a subtle etched highlight.
-Reduced motion removes travel and text transitions, not state distinctions.
+Speech selection paints in its control first, then commits the browser-local
+speech policy when that movement ends, so a message-rich team cannot consume
+the transition; interrupted movement commits only its final selection. Reduced
+motion removes travel and text transitions and commits immediately, without
+removing state distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
 for one recipient, equal separated arcs for several. Its small count follows
