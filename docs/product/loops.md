@@ -321,7 +321,7 @@ The wake decision itself is the hardened part:
 ```mermaid
 flowchart TD
   B["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
-  H -- yes --> W["select ONE vacant lane immediately"]
+  H -- yes --> W["select ONE vacant lane immediately:<br/>least recently claimed first"]
   H -- no --> R{"derived eligible count<br/>is at least 2?"}
   R -- yes --> S{"newest eligible origin<br/>aged at least 3s?"}
   R -- no --> L{"lone row aged<br/>at least 3 min?"}

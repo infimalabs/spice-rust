@@ -25,10 +25,8 @@ pub(super) fn project_targets(
         .with_appliance(appliance.product.clone());
     let projected_residency = residency.body();
     let ready_at = projection.ready_at();
-    let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
-    rows.sort_by_key(|row| row.lane);
     let mut targets = Vec::new();
-    for row in rows {
+    for row in &projected_residency.lanes {
         if row.occupant.is_some()
             || row.disposition == "occupied"
             || row.life == "drain"
@@ -58,6 +56,10 @@ pub(super) fn project_targets(
         };
         targets.push(Target {
             lane: row.lane,
+            last_claim: snapshot
+                .facts()
+                .latest_claim(&Actor::Lane(row.lane))
+                .map(|(claim, _)| claim),
             pending_inbox,
             held_claim,
             drain_queue,
