@@ -34,8 +34,8 @@ pub(super) use composer::{
     PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id,
     primary_textarea_id, use_primary_composer_drag_state,
 };
+use controls::{SendSlot, TeamLife, render_team_controls};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
-use controls::{TeamLife, render_team_controls};
 pub(in crate::browser) use fleet::use_team_arrangement_escape;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
@@ -304,12 +304,8 @@ fn render_compose(
     let broadcast_targets = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
     let dormant = team_dormant(team, drafts);
-    let ready = control.pending_life.is_none()
-        && team.members.iter().any(|member| {
-            authority
-                .target(member.occupant, member.wakeable, epoch)
-                .is_some()
-        });
+    let slots = send_slots(team, standings, drafts, authority, epoch);
+    let ready = control.pending_life.is_none() && slots.iter().any(|slot| slot.reachable);
     let cards = activity_cards(runtime, team, quote_agents);
     let member_command = member_controls::command_callback(sender, surface, team.lane);
     let composer = html! {
@@ -361,6 +357,8 @@ fn render_compose(
                 can_configure,
                 ready,
                 dormant,
+                slots,
+                member_controls::render_turbo(runtime, &team.members, &member_command),
             )}
             <span id={broadcast_help} class="visually-hidden">
                 {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
@@ -1033,6 +1031,31 @@ fn clear_primary_composer(lane_key: &str) {
         textarea.set_value("");
         composer::announce_value(&textarea);
     }
+}
+
+/// Each member as the send button sees it, in member order.
+fn send_slots(
+    team: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    drafts: &ComposerDrafts,
+    authority: SubmissionAuthority,
+    epoch: CanonicalUuid,
+) -> Vec<SendSlot> {
+    team.members
+        .iter()
+        .zip(standings)
+        .map(|(member, standing)| {
+            let lane = member.lane.to_string();
+            SendSlot {
+                attached: drafts.holds_quotes_or_images(&lane),
+                lane,
+                accent: standing.accent,
+                reachable: authority
+                    .target(member.occupant, member.wakeable, epoch)
+                    .is_some(),
+            }
+        })
+        .collect()
 }
 
 fn submit_team_callback(
