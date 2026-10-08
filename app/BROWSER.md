@@ -34,16 +34,19 @@ const lightApp = await launchAppBrowser(chromium, {
 
 ## Glass control-panel design gallery
 
-The standalone [glass control studies](design/glass-controls.html) compare six
+The standalone [glass control studies](design/glass-controls.html) compare three
 complete designs for the 80 × 160 composer control panel, against dark and light
 backgrounds. These are interactive visual mockups, not resident controls or a
 production style change. Browser screenshots of the gallery can be retained
 as task artifacts without adding generated images to the application sources.
-The designs use symmetric smoked, frosted, and restrained pearlescent surfaces.
-BASIC/TURBO, menu, and SEND are circular; SEND sits between the utility buttons
-and the two lower slider flyers.
-Three alternatives use flush etched, recessed pearl, and phone-home-button-style
-glass faces with less outward lift and shallower inset shading.
+The shortlisted surfaces are Smoked pearl, Frosted instrument, and Flush etched
+glass. Panels have sharp corners. BASIC/TURBO, menu, and SEND are circular; SEND
+sits between the utility buttons and the two pill-shaped slider flyers.
+
+SEND uses one perimeter rim, without nested optical ridges. Its face rests
+flush and moves down with an inset upper contact shadow during native pointer
+or keyboard activation; release restores the resting surface. A released/held
+comparison freezes both views for each finish.
 The rim-light selector previews neutral, mint, amber, or lilac agent accents
 without filling the glass faces with the accent color.
 The readiness selector applies off, running-without-text, one-recipient, or

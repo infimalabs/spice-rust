@@ -9,7 +9,7 @@
 </head>
 <body>
 <header class="page-head">
-  <div><p class="eyebrow">SPICE / CONTROL STUDIES · COMPLETE PANELS</p><h1>Round glass. Raised or recessed.</h1><p class="intro">Three optical finishes plus three flat-glass alternatives. Central SEND. Two lower flyers. 80 × 160 throughout.</p></div>
+  <div><p class="eyebrow">SPICE / CONTROL STUDIES · FINAL THREE</p><h1>Flush glass. A real press.</h1><p class="intro">Smoked pearl · Frosted instrument · Flush etched glass. Sharp panel. Round buttons. Pill flyers. 80 × 160.</p></div>
   <fieldset class="size-picker"><legend>Preview scale</legend><button type="button" data-scale="1" aria-pressed="false">Actual · 80 × 160</button><button type="button" data-scale="2" aria-pressed="true">Detail · 2×</button></fieldset>
   <label class="accent-picker">Rim light
     <select id="rim-accent" aria-label="Agent accent rim preview">
@@ -29,11 +29,16 @@
   </label>
 </header>
 <main id="studies" aria-label="Glass control panel concepts"></main>
+<section class="state-section" aria-labelledby="press-heading">
+  <div class="state-heading"><div><p class="eyebrow">CONTACT / RELEASE</p><h2 id="press-heading">The face drops. The edge stays clean.</h2></div></div>
+  <div id="press-matrix" aria-label="Released and held SEND comparison"></div>
+  <p class="state-explanation">Hold SEND in any live preview to feel the transition. On press: a small downward movement, a shaded upper contact edge, a lower light catch, and quieter accent light. At rest: flush glass, not a permanent bowl. The pairs above hold that exact pressed treatment for inspection.</p>
+</section>
 <section class="state-section" aria-labelledby="state-heading">
   <div class="state-heading">
     <div><p class="eyebrow">COMPLETE PANEL / FOUR STATES</p><h2 id="state-heading">From dormant to ready.</h2></div>
     <label class="accent-picker">Finish
-      <select id="state-finish" aria-label="State comparison finish"><option value="pearl">Smoked pearl</option><option value="smoke">Smoked optical</option><option value="frost">Frosted instrument</option><option value="flush">Flush etched glass</option><option value="inset">Recessed pearl</option><option value="home">Home lens</option></select>
+      <select id="state-finish" aria-label="State comparison finish"><option value="pearl">Smoked pearl</option><option value="frost">Frosted instrument</option><option value="flush">Flush etched glass</option></select>
     </label>
     <label class="accent-picker">Background
       <select id="state-background" aria-label="State comparison background"><option value="dark">Dark</option><option value="light">Light</option></select>
@@ -45,7 +50,7 @@
 <footer>
   <p>Standalone visual studies, not connected to a resident. Try BASIC / TURBO, the menu, SEND, and both sliders. Every action stays in this page.</p>
   <p>References: <a href="https://codepen.io/Petr-Knoll/pen/QwWLZdx">Petr Knoll · Glass Button</a> / <a href="https://freefrontend.com/css-liquid-glass/">Liquid glass collection</a>. Optical vocabulary: transparent faces, opposing rim highlights, inset lens shading, blurred transmitted background. CodePen’s live preview requires security verification; its source was not available for direct inspection.</p>
-  <p><strong>02 Smoked pearl</strong> is the recommended finish; <strong>01 Smoked optical</strong> is the cleaner neutral alternative; <strong>03 Frosted instrument</strong> is the softer option. Every design is a complete rail-mounted panel with genuinely circular buttons. No SVG displacement shaders here: the glass is CSS, with a solid fallback when backdrop filtering is unavailable.</p>
+  <p><strong>03 Flush etched glass</strong> is the recommended geometry, with <strong>01 Smoked pearl</strong> if you want the subtle pearl coloration. <strong>02 Frosted instrument</strong> is the softer finish. All have sharp panel corners, one clean SEND edge, and a contact shadow that appears only during a press. No SVG displacement shaders: CSS glass with a solid fallback when backdrop filtering is unavailable.</p>
 </footer>
 <template id="panel-template">
   <div class="panel">
