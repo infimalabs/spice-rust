@@ -873,20 +873,28 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
     -8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent),
     8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* Continuous face shading, asymmetric edge light, and diffuse elevation keep
-   every knob cohesive and tactile without visible concentric contour rings. */
+/* One colored-glass recipe keeps every stateful knob cohesive and tactile. */
 .team-composer :is(.team-send, .team-turbo, .team-slider) {
   --team-knob-surface: var(--control-state-accent, var(--accent));
   --team-knob-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-knob-surface) 68%, var(--app-shadow-source));
   --team-knob-highlight: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%);
   --team-knob-face: linear-gradient(150deg, color-mix(in srgb, var(--team-knob-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-knob-surface) 96%, var(--app-highlight-source)) 46%, var(--team-knob-surface) 68%, color-mix(in srgb, var(--team-knob-surface) 76%, var(--app-shadow-source)) 100%);
-  --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
+  --team-knob-glass:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--app-highlight-source) 20%, transparent) 0%,
+      color-mix(in srgb, var(--app-highlight-source) 4%, transparent) 46%, transparent 68%,
+      color-mix(in srgb, var(--app-shadow-source) 24%, transparent) 100%),
+    radial-gradient(ellipse closest-side, transparent 66%, color-mix(in srgb, var(--app-shadow-source) 26%, transparent));
+  --team-knob-accent-glass: linear-gradient(transparent, transparent);
+  --team-knob-rim: inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 18%, transparent);
+  --team-knob-ink-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 34%, transparent);
+  --team-knob-lift: var(--team-knob-rim), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
 }
 .team-composer :is(.team-send, .team-turbo, .team-menu) {
-  --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
+  --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent; --team-knob-rim: inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 30%, transparent);
   position: relative; display: grid; place-items: center; overflow: hidden;
   place-self: center; width: var(--team-knob-size); min-width: var(--team-knob-size); max-width: var(--team-knob-size); height: var(--team-knob-size); min-height: var(--team-knob-size); margin: 0; padding: 0;
-  border: var(--team-knob-edge); border-radius: var(--app-radius-circle); background: var(--team-knob-face);
+  border: var(--team-knob-edge); border-radius: var(--app-radius-circle); background: var(--team-knob-glass), var(--team-knob-accent-glass), var(--team-knob-face);
   box-shadow: var(--team-send-command-ring), var(--team-knob-lift);
   color: var(--page);
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
@@ -896,13 +904,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-menu:not(:disabled):is(:hover, :active, :focus-visible, [aria-expanded="true"]) { border-color: var(--accent-slot, var(--accent)); background: var(--control); color: var(--accent-slot, var(--accent)); }
 .team-composer .team-send {
   --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1;
-  --team-send-dome:
-    linear-gradient(150deg,
-      color-mix(in srgb, var(--app-highlight-source) 20%, transparent) 0%,
-      color-mix(in srgb, var(--app-highlight-source) 4%, transparent) 46%, transparent 68%,
-      color-mix(in srgb, var(--app-shadow-source) 24%, transparent) 100%),
-    radial-gradient(circle closest-side, transparent 66%, color-mix(in srgb, var(--app-shadow-source) 26%, transparent));
-  background: var(--team-send-dome), var(--team-knob-face);
 }
 .team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
@@ -913,11 +914,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    while the team runs; only a lit press depresses them. */
 .team-composer .team-send[data-lit="true"] {
   border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent);
-  background: var(--team-send-dome), var(--team-send-pinwheel);
+  background: var(--team-knob-glass), var(--team-send-pinwheel);
 }
 .team-composer .team-send .team-send-word {
   position: relative; z-index: 1;
-  color: var(--page); text-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 34%, transparent);
+  color: var(--page); text-shadow: var(--team-knob-ink-shadow);
 }
 .team-composer .team-send[data-lit="true"]:not(:disabled):active {
   background:
@@ -926,18 +927,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
       color-mix(in srgb, var(--app-shadow-source) 10%, transparent) 77%,
       color-mix(in srgb, var(--app-highlight-source) 26%, transparent) 82.5%,
       transparent 87%),
-    var(--team-send-dome), var(--team-send-pinwheel);
+    var(--team-knob-glass), var(--team-send-pinwheel);
 }
 .team-composer .team-turbo[data-lit="true"] {
   --control-state-accent: var(--accent-3);
-  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-3) 75%, transparent);
+  --team-knob-accent-glass: linear-gradient(color-mix(in srgb, var(--accent-3) 42%, transparent), color-mix(in srgb, var(--accent-3) 42%, transparent));
 }
 .team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { --control-state-accent: var(--muted); }
 .team-composer :is(.team-send, .team-menu):disabled { opacity: 1; }
 .team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
 .fit-word {
-  display: block; overflow: visible; pointer-events: none;
-  fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
+  display: block; overflow: hidden; pointer-events: none;
+  fill: currentColor; filter: drop-shadow(var(--team-knob-ink-shadow)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
 }
 .team-slider {
   --control-state-accent: var(--accent); --team-slider-position: 0;
@@ -948,9 +949,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-slider[data-stop="1"] { --team-slider-position: .5; }
 .team-slider[data-stop="2"] { --team-slider-position: 1; }
-/* Composer scope outranks the shared knob lift: thumbs keep neutral depth, no state colour spill. */
+/* Slider thumbs retain the shared glass and a quieter lift than round buttons. */
 .team-composer .team-slider {
-  grid-column: 1 / -1; --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
+  grid-column: 1 / -1; --team-knob-lift: var(--team-knob-rim), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
 }
 .team-composer .team-speech { grid-row: 3; }
 .team-composer .team-lifetime { grid-row: 4; }
@@ -977,24 +978,23 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block);
   margin-block-start: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
   border: var(--team-knob-edge); border-radius: var(--app-radius-pill);
-  background: var(--team-knob-highlight), var(--team-knob-face); box-shadow: var(--team-knob-lift);
+  background: var(--team-knob-highlight), var(--team-knob-glass), var(--team-knob-accent-glass), var(--team-knob-face); box-shadow: var(--team-knob-lift);
 }
 .team-slider input::-moz-range-thumb {
   box-sizing: border-box;
   inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block);
   border: var(--team-knob-edge); border-radius: var(--app-radius-pill);
-  background: var(--team-knob-highlight), var(--team-knob-face); box-shadow: var(--team-knob-lift);
+  background: var(--team-knob-highlight), var(--team-knob-glass), var(--team-knob-accent-glass), var(--team-knob-face); box-shadow: var(--team-knob-lift);
 }
 .team-slider input:focus-visible::-webkit-slider-thumb { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
 .team-slider input:focus-visible::-moz-range-thumb { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
 .team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .team-slider input:disabled { cursor: not-allowed; }
-/* The word rides the thumb: it starts where the native thumb starts along
-   the track and keeps five pixels inside each rounded end. */
+/* The word rides the thumb inside seven pixels at each rounded end. */
 .team-slider .fit-word {
   position: absolute; inset-block: 0; margin-block: auto;
-  inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - var(--team-slider-thumb-inline)) + 5px);
-  inline-size: calc(var(--team-slider-thumb-inline) - 10px); block-size: calc(var(--team-slider-thumb-block) - 11px);
+  inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - var(--team-slider-thumb-inline)) + 7px);
+  inline-size: calc(var(--team-slider-thumb-inline) - 14px); block-size: calc(var(--team-slider-thumb-block) - 13px);
   color: var(--page);
 }
 .team-slider.armed { --control-state-accent: var(--muted); }

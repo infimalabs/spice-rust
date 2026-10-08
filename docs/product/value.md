@@ -602,11 +602,14 @@ upper-right slot opens the team's swap/join arrangement menu using the soft
 glass surface and inset edge of the other hamburger controls. Each range runs
 left to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside
 a neutral 74 × 26 pill groove: two pixels of clearance above and below, and
-three pixels of panel inset at each end. Every current-value word is drawn to
-fill its thumb, so every value occupies the same width. Thumb state color ends
-at its border; neutral depth remains, but no state casts light into the groove.
-Send, the round buttons, and the thumbs share one tactile face whose color
-carries state. `Send` lights only when
+three pixels of panel inset at each end. Every current-value word fills the same
+32 × 9 label box, centered with seven pixels of horizontal and six-and-a-half
+pixels of vertical thumb clearance; the box clips overscan before it reaches
+the rounded edge. `Send`, `TURBO`, and both thumbs share one colored-glass
+material: state color under a continuous dome, edge highlight, lift, and raised
+ink shadow. Round buttons carry the stronger inner rim, while slider thumbs use
+a quieter version. Thumb state color ends at its border; no state casts light
+into the groove. `Send` lights only when
 a press would submit something: it fills with a pinwheel of one equal slice per
 agent that would receive a message, in that agent's accent and in mathematical
 order: the first agent opens at the right edge and the rest follow
@@ -619,11 +622,12 @@ keeps the full-opacity raised knob in the neutral surface of the resting quiet
 thumb; only its color mutes, while command-modifier and focus rings still show
 around it. With no running agent and no draft, the knob recedes to a depressed
 face.
-Raised states use distinct team accents: the
-first round button reads `TURBO`, lit in the reddish accent while the team's
-own fast-mode flag is on, and `BASIC`, in the same neutral raised knob,
-otherwise; each range's maximum stop, narrate and drain, keeps the second
-accent, blue. A press of `TURBO` flips that team flag, which the resident keeps
+Raised states use distinct team accents. The first round button reads `TURBO`
+while the team's fast-mode flag is on: a second internal accent layer deepens
+its red under the glass without casting a halo beyond the rim. Otherwise it
+reads `BASIC` in the same neutral raised knob. Each range's maximum stop,
+narrate and drain, keeps the second accent, blue. A press of `TURBO` flips that
+team flag, which the resident keeps
 across restarts. Fast mode is additive: a member launches in fast mode exactly
 when its own flag, its team's flag, or the global setting is on, so turning one
 level off never slows a member another level still enables. Running OMP agents

@@ -630,8 +630,8 @@ fn lifetime_slider(
 /// word and a short one read as equal labels on equal buttons.
 pub(super) fn fit_word(word: &'static str) -> Html {
     html! {
-        <svg class="fit-word" viewBox="0 0 100 11" preserveAspectRatio="none" aria-hidden="true">
-            <text x="0" y="11" font-size="15" textLength="100" lengthAdjust="spacingAndGlyphs">
+        <svg class="fit-word" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true">
+            <text x="0" y="13" font-size="15" textLength="100" lengthAdjust="spacingAndGlyphs">
                 {word}
             </text>
         </svg>
