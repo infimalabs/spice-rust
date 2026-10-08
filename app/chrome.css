@@ -75,10 +75,15 @@ body:has(.shell),
   --app-spice-surface: var(--control-surface-soft);
   position: relative;
   display: grid;
+  flex: 0 0 var(--app-header-control);
   grid-row: 1;
   grid-column: -2;
   width: var(--app-header-control);
+  min-width: var(--app-header-control);
+  max-width: var(--app-header-control);
   height: var(--app-header-control);
+  min-height: var(--app-header-control);
+  max-height: var(--app-header-control);
   padding: 0;
   place-items: center;
   border: var(--app-focus-ring-width) solid var(--app-spice-border);

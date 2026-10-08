@@ -84,7 +84,7 @@
 /* The fixed-width weekly percentage sits immediately beside the Spice button
    without moving it as quota state loads or becomes unavailable. */
 .app-spice-capacity {
-  flex: 0 0 4ch;
+  width: 4ch;
   color: var(--ink);
   font: 700 var(--app-type-control)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
