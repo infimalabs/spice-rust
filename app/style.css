@@ -465,7 +465,18 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-overlay-control { border-radius: var(--app-radius-compact); }
 .app-overlay-status { border-radius: var(--app-radius-overlay); }
 
+/* One side view serves every sidebar. Content chooses a standard width, and
+   the view materializes in place over the frosted veil: its material and
+   content fade in while it settles from just under full scale around its
+   origin, the launcher's twin when it has one and its top inline-end corner
+   otherwise. Its scale ending is the close boundary. */
 .app-sidebar-layer {
+  --app-side-view-small: 28rem;
+  --app-side-view-large: 46rem;
+  --app-side-view-gutter: 3rem;
+  --app-side-view-width: var(--app-side-view-large);
+  --app-side-view-rest: .965;
+  --app-side-view-ease: cubic-bezier(.2, .8, .2, 1);
   position: fixed;
   z-index: 80;
   inset: 0;
@@ -473,6 +484,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   min-width: 0;
   justify-items: end;
 }
+.app-sidebar-layer[data-sidebar-width="small"] { --app-side-view-width: var(--app-side-view-small); }
 .app-sidebar-backdrop {
   position: absolute;
   inset: 0;
@@ -483,44 +495,45 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   border-radius: 0;
   box-shadow: none;
   cursor: default;
-  opacity: 0;
-  transition: opacity var(--app-motion-settle) var(--app-ease-standard);
+  transition: opacity var(--app-motion-settle) var(--app-side-view-ease);
 }
 .app-sidebar {
+  --app-side-view-origin: 100% 0;
   position: relative;
   z-index: 1;
-  width: min(46rem, calc(100vw - 3rem));
+  width: min(var(--app-side-view-width), calc(100vw - var(--app-side-view-gutter)));
   height: 100%;
   overflow: hidden;
-  opacity: 0;
-  transform: translateX(1.25rem);
+  transform-origin: var(--app-side-view-origin);
   transition:
-    opacity var(--app-motion-fast) var(--app-ease-standard),
-    transform var(--app-motion-settle) var(--app-ease-standard);
+    transform var(--app-motion-settle) var(--app-side-view-ease),
+    background-color var(--app-motion-fast) var(--app-side-view-ease),
+    border-color var(--app-motion-fast) var(--app-side-view-ease);
 }
 .app-sidebar-frame {
   height: 100%;
   overflow: auto;
   overscroll-behavior: contain;
 }
-.app-sidebar-layer[data-sidebar-state="open"] .app-sidebar-backdrop { opacity: 1; }
-.app-sidebar-layer[data-sidebar-state="open"] .app-sidebar {
-  opacity: 1;
-  transform: translateX(0);
+.app-sidebar-frame,
+.app-sidebar-overlay-slot { transition: opacity var(--app-motion-fast) var(--app-side-view-ease); }
+.app-sidebar-layer[data-sidebar-state="open"] :is(.app-sidebar-frame, .app-sidebar-overlay-slot) { transition-delay: 40ms; }
+@media (prefers-reduced-motion: no-preference) {
+  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar-backdrop,
+  .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-frame, .app-sidebar-overlay-slot) { opacity: 0; }
+  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar {
+    border-color: transparent;
+    background-color: transparent;
+    transform: scale(var(--app-side-view-rest));
+  }
+  /* The twin turns the sheet's scale back about the same point, so the
+     launcher never moves or resizes while the view forms around it. */
+  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-spice-sidebar-anchor {
+    transform: scale(calc(1 / var(--app-side-view-rest)));
+  }
 }
-/* An anchored sheet forms around its launcher's twin, which stands at the
-   launcher's own place: the sheet grows out of the button's circle and
-   shrinks back into it, so the button never moves. */
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar {
-  --app-sidebar-anchor-x: calc(100% - var(--app-commandbar-inset-end) - var(--app-header-control) / 2);
-  --app-sidebar-anchor-y: calc(var(--app-commandbar-block-pad) + var(--app-header-control) / 2);
-  opacity: 1;
-  transform: none;
-  clip-path: circle(calc(var(--app-header-control) / 2) at var(--app-sidebar-anchor-x) var(--app-sidebar-anchor-y));
-  transition: clip-path var(--app-motion-settle) var(--app-ease-standard);
-}
-.app-sidebar-layer[data-sidebar-anchored][data-sidebar-state="open"] .app-sidebar {
-  clip-path: circle(142% at var(--app-sidebar-anchor-x) var(--app-sidebar-anchor-y));
+  --app-side-view-origin: calc(100% - var(--app-commandbar-inset-end) - var(--app-header-control) / 2) calc(var(--app-commandbar-block-pad) + var(--app-header-control) / 2);
 }
 .app-spice-sidebar-anchor {
   position: absolute;
@@ -531,6 +544,8 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   grid-template-columns: auto var(--app-header-control);
   align-items: center;
   gap: 8px;
+  transform-origin: calc(100% - var(--app-header-control) / 2) 50%;
+  transition: transform var(--app-motion-settle) var(--app-side-view-ease);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
   padding-inline-end: calc(var(--app-commandbar-inset-end) + var(--app-header-control) + 4ch + 28px);

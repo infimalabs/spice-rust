@@ -243,6 +243,7 @@ fn render_spice_sidebar(
     sidebar::Content {
         label: "Spice".into(),
         title: "Operator, resident & teams".into(),
+        width: sidebar::Width::Small,
         body,
         overlay: Html::default(),
         overlay_open: false,

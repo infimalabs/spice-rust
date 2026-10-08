@@ -58,7 +58,7 @@
 }
 
 @media (max-width: 1180px) {
-  .app-sidebar { width: min(42rem, calc(100vw - 2rem)); }
+  .app-sidebar-layer { --app-side-view-large: 42rem; --app-side-view-gutter: 2rem; }
 }
 
 @media (max-width: 920px) {
@@ -71,6 +71,7 @@
   .app-sidebar-header,
   .app-sheet-header,
   .app-sheet-body,
+  .app-spice-sidebar-content > .app-sheet-section,
   .work-blocker-rail,
   .work-blocker-review-body,
   .work-overview-map,
