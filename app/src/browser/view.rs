@@ -209,6 +209,7 @@ fn render_spice_sidebar(
 ) -> sidebar::Content {
     let body = html! {
         <div class="app-spice-sidebar-content">
+            {spice_sidebar::render_appearance()}
             {spice_sidebar::render_operator_settings(runtime, render.sender)}
             {spice_sidebar::render_resident(
                 render.connection,
