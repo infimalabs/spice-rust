@@ -1025,7 +1025,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer:has(.team-agent[data-accent="3"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-3); }
 .team-composer:has(.team-agent[data-accent="4"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-4); }
 .team-composer:has(.team-agent[data-accent="5"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); }
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); --team-send-command-ring: 0 0 0 3px var(--accent-5); }
+/* A broadcast reaches every occupied recipient at once, so its command ring is
+   their accent light combined: the theme's ink signal, near white on dark glass
+   and near black on light glass, rather than any one accent. */
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send::after { background: var(--team-send-broadcast-rim, transparent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send-recipient-count { display: none; }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send-broadcast-count { display: block; }
