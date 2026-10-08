@@ -182,11 +182,12 @@ minutes. Then come the Wake, Drain, Remove, Renew, and next-launch model,
 reasoning effort, and fast mode commands and refusals; Renew submits
 immediately, while Drain and Remove confirm first. Fast mode is one on/off
 toggle right after effort, tinted like the Spice sidebar's Fast mode when
-on. It shows the seat's next-launch value, which follows that global setting
-until a press pins the other value; pressing back to the global value clears
-the pin. Effort and fast mode each report the running value beside the next
-launch, and a running OMP agent takes either change at once, so its composer
-icon gains or drops the fast badge once omp confirms. Presence and lease age,
+on. It shows and flips the seat's own flag. Fast mode is additive, so the
+next launch also runs fast while the team's Turbo or the global setting is on,
+and the status names which level enables it. Effort and fast mode each report
+the running value beside the next launch, and a running OMP agent takes either
+change at once, so its composer icon gains or drops the fast badge once omp
+confirms. Presence and lease age,
 the current task, latest activity, waiting direction, copyable agent channel,
 occupant, session, and worktree follow, beside Create new team and Leave all
 teams. Wide lanes lay those groups side by side; narrow lanes stack them and

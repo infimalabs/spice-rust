@@ -945,11 +945,21 @@ fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
     assert!(wire::head::teamed(lane, [peer, lane]));
 
     for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
-        let configured = TeamSubscription { team: lane, policy };
+        let configured = TeamSubscription {
+            team: lane,
+            policy,
+            fast_mode: false,
+        };
         assert_eq!(configured.effective([lane]).policy, TeamLife::Steer);
         assert_eq!(configured.effective([lane, peer]).policy, policy);
         assert_eq!(
-            TeamSubscription { team, policy }.effective([lane]).policy,
+            TeamSubscription {
+                team,
+                policy,
+                fast_mode: false,
+            }
+            .effective([lane])
+            .policy,
             policy
         );
     }
@@ -981,12 +991,46 @@ fn residency_row(lane: CanonicalUuid, team: CanonicalUuid) -> LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
         session: None,
         disposition: "vacant".to_owned(),
+    }
+}
+
+#[test]
+fn fast_mode_is_on_when_any_of_lane_team_or_global_enables_it() {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
+    let peer = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
+    let team = uuid("018f82d4-6f59-7d06-92e3-bce913116303");
+    let other = uuid("018f82d4-6f59-7d06-92e3-bce913116304");
+    let subscription = |team, fast_mode| TeamSubscription {
+        team,
+        policy: wire::intent::TeamLife::Drive,
+        fast_mode,
+    };
+    for lane_flag in [false, true] {
+        for team_flag in [false, true] {
+            for global in [false, true] {
+                let mut row = residency_row(lane, team);
+                row.fast_mode = lane_flag;
+                let residency = ResidencyHead {
+                    epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116310"),
+                    state: ResidentState::Seated,
+                    topology_revision: 0,
+                    lanes: vec![row.clone(), residency_row(peer, other)],
+                    subscriptions: vec![subscription(team, team_flag), subscription(other, true)],
+                    renewals: Vec::new(),
+                };
+                assert_eq!(
+                    residency.fast_mode(&row, global),
+                    lane_flag || team_flag || global,
+                    "lane={lane_flag} team={team_flag} global={global}"
+                );
+            }
+        }
     }
 }
 

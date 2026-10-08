@@ -30,9 +30,9 @@ pub enum MemberCommand {
     /// Pin the reasoning effort the next occupant launches with; absent follows
     /// the vendor's configured effort.
     RetuneEffort { effort: Option<String> },
-    /// Pin whether the next occupant launches in fast mode; absent follows the
-    /// global fast-mode setting.
-    RetuneFast { fast_mode: Option<bool> },
+    /// Turn this member's own fast-mode flag on or off. The member still runs
+    /// fast while its team's flag or the global setting is on.
+    RetuneFast { fast_mode: bool },
 }
 
 impl MemberCommand {

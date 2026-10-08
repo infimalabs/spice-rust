@@ -1216,6 +1216,7 @@ fn attach_heads(
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         })
         .collect();
     write.residency_head(seated, move |_| ResidencyHead {
@@ -1238,7 +1239,7 @@ fn lane_residency(authority: &Authority) -> LaneResidency {
         vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant: Some(authority.occupant),
         lineage: vec![authority.occupant],
         capabilities: vec![authority.occupant],

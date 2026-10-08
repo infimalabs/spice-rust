@@ -843,6 +843,7 @@ pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::
     let subscription = wire::TeamSubscription {
         team: wire::CanonicalUuid::new(uuid::Uuid::nil()),
         policy: wire::intent::TeamLife::Drain,
+        fast_mode: false,
     };
     board::offer_order(
         entries,

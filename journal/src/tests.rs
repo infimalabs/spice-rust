@@ -952,7 +952,7 @@ fn residency_head() -> ResidencyHead {
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116303")),
             lineage: Vec::new(),
             capabilities: Vec::new(),
@@ -962,6 +962,7 @@ fn residency_head() -> ResidencyHead {
         subscriptions: vec![wire::TeamSubscription {
             team: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         }],
         renewals: Vec::new(),
     }

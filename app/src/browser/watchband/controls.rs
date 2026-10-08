@@ -439,6 +439,7 @@ fn commit_life_callback(
                 team,
                 member: None,
                 life: Some(life.wire()),
+                fast_mode: None,
             },
         ) {
             return;

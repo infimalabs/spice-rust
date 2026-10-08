@@ -358,7 +358,7 @@ fn render_compose(
                 ready,
                 dormant,
                 slots,
-                member_controls::render_turbo(runtime, &team.members, &member_command),
+                member_controls::render_turbo(team, topology_revision, sender, can_configure),
             )}
             <span id={broadcast_help} class="visually-hidden">
                 {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
@@ -727,6 +727,7 @@ fn agent_leave_control(
                     team: lane,
                     member: Some(lane),
                     life: None,
+                    fast_mode: None,
                 },
             )
         {

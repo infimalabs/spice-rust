@@ -125,6 +125,7 @@ fn standing_for(member: &LaneMember) -> app::watchband::Standing {
     let team = LaneRow {
         lane: member.lane,
         subscription: wire::intent::TeamLife::Steer,
+        fast_mode: false,
         members: vec![member.clone()],
     };
     standings(&[team], &[], &[])
@@ -137,6 +138,7 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
     LaneRow {
         lane: uuid(id),
         subscription: wire::intent::TeamLife::Steer,
+        fast_mode: false,
         members: vec![member(id, worktree)],
     }
 }
@@ -154,7 +156,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         effort: Some("high".to_owned()),
         seat_effort: None,
         fast_mode: false,
-        seat_fast_mode: None,
+        seat_fast_mode: false,
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),
         disposition: "seated".to_owned(),
@@ -402,6 +404,7 @@ fn one_team_emits_one_standing_per_member_without_losing_the_teamentity() {
     let team = LaneRow {
         lane: uuid(EPOCH),
         subscription: wire::intent::TeamLife::Steer,
+        fast_mode: false,
         members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
     };
 
@@ -1073,6 +1076,7 @@ fn seated(id: &str, members: &[(&str, &str)]) -> LaneRow {
     LaneRow {
         lane: uuid(id),
         subscription: wire::intent::TeamLife::Steer,
+        fast_mode: false,
         members: members
             .iter()
             .map(|(lane, worktree)| member(lane, worktree))

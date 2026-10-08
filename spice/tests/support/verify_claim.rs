@@ -87,7 +87,7 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
             vendor: "omp".parse().expect("verify fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: Vec::new(),

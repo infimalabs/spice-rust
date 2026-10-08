@@ -799,7 +799,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                         .expect("simulated demo vendor is valid"),
                     model: None,
                     effort: None,
-                    fast_mode: None,
+                    fast_mode: false,
                     occupant: Some(uuid(seed.occupant)),
                     lineage: vec![uuid(seed.occupant)],
                     capabilities: vec![uuid(seed.capability)],
@@ -810,6 +810,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
             subscriptions: vec![wire::TeamSubscription {
                 team,
                 policy: wire::intent::TeamLife::Drive,
+                fast_mode: false,
             }],
             renewals: Vec::new(),
         },

@@ -648,6 +648,7 @@ async fn send_team_configuration(socket: &mut ClientSocket, id: wire::CanonicalU
                 team: identity(0xb3),
                 member: None,
                 life: Some(wire::intent::TeamLife::Steer),
+                fast_mode: None,
             },
         },
     )

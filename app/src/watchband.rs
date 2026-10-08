@@ -1115,7 +1115,7 @@ mod tests {
             effort: None,
             seat_effort: None,
             fast_mode: false,
-            seat_fast_mode: None,
+            seat_fast_mode: false,
             occupant: None,
             session: None,
             disposition: "seated".to_owned(),
@@ -1161,6 +1161,7 @@ mod tests {
         let lanes = [crate::runtime::LaneRow {
             lane: id(10),
             subscription: wire::intent::TeamLife::Steer,
+            fast_mode: false,
             members: vec![member(1), member(2), member(3)],
         }];
 
@@ -1178,11 +1179,13 @@ mod tests {
             crate::runtime::LaneRow {
                 lane: id(10),
                 subscription: wire::intent::TeamLife::Steer,
+                fast_mode: false,
                 members: vec![lead, member(1)],
             },
             crate::runtime::LaneRow {
                 lane: id(20),
                 subscription: wire::intent::TeamLife::Steer,
+                fast_mode: false,
                 members: Vec::new(),
             },
         ];

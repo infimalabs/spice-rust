@@ -240,6 +240,7 @@ fn configure_member(
         team,
         member: Some(member),
         life: None,
+        fast_mode: None,
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,

@@ -134,7 +134,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
             vendor,
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: None,
             lineage: Vec::new(),
             capabilities: vec![capability],
@@ -144,6 +144,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
         subscriptions: vec![wire::TeamSubscription {
             team: lane,
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         }],
         renewals: Vec::new(),
     });

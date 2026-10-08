@@ -610,7 +610,7 @@ mod tests {
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant: Some(uuid(2)),
             lineage: vec![uuid(2)],
             capabilities: vec![uuid(3)],
@@ -656,6 +656,7 @@ mod tests {
         vec![wire::TeamSubscription {
             team: uuid(1),
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         }]
     }
 

@@ -54,6 +54,8 @@ pub(crate) enum ClientAction {
         team: CanonicalUuid,
         member: Option<CanonicalUuid>,
         life: Option<TeamLife>,
+        /// Replacement team fast-mode flag, or absent to preserve it.
+        fast_mode: Option<bool>,
     },
     /// Where every team and every agent stands after one team drag.
     ///

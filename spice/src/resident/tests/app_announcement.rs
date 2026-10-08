@@ -117,7 +117,7 @@ fn seed_lane_in_team_at(
         vendor: vendor.clone(),
         model: None,
         effort: None,
-        fast_mode: None,
+        fast_mode: false,
         occupant,
         lineage: occupant.into_iter().collect(),
         capabilities: vec![test_uuid(9)],
@@ -137,6 +137,7 @@ fn seed_lane_in_team_at(
         head.subscriptions.push(wire::TeamSubscription {
             team,
             policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
         });
         head.subscriptions
             .sort_by_key(|subscription| subscription.team);
@@ -479,7 +480,7 @@ fn seat_lane_residency(
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            fast_mode: None,
+            fast_mode: false,
             occupant,
             lineage: occupant.into_iter().collect(),
             capabilities: Vec::new(),

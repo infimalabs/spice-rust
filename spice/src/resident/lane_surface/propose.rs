@@ -35,6 +35,7 @@ pub(super) fn propose_seat(
         next.subscriptions.push(wire::TeamSubscription {
             team: request.team,
             policy,
+            fast_mode: false,
         });
         next.subscriptions
             .sort_by_key(|subscription| subscription.team);
@@ -48,7 +49,7 @@ pub(super) fn propose_seat(
         vendor: request.vendor.clone(),
         model: request.model.clone(),
         effort: request.effort.clone(),
-        fast_mode: None,
+        fast_mode: false,
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],

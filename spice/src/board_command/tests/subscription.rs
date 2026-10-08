@@ -32,6 +32,8 @@ pub(super) fn configure_subscription(
                 source_rekeyed_to: None,
                 from,
                 life: policy,
+                from_fast_mode: false,
+                fast_mode: false,
                 sources: Vec::new(),
             },
             FactCause::Root,
@@ -73,6 +75,7 @@ pub(super) fn move_fixture_lane_to_team(
     next.subscriptions.push(wire::TeamSubscription {
         team,
         policy: wire::intent::TeamLife::Drive,
+        fast_mode: false,
     });
 
     let origin = format!("resident:{epoch}")
@@ -89,6 +92,8 @@ pub(super) fn move_fixture_lane_to_team(
                 source_rekeyed_to: None,
                 from: wire::intent::TeamLife::Drive,
                 life: wire::intent::TeamLife::Drive,
+                from_fast_mode: false,
+                fast_mode: false,
                 sources: Vec::new(),
             },
             FactCause::Root,
