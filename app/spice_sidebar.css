@@ -81,17 +81,16 @@
 }
 .app-operator-form input:focus { border-color: var(--focus); outline: 0; }
 .app-operator-form button { grid-column: 2; margin-top: 2px; }
-/* A read-only chip beside Fast mode: the cumulative weekly quota remaining.
-   It takes the row's spare width, so the controls keep their places. */
+/* The fixed-width weekly percentage sits immediately beside the Spice button
+   without moving it as quota state loads or becomes unavailable. */
 .app-spice-capacity {
-  flex: 1 1 auto;
-  min-width: 0;
-  cursor: default;
+  flex: 0 0 4ch;
+  color: var(--ink);
+  font: 700 var(--app-type-control)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
-.app-spice-capacity span { color: var(--ink); }
-.app-spice-capacity[data-state="loading"] span,
-.app-spice-capacity[data-state="unavailable"] span,
-.app-spice-capacity[data-quota-stale] span { color: var(--muted); }
+.app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
 .app-spice-resident-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -128,17 +128,16 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
                     }}
                     onclick={onclick}
                 />
-                {render_capacity(runtime)}
                 {render_theme_selector()}
             </div>
         </section>
     }
 }
 
-/// The cumulative plan-weighted weekly quota remaining across accounts, the
-/// figure the trigger's liquid level draws. The disabled readout remains while
-/// quota state loads so later admission cannot move the controls around it.
-fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
+/// The cumulative plan-weighted weekly quota remaining across accounts, placed
+/// beside the open sidebar's Spice button. Its fixed-width fallback keeps the
+/// button still while quota state loads.
+pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     let generation = runtime.and_then(AppRuntime::quota);
     let remaining = generation
         .and_then(|generation| generation.last_good.as_deref())
@@ -157,28 +156,25 @@ fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
         (percentage, title, "ready")
     } else if runtime.is_none() {
         (
-            "loading".to_owned(),
+            "…".to_owned(),
             "Waiting for weekly quota".to_owned(),
             "loading",
         )
     } else {
         (
-            "unavailable".to_owned(),
+            "—".to_owned(),
             "Weekly quota is unavailable".to_owned(),
             "unavailable",
         )
     };
     html! {
         <span
-            class="app-readout-chip app-spice-capacity"
+            class="app-spice-capacity"
             data-state={state}
             data-quota-stale={stale.then_some("true")}
             aria-label={title.clone()}
             {title}
-        >
-            <strong>{"Quota left"}</strong>
-            <span>{value}{stale.then_some(" stale")}</span>
-        </span>
+        >{value}</span>
     }
 }
 

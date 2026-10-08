@@ -24,12 +24,6 @@ fn render(runtime: Option<&AppRuntime>, scope: &str, class: Classes) -> Html {
         >
             <div class="section-heading">
                 <h2 id={heading}>{"Provider quota"}</h2>
-                if snapshot.is_some() {
-                    <p class="quota-capacity" title="Weekly plan-weighted estimate across accounts · Free 0.2× · named $20 plans 1× · explicit 5× and OpenAI Pro Lite 5× · Pro/Max 20× by default">
-                        <strong>{crate::quota::capacity_summary(generation)}</strong>
-                        {" weekly"}
-                    </p>
-                }
             </div>
             if !presentation.fresh {
                 <div class="quota-status" role="status" aria-live="polite">
@@ -200,7 +194,7 @@ fn render_reset(window: Option<&wire::QuotaWindow>) -> Html {
         Some(at) => {
             let exact = iso_time(at);
             let title = label.map_or_else(|| exact.clone(), |label| format!("{label} · {exact}"));
-            html! { <>{"resets "}<Countdown expiry={at} class={classes!("app-quota-age")} title={title} /></> }
+            html! { <><span class="visually-hidden">{"resets "}</span><Countdown expiry={at} class={classes!("app-quota-age")} title={title} /></> }
         }
         None => html! { {label.unwrap_or_default()} },
     }

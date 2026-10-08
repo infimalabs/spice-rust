@@ -301,20 +301,23 @@ it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
 starting, connecting, and reconnecting grey and slowly pulse its pepper, and the
-tab title and icon say `Loading` or `Disconnected`; no chrome prose appears
-beside it and nothing in the bar moves. A quota sample in flight changes no
-word, row, or layer; only a finished attempt changes what quota shows.
+tab title and icon say `Loading` or `Disconnected`; the closed command bar adds
+no prose beside it and nothing in the bar moves. A quota sample in flight
+changes no word, row, or layer; only a finished attempt changes what quota
+shows.
 
-The open sidebar states that same global figure in words: Settings carries a
-read-only `Quota left` chip between Fast mode and the theme switch with the
-cumulative plan-weighted weekly percentage remaining. After a failed refresh
-it mutes and says `stale`; while no retained weekly figure exists, the same
-settled chip says `loading` or `unavailable`.
+The open sidebar places the cumulative plan-weighted weekly percentage
+immediately beside the Spice button. After a failed refresh it mutes while
+retaining the last good percentage; before any retained weekly figure exists,
+the same fixed-width place shows a loading or unavailable mark.
 
 Provider quota detail rows preserve each provider's authoritative remaining
 quantity. Percent limits label that capacity `N% full`; their filled segment
 starts at the left edge, so consumption exposes the track from the right.
-Counted limits retain their explicit remaining and total units.
+Counted limits retain their explicit remaining and total units. Each row keeps
+its amount and compact reset cadence beside the meter at ordinary and narrow
+sidebar widths; a long limit name wraps rather than forcing horizontal
+overflow.
 
 Inside the Spice sidebar, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,
