@@ -482,15 +482,37 @@ path.image-annotation-hit { fill: none; }
   padding: 0;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* One horned tab per task stem occupies the first row. An 8px outer inset
-   keeps the tabs off the team/browser edge, and the message stream's
-   inter-lane gap separates sibling stem groups. Overflow scrolls inside this
-   band without entering the status and pip row below. */
-.team-toolbar > .team-tasks {
-  grid-area: tasks;
+/* The team total stays fixed over the short leading screen while task groups
+   retain their ordinary horizontal scroll. One mirrored alpha fade lets hidden
+   tabs dissolve behind the total on the left and over the wider pip column on
+   the right instead of meeting a hard clip. Matching padding and scroll
+   padding keep the first and last tabs fully legible at either extent. */
+.team-toolbar > .team-task-rail {
+  --team-task-screen-start: 3rem;
+  --team-task-screen-end: var(--team-control-inline-size);
+  position: relative; display: grid; grid-area: tasks; align-self: end;
+  min-width: 0; margin: 0 8px; overflow: hidden;
+}
+.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { grid-area: 1 / 1; align-self: end; }
+.team-task-rail > [data-work-scope="team"] { z-index: 2; justify-self: start; }
+.team-task-rail > .team-tasks {
   z-index: 1;
-  align-self: end;
-  margin: 0 8px;
+  padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
+  scroll-padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--team-task-screen-start),
+    #000 calc(100% - var(--team-task-screen-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--team-task-screen-start),
+    #000 calc(100% - var(--team-task-screen-end)),
+    transparent
+  );
 }
 
 .team-lights[data-lane-drag-handle] {

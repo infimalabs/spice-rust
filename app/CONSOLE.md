@@ -65,6 +65,13 @@ is the sum of the stem badges and the number of handles. Activating it opens
 the unified overview with the team's complete current task set already
 selected. It does not change the durable location.
 
+The team total remains fixed at the rail's inline start. Stem and task tabs
+scroll beneath mirrored alpha screens: a short 3rem leading fade lets tabs
+disappear behind the total, while the trailing fade spans the full 80px
+composer-control and pip column. Matching inline and scroll padding keeps the
+first and last tabs fully opaque at their respective extents and keeps a
+no-overflow rail out of both fades.
+
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
 `.app-horn-tab--group` flag, and later matches join that flag without changing
@@ -72,8 +79,9 @@ their relative order. Its `.app-horn-tab__target` button displays the raw stem
 in the muted blocked tone with an `.app-count-badge` of the stem's open tasks,
 and opens the same overview with that team's matching stem selected. The
 following `.app-horn-tab__handle` buttons open the exact task. Closing any
-overview returns focus to the control that opened it. Flag overflow scrolls
-inside its band without entering the status/pip row.
+overview returns focus to the control that opened it. Flag overflow retains its
+ordinary horizontal scroll inside the screened band without entering the
+status/pip row.
 
 The global total opens every current task;
 global stem controls open their complete visibility-qualified stems. Team
