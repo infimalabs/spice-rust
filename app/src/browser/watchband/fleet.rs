@@ -354,7 +354,7 @@ fn render_team_task_group(
     html! {
         <span
             key={stem_key}
-            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
             data-task-stem={stem_label.clone()}
             data-task-visibility={visibility}
         >
