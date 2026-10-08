@@ -280,7 +280,7 @@ pub(in crate::resident) fn current_answer(
     epoch: CanonicalUuid,
     seats: &Seats,
 ) -> CommandResult<(wire::Seq, LaneAnswer)> {
-    let (head, cursor, mut holds) = bus
+    let (head, cursor) = bus
         .read(move |read| {
             let head = read.residency_head()?.ok_or_else(|| {
                 journal::GuardError::Invalid(
@@ -292,13 +292,7 @@ pub(in crate::resident) fn current_answer(
                     "resident lane read found no journal cursor".to_owned(),
                 )
             })?;
-            let mut holds = std::collections::BTreeMap::new();
-            for row in &head.body().lanes {
-                if let Some(held) = read.current_lane_hold(row.lane)? {
-                    holds.insert(row.lane, held);
-                }
-            }
-            Ok((head, cursor, holds))
+            Ok((head, cursor))
         })
         .map_err(|error| store_fault("resident::lane-read-unreadable", &error.to_string()))?;
     if head.body().epoch != epoch {
@@ -308,13 +302,32 @@ pub(in crate::resident) fn current_answer(
         ));
     }
     let mut answer = answer(head.body(), None, seats, paths)?;
+    project_holds(bus, cursor, &mut answer)?;
+    Ok((cursor, answer))
+}
+
+/// Give every row of one lane answer the hold current at `barrier`, the
+/// journal barrier the answer itself was built at.
+fn project_holds(bus: &Bus, barrier: wire::Seq, answer: &mut LaneAnswer) -> CommandResult<()> {
+    let lanes: Vec<CanonicalUuid> = answer.lanes.iter().map(|row| row.lane).collect();
+    let mut holds = bus
+        .read(move |read| {
+            let mut holds = std::collections::BTreeMap::new();
+            for lane in lanes {
+                if let Some(held) = read.lane_hold_at(lane, barrier)? {
+                    holds.insert(lane, held);
+                }
+            }
+            Ok(holds)
+        })
+        .map_err(|error| store_fault("resident::lane-hold-unreadable", &error.to_string()))?;
     for row in &mut answer.lanes {
         row.hold = holds.remove(&row.lane).map(|held| wire::intent::LaneHold {
             evidence: held.evidence,
             until: held.until,
         });
     }
-    Ok((cursor, answer))
+    Ok(())
 }
 
 /// Seat one new vacant lane and publish its command surface.
@@ -1171,10 +1184,13 @@ pub(super) fn recall(
             provenance,
         });
     }
-    let residency = match answer(head.body(), selected, seats, paths) {
+    let mut residency = match answer(head.body(), selected, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
+    if let Err(outcome) = project_holds(bus, barrier, &mut residency) {
+        return typed_outcome(outcome);
+    }
     let body = RecallAnswer {
         barrier,
         repository: paths.worktree.display().to_string(),

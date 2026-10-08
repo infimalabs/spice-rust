@@ -99,6 +99,11 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
         }),
         "the operator lane read carries the journaled deadline and evidence"
     );
+    assert_eq!(
+        recalled_hold(&fixture),
+        lane_read.lanes[0].hold,
+        "the recall residency row carries the same current hold"
+    );
     let projection = fixture.projection();
     let snapshot = fixture.bus.task_snapshot().expect("vacant snapshot reads");
     let holds = replay_holds(fixture.bus.fact_snapshot().expect("facts read").facts());
@@ -138,7 +143,53 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
         resumed_read.lanes[0].hold, None,
         "the operator lane read drops a released hold"
     );
+    assert_eq!(
+        recalled_hold(&fixture),
+        None,
+        "the recall residency row drops a released hold"
+    );
     fixture.finish();
+}
+
+/// The hold the operator recall reply projects onto the fixture lane's row.
+fn recalled_hold(fixture: &VendorExitFixture) -> Option<wire::intent::LaneHold> {
+    let request = wire::intent::LaneRecall { lane: Some(lane()) };
+    let command = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: "018f82d4-6f59-7d06-92e3-000000000008"
+            .parse()
+            .expect("fixture command identity"),
+        epoch: epoch(),
+        kind: wire::CommandKind::LaneRecall,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("recall intent encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: epoch(),
+    })
+    .expect("operator recall admits");
+    let wire::Outcome::Reply(reply) = crate::resident::lane_surface::recall(
+        &fixture.bus,
+        &fixture.paths,
+        epoch(),
+        &Seats::new(),
+        &command,
+        &request,
+    ) else {
+        panic!("operator recall replies")
+    };
+    let wire::intent::CommandAnswer::Recall(recall) = reply.body else {
+        panic!("recall answers with a continuity account")
+    };
+    recall
+        .residency
+        .lanes
+        .into_iter()
+        .find(|row| row.lane == lane())
+        .expect("recall carries the fixture lane")
+        .hold
 }
 
 #[test]

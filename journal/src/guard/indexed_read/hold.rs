@@ -5,19 +5,35 @@ use rusqlite::params;
 use super::{GuardError, JournalRead, decode_bounded_fact, read_metrics};
 
 impl JournalRead<'_> {
-    /// Read the latest hold/resume transition for one lane.
-    ///
-    /// The fact-kind index narrows this to lane-hold transitions, while JSON
-    /// extraction selects the exact lane before the one matching envelope is
-    /// decoded and validated. A resume is the authoritative absence of a hold.
+    /// Read the latest hold/resume transition for one lane at this read's
+    /// cursor.
     pub fn current_lane_hold(
         &self,
         lane: wire::CanonicalUuid,
     ) -> Result<Option<wire::body::LaneHeld>, GuardError> {
-        let Some(horizon) = self.cursor else {
+        let Some(cursor) = self.cursor else {
             return Ok(None);
         };
-        let horizon = i64::try_from(horizon.get())
+        self.lane_hold_at(lane, cursor)
+    }
+
+    /// Read the latest hold/resume transition for one lane at or before
+    /// `horizon`, so a reply built at an earlier barrier projects the hold
+    /// current at that barrier. A horizon past this read's cursor is read at
+    /// the cursor.
+    ///
+    /// The fact-kind index narrows this to lane-hold transitions, while JSON
+    /// extraction selects the exact lane before the one matching envelope is
+    /// decoded and validated. A resume is the authoritative absence of a hold.
+    pub fn lane_hold_at(
+        &self,
+        lane: wire::CanonicalUuid,
+        horizon: wire::Seq,
+    ) -> Result<Option<wire::body::LaneHeld>, GuardError> {
+        let Some(cursor) = self.cursor else {
+            return Ok(None);
+        };
+        let horizon = i64::try_from(horizon.min(cursor).get())
             .map_err(|_| GuardError::Invalid("lane hold horizon exceeds SQLite".to_owned()))?;
         read_metrics::observe_query();
         let mut statement = self
