@@ -794,24 +794,24 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The round send leads; a row of two round button slots follows, then the
-   speech and lifetime ranges, each spanning the 80px column with minimum on
-   the left and maximum on the right. Send, the round buttons, and both range
-   thumbs share one knob face whose color carries state, while range bars stay
-   neutral; each thumb wears its current word. One 93%, triple-thick control
-   paint stays continuous through the frame, then fades across the shared
-   10px continuation. The matching top rule and equal inline shadows lift it
-   above the panels on every side. */
+/* The round TURBO leads in a square top-left slot; the round SEND follows
+   across the complete column, then the speech and allocation ranges split the
+   remaining height evenly. Three pixels surround each button inside its row,
+   balancing TURBO's top and left breathing room. Range labels place minimum on
+   the left and maximum on the right. Send, Turbo, and both range thumbs share
+   one knob face whose color carries state, while range bars stay neutral. One
+   93%, triple-thick control paint stays continuous through the frame, then
+   fades across the shared 10px continuation. */
 .team-composer .team-composer-controls {
   --team-control-send-size: 56px;
-  --team-control-button-size: 30px;
+  --team-control-button-size: 34px;
   --team-slider-inset: 4px;
   --team-slider-track: 4px;
   --team-slider-thumb-inline: 46px;
   --team-slider-thumb-block: 22px;
   position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0; block-size: var(--team-composer-block-size);
-  grid-template: 62px 34px repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr));
+  grid-template: 40px 62px repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
@@ -836,8 +836,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 1; grid-column: 1 / -1; }
-.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 2; grid-column: 1; cursor: pointer; }
+.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; cursor: pointer; }
+.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1; }
 .team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
