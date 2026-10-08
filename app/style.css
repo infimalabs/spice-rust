@@ -526,7 +526,8 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   z-index: 3;
   top: var(--app-commandbar-block-pad);
   inset-inline-end: var(--app-commandbar-inset-end);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto var(--app-header-control);
   align-items: center;
   gap: 8px;
 }

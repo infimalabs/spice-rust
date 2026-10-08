@@ -294,10 +294,11 @@ and its texture stays distinct from any desaturated layer. The button's
 two-pixel ring and shadow are neutral, reddish for Fast mode whether or not an
 app update is available, and blue for an update alone; quota colors never change.
 Pressing the Spice button opens that generic sidebar, which forms around the
-button: the button stays in place above the sheet, which grows out of the
-button's circle and shrinks back into it on close, without motion when reduced
-motion is requested. Pressing the button again, Escape, or the backdrop closes
-it and restores focus to the button.
+button: the fixed square trigger stays circular and in place above the sheet,
+beside the quota percentage, while the sheet grows out of its circle and shrinks
+back into it on close, without motion when reduced motion is requested. Pressing
+the button again, Escape, or the backdrop closes it and restores focus to the
+button.
 
 Routine background work is silent and still. Connection lives in the button:
 starting, connecting, and reconnecting grey and slowly pulse its pepper, and the
