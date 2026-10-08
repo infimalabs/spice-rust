@@ -132,6 +132,7 @@ pub(in crate::board_command) fn claim_grant(
 pub(super) struct PreparedClaim {
     grant: ClaimGrant,
     prepared_git: Option<spice::task_git::ClaimPreparation>,
+    recovery: Option<String>,
 }
 
 /// Validate and prepare an atomic mutation-and-claim before the journal opens.
@@ -142,20 +143,21 @@ pub(super) fn prepare_capture_claim(
     snapshot: &ValidatedSnapshot,
     selected: &Entry,
 ) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
-    let captures_work = captures_implementation(command);
-    let capture_witness = command.expected().iter().any(|witness| {
-        matches!(
-            witness,
-            Witness::Eligibility { rule }
-                if matches!(rule.as_str(), "capture" | CAPTURE_WORK_RULE)
-        )
+    let claim_rule = command.expected().iter().find_map(|witness| match witness {
+        Witness::Eligibility { rule }
+            if matches!(rule.as_str(), "capture" | "recover" | CAPTURE_WORK_RULE) =>
+        {
+            Some(rule.as_str())
+        }
+        _ => None,
     });
-    if !capture_witness {
+    let Some(claim_rule) = claim_rule else {
         return Err(protocol_fault(
             "claim::capture-eligibility-witness",
-            "atomic capture has no capture eligibility witness",
+            "atomic capture has no capture or recovery eligibility witness",
         ));
-    }
+    };
+    let captures_work = claim_rule == CAPTURE_WORK_RULE;
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     if !board::capturable_entry(
         &snapshot.entries,
@@ -170,18 +172,65 @@ pub(super) fn prepare_capture_claim(
         ));
     }
     // Ordinary add-and-claim records the clean allocator boundary. Compound
-    // capture instead adopts the loose commits already inspected by its client;
-    // both decisions still commit with task creation under one journal guard.
+    // capture adopts the loose commits its client inspected; recovery binds the
+    // synchronized quarantine. Every mode commits with task creation under one
+    // journal guard.
     let possession = if captures_work {
         Possession::Capture
     } else {
         Possession::Next
     };
     let mut grant = claim_grant(bus, command, repository, snapshot, selected, possession)?;
+    let recovery = if claim_rule == "recover" {
+        let resident = repository.ok_or_else(|| {
+            protocol_fault(
+                "git::recovery-resident-missing",
+                "atomic dirty-handoff recovery requires the resident repository",
+            )
+        })?;
+        let recovery = spice::task_git::pending_recovery(resident)
+            .map_err(task_git_outcome)?
+            .ok_or_else(|| {
+                refusal(
+                    "git::recovery-transaction-missing",
+                    None,
+                    "start atomic recovery through `spice task add --recover`",
+                )
+            })?;
+        let boundary = grant.git.clone().ok_or_else(|| {
+            protocol_fault(
+                "git::recovery-boundary-missing",
+                "atomic dirty-handoff recovery prepared no Git boundary",
+            )
+        })?;
+        spice::task_git::bind_recovery_claim(
+            resident,
+            &recovery,
+            spice::task_git::RecoveryClaim {
+                actor: command.actor().clone(),
+                task: selected.born().clone(),
+                handle: Some(selected.handle().clone()),
+                fresh: true,
+                statement: wire::Seq::new(1).expect("fresh recovery placeholder is non-zero"),
+                workflow: wire::Seq::new(1).expect("fresh recovery placeholder is non-zero"),
+                phase: selected.workflow().phase.clone(),
+                claim: None,
+                lane: grant.lane,
+                occupant: grant.occupant,
+                epoch: command.epoch(),
+                boundary,
+            },
+        )
+        .map_err(task_git_outcome)?;
+        Some(recovery.transaction().to_owned())
+    } else {
+        None
+    };
     let prepared_git = grant.prepared_git.take();
     Ok(PreparedClaim {
         grant,
         prepared_git,
+        recovery,
     })
 }
 
@@ -232,6 +281,7 @@ impl PreparedClaim {
         let Self {
             grant,
             prepared_git,
+            recovery,
         } = self;
         if let Err(outcome) = append_claim_heads(
             write,
@@ -244,7 +294,7 @@ impl PreparedClaim {
             grant.expiry,
             grant.maximum,
             grant.git,
-            None,
+            recovery,
             grant.source,
         ) {
             if let Some(prepared) = prepared_git {

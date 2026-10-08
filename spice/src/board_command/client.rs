@@ -120,9 +120,9 @@ mod drain;
 pub(super) use drain::actor_rows;
 pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
 mod recovery;
-use recovery::client_recover;
 #[cfg(test)]
 pub(super) use recovery::{RecoveryBoardState, recovery_board_state, recovery_preflight};
+use recovery::{client_add_recovery, client_recover};
 mod completion;
 use completion::{client_done, client_review};
 mod submission;
@@ -130,7 +130,7 @@ pub(super) use submission::mutation_read;
 pub(in crate::board_command) use submission::{
     artifact_operation_failure, repository_state_failure,
 };
-use submission::{client_add, client_capture, client_oops};
+use submission::{client_add, client_capture, client_oops, submit_recovery_task_add};
 pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
 use submission::{mutate_from_board, mutate_task, mutate_task_from_board};
 
