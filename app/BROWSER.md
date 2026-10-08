@@ -118,6 +118,11 @@ and the local grant date identify it, with `Reset credit` reserved for an
 absent or invalid grant time. A valid expiry stays right-aligned as an `expires`
 relative countdown with exact-time hover detail.
 
+A provider-reported raw balance appears as a separate **Credits** datum on its
+account card. It is neither a time-window meter nor a reset grant, and accounts
+never share or aggregate it. An absent `creditBalance` amount stays absent;
+Spice does not infer zero from limits or read provider credentials to fill it.
+
 ## Arrange whole teams
 
 Pick up a team from its status-pip stack. After the same six-pixel lift

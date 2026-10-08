@@ -113,6 +113,13 @@ pub struct QuotaReport {
     pub fetched_at_ms: i64,
     pub account: QuotaAccount,
     pub limits: Vec<QuotaLimit>,
+    /// Provider-reported spendable credits, separate from quota windows and reset grants.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub credit_balance: Option<QuotaAmount>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

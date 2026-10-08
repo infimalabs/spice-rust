@@ -120,6 +120,7 @@ fn render_report(
             <ul class="quota-limit-list">
                 {for report.limits.iter().map(render_limit)}
             </ul>
+            {render_credit_balance(report.credit_balance.as_ref())}
             {render_reset_credits(report.reset_credits.as_ref())}
         </article>
     }
@@ -141,6 +142,17 @@ fn render_account_metadata(account: &wire::QuotaAccount, heading: &str) -> Html 
                 let value = value.filter(|value| *value != heading)?;
                 Some(html! { <div><dt>{label}</dt><dd>{value.to_owned()}</dd></div> })
             })}
+        </dl>
+    }
+}
+fn render_credit_balance(balance: Option<&wire::QuotaAmount>) -> Html {
+    let Some(balance) = balance else {
+        return Html::default();
+    };
+    html! {
+        <dl class="quota-credit-balance">
+            <dt>{"Credits"}</dt>
+            <dd>{crate::quota::amount_text(balance)}</dd>
         </dl>
     }
 }
