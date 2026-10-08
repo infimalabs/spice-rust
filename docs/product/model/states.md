@@ -344,6 +344,13 @@ flowchart TD
   L -- "vacant, never bound" --> UNBOUND["unbound"]
 ```
 
+When lifecycle authority holds a lane, the lane row and that lane's session
+briefing expose the current hold's deadline and journaled evidence. Both surfaces
+derive current state from the latest `LaneHeld` or `LaneResumed` transition for
+that lane. Deadline processing or operator wake journals the resume transition.
+The projection carries only hold metadata and the evidence string; it never reads
+the refused prompt, transcript, or reasoning.
+
 The durable resident authority uses a separate seven-value vocabulary. Its
 bounded shutdown order is explicit; resident replacement may release authority
 directly to `dark` while detached lane supervisors remain live:

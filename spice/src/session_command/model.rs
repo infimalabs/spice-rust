@@ -434,6 +434,8 @@ pub(crate) struct LanePostureView {
     pub(crate) life: String,
     pub(crate) vendor: String,
     pub(crate) model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hold: Option<wire::intent::LaneHold>,
 }
 
 /// The newest turn of the live transcript: enough to resume, not to replay.

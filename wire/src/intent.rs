@@ -1022,6 +1022,15 @@ impl LaneLiveness {
         }
     }
 }
+/// Current durable hold that pauses automatic seating for one lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneHold {
+    /// Exact evidence carried by the journaled hold fact.
+    pub evidence: String,
+    /// Deadline carried by the journaled hold fact.
+    pub until: Instant,
+}
 
 /// One capability-free lane row returned by [`LaneRead`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1127,6 +1136,13 @@ pub struct LaneAnswerRow {
     pub disposition: String,
     /// Dynamic supervised live/quiet fold at this read barrier.
     pub liveness: LaneLiveness,
+    /// Current durable seating hold, absent after its resume transition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub hold: Option<LaneHold>,
     /// Commands the lane keeps beyond the calls that started them, oldest
     /// first: what a vacant lane is still waiting on, and will wake for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

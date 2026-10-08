@@ -263,18 +263,58 @@ pub(super) fn read(
     seats: &Seats,
     _command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
-    let head = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let answer = match answer(head.body(), None, seats, paths) {
+    let (cursor, answer) = match current_answer(bus, paths, epoch, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
     Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(head.position()),
+        position: ReplyPosition::Snapshot(cursor),
         body: CommandAnswer::Lane(Box::new(answer)),
     })
+}
+
+/// Build the operator lane read and its exact journal barrier.
+pub(in crate::resident) fn current_answer(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+) -> CommandResult<(wire::Seq, LaneAnswer)> {
+    let (head, cursor, mut holds) = bus
+        .read(move |read| {
+            let head = read.residency_head()?.ok_or_else(|| {
+                journal::GuardError::Invalid(
+                    "resident lane read found no residency head".to_owned(),
+                )
+            })?;
+            let cursor = read.cursor()?.ok_or_else(|| {
+                journal::GuardError::Invalid(
+                    "resident lane read found no journal cursor".to_owned(),
+                )
+            })?;
+            let mut holds = std::collections::BTreeMap::new();
+            for row in &head.body().lanes {
+                if let Some(held) = read.current_lane_hold(row.lane)? {
+                    holds.insert(row.lane, held);
+                }
+            }
+            Ok((head, cursor, holds))
+        })
+        .map_err(|error| store_fault("resident::lane-read-unreadable", &error.to_string()))?;
+    if head.body().epoch != epoch {
+        return Err(store_fault(
+            "resident::epoch-moved",
+            &format!("expected {epoch}, observed {}", head.body().epoch),
+        ));
+    }
+    let mut answer = answer(head.body(), None, seats, paths)?;
+    for row in &mut answer.lanes {
+        row.hold = holds.remove(&row.lane).map(|held| wire::intent::LaneHold {
+            evidence: held.evidence,
+            until: held.until,
+        });
+    }
+    Ok((cursor, answer))
 }
 
 /// Seat one new vacant lane and publish its command surface.
