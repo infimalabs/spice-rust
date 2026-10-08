@@ -597,6 +597,11 @@
   content: "";
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
+/* Returning to the larger speaker row keeps the same leading air that the
+   next nested quote gets from its block padding. */
+.markdown-body .message-quote-card + .message-hunk {
+  padding-block-start: var(--mosaic-quote-pad-block);
+}
 /* The island moves rightward only: it docks against the card's or quote's
    inline-end edge and starts level with its hunk's first line, so it never
    reaches above into text it cannot reflow, such as an inner quote's last
