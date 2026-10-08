@@ -120,8 +120,10 @@ fn render_report(
             <ul class="quota-limit-list">
                 {for report.limits.iter().map(render_limit)}
             </ul>
-            {render_credit_balance(report.credit_balance.as_ref())}
-            {render_reset_credits(report.reset_credits.as_ref())}
+            if report.reset_credits.is_none() {
+                {render_credit_balance(report.credit_balance.as_ref())}
+            }
+            {render_reset_credits(report.reset_credits.as_ref(), report.credit_balance.as_ref())}
         </article>
     }
 }
@@ -145,6 +147,9 @@ fn render_account_metadata(account: &wire::QuotaAccount, heading: &str) -> Html 
         </dl>
     }
 }
+
+/// A balance on a line of its own, for an account with no reset credits to
+/// carry it.
 fn render_credit_balance(balance: Option<&wire::QuotaAmount>) -> Html {
     let Some(balance) = balance else {
         return Html::default();
@@ -152,9 +157,51 @@ fn render_credit_balance(balance: Option<&wire::QuotaAmount>) -> Html {
     html! {
         <dl class="quota-credit-balance">
             <dt>{"Credits"}</dt>
-            <dd>{crate::quota::amount_text(balance)}</dd>
+            <dd>{credit_balance_text(balance)}</dd>
         </dl>
     }
+}
+
+/// Whole credits grouped by the operator's locale, so a fractional balance
+/// never reads as more than can be spent.
+fn credit_balance_text(balance: &wire::QuotaAmount) -> String {
+    balance
+        .remaining
+        .as_deref()
+        .and_then(crate::quota::whole_credits)
+        .map_or_else(
+            || crate::quota::amount_text(balance),
+            |whole| format!("{} {}", grouped_whole(whole), balance.unit),
+        )
+}
+
+thread_local! {
+    static WHOLE_NUMBER_FORMATTER: js_sys::Intl::NumberFormat = {
+        let options = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            options.as_ref(),
+            &wasm_bindgen::JsValue::from_str("maximumFractionDigits"),
+            &wasm_bindgen::JsValue::from_f64(0.0),
+        );
+        js_sys::Intl::NumberFormat::new(&js_sys::Array::new(), &options)
+    };
+}
+
+/// A whole number grouped by the operator's locale, plain digits when the
+/// browser cannot format it.
+fn grouped_whole(whole: f64) -> String {
+    WHOLE_NUMBER_FORMATTER
+        .with(|formatter| {
+            formatter
+                .format()
+                .call1(
+                    &wasm_bindgen::JsValue::UNDEFINED,
+                    &wasm_bindgen::JsValue::from_f64(whole),
+                )
+                .ok()
+                .and_then(|value| value.as_string())
+        })
+        .unwrap_or_else(|| format!("{whole}"))
 }
 
 fn render_limit(limit: &wire::QuotaLimit) -> Html {
@@ -274,7 +321,12 @@ fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Html {
     }
 }
 
-fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
+/// Reset credits, with the account's credit balance at the right end of the
+/// heading line when there is one.
+fn render_reset_credits(
+    credits: Option<&wire::QuotaResetCredits>,
+    balance: Option<&wire::QuotaAmount>,
+) -> Html {
     let Some(credits) = credits else {
         return Html::default();
     };
@@ -285,6 +337,11 @@ fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
             <strong>{"Reset credits"}</strong>
             <span>{format!("{} available", credits.available_count)}</span>
             <span>{format!("{redeemable} redeemable")}</span>
+            {for balance.map(|balance| html! {
+                <span class="quota-reset-credits-balance" title="Credit balance">
+                    {credit_balance_text(balance)}
+                </span>
+            })}
             {for credits
                 .credits
                 .iter()

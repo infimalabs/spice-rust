@@ -322,8 +322,10 @@ Provider quota detail rows preserve each provider's authoritative remaining
 quantity. Percent limits label that capacity `N% full`; their filled segment
 starts at the left edge, so consumption exposes the track from the right.
 Counted limits retain their explicit remaining and total units. A
-provider-reported raw credit balance appears on its own account row as
-**Credits**, separate from time-window quota and banked reset grants; balances
+provider-reported raw credit balance appears on its account card in whole,
+locale-grouped credits, beside the reset credits when the account has them and
+on its own **Credits** line otherwise, separate from time-window quota and
+banked reset grants; balances
 are never inferred, combined across accounts, or treated as API-dollar credit.
 A balance is OMP's normalized windowless limit whose `credits` amount reports
 what remains and no total; windowed or capped credit allowances stay meters.
