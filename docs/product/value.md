@@ -395,9 +395,14 @@ selected task is a root in the immediate graph built from the admitted board
 snapshot; direct dependencies outside the set and missing durable identities
 remain explicit. Typed relationship reads enrich Dependency, Lineage, Review,
 and Lifecycle lenses within their protocol root and node bounds, but those
-bounds never remove a selected root. Direction, depth, zoom, pan, reset,
-loading, refusal, retry, and truncation controls qualify only the enrichment
-they change. A streamed task fact re-reads a cached lens only when it changes
+bounds never remove a selected root. Lens, direction, depth, and enrichment
+expansion controls qualify only the typed read they change. The graph has no
+zoom, pan, or reset rail: wheel, touch, pointer drag, pinch, and keyboard input
+manipulate its viewport directly, with fit as the lower bound. The graph,
+relationship list, code blocks, and tables hand vertical input to the overview
+sheet whenever they have no vertical range left to consume. Loading, refusal,
+retry, and truncation remain explicit. A streamed task fact re-reads a cached
+lens only when it changes
 a displayed task or can add an edge into that graph; unrelated task activity
 does not refresh it. A response that advances only the journal snapshot does
 not publish another browser render.
