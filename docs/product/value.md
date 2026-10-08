@@ -578,13 +578,21 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
-Beside the draft, one compact framed control holds the quiet/speak/narrate
-speech dial and the lifetime dial in two upper columns of vertical ranges, the
-current values set above the frame as one phrase, speech ending and lifetime
-starting at the center divider. Minimum remains at the bottom and maximum
-at the top. The send action says `Send` in every lifetime while its color
-continues to identify Steer, Drive, or Drain; the frame uses the same restrained
-corners as the adjacent draft rather than pill geometry.
+Beside the draft, one compact framed column holds, top to bottom, the round
+`Send`, a row of two small round button slots, the quiet/speak/narrate speech
+range, and the lifetime range. Both ranges run left to right, minimum on the
+left and maximum on the right; their bars stay neutral, and each thumb wears its
+current value as a word drawn to fill it, so every value occupies the same
+width. Send, the round buttons, and the thumbs share one tactile face whose
+color carries state. `Send` lights only when a press would submit something:
+it fills with one concentric ring per agent that would receive a message, in
+that agent's accent with member zero at the core, and otherwise stays
+uncolored; the command-modifier and focus rings still show around it. The
+first round button reads `TURBO`, lit in the warning color, while every member
+of the team launches in fast mode, and `BASIC`, uncolored, otherwise; a press
+moves every member to the other posture under the per-seat pinning rule, and
+running OMP agents take it at once. The frame uses the same restrained corners
+as the adjacent draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.

@@ -2,6 +2,7 @@ use super::*;
 
 mod frame;
 use frame::ControlsFrame;
+pub(super) use frame::SendSlot;
 
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 
@@ -450,33 +451,6 @@ fn commit_life_callback(
     })
 }
 
-/// Engines disagree on Left/Right for a vertical range: WebKit and Firefox
-/// keep the native vertical mapping, where Left raises. On every engine Right
-/// raises and Left lowers by exactly one stop, as Up and Down do natively, and
-/// the engine's own handling of the press is suppressed.
-fn horizontal_arrows(last: usize, select: Callback<usize>) -> Callback<KeyboardEvent> {
-    Callback::from(move |event: KeyboardEvent| {
-        let raise = match event.key().as_str() {
-            "ArrowRight" => true,
-            "ArrowLeft" => false,
-            _ => return,
-        };
-        event.prevent_default();
-        let input: HtmlInputElement = event.target_unchecked_into();
-        let Ok(index) = input.value().parse::<usize>() else {
-            return;
-        };
-        let next = if raise {
-            (index + 1).min(last)
-        } else {
-            index.saturating_sub(1)
-        };
-        if next != index {
-            select.emit(next);
-        }
-    })
-}
-
 fn cancel_life_preview_callback(
     team: CanonicalUuid,
     controls: UseReducerHandle<TeamControls>,
@@ -501,6 +475,8 @@ pub(super) fn render_team_controls(
     can_configure: bool,
     ready: bool,
     dormant: bool,
+    slots: Vec<SendSlot>,
+    turbo: Html,
 ) -> Html {
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
@@ -518,15 +494,11 @@ pub(super) fn render_team_controls(
             {dormant}
             {ready}
             {topology_revision}
+            {slots}
             speech={speech.label()}
             lifetime={selected.label()}
             lifetime_pending={control.pending_life.is_some()}
-            send_class={classes!(
-                "team-send",
-                (selected == TeamLife::Steer).then_some("armed"),
-                (selected == TeamLife::Drain).then_some("maxed"),
-            )}
-            send_title={format!("Send with {}: {}", selected.label(), selected.help())}
+            {turbo}
         >
             {speech_slider(
                 team,
@@ -554,7 +526,9 @@ fn speech_slider(
     set_automatic_speech: Callback<(String, bool)>,
 ) -> Html {
     let automatic_team = team.to_string();
-    let select = Callback::from(move |index: usize| {
+    let oninput = Callback::from(move |event: InputEvent| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let index = input.value().parse::<usize>().unwrap_or(1);
         let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
         set_automatic_speech.emit((automatic_team.clone(), speech != TeamSpeech::Quiet));
         controls.dispatch(TeamControlAction::SetSpeech {
@@ -563,29 +537,26 @@ fn speech_slider(
             speech,
         });
     });
-    let oninput = select.reform(|event: InputEvent| {
-        let input: HtmlInputElement = event.target_unchecked_into();
-        input.value().parse::<usize>().unwrap_or(1)
-    });
     html! {
-        <label class={classes!(
-            "team-slider",
-            "team-speech",
-            (speech == TeamSpeech::Quiet).then_some("armed"),
-            (speech == TeamSpeech::Narrate).then_some("maxed"),
-        )}>
+        <label
+            class={classes!(
+                "team-slider",
+                "team-speech",
+                (speech == TeamSpeech::Quiet).then_some("armed"),
+                (speech == TeamSpeech::Narrate).then_some("maxed"),
+            )}
+            data-stop={speech.index().to_string()}
+        >
             <input
                 type="range"
                 min="0"
                 max="2"
                 step="1"
-                aria-orientation="vertical"
                 value={speech.index().to_string()}
                 aria-label={format!("Speech mode: {}", speech.label())}
                 oninput={oninput}
-                onkeydown={horizontal_arrows(TeamSpeech::ALL.len() - 1, select)}
             />
-            <span>{speech.label()}</span>
+            {fit_word(speech.label())}
         </label>
     }
 }
@@ -602,28 +573,42 @@ fn lifetime_slider(
         input.value().parse::<usize>().unwrap_or(0)
     });
     html! {
-        <label class={classes!(
-            "team-slider",
-            "team-lifetime",
-            (selected == TeamLife::Steer).then_some("armed"),
-            (selected == TeamLife::Drain).then_some("maxed"),
-        )}>
+        <label
+            class={classes!(
+                "team-slider",
+                "team-lifetime",
+                (selected == TeamLife::Steer).then_some("armed"),
+                (selected == TeamLife::Drain).then_some("maxed"),
+            )}
+            data-stop={selected.index().to_string()}
+        >
             <input
                 type="range"
                 min="0"
                 max="2"
                 step="1"
-                aria-orientation="vertical"
                 value={selected.index().to_string()}
                 aria-label={format!("Task allocation policy: {}", selected.help())}
                 title={selected.help()}
                 disabled={disabled}
                 oninput={preview}
                 onchange={onchange}
-                onkeydown={horizontal_arrows(TeamLife::ALL.len() - 1, commit)}
                 onblur={cancel_preview}
             />
-            <span>{selected.label()}</span>
+            {fit_word(selected.label())}
         </label>
+    }
+}
+
+/// One control word drawn to fill its box exactly: every word occupies the
+/// same physical width and height, squeezed or stretched to fit, so a long
+/// word and a short one read as equal labels on equal buttons.
+pub(super) fn fit_word(word: &'static str) -> Html {
+    html! {
+        <svg class="fit-word" viewBox="0 0 100 11" preserveAspectRatio="none" aria-hidden="true">
+            <text x="0" y="11" font-size="15" textLength="100" lengthAdjust="spacingAndGlyphs">
+                {word}
+            </text>
+        </svg>
     }
 }

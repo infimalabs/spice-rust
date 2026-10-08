@@ -326,6 +326,59 @@ fn render_fast_toggle(
     }
 }
 
+/// The team's fast-mode button. It reads TURBO while every member's next
+/// launch runs in fast mode and BASIC otherwise. A press moves every member
+/// that differs to the other posture under the per-seat toggle's pinning rule,
+/// so a seat that lands on the global setting follows it again; running OMP
+/// agents take the change at once.
+pub(super) fn render_turbo(
+    runtime: &AppRuntime,
+    members: &[crate::runtime::LaneMember],
+    command: &Callback<(CanonicalUuid, MemberCommand)>,
+) -> Html {
+    let global = runtime.settings().map(|settings| settings.fast_mode);
+    let next = |member: &crate::runtime::LaneMember| member.seat_fast_mode.or(global);
+    let engaged = members.iter().all(|member| next(member) == Some(true));
+    let busy = members.iter().any(|member| {
+        runtime
+            .member_control(member.lane)
+            .and_then(MemberControlState::pending)
+            .is_some()
+    });
+    let target = !engaged;
+    let retunes = members
+        .iter()
+        .filter(|member| next(member) != Some(target))
+        .map(|member| member.lane)
+        .collect::<Vec<_>>();
+    let fast_mode = Some(target).filter(|target| global != Some(*target));
+    let command = command.clone();
+    let onclick = Callback::from(move |_: MouseEvent| {
+        for lane in &retunes {
+            command.emit((*lane, MemberCommand::RetuneFast { fast_mode }));
+        }
+    });
+    let word = if engaged { "Turbo" } else { "Basic" };
+    html! {
+        <button
+            type="button"
+            class="team-turbo"
+            data-lit={engaged.to_string()}
+            aria-label={word}
+            aria-pressed={engaged.to_string()}
+            title={if engaged {
+                "Turbo: every agent in this team runs in fast mode"
+            } else {
+                "Basic: press to run every agent in this team in fast mode"
+            }}
+            disabled={busy || global.is_none() || !runtime.offers(CommandKind::LaneFastRetune)}
+            onclick={onclick}
+        >
+            {super::controls::fit_word(word)}
+        </button>
+    }
+}
+
 fn render_retune(
     runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,

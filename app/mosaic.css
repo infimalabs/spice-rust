@@ -794,82 +794,118 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The round submit leads, the vertical ranges follow side by side, and their
-   current values finish the frame. Range wrappers stay frameless and state
-   uses fill alone. The 80px column keeps one 12px inline rhythm: the 56px
-   submit, 1.6 times the 35px global action, leaves 12px on each side, as each
-   16px track does within its 40px half. Its 68px row leaves 6px above and
-   below. One 93%, triple-thick control paint stays continuous through the
-   frame, then fades across the shared 10px continuation. The matching top
-   rule and equal inline shadows lift it above the panels on every side. */
+/* The round send leads; a row of two round button slots follows, then the
+   speech and lifetime ranges, each spanning the 80px column with minimum on
+   the left and maximum on the right. Send, the round buttons, and both range
+   thumbs share one knob face whose color carries state, while range bars stay
+   neutral; each thumb wears its current word. One 93%, triple-thick control
+   paint stays continuous through the frame, then fades across the shared
+   10px continuation. The matching top rule and equal inline shadows lift it
+   above the panels on every side. */
 .team-composer .team-composer-controls {
-  --team-control-item-height: 68px;
-  --team-control-label-row: 14px;
   --team-control-send-size: 56px;
+  --team-control-button-size: 30px;
+  --team-slider-inset: 4px;
+  --team-slider-track: 4px;
+  --team-slider-thumb-inline: 46px;
+  --team-slider-thumb-block: 22px;
   position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0; block-size: var(--team-composer-block-size);
-  grid-template: var(--team-control-item-height) minmax(0, 1fr) var(--team-control-label-row) / repeat(2, minmax(0, 1fr));
+  grid-template: 62px 34px repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
     -8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent),
     8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
+/* Continuous face shading, asymmetric edge light, and diffuse elevation keep
+   every knob cohesive and tactile without visible concentric contour rings. */
+.team-composer :is(.team-send, .team-turbo, .team-slider) {
+  --team-knob-surface: var(--control-state-accent, var(--accent));
+  --team-knob-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-knob-surface) 68%, var(--app-shadow-source));
+  --team-knob-highlight: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%);
+  --team-knob-face: linear-gradient(150deg, color-mix(in srgb, var(--team-knob-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-knob-surface) 96%, var(--app-highlight-source)) 46%, var(--team-knob-surface) 68%, color-mix(in srgb, var(--team-knob-surface) 76%, var(--app-shadow-source)) 100%);
+  --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
+}
+.team-composer :is(.team-send, .team-turbo) {
+  --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
+  position: relative; display: grid; place-items: center; overflow: hidden;
+  place-self: center; width: var(--team-knob-size); min-width: var(--team-knob-size); max-width: var(--team-knob-size); height: var(--team-knob-size); min-height: var(--team-knob-size); margin: 0; padding: 0;
+  border: var(--team-knob-edge); border-radius: var(--app-radius-circle); background: var(--team-knob-face);
+  box-shadow: var(--team-send-command-ring), var(--team-knob-lift);
+  color: var(--page);
+  font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
+}
+.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 1; grid-column: 1 / -1; }
+.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 2; grid-column: 1; cursor: pointer; }
+.team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
+.team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
+.team-composer :is(.team-send, .team-turbo):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
+.team-composer :is(.team-send, .team-turbo)[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
+.team-composer :is(.team-send, .team-turbo):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
+/* A round button lights only when pressing it does something. SEND fills
+   with one concentric ring per agent a press would reach, member zero at the
+   core, under the shared gloss; TURBO glows in the warning color. Unlit, both
+   are flat and uncolored, while the command and focus rings still show. */
+.team-composer .team-send[data-lit="true"] { border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-send-rings); }
+.team-composer .team-turbo[data-lit="true"] {
+  --control-state-accent: var(--warning);
+  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--warning) 75%, transparent);
+}
+.team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { border: var(--app-control-edge-width) solid var(--line); background: var(--control); box-shadow: var(--team-send-command-ring); color: var(--muted); }
+.team-composer :is(.team-send, .team-turbo):not([data-lit="true"])::before { content: none; }
+.team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
+.fit-word {
+  display: block; overflow: visible; pointer-events: none;
+  fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
+}
 .team-slider {
   --control-state-accent: var(--accent);
-  display: grid; grid-template-rows: minmax(0, 1fr); justify-items: center;
-  min-height: 0; padding: 7px 2px; overflow: hidden;
-  border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: ns-resize;
+  --team-slider-position: 0;
+  position: relative; display: grid; align-items: center;
+  min-width: 0; min-height: 0; padding: 0 var(--team-slider-inset);
+  cursor: ew-resize;
 }
+.team-slider[data-stop="1"] { --team-slider-position: .5; }
+.team-slider[data-stop="2"] { --team-slider-position: 1; }
+.team-composer .team-slider { grid-column: 1 / -1; }
 .team-slider input {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 16px;
-  height: 100%;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  accent-color: var(--control-state-accent);
-  cursor: ns-resize;
+  -webkit-appearance: none; appearance: none;
+  inline-size: 100%; block-size: var(--team-slider-thumb-block);
+  margin: 0; padding: 0; border: 0; background: transparent; cursor: inherit;
 }
+.team-slider input:focus-visible { outline: none; }
+/* Engines refuse a whole selector list that names another engine's range
+   pseudo-element, so each pseudo-element keeps its own rule. */
+.team-slider input::-webkit-slider-runnable-track { block-size: var(--team-slider-track); border-radius: var(--team-slider-track); background: var(--line); }
+.team-slider input::-moz-range-track { block-size: var(--team-slider-track); border-radius: var(--team-slider-track); background: var(--line); }
+.team-slider input::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; box-sizing: border-box;
+  inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block);
+  margin-block-start: calc((var(--team-slider-track) - var(--team-slider-thumb-block)) / 2);
+  border: var(--team-knob-edge); border-radius: var(--app-radius-pill);
+  background: var(--team-knob-highlight), var(--team-knob-face); box-shadow: var(--team-knob-lift);
+}
+.team-slider input::-moz-range-thumb {
+  box-sizing: border-box;
+  inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block);
+  border: var(--team-knob-edge); border-radius: var(--app-radius-pill);
+  background: var(--team-knob-highlight), var(--team-knob-face); box-shadow: var(--team-knob-lift);
+}
+.team-slider input:focus-visible::-webkit-slider-thumb { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
+.team-slider input:focus-visible::-moz-range-thumb { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
 .team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .team-slider input:disabled { cursor: not-allowed; }
-.team-slider span {
-  color: var(--muted);
-  font: var(--app-type-badge)/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-transform: lowercase;
-  white-space: nowrap;
+/* The word rides the thumb: it starts where the native thumb starts along
+   the track and keeps five pixels inside each rounded end. */
+.team-slider .fit-word {
+  position: absolute; inset-block: 0; margin-block: auto;
+  inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - var(--team-slider-thumb-inline)) + 5px);
+  inline-size: calc(var(--team-slider-thumb-inline) - 10px); block-size: calc(var(--team-slider-thumb-block) - 11px);
+  color: var(--page);
 }
-/* The frame is the labels' containing block, so slider clipping never reaches
-   them. Both labels end two pixels above the frame's bottom edge; speech ends
-   3px before and lifetime starts 4px after the column midpoint, while
-   "narrate" overhangs the frame's left edge, short of the draft. */
-.team-composer .team-slider { grid-row: 2; }
-.team-composer .team-slider span { position: absolute; inset-block-end: 2px; }
-.team-composer .team-speech span { inset-inline-end: calc(50% + 3px); }
-.team-composer .team-lifetime span { inset-inline-start: calc(50% + 4px); }
-/* Continuous face shading, asymmetric edge light, and diffuse elevation keep
-   the pop-top cohesive and tactile without visible concentric contour rings. */
-.team-composer .team-send {
-  --team-send-surface: var(--control-state-accent, var(--accent)); --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
-  position: relative; overflow: hidden;
-  grid-row: 1; grid-column: 1 / -1; place-self: center; width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size); margin: 0; padding: 0;
-  border: var(--app-control-edge-width) solid color-mix(in srgb, var(--team-send-surface) 68%, var(--app-shadow-source)); border-radius: var(--app-radius-circle); background: linear-gradient(150deg, color-mix(in srgb, var(--team-send-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-send-surface) 96%, var(--app-highlight-source)) 46%, var(--team-send-surface) 68%, color-mix(in srgb, var(--team-send-surface) 76%, var(--app-shadow-source)) 100%);
-  box-shadow: var(--team-send-command-ring), inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-send-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
-  font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; text-shadow: 0 1px 0 color-mix(in srgb, var(--app-shadow-source) 24%, transparent); transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
-}
-.team-composer .team-send::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: radial-gradient(ellipse at 34% 18%, color-mix(in srgb, var(--app-highlight-source) 16%, transparent), transparent 48%); box-shadow: none; content: ""; pointer-events: none; }
-.team-composer .team-send:not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
-.team-composer .team-send:not(:disabled):active { filter: brightness(.985); transform: translateY(1px); box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-send-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
-.team-composer .team-send:not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
-.team-slider.armed,
-.team-send.armed { --control-state-accent: var(--muted); }
-.team-slider.maxed,
-.team-send.maxed { --control-state-accent: var(--warning); }
-.team-slider.armed span,
-.team-slider.maxed span { color: var(--control-state-accent); }
+.team-slider.armed { --control-state-accent: var(--muted); }
+.team-slider.maxed { --control-state-accent: var(--warning); }
 .team-send {
   min-width: 6ch;
   flex: 0 0 var(--team-control-item-height);
@@ -883,22 +919,16 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: var(--app-type-copy)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-/* With no agent running and nothing drafted, the team's sliders and send step
-   back like an inactive lane without compositing their shared field surface.
-   Filter the slider's visual children, never its label-positioning ancestor:
-   filter establishes a containing block and would rebase both labels. */
-.team-composer .team-composer-controls > .team-send {
+/* With no agent running and nothing drafted, the team's knobs step back like
+   an inactive lane without compositing their shared field surface. */
+.team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-slider) {
   transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-composer-controls > .team-slider { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
-.team-composer .team-composer-controls > .team-slider > * { transition: filter var(--app-motion-settle) var(--app-ease-standard); }
 @media (prefers-reduced-motion: reduce) {
-  .team-composer .team-send,
-  .team-composer .team-composer-controls > .team-send { transition: none; }
+  .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-slider) { transition: none; }
 }
 .team-composer .team-composer-controls[data-idle="true"] > * { opacity: var(--inactive-lane-opacity); }
-.team-composer .team-composer-controls[data-idle="true"] > .team-send,
-.team-composer .team-composer-controls[data-idle="true"] > .team-slider > * { filter: saturate(.55); }
+.team-composer .team-composer-controls[data-idle="true"] > :is(.team-send, .team-turbo, .team-slider) { filter: saturate(.55); }
 .team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
 /* Command previews ring outside the send button now that its row has room.
    Ordinary submit follows the focused agent; broadcast uses its purple slot. */
