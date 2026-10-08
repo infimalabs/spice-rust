@@ -290,9 +290,9 @@ nearest to running out at the top, with equal amounts kept in capacity order.
 Usage therefore moves layer surfaces and positions, never colors; a failed
 refresh desaturates them. Spent capacity above the layers is a faint neutral
 hatch rather than bare page, so the well never reads as a hole in the button,
-and its texture stays distinct from any desaturated layer. The
-button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
-available app update, and red for both; quota colors never change.
+and its texture stays distinct from any desaturated layer. The button's
+two-pixel ring and shadow are neutral, reddish for Fast mode whether or not an
+app update is available, and blue for an update alone; quota colors never change.
 Pressing the Spice button opens that generic sidebar, which forms around the
 button: the button stays in place above the sheet, which grows out of the
 button's circle and shrinks back into it on close, without motion when reduced
@@ -595,11 +595,11 @@ it fills with one ring per agent that would receive a message, each holding an
 equal share of the face's area, in that agent's accent with member zero at the
 core, its word on a flat plate set into the rings. Unlit, it keeps the raised
 knob in the neutral surface of the resting quiet thumb; the command-modifier and
-focus rings still show around it. Raised states take the team accents in order
-after green: the first round button reads `TURBO`, lit in the second accent,
-blue, while every member of the team launches in fast mode, and `BASIC`, in the
-same neutral raised knob, otherwise; each range's maximum
-stop, narrate and drain, wears the same blue. A press of `TURBO`
+focus rings still show around it. Raised states use distinct team accents: the
+first round button reads `TURBO`, lit in the reddish accent while every member
+of the team launches in fast mode, and `BASIC`, in the same neutral raised knob,
+otherwise; each range's maximum stop, narrate and drain, keeps the second
+accent, blue. A press of `TURBO`
 moves every member to the other posture under the per-seat pinning rule, and
 running OMP agents take it at once. The frame uses the same restrained corners
 as the adjacent draft rather than pill geometry.
