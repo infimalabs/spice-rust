@@ -122,7 +122,7 @@ pub(super) fn render_spice_button(button: SpiceButton<'_>) -> Html {
     let quota = quota_level(button.runtime);
     let edge_accent = match (fast_mode, button.app_update.is_some()) {
         (false, false) => None,
-        (true, false) => Some(2),
+        (true, false) => Some(3),
         (false, true) => Some(1),
         (true, true) => Some(3),
     };

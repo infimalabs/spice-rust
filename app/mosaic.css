@@ -891,9 +891,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* A round button lights only when pressing it does something. SEND fills
    with one equal-area ring per agent a press would reach, member zero at the
    core, under the shared gloss, its word on a flat plate set into the rings.
-   Raised states take the team accents in order after green: TURBO and each
-   slider's maximum stop wear the second, blue. Unlit, both buttons keep the
-   raised knob in the neutral surface of the resting QUIET thumb. */
+   Raised states use distinct team accents: TURBO wears the reddish accent,
+   while each slider's maximum stop keeps the second accent, blue. Unlit, both
+   buttons keep the raised knob in the neutral surface of the resting QUIET thumb. */
 .team-composer .team-send[data-lit="true"] { border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-send-rings); }
 .team-composer .team-send[data-lit="true"] .team-send-word {
   position: relative; z-index: 1; padding: 3px 4px;
@@ -901,8 +901,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   background: var(--muted); color: var(--page);
 }
 .team-composer .team-turbo[data-lit="true"] {
-  --control-state-accent: var(--accent-1);
-  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-1) 75%, transparent);
+  --control-state-accent: var(--accent-3);
+  box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-3) 75%, transparent);
 }
 .team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { --control-state-accent: var(--muted); }
 .team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
