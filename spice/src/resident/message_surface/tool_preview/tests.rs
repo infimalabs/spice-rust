@@ -378,7 +378,7 @@ fn a_preview_within_the_bound_is_not_elided() {
         "a preview at the bound is whole: {preview}"
     );
 
-    let lone = ordinary_call_preview("", &format!(r#""{}""#, "z".repeat(MAX_CHARS * 2)));
+    let lone = ordinary_call_preview("", &format!(r#""{}""#, "z".repeat(MAX_CHARS * 2)), None);
     assert_eq!(lone.chars().count(), MAX_CHARS);
     assert!(lone.starts_with("tool: z"));
     assert_eq!(informative_tokens(&lone), MIN_INFORMATIVE_TOKENS);
@@ -417,10 +417,14 @@ fn shell_families_remain_visible_without_discarding_their_commands() {
             "shell: git status --short",
         ),
     ] {
-        assert_eq!(ordinary_call_preview(name, arguments), expected, "{name}");
+        assert_eq!(
+            ordinary_call_preview(name, arguments, None),
+            expected,
+            "{name}"
+        );
     }
-    assert_eq!(ordinary_call_preview("Bash", ""), "Bash shell");
-    assert_eq!(ordinary_call_preview("zsh", ""), "zsh shell");
+    assert_eq!(ordinary_call_preview("Bash", "", None), "Bash shell");
+    assert_eq!(ordinary_call_preview("zsh", "", None), "zsh shell");
 }
 
 #[test]
@@ -475,23 +479,83 @@ fn harness_tools_preview_the_target_they_act_on() {
         ("job", r#"{"op":"list","i":"Listing jobs"}"#, "job: list"),
     ] {
         assert_eq!(
-            ordinary_call_preview(name, arguments),
+            ordinary_call_preview(name, arguments, None),
             expected,
             "{arguments}"
         );
     }
     // A payload missing the tool's own target keeps the generic scan.
     assert_eq!(
-        ordinary_call_preview("lsp", r#"{"file":"src/a.rs"}"#),
+        ordinary_call_preview("lsp", r#"{"file":"src/a.rs"}"#, None),
         "lsp: src/a.rs"
     );
     let long = format!(
         r#"{{"action":"hover","symbol":"value","file":"{}.rs","line":9}}"#,
         "deep/".repeat(MAX_CHARS)
     );
-    let bounded = ordinary_call_preview("lsp", &long);
+    let bounded = ordinary_call_preview("lsp", &long, None);
     assert_eq!(bounded.chars().count(), MAX_CHARS);
     assert!(bounded.starts_with("lsp: hover value (deep/"), "{bounded}");
+}
+
+/// A job's typed intent is what a reader recognizes; its operation and job
+/// id stay beside it so the line still correlates with the job it names.
+///
+/// Updates repeat no intent, so the call's carries through each update and
+/// into the result, which append their state once. A call without one keeps
+/// the operation and id, and only `job` changes: other tools' typed intents
+/// leave their previews as they were.
+#[test]
+fn a_job_call_leads_with_its_typed_intent_through_updates_and_its_result() {
+    let mut previews = CallPreviews::default();
+    let job = |intent: Option<&str>| listen::ToolMoment::Call {
+        name: "job".to_owned(),
+        arguments: r#"{"op":"wait","id":"dVW6Zkf0h","i":"argument prose"}"#.to_owned(),
+        intent: intent.map(str::to_owned),
+    };
+    let wait = r#"{"op":"wait","id":"dVW6Zkf0h"}"#;
+
+    assert_eq!(
+        activity(
+            lane(1),
+            &tool("call-1", job(Some("  Waiting\nfor the gate "))),
+            &mut previews
+        ),
+        "job: Waiting for the gate (wait dVW6Zkf0h)"
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            activity(lane(1), &tool("call-1", update("job", wait)), &mut previews),
+            "job: Waiting for the gate (wait dVW6Zkf0h) update"
+        );
+    }
+    assert_eq!(
+        activity(lane(1), &tool("call-1", succeeded()), &mut previews),
+        "job: Waiting for the gate (wait dVW6Zkf0h) succeeded"
+    );
+
+    for intent in [None, Some(" \n ")] {
+        assert_eq!(
+            activity(lane(1), &tool("call-2", job(intent)), &mut previews),
+            "job: wait dVW6Zkf0h"
+        );
+    }
+    assert_eq!(
+        ordinary_call_preview("job", r#"{"op":"list"}"#, Some("Listing jobs")),
+        "job: Listing jobs (list)"
+    );
+    assert_eq!(
+        ordinary_call_preview("job", "{}", Some("Checking jobs")),
+        "job: Checking jobs"
+    );
+    assert_eq!(
+        ordinary_call_preview("grep", r#"{"pattern":"TODO"}"#, Some("Finding work")),
+        "grep: TODO"
+    );
+
+    let long = ordinary_call_preview("job", wait, Some(&"waiting ".repeat(MAX_CHARS)));
+    assert_eq!(long.chars().count(), MAX_CHARS);
+    assert!(long.ends_with("\u{2026} (wait dVW6Zkf0h)"), "{long}");
 }
 
 #[test]

@@ -102,6 +102,8 @@ enum ScanAttempt {
 struct PendingTool {
     order: u64,
     preview: String,
+    /// The typed intent the call declared, which its updates do not repeat.
+    intent: Option<String>,
 }
 
 struct RecordGuard {
@@ -816,25 +818,39 @@ fn visible_event(event: &listen::Event) -> bool {
 }
 
 fn fold_tool(cursor: &mut Cursor, tool: &listen::Tool) {
-    match &tool.moment {
+    let (name, arguments, declared) = match &tool.moment {
         listen::ToolMoment::Call {
-            name, arguments, ..
-        }
-        | listen::ToolMoment::Update { name, arguments } => {
-            let preview = super::tool_preview::call_preview(name, arguments);
-            if let Some(pending) = cursor.pending.get_mut(&tool.call_id) {
-                pending.preview = preview;
-            } else {
-                let order = cursor.next_call;
-                cursor.next_call = cursor.next_call.saturating_add(1);
-                cursor
-                    .pending
-                    .insert(tool.call_id.clone(), PendingTool { order, preview });
-            }
-        }
+            name,
+            arguments,
+            intent,
+        } => (
+            name,
+            arguments,
+            Some(super::tool_preview::declared_intent(intent.as_deref())),
+        ),
+        listen::ToolMoment::Update { name, arguments } => (name, arguments, None),
         listen::ToolMoment::Result(_) => {
             cursor.pending.remove(&tool.call_id);
+            return;
         }
+    };
+    let pending = cursor.pending.get_mut(&tool.call_id);
+    let intent = declared.unwrap_or_else(|| pending.as_ref().and_then(|tool| tool.intent.clone()));
+    let preview = super::tool_preview::call_preview(name, arguments, intent.as_deref());
+    if let Some(pending) = pending {
+        pending.preview = preview;
+        pending.intent = intent;
+    } else {
+        let order = cursor.next_call;
+        cursor.next_call = cursor.next_call.saturating_add(1);
+        cursor.pending.insert(
+            tool.call_id.clone(),
+            PendingTool {
+                order,
+                preview,
+                intent,
+            },
+        );
     }
 }
 
