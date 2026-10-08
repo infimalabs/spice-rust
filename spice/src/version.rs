@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use wire::manifest::ProductVersion;
 use wire::{Digest, Domain, Fault, FaultClass, TaskStamp};
 
-/// Base-52 committer instant of the source commit, injected only by
+/// Base-52 source clock with first-parent timestamp ties ordered, injected only by
 /// `spice dev xtask -- install`. Every other build is unbound to a commit.
 const SOURCE_STAMP: Option<&str> = option_env!("SPICE_SOURCE_STAMP"); // env-policy: allow
 

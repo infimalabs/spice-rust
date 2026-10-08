@@ -517,7 +517,11 @@ release commit, then binds that manifest, package, notes, targets, and operation
 with the identical source and release commit.
 Runtime version surfaces (`spice --version`, `spice version`, and the app
 menu footer) report the tracked version, with an installed pre-release extended
-by its source commit stamp. The version never carries the executable digest:
+by its source commit stamp. The stamp uses the Git committer second plus one
+microsecond per same-second first-parent ancestor, so deterministic landings
+with tied timestamps still order successive builds. Backward clocks and chains
+that exhaust one second's microsecond precision refuse. The version never
+carries the executable digest:
 the report's native-binary field names the running executable by its complete
 domain-separated digest, which needs no Git checkout, generated build input, or
 random value, so identical executable bytes keep the same identity. Ordinary

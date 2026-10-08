@@ -23,7 +23,7 @@ fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
 }
 
 #[test]
-fn a_source_stamp_orders_only_a_commit_later_than_its_first_parent() {
+fn source_stamps_order_first_parent_commits_even_when_their_seconds_tie() {
     let stamp = |log| stamp_from_committer_seconds(log);
     let head = stamp("1790000001\n1790000000\n").expect("later commit stamps");
     assert_eq!(
@@ -32,14 +32,31 @@ fn a_source_stamp_orders_only_a_commit_later_than_its_first_parent() {
     );
     assert_eq!(
         stamp("1790000001\n"),
-        Ok(head),
+        Ok(head.clone()),
         "a root commit has no parent to precede"
     );
+    let tied =
+        stamp("1790000001\n1790000001\n1790000000\n").expect("same-second descendant stamps");
+    let next = stamp("1790000001\n1790000001\n1790000001\n1790000000\n")
+        .expect("another same-second descendant stamps");
+    assert_eq!(tied.micros(), head.micros() + 1);
+    assert_eq!(next.micros(), tied.micros() + 1);
+    let later = stamp("1790000002\n1790000001\n1790000001\n1790000001\n1790000000\n")
+        .expect("later second stamps");
+    assert!(head < tied && tied < next && next < later);
+    assert_eq!(
+        stamp("1790000001\n1790000001\n"),
+        Ok(tied),
+        "a tied root has the same first-parent position"
+    );
     for refused in [
-        "1790000000\n1790000000\n",
         "1790000000\n1790000001\n",
+        "1790000000\n1790000000\n1790000001\n",
         "",
         "HEAD\n",
+        "1790000000\nparent\n",
+        "-1\n",
+        "9223372036854775807\n",
     ] {
         assert!(stamp(refused).is_err(), "{refused:?} must not stamp");
     }

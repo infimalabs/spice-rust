@@ -93,12 +93,22 @@ pub struct LaneEffortRetuned {
 pub struct LaneFastRetuned {
     /// Seated member whose own flag changed.
     pub lane: CanonicalUuid,
-    /// The lane's own flag before this transaction.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub from: bool,
-    /// The lane's own flag after this transaction.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub fast_mode: bool,
+    /// The lane's own flag before this transaction. Retain field presence so
+    /// older facts with explicit false or an inherited disposition round-trip.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<bool>,
+    /// The lane's own flag after this transaction. New facts always name it;
+    /// absence remains readable on facts from before the additive flag.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_mode: Option<bool>,
 }
 
 /// A running occupant confirmed a live provider retune.

@@ -80,8 +80,8 @@ impl Selection<'_> {
             }),
             Self::Fast(request) => SeatFact::Fast(wire::body::LaneFastRetuned {
                 lane: request.lane,
-                from: std::mem::replace(&mut row.fast_mode, request.fast_mode),
-                fast_mode: request.fast_mode,
+                from: Some(std::mem::replace(&mut row.fast_mode, request.fast_mode)),
+                fast_mode: Some(request.fast_mode),
             }),
         }
     }

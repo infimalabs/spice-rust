@@ -34,6 +34,8 @@ const RESIDENT_ROLLBACK: &str = "spice.resident.rollback";
 const NEXT_RESIDENT_ROLLBACK: &str = "spice.resident.rollback.next";
 /// Compile-time source stamp read by `spice::version`.
 const SOURCE_STAMP_ENV: &str = "SPICE_SOURCE_STAMP"; // env-policy: allow
+/// Ordered source-stamp positions available within one Git committer second.
+const SOURCE_SECOND_MICROS: i64 = 1_000_000;
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -317,11 +319,11 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
     Ok(digest)
 }
 
-/// Order this build by its source commit's committer instant.
+/// Order this build by its source commit's clock and first-parent tie position.
 fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
     let logged = Command::new("git")
         .current_dir(root)
-        .args(["log", "-2", "--first-parent", "--format=%ct", "HEAD"])
+        .args(["log", "--first-parent", "--format=%ct", "HEAD"])
         .stderr(Stdio::inherit())
         .output()?;
     if !logged.status.success() {
@@ -333,9 +335,12 @@ fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
         .map_err(RefreshError::SourceStamp)
 }
 
-/// Stamp HEAD from `git log -2 --first-parent --format=%ct`, refusing a
-/// commit that is not strictly later than its first parent: such a stamp
-/// would not order this build after the one before it.
+/// Stamp HEAD from its committer second and its position in a same-second
+/// first-parent chain. Git stores only seconds, and deterministic task landings
+/// inherit the later parent's clock. Each tied descendant therefore advances
+/// one microsecond. The whole tied prefix is needed so repeated landings cannot
+/// reuse their parent's adjusted stamp. Refuse backward clocks and chains that
+/// exhaust the second's precision rather than overlap the next second.
 fn stamp_from_committer_seconds(log: &str) -> Result<TaskStamp, String> {
     let mut instants = log.lines().map(|line| {
         line.parse::<i64>()
@@ -344,16 +349,29 @@ fn stamp_from_committer_seconds(log: &str) -> Result<TaskStamp, String> {
     let head = instants
         .next()
         .ok_or_else(|| "HEAD has no committer instant".to_owned())??;
-    if let Some(parent) = instants.next().transpose()?
-        && head <= parent
-    {
-        return Err(format!(
-            "HEAD committer instant {head}s is not later than its first parent's {parent}s"
-        ));
+    let micros = head
+        .checked_mul(SOURCE_SECOND_MICROS)
+        .ok_or_else(|| format!("committer instant {head}s overflows microseconds"))?;
+    let mut ties = 0;
+    for parent in instants {
+        let parent = parent?;
+        if head < parent {
+            return Err(format!(
+                "HEAD committer instant {head}s is earlier than its first-parent ancestor's {parent}s"
+            ));
+        }
+        if head > parent {
+            break;
+        }
+        ties += 1;
+        if ties >= SOURCE_SECOND_MICROS {
+            return Err("same-second first-parent chain exhausts microsecond precision".to_owned());
+        }
     }
-    head.checked_mul(1_000_000)
-        .ok_or_else(|| format!("committer instant {head}s overflows microseconds"))
-        .and_then(|micros| TaskStamp::for_micros(micros).map_err(|error| error.to_string()))
+    let ordered = micros.checked_add(ties).ok_or_else(|| {
+        format!("committer instant {head}s with {ties} ties overflows microseconds")
+    })?;
+    TaskStamp::for_micros(ordered).map_err(|error| error.to_string())
 }
 
 /// Build `spice` and answer the executable Cargo reported for it.

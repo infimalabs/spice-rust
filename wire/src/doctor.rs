@@ -74,7 +74,7 @@ pub enum SpiceVariable {
     /// Exact installed Spice executable selected by the agent-shell wrapper route.
     #[serde(rename = "SPICE_RS_WRAPPER_SPICE")] // env-policy: allow
     WrapperSpice,
-    /// Source commit's committer instant sealed into the appliance version as it is built.
+    /// Source clock with first-parent timestamp ties ordered, sealed into the appliance version.
     #[serde(rename = "SPICE_SOURCE_STAMP")] // env-policy: allow
     SourceStamp,
 }
