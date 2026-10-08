@@ -847,24 +847,28 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The round TURBO leads in a square top-left slot; the round SEND follows
-   across the complete column, then the speech and allocation ranges split the
-   remaining height evenly. Three pixels above and left of TURBO balance its
-   corner inset; three vertical pixels center SEND in its row. Range labels
-   place minimum on the left and maximum on the right. Send, Turbo, and both
-   range thumbs share one knob face whose color carries state, while range bars
-   stay neutral. One 93%, triple-thick control paint stays continuous through
-   the frame, then fades across the shared 10px continuation. */
+/* The 80 × 160 control panel has four rows and three equal row gaps. SEND
+   occupies its fixed diameter first; the next row has two equal slots for
+   TURBO and the future team menu. Each range then receives exactly half the
+   residual height:
+
+     range row = (panel height - SEND - small button - 3 gaps) / 2
+
+   Explicit rows keep a later menu from displacing either range. The range
+   thumb travels inside a pill groove four pixels taller than itself. */
 .team-composer .team-composer-controls {
+  --team-control-gap: 4px;
   --team-control-send-size: 56px;
   --team-control-button-size: 34px;
-  --team-slider-inset: 4px;
-  --team-slider-track: 4px;
+  --team-control-fixed-block: calc(var(--team-control-send-size) + var(--team-control-button-size) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap));
+  --team-slider-row-block: calc((var(--team-composer-block-size) - var(--team-control-fixed-block)) / 2);
+  --team-slider-inset: 2px;
+  --team-slider-groove-block: 26px;
   --team-slider-thumb-inline: 46px;
   --team-slider-thumb-block: 22px;
-  position: relative; display: grid; gap: 0; inline-size: var(--team-control-inline-size);
+  position: relative; display: grid; gap: var(--team-control-gap); inline-size: var(--team-control-inline-size);
   margin-block-start: 0; block-size: var(--team-composer-block-size);
-  grid-template: 40px 62px repeat(2, minmax(0, 1fr)) / repeat(2, minmax(0, 1fr));
+  grid-template: var(--team-control-send-size) var(--team-control-button-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
@@ -889,8 +893,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; cursor: pointer; }
-.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1; }
+.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 2; grid-column: 1; cursor: pointer; }
+.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 1; grid-column: 1 / -1; }
 .team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
@@ -942,6 +946,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider {
   --control-state-accent: var(--accent);
   --team-slider-position: 0;
+  --team-slider-groove-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--line) 74%, var(--app-shadow-source));
+  --team-slider-groove-face: color-mix(in srgb, var(--control) 88%, var(--page));
+  --team-slider-groove-shadow: inset 0 2px 4px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
   position: relative; display: grid; align-items: center;
   min-width: 0; min-height: 0; padding: 0 var(--team-slider-inset);
   cursor: ew-resize;
@@ -949,20 +956,30 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider[data-stop="1"] { --team-slider-position: .5; }
 .team-slider[data-stop="2"] { --team-slider-position: 1; }
 .team-composer .team-slider { grid-column: 1 / -1; }
+.team-composer .team-speech { grid-row: 3; }
+.team-composer .team-lifetime { grid-row: 4; }
 .team-slider input {
   -webkit-appearance: none; appearance: none;
-  inline-size: 100%; block-size: var(--team-slider-thumb-block);
+  inline-size: 100%; block-size: var(--team-slider-groove-block);
   margin: 0; padding: 0; border: 0; background: transparent; cursor: inherit;
 }
 .team-slider input:focus-visible { outline: none; }
 /* Engines refuse a whole selector list that names another engine's range
    pseudo-element, so each pseudo-element keeps its own rule. */
-.team-slider input::-webkit-slider-runnable-track { block-size: var(--team-slider-track); border-radius: var(--team-slider-track); background: var(--line); }
-.team-slider input::-moz-range-track { block-size: var(--team-slider-track); border-radius: var(--team-slider-track); background: var(--line); }
+.team-slider input::-webkit-slider-runnable-track {
+  box-sizing: border-box; block-size: var(--team-slider-groove-block);
+  border: var(--team-slider-groove-edge); border-radius: var(--app-radius-pill);
+  background: var(--team-slider-groove-face); box-shadow: var(--team-slider-groove-shadow);
+}
+.team-slider input::-moz-range-track {
+  box-sizing: border-box; block-size: var(--team-slider-groove-block);
+  border: var(--team-slider-groove-edge); border-radius: var(--app-radius-pill);
+  background: var(--team-slider-groove-face); box-shadow: var(--team-slider-groove-shadow);
+}
 .team-slider input::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; box-sizing: border-box;
   inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block);
-  margin-block-start: calc((var(--team-slider-track) - var(--team-slider-thumb-block)) / 2);
+  margin-block-start: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
   border: var(--team-knob-edge); border-radius: var(--app-radius-pill);
   background: var(--team-knob-highlight), var(--team-knob-face); box-shadow: var(--team-knob-lift);
 }

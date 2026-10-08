@@ -585,23 +585,26 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
-Beside the draft, one compact framed column holds, top to bottom, the round
-`Send`, a row of two small round button slots, the quiet/speak/narrate speech
-range, and the lifetime range. Both ranges run left to right, minimum on the
-left and maximum on the right; their bars stay neutral, and each thumb wears its
-current value as a word drawn to fill it, so every value occupies the same
-width. Send, the round buttons, and the thumbs share one tactile face whose
-color carries state. `Send` lights only when a press would submit something:
-it fills with a pinwheel of one equal slice per agent that would receive a
-message, in that agent's accent and in mathematical order: the first agent
-opens at the right edge and the rest follow counterclockwise, with a darker
-seam opening each slice so two agents sharing an accent stay distinct. A
-smooth raised dome shades the pinwheel, and its word is inked
-straight into the dome in the page color, with no plate. Pressing a lit `Send`
-pops the dome down, and its fold shows as a bright circle around the word until
-release. Unlit, it keeps the raised knob in the
-neutral surface of the resting quiet thumb; the command-modifier and focus
-rings still show around it. Raised states use distinct team accents: the
+Beside the draft, one fixed 80 × 160 control panel has four rows separated by
+three four-pixel gaps: 56 pixels for `Send`, 34 for two equal small-button
+slots, then two equal 29-pixel range rows because
+$(160 - 56 - 34 - 3 \times 4) / 2 = 29$. `TURBO` occupies the small row's
+first slot; its second stays available for the team menu. Each range runs left
+to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside a
+neutral 76 × 26 pill groove: two pixels of clearance above and below, and two
+pixels of panel inset at each end. Every current-value word is drawn to fill its
+thumb, so every value occupies the same width. Send, the round buttons, and the
+thumbs share one tactile face whose color carries state. `Send` lights only when
+a press would submit something: it fills with a pinwheel of one equal slice per
+agent that would receive a message, in that agent's accent and in mathematical
+order: the first agent opens at the right edge and the rest follow
+counterclockwise, with a darker seam opening each slice so two agents sharing an
+accent stay distinct. A smooth raised dome shades the pinwheel, and its word is
+inked straight into the dome in the page color, with no plate. Pressing a lit
+`Send` pops the dome down, and its fold shows as a bright circle around the word
+until release. Unlit, it keeps the raised knob in the neutral surface of the
+resting quiet thumb; the command-modifier and focus rings still show around it.
+Raised states use distinct team accents: the
 first round button reads `TURBO`, lit in the reddish accent while the team's
 own fast-mode flag is on, and `BASIC`, in the same neutral raised knob,
 otherwise; each range's maximum stop, narrate and drain, keeps the second
