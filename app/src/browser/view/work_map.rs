@@ -9,21 +9,17 @@ use wire::intent::{
 };
 use yew::prelude::*;
 
-use crate::browser::mermaid::MermaidImage;
 use crate::work::{
     TaskOverviewSelection, WorkAvailability, WorkProjection, WorkRelationshipDirection, lens,
 };
 use crate::{AppRuntime, TaskRelationsKey, TaskRelationsState};
 
 mod overlay;
+mod viewport;
 
 const DEFAULT_DEPTH: u8 = 2;
 const DEFAULT_NODES: u16 = 48;
 const NODE_STEP: u16 = 32;
-const ZOOM_MIN: u16 = 100;
-const ZOOM_MAX: u16 = 200;
-const ZOOM_STEP: u16 = 25;
-const PAN_STEP: i16 = 48;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum WorkMapLens {
@@ -86,9 +82,6 @@ pub(in crate::browser) struct WorkMapState {
     direction: WorkRelationshipDirection,
     depth: u8,
     max_nodes: u16,
-    zoom: u16,
-    pan_x: i16,
-    pan_y: i16,
 }
 
 impl Default for WorkMapState {
@@ -98,9 +91,6 @@ impl Default for WorkMapState {
             direction: WorkRelationshipDirection::Both,
             depth: DEFAULT_DEPTH,
             max_nodes: DEFAULT_NODES,
-            zoom: ZOOM_MIN,
-            pan_x: 0,
-            pan_y: 0,
         }
     }
 }
@@ -119,34 +109,12 @@ impl WorkMapState {
         TaskRelationsKey::new(roots, self.lens.relation(), self.depth, self.max_nodes)
     }
 
-    fn reset_controls(&mut self) {
-        self.direction = WorkRelationshipDirection::Both;
-        self.depth = DEFAULT_DEPTH;
-        self.max_nodes = DEFAULT_NODES;
-        self.zoom = ZOOM_MIN;
-        self.pan_x = 0;
-        self.pan_y = 0;
-    }
-
     fn expand(&mut self) {
         self.depth = self.depth.saturating_add(1).min(TASK_RELATION_DEPTH_LIMIT);
         self.max_nodes = self
             .max_nodes
             .saturating_add(NODE_STEP)
             .min(TASK_RELATION_NODE_LIMIT);
-    }
-
-    fn zoom(&mut self, increase: bool) {
-        self.zoom = if increase {
-            self.zoom.saturating_add(ZOOM_STEP).min(ZOOM_MAX)
-        } else {
-            self.zoom.saturating_sub(ZOOM_STEP).max(ZOOM_MIN)
-        };
-    }
-
-    fn pan(&mut self, x: i16, y: i16) {
-        self.pan_x = self.pan_x.saturating_add(x);
-        self.pan_y = self.pan_y.saturating_add(y);
     }
 }
 
@@ -244,7 +212,6 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             } else if let Some(presentation) = presentation {
                 {render_graph(
                     &presentation,
-                    render.state,
                     render.work,
                     &activate_task,
                     can_read && matches!(relations, None | Some(TaskRelationsState::Loading)),
@@ -296,46 +263,23 @@ fn enrichment_problem(can_read: bool, relations: Option<&TaskRelationsState>) ->
 /// the graph's own reserved viewport rather than in flow.
 fn render_graph(
     presentation: &lens::Presentation,
-    state: &WorkMapState,
     work: &WorkProjection<'_>,
     activate: &Callback<TaskStamp>,
     pending: bool,
     retry: Option<Callback<MouseEvent>>,
 ) -> Html {
-    let targets = map_targets(presentation, work);
-    let node_ids = Rc::new(targets.iter().map(|target| target.id.clone()).collect());
-    let viewport = overlay::ViewportTransform {
-        zoom: state.zoom,
-        pan_x: state.pan_x,
-        pan_y: state.pan_y,
-    };
-    let render_geometry = Some(overlay::renderer(targets, activate.clone(), viewport));
     html! {
-        <div
-            class="work-map-viewport"
-            aria-busy={pending.then_some("true")}
-            data-work-map-zoom={state.zoom.to_string()}
-            data-work-map-pan-x={state.pan_x.to_string()}
-            data-work-map-pan-y={state.pan_y.to_string()}
-        >
-            <MermaidImage
-                source={AttrValue::from(presentation.source.clone())}
-                {node_ids}
-                {render_geometry}
-                final_answer={true}
-            />
-            if let Some(retry) = retry {
-                <button type="button" class="app-compact-control work-map-retry" onclick={retry}>{"Retry enrichment"}</button>
-            }
-        </div>
+        <viewport::WorkMapViewport
+            source={AttrValue::from(presentation.source.clone())}
+            targets={map_targets(presentation, work)}
+            select={activate.clone()}
+            {pending}
+            {retry}
+        />
     }
 }
 
 fn render_controls(state: &UseStateHandle<WorkMapState>) -> Html {
-    let reset = {
-        let state = state.clone();
-        Callback::from(move |_| update(&state, WorkMapState::reset_controls))
-    };
     html! {
         <>
             <div class="work-map-primary-controls">
@@ -358,20 +302,6 @@ fn render_controls(state: &UseStateHandle<WorkMapState>) -> Html {
                     <button type="button" aria-label="Decrease map depth" disabled={state.depth == 0} onclick={depth_callback(state.clone(), false)}>{"−"}</button>
                     <span>{format!("Depth {}", state.depth)}</span>
                     <button type="button" aria-label="Increase map depth" disabled={state.depth >= TASK_RELATION_DEPTH_LIMIT} onclick={depth_callback(state.clone(), true)}>{"+"}</button>
-                </div>
-                <div class="work-map-control-group app-control-rail work-map-zoom" aria-label="Map zoom">
-                    <button type="button" aria-label="Zoom map out" disabled={state.zoom <= ZOOM_MIN} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(false))}>{"−"}</button>
-                    <span>{format!("{}%", state.zoom)}</span>
-                    <button type="button" aria-label="Zoom map in" disabled={state.zoom >= ZOOM_MAX} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(true))}>{"+"}</button>
-                </div>
-                <div class="work-map-control-group app-control-rail work-map-pan" aria-label="Map pan">
-                    <button type="button" aria-label="Pan map left" onclick={viewport_callback(state.clone(), ViewportAction::Pan(-PAN_STEP, 0))}>{"←"}</button>
-                    <button type="button" aria-label="Pan map up" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, -PAN_STEP))}>{"↑"}</button>
-                    <button type="button" aria-label="Pan map down" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, PAN_STEP))}>{"↓"}</button>
-                    <button type="button" aria-label="Pan map right" onclick={viewport_callback(state.clone(), ViewportAction::Pan(PAN_STEP, 0))}>{"→"}</button>
-                </div>
-                <div class="work-map-control-group app-control-rail work-map-actions">
-                    <button type="button" disabled={is_default_view(state)} onclick={reset}>{"Reset view"}</button>
                 </div>
                 <span class="work-map-bounds">{format!("Limit {} enrichment nodes", state.max_nodes)}</span>
             </section>
@@ -417,33 +347,6 @@ fn depth_callback(state: UseStateHandle<WorkMapState>, increase: bool) -> Callba
             };
         });
     })
-}
-
-#[derive(Clone, Copy)]
-enum ViewportAction {
-    Zoom(bool),
-    Pan(i16, i16),
-}
-
-fn viewport_callback(
-    state: UseStateHandle<WorkMapState>,
-    action: ViewportAction,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        update(&state, |next| match action {
-            ViewportAction::Zoom(increase) => next.zoom(increase),
-            ViewportAction::Pan(x, y) => next.pan(x, y),
-        });
-    })
-}
-
-fn is_default_view(state: &WorkMapState) -> bool {
-    state.direction == WorkRelationshipDirection::Both
-        && state.depth == DEFAULT_DEPTH
-        && state.max_nodes == DEFAULT_NODES
-        && state.zoom == ZOOM_MIN
-        && state.pan_x == 0
-        && state.pan_y == 0
 }
 
 fn map_targets(

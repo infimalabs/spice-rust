@@ -311,6 +311,7 @@
 }
 .mermaid-render[data-source-visible="true"] > .message-image { visibility: hidden; }
 .mermaid-source-body[hidden] { display: none; }
+.mermaid-render > .mermaid-retry { position: absolute; inset-block-end: 10px; inset-inline-end: 10px; z-index: 1; }
 .image-lightbox {
   padding: 16px;
 }

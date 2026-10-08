@@ -187,6 +187,10 @@ pub(super) struct MermaidImageProps {
     pub(super) render_geometry: Option<Callback<Rc<crate::mermaid_geometry::Geometry>, Html>>,
     #[prop_or(true)]
     pub(super) final_answer: bool,
+    /// A canvas is a surface its host manipulates directly: no full-size
+    /// opener and no source toggle compete with its gestures.
+    #[prop_or_default]
+    pub(super) canvas: bool,
 }
 
 struct RenderSubscription {
@@ -346,13 +350,32 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
         .flatten()
         .zip(props.render_geometry.as_ref())
         .map_or_else(Html::default, |(geometry, render)| render.emit(geometry));
+    let status_state = if error.is_some() && !props.final_answer {
+        "pending"
+    } else {
+        state
+    };
+    if props.canvas {
+        return html! {
+            <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state}>
+                <div class="message-image">
+                    if let Some(image) = previous {
+                        <img src={image} alt="Mermaid diagram" draggable="false" data-mosaic-image-state="loaded" />
+                    }
+                    <span class="message-image-status" role="status" data-mermaid-status={status_state}>{status}</span>
+                </div>
+                {geometry_overlay}
+                <button ref={retry_button} type="button" class="app-compact-control mermaid-retry" hidden={error.is_none()}>{"Retry diagram"}</button>
+            </div>
+        };
+    }
     html! {
         <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state} data-source-visible={show_source.to_string()}>
             <button type="button" class="message-image message-image--openable" data-image-preview="" data-image-name="diagram.svg" disabled={previous.is_none()} aria-label="View full-size diagram" title="View full-size diagram">
                 if let Some(image) = previous {
                     <img src={image} alt="Mermaid diagram" data-mosaic-image-state="loaded" />
                 }
-                <span class="message-image-status" role="status" data-mermaid-status={if error.is_some() && !props.final_answer { "pending" } else { state }}>{status}</span>
+                <span class="message-image-status" role="status" data-mermaid-status={status_state}>{status}</span>
             </button>
             {geometry_overlay}
             <button ref={source_button} type="button" class="mermaid-source-toggle" aria-label={source_action} title={source_action} aria-pressed={show_source.to_string()}>

@@ -38,7 +38,8 @@
 .task-text > :last-child { margin-bottom: 0; }
 .task-text :is(p, ul, ol, pre, blockquote, .markdown-table) { margin: 0 0 8px; }
 .task-text h5 { margin: 12px 0 6px; font-size: var(--app-type-summary); }
-.task-text pre { max-height: 24rem; overflow: auto; }
+/* Code scrolls only sideways; the side view owns vertical scrolling. */
+.task-text pre { overflow-x: auto; }
 .task-text img { max-width: 100%; }
 .task-text a { color: var(--accent); }
 .app-sidebar .task-text .message-task-chip:focus-visible {
@@ -209,8 +210,7 @@
   background: transparent;
   font-size: var(--app-type-meta);
 }
-.work-map-depth span,
-.work-map-zoom span {
+.work-map-depth span {
   display: grid;
   place-items: center;
   padding-inline: 5px;
@@ -243,14 +243,13 @@
 }
 /* Graph evidence arrives with enrichment and changes with the board, so its
    rows and any truncation scroll inside one fixed footprint instead of moving
-   jobs and details below. */
+   jobs and details below. At its bounds, scrolling continues to the side view. */
 .work-map-list-scroll {
   display: grid;
   align-content: start;
   gap: 18px;
   block-size: clamp(14rem, 36vh, 24rem);
   overflow-y: auto;
-  overscroll-behavior: contain;
 }
 .work-map-list-scroll:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .work-overview-map { display: grid; gap: 14px; padding: 14px 22px 24px; }
@@ -285,45 +284,52 @@
 .work-map-heading h3 { margin: 0; font-size: var(--app-type-section); }
 .work-map-heading > span { color: var(--muted); font-size: var(--app-type-sm); text-align: right; }
 /* The frame is one fixed footprint: neither the first enrichment answer nor a
-   refreshed graph of another shape resizes it. The node overlay publishes the
-   diagram's natural size, and the image never draws above it, so it shares the
-   overlay's contain fit: small graphs sit centered and zoom alone enlarges. */
+   refreshed graph of another shape resizes it. The viewport publishes the
+   drawing's fit, zoomed size, stage and centering offset; the stage scrolls
+   natively and node controls follow the same scale in diagram units. */
 .work-map-viewport {
   position: relative;
   height: clamp(18rem, 42vh, 28rem);
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-width: none;
+  touch-action: pan-x pan-y;
+  user-select: none;
   border: var(--app-edge-soft);
   border-radius: var(--app-radius-inset);
   background: var(--control-surface-soft);
 }
-.work-map-viewport .mermaid-render { height: 100%; min-height: 0; }
+.work-map-viewport::-webkit-scrollbar { display: none; }
+.work-map-viewport:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.work-map-viewport[data-work-map-zoomed="true"] { cursor: grab; }
+.work-map-viewport[data-work-map-dragging="true"] { cursor: grabbing; }
+.work-map-viewport .mermaid-render {
+  width: var(--work-map-stage-inline, 100%);
+  height: var(--work-map-stage-block, 100%);
+  min-height: 0;
+}
 .work-map-viewport .mermaid-render > .message-image {
   --message-image-size: 100%;
-  width: 100%;
+  position: absolute;
+  left: var(--work-map-offset-inline, 0px);
+  top: var(--work-map-offset-block, 0px);
+  width: var(--work-map-drawn-inline, 100%);
   min-width: 0;
-  height: 100%;
+  height: var(--work-map-drawn-block, 100%);
 }
-.work-map-viewport .mermaid-render > .message-image img {
-  width: min(100%, var(--work-map-diagram-inline, 100%));
-  height: min(100%, var(--work-map-diagram-block, 100%));
-}
-.work-map-viewport .mermaid-render > .message-image,
-.work-map-node-layer {
-  transform-origin: center;
-  transition: transform var(--app-motion-fast) var(--app-ease-standard);
-}
+.work-map-viewport .mermaid-render > .message-image img { width: 100%; height: 100%; }
 .work-map-node-layer {
   position: absolute;
   inset: 0;
   z-index: 1;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
   pointer-events: none;
 }
 .work-map-node-button {
   --work-card-tone: var(--work-terminal);
   position: absolute; pointer-events: auto; padding: 0;
+  left: calc(var(--work-map-offset-inline, 0px) + var(--map-node-x) * var(--work-map-scale) * 1px);
+  top: calc(var(--work-map-offset-block, 0px) + var(--map-node-y) * var(--work-map-scale) * 1px);
+  width: calc(var(--map-node-width) * var(--work-map-scale) * 1px);
+  height: calc(var(--map-node-height) * var(--work-map-scale) * 1px);
   border: var(--app-focus-ring-width) solid color-mix(in srgb, var(--work-card-tone) 65%, transparent);
   border-radius: var(--app-radius-control);
   background: transparent;
@@ -356,11 +362,6 @@
   outline-offset: -3px;
 }
 .work-map-node-button[data-task-selected="true"] { border-width: var(--app-focus-ring-strong-width); }
-.mermaid-render[data-source-visible="true"] > .work-map-node-layer { visibility: hidden; }
-@media (prefers-reduced-motion: reduce) {
-  .work-map-viewport .mermaid-render > .message-image,
-  .work-map-node-layer { transition: none; }
-}
 .work-map-task-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
