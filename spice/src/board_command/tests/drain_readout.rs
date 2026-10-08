@@ -278,6 +278,55 @@ fn complete_and_delete_delta_heads(
 }
 
 #[test]
+fn next_read_offers_an_advanced_task_in_its_next_phase() {
+    let (root, bus, epoch, seats) = fixture("next-read-phase-advance", 2);
+    let author = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DRAIN-phase001",
+        "Phased work",
+        Some("todo,review"),
+    );
+    claim_task(&bus, epoch, &seats[0], &author, &task);
+    let held = board(&bus, epoch, author.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        author,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &task),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "phase advance fixture".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+
+    let answer = next_board(&bus, epoch, Actor::Lane(seats[1].lane));
+    let Some(NextWorkState::Candidate { task: selected }) = answer.next else {
+        panic!("an advanced task must stay allocatable in its next phase")
+    };
+    assert_eq!(
+        TaskHandle::for_project(
+            &selected.statement.body.project,
+            &selected.statement.body.born
+        ),
+        task
+    );
+    assert_eq!(selected.workflow.body.phase.as_str(), "review");
+    clean(&root, bus);
+}
+
+#[test]
 fn next_read_returns_each_authoritative_team_policy() {
     let (root, bus, epoch, seats) = fixture("next-read-policies", 1);
     let actor = Actor::Lane(seats[0].lane);
