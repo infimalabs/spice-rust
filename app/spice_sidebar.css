@@ -202,11 +202,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* One agent row is the footprint the unassigned empty line reserves, and one
-   team of one agent is the footprint "No open teams" reserves, so the first
-   team or unassigned agent moves nothing below. An open team shows every
-   member: a larger team grows the section rather than hiding rows. */
-.app-open-teams { gap: 10px; }
+.app-open-teams { display: grid; gap: 10px; }
 .app-team {
   display: grid;
   gap: var(--app-team-gap);
@@ -224,7 +220,7 @@
   align-items: start;
   justify-content: space-between;
   min-width: 0;
-  min-block-size: var(--app-team-head);
+  min-block-size: 0;
   gap: 10px;
   color: var(--muted);
   font: var(--app-type-caption)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -238,41 +234,24 @@
 .app-team > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .app-team > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-team-members { display: grid; gap: 6px; }
-.app-team-member {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 9px;
-  min-height: var(--app-member-row);
-  padding: 8px 10px;
-  border: var(--app-control-edge);
-  border-radius: var(--app-radius-inset);
-  background: var(--control);
-  cursor: grab;
-}
-.app-team-member[draggable="true"]:hover {
-  border-color: color-mix(in srgb, var(--accent-slot) 24%, var(--control-line-soft));
-  background: color-mix(in srgb, var(--control) 94%, var(--accent-slot) 6%);
-}
-.app-team-member[draggable="true"]:active { cursor: grabbing; }
-.app-team-member[aria-disabled="true"] { cursor: default; }
-.app-team-member[aria-disabled="true"] > :not(.app-presence-pip--member) { opacity: .66; }
-.app-member-copy { display: grid; min-width: 0; gap: 4px; }
-.app-member-copy strong {
-  overflow: hidden;
-  color: var(--accent-slot, var(--ink));
-  font-size: var(--app-type-identity);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.app-member-copy small {
-  overflow: hidden;
+.app-team-drop > header,
+.app-unassigned > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
   color: var(--muted);
-  font-size: var(--app-type-fact);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font: var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.app-member-drag { color: color-mix(in srgb, var(--muted) 78%, var(--accent-slot)); font-family: monospace; }
+.app-spice-topology .app-team-drop h2,
+.app-spice-topology .app-unassigned h2 {
+  margin: 0;
+  font: 700 var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
 .app-team-drop,
 .app-unassigned {
   padding: 10px;
@@ -307,7 +286,4 @@
   color: var(--muted);
 }
 .app-empty-state { margin: 0; padding: 3px 1px; color: var(--muted); font-size: var(--app-type-sm); line-height: 1.4; }
-.app-open-teams > .app-empty-state {
-  min-block-size: calc(2 * (var(--app-team-pad) + 1px) + var(--app-team-head) + var(--app-team-gap) + var(--app-member-row));
-}
-.app-team-members > .app-empty-state { min-block-size: var(--app-member-row); }
+.app-team-members > .app-empty-state { grid-column: 1 / -1; }

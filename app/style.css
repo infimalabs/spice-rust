@@ -783,29 +783,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .section-heading h2 { margin: 0; font-size: var(--app-type-copy); }
 .section-count { color: var(--muted); font-size: var(--app-type-body); }
 
-/* One grid of up to four tile columns shared by every group. A group spans a
-   column per tile (data-span, capped by the renderer) and lays its tiles on
-   the shared columns, so small groups sit beside each other. Container
-   queries step the columns down with the section's own width. */
+/* Team drop targets and independent agents share the same compact tile grid. */
 .app-spice-topology { container-type: inline-size; }
-.app-spice-topology-groups {
-  --topology-columns: 4;
-  display: grid;
-  grid-template-columns: repeat(var(--topology-columns), minmax(0, 1fr));
-  gap: 14px 10px;
+.app-spice-topology .app-team-members {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
-.app-spice-topology-group,
-.app-spice-topology-agent-list { display: grid; grid-template-columns: subgrid; gap: 8px 10px; min-width: 0; }
-.app-spice-topology-group { grid-column: span min(var(--group-span, 1), var(--topology-columns)); align-content: start; }
-.app-spice-topology-group[data-span="2"] { --group-span: 2; }
-.app-spice-topology-group[data-span="3"] { --group-span: 3; }
-.app-spice-topology-group[data-span="4"] { --group-span: 4; }
-.app-spice-topology-agent-list { grid-column: 1 / -1; }
-@container (max-width: 820px) { .app-spice-topology-groups { --topology-columns: 3; } }
-@container (max-width: 610px) { .app-spice-topology-groups { --topology-columns: 2; } }
-@container (max-width: 400px) { .app-spice-topology-groups { --topology-columns: 1; } }
-.app-spice-topology-group > h3 { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: var(--app-type-subheading); }
-.app-spice-topology-group > h3 span { color: var(--muted); font-size: var(--app-type-label); font-weight: 400; }
+@container (max-width: 400px) {
+  .app-spice-topology .app-team-members { grid-template-columns: minmax(0, 1fr); }
+}
+.app-topology-member { min-width: 0; }
+.app-topology-member[draggable="true"] { cursor: grab; }
+.app-topology-member[draggable="true"]:active { cursor: grabbing; }
+.app-topology-member > .app-spice-topology-agent { height: 100%; box-sizing: border-box; }
 .app-spice-topology-agent {
   position: relative;
   min-width: 0;
