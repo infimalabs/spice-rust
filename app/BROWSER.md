@@ -152,6 +152,14 @@ Its label stays “SEND”; color and the adjacent allocation value distinguish
 Steer, Drive, and Drain. Hover, press, reduced-motion, ordinary-submit, and
 broadcast-preview states change paint only, never geometry.
 
+Vacant members do not create broadcast recipients. An empty vacant composer
+also contributes no ordinary SEND slice: when no member has sendable content,
+the button removes its pinwheel paint and retains the neutral no-recipient
+face. When occupied composers do hold content, only those recipients supply
+the equal pinwheel slices and the accessible recipient count. The pinwheel is
+paint on the one SEND button, never a set of per-recipient hover targets, so
+adding or removing a vacant member cannot add a seam, label, or hit region.
+
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
 primitive; the dark veil uses it while the light theme retains its softer base.
