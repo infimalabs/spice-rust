@@ -614,42 +614,44 @@ two-slot button row, a 56-pixel `Send` row, then two equal 29-pixel range rows
 because $(160 - 3 - 34 - 56 - 3 \times 3) / 2 = 29$. `TURBO` occupies the
 upper-left slot at the same diameter as the global `Spice` control, giving it
 equal three-pixel top and left clearance. A same-diameter hamburger in the
-upper-right slot opens the team's swap/join arrangement menu using the soft
-glass surface and inset edge of the other hamburger controls. Each range runs
-left to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside
+upper-right slot opens the team's swap/join arrangement menu. Both utility
+buttons use the primary panel's Flush etched-glass surface.
+Each range runs left to right, minimum to maximum, as a 46 × 22 labeled thumb in
 a neutral 74 × 26 pill groove: two pixels of clearance above and below, and
 three pixels of panel inset at each end. Every current-value word fills the same
 32 × 9 label box, centered with seven pixels of horizontal and six-and-a-half
 pixels of vertical thumb clearance; the box clips overscan before it reaches
-the rounded edge. `Send`, `TURBO`, and both thumbs share one colored-glass
-material: state color under a continuous dome, edge highlight, lift, and raised
-ink shadow. Round buttons carry the stronger inner rim, while slider thumbs use
-a quieter version. Thumb state color ends at its border; no state casts light
-into the groove. `Send` lights only when
-a press would submit something: it fills with a pinwheel of one equal slice per
-agent that would receive a message, in that agent's accent and in mathematical
-order: the first agent opens at the right edge and the rest follow
-counterclockwise, with a darker seam opening each slice so two agents sharing an
-accent stay distinct. A smooth raised dome shades the pinwheel, and its word is
-inked straight into the dome in the page color, with no plate. Pressing a lit
-`Send` pops the dome down, and its fold shows as a bright circle around the word
-until release. Until the team is fully idle, `Send` unlit by an empty draft
-keeps the full-opacity raised knob in the neutral surface of the resting quiet
-thumb; only its color mutes, while command-modifier and focus rings still show
-around it. With no running agent and no draft, the knob recedes to a depressed
-face. While the keyboard broadcast preview is held from an eligible primary
-composer, `Send` instead shows the same pinwheel over every occupied member the
-broadcast would reach, whatever the drafts hold; releasing it restores the
-ordinary face.
-Raised states use distinct team accents. The first round button reads `TURBO`
-while the team's fast-mode flag is on: a second internal accent layer deepens
-its red under the glass without casting a halo beyond the rim. Otherwise it
-reads `BASIC` in the same neutral raised knob. Each range's maximum stop,
-narrate and drain, keeps the second accent, blue. Pressing the composer's
-`TURBO` flips that team flag, which the resident keeps across restarts. The
-Settings section in the Spice side view uses the same `TURBO`/`BASIC` button,
-material, and pressed-state convention to flip the global flag; it remains
-disabled until settings have loaded and the resident offers that command.
+the rounded edge. `Send`, team `TURBO`/`BASIC`, the menu button, and both
+flyers share one Flush etched-glass material: the background transmits through
+a neutral face bounded by one fine optical edge, without an opaque state fill,
+raised dome, or nested ridge. Flyer state color stays on that edge and casts no
+light into the groove.
+
+`Send` lights only when a press would submit something. One two-pixel perimeter
+rim divides into an equal arc per agent that would receive the message, in that
+agent's accent and in mathematical order: the first agent opens at the right
+edge and the rest follow counterclockwise. A darker seam separates neighboring
+arcs so two agents sharing an accent remain distinct, while the small count
+states the number of recipients. The face remains neutral. Pointer, touch, and
+keyboard contact move it down one-and-a-half pixels, deepen its upper contact
+shadow, and quiet the rim; release restores the flat face without moving the
+grid. A running team with no sendable draft has no rim or count. With no running
+agent and no draft, the controls dim and `Send` is disabled. Command-modifier
+and focus rings remain visible around admitted actions.
+
+While the keyboard broadcast preview is held from an eligible primary composer,
+`Send` replaces the ordinary recipient rim and count with those of every
+occupied member the broadcast would reach, whatever the drafts hold; releasing
+the modifiers restores the ordinary face. Team `TURBO` uses a red edge while
+engaged and otherwise reads `BASIC` on the same neutral Flush face. The range
+flyers use muted edges for Quiet and Steer, the active accent for Speak and
+Drive, and blue for Narrate and Drain. Pressing the composer's `TURBO` flips
+that team flag, which the resident keeps across restarts.
+
+The Settings section in the Spice side view uses an independently styled
+`TURBO`/`BASIC` button with its existing raised colored-glass appearance to flip
+the global flag; it remains disabled until settings have loaded and the resident
+offers that command.
 Fast mode is additive: a member launches in fast mode exactly when its own flag,
 its team's flag, or the global setting is on, so turning one level off never
 slows a member another level still enables. Running OMP agents whose effective

@@ -169,12 +169,12 @@ focused-agent command ring; a held broadcast uses its occupied recipients' rim
 and count while retaining the neutral face.
 
 Vacant members do not create broadcast recipients. An empty vacant composer
-also contributes no ordinary SEND slice: when no member has sendable content,
-the button removes its pinwheel paint and retains the neutral no-recipient
-face. When occupied composers do hold content, only those recipients supply
-the equal pinwheel slices and the accessible recipient count. The pinwheel is
-paint on the one SEND button, never a set of per-recipient hover targets, so
-adding or removing a vacant member cannot add a seam, label, or hit region.
+also contributes no ordinary SEND rim arc: when no member has sendable content,
+the button removes its recipient-rim paint and count while retaining the neutral
+face. When occupied composers do hold content, only reachable recipients supply
+the equal perimeter arcs and accessible count. The rim is paint on the one SEND
+button, never a set of per-recipient hover targets, so adding or removing a
+vacant member cannot add an arc, seam, label, or hit region.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
