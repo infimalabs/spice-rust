@@ -207,10 +207,6 @@ fn render_spice_sidebar(
     runtime: Option<&AppRuntime>,
     cursor: &str,
 ) -> sidebar::Content {
-    let context = spice_sidebar::Context {
-        sender: render.sender,
-        submissions: &render.submissions.status,
-    };
     let body = html! {
         <div class="app-spice-sidebar-content">
             {spice_sidebar::render_operator_settings(runtime, render.sender)}
@@ -224,7 +220,6 @@ fn render_spice_sidebar(
             {spice_sidebar::render_global_settings(runtime, render.sender)}
             {quota::render_sidebar(runtime)}
             {render_spice_topology(render, runtime)}
-            {spice_sidebar::render_arrangement(runtime, &context)}
         </div>
     };
     let anchor = html! {
@@ -293,10 +288,10 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
         .iter()
         .map(|standing| standing.pending)
         .sum::<usize>();
-    let (teams, solos): (Vec<_>, Vec<_>) = lanes.lanes.iter().partition(|team| team.teamed());
+    let teams = lanes.lanes.iter().filter(|team| team.teamed()).count();
     let totals = [
         topology_count(standings.len(), "agent", "agents"),
-        topology_count(teams.len(), "team", "teams"),
+        topology_count(teams, "team", "teams"),
         format!("{live} live"),
         topology_count(holding, "holding a task", "holding tasks"),
         format!("{pending} pending"),
@@ -312,26 +307,13 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
                 <h2 id="spice-resident-topology-heading">{"Resident topology"}</h2>
                 <span class="section-count">{totals}</span>
             </div>
-            if lanes.lanes.is_empty() {
-                {empty("No agent lanes are connected.")}
-            } else {
-                <div class="app-spice-topology-groups">
-                    {for teams.iter().map(|team| {
-                        render_topology_group(
-                            team_name(team),
-                            Some(team.lane),
-                            team_agents(team, &standings).collect(),
-                        )
-                    })}
-                    if !solos.is_empty() {
-                        {render_topology_group(
-                            "Independent".to_owned(),
-                            None,
-                            solos.iter().flat_map(|team| team_agents(team, &standings)).collect(),
-                        )}
-                    }
-                </div>
-            }
+            {spice_sidebar::render_arrangement(
+                runtime,
+                &spice_sidebar::Context {
+                    sender: render.sender,
+                },
+                &standings,
+            )}
         </section>
     }
 }
@@ -372,56 +354,6 @@ pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html 
 
 fn topology_count(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
-}
-
-/// A lane's members paired with their joined standings, in member order.
-fn team_agents<'a>(
-    team: &'a crate::runtime::LaneRow,
-    standings: &'a [crate::watchband::Standing],
-) -> impl Iterator<
-    Item = (
-        &'a crate::runtime::LaneMember,
-        &'a crate::watchband::Standing,
-    ),
-> {
-    team.members.iter().zip(
-        standings
-            .iter()
-            .filter(move |standing| standing.team == team.lane),
-    )
-}
-
-/// Widest topology grid, in tile columns; `app/style.css` steps the grid down
-/// from here as the section narrows.
-const TOPOLOGY_COLUMNS: usize = 4;
-
-/// One team, or every independent lane together, as a titled run of tiles.
-/// The group spans one grid column per tile up to the grid's width, so small
-/// groups share a row instead of leaving it empty.
-fn render_topology_group(
-    heading: String,
-    team: Option<CanonicalUuid>,
-    agents: Vec<(&crate::runtime::LaneMember, &crate::watchband::Standing)>,
-) -> Html {
-    let linked = team.is_some();
-    html! {
-        <section
-            class="app-spice-topology-group"
-            data-topology-group={team.map(|team| team.to_string())}
-            data-group-kind={if team.is_some() { "team" } else { "independent" }}
-            data-span={agents.len().clamp(1, TOPOLOGY_COLUMNS).to_string()}
-        >
-            <h3 title={team.map(|team| format!("Group {team}"))}>
-                {heading}
-                <span>{topology_count(agents.len(), "agent", "agents")}</span>
-            </h3>
-            <div class="app-spice-topology-agent-list">
-                {for agents.into_iter().map(|(member, standing)| {
-                    render_topology_agent(member, standing, linked)
-                })}
-            </div>
-        </section>
-    }
 }
 
 /// One lane in the chat's tile language: accent-dealt name, presence, the

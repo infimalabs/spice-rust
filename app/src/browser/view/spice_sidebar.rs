@@ -9,22 +9,20 @@ const MEMBER_MIME: &str = "application/x-spice-team-member";
 
 pub(super) struct Context<'a> {
     pub(super) sender: &'a SenderHandle,
-    pub(super) submissions: &'a SubmissionStatus,
 }
 
-/// Team arrangement stays structurally present while resident state loads, so
-/// admitted topology fills settled sections rather than moving the sidebar.
-pub(super) fn render_arrangement(runtime: Option<&AppRuntime>, context: &Context<'_>) -> Html {
+/// One interactive topology: compact status tiles double as draggable members.
+pub(super) fn render_arrangement(
+    runtime: Option<&AppRuntime>,
+    context: &Context<'_>,
+    standings: &[watchband::Standing],
+) -> Html {
     let lanes = runtime.and_then(AppRuntime::lanes);
     let awaited = match (runtime, lanes) {
         (None, _) => Some("Waiting for resident teams…"),
         (Some(_), None) => Some("Waiting for agent state…"),
         (Some(_), Some(_)) => None,
     };
-    let waiting = runtime
-        .and_then(AppRuntime::inbox)
-        .map(|inbox| inbox.lanes.as_slice())
-        .unwrap_or(&[]);
     let can_configure = lanes.is_some()
         && runtime.is_some_and(|runtime| runtime.offers(CommandKind::TeamConfigure));
     let topology_revision = lanes.map_or(0, |lanes| lanes.topology_revision);
@@ -44,8 +42,7 @@ pub(super) fn render_arrangement(runtime: Option<&AppRuntime>, context: &Context
         .collect::<Vec<_>>();
     let new_team = super::super::random_uuid().expect("browser crypto mints a new team identity");
     let solo_render = SoloDropRender {
-        waiting,
-        submissions: context.submissions,
+        standings,
         sender: context.sender,
         can_configure,
         topology_revision,
@@ -53,23 +50,21 @@ pub(super) fn render_arrangement(runtime: Option<&AppRuntime>, context: &Context
     };
     html! {
         <>
-            <section class="app-sheet-section app-open-teams">
-                <h2>{"Open Team"}</h2>
-                if grouped_teams.is_empty() {
-                    <p class="app-empty-state">{awaited.unwrap_or("No open teams")}</p>
+            <div class="app-open-teams">
+                if grouped_teams.is_empty() && solo_members.is_empty() {
+                    <p class="app-empty-state">{awaited.unwrap_or("No agent lanes are connected.")}</p>
                 } else {
                     {for grouped_teams.into_iter().map(|team| {
                         render_team(
                             team,
-                            waiting,
-                            context.submissions,
+                            standings,
                             context.sender,
                             can_configure,
                             topology_revision,
                         )
                     })}
                 }
-            </section>
+            </div>
             {render_new_team_drop(
                 new_team,
                 context.sender,
@@ -516,8 +511,7 @@ fn render_theme_selector() -> Html {
 
 fn render_team(
     team: &crate::runtime::LaneRow,
-    waiting: &[wire::intent::LaneInbox],
-    submissions: &SubmissionStatus,
+    standings: &[watchband::Standing],
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
@@ -546,74 +540,44 @@ fn render_team(
         >
             <header>
                 <div>
-                    <strong>{format!("Team {}", watchband::team_label(team))}</strong>
-                    <span>{format!(
-                        "open any member; {} agents open together",
-                        team.members.len()
-                    )}</span>
+                    <strong>{super::team_name(team)}</strong>
+                    <span>{super::topology_count(team.members.len(), "agent", "agents")}</span>
                 </div>
             </header>
             <div class="app-team-members">
-                {for team.members.iter().enumerate().map(|(position, member)| {
-                    render_member(
+                {for team.members.iter().filter_map(|member| {
+                    let standing = standings.iter().find(|standing| standing.lane == member.lane)?;
+                    Some(render_member(
                         member,
-                        watchband::accent(team.members.len(), position),
-                        PresenceProjection {
-                            waiting,
-                            submissions,
-                        },
+                        standing,
                         team.lane,
+                        true,
                         can_configure,
-                    )
+                    ))
                 })}
             </div>
         </article>
     }
 }
 
-struct PresenceProjection<'a> {
-    waiting: &'a [wire::intent::LaneInbox],
-    submissions: &'a SubmissionStatus,
-}
-
 fn render_member(
     member: &crate::runtime::LaneMember,
-    accent: usize,
-    presence: PresenceProjection<'_>,
+    standing: &watchband::Standing,
     source: CanonicalUuid,
+    linked: bool,
     can_configure: bool,
 ) -> Html {
-    let pending = super::member_pending(presence.waiting, presence.submissions, member.lane);
-    let waking = super::member_waking(presence.waiting, presence.submissions, member.lane);
-    let status = member.status(waking);
-    let label = member
-        .name
-        .clone()
-        .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
-    let worktree = watchband::leaf(&member.worktree).to_owned();
     let ondragstart = begin_drag(member.lane, can_configure);
     html! {
-        <article
-            class="app-team-member"
+        <div
+            class="app-topology-member"
             draggable={can_configure.to_string()}
-            aria-disabled={(!can_configure).to_string()}
             data-team-member={member.lane.to_string()}
             data-source-team={source.to_string()}
-            data-accent={accent.to_string()}
             {ondragstart}
         >
-            {render_member_presence(status)}
-            <span class="app-member-copy">
-                <strong>{format!("{label} on {worktree}")}</strong>
-                <small>{format!(
-                    "{} · {}{}",
-                    crate::watchband::model_display(member.model.as_deref()),
-                    status.label(),
-                    if pending == 0 { String::new() } else { format!(" · {pending} pending") }
-                )}</small>
-            </span>
-            <span class="app-member-drag" aria-hidden="true">{"↕"}</span>
-        </article>
+            {super::render_topology_agent(member, standing, linked)}
+        </div>
     }
 }
 
@@ -639,8 +603,7 @@ fn render_new_team_drop(
 }
 
 struct SoloDropRender<'a> {
-    waiting: &'a [wire::intent::LaneInbox],
-    submissions: &'a SubmissionStatus,
+    standings: &'a [watchband::Standing],
     sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
@@ -675,17 +638,15 @@ fn render_solo_members_drop(
                 if members.is_empty() {
                     <p class="app-empty-state">{render.empty}</p>
                 } else {
-                    {for members.iter().map(|member| {
-                        render_member(
+                    {for members.iter().filter_map(|member| {
+                        let standing = render.standings.iter().find(|standing| standing.lane == member.lane)?;
+                        Some(render_member(
                             member,
-                            watchband::accent(1, 0),
-                            PresenceProjection {
-                                waiting: render.waiting,
-                                submissions: render.submissions,
-                            },
+                            standing,
                             member.lane,
+                            false,
                             render.can_configure,
-                        )
+                        ))
                     })}
                 }
             </div>

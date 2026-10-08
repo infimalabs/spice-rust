@@ -47,6 +47,20 @@ disconnected states use ellipsis and exclamation marks. Reconnect retains the
 last count in amber and marks the title stale; current data restores green.
 Title and icon are rewritten only when this state changes.
 
+## Resident topology in the global menu
+
+Resident topology is one interactive roster. Each team contains compact agent
+cards with presence, pending steering, liveness, held task, kept jobs, model,
+and provider emblem. A teamed agent's card opens its composer in Chat; the same
+card is draggable when team configuration is admitted.
+
+Drop a card onto another team to mix members, onto **New Team** to create a
+team, or onto **Unassigned Agents** to separate it from its team. Unassigned
+agents use the same cards without a Chat link. Every drop uses the topology
+revision currently shown, and unavailable configuration disables dragging
+without disabling existing Chat links. Cards use two columns where the menu
+has room and one column in narrow layouts.
+
 ## Provider quota rows
 
 Each account-limit row reads from left to right as the limit name, flexible
