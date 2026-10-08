@@ -71,6 +71,15 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
         "the runtime holds the lane on the journaled deadline"
     );
     assert_eq!(
+        held.vendor_failure,
+        Some(body::VendorFailureInput {
+            session: Some("reaped-session".to_owned()),
+            directives: Vec::new(),
+            renewal: None,
+        }),
+        "the hold records the exact resumable session and pending operator input"
+    );
+    assert_eq!(
         residency_row(&fixture.bus).occupant,
         None,
         "the exit is still accounted"
@@ -129,6 +138,107 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
         resumed_read.lanes[0].hold, None,
         "the operator lane read drops a released hold"
     );
+    fixture.finish();
+}
+
+#[test]
+fn a_new_operator_direction_releases_the_vendor_hold() {
+    let fixture = VendorExitFixture::new(
+        "changed-direction",
+        &[PROMPT, REFUSED_RESULT, TRAILING_WIDGET],
+    );
+    fixture.steer();
+    let config = lane::Config::default();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let mut diagnostic = Vec::new();
+    fixture
+        .exit(&mut lifecycle, &mut diagnostic)
+        .expect("the refused exit is accounted");
+    assert_eq!(
+        fixture
+            .held_fact()
+            .vendor_failure
+            .expect("vendor hold carries input")
+            .directives,
+        [uuid(11)]
+    );
+
+    committed(
+        fixture
+            .bus
+            .commit(second_operator_direction_write())
+            .expect("new operator direction commits"),
+    );
+    let snapshot = fixture.bus.task_snapshot().expect("changed snapshot reads");
+    lifecycle
+        .projection
+        .advance(&snapshot, &projects())
+        .expect("changed projection advances");
+    assert!(
+        lifecycle
+            .release_changed_vendor_hold(&fixture.bus, epoch(), &snapshot)
+            .expect("changed input reconciles"),
+        "changed operator input commits a hold release"
+    );
+    assert_eq!(lifecycle.held_until(lane()), None);
+    let resumed = fixture
+        .bus
+        .fact_snapshot()
+        .expect("released facts read")
+        .facts()
+        .iter()
+        .rev()
+        .find_map(|fact| fact.fact.read::<body::LaneResumed>())
+        .expect("changed input journals a release");
+    assert_eq!(resumed.release, body::Release::InputChanged);
+    fixture.finish();
+}
+
+#[test]
+fn cancelling_the_refused_operator_direction_releases_the_vendor_hold() {
+    let fixture = VendorExitFixture::new(
+        "cancelled-direction",
+        &[PROMPT, REFUSED_RESULT, TRAILING_WIDGET],
+    );
+    fixture.steer();
+    let config = lane::Config::default();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let mut diagnostic = Vec::new();
+    fixture
+        .exit(&mut lifecycle, &mut diagnostic)
+        .expect("the refused exit is accounted");
+
+    committed(
+        fixture
+            .bus
+            .commit(cancel_operator_direction_write(&fixture.bus))
+            .expect("operator cancellation commits"),
+    );
+    let snapshot = fixture
+        .bus
+        .task_snapshot()
+        .expect("cancelled snapshot reads");
+    lifecycle
+        .projection
+        .advance(&snapshot, &projects())
+        .expect("cancelled projection advances");
+    assert!(
+        lifecycle
+            .release_changed_vendor_hold(&fixture.bus, epoch(), &snapshot)
+            .expect("cancelled input reconciles"),
+        "cancelling refused operator input commits a hold release"
+    );
+    assert_eq!(lifecycle.held_until(lane()), None);
+    let resumed = fixture
+        .bus
+        .fact_snapshot()
+        .expect("released facts read")
+        .facts()
+        .iter()
+        .rev()
+        .find_map(|fact| fact.fact.read::<body::LaneResumed>())
+        .expect("cancelled input journals a release");
+    assert_eq!(resumed.release, body::Release::InputChanged);
     fixture.finish();
 }
 
@@ -391,6 +501,58 @@ fn verbose_vendor_text_is_cut_at_a_character_boundary_in_the_evidence() {
     );
     assert!(kept.chars().all(|character| character == 'é'));
     bus.shutdown().expect("verbose fixture stops");
+}
+
+fn cancel_operator_direction_write(bus: &Bus) -> JournalWrite {
+    let observed = bus
+        .read(|read| read.steering_head(uuid(11)))
+        .expect("operator direction head reads")
+        .expect("operator direction exists");
+    let at = instant(12);
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
+    let canceled = write
+        .fact(
+            body::SteerCanceled {
+                key: observed.body().key.clone(),
+                lane: observed.body().lane,
+            },
+            FactCause::Existing(observed.position()),
+        )
+        .expect("operator cancellation fact builds");
+    let mut next = observed.body().clone();
+    next.disposition = wire::Disposition::Canceled;
+    write.steering_head(canceled, move |_| next);
+    write
+}
+
+fn second_operator_direction_write() -> JournalWrite {
+    let at = instant(12);
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let direction = body::SteerSent {
+        from: None,
+        directive: uuid(21),
+        fanout: Some(uuid(22)),
+        key: "1kKRRsDT".to_owned(),
+        lane: lane(),
+        text: "New input after the refusal.".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(59),
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let sent = write
+        .fact(direction.clone(), FactCause::Root)
+        .expect("second operator direction fact builds");
+    write.steering_head(sent, move |position| {
+        Ledger::sent_head(&direction, origin, at, position)
+            .expect("second operator direction head builds")
+    });
+    write
 }
 
 fn held_fact(bus: &Bus) -> body::LaneHeld {

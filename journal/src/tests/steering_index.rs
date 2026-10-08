@@ -554,6 +554,7 @@ fn escalation_batch(observed: &JournalHead<SteeringHead>, placement: BatchHead) 
                         lane: lane(),
                         evidence: "stray steering head target".to_owned(),
                         until: at,
+                        vendor_failure: None,
                     },
                     FactCause::Root,
                 )

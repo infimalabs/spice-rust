@@ -6,22 +6,23 @@
 //! stops until an operator wakes it or the hold reaches its deadline.
 //!
 //! An occupant whose last word was a vendor failure holds the seat at once.
-//! The vendor refused the turn the seat resumes into, so the next occupant
-//! resumes into the same refusal, and counting those exits as young deaths
-//! would only re-seat the refusal until the run was long enough to notice.
+//! The vendor refused the exact session and pending directions recorded with
+//! the hold. Re-seating stays quiet after the deadline while that input is
+//! unchanged; operator wake or changed input releases it. This prevents a
+//! deterministic refusal from consuming one identical turn per hold period.
 //!
-//! A hold is a fact, not a log line. [`LaneHeld`] carries the evidence and the
-//! deadline it was taken under and [`LaneResumed`] carries what released it, so
-//! the reason a lane stopped filling is answerable from the journal instead of
+//! A hold is a fact, not a log line. [`LaneHeld`] carries its evidence,
+//! deadline, and refused input; [`LaneResumed`] carries what released it. The
+//! reason a lane stopped filling is answerable from the journal instead of
 //! from whatever the supervisor happened to print.
 //!
 //! Youth and now both arrive from the caller. This module compares the
-//! deadlines it was handed and never reads a clock, so a held lane replays to
-//! the same hold.
+//! deadlines and input identities it was handed and never reads a clock, so a
+//! held lane replays to the same hold.
 
 use std::collections::BTreeMap;
 
-use journal::crossing::body::{LaneHeld, LaneResumed, Release};
+use journal::crossing::body::{LaneHeld, LaneResumed, Release, VendorFailureInput};
 use journal::crossing::{CanonicalUuid, Instant};
 
 /// How an occupant's life ended, as the caller measured it.
@@ -33,12 +34,26 @@ pub enum Death {
     Mature,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HoldKind {
+    YoungDeath,
+    /// `None` is one legacy vendor hold written before refused input was durable.
+    VendorFailure(Option<VendorFailureInput>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Hold {
+    until: Instant,
+    kind: HoldKind,
+    expiry_observed: bool,
+}
+
 /// Consecutive young deaths per lane, and the holds they produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Holds {
     limit: u32,
     young: BTreeMap<CanonicalUuid, u32>,
-    held: BTreeMap<CanonicalUuid, Instant>,
+    held: BTreeMap<CanonicalUuid, Hold>,
 }
 
 impl Holds {
@@ -84,11 +99,19 @@ impl Holds {
         }
         let evidence = format!("{deaths} consecutive young occupant deaths");
         self.young.remove(&lane);
-        self.held.insert(lane, until);
+        self.held.insert(
+            lane,
+            Hold {
+                until,
+                kind: HoldKind::YoungDeath,
+                expiry_observed: false,
+            },
+        );
         Some(LaneHeld {
             lane,
             evidence,
             until,
+            vendor_failure: None,
         })
     }
 
@@ -104,38 +127,74 @@ impl Holds {
         lane: CanonicalUuid,
         evidence: String,
         until: Instant,
+        input: VendorFailureInput,
     ) -> Option<LaneHeld> {
         if self.held.contains_key(&lane) {
             return None;
         }
         self.young.remove(&lane);
-        self.held.insert(lane, until);
+        self.held.insert(
+            lane,
+            Hold {
+                until,
+                kind: HoldKind::VendorFailure(Some(input.clone())),
+                expiry_observed: false,
+            },
+        );
         Some(LaneHeld {
             lane,
             evidence,
             until,
+            vendor_failure: Some(input),
         })
     }
 
     /// The deadline a lane is held until, absent when it is not held.
     #[must_use]
     pub fn held(&self, lane: CanonicalUuid) -> Option<Instant> {
-        self.held.get(&lane).copied()
+        self.held.get(&lane).map(|hold| hold.until)
     }
 
-    /// Earliest current hold deadline, ordered by lane when deadlines tie.
+    /// Refused vendor input, with an inner absence only for one legacy hold.
+    #[must_use]
+    pub fn vendor_failure(&self, lane: CanonicalUuid) -> Option<Option<&VendorFailureInput>> {
+        match &self.held.get(&lane)?.kind {
+            HoldKind::YoungDeath => None,
+            HoldKind::VendorFailure(input) => Some(input.as_ref()),
+        }
+    }
+
+    /// Earliest deadline that still needs a timer event.
     #[must_use]
     pub fn next(&self) -> Option<(CanonicalUuid, Instant)> {
         self.held
             .iter()
-            .map(|(lane, until)| (*lane, *until))
+            .filter(|(_, hold)| !hold.expiry_observed)
+            .map(|(lane, hold)| (*lane, hold.until))
             .min_by_key(|(lane, until)| (*until, *lane))
     }
 
     /// Replay one durable hold fact into this reducer.
     pub fn absorb_held(&mut self, held: &LaneHeld) {
         self.young.remove(&held.lane);
-        self.held.insert(held.lane, held.until);
+        let kind = held.vendor_failure.clone().map_or_else(
+            || {
+                if held.evidence.contains(" ended on a vendor error:") {
+                    HoldKind::VendorFailure(None)
+                } else {
+                    HoldKind::YoungDeath
+                }
+            },
+            |input| HoldKind::VendorFailure(Some(input)),
+        );
+        self.held.insert(
+            held.lane,
+            Hold {
+                until: held.until,
+                kind,
+                expiry_observed: false,
+            },
+        );
     }
 
     /// Replay one durable release fact into this reducer.
@@ -149,18 +208,51 @@ impl Holds {
         !self.held.contains_key(&lane)
     }
 
-    /// Releases a hold whose deadline has passed.
-    ///
-    /// Returns nothing when the lane is not held or its deadline is still
-    /// ahead, so a lane resumes exactly once however often this is asked.
+    /// Releases a young-death hold whose deadline passed. A vendor-failure
+    /// deadline instead marks that its unchanged refused input stays quiet.
     pub fn expire(&mut self, lane: CanonicalUuid, now: Instant) -> Option<LaneResumed> {
-        if self.held.get(&lane).is_none_or(|until| now < *until) {
+        let hold = self.held.get_mut(&lane)?;
+        if now < hold.until || hold.expiry_observed {
+            return None;
+        }
+        if matches!(hold.kind, HoldKind::VendorFailure(_)) {
+            hold.expiry_observed = true;
             return None;
         }
         self.held.remove(&lane);
         Some(LaneResumed {
             lane,
             release: Release::Expiry,
+        })
+    }
+
+    /// Supplies current input to a replayed legacy vendor hold.
+    pub fn hydrate_vendor_failure(&mut self, lane: CanonicalUuid, input: VendorFailureInput) {
+        if let Some(Hold {
+            kind: HoldKind::VendorFailure(current @ None),
+            ..
+        }) = self.held.get_mut(&lane)
+        {
+            *current = Some(input);
+        }
+    }
+
+    /// Releases a vendor hold once its resumable input differs.
+    pub fn input_changed(
+        &mut self,
+        lane: CanonicalUuid,
+        current: &VendorFailureInput,
+    ) -> Option<LaneResumed> {
+        let HoldKind::VendorFailure(Some(refused)) = &self.held.get(&lane)?.kind else {
+            return None;
+        };
+        if refused == current {
+            return None;
+        }
+        self.held.remove(&lane);
+        Some(LaneResumed {
+            lane,
+            release: Release::InputChanged,
         })
     }
 
@@ -180,7 +272,7 @@ impl Holds {
 #[cfg(test)]
 mod tests {
     use super::{Death, Holds};
-    use journal::crossing::body::Release;
+    use journal::crossing::body::{LaneHeld, Release, VendorFailureInput};
     use journal::crossing::{CanonicalUuid, Instant};
 
     fn lane(last: u8) -> CanonicalUuid {
@@ -193,6 +285,14 @@ mod tests {
         format!("2026-08-01T07:{minute:02}:00.000Z")
             .parse()
             .expect("fixture instant")
+    }
+
+    fn input(session: &str, directive: u8) -> VendorFailureInput {
+        VendorFailureInput {
+            session: Some(session.to_owned()),
+            directives: vec![lane(directive)],
+            renewal: None,
+        }
     }
 
     /// A run of young deaths short of the limit does not hold the lane.
@@ -254,33 +354,79 @@ mod tests {
         );
     }
 
-    /// One vendor failure holds the lane at once, with the vendor's text as
-    /// its evidence, however short the run of young deaths before it.
+    /// One vendor failure holds the lane at once. Reaching its deadline with
+    /// unchanged input makes the hold quiet instead of resuming the refusal.
     #[test]
-    fn one_vendor_failure_holds_the_lane_without_a_run_of_young_deaths() {
+    fn one_vendor_failure_stays_held_after_unchanged_input_reaches_its_deadline() {
         let mut holds = Holds::new(3);
         assert!(holds.died(lane(1), Death::Young, instant(30)).is_none());
+        let refused = input("session-1", 11);
 
         let held = holds
             .failed(
                 lane(1),
                 "occupant ended on a vendor error: refused".to_owned(),
                 instant(31),
+                refused.clone(),
             )
             .expect("the first vendor failure holds the lane");
 
         assert_eq!(held.lane, lane(1));
         assert_eq!(held.evidence, "occupant ended on a vendor error: refused");
         assert_eq!(held.until, instant(31));
+        assert_eq!(held.vendor_failure, Some(refused));
         assert!(!holds.seats(lane(1)));
         assert_eq!(holds.next(), Some((lane(1), instant(31))));
-        holds
-            .expire(lane(1), instant(31))
-            .expect("the hold expires at its deadline");
+        assert!(holds.expire(lane(1), instant(31)).is_none());
+        assert!(!holds.seats(lane(1)), "unchanged refused input stays held");
+        assert_eq!(holds.next(), None, "the quiet hold arms no retry timer");
         assert!(
             holds.died(lane(1), Death::Young, instant(40)).is_none(),
             "the young death before the failure was forgotten with the hold",
         );
+    }
+
+    #[test]
+    fn changed_vendor_input_resumes_the_lane() {
+        let mut holds = Holds::new(3);
+        holds.failed(
+            lane(1),
+            "occupant ended on a vendor error: refused".to_owned(),
+            instant(31),
+            input("session-1", 11),
+        );
+
+        assert!(
+            holds
+                .input_changed(lane(1), &input("session-1", 11))
+                .is_none(),
+            "identical input cannot resume the refusal"
+        );
+        let resumed = holds
+            .input_changed(lane(1), &input("session-1", 12))
+            .expect("new direction releases the refused input");
+        assert_eq!(resumed.release, Release::InputChanged);
+        assert!(holds.seats(lane(1)));
+    }
+
+    #[test]
+    fn a_renewal_revision_releases_the_refused_session() {
+        let mut holds = Holds::new(3);
+        let refused = input("session-1", 11);
+        holds.failed(
+            lane(1),
+            "occupant ended on a vendor error: refused".to_owned(),
+            instant(31),
+            refused.clone(),
+        );
+        let mut renewed = refused;
+        renewed.renewal = Some(7);
+
+        let resumed = holds
+            .input_changed(lane(1), &renewed)
+            .expect("renewal replaces the refused session input");
+        assert_eq!(resumed.release, Release::InputChanged);
+        assert!(holds.seats(lane(1)));
     }
 
     /// A vendor failure on a held lane keeps the hold it already has.
@@ -293,7 +439,12 @@ mod tests {
 
         assert!(
             holds
-                .failed(lane(1), "later failure".to_owned(), instant(59))
+                .failed(
+                    lane(1),
+                    "later failure".to_owned(),
+                    instant(59),
+                    input("session-2", 12),
+                )
                 .is_none()
         );
         assert_eq!(holds.held(lane(1)), Some(instant(30)));
@@ -375,5 +526,51 @@ mod tests {
         replay.absorb_resumed(&resumed);
         assert!(replay.seats(lane(2)));
         assert_eq!(replay.next(), None);
+    }
+
+    #[test]
+    fn durable_vendor_input_rebuilds_the_same_quiet_hold() {
+        let refused = input("session-1", 11);
+        let mut source = Holds::new(1);
+        let held = source
+            .failed(
+                lane(1),
+                "occupant ended on a vendor error: refused".to_owned(),
+                instant(30),
+                refused.clone(),
+            )
+            .expect("source holds the refused input");
+        let mut replay = Holds::new(1);
+        replay.absorb_held(&held);
+
+        assert!(replay.expire(lane(1), instant(30)).is_none());
+        assert!(!replay.seats(lane(1)));
+        assert_eq!(replay.next(), None);
+        assert!(replay.input_changed(lane(1), &refused).is_none());
+    }
+
+    #[test]
+    fn a_legacy_vendor_hold_hydrates_before_comparing_current_input() {
+        let mut holds = Holds::new(1);
+        holds.absorb_held(&LaneHeld {
+            lane: lane(1),
+            evidence: "occupant 1 ended on a vendor error: refused".to_owned(),
+            until: instant(30),
+            vendor_failure: None,
+        });
+
+        assert!(holds.expire(lane(1), instant(30)).is_none());
+        assert!(!holds.seats(lane(1)));
+        holds.hydrate_vendor_failure(lane(1), input("session-1", 11));
+        assert!(
+            holds
+                .input_changed(lane(1), &input("session-1", 11))
+                .is_none()
+        );
+        assert!(
+            holds
+                .input_changed(lane(1), &input("session-2", 11))
+                .is_some()
+        );
     }
 }

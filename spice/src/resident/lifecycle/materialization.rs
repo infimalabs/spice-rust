@@ -68,11 +68,20 @@ impl Projection {
         &self.ledger
     }
 
-    pub(super) fn has_operator_steering(&self, lane: CanonicalUuid) -> bool {
+    pub(super) fn operator_steering(&self, lane: CanonicalUuid) -> Vec<CanonicalUuid> {
         self.ledger
             .pending(lane)
-            .iter()
-            .any(|directive| self.operator_directives.contains(&directive.directive()))
+            .into_iter()
+            .filter_map(|directive| {
+                self.operator_directives
+                    .contains(&directive.directive())
+                    .then_some(directive.directive())
+            })
+            .collect()
+    }
+
+    pub(super) fn has_operator_steering(&self, lane: CanonicalUuid) -> bool {
+        !self.operator_steering(lane).is_empty()
     }
 
     pub(super) const fn ready_at(&self) -> &BTreeMap<TaskStamp, Instant> {
