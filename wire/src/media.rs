@@ -34,6 +34,10 @@ pub const MAX_MEDIA_DATA_URL_BYTES: usize = 3 * 1024 * 1024;
 
 /// Maximum UTF-8 bytes retained for an operator-facing media name.
 pub const MAX_MEDIA_NAME_BYTES: usize = 255;
+/// Maximum UTF-8 bytes in one authenticated Markdown image destination.
+///
+/// The destination remains authored transcript text rather than a fetch target.
+pub const MAX_MEDIA_DESTINATION_BYTES: usize = 4 * 1_024;
 
 /// Maximum encoded bytes in one agent-facing media reference.
 ///
@@ -272,6 +276,64 @@ pub struct Media {
     pub content_type: String,
     /// Canonical base64 data URL carrying the exact bytes.
     pub data_url: String,
+}
+
+/// Display-only replacement for one exact authored Markdown image destination.
+///
+/// The resident authenticates this binding against transcript source state.
+/// Consumers may render `media` only where an image destination exactly equals
+/// `destination`; the destination itself never grants read or fetch authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkdownImageBinding {
+    /// Exact authored destination spelling.
+    pub destination: String,
+    /// Admitted bytes reacquired from the provider's content-addressed store.
+    pub media: Media,
+}
+
+impl MarkdownImageBinding {
+    /// Validate the destination and admitted media payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact shared media error when either field is not admitted.
+    pub fn validate(&self) -> Result<(), MediaError> {
+        if self.destination.is_empty()
+            || self.destination.len() > MAX_MEDIA_DESTINATION_BYTES
+            || self.destination.chars().any(char::is_control)
+        {
+            return Err(MediaError::Destination);
+        }
+        self.media.validate()
+    }
+}
+
+/// Validate one bounded, unambiguous set of display bindings.
+///
+/// # Errors
+///
+/// Returns an error for an invalid binding, too many bindings, or two bindings
+/// naming the same authored destination.
+pub fn validate_markdown_image_bindings(
+    bindings: &[MarkdownImageBinding],
+) -> Result<(), MediaError> {
+    if bindings.len() > MAX_MEDIA_ITEMS {
+        return Err(MediaError::Count {
+            observed: bindings.len(),
+            maximum: MAX_MEDIA_ITEMS,
+        });
+    }
+    for (index, binding) in bindings.iter().enumerate() {
+        binding.validate()?;
+        if bindings[..index]
+            .iter()
+            .any(|known| known.destination == binding.destination)
+        {
+            return Err(MediaError::Destination);
+        }
+    }
+    Ok(())
 }
 
 impl Media {
@@ -687,6 +749,8 @@ pub enum MediaError {
     Count { observed: usize, maximum: usize },
     /// A media name was empty, too long, or contained control characters.
     Name,
+    /// A Markdown destination was empty, oversized, controlled, or duplicated.
+    Destination,
     /// The declared type is outside the raster-image vocabulary.
     UnsupportedType(String),
     /// The URL did not exactly bind its declared type to canonical base64.
@@ -714,6 +778,9 @@ impl fmt::Display for MediaError {
             }
             Self::Name => formatter.write_str(
                 "media name must be non-empty, control-free, and at most 255 UTF-8 bytes",
+            ),
+            Self::Destination => formatter.write_str(
+                "media destination must be unique, non-empty, control-free, and at most 4096 UTF-8 bytes",
             ),
             Self::UnsupportedType(found) => write!(
                 formatter,

@@ -487,6 +487,14 @@ and edge-to-edge image covers both shrink inside their existing cells; the
 lattice does not grow, reorder, overlap, or open a page-level overflow to make
 room.
 
+An assistant can reuse an exact image path it previously read without making
+that path browser authority. The resident correlates one successful typed read
+and provider image inside the same lane, occupant, and transcript source, then
+reacquires the content-addressed provider blob for display. Unknown, stale,
+cross-source, or conflicting paths stay ordinary authored Markdown and trigger
+no local-file or network lookup; alt text, titles, quotes, and classifications
+remain the authored message.
+
 Seat and import share one panel, even for an empty fleet. Moving a member to a
 new team preserves its siblings and allocation policy; leaving all teams moves
 only that member to its lane identity, keeping its seat.

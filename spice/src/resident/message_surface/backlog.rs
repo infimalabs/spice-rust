@@ -566,6 +566,10 @@ impl DurableHistory {
             scan,
             lane,
             source.author,
+            source
+                .session
+                .as_ref()
+                .map(|session| session.path.as_path()),
             &messages,
             &mut reader,
             &mut diagnostic,
@@ -789,6 +793,21 @@ fn restore_lane(
     if !tape_available(&tape, row.lane, diagnostic) {
         return Ok(None);
     }
+    let transcript = row
+        .session
+        .as_ref()
+        .filter(|session| {
+            session.occupant == author && session.lane == row.lane && session.vendor == row.vendor
+        })
+        .and_then(|session| {
+            crate::session_command::vendor_thread_transcript(
+                &session.identity,
+                &session.vendor,
+                &crate::session_environment(),
+            )
+            .ok()
+            .map(|(path, _)| path)
+        });
     let tail = match read_backlog(&tape, row.lane, vendor.dialect(), reader) {
         Ok(tail) => tail,
         Err(error) => {
@@ -803,7 +822,15 @@ fn restore_lane(
         hydrate_observations(bus, row.lane, &scan, reader)?;
         hydrate_steering_presentations(bus, &scan, &mut reader.steering)?;
     }
-    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)?;
+    publish_scan(
+        scan,
+        row.lane,
+        author,
+        transcript.as_deref(),
+        publisher,
+        reader,
+        diagnostic,
+    )?;
     Ok(Some(work))
 }
 
@@ -969,6 +996,7 @@ fn forget_changed_source(
     if matches!(&error, listen::ScanError::SourceChanged { .. }) {
         reader.cursors.remove(&lane);
         reader.state.previews.clear_lane(lane);
+        reader.state.media_hydration.clear_lane(lane);
         reader.state.prose.remove(&lane);
     }
     let _ = writeln!(diagnostic, "backlog unavailable for lane {lane}: {error}",);
@@ -978,6 +1006,7 @@ fn publish_scan(
     scan: listen::Scan,
     lane: CanonicalUuid,
     author: CanonicalUuid,
+    transcript: Option<&Path>,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
@@ -1017,6 +1046,7 @@ fn publish_scan(
                 events: &decoded,
                 observed: None,
                 unavailable_tool_terminals: &[],
+                transcript,
             },
             &mut reader.state,
             Some(&reader.steering),

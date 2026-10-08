@@ -875,6 +875,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         },
         AgentMessage {
             prose_origin: None,
@@ -905,6 +906,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         },
         AgentMessage {
             prose_origin: None,
@@ -932,6 +934,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         },
     ]
 }
@@ -1022,6 +1025,7 @@ fn stream_data_samples(
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        markdown_images: Vec::new(),
     };
     vec![
         StreamFrame::Facts {

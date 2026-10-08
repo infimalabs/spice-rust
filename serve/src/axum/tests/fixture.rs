@@ -25,6 +25,7 @@ pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentM
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        markdown_images: Vec::new(),
     }
 }
 

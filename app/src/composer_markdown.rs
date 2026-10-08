@@ -86,13 +86,12 @@ pub(crate) struct ExpandedMedia<'a> {
     pub(crate) directives: Cow<'a, [MessageDirective]>,
 }
 
-/// Expand display-only media payloads while preserving exact classification
-/// and directive-context offsets. A media reference containing an
-/// authenticated marker is left untouched rather than making that marker
-/// ambiguous.
+/// Expand authenticated display-only media while preserving authored labels,
+/// titles, and exact annotation offsets.
 pub(crate) fn expand_media_payloads<'a>(
     markdown: &'a str,
     media: &[Media],
+    bindings: &[wire::MarkdownImageBinding],
     classifications: &'a [MessageClassification],
     directives: &'a [MessageDirective],
 ) -> Result<ExpandedMedia<'a>, wire::MediaError> {
@@ -101,91 +100,150 @@ pub(crate) fn expand_media_payloads<'a>(
         classifications: Cow::Borrowed(classifications),
         directives: Cow::Borrowed(directives),
     };
-    if !markdown.contains("](attachment:") {
-        return Ok(expanded);
+    if markdown.contains("](attachment:") {
+        for item in media {
+            let reference = item.reference_markdown()?;
+            let replacement = item.markdown()?;
+            let ranges = expanded
+                .markdown
+                .match_indices(&reference)
+                .filter_map(|(start, _)| {
+                    let range = start..start + reference.len();
+                    (!intersects_classification(&range, &expanded.classifications)).then_some(range)
+                })
+                .collect::<Vec<_>>();
+            replace_ranges(&mut expanded, &ranges, &replacement);
+        }
     }
-    for item in media {
-        let reference = item.reference_markdown()?;
-        if !expanded.markdown.contains(&reference) {
-            continue;
-        }
-        let replacement = item.markdown()?;
-        let reference_len = reference.len();
-        let starts = expanded
-            .markdown
-            .match_indices(&reference)
-            .filter_map(|(start, _)| {
-                let end = start + reference_len;
-                let intersects_classification =
-                    expanded.classifications.iter().any(|classification| {
-                        usize::try_from(classification.start)
-                            .is_ok_and(|classification_start| classification_start < end)
-                            && usize::try_from(classification.end)
-                                .is_ok_and(|classification_end| start < classification_end)
-                    });
-                (!intersects_classification).then_some(start)
-            })
-            .collect::<Vec<_>>();
-        if starts.is_empty() {
-            continue;
-        }
-        let source = expanded.markdown.as_ref();
-        let mut projected = String::with_capacity(
-            source
-                .len()
-                .saturating_add(replacement.len().saturating_mul(starts.len())),
-        );
-        let mut cursor = 0;
-        for start in &starts {
-            projected.push_str(&source[cursor..*start]);
-            projected.push_str(&replacement);
-            cursor = start + reference_len;
-        }
-        projected.push_str(&source[cursor..]);
-
-        let delta = i64::try_from(replacement.len()).expect("media Markdown length fits i64")
-            - i64::try_from(reference_len).expect("media reference length fits i64");
-        let shift = |offset: u32| {
-            let position = usize::try_from(offset).expect("validated annotation offset fits usize");
-            let preceding = starts
-                .partition_point(|replacement_start| replacement_start + reference_len <= position);
-            let shift = delta
-                .checked_mul(i64::try_from(preceding).expect("media replacement count fits i64"))
-                .expect("media annotation offset shift fits i64");
-            let shifted = i64::from(offset)
-                .checked_add(shift)
-                .expect("media annotation offset shift does not overflow");
-            u32::try_from(shifted).expect("admitted media projection fits annotation offsets")
-        };
-        if !expanded.classifications.is_empty() {
-            expanded.classifications = Cow::Owned(
-                expanded
-                    .classifications
-                    .iter()
-                    .map(|classification| MessageClassification {
-                        start: shift(classification.start),
-                        end: shift(classification.end),
-                        kind: classification.kind,
-                    })
-                    .collect(),
-            );
-        }
-        if !expanded.directives.is_empty() {
-            expanded.directives = Cow::Owned(
-                expanded
-                    .directives
-                    .iter()
-                    .map(|directive| MessageDirective {
-                        start: shift(directive.start),
-                        end: shift(directive.end),
-                        ..directive.clone()
-                    })
-                    .collect(),
-            );
-        }
-        expanded.markdown = Cow::Owned(projected);
+    wire::media::validate_markdown_image_bindings(bindings)?;
+    for binding in bindings {
+        let ranges = inline_image_destination_ranges(&expanded.markdown, &binding.destination);
+        replace_ranges(&mut expanded, &ranges, &binding.media.data_url);
     }
     Ok(expanded)
+}
+
+fn intersects_classification(
+    range: &Range<usize>,
+    classifications: &[MessageClassification],
+) -> bool {
+    classifications.iter().any(|classification| {
+        usize::try_from(classification.start).is_ok_and(|start| start < range.end)
+            && usize::try_from(classification.end).is_ok_and(|end| range.start < end)
+    })
+}
+
+fn replace_ranges(expanded: &mut ExpandedMedia<'_>, ranges: &[Range<usize>], replacement: &str) {
+    if ranges.is_empty() {
+        return;
+    }
+    let source = expanded.markdown.as_ref();
+    let added = ranges.iter().fold(0usize, |added, range| {
+        added.saturating_add(replacement.len().saturating_sub(range.len()))
+    });
+    let mut projected = String::with_capacity(source.len().saturating_add(added));
+    let mut cursor = 0;
+    for range in ranges {
+        projected.push_str(&source[cursor..range.start]);
+        projected.push_str(replacement);
+        cursor = range.end;
+    }
+    projected.push_str(&source[cursor..]);
+
+    let shift = |offset: u32| {
+        let position = usize::try_from(offset).expect("validated annotation offset fits usize");
+        let delta = ranges
+            .iter()
+            .take_while(|range| range.end <= position)
+            .map(|range| {
+                i64::try_from(replacement.len()).expect("media payload length fits i64")
+                    - i64::try_from(range.len()).expect("media destination length fits i64")
+            })
+            .sum::<i64>();
+        let shifted = i64::from(offset)
+            .checked_add(delta)
+            .expect("media annotation offset shift does not overflow");
+        u32::try_from(shifted).expect("admitted media projection fits annotation offsets")
+    };
+    if !expanded.classifications.is_empty() {
+        expanded.classifications = Cow::Owned(
+            expanded
+                .classifications
+                .iter()
+                .map(|classification| MessageClassification {
+                    start: shift(classification.start),
+                    end: shift(classification.end),
+                    kind: classification.kind,
+                })
+                .collect(),
+        );
+    }
+    if !expanded.directives.is_empty() {
+        expanded.directives = Cow::Owned(
+            expanded
+                .directives
+                .iter()
+                .map(|directive| MessageDirective {
+                    start: shift(directive.start),
+                    end: shift(directive.end),
+                    ..directive.clone()
+                })
+                .collect(),
+        );
+    }
+    expanded.markdown = Cow::Owned(projected);
+}
+
+fn inline_image_destination_ranges(markdown: &str, destination: &str) -> Vec<Range<usize>> {
+    Parser::new_ext(markdown, Options::all())
+        .into_offset_iter()
+        .filter_map(|(event, source)| match event {
+            MarkdownEvent::Start(Tag::Image {
+                link_type: pulldown_cmark::LinkType::Inline,
+                dest_url,
+                ..
+            }) if dest_url.as_ref() == destination => {
+                inline_destination_range(&markdown[source.clone()])
+                    .map(|range| source.start + range.start..source.start + range.end)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn inline_destination_range(image: &str) -> Option<Range<usize>> {
+    let label_end = image.find("](")?;
+    let mut start = label_end + 2;
+    while image
+        .as_bytes()
+        .get(start)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        start += 1;
+    }
+    if image.as_bytes().get(start) == Some(&b'<') {
+        let end = image[start + 1..].find('>')? + start + 1;
+        return Some(start + 1..end);
+    }
+    let mut escaped = false;
+    let mut parentheses = 0usize;
+    for (relative, character) in image[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '(' => parentheses = parentheses.saturating_add(1),
+            ')' if parentheses == 0 => return (relative != 0).then_some(start..start + relative),
+            ')' => parentheses -= 1,
+            character if character.is_ascii_whitespace() && parentheses == 0 => {
+                return (relative != 0).then_some(start..start + relative);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Render received text using exact resident-authenticated semantic ranges.

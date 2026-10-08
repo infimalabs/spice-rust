@@ -112,16 +112,45 @@ pub(super) fn present_swept<P: AgentMessagePublisher>(
     swept: &[Cow<'_, lane::capture::CaptureRecord>],
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
+    let transcript = swept
+        .first()
+        .and_then(|record| transcript_for(bus, epoch, record.lane, record.occupant));
     for record in swept {
         recognize(bus, epoch, surfaces, recognition, record, views.diagnostic)?;
         let steering = steering_ledger(bus, record)?;
-        present(surfaces, record, steering.as_ref(), views)?;
+        present(
+            surfaces,
+            record,
+            steering.as_ref(),
+            transcript.as_deref(),
+            views,
+        )?;
         let steps = lock_state(views.state)?
             .narration
             .observe(surfaces.narration, record);
         narration::record(bus, surfaces.paths, epoch, steps, views.diagnostic)?;
     }
     Ok(())
+}
+
+fn transcript_for(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Option<std::path::PathBuf> {
+    let residency = current_residency(bus, epoch).ok()?;
+    let row = residency.body().lanes.iter().find(|row| row.lane == lane)?;
+    let session = row.session.as_ref().filter(|session| {
+        session.lane == lane && session.occupant == occupant && session.vendor == row.vendor
+    })?;
+    crate::session_command::vendor_thread_transcript(
+        &session.identity,
+        &session.vendor,
+        &crate::session_environment(),
+    )
+    .ok()
+    .map(|(path, _)| path)
 }
 
 /// Recognize one record's taste candidates under the configured adjudication.
@@ -188,6 +217,7 @@ pub(super) fn present<P: AgentMessagePublisher>(
     surfaces: &CaptureSurfaces<'_, P>,
     record: &lane::capture::CaptureRecord,
     steering: Option<&PresentationDirectives>,
+    transcript: Option<&std::path::Path>,
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
     let presented = publish_agent_messages_in(
@@ -197,6 +227,7 @@ pub(super) fn present<P: AgentMessagePublisher>(
         steering,
         None,
         None,
+        transcript,
     );
     app_diagnostic(presented, views.diagnostic)
 }

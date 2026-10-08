@@ -601,6 +601,9 @@ pub struct AgentMessage {
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
+    /// Authenticated display-only replacements for exact Markdown image destinations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markdown_images: Vec<crate::MarkdownImageBinding>,
 }
 
 impl AgentMessage {
@@ -699,6 +702,7 @@ mod message_retention_tests {
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            markdown_images: Vec::new(),
         }
     }
 
