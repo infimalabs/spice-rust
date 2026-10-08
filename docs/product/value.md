@@ -614,9 +614,11 @@ counterclockwise, with a darker seam opening each slice so two agents sharing an
 accent stay distinct. A smooth raised dome shades the pinwheel, and its word is
 inked straight into the dome in the page color, with no plate. Pressing a lit
 `Send` pops the dome down, and its fold shows as a bright circle around the word
-until release. Unlit or disabled by an empty draft, it keeps the full-opacity
-raised knob in the neutral surface of the resting quiet thumb; only its color
-mutes, while the command-modifier and focus rings still show around it.
+until release. Until the team is fully idle, `Send` unlit by an empty draft
+keeps the full-opacity raised knob in the neutral surface of the resting quiet
+thumb; only its color mutes, while command-modifier and focus rings still show
+around it. With no running agent and no draft, the knob recedes to a depressed
+face.
 Raised states use distinct team accents: the
 first round button reads `TURBO`, lit in the reddish accent while the team's
 own fast-mode flag is on, and `BASIC`, in the same neutral raised knob,
