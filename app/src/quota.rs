@@ -754,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn credit_balances_never_read_above_the_reported_amount() {
+    fn credit_balances_truncate_to_whole_credits_past_float_noise() {
         for (reported, shown) in [
             ("61500.25", Some(61_500.0)),
             ("62000", Some(62_000.0)),
