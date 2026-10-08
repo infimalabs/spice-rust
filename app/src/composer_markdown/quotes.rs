@@ -248,6 +248,7 @@ fn render(
                     controls_target: target.clone(),
                     signoff,
                     disposition,
+                    badge: String::new(),
                     task_tail,
                 },
                 quote_depth,

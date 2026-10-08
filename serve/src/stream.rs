@@ -22,7 +22,7 @@ mod tests;
 
 pub use message::{
     MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessageBatch, MessageHistoryPage,
-    MessageHistoryProvider, MessagePublishError, MessagePublisher,
+    MessageHistoryProvider, MessagePresentation, MessagePublishError, MessagePublisher,
 };
 use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;

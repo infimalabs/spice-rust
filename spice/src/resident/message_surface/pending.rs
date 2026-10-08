@@ -83,10 +83,7 @@ pub(in crate::resident) trait PresentationPublisher {
         &self,
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: serve::stream::MessagePresentation,
     ) -> Result<bool, serve::stream::MessagePublishError>;
 }
 
@@ -95,20 +92,9 @@ impl PresentationPublisher for serve::stream::MessagePublisher {
         &self,
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: serve::stream::MessagePresentation,
     ) -> Result<bool, serve::stream::MessagePublishError> {
-        Self::revise_presentation(
-            self,
-            lane,
-            locus,
-            text,
-            acknowledgement,
-            classifications,
-            directive_contexts,
-        )
+        Self::revise_presentation(self, lane, locus, presentation)
     }
 }
 
@@ -117,20 +103,9 @@ impl PresentationPublisher for serve::stream::MessageBatch {
         &self,
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: serve::stream::MessagePresentation,
     ) -> Result<bool, serve::stream::MessagePublishError> {
-        Self::revise_presentation(
-            self,
-            lane,
-            locus,
-            text,
-            acknowledgement,
-            classifications,
-            directive_contexts,
-        )
+        Self::revise_presentation(self, lane, locus, presentation)
     }
 }
 
@@ -187,8 +162,8 @@ fn settle_with_directives(
 
 /// Re-present one card from the current journal disposition of its keys.
 ///
-/// The prose state the turn end revises to final follows the same text and
-/// classifications, so the terminal revision still names the card retention holds.
+/// The prose state the turn end revises to final follows the same
+/// presentation, so the terminal revision still names the card retention holds.
 fn present_again(
     publisher: &impl PresentationPublisher,
     state: &mut MessageState,
@@ -201,32 +176,27 @@ fn present_again(
     }
     let presented = present_steering_acknowledgements(&card.text, Some(directives), event)?;
     publisher
-        .revise_presentation(
-            card.lane,
-            card.locus,
-            presented.text.clone(),
-            presented.acknowledgement,
-            presented.classifications.clone(),
-            presented.directive_contexts.clone(),
-        )
+        .revise_presentation(card.lane, card.locus, presented.clone())
         .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
     if let Some(prose) = state.prose.get_mut(&card.lane)
         && prose.published.locus == card.locus
     {
-        prose.published.text.clone_from(&presented.text);
-        prose.published.acknowledgement = presented.acknowledgement;
-        prose
-            .published
-            .classifications
-            .clone_from(&presented.classifications);
-        prose
-            .published
-            .directive_contexts
-            .clone_from(&presented.directive_contexts);
-        prose.terminal.text = presented.text;
-        prose.terminal.acknowledgement = presented.acknowledgement;
-        prose.terminal.classifications = presented.classifications;
-        prose.terminal.directive_contexts = presented.directive_contexts;
+        apply_presentation(&mut prose.published, &presented);
+        apply_presentation(&mut prose.terminal, &presented);
     }
     Ok(())
+}
+
+fn apply_presentation(
+    message: &mut wire::AgentMessage,
+    presented: &serve::stream::MessagePresentation,
+) {
+    message.text.clone_from(&presented.text);
+    message.acknowledgement = presented.acknowledgement;
+    message
+        .classifications
+        .clone_from(&presented.classifications);
+    message
+        .directive_contexts
+        .clone_from(&presented.directive_contexts);
 }

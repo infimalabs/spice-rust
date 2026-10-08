@@ -1094,7 +1094,7 @@ fn reminded(
         occupant,
         compaction,
         locus: locus(compaction as u32),
-        text: format!("[TASTE] {taste}"),
+        text: taste.to_owned(),
         expires: "2031-01-01T00:00:00.000Z".parse().expect("fixture expiry"),
     }
 }

@@ -4,34 +4,20 @@ use super::*;
 struct MessageBadges {
     acknowledgement: Option<wire::MessageAcknowledgement>,
     final_answer: bool,
-    taste: bool,
-    review: bool,
     broadcast: bool,
 }
 
 impl MessageBadges {
     fn from_message(message: &wire::AgentMessage) -> Self {
-        let mut badges = Self {
+        Self {
             acknowledgement: message.acknowledgement,
             final_answer: message.final_answer,
-            ..Self::default()
-        };
-        for classification in &message.classifications {
-            match classification.kind {
-                wire::MessageClassificationKind::Taste => badges.taste = true,
-                wire::MessageClassificationKind::Review => badges.review = true,
-                wire::MessageClassificationKind::Broadcast => badges.broadcast = true,
-            }
+            broadcast: !message.classifications.is_empty(),
         }
-        badges
     }
 
     fn is_empty(&self) -> bool {
-        self.acknowledgement.is_none()
-            && !self.final_answer
-            && !self.taste
-            && !self.review
-            && !self.broadcast
+        self.acknowledgement.is_none() && !self.final_answer && !self.broadcast
     }
 }
 
@@ -51,24 +37,6 @@ pub(super) fn render(message: &wire::AgentMessage) -> Html {
             }
             if badges.final_answer {
                 {render_final_segment()}
-            }
-            if badges.taste {
-                <span
-                    class="message-taste-pill"
-                    data-message-classification="taste"
-                    aria-label="Taste classification"
-                >
-                    {"TASTE"}
-                </span>
-            }
-            if badges.review {
-                <span
-                    class="message-review-pill"
-                    data-message-classification="review"
-                    aria-label="Review classification"
-                >
-                    {"REVIEW"}
-                </span>
             }
             if badges.broadcast {
                 <span

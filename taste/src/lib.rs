@@ -11,7 +11,7 @@ mod bag;
 mod config;
 
 pub use bag::{
-    Bag, BagError, Hit, REMINDER_MARKER, Span, Taste, Trigger, TriggerError, bag_identity,
-    is_reminder_echo, normalize_prose, reminder_identity, reminder_text,
+    Bag, BagError, Hit, Span, Taste, Trigger, TriggerError, bag_identity, normalize_prose,
+    reminder_identity,
 };
 pub use config::{Config, ConfigError, configured};

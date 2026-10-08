@@ -519,11 +519,40 @@ enum MessageMutation {
     RevisePresentation {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: MessagePresentation,
     },
+}
+
+/// Journal-derived presentation of one prose card's text.
+///
+/// The resident derives every field from the same steering evidence, so a
+/// revision replaces them together.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessagePresentation {
+    /// Presented message text.
+    pub text: String,
+    /// Acknowledgment disposition the answer earned.
+    pub acknowledgement: Option<wire::MessageAcknowledgement>,
+    /// Exact broadcast marker ranges in [`Self::text`].
+    pub classifications: Vec<wire::MessageClassification>,
+    /// Exact directive context ranges in [`Self::text`].
+    pub directive_contexts: Vec<wire::MessageDirective>,
+}
+
+impl MessagePresentation {
+    /// Text presented without any steering-derived annotation.
+    #[must_use]
+    pub fn plain(text: String) -> Self {
+        Self {
+            text,
+            ..Self::default()
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        wire::valid_message_classifications(&self.text, &self.classifications)
+            && wire::valid_message_directives(&self.text, &self.directive_contexts)
+    }
 }
 
 impl MessagePublisher {
@@ -648,20 +677,10 @@ impl MessagePublisher {
         &self,
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: MessagePresentation,
     ) -> Result<bool, MessagePublishError> {
         let batch = self.batch()?;
-        let changed = batch.revise_presentation(
-            lane,
-            locus,
-            text,
-            acknowledgement,
-            classifications,
-            directive_contexts,
-        )?;
+        let changed = batch.revise_presentation(lane, locus, presentation)?;
         if changed {
             batch.commit()?;
         }
@@ -707,39 +726,23 @@ impl MessageBatch {
         &self,
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
-        text: String,
-        acknowledgement: Option<wire::MessageAcknowledgement>,
-        classifications: Vec<wire::MessageClassification>,
-        directive_contexts: Vec<wire::MessageDirective>,
+        presentation: MessagePresentation,
     ) -> Result<bool, MessagePublishError> {
-        if !wire::valid_message_classifications(&text, &classifications)
-            || !wire::valid_message_directives(&text, &directive_contexts)
-        {
+        if !presentation.is_valid() {
             return Err(MessagePublishError::InvalidClassifications);
         }
         let mut state = self
             .state
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let Some(_) = revise_presented_message(
-            &mut state.retained,
-            lane,
-            locus,
-            text.clone(),
-            acknowledgement,
-            classifications.clone(),
-            directive_contexts.clone(),
-        )?
+        let Some(_) = revise_presented_message(&mut state.retained, lane, locus, &presentation)?
         else {
             return Ok(false);
         };
         state.mutations.push(MessageMutation::RevisePresentation {
             lane,
             locus,
-            text,
-            acknowledgement,
-            classifications,
-            directive_contexts,
+            presentation,
         });
         Ok(true)
     }
@@ -876,20 +879,9 @@ impl MessageMutation {
             Self::RevisePresentation {
                 lane,
                 locus,
-                text,
-                acknowledgement,
-                classifications,
-                directive_contexts,
-            } => revise_presented_message(
-                retained,
-                *lane,
-                *locus,
-                text.clone(),
-                *acknowledgement,
-                classifications.clone(),
-                directive_contexts.clone(),
-            )
-            .map(|revised| revised.is_some()),
+                presentation,
+            } => revise_presented_message(retained, *lane, *locus, presentation)
+                .map(|revised| revised.is_some()),
         }
     }
 }
@@ -994,10 +986,7 @@ fn revise_presented_message(
     retained: &mut VecDeque<AgentMessage>,
     lane: wire::CanonicalUuid,
     locus: wire::MessageLocus,
-    text: String,
-    acknowledgement: Option<wire::MessageAcknowledgement>,
-    classifications: Vec<wire::MessageClassification>,
-    directive_contexts: Vec<wire::MessageDirective>,
+    presentation: &MessagePresentation,
 ) -> Result<Option<AgentMessage>, MessagePublishError> {
     let Some(existing) = retained
         .iter_mut()
@@ -1008,17 +997,21 @@ fn revise_presented_message(
     if existing.activity != wire::AgentActivityKind::Prose {
         return Err(MessagePublishError::IdentityConflict);
     }
-    if existing.text == text
-        && existing.acknowledgement == acknowledgement
-        && existing.classifications == classifications
-        && existing.directive_contexts == directive_contexts
+    if existing.text == presentation.text
+        && existing.acknowledgement == presentation.acknowledgement
+        && existing.classifications == presentation.classifications
+        && existing.directive_contexts == presentation.directive_contexts
     {
         return Ok(None);
     }
-    existing.text = text;
-    existing.acknowledgement = acknowledgement;
-    existing.classifications = classifications;
-    existing.directive_contexts = directive_contexts;
+    existing.text.clone_from(&presentation.text);
+    existing.acknowledgement = presentation.acknowledgement;
+    existing
+        .classifications
+        .clone_from(&presentation.classifications);
+    existing
+        .directive_contexts
+        .clone_from(&presentation.directive_contexts);
     Ok(Some(existing.clone()))
 }
 

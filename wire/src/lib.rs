@@ -119,7 +119,7 @@ pub use reply::{
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
-    MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,
+    DirectiveBadge, MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,
     MessageClassificationKind, MessageDirective, MessageHistoryCursor, MessageLocus,
     MessageProseOrigin, PEER_REPLY_CONTROL_PREFIX, PeerAnswer, REVIEW_FEEDBACK_CONTROL_PREFIX,
     StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamLaneSeated, StreamRequest,

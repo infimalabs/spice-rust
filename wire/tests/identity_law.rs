@@ -48,9 +48,9 @@ use wire::manifest::{ProductVersion, ReleaseTarget};
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, Answer, AnyFact,
     AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
-    CommandKind, CursorHead, DemoAnswer, Derived, Digest, Disposition, DoctorObservation,
-    DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork,
-    DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
+    CommandKind, CursorHead, DemoAnswer, Derived, Digest, DirectiveBadge, Disposition,
+    DoctorObservation, DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode,
+    DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
     EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, Fault, FaultClass,
     FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
     LaneResidency, LaneSession, LeaseHead, MessageAcknowledgement, MessageClassification,

@@ -529,25 +529,18 @@ fn present_steering_acknowledgements(
     text: &str,
     steering: Option<&PresentationDirectives>,
     event: PresentationEvent,
-) -> CommandResult<PresentedMessageText> {
+) -> CommandResult<serve::stream::MessagePresentation> {
     let Some(steering) = steering else {
-        return Ok(PresentedMessageText {
-            text: text.to_owned(),
-            acknowledgement: None,
-            classifications: Vec::new(),
-            directive_contexts: Vec::new(),
-        });
+        return Ok(serve::stream::MessagePresentation::plain(text.to_owned()));
     };
     let presented = present_steering_acknowledgements_with_directives(text, steering, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
-    let classifications = hydrate_message_classifications(
-        &presented.text,
-        message_badges(text, Some(steering), event),
-    )
-    .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
+    let broadcasts = answered_broadcasts(text, steering, event);
+    let classifications = hydrate_message_classifications(&presented.text, broadcasts)
+        .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let directive_contexts = hydrate_directive_contexts(&presented, steering)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
-    Ok(PresentedMessageText {
+    Ok(serve::stream::MessagePresentation {
         text: presented.text,
         acknowledgement: presented.acknowledgement,
         classifications,
@@ -555,12 +548,6 @@ fn present_steering_acknowledgements(
     })
 }
 
-struct PresentedMessageText {
-    text: String,
-    acknowledgement: Option<wire::MessageAcknowledgement>,
-    classifications: Vec<wire::MessageClassification>,
-    directive_contexts: Vec<wire::MessageDirective>,
-}
 pub(crate) fn quote_agent_prose(
     reader: &bus::BusReader,
     lane: CanonicalUuid,
@@ -574,7 +561,7 @@ pub(crate) fn quote_agent_prose(
     }
     let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
     let directives = PresentationDirectives::from_presentations(&rows)?;
-    let PresentedMessageText {
+    let serve::stream::MessagePresentation {
         mut text,
         directive_contexts,
         ..
@@ -614,6 +601,19 @@ struct PresentationDirective {
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
     retirement: Option<wire::body::TranscriptLocus>,
+}
+
+impl PresentationDirective {
+    /// Badge of the resident-generated directive kind, from typed provenance.
+    fn badge(&self) -> Option<wire::DirectiveBadge> {
+        if self.review {
+            Some(wire::DirectiveBadge::Review)
+        } else if self.taste {
+            Some(wire::DirectiveBadge::Taste)
+        } else {
+            None
+        }
+    }
 }
 
 impl PresentationDirectives {
@@ -797,73 +797,32 @@ fn is_review_feedback(control: Option<&str>) -> bool {
         .is_some()
 }
 
-/// Flavor badges an answer earned for the directives it quoted.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ClassificationCounts {
-    tastes: u32,
-    broadcasts: u32,
-    reviews: u32,
-}
-impl ClassificationCounts {
-    #[cfg(test)]
-    fn is_empty(self) -> bool {
-        self == Self::default()
-    }
-}
-
-fn message_badges(
+/// How many broadcast markers the quoted contexts of directives this answer
+/// actually answered may present.
+fn answered_broadcasts(
     text: &str,
-    directives: Option<&PresentationDirectives>,
+    directives: &PresentationDirectives,
     event: PresentationEvent,
-) -> ClassificationCounts {
-    let Some(directives) = directives else {
-        return ClassificationCounts::default();
-    };
+) -> usize {
     let standing = EventDirectives { directives, event };
-    let answered = recognized_answers(text, &standing)
+    recognized_answers(text, &standing)
         .map(|(key, _)| key)
-        .collect::<BTreeSet<_>>();
-    let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
-        let matched = answered
-            .iter()
-            .filter(|key| directives.0.get(*key).is_some_and(select))
-            .count();
-        u32::try_from(matched).unwrap_or(u32::MAX)
-    };
-    ClassificationCounts {
-        tastes: count(&|directive| directive.taste),
-        broadcasts: count(&|directive| !directive.taste && has_broadcast_marker(&directive.text)),
-        reviews: count(&|directive| directive.review),
-    }
+        .collect::<BTreeSet<_>>()
+        .iter()
+        .filter_map(|key| directives.0.get(key))
+        .filter(|directive| !directive.taste && has_broadcast_marker(&directive.text))
+        .count()
 }
 
-#[derive(Debug)]
-struct RemainingClassifications {
-    tastes: usize,
-    broadcasts: usize,
-    reviews: usize,
-}
-
-impl From<ClassificationCounts> for RemainingClassifications {
-    fn from(counts: ClassificationCounts) -> Self {
-        let count = |value| usize::try_from(value).unwrap_or(usize::MAX);
-        Self {
-            tastes: count(counts.tastes),
-            broadcasts: count(counts.broadcasts),
-            reviews: count(counts.reviews),
-        }
-    }
-}
-
-/// Classify source markers a presented message carries.
+/// Classify the broadcast markers a presented message carries.
 ///
-/// Flavor markers sit inside quoted directive text and are bounded by the
-/// counts this answer's recognized keys earned. Identical words anywhere the
-/// agent wrote them stay literal. Acknowledgment disposition is independent of
-/// source ranges and never enters this collection.
+/// A broadcast marker opens first-level quoted directive text and is bounded
+/// by the broadcasts this answer's recognized keys earned. Identical words
+/// anywhere the agent wrote them stay literal. Acknowledgment disposition and
+/// badges are independent of source ranges and never enter this collection.
 fn hydrate_message_classifications(
     text: &str,
-    counts: ClassificationCounts,
+    mut broadcasts: usize,
 ) -> Result<Vec<wire::MessageClassification>, String> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -872,12 +831,16 @@ fn hydrate_message_classifications(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let mut remaining = RemainingClassifications::from(counts);
+    let kind = wire::MessageClassificationKind::Broadcast;
+    let marker = kind.marker();
     let mut quote_depth = 0usize;
     let mut code_block = false;
     let mut image_depth = 0usize;
     let mut classifications = Vec::new();
     for (event, source) in Parser::new_ext(text, options).into_offset_iter() {
+        if broadcasts == 0 {
+            break;
+        }
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
@@ -894,33 +857,31 @@ fn hydrate_message_classifications(
         let MarkdownEvent::Text(_) = event else {
             continue;
         };
-        if code_block || image_depth != 0 || quote_depth == 0 {
+        if code_block || image_depth != 0 || quote_depth != 1 {
             continue;
         }
         let source_tail = text
             .get(source.start..)
             .ok_or_else(|| "Markdown source offset is not UTF-8 aligned".to_owned())?;
-        let Some(kind) = live_classification(source_tail, quote_depth, &mut remaining) else {
+        if !source_tail
+            .strip_prefix(marker)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
+        {
             continue;
-        };
-        classifications.push((source.start, kind));
+        }
+        broadcasts -= 1;
+        let end = source
+            .start
+            .checked_add(marker.len())
+            .ok_or_else(|| "classification end overflowed".to_owned())?;
+        classifications.push(wire::MessageClassification {
+            start: u32::try_from(source.start)
+                .map_err(|_| "classification start exceeds the wire range".to_owned())?,
+            end: u32::try_from(end)
+                .map_err(|_| "classification end exceeds the wire range".to_owned())?,
+            kind,
+        });
     }
-    classifications.sort_unstable_by_key(|(start, _)| *start);
-    let classifications = classifications
-        .into_iter()
-        .map(|(start, kind)| {
-            let end = start
-                .checked_add(kind.marker().len())
-                .ok_or_else(|| "classification end overflowed".to_owned())?;
-            Ok(wire::MessageClassification {
-                start: u32::try_from(start)
-                    .map_err(|_| "classification start exceeds the wire range".to_owned())?,
-                end: u32::try_from(end)
-                    .map_err(|_| "classification end exceeds the wire range".to_owned())?,
-                kind,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
     if !wire::valid_message_classifications(text, &classifications) {
         return Err("hydrated message classifications are not exact and ordered".to_owned());
     }
@@ -948,49 +909,10 @@ fn hydrate_directive_contexts(
                 quote_target: directive.quote_target.clone(),
                 actor: directive.actor.clone(),
                 authored: directive.published,
+                badge: directive.badge(),
             })
         })
         .collect()
-}
-
-/// A flavor marker opening quoted directive text, drawn from what the answer
-/// earned. Taste is recognized at any depth; the others only on the first level.
-fn live_classification(
-    source_tail: &str,
-    quote_depth: usize,
-    remaining: &mut RemainingClassifications,
-) -> Option<wire::MessageClassificationKind> {
-    use wire::MessageClassificationKind as Kind;
-    if quote_depth == 1 {
-        for (kind, remaining) in [
-            (Kind::Review, &mut remaining.reviews),
-            (Kind::Broadcast, &mut remaining.broadcasts),
-        ] {
-            if take_classification(source_tail, kind, remaining) {
-                return Some(kind);
-            }
-        }
-    }
-    take_classification(source_tail, Kind::Taste, &mut remaining.tastes).then_some(Kind::Taste)
-}
-
-fn take_classification(
-    text: &str,
-    kind: wire::MessageClassificationKind,
-    remaining: &mut usize,
-) -> bool {
-    if *remaining == 0 {
-        return false;
-    }
-    let marker = kind.marker();
-    if !text
-        .strip_prefix(marker)
-        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
-    {
-        return false;
-    }
-    *remaining -= 1;
-    true
 }
 
 /// Recognized answers from one presentation scan. Callers select dispositions

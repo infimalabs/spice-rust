@@ -11,11 +11,14 @@ use serde::{Deserialize, Serialize};
 
 mod prose;
 pub use prose::{MessageProseOrigin, superseded_prose};
+mod annotation;
+pub use annotation::{
+    DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDirective,
+    valid_message_classifications, valid_message_directives,
+};
 
 /// Canonical semantic prefix carried by every broadcast steering directive.
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
-/// Canonical semantic prefix carried by every peer-review steering directive.
-pub const REVIEW_MARKER: &str = "[REVIEW]";
 /// Canonical control prefix carried by resident-generated peer-review feedback.
 pub const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = "review-feedback:";
 
@@ -147,9 +150,6 @@ mod peer_reply_control_tests {
         }
     }
 }
-
-/// Canonical semantic prefix carried by every taste steering directive.
-pub const TASTE_MARKER: &str = "[TASTE]";
 
 /// Newest messages every surface keeps for each agent, whatever else it drops.
 ///
@@ -338,120 +338,6 @@ impl MessageAcknowledgement {
             Self::Declined => 2,
         }
     }
-}
-
-/// One resident-authenticated source classification at an exact byte range in
-/// the presented message text.
-///
-/// The resident owns both classification and placement. A consumer may replace
-/// only this exact range after validating it against [`Self::kind`]; identical
-/// marker prose elsewhere remains ordinary text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MessageClassification {
-    /// Inclusive UTF-8 byte offset where the canonical marker begins.
-    pub start: u32,
-    /// Exclusive UTF-8 byte offset immediately after the canonical marker.
-    pub end: u32,
-    /// Authenticated semantic presentation at this range.
-    pub kind: MessageClassificationKind,
-}
-
-impl MessageClassification {
-    /// Whether this annotation names its kind's exact canonical marker on UTF-8
-    /// boundaries in `text`.
-    #[must_use]
-    pub fn is_valid_for(&self, text: &str) -> bool {
-        let Ok(start) = usize::try_from(self.start) else {
-            return false;
-        };
-        let Ok(end) = usize::try_from(self.end) else {
-            return false;
-        };
-        text.get(start..end) == Some(self.kind.marker())
-    }
-}
-/// One resident-authenticated directive context embedded in an agent card.
-///
-/// The range identifies the exact rendered context the quote action belongs to;
-/// the target authenticates the original journal text independently of marker
-/// presentation, and the actor attributes it exactly as a quote of that target
-/// would.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MessageDirective {
-    /// Inclusive UTF-8 byte offset where the rendered directive begins.
-    pub start: u32,
-    /// Exclusive UTF-8 byte offset immediately after the rendered directive.
-    pub end: u32,
-    /// Canonical steering target supplied by the resident.
-    pub quote_target: QuoteTarget,
-    /// Actor on the directive's creating fact.
-    pub actor: crate::Actor,
-    /// Journal instant at which the quoted directive was published.
-    pub authored: Instant,
-}
-
-impl MessageDirective {
-    /// Whether this context names a non-empty UTF-8 range and a steering target.
-    #[must_use]
-    pub fn is_valid_for(&self, text: &str) -> bool {
-        let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
-            return false;
-        };
-        start < end
-            && text.get(start..end).is_some()
-            && matches!(&self.quote_target, QuoteTarget::Steering { .. })
-    }
-}
-/// Whether directive contexts are exact, ordered, and non-overlapping.
-#[must_use]
-pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> bool {
-    directives
-        .iter()
-        .all(|directive| directive.is_valid_for(text))
-        && directives
-            .windows(2)
-            .all(|pair| pair[0].end <= pair[1].start)
-}
-
-/// Semantic source-marker presentation authenticated by the resident.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MessageClassificationKind {
-    /// Confirmed taste guidance.
-    Taste,
-    /// Broadcast steering.
-    Broadcast,
-    /// Peer-review feedback.
-    Review,
-}
-
-impl MessageClassificationKind {
-    /// Canonical source marker this semantic presentation replaces.
-    #[must_use]
-    pub const fn marker(self) -> &'static str {
-        match self {
-            Self::Taste => TASTE_MARKER,
-            Self::Broadcast => BROADCAST_MARKER,
-            Self::Review => REVIEW_MARKER,
-        }
-    }
-}
-
-/// Whether ordered classifications are exact, non-overlapping annotations of
-/// their presented text.
-#[must_use]
-pub fn valid_message_classifications(
-    text: &str,
-    classifications: &[MessageClassification],
-) -> bool {
-    classifications
-        .iter()
-        .all(|classification| classification.is_valid_for(text))
-        && classifications
-            .windows(2)
-            .all(|pair| pair[0].end <= pair[1].start)
 }
 
 /// Resident-selected text for one automatic Speak delivery.
@@ -661,7 +547,7 @@ pub struct AgentMessage {
         deserialize_with = "crate::optional::present"
     )]
     pub provider_error: Option<AgentProviderError>,
-    /// Resident-authenticated semantic markers at exact byte ranges in
+    /// Resident-authenticated broadcast markers at exact byte ranges in
     /// [`Self::text`].
     ///
     /// The absent wire spelling means no source range may be rendered as

@@ -11,8 +11,8 @@ a long exception list belongs in that task or its review instead.
 
 One runtime law has two explicitly configured modes. With `judge.enabled`
 absent or false, selection is the whole decision: a configured bag hit in
-authored prose emits one `[TASTE]` ordinary directive to the lane that wrote the
-prose, carrying the taste's message unchanged. With `judge.enabled = true`, the
+authored prose emits one ordinary taste directive to the lane that wrote the
+prose, carrying the taste's message unchanged and nothing else. With `judge.enabled = true`, the
 resident deterministically shuffles several equivalent framings, then invokes a
 fresh bounded judge child for each framing in sequence. Exactly one normalized YES confirms the
 candidate and opens the same ordinary directive; exactly one normalized NO
@@ -24,11 +24,13 @@ Both judgments are durable `taste::judged` evidence carrying the exact source,
 bag identity, trigger, vendor, transcript locus, compaction epoch, and ordered
 attempt provenance. That evidence makes replay and restart idempotent; only its
 confirmed variant is a steering publication. The same taste and normalized
-prose can be decided at most once for one bag and compaction epoch, and prose
-already carrying the reserved `[TASTE]` marker is classified as the runtime's
-own echo before matching, so a quoted reminder never becomes a candidate.
-Confirmed and direct reminders are ordinary steering: acknowledged, declined,
-resent, and expiring like any other directive.
+prose can be decided at most once for one bag and compaction epoch, a taste
+already reminded or confirmed in the current context is not reminded again,
+and quoted lines and the acknowledgment answering a directive are not
+candidate prose, so a reminder cannot trigger itself. Confirmed and direct
+reminders are ordinary steering: acknowledged, declined, resent, and expiring
+like any other directive. A quoted reminder wears a typed TASTE badge from
+that provenance; no marker is written into the reminder text.
 
 `taste::judged` is the sole resident decision fact. Other decodable
 taste-decision facts are read-only curation evidence and never drive a resident

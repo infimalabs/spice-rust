@@ -82,9 +82,7 @@ fn every_command_names_the_witnesses_it_requires() {
         assert_eq!(
             law.required.is_empty(),
             kind.is_read() || scanner_disposition || lane_lifecycle || global_settings,
-            concat!(
-                "only reads, lane lifecycle, and scanner dispositions may omit required witnesses"
-            ),
+            "only reads, lane lifecycle, and scanner dispositions may omit required witnesses",
         );
         if scanner_disposition {
             assert_eq!(law.optional, &[WitnessKind::Directive]);

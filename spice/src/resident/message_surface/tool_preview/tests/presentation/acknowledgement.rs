@@ -83,6 +83,19 @@ fn presented_acknowledgement(
         .expect("message presents")
         .acknowledgement
 }
+/// Badge of every directive context the answer presents, in text order.
+fn presented_badges(
+    text: &str,
+    directives: &PresentationDirectives,
+    event: PresentationEvent,
+) -> Vec<Option<wire::DirectiveBadge>> {
+    present_steering_acknowledgements(text, Some(directives), event)
+        .expect("message presents")
+        .directive_contexts
+        .into_iter()
+        .map(|context| context.badge)
+        .collect()
+}
 
 #[test]
 fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
@@ -229,11 +242,8 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
     let directives = directives(&[("1kQnrzNZ", "[BROADCAST] Send this to every occupied agent.")]);
 
     assert_eq!(
-        message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event()),
-        ClassificationCounts {
-            broadcasts: 1,
-            ..ClassificationCounts::default()
-        },
+        presented_badges("ACK 1kQnrzNZ: applied.", &directives, event()),
+        [None],
     );
     assert_eq!(
         presented_kinds("ACK 1kQnrzNZ: applied.", &directives, event()),
@@ -244,11 +254,8 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
         Some(wire::MessageAcknowledgement::Pending),
     );
     assert_eq!(
-        message_badges("NAK 1kQnrzNZ: refused.", Some(&directives), event()),
-        ClassificationCounts {
-            broadcasts: 1,
-            ..ClassificationCounts::default()
-        },
+        presented_badges("NAK 1kQnrzNZ: refused.", &directives, event()),
+        [None],
     );
     assert_eq!(
         presented_kinds("NAK 1kQnrzNZ: refused.", &directives, event()),
@@ -261,9 +268,9 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
 }
 
 #[test]
-fn taste_only_acknowledgement_carries_disposition_and_flavor() {
+fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
     let key = "dRyzkQp1P".parse::<steer::Key>().expect("taste key parses");
-    let directive_text = "[TASTE] compatibility: Keep one tested path.";
+    let directive_text = "Keep one tested path.";
     let directives = PresentationDirectives(BTreeMap::from([(
         key,
         PresentationDirective {
@@ -290,21 +297,34 @@ fn taste_only_acknowledgement_carries_disposition_and_flavor() {
     let text = "ACK dRyzkQp1P: Applied.";
 
     assert_eq!(
-        presented_kinds(text, &directives, event()),
-        [wire::MessageClassificationKind::Taste],
+        presented_badges(text, &directives, event()),
+        [Some(wire::DirectiveBadge::Taste)],
+        "the quoted reminder carries its kind without any marker",
     );
+    assert_eq!(presented_kinds(text, &directives, event()), []);
     assert_eq!(
         presented_acknowledgement(text, &directives, event()),
         Some(wire::MessageAcknowledgement::Acknowledged),
     );
     assert_eq!(
         presented_text(text, &directives, event()).expect("taste acknowledgement presents"),
-        "> [TASTE] compatibility: Keep one tested path.\n\nApplied.",
+        "> Keep one tested path.\n\nApplied.",
+    );
+
+    let mut literal = directives;
+    for directive in literal.0.values_mut() {
+        directive.taste = false;
+        directive.text = "[TASTE] Keep one tested path.".to_owned();
+    }
+    assert_eq!(
+        presented_badges(text, &literal, event()),
+        [None],
+        "a literal marker in ordinary direction earns no badge",
     );
 }
 
 #[test]
-fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
+fn review_feedback_context_carries_its_badge_without_a_marker() {
     assert!(is_review_feedback(Some("review-feedback:1kKRRsDR:42")));
     assert!(!is_review_feedback(Some("lane-renewal-context")));
     let source = "00000000-0000-4000-8000-000000000002"
@@ -320,7 +340,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             published: published(1),
             lane: lane(),
             text: concat!(
-                "[REVIEW] APP-1kKRRsDR\n\n",
+                "APP-1kKRRsDR\n\n",
                 "> preserve the finding\n\n",
                 "Keep working the current task."
             )
@@ -332,7 +352,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             quote_target: quote_target(
                 "1kQnrzNZ",
                 concat!(
-                    "[REVIEW] APP-1kKRRsDR\n\n",
+                    "APP-1kKRRsDR\n\n",
                     "> preserve the finding\n\n",
                     "Keep working the current task."
                 ),
@@ -352,16 +372,10 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
     let mut original = event();
     original.source = Some(source);
     assert_eq!(
-        message_badges(text, Some(&directives), original),
-        ClassificationCounts {
-            reviews: 1,
-            ..ClassificationCounts::default()
-        },
+        presented_badges(text, &directives, original),
+        [Some(wire::DirectiveBadge::Review)],
     );
-    assert_eq!(
-        presented_kinds(text, &directives, original),
-        [wire::MessageClassificationKind::Review],
-    );
+    assert_eq!(presented_kinds(text, &directives, original), []);
     assert_eq!(
         presented_acknowledgement(text, &directives, original),
         Some(wire::MessageAcknowledgement::Acknowledged),
@@ -372,9 +386,10 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             .parse()
             .expect("other fixture source"),
     );
-    assert!(
-        message_badges(text, Some(&directives), other_source).is_empty(),
-        "the same prose in another tape generation earns no review classification"
+    assert_eq!(
+        presented_badges(text, &directives, other_source),
+        [Some(wire::DirectiveBadge::Review)],
+        "the badge belongs to the sent feedback, not to whichever answer quotes it"
     );
 }
 
@@ -791,7 +806,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
     let mut directives = directives(&[
         ("1kQwPZtK", "Another lane's live direction."),
         ("1kQwPZtL", "Another lane's settled direction."),
-        ("1kQwPZtM", "[REVIEW] APP-1kKRRsDR\n\nKeep working."),
+        ("1kQwPZtM", "APP-1kKRRsDR\n\nKeep working."),
         ("1kQwPZtN", "Refused earlier on this lane."),
     ]);
     for (key, lane, disposition, review) in [
@@ -820,7 +835,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
         ),
         (
             "ACK 1kQwPZtM: again.",
-            "> [REVIEW] APP-1kKRRsDR\n>\n> Keep working.\n\nAgain.",
+            "> APP-1kKRRsDR\n>\n> Keep working.\n\nAgain.",
         ),
         (
             "ACK 1kQwPZtN: after all.",
@@ -836,9 +851,11 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
             presented,
             "wrong presentation for {text:?}",
         );
-        assert!(
-            message_badges(text, Some(&directives), event()).is_empty(),
-            "a reference this response did not answer earns no badge: {text:?}",
+        let review = text.contains("1kQwPZtM");
+        assert_eq!(
+            presented_badges(text, &directives, event()),
+            [review.then_some(wire::DirectiveBadge::Review)],
+            "a quoted directive carries its own kind: {text:?}",
         );
         let locus = wire::MessageLocus {
             member: 1,
@@ -956,15 +973,12 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 actor: wire::Actor::Operator,
                 published: published(2),
                 lane: lane(),
-                text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
+                text: "Keep one deterministic path.".to_owned(),
                 authored: true,
                 taste: true,
                 review: false,
                 disposition: wire::Disposition::Acked,
-                quote_target: quote_target(
-                    "1kR5xJDD",
-                    "[TASTE] fallbacks: Keep one deterministic path.",
-                ),
+                quote_target: quote_target("1kR5xJDD", "Keep one deterministic path."),
                 retirement: Some(retirement(0, 14)),
             },
         ),
@@ -980,7 +994,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
         presented.text,
         concat!(
             "> Continue\n\n",
-            "> [TASTE] fallbacks: Keep one deterministic path.\n\n",
+            "> Keep one deterministic path.\n\n",
             "Continuing with the explicit two-context contract only."
         ),
     );
@@ -994,16 +1008,14 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
         "each context keeps its directive's publication instant"
     );
     assert_eq!(
-        message_badges(text, Some(&directives), event()),
-        ClassificationCounts {
-            tastes: 1,
-            ..ClassificationCounts::default()
-        },
+        presented
+            .directive_contexts
+            .iter()
+            .map(|context| context.badge)
+            .collect::<Vec<_>>(),
+        [None, Some(wire::DirectiveBadge::Taste)],
     );
-    assert_eq!(
-        presented_kinds(text, &directives, event()),
-        [wire::MessageClassificationKind::Taste],
-    );
+    assert!(presented.classifications.is_empty());
     assert_eq!(
         presented.acknowledgement,
         Some(wire::MessageAcknowledgement::Acknowledged),

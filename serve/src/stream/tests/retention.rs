@@ -275,26 +275,19 @@ fn presentation_revision_moves_only_semantics_and_keeps_the_final_state() {
     );
     let mut updates = source.subscribe_messages();
 
-    let retired_text = spoken.text.clone();
-    let retired_classifications = Vec::new();
+    let retired = crate::stream::MessagePresentation {
+        text: spoken.text.clone(),
+        acknowledgement: Some(wire::MessageAcknowledgement::Acknowledged),
+        ..crate::stream::MessagePresentation::default()
+    };
     assert!(
         publisher
-            .revise_presentation(
-                spoken.lane,
-                spoken.locus,
-                retired_text.clone(),
-                Some(wire::MessageAcknowledgement::Acknowledged),
-                retired_classifications.clone(),
-                Vec::new(),
-            )
+            .revise_presentation(spoken.lane, spoken.locus, retired.clone())
             .expect("retired presentation publishes")
     );
     let mut expected = terminal;
-    expected.text = retired_text.clone();
-    expected.acknowledgement = Some(wire::MessageAcknowledgement::Acknowledged);
-    expected
-        .classifications
-        .clone_from(&retired_classifications);
+    expected.text.clone_from(&retired.text);
+    expected.acknowledgement = retired.acknowledgement;
     let generation = updates.try_recv().expect("retired presentation broadcasts");
     assert_eq!(
         generation.messages,
@@ -303,27 +296,13 @@ fn presentation_revision_moves_only_semantics_and_keeps_the_final_state() {
     );
     assert!(
         !publisher
-            .revise_presentation(
-                spoken.lane,
-                spoken.locus,
-                retired_text.clone(),
-                Some(wire::MessageAcknowledgement::Acknowledged),
-                retired_classifications.clone(),
-                Vec::new(),
-            )
+            .revise_presentation(spoken.lane, spoken.locus, retired.clone())
             .expect("identical presentation deduplicates")
     );
     let absent = message(0xe6, 1);
     assert!(
         !publisher
-            .revise_presentation(
-                absent.lane,
-                absent.locus,
-                retired_text,
-                Some(wire::MessageAcknowledgement::Acknowledged),
-                retired_classifications,
-                Vec::new(),
-            )
+            .revise_presentation(absent.lane, absent.locus, retired)
             .expect("a card retention does not hold is not revised")
     );
     assert!(updates.try_recv().is_err(), "nothing else broadcasts");

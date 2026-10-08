@@ -21,7 +21,6 @@ mod math;
 mod quotes;
 mod tables;
 pub(crate) mod task_text;
-mod taste_quotes;
 mod terminal;
 
 pub(crate) struct RenderedMarkdown {
@@ -303,18 +302,12 @@ fn render(
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
     let math = math::normalize(markdown, classifications, directives, options);
-    let normalized = taste_quotes::normalize(
-        &math.markdown,
-        &math.classifications,
-        &math.directives,
-        options,
-    );
-    let markdown = normalized.markdown;
+    let markdown = math.markdown;
     let (events, outer_quotes) = parse_events(
         &markdown,
         options,
-        normalized.classifications,
-        normalized.directives,
+        math.classifications,
+        math.directives,
         quote_agents,
         quote_sources,
     );
@@ -339,6 +332,7 @@ fn render(
                 controls_target: String::new(),
                 signoff: SIGNOFF_SLOT.to_owned(),
                 disposition: String::new(),
+                badge: String::new(),
                 task_tail: String::new(),
             })
         }
@@ -507,8 +501,32 @@ fn directive_attribution(
             quote_sources,
         ),
         disposition: String::new(),
+        badge: context.badge.map_or_else(String::new, directive_badge_html),
         task_tail: quotes::task_tail_html(&target),
     }
+}
+
+/// The quoted directive's own kind, where its source marker once stood.
+fn directive_badge_html(badge: wire::DirectiveBadge) -> String {
+    let (class, classification, label, text) = match badge {
+        wire::DirectiveBadge::Review => (
+            "message-review-pill",
+            "review",
+            "Review classification",
+            "REVIEW",
+        ),
+        wire::DirectiveBadge::Taste => (
+            "message-taste-pill",
+            "taste",
+            "Taste classification",
+            "TASTE",
+        ),
+    };
+    format!(
+        "<span class=\"message-classification-group\" role=\"group\" \
+         aria-label=\"Directive classification\"><span class=\"{class}\" \
+         data-message-classification=\"{classification}\" aria-label=\"{label}\">{text}</span></span>"
+    )
 }
 
 fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
@@ -536,12 +554,12 @@ fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
     source: Range<usize>,
     remaining: &mut BTreeMap<u32, MessageClassification>,
-    skipped_marker: &mut Option<(usize, bool)>,
+    skipped_marker: &mut Option<usize>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(mut text) = event else {
         return vec![event];
     };
-    if let Some((end, taste)) = *skipped_marker {
+    if let Some(end) = *skipped_marker {
         if source.end <= end {
             return Vec::new();
         }
@@ -554,9 +572,6 @@ fn inline_classification_marker<'a>(
                 .into();
         }
         *skipped_marker = None;
-        if taste {
-            text = taste_guidance_suffix(&text).into();
-        }
         return vec![MarkdownEvent::Text(text)];
     }
 
@@ -583,111 +598,51 @@ fn inline_classification_marker<'a>(
     events.push(MarkdownEvent::InlineHtml(
         classification_pill_html(classification.kind).into(),
     ));
-    let taste = classification.kind == MessageClassificationKind::Taste;
     if source.end <= end {
-        *skipped_marker = Some((end, taste));
+        *skipped_marker = Some(end);
     } else {
-        let mut suffix = text
-            .get(end - source.start..)
-            .expect("classification suffix aligns with rendered text")
-            .to_owned();
-        if taste {
-            suffix = taste_guidance_suffix(&suffix);
-        }
-        events.push(MarkdownEvent::Text(suffix.into()));
+        events.push(MarkdownEvent::Text(
+            text.get(end - source.start..)
+                .expect("classification suffix aligns with rendered text")
+                .to_owned()
+                .into(),
+        ));
     }
     events
 }
 
 fn classification_pill_html(kind: MessageClassificationKind) -> String {
     match kind {
-        MessageClassificationKind::Review => review_pill_html(),
         MessageClassificationKind::Broadcast => broadcast_pill_html(),
-        MessageClassificationKind::Taste => taste_pill_html(),
     }
 }
 
+/// Render received text with the first `broadcasts` first-level quoted
+/// broadcast markers authenticated, as the resident would hydrate them.
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
-struct TestClassifications {
-    reviews: u32,
-    tastes: u32,
-    broadcasts: u32,
-}
-
-#[cfg(test)]
-fn render_received_with_fixture_classifications(
-    markdown: &str,
-    requested: TestClassifications,
-) -> RenderedMarkdown {
-    let requested = [
-        (MessageClassificationKind::Review, requested.reviews),
-        (MessageClassificationKind::Taste, requested.tastes),
-        (MessageClassificationKind::Broadcast, requested.broadcasts),
-    ];
-    let mut classifications = requested
-        .into_iter()
-        .flat_map(|(kind, count)| test_classifications(markdown, kind, count))
-        .collect::<Vec<_>>();
-    classifications.sort_by_key(|classification| classification.start);
-    render_received_with_classifications(markdown, &classifications)
-}
-#[cfg(test)]
-fn test_classifications(
-    markdown: &str,
-    kind: MessageClassificationKind,
-    count: u32,
-) -> Vec<MessageClassification> {
-    if count == 0 {
-        return Vec::new();
-    }
+fn render_received_with_broadcasts(markdown: &str, broadcasts: usize) -> RenderedMarkdown {
+    let marker = MessageClassificationKind::Broadcast.marker();
     let mut classifications = Vec::new();
     let mut line_start = 0usize;
     for line in markdown.split_inclusive('\n') {
-        let mut marker_start = line_start;
-        let mut content = line.trim_end_matches(['\r', '\n']);
-        let mut quote_depth = 0usize;
-        while let Some(rest) = content.strip_prefix("> ") {
-            quote_depth += 1;
-            marker_start += 2;
-            content = rest;
+        if classifications.len() == broadcasts {
+            break;
         }
-        let eligible_depth = if kind == MessageClassificationKind::Taste {
-            quote_depth > 0
-        } else {
-            quote_depth == 1
-        };
-        let marker = kind.marker();
-        if eligible_depth
-            && content
-                .strip_prefix(marker)
-                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
+        if line
+            .strip_prefix("> ")
+            .and_then(|content| content.strip_prefix(marker))
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
         {
+            let start = line_start + 2;
             classifications.push(MessageClassification {
-                start: u32::try_from(marker_start).expect("fixture marker offset fits u32"),
-                end: u32::try_from(marker_start + marker.len())
-                    .expect("fixture marker offset fits u32"),
-                kind,
+                start: u32::try_from(start).expect("fixture marker offset fits u32"),
+                end: u32::try_from(start + marker.len()).expect("fixture marker offset fits u32"),
+                kind: MessageClassificationKind::Broadcast,
             });
-            if classifications.len() == usize::try_from(count).unwrap_or(usize::MAX) {
-                break;
-            }
         }
         line_start += line.len();
     }
-    classifications
-}
-
-/// Render received text with authenticated taste locations in native tests.
-#[cfg(test)]
-pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
-    render_received_with_fixture_classifications(
-        markdown,
-        TestClassifications {
-            tastes,
-            ..TestClassifications::default()
-        },
-    )
+    render_received_with_classifications(markdown, &classifications)
 }
 
 fn has_marker_prefix(text: &str, marker: &str) -> bool {
@@ -695,32 +650,9 @@ fn has_marker_prefix(text: &str, marker: &str) -> bool {
         .is_some_and(|suffix| suffix.starts_with(char::is_whitespace))
 }
 
-fn taste_guidance_suffix(suffix: &str) -> String {
-    let trimmed = suffix.trim_start();
-    let Some((name, guidance)) = trimmed.split_once(':') else {
-        return suffix.to_owned();
-    };
-    if name.is_empty() || name.chars().any(char::is_whitespace) {
-        return suffix.to_owned();
-    }
-    format!(" {}", guidance.trim_start())
-}
-
-fn taste_pill_html() -> String {
-    "<span class=\"message-taste-pill\" data-message-classification=\"taste\" \
-     aria-label=\"Taste classification\">TASTE</span>"
-        .to_owned()
-}
-
 fn broadcast_pill_html() -> String {
     "<span class=\"message-broadcast-pill\" data-message-classification=\"broadcast\" \
      aria-label=\"Broadcast classification\">BROADCAST</span>"
-        .to_owned()
-}
-
-fn review_pill_html() -> String {
-    "<span class=\"message-review-pill\" data-message-classification=\"review\" \
-     aria-label=\"Review classification\">REVIEW</span>"
         .to_owned()
 }
 
