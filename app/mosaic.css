@@ -844,18 +844,22 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer :is(.team-send, .team-turbo)[data-lit="true"]:not(:disabled):active { box-shadow: var(--team-send-command-ring), inset 1px 2px 5px -3px color-mix(in srgb, var(--app-shadow-source) 22%, transparent), inset -1px -3px 5px -3px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 5px 9px -7px color-mix(in srgb, var(--app-shadow-source) 58%, transparent); }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active::before { background: radial-gradient(ellipse at 36% 21%, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), transparent 52%); box-shadow: none; }
 /* A round button lights only when pressing it does something. SEND fills
-   with one concentric ring per agent a press would reach, member zero at the
-   core, under the shared gloss. Raised states take the team accents in order
-   after green: TURBO and each slider's maximum stop wear the second, blue.
-   Unlit, both buttons are flat and uncolored, while the command and focus
-   rings still show. */
+   with one equal-area ring per agent a press would reach, member zero at the
+   core, under the shared gloss, its word on a flat plate set into the rings.
+   Raised states take the team accents in order after green: TURBO and each
+   slider's maximum stop wear the second, blue. Unlit, both buttons keep the
+   raised knob in the neutral surface of the resting QUIET thumb. */
 .team-composer .team-send[data-lit="true"] { border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-send-rings); }
+.team-composer .team-send[data-lit="true"] .team-send-word {
+  position: relative; z-index: 1; padding: 3px 4px;
+  border: 1px solid color-mix(in srgb, var(--muted) 55%, var(--app-shadow-source)); border-radius: var(--app-radius-pill);
+  background: var(--muted); color: var(--page);
+}
 .team-composer .team-turbo[data-lit="true"] {
   --control-state-accent: var(--accent-1);
   box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-1) 75%, transparent);
 }
-.team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { border: var(--app-control-edge-width) solid var(--line); background: var(--control); box-shadow: var(--team-send-command-ring); color: var(--muted); }
-.team-composer :is(.team-send, .team-turbo):not([data-lit="true"])::before { content: none; }
+.team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { --control-state-accent: var(--muted); }
 .team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
 .fit-word {
   display: block; overflow: visible; pointer-events: none;

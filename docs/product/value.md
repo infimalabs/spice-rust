@@ -591,12 +591,14 @@ left and maximum on the right; their bars stay neutral, and each thumb wears its
 current value as a word drawn to fill it, so every value occupies the same
 width. Send, the round buttons, and the thumbs share one tactile face whose
 color carries state. `Send` lights only when a press would submit something:
-it fills with one concentric ring per agent that would receive a message, in
-that agent's accent with member zero at the core, and otherwise stays
-uncolored; the command-modifier and focus rings still show around it. Raised
-states take the team accents in order after green: the first round button reads
-`TURBO`, lit in the second accent, blue, while every member of the team
-launches in fast mode, and `BASIC`, uncolored, otherwise; each range's maximum
+it fills with one ring per agent that would receive a message, each holding an
+equal share of the face's area, in that agent's accent with member zero at the
+core, its word on a flat plate set into the rings. Unlit, it keeps the raised
+knob in the neutral surface of the resting quiet thumb; the command-modifier and
+focus rings still show around it. Raised states take the team accents in order
+after green: the first round button reads `TURBO`, lit in the second accent,
+blue, while every member of the team launches in fast mode, and `BASIC`, in the
+same neutral raised knob, otherwise; each range's maximum
 stop, narrate and drain, wears the same blue. A press of `TURBO`
 moves every member to the other posture under the per-seat pinning rule, and
 running OMP agents take it at once. The frame uses the same restrained corners
