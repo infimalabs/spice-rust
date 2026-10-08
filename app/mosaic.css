@@ -796,12 +796,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* The round TURBO leads in a square top-left slot; the round SEND follows
    across the complete column, then the speech and allocation ranges split the
-   remaining height evenly. Three pixels surround each button inside its row,
-   balancing TURBO's top and left breathing room. Range labels place minimum on
-   the left and maximum on the right. Send, Turbo, and both range thumbs share
-   one knob face whose color carries state, while range bars stay neutral. One
-   93%, triple-thick control paint stays continuous through the frame, then
-   fades across the shared 10px continuation. */
+   remaining height evenly. Three pixels above and left of TURBO balance its
+   corner inset; three vertical pixels center SEND in its row. Range labels
+   place minimum on the left and maximum on the right. Send, Turbo, and both
+   range thumbs share one knob face whose color carries state, while range bars
+   stay neutral. One 93%, triple-thick control paint stays continuous through
+   the frame, then fades across the shared 10px continuation. */
 .team-composer .team-composer-controls {
   --team-control-send-size: 56px;
   --team-control-button-size: 34px;
