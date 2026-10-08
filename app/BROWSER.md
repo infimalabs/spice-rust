@@ -119,11 +119,11 @@ absent or invalid grant time. A valid expiry stays right-aligned as an `expires`
 relative countdown with exact-time hover detail.
 
 A provider-reported raw balance appears as a separate **Credits** datum on its
-account card. It comes from the OMP usage limit that has no window and reports
-only a remaining `credits` amount, so it is neither a time-window meter nor a
-reset grant, and accounts never share or aggregate it. An account without that
-limit shows no Credits datum; Spice does not infer zero from limits or read
-provider credentials to fill it.
+account card. It comes from the OMP usage limit whose scope identifies the
+`balance` window, has no window, and reports only a remaining `credits` amount,
+so it is neither a time-window meter nor a reset grant, and accounts never
+share or aggregate it. An account without that limit shows no Credits datum;
+Spice does not infer zero from limits or read provider credentials to fill it.
 
 ## Arrange whole teams
 
