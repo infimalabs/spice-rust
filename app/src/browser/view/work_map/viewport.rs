@@ -1,7 +1,8 @@
 //! The graph frame is manipulated directly. The diagram is drawn at a contain
-//! fit that never enlarges; zoom alone grows it, inside a stage the frame
-//! scrolls natively, so wheel, trackpad, touch and arrow keys pan a zoomed
-//! graph and chain to the side view at its bounds. Pinch, ctrl/cmd-wheel and
+//! fit that never enlarges; zoom alone grows it inside a scrollable stage.
+//! Wheel and trackpad input stays native while the graph has range, then its
+//! unconsumed vertical distance moves the side view even in browsers that keep
+//! a wheel transaction pinned to its first scroller. Pinch, ctrl/cmd-wheel and
 //! `+`/`-` zoom about a point; mouse drag pans; double-click or `0` fits.
 //! Zoom writes custom properties synchronously, so neither the image nor its
 //! node controls wait on a render.
@@ -345,11 +346,6 @@ fn wheel(canvas: &Canvas, _: &RefCell<Gesture>, event: &web_sys::Event) {
     let Some(event) = event.dyn_ref::<web_sys::WheelEvent>() else {
         return;
     };
-    // Plain scrolling stays native; ctrl is also how browsers report a pinch.
-    if !(event.ctrl_key() || event.meta_key()) {
-        return;
-    }
-    event.prevent_default();
     let unit = match event.delta_mode() {
         web_sys::WheelEvent::DOM_DELTA_LINE => LINE_PIXELS,
         web_sys::WheelEvent::DOM_DELTA_PAGE => canvas
@@ -357,14 +353,43 @@ fn wheel(canvas: &Canvas, _: &RefCell<Gesture>, event: &web_sys::Event) {
             .map_or(LINE_PIXELS, |element| f64::from(element.client_height())),
         _ => 1.0,
     };
-    let delta = (event.delta_y() * unit).clamp(-WHEEL_ZOOM_DELTA_LIMIT, WHEEL_ZOOM_DELTA_LIMIT);
-    canvas.zoom_by(
-        (-delta / WHEEL_ZOOM_RATE).exp(),
-        anchor(
-            canvas,
-            (f64::from(event.client_x()), f64::from(event.client_y())),
-        ),
-    );
+    // Ctrl is also how browsers report a trackpad pinch.
+    if event.ctrl_key() || event.meta_key() {
+        event.prevent_default();
+        let delta = (event.delta_y() * unit).clamp(-WHEEL_ZOOM_DELTA_LIMIT, WHEEL_ZOOM_DELTA_LIMIT);
+        canvas.zoom_by(
+            (-delta / WHEEL_ZOOM_RATE).exp(),
+            anchor(
+                canvas,
+                (f64::from(event.client_x()), f64::from(event.client_y())),
+            ),
+        );
+        return;
+    }
+    // Keep shift-wheel's browser-defined horizontal behavior. For ordinary
+    // scrolling, intervene only when this delta crosses or starts at a
+    // vertical boundary. Firefox otherwise pins the whole wheel transaction
+    // to the graph and never gives its unconsumed distance to the side view.
+    if event.shift_key() || event.delta_y() == 0.0 {
+        return;
+    }
+    let Some(element) = canvas.element() else {
+        return;
+    };
+    let delta_y = event.delta_y() * unit;
+    let top = f64::from(element.scroll_top());
+    let limit = f64::from((element.scroll_height() - element.client_height()).max(0));
+    let graph_y = (top + delta_y).clamp(0.0, limit) - top;
+    let remainder = delta_y - graph_y;
+    if remainder.abs() < f64::EPSILON {
+        return;
+    }
+    let Some(side_view) = element.closest(".app-sidebar-frame").ok().flatten() else {
+        return;
+    };
+    event.prevent_default();
+    element.scroll_by_with_x_and_y(event.delta_x() * unit, graph_y);
+    side_view.scroll_by_with_x_and_y(0.0, remainder);
 }
 
 fn number(event: &web_sys::Event, property: &str) -> Option<f64> {
