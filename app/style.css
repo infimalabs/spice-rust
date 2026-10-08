@@ -70,6 +70,7 @@
   --app-motion-pulse: 5s;
   --app-status-line-band: 30px;
   --app-horn-tab-block-size: 21px;
+  --app-horn-tab-inset: 10px;
   --app-presence-pip-size: 8px;
   --app-presence-member-border-width: 5px;
   --app-provider-emblem-size: 22px;
@@ -211,7 +212,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   align-items: center;
   gap: 4px;
   min-height: var(--app-horn-tab-block-size);
-  padding: 0;
+  padding: 0 var(--app-horn-tab-inset);
   overflow: clip;
   border: 0;
   border-inline: var(--quote-rail) solid var(--line);
@@ -223,7 +224,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
 .app-horn-tab__label { color: var(--muted); opacity: .72; }
-.app-horn-tab--group { gap: 0; }
+.app-horn-tab--group { gap: 0; padding: 0; }
 .app-horn-tab--group > button {
   align-self: stretch;
   min-height: 0;
@@ -236,9 +237,9 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding-inline-start: 10px;
 }
-.app-horn-tab--group > button:last-child { padding-inline-end: 10px; }
+.app-horn-tab--group > button:first-child { padding-inline-start: var(--app-horn-tab-inset); }
+.app-horn-tab--group > button:last-child { padding-inline-end: var(--app-horn-tab-inset); }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
   background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--control));
   color: var(--muted);

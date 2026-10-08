@@ -68,12 +68,13 @@ is the sum of the stem badges and the number of handles. Activating it opens
 the unified overview with the team's complete current task set already
 selected. It does not change the durable location.
 
-The team total remains fixed at the rail's inline start. Stem and task tabs
-scroll beneath mirrored alpha screens: a short 3rem leading fade lets tabs
-disappear behind the total, while the trailing fade spans the full 80px
-composer-control and pip column. Matching inline and scroll padding keeps the
-first and last tabs fully opaque at their respective extents and keeps a
-no-overflow rail out of both fades.
+The team total holds its own column at the rail's inline start, so the first
+stem tab sits one `--mosaic-gap` past it whatever its badge width. Stem and
+task tabs scroll beneath mirrored alpha screens: a short leading fade reaches
+back under the total and through that gap so tabs disappear behind it, while
+the trailing fade spans the full 80px composer-control and pip column.
+Matching inline and scroll padding keeps the first and last tabs fully opaque
+at their respective extents and keeps a no-overflow rail out of both fades.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one

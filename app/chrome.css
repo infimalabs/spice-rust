@@ -68,7 +68,6 @@ body:has(.shell),
   align-self: start;
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
 }
-.app-global-work-tabs > .app-horn-tab { padding-inline: 10px; }
 .app-spice-button {
   --app-spice-edge: var(--accent-slot, var(--line));
   --app-spice-border: color-mix(in srgb, var(--app-spice-edge) 68%, var(--line));
