@@ -1147,3 +1147,62 @@ fn a_ref_hook_refusal_restores_dirty_work_and_the_staged_generation() {
     );
     assert!(!transaction_path(root).expect("transaction path").exists());
 }
+
+#[test]
+fn explicit_recovery_restore_is_byte_exact_retired_and_refuses_drift() {
+    let fixture = RepositoryFixture::new("explicit-recovery-restore");
+    let root = &fixture.root;
+    fs::write(root.join("tracked.txt"), "staged generation\n").expect("staged edit");
+    git(root, &["add", "tracked.txt"]);
+    let index_path = git_state_path(root, "index").expect("index path");
+    let expected_index = fs::read(&index_path).expect("original index");
+    fs::write(root.join("tracked.txt"), "working generation\n").expect("working edit");
+    fs::write(root.join("untracked.bin"), [0, 255, 128]).expect("untracked bytes");
+
+    let recovery = quarantine_for_recovery(&fixture.repository).expect("quarantine generation");
+    synchronize_recovery(&fixture.repository, &recovery).expect("synchronize generation");
+    fs::write(root.join("concurrent.txt"), "foreign dirt\n").expect("concurrent dirt");
+    let refusal =
+        restore_recovery(&fixture.repository, &recovery).expect_err("drift must refuse restore");
+    assert_eq!(refusal.reason(), "git::recovery-rollback-drift");
+    assert_eq!(
+        pending_recovery(&fixture.repository)
+            .expect("retained quarantine")
+            .as_ref()
+            .map(Recovery::transaction),
+        Some(recovery.transaction()),
+    );
+
+    fs::remove_file(root.join("concurrent.txt")).expect("remove concurrent dirt");
+    restore_recovery(&fixture.repository, &recovery).expect("restore original generation");
+    assert_eq!(
+        fs::read(&index_path).expect("restored index"),
+        expected_index
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).expect("restored working edit"),
+        "working generation\n",
+    );
+    assert_eq!(
+        fs::read(root.join("untracked.bin")).expect("restored untracked bytes"),
+        [0, 255, 128],
+    );
+    assert!(
+        pending_recovery(&fixture.repository)
+            .expect("retired quarantine")
+            .is_none(),
+    );
+    assert!(
+        restore_recovery(&fixture.repository, &recovery).is_err(),
+        "retired transaction cannot restore twice",
+    );
+    assert_eq!(
+        fs::read(&index_path).expect("index remains exact"),
+        expected_index
+    );
+    assert!(
+        pending_recovery(&fixture.repository)
+            .expect("retired quarantine remains absent")
+            .is_none(),
+    );
+}

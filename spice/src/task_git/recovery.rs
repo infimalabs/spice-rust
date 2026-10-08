@@ -16,7 +16,7 @@ use std::os::unix::ffi::OsStringExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
-use wire::{Actor, CanonicalUuid, Phase, Seq, TaskStamp};
+use wire::{Actor, CanonicalUuid, Phase, Seq, TaskHandle, TaskStamp};
 
 const RECOVERY_DIRECTORY: &str = "spice-task-recovery";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -62,6 +62,12 @@ pub struct RecoveryClaim {
     pub actor: Actor,
     /// Durable identity of the one named task.
     pub task: TaskStamp,
+    /// Public handle sealed for an atomically created recovery target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<TaskHandle>,
+    /// Whether the target is created in the same journal transaction as its claim.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh: bool,
     /// Statement head witnessed before the claim.
     pub statement: Seq,
     /// Workflow head witnessed before the claim.

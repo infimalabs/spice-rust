@@ -33,21 +33,31 @@ pub(super) fn client_add(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    submit_task_add(
-        repository,
-        contract,
-        TaskAdd {
-            title,
-            project,
-            description,
-            acceptance,
-            requirements,
-            origin,
-            flow: matches.get_one::<String>("flow").cloned(),
-            depends: Vec::new(),
-            claim: matches.get_flag("claim"),
-        },
-    )
+    let claim = matches.get_flag("claim");
+    let recover = matches.get_flag("recover");
+    if claim && recover {
+        return refusal(
+            "git::recovery-claim-conflict",
+            None,
+            "choose ordinary --claim or explicit --recover, not both",
+        );
+    }
+    let body = TaskAdd {
+        title,
+        project,
+        description,
+        acceptance,
+        requirements,
+        origin,
+        flow: matches.get_one::<String>("flow").cloned(),
+        depends: Vec::new(),
+        claim: claim || recover,
+    };
+    if recover {
+        client_add_recovery(repository, contract, body)
+    } else {
+        submit_task_add(repository, contract, body)
+    }
 }
 
 pub(super) fn client_capture(
@@ -237,6 +247,23 @@ pub(crate) fn submit_task_add(
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
+    submit_task_add_with(repository, contract, body, false)
+}
+
+pub(super) fn submit_recovery_task_add(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
+    submit_task_add_with(repository, contract, body, true)
+}
+
+fn submit_task_add_with(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+    recovery: bool,
+) -> Outcome<CommandAnswer> {
     let steering_origin = match steering_origin_key(body.origin.as_ref()) {
         Ok(key) => key,
         Err(outcome) => return outcome,
@@ -251,7 +278,9 @@ pub(crate) fn submit_task_add(
             if body.claim {
                 let (lane, occupant) = actor_seat(&board)?;
                 expected.push(Witness::Eligibility {
-                    rule: "capture".parse().expect("capture is a wire name"),
+                    rule: if recovery { "recover" } else { "capture" }
+                        .parse()
+                        .expect("task add possession rule is a wire name"),
                 });
                 expected.push(residency_witness(&board, lane, occupant));
             }

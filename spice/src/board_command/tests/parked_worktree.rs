@@ -474,3 +474,136 @@ fn automatic_claims_replay_released_commits_once_across_a_failed_launch() {
     assert_eq!(claimed_commits(&bus, epoch, &task), (head_commit(&lane), 1));
     clean(&root, bus);
 }
+
+fn assert_recovery_target_not_allocatable(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) {
+    let during = board(bus, epoch, Actor::Lane(seat.lane));
+    let entries = actor_entries(&during).expect("allocator entries");
+    let subscription = allocation_subscription(&during.residency.body, &during.principal)
+        .expect("lane subscription");
+    assert!(
+        board::select(
+            &entries,
+            &during.principal,
+            &subscription,
+            during.allocation_band,
+            during.recent_cell.as_ref(),
+            &during.environment(),
+        )
+        .is_none(),
+        "allocator must not observe the not-yet-committed recovery target",
+    );
+}
+
+/// Atomic dirty-handoff creation never publishes an unclaimed target: an
+/// allocator read in the old add/recover gap sees no row, then the one journal
+/// transaction publishes both the task and its recovery-bearing claim.
+#[test]
+fn atomic_recovery_creation_has_no_allocator_gap_and_replays_once() {
+    let (root, bus, epoch, seats) = fixture("atomic-recovery-add", 1);
+    let seat = &seats[0];
+    authorize_lane_creation(&bus, epoch, seat);
+    let (lane, repository, _) = bind_lane(&root, &bus, epoch, seat);
+    fs::write(lane.join("tracked.txt"), "staged recovery\n").expect("staged edit");
+    test_repository::stage(&lane, &["tracked.txt"]);
+    let expected_index = test_repository::write_tree(&lane, None);
+    fs::write(lane.join("tracked.txt"), "unstaged recovery\n").expect("unstaged edit");
+    fs::write(lane.join("untracked.bin"), [0, 255, 128]).expect("untracked edit");
+
+    let recovery =
+        spice::task_git::quarantine_for_recovery(&repository).expect("quarantine dirty lane");
+    spice::task_git::synchronize_recovery(&repository, &recovery)
+        .expect("synchronize quarantined lane");
+    let before = board(&bus, epoch, Actor::Lane(seat.lane));
+    let born = stamp("RECOVER-atomic1");
+    let handle = TaskHandle::for_project("board.test", &born);
+    let add = TaskAdd {
+        title: "Atomically own recovered work".to_owned(),
+        project: Some("board.test".to_owned()),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        origin: Some("fixture:atomic-recovery".parse().expect("fixture origin")),
+        flow: Some("todo".to_owned()),
+        depends: Vec::new(),
+        claim: true,
+    };
+    let command = fixture_command(
+        epoch,
+        Actor::Lane(seat.lane),
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence { task: born },
+            Witness::Eligibility {
+                rule: "recover".parse().expect("recovery rule"),
+            },
+            residency(&before, seat),
+        ],
+        &add,
+    );
+    let outcome = task_add_with(
+        &bus,
+        &command,
+        &add,
+        Some(&repository),
+        &projects(),
+        &board::NextConfig::default(),
+        || assert_recovery_target_not_allocatable(&bus, epoch, seat),
+    );
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(range),
+        body: CommandAnswer::Task(answer),
+    }) = outcome
+    else {
+        panic!("atomic recovery creation did not commit")
+    };
+    assert_eq!(answer.task, handle);
+    assert_eq!(
+        answer.claim.as_ref().map(|claim| &claim.task),
+        Some(&handle),
+    );
+    let committed = bus
+        .fact_snapshot()
+        .expect("fixture facts remain readable")
+        .facts()
+        .iter()
+        .filter(|fact| fact.seq >= range.first && fact.seq <= range.last)
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert!(committed.contains(&wire::FactKind::TaskAdded));
+    assert!(committed.contains(&wire::FactKind::ClaimWon));
+    let claimed = board(&bus, epoch, Actor::Lane(seat.lane));
+    let active = actor_entries(&claimed)
+        .expect("claimed entries")
+        .into_iter()
+        .filter(|entry| {
+            entry.claim().is_some_and(|claim| {
+                claim.actor == claimed.principal && claim.disposition == ClaimDisposition::Active
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].handle(), &handle);
+    assert_eq!(
+        active[0]
+            .claim()
+            .and_then(|claim| claim.recovery.as_deref()),
+        Some(recovery.transaction()),
+    );
+
+    spice::task_git::replay_recovery(&repository, &recovery).expect("replay dirty generation");
+    assert_eq!(test_repository::write_tree(&lane, None), expected_index);
+    assert_eq!(
+        fs::read_to_string(lane.join("tracked.txt")).expect("tracked edit"),
+        "unstaged recovery\n",
+    );
+    assert_eq!(
+        fs::read(lane.join("untracked.bin")).expect("untracked edit"),
+        [0, 255, 128],
+    );
+    assert!(
+        spice::task_git::pending_recovery(&repository)
+            .expect("recovery state")
+            .is_none(),
+    );
+    clean(&root, bus);
+}

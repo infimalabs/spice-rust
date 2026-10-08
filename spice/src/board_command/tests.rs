@@ -659,6 +659,67 @@ fn recovery_restart_classifies_only_its_exact_claim_as_postclaim() {
 }
 
 #[test]
+fn recovery_foreign_claim_then_free_is_explicitly_restorable() {
+    let (root, bus, epoch, seats) = fixture("recover-foreign-free", 2);
+    let recovering = Actor::Lane(seats[0].lane);
+    let foreign = Actor::Lane(seats[1].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECOVER-foreign",
+        "Foreign claim moved the recovery head",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, recovering.clone());
+    let transaction = "c".repeat(40);
+    let sealed = recovery_preflight(&available, &task)
+        .expect("ready task admits recovery preflight")
+        .seal(GitBoundary {
+            head: "synchronized-head".to_owned(),
+            integrated: "synchronized-head".to_owned(),
+            upstream: Some("origin/main".to_owned()),
+            upstream_head: Some("synchronized-head".to_owned()),
+            local_commits: 0,
+        });
+
+    claim_task(&bus, epoch, &seats[1], &foreign, &task);
+    let held = board(&bus, epoch, foreign);
+    let heads = at(&held, &task);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Lane(seats[1].lane),
+        CommandKind::ClaimFree,
+        vec![
+            claim_witness(heads),
+            Witness::Lease {
+                task: heads.statement.body.born.clone(),
+                head: heads.lease.as_ref().expect("foreign lease").position,
+            },
+            residency(&held, &seats[1]),
+        ],
+        &TaskRef { task: task.clone() },
+    ));
+
+    let moved = board(&bus, epoch, recovering);
+    assert!(matches!(
+        recovery_board_state(&moved, &task, &transaction, &sealed),
+        RecoveryBoardState::Restorable(_)
+    ));
+    assert_eq!(
+        at(&moved, &task)
+            .claim
+            .as_ref()
+            .expect("foreign claim head remains")
+            .body
+            .disposition,
+        ClaimDisposition::Freed,
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
     let (root, bus, epoch, seats) = fixture("claim-overlap", 3);
     let first = add_project_with_acceptance(
