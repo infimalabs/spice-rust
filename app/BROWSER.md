@@ -32,6 +32,19 @@ const lightApp = await launchAppBrowser(chromium, {
 });
 ```
 
+## Glass control-panel design gallery
+
+The standalone [glass control studies](design/glass-controls.html) compare six
+designs for the 80 × 160 composer control panel, each against dark and light
+backgrounds. These are interactive visual mockups, not resident controls or a
+production style change. Browser screenshots of the gallery can be retained
+as task artifacts without adding generated images to the application sources.
+
+Serve `app/design` with a local static server, then open `glass-controls.html`.
+The actual-size toggle shows the existing footprint; the detail toggle doubles
+it for inspection. Both sliders, BASIC/TURBO, menu preview, and SEND preview
+operate locally without sending commands.
+
 ## Browser branding and remaining work
 
 The tab and menu use the lowercase brand `spice`, always trailing changing
