@@ -34,14 +34,20 @@ const lightApp = await launchAppBrowser(chromium, {
 
 ## Glass control-panel design gallery
 
-The standalone [glass control studies](design/glass-controls.html) compare three
-complete designs for the 80 × 160 composer control panel, against dark and light
-backgrounds. These are interactive visual mockups, not resident controls or a
-production style change. Browser screenshots of the gallery can be retained
-as task artifacts without adding generated images to the application sources.
-The shortlisted surfaces are Smoked pearl, Frosted instrument, and Flush etched
-glass. Panels have sharp corners. BASIC/TURBO, menu, and SEND are circular; SEND
-sits between the utility buttons and the two pill-shaped slider flyers.
+The standalone [glass control studies](design/glass-controls.html) are a
+reference gallery for the 80 × 160 composer control panel, against dark and
+light backgrounds. They are interactive local mockups, not resident controls,
+and editing them changes no production style. Browser screenshots of the
+gallery can be retained as task artifacts without adding generated images to
+the application sources.
+
+Flush etched glass is the shipped primary panel described under
+[Team composer controls](#team-composer-controls); the gallery reproduces its
+geometry, 2px recipient rim, and contact depression. Smoked pearl and Frosted
+instrument are reference-only finishes on the same geometry, not the current
+selection. Every finish keeps sharp panel corners, circular BASIC/TURBO, menu,
+and SEND controls, and two pill-shaped slider flyers labeled Quiet / Speak /
+Narrate and Steer / Drive / Drain.
 
 SEND uses one perimeter rim, without nested optical ridges. Its face rests
 flush and moves down with an inset upper contact shadow during native pointer
@@ -51,9 +57,10 @@ The rim-light selector previews neutral, mint, amber, or lilac agent accents
 without filling the glass faces with the accent color.
 The readiness selector applies off, running-without-text, one-recipient, or
 multiple-recipient states to the material previews. A separate complete-panel
-matrix compares all four states with selectable finish and background. SEND
-is disabled in the first two states; ready states carry explicit recipient
-counts and single or segmented accent rims.
+matrix compares all four states, defaulting to the shipped finish, with
+selectable finish and background. SEND is disabled in the first two states;
+ready states carry explicit recipient counts and single or segmented accent
+rims.
 
 Serve `app/design` with a local static server, then open `glass-controls.html`.
 The actual-size toggle shows the existing footprint; the detail toggle doubles
