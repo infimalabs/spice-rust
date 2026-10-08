@@ -340,11 +340,10 @@ fn render_fast_toggle(
     }
 }
 
-/// The team's fast-mode button. It reads TURBO while the team's own fast-mode
-/// flag is on and BASIC otherwise, and a press flips that flag. Fast mode is
-/// additive, so BASIC never turns off a member whose own flag or the global
-/// setting keeps it fast; running OMP agents whose effective value changes
-/// take it at once.
+/// The team's fast-mode toggle retains TURBO lettering in both states.
+/// Fast mode is additive: switching this flag off does not turn off a member
+/// whose own flag or the global setting keeps it fast. Running OMP agents
+/// whose effective value changes take it at once.
 pub(super) fn render_turbo(
     team: &crate::runtime::LaneRow,
     topology_revision: u64,
@@ -371,7 +370,7 @@ pub(super) fn render_turbo(
     let title = if engaged {
         "Turbo: every agent in this team runs in fast mode"
     } else {
-        "Basic: press to run every agent in this team in fast mode"
+        "Turbo off: press to run every agent in this team in fast mode"
     };
     html! {
         <crate::browser::view::chrome::TurboButton

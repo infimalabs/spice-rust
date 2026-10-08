@@ -564,12 +564,7 @@ fn speech_slider(
     });
     html! {
         <label
-            class={classes!(
-                "team-slider",
-                "team-speech",
-                (speech == TeamSpeech::Quiet).then_some("armed"),
-                (speech == TeamSpeech::Narrate).then_some("maxed"),
-            )}
+            class="team-slider team-speech"
             data-stop={speech.index().to_string()}
         >
             <input
@@ -581,7 +576,7 @@ fn speech_slider(
                 aria-label={format!("Speech mode: {}", speech.label())}
                 oninput={oninput}
             />
-            {crate::browser::view::chrome::fit_word(speech.label())}
+            {slider_words(TeamSpeech::ALL.map(|speech| speech.label()), speech.index())}
         </label>
     }
 }
@@ -599,12 +594,7 @@ fn lifetime_slider(
     });
     html! {
         <label
-            class={classes!(
-                "team-slider",
-                "team-lifetime",
-                (selected == TeamLife::Steer).then_some("armed"),
-                (selected == TeamLife::Drain).then_some("maxed"),
-            )}
+            class="team-slider team-lifetime"
             data-stop={selected.index().to_string()}
         >
             <input
@@ -620,7 +610,19 @@ fn lifetime_slider(
                 onchange={onchange}
                 onblur={cancel_preview}
             />
-            {crate::browser::view::chrome::fit_word(selected.label())}
+            {slider_words(TeamLife::ALL.map(|life| life.label()), selected.index())}
         </label>
+    }
+}
+
+fn slider_words(words: [&'static str; 3], selected: usize) -> Html {
+    html! {
+        <span class="team-slider-words" aria-hidden="true">
+            {for words.into_iter().enumerate().map(|(index, word)| html! {
+                <span data-selected={(index == selected).to_string()}>
+                    {crate::browser::view::chrome::fit_word(word)}
+                </span>
+            })}
+        </span>
     }
 }

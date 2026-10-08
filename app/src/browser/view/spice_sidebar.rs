@@ -106,7 +106,7 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
         (false, _, _) => "Fast mode is loading",
         (true, false, _) => "Fast mode cannot be changed by this resident",
         (true, true, true) => "Turbo: every agent runs in fast mode",
-        (true, true, false) => "Basic: press to run every agent in fast mode",
+        (true, true, false) => "Turbo off: press to run every agent in fast mode",
     };
     html! {
         <section class="app-sheet-section app-spice-settings">
@@ -117,7 +117,7 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
                     engaged={fast_mode}
                     label={format!(
                         "Global fast mode: {}",
-                        if fast_mode { "Turbo" } else { "Basic" },
+                        if fast_mode { "on" } else { "off" },
                     )}
                     disabled={!enabled}
                     title={title}
