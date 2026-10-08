@@ -22,6 +22,8 @@ impl RecoveryPreflight {
             actor: self.actor,
             task: self.task,
             statement: self.statement,
+            handle: None,
+            fresh: false,
             workflow: self.workflow,
             phase: self.phase,
             claim: self.claim,
@@ -32,13 +34,93 @@ impl RecoveryPreflight {
         }
     }
 }
+pub(super) fn client_add_recovery(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
+    let pending = match spice::task_git::pending_recovery(repository) {
+        Ok(pending) => pending,
+        Err(error) => return task_git_outcome(error),
+    };
+    let recovery = match pending {
+        Some(recovery) => match spice::task_git::recovery_claim(repository, &recovery) {
+            Ok(Some(claim)) if claim.fresh => {
+                let Some(task) = claim.handle.clone() else {
+                    return protocol_fault(
+                        "git::recovery-fresh-handle-missing",
+                        "atomic recovery claim has no sealed public handle",
+                    );
+                };
+                return reconcile_client_recovery(repository, &task, recovery, claim, None, true);
+            }
+            Ok(Some(_)) => {
+                return refusal(
+                    "git::recovery-target-mismatch",
+                    Some(recovery.transaction().to_owned()),
+                    "resume the retained existing-target recovery or restore it explicitly",
+                );
+            }
+            Ok(None) => recovery,
+            Err(error) => return task_git_outcome(error),
+        },
+        None => match spice::task_git::quarantine_for_recovery(repository) {
+            Ok(recovery) => recovery,
+            Err(error) => return task_git_outcome(error),
+        },
+    };
+    if let Err(error) = spice::task_git::synchronize_recovery(repository, &recovery) {
+        return rollback_recovery_error(repository, &recovery, error);
+    }
+    let outcome = submit_recovery_task_add(repository, contract, body);
+    let claim = match spice::task_git::recovery_claim(repository, &recovery) {
+        Ok(Some(claim)) if claim.fresh => claim,
+        Ok(Some(_)) => {
+            return refusal(
+                "git::recovery-target-mismatch",
+                Some(recovery.transaction().to_owned()),
+                "retain the quarantine and resume only its sealed target",
+            );
+        }
+        Ok(None) => {
+            if let Err(error) = spice::task_git::restore_recovery(repository, &recovery) {
+                return task_git_outcome(error);
+            }
+            return outcome;
+        }
+        Err(error) => return task_git_outcome(error),
+    };
+    let Some(task) = claim.handle.clone() else {
+        return protocol_fault(
+            "git::recovery-fresh-handle-missing",
+            "atomic recovery claim has no sealed public handle",
+        );
+    };
+    reconcile_client_recovery(repository, &task, recovery, claim, Some(outcome), true)
+}
 
 pub(super) fn client_recover(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let written = required(matches, "HANDLE");
+    if matches.get_flag("restore") {
+        if matches.get_one::<String>("HANDLE").is_some() {
+            return refusal(
+                "git::recovery-restore-shape",
+                None,
+                "use `spice task recover --restore` without a task handle",
+            );
+        }
+        return restore_client_recovery(repository);
+    }
+    let Some(written) = matches.get_one::<String>("HANDLE").cloned() else {
+        return refusal(
+            "git::recovery-task-missing",
+            None,
+            "name the existing task to recover or use --restore",
+        );
+    };
     let task = match written.parse::<TaskHandle>() {
         Ok(task) => task,
         Err(error) => return refusal("task::handle-invalid", Some(written), &error.to_string()),
@@ -97,7 +179,7 @@ pub(super) fn client_recover(
             recovery: Some(transaction),
         },
     );
-    reconcile_client_recovery(repository, &task, recovery, claim, Some(outcome))
+    reconcile_client_recovery(repository, &task, recovery, claim, Some(outcome), false)
 }
 
 pub(in crate::board_command) fn recovery_preflight(
@@ -155,6 +237,87 @@ pub(in crate::board_command) fn recovery_preflight(
     })
 }
 
+fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
+    let recovery = match spice::task_git::pending_recovery(repository) {
+        Ok(Some(recovery)) => recovery,
+        Ok(None) => {
+            return refusal(
+                "git::recovery-transaction-missing",
+                None,
+                "there is no retained dirty-handoff transaction to restore",
+            );
+        }
+        Err(error) => return task_git_outcome(error),
+    };
+    let sealed = match spice::task_git::recovery_claim(repository, &recovery) {
+        Ok(sealed) => sealed,
+        Err(error) => return task_git_outcome(error),
+    };
+    let board = match current_board(repository, BoardRead::All { family: None }) {
+        Ok(board) => board,
+        Err(outcome) => return outcome,
+    };
+    let entries = match actor_entries(&board) {
+        Ok(entries) => entries,
+        Err(outcome) => return outcome,
+    };
+    if let Some(active) = entries.iter().find(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == board.principal && claim.disposition == ClaimDisposition::Active
+        })
+    }) {
+        let exact = sealed.as_ref().is_some_and(|claim| {
+            active.born() == &claim.task
+                && active.claim().and_then(|head| head.recovery.as_deref())
+                    == Some(recovery.transaction())
+        });
+        return refusal(
+            if exact {
+                "git::recovery-postclaim-active"
+            } else {
+                "claim::active-exists"
+            },
+            Some(active.handle().to_string()),
+            if exact {
+                "resume the exact recovery with `spice task recover HANDLE`"
+            } else {
+                "release or complete the active claim before restoring unrelated dirty work"
+            },
+        );
+    }
+    if let Some(claim) = &sealed {
+        if board.principal != claim.actor {
+            return refusal(
+                "git::recovery-actor-moved",
+                Some(claim.actor.to_string()),
+                "restore through the lane that sealed the recovery transaction",
+            );
+        }
+        let seat = actor_seat(&board);
+        if !matches!(seat, Ok((lane, occupant)) if lane == claim.lane && occupant == claim.occupant)
+            || board.residency.body.epoch != claim.epoch
+        {
+            return refusal(
+                "git::recovery-residency-moved",
+                Some(claim.lane.to_string()),
+                "restore only through the original seated occupant and resident epoch",
+            );
+        }
+    }
+    if let Err(error) = spice::task_git::restore_recovery(repository, &recovery) {
+        return task_git_outcome(error);
+    }
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: CommandAnswer::Text(wire::intent::TextAnswer {
+            text: format!(
+                "restored dirty-handoff transaction {}",
+                recovery.transaction()
+            ),
+        }),
+    })
+}
+
 fn resume_client_recovery(
     repository: &Repository,
     task: &TaskHandle,
@@ -174,13 +337,79 @@ fn resume_client_recovery(
         }
         Err(error) => return task_git_outcome(error),
     };
-    reconcile_client_recovery(repository, task, recovery, claim, None)
+    reconcile_client_recovery(repository, task, recovery, claim, None, false)
 }
 
 pub(in crate::board_command) enum RecoveryBoardState {
     PreClaim,
     PostClaim { first: Seq, last: Seq },
+    Restorable(String),
     Ambiguous(String),
+}
+
+fn recovery_residency_matches(
+    board: &BoardAnswer,
+    sealed: &spice::task_git::RecoveryClaim,
+) -> bool {
+    matches!(
+        actor_seat(board),
+        Ok((lane, occupant)) if lane == sealed.lane && occupant == sealed.occupant
+    ) && board.residency.body.epoch == sealed.epoch
+}
+
+fn active_recovery_claims<'a>(
+    board: &'a BoardAnswer,
+    actor: &Actor,
+) -> (usize, Option<&'a wire::TaskStamp>) {
+    let mut count = 0;
+    let mut task = None;
+    for candidate in &board.tasks {
+        if candidate.claim.as_ref().is_some_and(|claim| {
+            claim.body.actor == *actor && claim.body.disposition == ClaimDisposition::Active
+        }) {
+            count += 1;
+            task = Some(&candidate.statement.body.born);
+        }
+    }
+    (count, task)
+}
+
+fn recovery_preclaim_unchanged(heads: &BoardTask, sealed: &spice::task_git::RecoveryClaim) -> bool {
+    !sealed.fresh
+        && heads.statement.position == sealed.statement
+        && heads.workflow.position == sealed.workflow
+        && heads.workflow.body.phase == sealed.phase
+        && heads.claim.as_ref().map(|claim| claim.position) == sealed.claim
+}
+
+fn exact_recovery_claim(
+    heads: &BoardTask,
+    sealed: &spice::task_git::RecoveryClaim,
+    transaction: &str,
+    active_count: usize,
+    active_task: Option<&wire::TaskStamp>,
+) -> bool {
+    let Some(claim) = &heads.claim else {
+        return false;
+    };
+    let statement_matches = sealed.fresh || heads.statement.position == sealed.statement;
+    let workflow_matches = sealed.fresh
+        || heads.workflow.position == sealed.workflow
+        || (sealed.phase.as_str() == "review"
+            && heads.workflow.body.assignment.as_ref() == Some(&sealed.actor)
+            && heads.workflow.body.review == "assigned");
+    claim.body.actor == sealed.actor
+        && claim.body.disposition == ClaimDisposition::Active
+        && claim.body.cell.phase == sealed.phase
+        && claim.body.lane == sealed.lane
+        && claim.body.occupant == sealed.occupant
+        && claim.body.epoch == sealed.epoch
+        && claim.body.recovery.as_deref() == Some(transaction)
+        && heads.workflow.body.phase == sealed.phase
+        && statement_matches
+        && workflow_matches
+        && active_count == 1
+        && active_task == Some(&sealed.task)
 }
 
 pub(in crate::board_command) fn recovery_board_state(
@@ -189,86 +418,80 @@ pub(in crate::board_command) fn recovery_board_state(
     transaction: &str,
     sealed: &spice::task_git::RecoveryClaim,
 ) -> RecoveryBoardState {
-    let Ok(heads) = task_heads(board, task) else {
-        return RecoveryBoardState::Ambiguous(format!("task {task} is no longer visible"));
-    };
-    if board.principal != sealed.actor
-        || heads.statement.body.born != sealed.task
-        || heads.statement.position != sealed.statement
-        || heads.workflow.body.phase != sealed.phase
-    {
+    if board.principal != sealed.actor {
         return RecoveryBoardState::Ambiguous(format!(
-            "task {task} actor, statement, workflow, or phase moved"
+            "task {task} recovery belongs to actor {}",
+            sealed.actor
         ));
     }
-    let seat = actor_seat(board);
-    if !matches!(seat, Ok((lane, occupant)) if lane == sealed.lane && occupant == sealed.occupant)
-        || board.residency.body.epoch != sealed.epoch
-    {
+    if !recovery_residency_matches(board, sealed) {
         return RecoveryBoardState::Ambiguous(format!(
             "task {task} residency or resident epoch moved"
         ));
     }
-    let position = heads.claim.as_ref().map(|claim| claim.position);
-    if position == sealed.claim {
-        if heads.workflow.position != sealed.workflow {
+    let (active_count, active_task) = active_recovery_claims(board, &sealed.actor);
+    let heads = match task_heads(board, task) {
+        Ok(heads) if heads.statement.body.born == sealed.task => heads,
+        Ok(_) => {
             return RecoveryBoardState::Ambiguous(format!(
-                "task {task} workflow moved before its recovery claim"
+                "task {task} resolved to another durable identity"
             ));
         }
-        let actor_holds_claim = board.tasks.iter().any(|candidate| {
-            candidate.claim.as_ref().is_some_and(|claim| {
-                claim.body.actor == sealed.actor
-                    && claim.body.disposition == ClaimDisposition::Active
-            })
-        });
-        return if actor_holds_claim {
+        Err(_) if sealed.fresh && active_count == 0 => return RecoveryBoardState::PreClaim,
+        Err(_) if active_count == 0 => {
+            return RecoveryBoardState::Restorable(format!(
+                "task {task} moved out of the recovery projection"
+            ));
+        }
+        Err(_) => {
+            return RecoveryBoardState::Ambiguous(format!(
+                "task {task} is unavailable while actor {} holds a claim",
+                sealed.actor
+            ));
+        }
+    };
+    if recovery_preclaim_unchanged(heads, sealed) {
+        return if active_count == 0 {
+            RecoveryBoardState::PreClaim
+        } else {
             RecoveryBoardState::Ambiguous(format!(
                 "actor {} acquired another active claim",
                 sealed.actor
             ))
-        } else {
-            RecoveryBoardState::PreClaim
         };
     }
     let Some(claim) = &heads.claim else {
-        return RecoveryBoardState::Ambiguous(format!("task {task} claim head disappeared"));
+        return if sealed.fresh {
+            RecoveryBoardState::Ambiguous(format!(
+                "atomically created task {task} has no claim head"
+            ))
+        } else if active_count == 0 {
+            RecoveryBoardState::Restorable(format!(
+                "task {task} claim head disappeared before recovery"
+            ))
+        } else {
+            RecoveryBoardState::Ambiguous(format!(
+                "task {task} claim head disappeared while actor {} holds a claim",
+                sealed.actor
+            ))
+        };
     };
-    let workflow_matches_claim = heads.workflow.position == sealed.workflow
-        || (sealed.phase.as_str() == "review"
-            && heads.workflow.body.assignment.as_ref() == Some(&sealed.actor)
-            && heads.workflow.body.review == "assigned");
-    let active = board
-        .tasks
-        .iter()
-        .filter(|candidate| {
-            candidate.claim.as_ref().is_some_and(|claim| {
-                claim.body.actor == sealed.actor
-                    && claim.body.disposition == ClaimDisposition::Active
-            })
-        })
-        .collect::<Vec<_>>();
-    if claim.body.actor == sealed.actor
-        && claim.body.disposition == ClaimDisposition::Active
-        && claim.body.cell.phase == sealed.phase
-        && claim.body.lane == sealed.lane
-        && claim.body.occupant == sealed.occupant
-        && claim.body.epoch == sealed.epoch
-        && claim.body.recovery.as_deref() == Some(transaction)
-        && workflow_matches_claim
-        && matches!(active.as_slice(), [only] if only.statement.body.born == sealed.task)
-    {
+    if exact_recovery_claim(heads, sealed, transaction, active_count, active_task) {
         RecoveryBoardState::PostClaim {
-            first: if heads.workflow.position == sealed.workflow {
+            first: if sealed.fresh || heads.workflow.position == sealed.workflow {
                 claim.position
             } else {
                 heads.workflow.position
             },
             last: claim.position,
         }
+    } else if active_count == 0 {
+        RecoveryBoardState::Restorable(format!(
+            "task {task} advanced without recovery {transaction}"
+        ))
     } else {
         RecoveryBoardState::Ambiguous(format!(
-            "task {task} claim does not carry recovery {transaction}"
+            "task {task} does not carry the only active recovery {transaction}"
         ))
     }
 }
@@ -279,6 +502,7 @@ fn reconcile_client_recovery(
     recovery: spice::task_git::Recovery,
     sealed: spice::task_git::RecoveryClaim,
     outcome: Option<Outcome<CommandAnswer>>,
+    task_reply: bool,
 ) -> Outcome<CommandAnswer> {
     let board = match current_board(
         repository,
@@ -322,22 +546,41 @@ fn reconcile_client_recovery(
             outcome
                 .filter(|outcome| matches!(outcome, Outcome::Reply(_)))
                 .unwrap_or_else(|| {
+                    let claim = wire::intent::ClaimAnswer {
+                        task: task.clone(),
+                        holder: Some(sealed.actor),
+                        expiry: None,
+                        warnings: Box::default(),
+                        creation_context: None,
+                        origin_context: None,
+                        next: None,
+                        phase: None,
+                        transplant: None,
+                    };
+                    let body = if task_reply {
+                        CommandAnswer::Task(wire::intent::TaskAnswer {
+                            task: task.clone(),
+                            status: "pending".to_owned(),
+                            guidance: None,
+                            completion: None,
+                            learning: None,
+                            claim: Some(Box::new(claim)),
+                            next: None,
+                        })
+                    } else {
+                        CommandAnswer::Claim(Box::new(claim))
+                    };
                     Outcome::Reply(Reply {
                         position: ReplyPosition::Committed(SeqRange { first, last }),
-                        body: CommandAnswer::Claim(Box::new(wire::intent::ClaimAnswer {
-                            task: task.clone(),
-                            holder: Some(sealed.actor),
-                            expiry: None,
-                            warnings: Box::default(),
-                            creation_context: None,
-                            origin_context: None,
-                            next: None,
-                            phase: None,
-                            transplant: None,
-                        })),
+                        body,
                     })
                 })
         }
+        RecoveryBoardState::Restorable(detail) => refusal(
+            "git::recovery-preclaim-moved",
+            Some(detail),
+            "restore the exact quarantined generation with `spice task recover --restore`",
+        ),
         RecoveryBoardState::Ambiguous(detail) => refusal(
             "git::recovery-board-ambiguous",
             Some(detail),

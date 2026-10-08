@@ -146,6 +146,19 @@ flowchart TD
 - Failed guarded journal writes are atomic refusals: the claim and lane return
   to their pre-command state, including the original staged/worktree split on
   release and abandoning a paused or dirty replay on claim.
+- Dirty-handoff recovery has two explicit ownership boundaries. `task recover
+  HANDLE` seals a dirty generation before claiming an existing ready task.
+  `task add TITLE --project PROJECT --recover` creates a new target and its
+  recovery-identified active claim in one guarded journal transaction; it is
+  mutually exclusive with `--claim`, so no board read can select the new row
+  between creation and possession.
+- Restart reconciles by the sealed transaction identity. The exact active
+  recovery claim replays once. If another claim moved the target first,
+  `task recover --restore` (with no handle) leaves the task unchanged, restores
+  the original staged, unstaged, and untracked generation, and retires only
+  that quarantine. A moved repository boundary, unexpected dirty path, active
+  claim held by the restoring actor, or mismatched recovery identity refuses
+  without deleting the quarantine.
 - A peer-authored deferral does not release another actor's claim.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.

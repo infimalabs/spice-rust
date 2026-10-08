@@ -33,21 +33,31 @@ pub(super) fn client_add(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    submit_task_add(
-        repository,
-        contract,
-        TaskAdd {
-            title,
-            project,
-            description,
-            acceptance,
-            requirements,
-            origin,
-            flow: matches.get_one::<String>("flow").cloned(),
-            depends: Vec::new(),
-            claim: matches.get_flag("claim"),
-        },
-    )
+    let claim = matches.get_flag("claim");
+    let recover = matches.get_flag("recover");
+    if claim && recover {
+        return refusal(
+            "git::recovery-claim-conflict",
+            None,
+            "choose ordinary --claim or explicit --recover, not both",
+        );
+    }
+    let body = TaskAdd {
+        title,
+        project,
+        description,
+        acceptance,
+        requirements,
+        origin,
+        flow: matches.get_one::<String>("flow").cloned(),
+        depends: Vec::new(),
+        claim: claim || recover,
+    };
+    if recover {
+        client_add_recovery(repository, contract, body)
+    } else {
+        submit_task_add(repository, contract, body)
+    }
 }
 
 pub(super) fn client_capture(
@@ -250,6 +260,14 @@ pub(crate) fn submit_task_add(
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
     submit_task_add_with_rule(repository, contract, body, "capture")
+}
+
+pub(super) fn submit_recovery_task_add(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
+    submit_task_add_with_rule(repository, contract, body, "recover")
 }
 
 fn submit_captured_task(

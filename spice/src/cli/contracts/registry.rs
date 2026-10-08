@@ -505,9 +505,9 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "recover"],
-        "task recover HANDLE",
+        "task recover [HANDLE] [--restore]",
         Lane,
-        Command,
+        Command => DirectOrCommitted,
         [ClaimWon],
         [Resident, LaneCapability, Toolful],
         TASK_GIT_TOOLS,
@@ -528,7 +528,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--requires-journal-schema SCHEMA] \
-         [--requires-trust-grant DIGEST] [--origin ORIGIN] [--claim]",
+         [--requires-trust-grant DIGEST] [--origin ORIGIN] [--claim] [--recover]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted, ClaimWon],
