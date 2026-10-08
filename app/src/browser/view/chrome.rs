@@ -526,11 +526,13 @@ pub(in crate::browser) struct TurboButtonProps {
     pub(in crate::browser) onclick: Callback<MouseEvent>,
 }
 
-/// One shared TURBO/BASIC state button for team and global fast mode.
+/// Shared stable TURBO lettering; pressed state reflects team or global fast mode.
 #[function_component(TurboButton)]
 pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
-    let word = if props.engaged { "Turbo" } else { "Basic" };
-    let label = props.label.clone().unwrap_or_else(|| AttrValue::from(word));
+    let label = props
+        .label
+        .clone()
+        .unwrap_or_else(|| AttrValue::from("Turbo"));
     html! {
         <button
             type="button"
@@ -542,7 +544,7 @@ pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
             disabled={props.disabled}
             onclick={props.onclick.clone()}
         >
-            {fit_word(word)}
+            {fit_word("Turbo")}
         </button>
     }
 }

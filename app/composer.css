@@ -22,17 +22,14 @@
   background: var(--control);
   color: var(--ink);
 }
-.agent-menu-button:hover,
-.agent-menu-button:active,
-.agent-menu-button:focus-visible,
 .composer-shard-image-attach:active,
 .composer-shard-image-attach:focus-within {
   border-color: var(--accent-slot, var(--accent));
   background: var(--control);
   color: var(--accent-slot, var(--accent));
 }
-.agent-menu-button:focus-visible {
-  outline: var(--app-focus-ring-width) solid var(--accent-slot, var(--accent));
+.agent-menu > .agent-menu-button:focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 1px;
 }
 /* Draft image chooser in the menu's own circle frame, centred in the
@@ -70,17 +67,16 @@
   background: currentColor;
 }
 .agent-menu { position: static; }
-.agent-menu-button {
+.agent-menu > .agent-menu-button {
+  --team-control-button-size: 22px;
+  overflow: visible;
   list-style: none;
   cursor: pointer;
 }
 .agent-menu-button::-webkit-details-marker { display: none; }
-/* A requested renewal stays visible after the menu closes: the button takes
-   the member's accent and carries a dot until the request settles. */
+/* Renewal keeps its recipient-colored status dot, not a colored control rim. */
 .agent-menu[data-renewal-pending="true"] > .agent-menu-button {
   position: relative;
-  border-color: var(--accent-slot, var(--accent));
-  color: var(--accent-slot, var(--accent));
 }
 .agent-menu[data-renewal-pending="true"] > .agent-menu-button::after {
   position: absolute;
@@ -96,9 +92,7 @@
 .agent-menu[open] > .agent-menu-button {
   position: relative;
   z-index: 5;
-  background: var(--panel);
-  border-color: var(--accent-slot, var(--accent));
-  color: var(--accent-slot, var(--accent));
+  color: var(--ink);
 }
 /* The open menu replaces the composer below the shard heading rather than
    floating over the lane, and scrolls within the shard it took over. A wide

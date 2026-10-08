@@ -153,13 +153,18 @@ margin of its own.
 ## Team composer controls
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
-Round 34px BASIC/TURBO and team-menu buttons share the first row; round 56px SEND
+Round 34px TURBO and team-menu buttons share the first row; round 56px SEND
 sits in the middle, above two pill-shaped slider flyers. Faces transmit the
 neutral background, with fine etched edges and no opaque recipient-color fill,
-domes, or nested ridges. The Settings global-menu BASIC/TURBO control reuses the
-same neutral 34px Flush face and lights only its red edge when engaged, while
-remaining its own separately admitted control outside the primary panel.
+domes, or nested ridges. Team and Settings global TURBO retain the same lettering:
+muted when off, brighter ink and a neutral glass wash when on, without colored
+active rims. Each remains its own separately admitted control.
 Task-observation Add/Close retain their independent appearance.
+
+Slider flyers and their riding labels settle together over 180ms; their words
+crossfade over 120ms. The native ranges retain their stops and hit targets,
+including the 2px endpoint inset. Lettering has a subtle etched highlight.
+Reduced motion removes travel and text transitions, not state distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
 for one recipient, equal separated arcs for several. Its small count follows
@@ -276,9 +281,10 @@ teams. Wide lanes lay those groups side by side; narrow lanes stack them and
 scroll within the lane. The button, Escape, or a click elsewhere in the team
 restores the composer.
 
-Each lane menu's neutral hamburger takes that member's accent for hover,
-press, keyboard focus, and open states, so neighboring lanes never share an
-unrelated highlight color.
+Lane hamburger buttons reuse the composer's Flush glass face, neutral edge,
+hover wash and contact shadow, retaining their 22px footprint. Open menus use a
+neutral wash; keyboard focus remains explicit. Pending renewal keeps its small
+recipient-colored status dot without turning the button rim into an accent light.
 
 ## Composer image strip
 
