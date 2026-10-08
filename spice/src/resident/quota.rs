@@ -587,7 +587,6 @@ struct ReportInput {
     fetched_at: i64,
     #[serde(default)]
     limits: Vec<Limit>,
-    credit_balance: Option<Amount>,
     reset_credits: Option<ResetCredits>,
     metadata: Option<ReportAccount>,
 }
@@ -599,16 +598,31 @@ impl ReportInput {
         for limit in &mut self.limits {
             limit.scope.redact();
         }
+        let credit_balance = self
+            .limits
+            .iter()
+            .position(Limit::is_credit_balance)
+            .map(|index| self.limits.remove(index).amount);
         Report {
             provider: self.provider,
             fetched_at_ms: self.fetched_at,
             account,
             limits: self.limits,
-            credit_balance: self.credit_balance.filter(|balance| {
-                balance.unit.eq_ignore_ascii_case("credits") && balance.remaining.is_some()
-            }),
+            credit_balance,
             reset_credits: self.reset_credits,
         }
+    }
+}
+
+impl Limit {
+    /// OMP's normalized raw balance: a windowless credits amount that reports
+    /// what remains and no allowance to measure it against. Windowed or capped
+    /// credit allowances stay quota meters.
+    fn is_credit_balance(&self) -> bool {
+        self.window.is_none()
+            && self.amount.unit.eq_ignore_ascii_case("credits")
+            && self.amount.remaining.is_some()
+            && self.amount.limit.is_none()
     }
 }
 
@@ -905,11 +919,12 @@ mod tests {
             "unit": "percent"
           },
           "status": "ok"
+        }, {
+          "id": "openai-codex:credits",
+          "label": "Credit balance",
+          "scope": { "provider": "openai-codex", "windowId": "balance" },
+          "amount": { "remaining": 62000, "unit": "credits" }
         }],
-        "creditBalance": {
-          "remaining": 62000,
-          "unit": "credits"
-        },
         "resetCredits": {
           "availableCount": 1,
           "redeemableCount": 1,
@@ -931,11 +946,12 @@ mod tests {
           "accountId": "o2*",
           "planType": "pro"
         },
-        "limits": [],
-        "creditBalance": {
-          "remaining": 61500.25,
-          "unit": "credits"
-        }
+        "limits": [{
+          "id": "openai-codex:credits",
+          "label": "Credit balance",
+          "scope": { "provider": "openai-codex", "windowId": "balance" },
+          "amount": { "remaining": 61500.25, "unit": "credits" }
+        }]
       }, {
         "provider": "openai-codex",
         "fetchedAt": 1700000000300,
@@ -944,7 +960,13 @@ mod tests {
           "accountId": "m3*",
           "planType": "pro"
         },
-        "limits": []
+        "limits": [{
+          "id": "openai-codex:credits:1w",
+          "label": "Weekly credits",
+          "scope": { "provider": "openai-codex", "windowId": "1w" },
+          "window": { "id": "1w", "label": "1 week", "durationMs": 604800000 },
+          "amount": { "used": 40, "limit": 100, "remaining": 60, "unit": "credits" }
+        }]
       }],
       "accountsWithoutUsage": [{
         "provider": "xai",
@@ -1086,7 +1108,17 @@ mod tests {
                 .and_then(|balance| balance.remaining),
             Some(61_500.25)
         );
+        assert_eq!(
+            snapshot.reports[0].limits.len(),
+            1,
+            "the balance is no meter"
+        );
+        assert!(snapshot.reports[1].limits.is_empty());
         assert_eq!(snapshot.reports[2].credit_balance, None);
+        assert_eq!(
+            snapshot.reports[2].limits[0].id, "openai-codex:credits:1w",
+            "a windowed credits allowance stays a quota meter"
+        );
         assert_eq!(
             snapshot.reports[0]
                 .reset_credits
