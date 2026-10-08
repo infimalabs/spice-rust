@@ -28,7 +28,8 @@
   --app-focus-ring-width: 2px; --app-focus-ring-strong-width: 3px;
   --app-selection-shadow: inset 0 0 0 1px var(--line-soft);
   --app-motion-fast: 120ms; --app-motion-settle: 180ms; --app-ease-standard: ease-out;
-  --app-radius-horn: 1em;
+  /* A message card rounds by its rail width; work tabs share that curvature. */
+  --app-radius-card: var(--message-rail);
   --app-type-avatar-min: .5rem;
   --app-type-2xs: .58rem;
   --app-type-micro: .6rem;
@@ -218,8 +219,8 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   color: var(--muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.app-horn-tab--down { border-radius: 0 0 var(--app-radius-horn) var(--app-radius-horn); }
-.app-horn-tab--up { border-radius: var(--app-radius-horn) var(--app-radius-horn) 0 0; }
+.app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
+.app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
 .app-horn-tab__label { color: var(--muted); opacity: .72; }
 .app-horn-tab--group { gap: 0; }
