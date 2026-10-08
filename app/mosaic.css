@@ -326,20 +326,17 @@
 /* The lightbox's packed actions use the app-wide joined frame while retaining
    the frosted surface treatment. Annotation tools form two spatially separate
    joined sets: editing tools and commit actions. */
-.image-lightbox-actions {
-  grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end;
-}
+.image-lightbox-actions { grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; }
 .image-lightbox-actions.app-control-rail > button,
 .image-annotation-tools.app-control-rail > button { background: transparent; }
 .image-lightbox-actions.app-control-rail > button:not([aria-disabled="true"], :disabled):hover,
-.image-annotation-tools.app-control-rail > button:not([aria-disabled="true"], :disabled):hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.image-annotation-controls { justify-self: stretch; justify-content: space-between; gap: 8px; }
+.image-annotation-tools.app-control-rail > button:not([aria-disabled="true"], :disabled):hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.image-annotation-editor { display: contents; }
+.image-annotation-controls { justify-self: stretch; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+.image-annotation-editing { grid-column: 1; min-width: 0; }
+.image-annotation-commit { grid-column: 2; justify-self: end; flex-wrap: nowrap; }
 .image-annotation-tools > button[aria-pressed="true"],
-.image-annotation-tools.app-control-rail > .image-annotation-apply {
-  background: var(--accent); color: var(--on-accent, var(--panel));
-}
+.image-annotation-tools.app-control-rail > .image-annotation-apply { background: var(--accent); color: var(--on-accent, var(--panel)); }
 .image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
 /* Wide enough for its longest route word, so cycling never reflows the rail. */
 .image-annotation-tools > .image-annotation-route { min-inline-size: 9ch; }

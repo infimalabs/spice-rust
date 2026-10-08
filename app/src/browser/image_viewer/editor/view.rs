@@ -34,30 +34,32 @@ pub(super) fn toolbar(
     let routing = selected_route.is_some() || matches!(tool, Tool::Line | Tool::Arrow);
     let shown = selected_route.unwrap_or(pen.route);
     let ink = selected.map_or(pen.color, |shape| shape.color);
-    let swatches = Color::ALL.into_iter().map(|color| {
+    let swatches = Color::ALL.into_iter().enumerate().map(|(index, color)| {
         let choose = actions.color.reform(move |_: MouseEvent| color);
+        let shortcut = (index + 1).to_string();
+        let title = format!("{} ({shortcut})", color.label());
         html! {
-            <button type="button" class="image-annotation-swatch" aria-pressed={(color == ink).to_string()} aria-label={format!("Colour: {}", color.label())} title={color.label()} disabled={busy} onclick={choose}>
+            <button type="button" class="image-annotation-swatch" aria-pressed={(color == ink).to_string()} aria-label={format!("Colour: {}", color.label())} aria-keyshortcuts={shortcut} {title} disabled={busy} onclick={choose}>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill={color.ink()} stroke={color.halo()} stroke-width="1.5" /></svg>
             </button>
         }
     });
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
-            <span class="image-annotation-tools app-control-rail app-overlay-control">
-                {for [(Tool::Select, "Select"), (Tool::Rectangle, "Rectangle"), (Tool::Line, "Line"), (Tool::Arrow, "Arrow"), (Tool::Text, "Text")].into_iter().map(|(value, label)| {
+            <span class="image-annotation-tools image-annotation-editing app-control-rail app-overlay-control">
+                {for [(Tool::Select, "Select", "V"), (Tool::Rectangle, "Rectangle", "R"), (Tool::Line, "Line", "L"), (Tool::Arrow, "Arrow", "A"), (Tool::Text, "Text", "T")].into_iter().map(|(value, label, shortcut)| {
                     let choose = actions.tool.reform(move |_: MouseEvent| value);
-                    html! { <button type="button" aria-pressed={(tool == value).to_string()} disabled={busy} onclick={choose}>{label}</button> }
+                    html! { <button type="button" aria-pressed={(tool == value).to_string()} aria-keyshortcuts={shortcut} title={format!("{label} ({shortcut})")} disabled={busy} onclick={choose}>{label}</button> }
                 })}
-                <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} title="Route: Straight, Elbow (Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees" onclick={actions.route}>{shown.label()}</button>
+                <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} aria-keyshortcuts="G" title="Cycle route (G): Straight, Elbow (Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees" onclick={actions.route}>{shown.label()}</button>
                 <span class="image-annotation-palette" role="group" aria-label="Mark colour">{for swatches}</span>
-                <button type="button" disabled={busy || !history.can_undo()} onclick={actions.undo}>{"Undo"}</button>
-                <button type="button" disabled={busy || !history.can_redo()} onclick={actions.redo}>{"Redo"}</button>
-                <button type="button" disabled={busy || history.selected.is_none()} onclick={actions.delete}>{"Delete"}</button>
+                <button type="button" disabled={busy || !history.can_undo()} aria-keyshortcuts="Meta+Z Control+Z" title="Undo (Command or Control+Z)" onclick={actions.undo}>{"Undo"}</button>
+                <button type="button" disabled={busy || !history.can_redo()} aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Meta+Y Control+Y" title="Redo (Shift+Command or Control+Z; Command or Control+Y)" onclick={actions.redo}>{"Redo"}</button>
+                <button type="button" disabled={busy || history.selected.is_none()} aria-keyshortcuts="Delete Backspace" title="Delete selected mark (Delete or Backspace)" onclick={actions.delete}>{"Delete"}</button>
             </span>
-            <span class="image-annotation-tools app-control-rail">
-                <button type="button" onclick={actions.cancel}>{"Cancel"}</button>
-                <button type="button" class="image-annotation-apply" disabled={busy || !ready} onclick={actions.apply}>{"Apply"}</button>
+            <span class="image-annotation-tools image-annotation-commit app-control-rail">
+                <button type="button" aria-keyshortcuts="Escape" title="Cancel annotation (Escape)" onclick={actions.cancel}>{"Cancel"}</button>
+                <button type="button" class="image-annotation-apply" aria-keyshortcuts="Meta+Enter Control+Enter" title="Apply annotations (Command or Control+Enter)" disabled={busy || !ready} onclick={actions.apply}>{"Apply"}</button>
             </span>
         </div>
     }
