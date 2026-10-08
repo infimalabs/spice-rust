@@ -27,6 +27,15 @@ pub(super) fn build(
         ));
     }
     refuse_own_live_session(&session, environment)?;
+    let dialect = spice::extension::vendor(vendor.as_str())
+        .map(|declared| declared.dialect())
+        .ok_or_else(|| {
+            refusal(
+                "session::context-vendor-unknown",
+                Some(vendor.to_string()),
+                "run the unmodified command rendered by task show or task next",
+            )
+        })?;
 
     let current = std::env::current_dir().map_err(|error| {
         refusal(
@@ -53,8 +62,14 @@ pub(super) fn build(
     let tape = retained_tape(&root, source)?;
     let (extents, boundary_index) = retained_boundary(&tape, member, offset)?;
 
-    let before = records_before(&tape, &extents, boundary_index, offset)?;
-    let after = records_after(&tape, &extents, boundary_index, offset)?;
+    let before = withheld(
+        dialect,
+        records_before(&tape, &extents, boundary_index, offset)?,
+    );
+    let after = withheld(
+        dialect,
+        records_after(&tape, &extents, boundary_index, offset)?,
+    );
     let rows = nearest_first(before, after, &page);
     let resumed = match page.after() {
         Some(cursor) => rows
@@ -85,6 +100,24 @@ pub(super) fn build(
         offset,
         page,
     })
+}
+
+/// What a record reads when it cannot be shown free of reasoning.
+const WITHHELD_RECORD: &str = "[record withheld: not a structured vendor record]";
+
+/// Records as another model may read them.
+///
+/// The reply lands in a model's context, and a provider refuses a request
+/// that carries another session's reasoning, so every reasoning payload is
+/// withheld and a record that cannot be shown free of it is withheld whole.
+fn withheld(dialect: listen::Dialect, records: Vec<String>) -> Vec<String> {
+    records
+        .into_iter()
+        .map(|record| {
+            listen::withhold_reasoning(dialect, &record)
+                .unwrap_or_else(|| WITHHELD_RECORD.to_owned())
+        })
+        .collect()
 }
 
 /// Records nearest the boundary first, the one before ahead of the one after
@@ -347,12 +380,12 @@ where
 /// Refuse to hand a live session its own transcript.
 ///
 /// The retained context command names the session whose tape it reads. When
-/// that name is the caller's own live vendor identity, every assistant and
-/// thinking record the reply would carry was produced by the model reading
-/// it, and feeding that reasoning back poisons each later turn of the same
-/// session. The caller's identity is whatever a vendor put in the process
-/// environment; a match on either the canonical form or the raw text refuses
-/// before any tape is opened.
+/// that name is the caller's own live vendor identity, every assistant record
+/// the reply would carry was produced by the model reading it, and feeding
+/// its own words back poisons each later turn of the same session. The
+/// caller's identity is whatever a vendor put in the process environment; a
+/// match on either the canonical form or the raw text refuses before any tape
+/// is opened.
 fn refuse_own_live_session(session: &str, environment: &Environment) -> Result<(), Refusal> {
     let requested = source::canonical_thread(session);
     for row in &environment.vendors {
