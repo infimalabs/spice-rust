@@ -703,7 +703,8 @@ each is one task, and its tone carries in-flight or dormant state.
 
 Messages keep the agent's order: leading prose, then each recognized ACK or NAK
 as its steering quote followed by that response, as ordinary Markdown with the
-lane accent.
+lane accent. A speaker row returning after a quote chain keeps the same minimum
+gap from that chain as adjacent nested quote rows keep from each other.
 
 **Value:** you never hold "what did I ask?" in your head — across twenty minutes
 and four lanes, the difference between reading and re-deriving.
