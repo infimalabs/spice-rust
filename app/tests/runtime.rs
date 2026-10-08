@@ -428,6 +428,7 @@ fn lane_response_with_renewals(
                 } else {
                     wire::intent::LaneLiveness::Vacant
                 },
+                hold: None,
             },
         )
         .collect::<Vec<_>>();
