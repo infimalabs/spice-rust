@@ -844,27 +844,28 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The 80 × 160 control panel has four rows and three equal row gaps. TURBO
+/* The 80 × 160 control panel starts with the same three-pixel clearance that
+   centers TURBO in its half-width slot, then uses three equal row gaps. TURBO
    occupies the first row's left slot, leaving the right slot for the future
-   team menu; SEND spans the next row. Each range then receives exactly half the
-   residual height:
+   team menu; SEND spans the next row. Each range receives the residual half:
 
-     range row = (panel height - SEND - small button - 3 gaps) / 2
+     range row = (panel height - top inset - SEND - small button - 3 gaps) / 2
 
    Explicit rows keep a later menu from displacing either range. The range
    thumb travels inside a pill groove four pixels taller than itself. */
 .team-composer .team-composer-controls {
-  --team-control-gap: 4px;
+  --app-control-glass-depth: calc(var(--app-glass-thickness) + var(--app-glass-thickness) + var(--app-glass-thickness));
+  --team-control-gap: 3px;
   --team-control-send-size: 56px;
   --team-control-button-size: var(--app-round-control-size);
-  --team-control-fixed-block: calc(var(--team-control-send-size) + var(--team-control-button-size) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap));
+  --team-control-fixed-block: calc(var(--team-control-send-size) + var(--team-control-button-size) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap));
   --team-slider-row-block: calc((var(--team-composer-block-size) - var(--team-control-fixed-block)) / 2);
-  --team-slider-inset: 2px;
+  --team-slider-inset: var(--team-control-gap);
   --team-slider-groove-block: 26px;
   --team-slider-thumb-inline: 46px;
   --team-slider-thumb-block: 22px;
-  position: relative; display: grid; gap: var(--team-control-gap); inline-size: var(--team-control-inline-size);
-  margin-block-start: 0; block-size: var(--team-composer-block-size);
+  position: relative; display: grid; row-gap: var(--team-control-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
+  margin-block-start: 0; padding-block-start: var(--team-control-gap); block-size: var(--team-composer-block-size);
   grid-template: var(--team-control-button-size) var(--team-control-send-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
@@ -881,7 +882,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-knob-face: linear-gradient(150deg, color-mix(in srgb, var(--team-knob-surface) 80%, var(--app-highlight-source)) 0%, color-mix(in srgb, var(--team-knob-surface) 96%, var(--app-highlight-source)) 46%, var(--team-knob-surface) 68%, color-mix(in srgb, var(--team-knob-surface) 76%, var(--app-shadow-source)) 100%);
   --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 3px 4px -2px color-mix(in srgb, var(--team-knob-surface) 38%, var(--app-shadow-source)), 0 9px 14px -9px color-mix(in srgb, var(--app-shadow-source) 65%, transparent);
 }
-.team-composer :is(.team-send, .team-turbo) {
+.team-composer :is(.team-send, .team-turbo, .team-menu) {
   --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
   position: relative; display: grid; place-items: center; overflow: hidden;
   place-self: center; width: var(--team-knob-size); min-width: var(--team-knob-size); max-width: var(--team-knob-size); height: var(--team-knob-size); min-height: var(--team-knob-size); margin: 0; padding: 0;
@@ -891,6 +892,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
 .team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; cursor: pointer; }
+.team-composer .team-menu { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 2; border: var(--app-control-edge-width) solid var(--control-line-soft); background: var(--control-surface-soft); box-shadow: inset 0 0 0 1px var(--line-soft); color: var(--muted); cursor: pointer; }
+.team-composer .team-menu:not(:disabled):is(:hover, :active, :focus-visible, [aria-expanded="true"]) { border-color: var(--accent-slot, var(--accent)); background: var(--control); color: var(--accent-slot, var(--accent)); }
 .team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1; }
 .team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
@@ -935,6 +938,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   box-shadow: var(--team-knob-lift), 0 0 10px -2px color-mix(in srgb, var(--accent-3) 75%, transparent);
 }
 .team-composer :is(.team-send, .team-turbo):not([data-lit="true"]) { --control-state-accent: var(--muted); }
+.team-composer :is(.team-send, .team-menu):disabled { opacity: 1; }
 .team-composer .team-turbo .fit-word { inline-size: 22px; block-size: 8px; }
 .fit-word {
   display: block; overflow: visible; pointer-events: none;
@@ -1015,14 +1019,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* With no agent running and nothing drafted, the team's knobs step back like
    an inactive lane without compositing their shared field surface. */
-.team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-slider) {
+.team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider) {
   transition: opacity var(--app-motion-settle) var(--app-ease-standard), filter var(--app-motion-settle) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-@media (prefers-reduced-motion: reduce) {
-  .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-slider) { transition: none; }
-}
-.team-composer .team-composer-controls[data-idle="true"] > * { opacity: var(--inactive-lane-opacity); }
-.team-composer .team-composer-controls[data-idle="true"] > :is(.team-send, .team-turbo, .team-slider) { filter: saturate(.55); }
+@media (prefers-reduced-motion: reduce) { .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider) { transition: none; } }
+.team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
+.team-composer .team-composer-controls[data-idle="true"] > :is(.team-turbo, .team-menu, .team-slider) { filter: saturate(.55); }
 .team-composer-controls[data-idle="true"] .team-send:disabled { cursor: default; }
 /* Command previews ring outside the send button now that its row has room.
    Ordinary submit follows the focused agent; broadcast uses its purple slot. */

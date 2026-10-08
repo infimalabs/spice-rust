@@ -1009,7 +1009,7 @@ pub(super) fn render_quote_shards(
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
                     >
-                        <header class="composer-shard-heading">
+                        <header class="app-glass-control-surface composer-shard-heading">
                             <a
                                 class={classes!(
                                     "composer-shard-link",

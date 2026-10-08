@@ -589,15 +589,17 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
-Beside the draft, one fixed 80 × 160 control panel has four rows separated by
-three four-pixel gaps: a 34-pixel two-slot button row, a 56-pixel `Send` row,
-then two equal 29-pixel range rows because
-$(160 - 34 - 56 - 3 \times 4) / 2 = 29$. `TURBO` occupies the upper-left slot
-at the same diameter as the global `Spice` control; the upper-right slot stays
-available for the team menu. Each range runs left
-to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside a
-neutral 76 × 26 pill groove: two pixels of clearance above and below, and two
-pixels of panel inset at each end. Every current-value word is drawn to fill its
+Beside the draft, one fixed 80 × 160 control panel begins with a three-pixel
+top inset and has four rows separated by three three-pixel gaps: a 34-pixel
+two-slot button row, a 56-pixel `Send` row, then two equal 29-pixel range rows
+because $(160 - 3 - 34 - 56 - 3 \times 3) / 2 = 29$. `TURBO` occupies the
+upper-left slot at the same diameter as the global `Spice` control, giving it
+equal three-pixel top and left clearance. A same-diameter hamburger in the
+upper-right slot opens the team's swap/join arrangement menu using the soft
+glass surface and inset edge of the other hamburger controls. Each range runs
+left to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside
+a neutral 74 × 26 pill groove: two pixels of clearance above and below, and
+three pixels of panel inset at each end. Every current-value word is drawn to
 thumb, so every value occupies the same width. Thumb state color ends at its
 border; neutral depth remains, but no state casts light into the groove. Send,
 the round buttons, and the thumbs share one tactile face whose color carries
@@ -609,8 +611,9 @@ counterclockwise, with a darker seam opening each slice so two agents sharing an
 accent stay distinct. A smooth raised dome shades the pinwheel, and its word is
 inked straight into the dome in the page color, with no plate. Pressing a lit
 `Send` pops the dome down, and its fold shows as a bright circle around the word
-until release. Unlit, it keeps the raised knob in the neutral surface of the
-resting quiet thumb; the command-modifier and focus rings still show around it.
+until release. Unlit or disabled by an empty draft, it keeps the full-opacity
+raised knob in the neutral surface of the resting quiet thumb; only its color
+mutes, while the command-modifier and focus rings still show around it.
 Raised states use distinct team accents: the
 first round button reads `TURBO`, lit in the reddish accent while the team's
 own fast-mode flag is on, and `BASIC`, in the same neutral raised knob,
@@ -619,8 +622,12 @@ accent, blue. A press of `TURBO` flips that team flag, which the resident keeps
 across restarts. Fast mode is additive: a member launches in fast mode exactly
 when its own flag, its team's flag, or the global setting is on, so turning one
 level off never slows a member another level still enables. Running OMP agents
-whose effective value changes take it at once. The frame uses the same
-restrained corners as the adjacent draft rather than pill geometry.
+whose effective value changes take it at once. The draft field is one glass
+thickness. One inherited depth parameter drives the shared control-glass paint:
+headers use its default two thicknesses, while the control frame overrides it
+to three. Each surface receives that paint once, so the moving page stays
+visible through it. The frame uses the same restrained corners as the adjacent
+draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.

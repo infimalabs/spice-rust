@@ -36,8 +36,9 @@ pub(in crate::browser::watchband) struct FrameProps {
     pub speech: &'static str,
     pub lifetime: &'static str,
     pub lifetime_pending: bool,
-    /// The round button row beneath send.
+    /// The paired round controls in the first row.
     pub turbo: Html,
+    pub menu: Html,
     pub children: Html,
 }
 
@@ -133,6 +134,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             data-idle={idle.to_string()}
         >
             {props.turbo.clone()}
+            {props.menu.clone()}
             <button
                 ref={send}
                 class="team-send"

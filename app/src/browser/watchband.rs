@@ -354,6 +354,7 @@ fn render_compose(
                 team_controls,
                 &controls.set_automatic_speech,
                 sender,
+                can_arrange,
                 can_configure,
                 ready,
                 dormant,
@@ -951,7 +952,7 @@ fn render_composer_heading(
         display_millis,
     } = stream;
     html! {
-        <header class="composer-shard-heading">
+        <header class="app-glass-control-surface composer-shard-heading">
             <a
                 class={classes!(
                     "composer-shard-link",
