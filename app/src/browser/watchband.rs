@@ -301,10 +301,10 @@ fn render_compose(
         drafts.clone(),
         submissions.clone(),
     );
-    let broadcast_targets = broadcast_targets(&team.members, epoch, authority.send);
+    let broadcast = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
     let dormant = team_dormant(team, drafts);
-    let slots = send_slots(team, standings, drafts, authority, epoch);
+    let slots = send_slots(team, standings, drafts, authority, epoch, &broadcast);
     let ready = control.pending_life.is_none() && slots.iter().any(|slot| slot.reachable);
     let cards = activity_cards(runtime, team, quote_agents);
     let member_command = member_controls::command_callback(sender, surface, team.lane);
@@ -339,7 +339,7 @@ fn render_compose(
                         composer_drag,
                         drafts,
                         submissions,
-                        &broadcast_targets,
+                        &broadcast,
                         &broadcast_help,
                         header.stream,
                         header.prose,
@@ -1042,6 +1042,7 @@ fn send_slots(
     drafts: &ComposerDrafts,
     authority: SubmissionAuthority,
     epoch: CanonicalUuid,
+    broadcast_targets: &[BroadcastTarget],
 ) -> Vec<SendSlot> {
     team.members
         .iter()
@@ -1055,6 +1056,9 @@ fn send_slots(
                 reachable: authority
                     .target(member.occupant, member.wakeable, epoch)
                     .is_some(),
+                broadcast: broadcast_targets
+                    .iter()
+                    .any(|target| target.lane == member.lane),
             }
         })
         .collect()

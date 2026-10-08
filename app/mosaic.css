@@ -1026,15 +1026,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   cursor: default;
 }
 .team-composer-controls[data-idle="true"] .team-send-word { text-shadow: none; }
-/* Command previews ring outside the send button now that its row has room.
-   Ordinary submit follows the focused agent; broadcast uses its purple slot. */
+/* Command previews ring outside SEND. Ordinary submit follows the focused agent;
+   a held broadcast rings purple and shows its own recipients' pinwheel. */
 .team-composer:has(.team-agent[data-accent="0"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-0); }
 .team-composer:has(.team-agent[data-accent="1"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-1); }
 .team-composer:has(.team-agent[data-accent="2"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-2); }
 .team-composer:has(.team-agent[data-accent="3"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-3); }
 .team-composer:has(.team-agent[data-accent="4"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-4); }
 .team-composer:has(.team-agent[data-accent="5"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); }
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); --team-send-command-ring: 0 0 0 3px var(--accent-5); }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-5); --team-send-command-ring: 0 0 0 3px var(--accent-5); border-color: color-mix(in srgb, var(--app-shadow-source) 45%, transparent); background: var(--team-knob-glass), var(--team-send-broadcast-pinwheel); }
 html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
 html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-note-composer:has(textarea:focus) .team-send[value="close"]:not(:disabled) { box-shadow: inset 0 0 0 3px var(--focus); }
