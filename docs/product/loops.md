@@ -523,7 +523,13 @@ those bytes is not a new steering send.
 
 **Draft image annotations.** Open a pasted or dropped lane/quote attachment,
 then choose **Annotate** in its full-size preview. **Rectangle**, **Line**,
-and **Arrow** draw red marks in original-image coordinates. A line or arrow
+and **Arrow** draw marks in original-image coordinates. The toolbar palette
+(red, yellow, green, blue, black, white) sets the colour of new marks; choosing
+a colour while a mark is selected recolours it as one undoable edit, and
+taking up a different tool lets go of the selection so the palette sets up the
+next mark. Labels carry a contrasting halo in every colour, so they read on
+light and dark images, and Apply exports each mark in its on-screen colour. A
+line or arrow
 routes straight; hold Shift while drawing to snap it to 45° steps, Alt/Option
 to route an axis-aligned elbow, or Command/Control to bend a curve, and the
 arrowhead follows the final segment. The route button cycles the selected
@@ -539,7 +545,8 @@ pointer gesture is discarded.
 
 **Apply** replaces that exact draft attachment with a native-resolution PNG.
 The draft retains the original raster and editable shape list, so reopening
-**Annotate** edits the marks without drawing over previously flattened marks.
+**Annotate** edits the marks, colours included, without drawing over
+previously flattened marks.
 **Cancel**, closing the preview, or leaving its owning composer discards
 unapplied edits. Identical pasted images are separate edit targets; a removed,
 submitted, or superseded attachment cannot receive a stale export.

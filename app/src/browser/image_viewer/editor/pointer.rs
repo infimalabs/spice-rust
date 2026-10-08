@@ -76,7 +76,7 @@ fn hit(history: &History, event: &PointerEvent) -> (Option<usize>, Option<String
 fn begin(
     history: &mut History,
     tool: Tool,
-    route: Route,
+    pen: Pen,
     event: &PointerEvent,
     point: Point,
 ) -> Option<(Motion, Vec<Shape>)> {
@@ -101,9 +101,13 @@ fn begin(
     };
     let before = history.shapes.clone();
     let index = history.shapes.len();
-    history
-        .shapes
-        .push(Shape::new(kind, route_for(event, route), point, point));
+    history.shapes.push(Shape::new(
+        kind,
+        route_for(event, pen.route),
+        pen.color,
+        point,
+        point,
+    ));
     history.selected = Some(index);
     Some((Motion::Draw(index), before))
 }
@@ -114,7 +118,7 @@ pub(super) fn down(
     surface: &NodeRef,
     session: &Session,
     tool: Tool,
-    route: Route,
+    pen: Pen,
 ) {
     if event.button() != 0 || session.gesture.borrow().is_some() {
         return;
@@ -138,13 +142,13 @@ pub(super) fn down(
         if handle.is_none() {
             match editable {
                 Some(index) => label::edit(session, index),
-                None => label::place(session, point, canvas.dimensions),
+                None => label::place(session, point, canvas.dimensions, pen.color),
             }
             session.repaint.emit(());
             return;
         }
     }
-    let begun = begin(&mut session.history.borrow_mut(), tool, route, event, point);
+    let begun = begin(&mut session.history.borrow_mut(), tool, pen, event, point);
     if let Some((motion, before)) = begun {
         if let Some(element) = canvas.svg.cast::<web_sys::Element>() {
             let _ = element.set_pointer_capture(event.pointer_id());
@@ -153,7 +157,7 @@ pub(super) fn down(
             pointer: event.pointer_id(),
             motion,
             before,
-            route,
+            route: pen.route,
         });
     }
     session.repaint.emit(());

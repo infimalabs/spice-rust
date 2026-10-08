@@ -113,6 +113,62 @@ impl Course {
     }
 }
 
+/// The colours a mark can take. Each has a contrasting halo that keeps a text
+/// label legible on light and dark images alike.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Color {
+    #[default]
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Black,
+    White,
+}
+
+impl Color {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Red,
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Black,
+        Self::White,
+    ];
+
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Red => "Red",
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Blue => "Blue",
+            Self::Black => "Black",
+            Self::White => "White",
+        }
+    }
+
+    pub(crate) const fn ink(self) -> &'static str {
+        match self {
+            Self::Red => "#ef4444",
+            Self::Yellow => "#facc15",
+            Self::Green => "#22c55e",
+            Self::Blue => "#3b82f6",
+            Self::Black => "#111111",
+            Self::White => "#ffffff",
+        }
+    }
+
+    /// The outline drawn under a label so its ink always meets a contrasting
+    /// edge, whatever the image beneath.
+    pub(crate) const fn halo(self) -> &'static str {
+        match self {
+            Self::Yellow | Self::Green | Self::White => "#111111",
+            Self::Red | Self::Blue | Self::Black => "#ffffff",
+        }
+    }
+}
+
 /// One mark. Rectangles span their two corners and routed marks run between
 /// their endpoints; a text label is anchored at `start`, and `end` is the
 /// opposite corner of its measured box so it moves and clamps like any mark.
@@ -120,35 +176,38 @@ impl Course {
 pub(crate) struct Shape {
     pub(crate) kind: Kind,
     pub(crate) route: Route,
+    pub(crate) color: Color,
     pub(crate) start: Point,
     pub(crate) end: Point,
     pub(crate) text: Rc<str>,
 }
 
 impl Shape {
-    pub(crate) fn new(kind: Kind, route: Route, start: Point, end: Point) -> Self {
+    pub(crate) fn new(kind: Kind, route: Route, color: Color, start: Point, end: Point) -> Self {
         Self {
             kind,
             route,
+            color,
             start,
             end,
             text: Rc::from(""),
         }
     }
 
-    /// A label anchored at its top-left corner whose box is `width` wide and
-    /// one text size tall.
-    pub(crate) fn label(anchor: Point, text: Rc<str>, width: i32, size: i32) -> Self {
-        Self {
-            kind: Kind::Text,
-            route: Route::Straight,
-            start: anchor,
-            end: Point {
-                x: anchor.x + width.max(1),
-                y: anchor.y + size,
-            },
-            text,
-        }
+    /// An empty label anchored at its top-left corner, one text size tall.
+    pub(crate) fn label(anchor: Point, color: Color, size: i32) -> Self {
+        let mut label = Self::new(Kind::Text, Route::Straight, color, anchor, anchor);
+        label.relabel(Rc::from(""), 0, size);
+        label
+    }
+
+    /// Give a label new text whose box is `width` wide and `size` tall.
+    pub(crate) fn relabel(&mut self, text: Rc<str>, width: i32, size: i32) {
+        self.end = Point {
+            x: self.start.x + width.max(1),
+            y: self.start.y + size,
+        };
+        self.text = text;
     }
 
     pub(crate) fn bounds(&self) -> (Point, Point) {
@@ -326,6 +385,7 @@ mod tests {
         Shape::new(
             kind,
             Route::Straight,
+            Color::Red,
             Point {
                 x: start.0,
                 y: start.1,
@@ -346,7 +406,8 @@ mod tests {
         }
         // A label wider than the image pins to the left edge instead of
         // failing to clamp.
-        let wide = Shape::label(Point { x: 30, y: 10 }, Rc::from("wide"), 200, 20);
+        let mut wide = Shape::label(Point { x: 30, y: 10 }, Color::Red, 20);
+        wide.relabel(Rc::from("wide"), 200, 20);
         assert_eq!(wide.translated(5, 0, 120, 80).start.x, 0);
     }
 
@@ -390,19 +451,28 @@ mod boundaries {
     fn degenerate_marks_are_discarded_and_short_arrows_have_bounded_heads() {
         let point = Point { x: 10, y: 20 };
         for kind in [Kind::Rectangle, Kind::Line, Kind::Arrow] {
-            assert!(!Shape::new(kind, Route::Straight, point, point).visible());
+            assert!(!Shape::new(kind, Route::Straight, Color::Red, point, point).visible());
         }
         assert!(
             !Shape::new(
                 Kind::Rectangle,
                 Route::Straight,
+                Color::Red,
                 point,
                 Point { x: 10, y: 80 }
             )
             .visible()
         );
-        assert!(!Shape::label(point, Rc::from("  "), 10, 10).visible());
-        let arrow = Shape::new(Kind::Arrow, Route::Straight, point, Point { x: 12, y: 22 });
+        let mut blank = Shape::label(point, Color::Red, 10);
+        blank.relabel(Rc::from("  "), 10, 10);
+        assert!(!blank.visible());
+        let arrow = Shape::new(
+            Kind::Arrow,
+            Route::Straight,
+            Color::Red,
+            point,
+            Point { x: 12, y: 22 },
+        );
         assert!(arrow.visible());
         let head = arrow.arrowhead(stroke_width(1200, 800));
         assert_eq!(head[0], (12.0, 22.0));
@@ -421,7 +491,7 @@ mod boundaries {
             Point { x: 30, y: 210 },
             Point { x: 10, y: 90 },
         ] {
-            let elbow = Shape::new(Kind::Arrow, Route::Elbow, start, end);
+            let elbow = Shape::new(Kind::Arrow, Route::Elbow, Color::Red, start, end);
             let Course::Polyline(points) = elbow.course() else {
                 panic!("an elbow is a polyline");
             };
@@ -445,7 +515,13 @@ mod boundaries {
             assert!(arrival.0 * barbs.0 + arrival.1 * barbs.1 < 0.0);
             assert!((arrival.0 * barbs.1 - arrival.1 * barbs.0).abs() < 1e-9);
         }
-        let curve = Shape::new(Kind::Arrow, Route::Curve, start, Point { x: 110, y: 10 });
+        let curve = Shape::new(
+            Kind::Arrow,
+            Route::Curve,
+            Color::Red,
+            start,
+            Point { x: 110, y: 10 },
+        );
         let Course::Quadratic { control, .. } = curve.course() else {
             panic!("a curve is quadratic");
         };
@@ -466,5 +542,32 @@ mod boundaries {
         let diagonal = snapped(start, Point { x: 150, y: 160 });
         assert_eq!(diagonal.x - start.x, diagonal.y - start.y);
         assert_eq!(snapped(start, start), start);
+    }
+
+    /// Every palette ink meets its label halo at least at the WCAG contrast
+    /// for large text, so a label reads on any image; and every ink is a
+    /// distinct colour.
+    #[test]
+    fn every_ink_contrasts_with_its_label_halo() {
+        fn luminance(hex: &str) -> f64 {
+            let channel = |at: usize| {
+                let value = f64::from(u8::from_str_radix(&hex[at..at + 2], 16).unwrap()) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+        }
+        for color in Color::ALL {
+            let (ink, halo) = (luminance(color.ink()), luminance(color.halo()));
+            let ratio = (ink.max(halo) + 0.05) / (ink.min(halo) + 0.05);
+            assert!(ratio >= 3.0, "{color:?} ink meets its halo at {ratio:.2}:1");
+        }
+        let mut inks = Color::ALL.map(Color::ink).to_vec();
+        inks.sort_unstable();
+        inks.dedup();
+        assert_eq!(inks.len(), Color::ALL.len());
     }
 }

@@ -44,7 +44,7 @@ pub(super) const fn family() -> &'static str {
     FAMILY
 }
 
-/// The halo width that keeps a red label legible on any background.
+/// The width of the contrasting halo that keeps a label legible on any image.
 pub(super) fn halo(size: i32) -> f64 {
     (f64::from(size) / 8.0).max(1.0)
 }
@@ -75,7 +75,7 @@ fn measure(text: &str, size: i32) -> i32 {
 }
 
 /// A new empty label centred vertically on the press, ready for typing.
-pub(super) fn place(session: &Session, point: Point, dimensions: (u32, u32)) {
+pub(super) fn place(session: &Session, point: Point, dimensions: (u32, u32), color: Color) {
     let size = text_size(dimensions.0, dimensions.1);
     let mut history = session.history.borrow_mut();
     let before = history.shapes.clone();
@@ -84,9 +84,7 @@ pub(super) fn place(session: &Session, point: Point, dimensions: (u32, u32)) {
         x: point.x,
         y: (point.y - size / 2).clamp(0, (dimensions.1 as i32 - size).max(0)),
     };
-    history
-        .shapes
-        .push(Shape::label(anchor, Rc::from(""), 0, size));
+    history.shapes.push(Shape::label(anchor, color, size));
     history.selected = Some(index);
     *session.label.borrow_mut() = Some(Typing::new(index, before));
 }
@@ -237,8 +235,8 @@ pub(super) fn field(props: &FieldProps) -> Html {
     {
         let (frame, input) = (*nodes).clone();
         use_effect_with(
-            (props.shape.start, size, props.dimensions),
-            move |(start, size, dimensions)| {
+            (props.shape.start, size, props.dimensions, props.shape.color),
+            move |(start, size, dimensions, color)| {
                 let pad = size / 4;
                 let width = (dimensions.0 as i32 - start.x + pad).max(*size);
                 for (name, value) in [
@@ -249,11 +247,12 @@ pub(super) fn field(props: &FieldProps) -> Html {
                 ] {
                     let _ = frame.set_attribute(name, &value.to_string());
                 }
-                // The app CSP refuses style attributes, so the size reaches
-                // the field through CSSOM.
-                let _ = input
-                    .style()
-                    .set_property("--annotation-label-size", &format!("{size}px"));
+                // The app CSP refuses style attributes, so the size and ink
+                // reach the field through CSSOM.
+                let style = input.style();
+                let _ = style.set_property("--annotation-label-size", &format!("{size}px"));
+                let _ = style.set_property("--annotation-label-ink", color.ink());
+                let _ = style.set_property("--annotation-label-halo", color.halo());
             },
         );
     }
@@ -278,7 +277,7 @@ fn typed(session: &Session, value: &str) {
     if let Some(shape) = history.shapes.get_mut(index) {
         let size = shape.end.y - shape.start.y;
         let width = measure(value, size);
-        *shape = Shape::label(shape.start, Rc::from(value), width, size);
+        shape.relabel(Rc::from(value), width, size);
     }
     drop(history);
     session.repaint.emit(());

@@ -947,7 +947,7 @@ mod tests {
 #[cfg(test)]
 mod image_tests {
     use super::*;
-    use crate::image_annotation::{Kind, Point, Route};
+    use crate::image_annotation::{Color, Kind, Point, Route};
 
     #[test]
     fn edits_own_one_paste_and_revision_and_survive_refusal_restoration() {
@@ -966,6 +966,7 @@ mod image_tests {
         let shapes = Rc::new(vec![Shape::new(
             Kind::Rectangle,
             Route::Straight,
+            Color::Red,
             Point { x: 2, y: 3 },
             Point { x: 20, y: 30 },
         )]);
