@@ -44,7 +44,8 @@ leads with a badge-only total, identified by `data-work-scope`, one globally
 and one per team; its inline-start and inline-end rails take the message card's
 `--message-rail` width. Each following stem tab uses the nested quote's
 narrower `--quote-rail` width on both sides. Both rail treatments taper into
-`--app-radius-horn` corners, with no edge along the glued side and a square open side; no
+the message card's own `--app-radius-card` corners, with no edge along the
+glued side and a square open side; no
 handle carries a rail of its own. Both rails take `--line`, the colour of the
 status band's top rule the team tabs stand on, so each team tab and that rule
 read as one stroke. A global tab is a stem roll-up: one stem label and its

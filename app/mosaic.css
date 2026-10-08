@@ -29,8 +29,9 @@
   border-radius: var(--app-radius-circle);
 }
 
-/* Stream cards (2x) and nested quotes round by their rail width, ending each
-   curve at the rail's inner edge; other markdown keeps the surface radius. */
+/* Stream cards (--app-radius-card) and nested quotes round by their rail
+   width, ending each curve at the rail's inner edge; other markdown keeps the
+   surface radius. */
 .markdown-body { --mosaic-quote-radius: 12px; }
 .mosaic-message-card,
 .mosaic-message-card .markdown-body { --mosaic-quote-radius: 2px; }
@@ -122,7 +123,7 @@
   padding: 15px;
   border: var(--app-edge);
   border-left: var(--message-rail) solid var(--accent);
-  border-radius: calc(2 * var(--mosaic-quote-radius));
+  border-radius: var(--app-radius-card);
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
 }
@@ -1134,7 +1135,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   padding: var(--message-card-inset);
   border: 0;
   border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent-neutral));
-  border-radius: calc(2 * var(--mosaic-quote-radius));
+  border-radius: var(--app-radius-card);
   background: var(--card-rest-wash, transparent);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: var(--app-type-copy);
