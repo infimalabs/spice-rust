@@ -929,11 +929,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-turbo:disabled,
 .team-composer .team-menu:disabled,
 .app-spice-settings .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
-.team-composer .fit-word,
-.app-spice-settings .app-spice-turbo .fit-word { filter: none; }
 .fit-word {
   display: block; overflow: hidden; pointer-events: none;
-  fill: currentColor; filter: drop-shadow(var(--team-knob-ink-shadow)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
+  fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
 }
 .team-slider {
   --control-state-accent: var(--accent); --team-slider-position: 0;
