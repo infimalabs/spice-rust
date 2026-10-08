@@ -456,10 +456,12 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-overlay-status { border-radius: var(--app-radius-overlay); }
 
 /* One side view serves every sidebar. Content chooses a standard width, and
-   the view materializes in place over the frosted veil: its material and
-   content fade in while it settles from just under full scale around its
+   the view materializes in place over the frosted veil: its surface's material
+   and content fade in while it settles from just under full scale around its
    origin, the launcher's twin when it has one and its top inline-end corner
-   otherwise. Its scale ending is the close boundary. */
+   otherwise. The twin stands beside the surface, outside every transform, so
+   it never moves, resizes, or rerasterizes. The surface's scale ending is the
+   close boundary. */
 .app-sidebar-layer {
   --app-side-view-small: 28rem;
   --app-side-view-large: 46rem;
@@ -493,6 +495,11 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   z-index: 1;
   width: min(var(--app-side-view-width), calc(100vw - var(--app-side-view-gutter)));
   height: 100%;
+  min-height: 0;
+}
+.app-sidebar-surface {
+  position: relative;
+  height: 100%;
   overflow: hidden;
   transform-origin: var(--app-side-view-origin);
   transition:
@@ -511,15 +518,10 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 @media (prefers-reduced-motion: no-preference) {
   .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar-backdrop,
   .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-frame, .app-sidebar-overlay-slot) { opacity: 0; }
-  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar {
+  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-sidebar-surface {
     border-color: transparent;
     background-color: transparent;
     transform: scale(var(--app-side-view-rest));
-  }
-  /* The twin turns the sheet's scale back about the same point, so the
-     launcher never moves or resizes while the view forms around it. */
-  .app-sidebar-layer:not([data-sidebar-state="open"]) .app-spice-sidebar-anchor {
-    transform: scale(calc(1 / var(--app-side-view-rest)));
   }
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar {
@@ -534,8 +536,6 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   grid-template-columns: auto var(--app-header-control);
   align-items: center;
   gap: 8px;
-  transform-origin: calc(100% - var(--app-header-control) / 2) 50%;
-  transition: transform var(--app-motion-settle) var(--app-side-view-ease);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
   padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 4ch + 28px);

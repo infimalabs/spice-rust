@@ -27,8 +27,9 @@ pub(super) struct Content {
     pub overlay_open: bool,
     pub dismiss_overlay: Option<Callback<()>>,
     /// The launcher's twin, standing over the launcher's own place and closing
-    /// the sidebar in place of the Close button; the view forms around it. It
-    /// carries the sidebar's close ref and close callback.
+    /// the sidebar in place of the Close button. It sits beside the scaling
+    /// surface rather than inside it, so the view forms around a trigger that
+    /// never moves. It carries the sidebar's close ref and close callback.
     pub anchor: Option<Html>,
 }
 
@@ -72,36 +73,37 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
                 onclick={close_click.clone()}
             ></button>
             <aside
-                ref={render.sheet_ref.clone()}
-                class="app-sidebar app-overlay-sheet"
+                class="app-sidebar"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="app-sidebar-title"
             >
                 {render.content.anchor.unwrap_or_default()}
-                <div
-                    class="app-sidebar-frame"
-                    inert={render.content.overlay_open.then_some("true")}
-                    aria-hidden={render.content.overlay_open.to_string()}
-                >
-                    <header class="app-sidebar-header">
-                        <div>
-                            <p class="app-sidebar-kicker">{render.content.label}</p>
-                            <h2 id="app-sidebar-title">{render.content.title}</h2>
-                        </div>
-                        if !anchored {
-                            <button
-                                ref={render.close_ref.clone()}
-                                type="button"
-                                class="app-sidebar-close app-compact-control"
-                                aria-label={close_label}
-                                onclick={close_click}
-                            >{"Close"}</button>
-                        }
-                    </header>
-                    {render.content.body}
+                <div ref={render.sheet_ref.clone()} class="app-sidebar-surface app-overlay-sheet">
+                    <div
+                        class="app-sidebar-frame"
+                        inert={render.content.overlay_open.then_some("true")}
+                        aria-hidden={render.content.overlay_open.to_string()}
+                    >
+                        <header class="app-sidebar-header">
+                            <div>
+                                <p class="app-sidebar-kicker">{render.content.label}</p>
+                                <h2 id="app-sidebar-title">{render.content.title}</h2>
+                            </div>
+                            if !anchored {
+                                <button
+                                    ref={render.close_ref.clone()}
+                                    type="button"
+                                    class="app-sidebar-close app-compact-control"
+                                    aria-label={close_label}
+                                    onclick={close_click}
+                                >{"Close"}</button>
+                            }
+                        </header>
+                        {render.content.body}
+                    </div>
+                    <div class="app-sidebar-overlay-slot">{render.content.overlay}</div>
                 </div>
-                <div class="app-sidebar-overlay-slot">{render.content.overlay}</div>
             </aside>
         </div>
     }

@@ -137,6 +137,7 @@ body:has(.shell),
   grid-area: 1 / 1;
   position: relative;
   z-index: 1;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: var(--app-type-menu-icon);
   line-height: 1;
   filter: var(--app-pepper-halo);
