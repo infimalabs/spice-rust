@@ -944,13 +944,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --control-state-accent: var(--accent); --team-slider-position: 0;
   --team-slider-groove-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--line) 74%, var(--app-shadow-source));
   --team-slider-groove-face: color-mix(in srgb, var(--control) 88%, var(--page)); --team-slider-groove-shadow: inset 0 2px 4px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
-  --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
   position: relative; display: grid; align-items: center;
   min-width: 0; min-height: 0; padding: 0 var(--team-slider-inset); cursor: ew-resize;
 }
 .team-slider[data-stop="1"] { --team-slider-position: .5; }
 .team-slider[data-stop="2"] { --team-slider-position: 1; }
-.team-composer .team-slider { grid-column: 1 / -1; }
+/* Composer scope outranks the shared knob lift: thumbs keep neutral depth, no state colour spill. */
+.team-composer .team-slider {
+  grid-column: 1 / -1; --team-knob-lift: inset 1px 2px 4px -3px color-mix(in srgb, var(--app-highlight-source) 52%, transparent), inset -2px -4px 6px -3px color-mix(in srgb, var(--app-shadow-source) 34%, transparent), 0 2px 3px -2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent);
+}
 .team-composer .team-speech { grid-row: 3; }
 .team-composer .team-lifetime { grid-row: 4; }
 .team-slider input {
