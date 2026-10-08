@@ -102,25 +102,25 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
             event.stop_propagation();
         }
     });
+    let title = match (settings.is_some(), enabled, fast_mode) {
+        (false, _, _) => "Fast mode is loading",
+        (true, false, _) => "Fast mode cannot be changed by this resident",
+        (true, true, true) => "Turbo: every agent runs in fast mode",
+        (true, true, false) => "Basic: press to run every agent in fast mode",
+    };
     html! {
         <section class="app-sheet-section app-spice-settings">
             <h2>{"Settings"}</h2>
             <div class="app-spice-settings-controls">
-                <chrome::SettingToggle
-                    label="Fast mode"
-                    value={if settings.is_some() {
-                        if fast_mode { "on" } else { "off" }
-                    } else {
-                        "loading"
-                    }}
-                    checked={fast_mode}
+                <chrome::TurboButton
+                    class={classes!("app-spice-turbo")}
+                    engaged={fast_mode}
+                    label={format!(
+                        "Global fast mode: {}",
+                        if fast_mode { "Turbo" } else { "Basic" },
+                    )}
                     disabled={!enabled}
-                    checkbox={true}
-                    title={if fast_mode {
-                        "Fast mode is on for supported agents"
-                    } else {
-                        "Fast mode is off for supported agents"
-                    }}
+                    title={title}
                     onclick={onclick}
                 />
                 {render_theme_selector()}
