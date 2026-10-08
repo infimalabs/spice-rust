@@ -46,36 +46,40 @@
   gap: 8px;
   min-width: 0;
 }
+/* Identity and resident facts are dense reference rows: labels sit beside
+   their values instead of above them, and the sections stand tighter. */
+.app-spice-sidebar-content > :is(.app-spice-operator, .app-spice-resident) {
+  gap: 8px;
+  padding-block: 12px;
+}
 .app-spice-operator-identity {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
   align-items: start;
   gap: 12px;
   min-width: 0;
 }
 .app-spice-operator .operator-avatar {
-  flex-basis: 44px;
-  width: 44px;
-  height: 44px;
+  flex-basis: 40px;
+  width: 40px;
+  height: 40px;
   font-size: var(--app-type-label);
 }
-.app-operator-form { display: grid; grid-template-columns: 1fr auto; gap: 5px 8px; }
+.app-operator-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px 10px;
+  min-width: 0;
+}
 .app-operator-form label {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
   color: var(--muted);
   font-size: var(--app-type-caption);
 }
-.app-operator-form label small {
-  font: var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-transform: uppercase;
-}
 .app-operator-form input {
-  grid-column: 1 / -1;
   min-width: 0;
-  height: 34px;
-  padding: 0 9px;
+  height: 28px;
+  padding: 0 8px;
   border: var(--app-control-edge);
   border-radius: var(--app-radius-inset);
   background: var(--panel);
@@ -83,7 +87,7 @@
   font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-operator-form input:focus { border-color: var(--focus); outline: 0; }
-.app-operator-form button { grid-column: 2; margin-top: 2px; }
+.app-operator-form button { grid-column: 2; justify-self: end; }
 /* The fixed-width weekly percentage sits immediately beside the Spice button
    without moving it as quota state loads or becomes unavailable. */
 .app-spice-capacity {
@@ -96,16 +100,15 @@
 .app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
 .app-spice-resident-facts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 16px;
   margin: 0;
 }
 .app-spice-resident-facts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
   min-width: 0;
-  padding: 9px 10px;
-  border: var(--app-control-edge);
-  border-radius: var(--app-radius-inset);
-  background: var(--control-surface-soft);
 }
 .app-spice-resident-facts dt {
   color: var(--muted);
@@ -115,7 +118,7 @@
 }
 .app-spice-resident-facts dd {
   min-width: 0;
-  margin: 4px 0 0;
+  margin: 0;
   overflow: hidden;
   font: var(--app-type-meta)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-overflow: ellipsis;
@@ -133,9 +136,6 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
-  margin-top: 1px;
-  padding: 10px 3px 3px;
-  border-top: var(--app-edge-soft);
   color: var(--muted);
   font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }

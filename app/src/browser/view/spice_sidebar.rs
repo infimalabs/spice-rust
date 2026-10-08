@@ -205,13 +205,6 @@ pub(super) fn render_operator_settings(
         ),
         None => (LOADING.to_owned(), LOADING.to_owned()),
     };
-    let source = |explicit: Option<&Option<String>>| match explicit {
-        None => LOADING,
-        Some(Some(_)) => "explicit",
-        Some(None) => "Git",
-    };
-    let name_source = source(settings.map(|settings| &settings.operator_name));
-    let email_source = source(settings.map(|settings| &settings.operator_email));
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let sender = sender.clone();
     let onsubmit = Callback::from(move |event: SubmitEvent| {
@@ -241,10 +234,7 @@ pub(super) fn render_operator_settings(
             <div class="app-spice-operator-identity">
                 {super::render_operator_avatar(operator)}
                 <form class="app-operator-form" {onsubmit}>
-                <label for="operator-name">
-                    <span>{"Name"}</span>
-                    <small>{name_source}</small>
-                </label>
+                <label for="operator-name">{"Name"}</label>
                 <input
                     id="operator-name"
                     type="text"
@@ -253,10 +243,7 @@ pub(super) fn render_operator_settings(
                     autocomplete="name"
                     disabled={!enabled}
                 />
-                <label for="operator-email">
-                    <span>{"Email"}</span>
-                    <small>{email_source}</small>
-                </label>
+                <label for="operator-email">{"Email"}</label>
                 <input
                     id="operator-email"
                     type="email"
