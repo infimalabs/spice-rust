@@ -130,14 +130,15 @@ pub(crate) fn restated(record: &Object) -> bool {
 /// and report whether there was any.
 ///
 /// Reasoning arrives as `thinking` content blocks inside messages, partials,
-/// and message arrays, as `redacted_thinking` blocks, and as the streamed
+/// and message arrays, as `redactedThinking` blocks (`redacted_thinking` on
+/// the Anthropic wire), and as the streamed
 /// `thinking_start`, `thinking_delta`, and `thinking_end` updates. Each text
 /// becomes `marker`; opaque signatures and redacted data are dropped, since
 /// they are reasoning in another encoding.
 pub(crate) fn withhold_reasoning(record: &mut Object, marker: &str) -> bool {
     let carried = match record.get("type").and_then(Value::as_str) {
         Some("thinking") => Some(Carried::Block),
-        Some("redacted_thinking") => Some(Carried::Redacted),
+        Some("redactedThinking" | "redacted_thinking") => Some(Carried::Redacted),
         Some("thinking_start" | "thinking_delta" | "thinking_end") => Some(Carried::Stream),
         _ => None,
     };
@@ -171,7 +172,7 @@ fn withhold_nested(value: &mut Value, marker: &str) -> bool {
 enum Carried {
     /// A `thinking` content block.
     Block,
-    /// A `redacted_thinking` content block.
+    /// A `redactedThinking` content block.
     Redacted,
     /// A streamed thinking update.
     Stream,
