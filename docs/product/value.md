@@ -639,9 +639,11 @@ arcs so two agents sharing an accent remain distinct, while the small count
 states the number of recipients. The face remains neutral. Pointer, touch, and
 keyboard contact move it down one-and-a-half pixels, deepen its upper contact
 shadow, and quiet the rim; release restores the flat face without moving the
-grid. A running team with no sendable draft has no rim or count. With no running
-agent and no draft, the controls dim and `Send` is disabled. Command-modifier
-and focus rings remain visible around admitted actions.
+grid. A running team with no sendable draft has no rim or count. A vacant
+member with a sendable draft joins the ordinary rim because that press wakes
+and delivers to it; an empty vacant member contributes no arc or count. With no
+running agent and no draft, the controls dim and `Send` is disabled.
+Command-modifier and focus rings remain visible around admitted actions.
 
 While the keyboard broadcast preview is held from an eligible primary composer,
 `Send` replaces the ordinary recipient rim and count with those of every
