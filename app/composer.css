@@ -421,6 +421,12 @@
 .team-surface + .team-surface .team-composer {
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
+/* Only sibling teams need a dividing rule. The compose subtree spans the
+   controls and the complete message plane, while the sibling selector leaves
+   both browser-adjacent fleet edges untouched. */
+.team-surface + .team-surface .team-compose {
+  border-inline-start: var(--app-control-edge);
+}
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
