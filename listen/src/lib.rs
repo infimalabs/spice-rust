@@ -139,6 +139,29 @@ pub fn restated(dialect: Dialect, bytes: &[u8]) -> bool {
     omp::restated(&record)
 }
 
+/// What a reasoning text reads once withheld.
+pub const WITHHELD_REASONING: &str = "[reasoning withheld]";
+
+/// One record with every reasoning payload its dialect carries withheld.
+///
+/// Providers refuse a request that feeds one session's reasoning into another
+/// model's context as reasoning extraction, so a reader that hands records to
+/// a model passes them through here first. Reasoning texts read
+/// [`WITHHELD_REASONING`] and opaque reasoning encodings are dropped; a record
+/// with no reasoning returns exactly as written. A record that does not parse
+/// as an object cannot be shown to be free of reasoning and returns `None`.
+#[must_use]
+pub fn withhold_reasoning(dialect: Dialect, record: &str) -> Option<String> {
+    let Ok(Value::Object(mut parsed)) = serde_json::from_str(record) else {
+        return None;
+    };
+    let Dialect::Omp = dialect;
+    if !omp::withhold_reasoning(&mut parsed, WITHHELD_REASONING) {
+        return Some(record.to_owned());
+    }
+    serde_json::to_string(&parsed).ok()
+}
+
 /// Decode one record using an explicit dialect or its uniquely owned envelope.
 ///
 /// The JSON value is parsed exactly once. Without an explicit dialect, records

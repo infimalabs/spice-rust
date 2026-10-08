@@ -126,6 +126,67 @@ pub(crate) fn restated(record: &Object) -> bool {
     }
 }
 
+/// Withhold every reasoning payload one record carries, wherever it nests,
+/// and report whether there was any.
+///
+/// Reasoning arrives as `thinking` content blocks inside messages, partials,
+/// and message arrays, as `redacted_thinking` blocks, and as the streamed
+/// `thinking_start`, `thinking_delta`, and `thinking_end` updates. Each text
+/// becomes `marker`; opaque signatures and redacted data are dropped, since
+/// they are reasoning in another encoding.
+pub(crate) fn withhold_reasoning(record: &mut Object, marker: &str) -> bool {
+    let carried = match record.get("type").and_then(Value::as_str) {
+        Some("thinking") => Some(Carried::Block),
+        Some("redacted_thinking") => Some(Carried::Redacted),
+        Some("thinking_start" | "thinking_delta" | "thinking_end") => Some(Carried::Stream),
+        _ => None,
+    };
+    let mut withheld = match carried {
+        Some(Carried::Block) => {
+            let text = mark(record, "thinking", marker);
+            record.remove("thinkingSignature").is_some() | text
+        }
+        Some(Carried::Redacted) => record.remove("data").is_some(),
+        Some(Carried::Stream) => mark(record, "delta", marker) | mark(record, "content", marker),
+        None => false,
+    };
+    for value in record.values_mut() {
+        withheld |= withhold_nested(value, marker);
+    }
+    withheld
+}
+
+fn withhold_nested(value: &mut Value, marker: &str) -> bool {
+    match value {
+        Value::Object(object) => withhold_reasoning(object, marker),
+        Value::Array(items) => items.iter_mut().fold(false, |withheld, item| {
+            withhold_nested(item, marker) | withheld
+        }),
+        _ => false,
+    }
+}
+
+/// Where one object carries reasoning of its own.
+#[derive(Clone, Copy)]
+enum Carried {
+    /// A `thinking` content block.
+    Block,
+    /// A `redacted_thinking` content block.
+    Redacted,
+    /// A streamed thinking update.
+    Stream,
+}
+
+fn mark(object: &mut Object, field: &str, marker: &str) -> bool {
+    match object.get_mut(field) {
+        Some(value @ Value::String(_)) => {
+            *value = Value::String(marker.to_owned());
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The turn moment one session-file message marks.
 ///
 /// The session file carries no lifecycle frames, so the operator prompt

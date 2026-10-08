@@ -7,7 +7,8 @@
 
 use listen::{
     Decoded, Dialect, Dialog, Event, EventKind, Locus, PromptStatus, ProseRole, RecordDecodeError,
-    ToolMoment, ToolResult, TurnMoment, decode, decode_record, restated,
+    ToolMoment, ToolResult, TurnMoment, WITHHELD_REASONING, decode, decode_record, restated,
+    withhold_reasoning,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","sessionFile":"/tmp/sessions/x.jsonl","isStreaming":false}}"#;
@@ -579,4 +580,47 @@ fn a_record_omp_does_not_own_is_refused_without_an_explicit_dialect() {
             Err(RecordDecodeError::Unowned)
         );
     }
+}
+
+#[test]
+fn withheld_records_carry_no_reasoning_in_any_omp_shape() {
+    let carriers = [
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET plan","thinkingSignature":"SECRET-sig"},{"type":"text","text":"visible"}]}}"#,
+        r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"SECRET step","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET step"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"SECRET step"}]}}"#,
+        r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"SECRET whole"}}"#,
+        r#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":"SECRET-opaque"},{"type":"text","text":"visible"}]}]}"#,
+    ];
+    for record in carriers {
+        let withheld =
+            withhold_reasoning(Dialect::Omp, record).expect("an object record is rewritten");
+        assert!(!withheld.contains("SECRET"), "{withheld}");
+        assert!(
+            withheld.contains("visible") || !record.contains("visible"),
+            "{withheld}"
+        );
+        assert!(
+            withheld.contains(WITHHELD_REASONING) || record.contains("redacted_thinking"),
+            "{withheld}"
+        );
+    }
+
+    let thinking_level: &[u8] = br#"{"type":"thinking_level_changed","thinkingLevel":"high"}"#;
+    for unchanged in [
+        PROSE,
+        TOOL,
+        OPERATOR,
+        PARTIAL,
+        PROMPT_FAILED,
+        thinking_level,
+    ] {
+        let record = std::str::from_utf8(unchanged).expect("fixture is UTF-8");
+        assert_eq!(
+            withhold_reasoning(Dialect::Omp, record).as_deref(),
+            Some(record),
+            "a record without reasoning is returned exactly as written"
+        );
+    }
+
+    assert_eq!(withhold_reasoning(Dialect::Omp, "not json"), None);
+    assert_eq!(withhold_reasoning(Dialect::Omp, r#"["thinking"]"#), None);
 }
