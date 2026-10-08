@@ -1,10 +1,10 @@
 const concepts = [
-  { key: 'lens', name: 'Clear lens', note: 'Thick transparent rims. Floating controls. Closest to the hamburger’s direction.' },
-  { key: 'frost', name: 'Frosted instrument', note: 'One etched glass chassis. Squared lenses. Quiet and precise.' },
-  { key: 'smoke', name: 'Smoked optical', note: 'Dark translucent cuts. A broad SEND key. Sharp edge illumination.' },
-  { key: 'opal', name: 'Opal stack', note: 'Pearlescent rims. SEND first. Soft color dispersion without colored paint.' },
-  { key: 'droplet', name: 'Liquid droplets', note: 'Rounded volumes with wet highlights. Open substrate. Organic SEND lens.' },
-  { key: 'rail', name: 'Split rail', note: 'Sliders between utility and action rows. A clear lower SEND lens.' },
+  { key: 'smoke', name: 'Smoked optical', note: 'The lead direction: separate smoked-glass cuts, broad central SEND, crisp white rims.' },
+  { key: 'rail', name: 'Split rail · centered', note: 'A slim clear chassis. SEND moves to the middle; the two sliders stay below.' },
+  { key: 'frost', name: 'Frosted instrument', note: 'An etched translucent slab with softened rectangular keys. Quiet, precise, symmetric.' },
+  { key: 'pearl', name: 'Smoked pearl', note: 'Smoked optical with a restrained pearl sheen. One aligned rim, no split-color halo.' },
+  { key: 'satin', name: 'Satin graphite', note: 'A nearby instrument direction: softly diffused dark glass, broad faces, fine etched edges.' },
+  { key: 'edge', name: 'Edge-lit rail', note: 'A lighter split-rail hybrid. Thin optical borders and a clear, symmetric central action key.' },
 ];
 const speechModes = ['Quiet', 'Brief', 'Narrate'];
 const allocationModes = ['Steer', 'Auto', 'Drain'];
@@ -83,3 +83,9 @@ for (const button of document.querySelectorAll('[data-scale]')) {
     }
   });
 }
+
+document.querySelector('#rim-accent').addEventListener('change', event => {
+  const color = event.target.value;
+  document.documentElement.classList.toggle('accented', Boolean(color));
+  document.documentElement.style.setProperty('--agent-accent', color);
+});

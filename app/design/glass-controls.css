@@ -52,42 +52,93 @@ button:focus-visible { outline: 2px solid var(--accent, #9de8cf); outline-offset
 .menu-popover strong, .menu-popover span, .menu-popover small { display: block; }
 .menu-popover small { font-size: 6px; opacity: .7; }
 .menu-popover[hidden] { display: none; }
-/* 01: Thick lens edges; colored transmitted light, not opaque paint. */
-.lens .glass { --bevel: inset 1px 1px 1px rgb(255 255 255 / .8), inset -1px -2px 1px rgb(255 255 255 / .42), inset 3px 3px 6px rgb(255 255 255 / .09), inset -3px -4px 6px rgb(2 23 20 / .25), 0 4px 5px var(--shadow); }
-.lens .send::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; border-left: 2px solid rgb(255 255 255 / .4); border-right: 1px solid rgb(181 230 255 / .3); filter: blur(.6px); pointer-events: none; }
-/* 02: One etched instrument slab; softened rectangles instead of domes. */
-.frost .panel { border-radius: 15px; padding: 4px; grid-template-rows: 28px 58px 29px 29px; background: rgb(220 255 237 / .14); border: 1px solid rgb(255 255 255 / .35); box-shadow: inset 0 1px 1px rgb(255 255 255 / .6), 0 6px 10px var(--shadow); backdrop-filter: blur(8px); }
-.frost .glass { --radius: 7px; background: linear-gradient(135deg, rgb(255 255 255 / .17), rgb(255 255 255 / .025)); backdrop-filter: blur(5px); }
-.frost .send { width: 68px; height: 50px; gap: 0; }
-.frost .groove { border-radius: 7px; }
-.frost .flyer { width: 40px; left: calc(1px + (100% - 42px) * var(--position)); }
-/* 03: Separate dark optical pieces, illuminated along the cut edges. */
-.smoke .scene { --accent: #f2cf84; }
-.smoke .glass { --radius: 10px; background: linear-gradient(150deg, rgb(255 255 255 / .17), transparent 30%, rgb(0 10 14 / .26)); border-color: rgb(235 247 255 / .35); box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), inset 0 -1px 0 rgb(226 242 255 / .24), 0 4px 8px var(--shadow); }
-.smoke .send { width: 72px; height: 54px; display: flex; justify-content: center; gap: 6px; }
-.smoke .send svg { display: block; width: 13px; }
-.smoke .groove { background: rgb(0 10 16 / .18); }
-/* 04: Pearlescent edges and a large send lens above the two tiny buttons. */
-.opal .scene { --accent: #c2baff; }
-.opal .panel { grid-template-rows: 59px 31px 30px 30px; }
-.opal .send { grid-row: 1; }
-.opal .turbo, .opal .menu { grid-row: 2; }
-.opal .glass { background: linear-gradient(140deg, rgb(220 241 255 / .28), rgb(246 210 244 / .08) 40%, rgb(194 252 230 / .1) 70%, rgb(231 220 255 / .3)); border-color: rgb(234 225 255 / .6); box-shadow: inset 1px 1px 1px rgb(255 255 255 / .8), inset -1px -1px 2px rgb(169 214 255 / .6), 1px 2px 0 rgb(240 176 223 / .2), 0 5px 7px var(--shadow); }
-/* 05: Floating glass droplets and thumb lenses; the substrate stays open. */
-.droplet .glass { background: radial-gradient(ellipse at 25% 15%, rgb(255 255 255 / .42), transparent 48%), linear-gradient(155deg, rgb(255 255 255 / .035) 35%, rgb(255 255 255 / .15)); box-shadow: inset 1px 2px 2px rgb(255 255 255 / .55), inset -2px -3px 3px rgb(255 255 255 / .23), inset 0 -6px 7px rgb(1 20 14 / .18), 0 5px 8px var(--shadow); }
-.droplet .send { border-radius: 23px 28px 25px 30px; width: 58px; transform: rotate(-5deg); }
-.droplet .send > span { transform: rotate(5deg); }
-.droplet .groove { border: 0; background: rgb(244 255 244 / .05); box-shadow: inset 0 1px 0 rgb(255 255 255 / .22); }
-.droplet .flyer { height: 23px; top: 0; }
-/* 06: A unified lower action lens; slim paired slider rails above it. */
-.rail .panel { border-radius: 18px; padding: 4px; grid-template: 28px 29px 29px 60px / 1fr 1fr; gap: 1px; background: rgb(227 255 244 / .07); border: 1px solid rgb(255 255 255 / .35); box-shadow: inset 1px 1px 1px rgb(255 255 255 / .3), 0 5px 8px var(--shadow); backdrop-filter: blur(2px); }
-.rail .speech { grid-row: 2; }
-.rail .life { grid-row: 3; }
-.rail .send { grid-row: 4; width: 66px; height: 52px; border-radius: 13px; display: flex; justify-content: center; gap: 5px; }
-.rail .send svg { display: block; width: 12px; }
-.rail .glass { --radius: 9px; border-color: rgb(255 255 255 / .4); }
-.rail .turbo, .rail .menu { height: 24px; }
-.rail .flyer { width: 39px; left: calc(1px + (100% - 41px) * var(--position)); }
+/* Smoked optical: separate dark optical pieces with clean, aligned rims. */
+.smoke .glass,
+.pearl .glass {
+  --radius: 10px;
+  background: linear-gradient(150deg, rgb(255 255 255 / .17), transparent 30%, rgb(0 10 14 / .26));
+  border-color: rgb(235 247 255 / .35);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), inset 0 -1px 0 rgb(226 242 255 / .24), 0 4px 8px var(--shadow);
+}
+.smoke .send,
+.pearl .send { width: 72px; height: 54px; display: flex; justify-content: center; gap: 6px; }
+.smoke .send svg,
+.pearl .send svg { display: block; width: 13px; }
+.smoke .groove,
+.pearl .groove { background: rgb(0 10 16 / .18); }
+/* Split rail: utility row, central action, two lower flyers. */
+.rail .panel,
+.edge .panel {
+  border-radius: 18px; padding: 4px;
+  grid-template: 28px 58px 29px 29px / 1fr 1fr; gap: 1px;
+  background: rgb(227 255 244 / .07);
+  border: 1px solid rgb(255 255 255 / .35);
+  box-shadow: inset 1px 1px 1px rgb(255 255 255 / .3), 0 5px 8px var(--shadow);
+  backdrop-filter: blur(2px);
+}
+.rail .send,
+.edge .send { width: 66px; height: 52px; border-radius: 13px; display: flex; justify-content: center; gap: 5px; }
+.rail .send svg,
+.edge .send svg { display: block; width: 12px; }
+.rail .glass,
+.edge .glass { --radius: 9px; border-color: rgb(255 255 255 / .4); }
+.rail .turbo, .rail .menu,
+.edge .turbo, .edge .menu { height: 24px; }
+.rail .flyer,
+.edge .flyer { width: 39px; left: calc(1px + (100% - 41px) * var(--position)); }
+/* Frosted instrument: an etched slab, symmetric rectangular lenses. */
+.frost .panel,
+.satin .panel {
+  border-radius: 15px; padding: 4px; grid-template-rows: 28px 58px 29px 29px;
+  background: rgb(220 255 237 / .14); border: 1px solid rgb(255 255 255 / .35);
+  box-shadow: inset 0 1px 1px rgb(255 255 255 / .6), 0 6px 10px var(--shadow);
+  backdrop-filter: blur(8px);
+}
+.frost .glass,
+.satin .glass { --radius: 7px; background: linear-gradient(135deg, rgb(255 255 255 / .17), rgb(255 255 255 / .025)); backdrop-filter: blur(5px); }
+.frost .send,
+.satin .send { width: 68px; height: 50px; gap: 0; }
+.frost .groove,
+.satin .groove { border-radius: 7px; }
+.frost .flyer,
+.satin .flyer { width: 40px; left: calc(1px + (100% - 42px) * var(--position)); }
+/* Pearl is a low-opacity surface sheen, never offset RGB edge copies. */
+.pearl .glass {
+  background:
+    linear-gradient(125deg, rgb(230 235 255 / .14), rgb(243 225 236 / .045) 38%, transparent 62%, rgb(225 240 234 / .09)),
+    linear-gradient(150deg, rgb(255 255 255 / .1), transparent 30%, rgb(0 10 14 / .26));
+  border-color: rgb(245 241 246 / .4);
+  box-shadow: inset 0 1px 1px rgb(255 250 255 / .6), inset 0 -1px 1px rgb(225 235 235 / .28), 0 4px 8px var(--shadow);
+}
+.pearl .glass::before { border-top-color: rgb(250 240 250 / .5); }
+/* Satin graphite: a calmer, darker instrument finish, with less rim glare. */
+.satin .panel { background: rgb(15 28 30 / .19); border-color: rgb(231 242 240 / .3); backdrop-filter: blur(6px); }
+.satin .glass {
+  background: linear-gradient(160deg, rgb(236 248 248 / .12), rgb(10 20 25 / .15));
+  border-color: rgb(242 252 250 / .28);
+  box-shadow: inset 0 1px 1px rgb(255 255 255 / .32), inset 0 -1px 1px rgb(255 255 255 / .12), 0 2px 4px var(--shadow);
+}
+.satin .glass::before { border-top-color: rgb(255 255 255 / .15); }
+.satin .send { font-weight: 650; letter-spacing: .6px; }
+/* Edge-lit rail: thin, clear rims instead of a thick dome. */
+.edge .panel { background: rgb(232 250 246 / .025); border-color: rgb(255 255 255 / .24); }
+.edge .glass {
+  background: linear-gradient(155deg, rgb(255 255 255 / .085), transparent 45%, rgb(241 255 252 / .06));
+  border-color: rgb(255 255 255 / .55);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .55), inset 0 -1px 0 rgb(255 255 255 / .2), 0 3px 6px var(--shadow);
+}
+.edge .glass::before { border: 0; }
+.edge .groove { background: rgb(15 48 38 / .05); border-color: rgb(255 255 255 / .2); }
+/* Agent identity lights the rim without turning the glass into colored paint. */
+.accented .glass::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit;
+  border: 1px solid color-mix(in srgb, var(--agent-accent) 65%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--agent-accent) 25%, transparent),
+    inset 0 0 2px color-mix(in srgb, var(--agent-accent) 20%, transparent);
+  pointer-events: none;
+}
+.accent-picker { display: grid; gap: 8px; color: #a3b0a8; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+.accent-picker select { padding: 8px; border: 1px solid #34433b; border-radius: 8px; background: #18201c; color: #d9e9df; font: 11px -apple-system, BlinkMacSystemFont, sans-serif; }
 footer { max-width: 1300px; margin: 28px auto 0; color: #94a99b; font-size: 11px; line-height: 1.7; }
 a { color: #c1e3d0; text-underline-offset: 3px; }
 @supports not (backdrop-filter: blur(2px)) { .glass { background-color: #536e63; } .light .glass { background-color: #d3e3da; } }
