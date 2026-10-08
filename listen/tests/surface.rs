@@ -380,6 +380,37 @@ fn a_record_that_surfaces_nothing_advances_the_cursor_without_a_row() {
 }
 
 #[test]
+fn watch_and_retro_mark_reasoning_without_its_text() {
+    let scratch = Scratch::new("reasoning-withheld");
+    let (path, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(REASONING))
+        .expect("reasoning record is durable");
+    let watched = poll_watch(&mut Watch::new(scratch.path(), DIALECTS.iter().copied()))
+        .expect("watch reads the reasoning record");
+    let replay = retro(scratch.path(), RetroSelector::Path(path), DIALECTS)
+        .expect("retro reads the reasoning record");
+
+    for outcome in [watched, replay] {
+        let reasoning: Vec<_> = outcome
+            .observations
+            .iter()
+            .filter_map(|observation| match observation {
+                Observation::Event {
+                    event: SurfaceEvent::Reasoning { content },
+                    ..
+                } => Some(content.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, vec![SurfaceReasoning::Withheld { bytes: 7 }]);
+        let bytes = wire::encode(&outcome).expect("stream outcome encodes");
+        assert!(!String::from_utf8_lossy(&bytes).contains("inspect"));
+    }
+
+    scratch.remove();
+}
+
+#[test]
 fn a_resumed_watch_emits_only_records_after_its_durable_cursor() {
     let scratch = Scratch::new("watch-resume");
     let (_, tape) = session(scratch.path(), "lane-a", "omp");
@@ -928,9 +959,7 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
             media: Vec::new(),
         },
         SurfaceEvent::Reasoning {
-            content: SurfaceReasoning::Plain {
-                lines: vec!["inspect".to_owned()],
-            },
+            content: SurfaceReasoning::Withheld { bytes: 7 },
         },
         SurfaceEvent::Tool {
             call_id: "call-1".to_owned(),
