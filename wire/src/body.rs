@@ -370,6 +370,7 @@ pub use lane::{
     LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted, LaneTimedOut,
     RtkHealth, RtkHealthState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt,
     TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged, TeamConfigured, TeamStanding,
+    VendorFailureInput,
 };
 
 /// A seated occupant exceeded a call-count or active-silence narration bound.

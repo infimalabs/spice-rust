@@ -25,6 +25,7 @@ use super::shutdown::{current_residency, guard_residency};
 use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_fault, write};
 
 mod availability;
+mod holds;
 mod materialization;
 use availability::{ready_instant, selected_ready};
 use materialization::Projection;
@@ -350,7 +351,16 @@ impl Runtime {
             })?;
             self.synchronize_holds(&snapshot, self.projection.cursor())?;
         }
-        self.projection.advance(&snapshot, &config.projects)?;
+        loop {
+            self.projection.advance(&snapshot, &config.projects)?;
+            if !self.release_changed_vendor_hold(bus, epoch, &snapshot)? {
+                break;
+            }
+            snapshot = bus.task_snapshot().map_err(|error| {
+                store_fault("lifecycle::snapshot-unreadable", &error.to_string())
+            })?;
+            self.synchronize_holds(&snapshot, self.projection.cursor())?;
+        }
         let targets = project_targets(
             &snapshot,
             &self.projection,
@@ -463,204 +473,6 @@ impl Runtime {
 
     pub(super) fn release_all(&mut self) {
         self.backoff.release_all();
-    }
-
-    /// Classify one observed occupant death through the shared hold reducer.
-    ///
-    /// `seated` is the occupant's own seating, or nothing for an exit that
-    /// named no seated occupant, which is nobody's death. A death is young
-    /// only when the occupant died inside the young window without settling
-    /// its wake: an occupant whose transcript ends on its own answer and
-    /// leaves no direction pending did the work its wake asked for, however
-    /// quickly, so its exit says nothing against the seat. One that answered
-    /// but left the direction it was woken for live hands the same wake to
-    /// its successor, so its exit counts like silence.
-    pub(super) fn observe_death(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        seated: Option<Activity>,
-        lane: CanonicalUuid,
-        settled: bool,
-        diagnostic: &mut dyn std::io::Write,
-    ) -> CommandResult<()> {
-        let Some(activity) = seated else {
-            return Ok(());
-        };
-        let death = if !settled && activity.at().elapsed() < self.young {
-            Death::Young
-        } else {
-            Death::Mature
-        };
-        let until = hold_deadline(self.hold, current_instant()?)?;
-        let Some(held) = self.holds.died(lane, death, until) else {
-            return Ok(());
-        };
-        self.commit_hold(bus, epoch, held, diagnostic)
-    }
-
-    /// Hold a lane whose occupant's transcript ended on a vendor failure.
-    ///
-    /// The vendor refused the turn this seat resumes into, so a successor
-    /// resumes into the same refusal a few seconds later and the lane spends
-    /// its budget on wakes that say nothing new. One such exit holds the lane
-    /// at once, with the vendor's own text journaled against the occupant as
-    /// the hold's evidence, rather than waiting for a run of young deaths to
-    /// reach the limit.
-    pub(super) fn observe_vendor_failure(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        failure: &str,
-        diagnostic: &mut dyn std::io::Write,
-    ) -> CommandResult<()> {
-        let now = current_instant()?;
-        self.observe_vendor_failure_at(bus, epoch, lane, occupant, failure, now, diagnostic)
-    }
-
-    /// [`Self::observe_vendor_failure`] with the clock supplied, so the hold
-    /// deadline a fixture asserts is the deadline the reducer was handed.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one hold crosses the journal, the reducer, the clock, and the diagnostic"
-    )]
-    pub(super) fn observe_vendor_failure_at(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        failure: &str,
-        now: Instant,
-        diagnostic: &mut dyn std::io::Write,
-    ) -> CommandResult<()> {
-        let until = hold_deadline(self.hold, now)?;
-        let evidence = vendor_failure_evidence(occupant, failure);
-        let Some(held) = self.holds.failed(lane, evidence, until) else {
-            return Ok(());
-        };
-        self.commit_hold(bus, epoch, held, diagnostic)
-    }
-
-    /// Journal one hold the reducer already recorded, forgetting it again
-    /// when the journal refuses so the reducer and the journal agree, and
-    /// write the hold down where an operator reading why a lane went quiet
-    /// will look.
-    fn commit_hold(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        held: wire::body::LaneHeld,
-        diagnostic: &mut dyn std::io::Write,
-    ) -> CommandResult<()> {
-        let lane = held.lane;
-        let observed = current_residency(bus, epoch)?;
-        let mut proposal = write(Actor::Spice, epoch, Producer::BusTimer)?;
-        guard_residency(&mut proposal, &observed);
-        let line = format!(
-            "lifecycle held lane={lane} until={} evidence={}",
-            held.until, held.evidence
-        );
-        proposal
-            .fact(held, FactCause::Existing(observed.position()))
-            .map_err(|error| store_fault("lifecycle::hold-fact-invalid", &error.to_string()))?;
-        match commit(bus, proposal) {
-            Ok(_) => {
-                let _ = writeln!(diagnostic, "{line}");
-                Ok(())
-            }
-            Err(outcome) => {
-                let _ = self.holds.wake(lane);
-                Err(outcome)
-            }
-        }
-    }
-
-    /// The deadline the lane is held until, when it is held.
-    #[cfg(test)]
-    pub(super) fn held_until(&self, lane: CanonicalUuid) -> Option<Instant> {
-        self.holds.held(lane)
-    }
-
-    /// Release one hold from its explicit timer event.
-    pub(super) fn expire_hold(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-    ) -> CommandResult<()> {
-        let now = current_instant()?;
-        let until = self.holds.held(lane);
-        let resumed = self.holds.expire(lane, now);
-        self.commit_resume(bus, epoch, lane, until, resumed)
-    }
-
-    /// Release one hold because an operator explicitly requested wake.
-    pub(super) fn operator_wake(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-    ) -> CommandResult<()> {
-        self.backoff.release(lane);
-        let until = self.holds.held(lane);
-        let resumed = self.holds.wake(lane);
-        self.commit_resume(bus, epoch, lane, until, resumed)
-    }
-
-    fn commit_resume(
-        &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        until: Option<Instant>,
-        resumed: Option<wire::body::LaneResumed>,
-    ) -> CommandResult<()> {
-        let Some(resumed) = resumed else {
-            return Ok(());
-        };
-        let observed = current_residency(bus, epoch)?;
-        let mut proposal = write(Actor::Spice, epoch, Producer::BusTimer)?;
-        guard_residency(&mut proposal, &observed);
-        proposal
-            .fact(resumed, FactCause::Existing(observed.position()))
-            .map_err(|error| store_fault("lifecycle::resume-fact-invalid", &error.to_string()))?;
-        match commit(bus, proposal) {
-            Ok(_) => Ok(()),
-            Err(outcome) => {
-                if let Some(until) = until {
-                    self.holds.absorb_held(&wire::body::LaneHeld {
-                        lane,
-                        evidence: "durable hold restored after refused release".to_owned(),
-                        until,
-                    });
-                }
-                Err(outcome)
-            }
-        }
-    }
-
-    fn synchronize_holds(
-        &mut self,
-        snapshot: &bus::TaskSnapshot,
-        cursor: Option<Seq>,
-    ) -> CommandResult<()> {
-        for envelope in snapshot.facts().after(cursor) {
-            match envelope.fact.kind() {
-                wire::FactKind::LaneHeld => {
-                    let held = fact_body::<wire::body::LaneHeld>(envelope)?;
-                    self.holds.absorb_held(&held);
-                }
-                wire::FactKind::LaneResumed => {
-                    let resumed = fact_body::<wire::body::LaneResumed>(envelope)?;
-                    self.holds.absorb_resumed(&resumed);
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     #[allow(
@@ -948,37 +760,6 @@ fn current_instant() -> CommandResult<Instant> {
     Instant::new(jiff::Timestamp::now())
         .map_err(|error| super::environment_fault("lifecycle::clock-invalid", &error.to_string()))
 }
-
-/// The deadline a hold taken now runs until, under the configured lane hold.
-fn hold_deadline(hold: Duration, now: Instant) -> CommandResult<Instant> {
-    let seconds = i64::try_from(hold.as_secs()).map_err(|_| {
-        super::environment_fault(
-            "lifecycle::hold-range",
-            "the configured lane hold does not fit a signed deadline",
-        )
-    })?;
-    after(now, seconds)
-}
-
-/// Longest vendor failure text a hold carries as evidence.
-const VENDOR_FAILURE_EVIDENCE_BYTES: usize = 512;
-
-/// The evidence a vendor failure hold names: the occupant that ended on the
-/// failure and the vendor's own words, cut at a character boundary so one
-/// verbose vendor does not fill the journal.
-fn vendor_failure_evidence(occupant: CanonicalUuid, failure: &str) -> String {
-    let failure = failure.trim();
-    let mut end = failure.len().min(VENDOR_FAILURE_EVIDENCE_BYTES);
-    while !failure.is_char_boundary(end) {
-        end -= 1;
-    }
-    let cut = if end < failure.len() { "…" } else { "" };
-    format!(
-        "occupant {occupant} ended on a vendor error: {}{cut}",
-        &failure[..end]
-    )
-}
-
 fn after(at: Instant, seconds: i64) -> CommandResult<Instant> {
     let at = at
         .get()

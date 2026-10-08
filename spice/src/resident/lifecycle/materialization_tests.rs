@@ -922,6 +922,7 @@ fn hold_write() -> JournalWrite {
                 lane: lane(),
                 evidence: "equal scale-tail hold".to_owned(),
                 until: instant(55),
+                vendor_failure: None,
             },
             FactCause::Root,
         )

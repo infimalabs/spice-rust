@@ -782,18 +782,48 @@ pub struct LaneDegraded {
     pub marker: String,
 }
 
-/// Repeated young occupant deaths paused automatic re-seating.
+/// Exact resumable input whose vendor failure paused automatic re-seating.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VendorFailureInput {
+    /// Vendor session that would be resumed, absent before a session declaration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub session: Option<String>,
+    /// Live operator directives that the resumed turn would receive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub directives: Vec<CanonicalUuid>,
+    /// Renewal revision that would replace the refused session.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub renewal: Option<u64>,
+}
+
+/// An occupant failure paused automatic re-seating.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneHeld {
     /// Held lane.
     pub lane: CanonicalUuid,
     /// Evidence the hold names.
     pub evidence: String,
-    /// Deadline the hold names.
+    /// Deadline at which a young-death hold releases or a vendor hold becomes quiet.
     pub until: Instant,
+    /// Input a vendor refused; absent on an ordinary young-death hold.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub vendor_failure: Option<VendorFailureInput>,
 }
 
-/// A held lane returned to seating eligibility by operator wake or expired hold.
+/// A held lane returned to seating eligibility by operator wake, changed input, or expiry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneResumed {
     /// Resumed lane.

@@ -117,7 +117,10 @@ pub enum Verdict {
 pub enum Release {
     /// The operator woke the lane.
     Wake,
-    /// The hold reached its deadline.
+    /// The resumable vendor session or its pending operator direction changed.
+    #[serde(rename = "input-changed")]
+    InputChanged,
+    /// A young-death hold reached its deadline.
     Expiry,
 }
 

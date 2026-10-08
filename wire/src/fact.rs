@@ -296,9 +296,9 @@ vocabulary! {
     LaneKilled = "lane::killed" by ResidentRecognition;
     /// Work run without the resident left a marker recognized once.
     LaneDegraded = "lane::degraded" by ResidentRecognition;
-    /// Repeated young occupant deaths paused automatic re-seating.
+    /// Young deaths or a vendor-refused input paused automatic re-seating.
     LaneHeld = "lane::held" by BusTimer;
-    /// A held lane returned to seating eligibility.
+    /// Operator authority, changed input, or expiry returned a held lane to eligibility.
     LaneResumed = "lane::resumed" by BusTimer;
 
     /// The judge confirmed a taste at an evidence locus.
