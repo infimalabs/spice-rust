@@ -644,8 +644,10 @@ value changes take it at once. The draft field is one glass
 thickness. One inherited depth parameter drives the shared control-glass paint:
 headers use its default two thicknesses, while the control frame overrides it
 to three. Each surface receives that paint once, so the moving page stays
-visible through it. The frame uses the same restrained corners as the adjacent
-draft rather than pill geometry.
+visible through it. The controls continuation has neither a top divider nor an
+attached perpendicular rule; soft lateral shadows still separate sibling
+teams, and the adjacent member-header rules remain visible. The frame uses the
+same restrained corners as the adjacent draft rather than pill geometry.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.
