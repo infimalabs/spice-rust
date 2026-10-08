@@ -1,10 +1,10 @@
 const concepts = [
-  { key: 'smoke', name: 'Smoked optical', note: 'The lead direction: separate smoked-glass cuts, broad central SEND, crisp white rims.' },
-  { key: 'rail', name: 'Split rail · centered', note: 'A slim clear chassis. SEND moves to the middle; the two sliders stay below.' },
-  { key: 'frost', name: 'Frosted instrument', note: 'An etched translucent slab with softened rectangular keys. Quiet, precise, symmetric.' },
-  { key: 'pearl', name: 'Smoked pearl', note: 'Smoked optical with a restrained pearl sheen. One aligned rim, no split-color halo.' },
-  { key: 'satin', name: 'Satin graphite', note: 'A nearby instrument direction: softly diffused dark glass, broad faces, fine etched edges.' },
-  { key: 'edge', name: 'Edge-lit rail', note: 'A lighter split-rail hybrid. Thin optical borders and a clear, symmetric central action key.' },
+  { key: 'smoke', name: 'Smoked optical', note: 'Round smoked-glass buttons on a clear rail chassis. Central SEND; two lower flyers.' },
+  { key: 'pearl', name: 'Smoked pearl', note: 'The final pearl treatment: restrained sheen, aligned rims, neutral glass faces.' },
+  { key: 'frost', name: 'Frosted instrument', note: 'Round optical keys in one softly etched panel. The quietest complete-panel finish.' },
+  { key: 'flush', name: 'Flush etched glass', note: 'Flat transparent faces, etched circular rims. No raised dome or floating shadow.' },
+  { key: 'inset', name: 'Recessed pearl', note: 'A shallow glass well. Pearl catches the inner lower edge, not a raised outer lip.' },
+  { key: 'home', name: 'Home lens', note: 'Phone home-button direction: a clear circular inset with a fine ring and quiet surface.' },
 ];
 const speechModes = ['Quiet', 'Brief', 'Narrate'];
 const allocationModes = ['Steer', 'Auto', 'Drain'];
@@ -31,6 +31,54 @@ for (const [index, concept] of concepts.entries()) {
   }
   studies.append(study);
 }
+const previewStates = [
+  { key: 'off', name: 'Totally off', note: 'No agents running. The whole panel rests; SEND is unavailable.' },
+  { key: 'idle', name: 'Running · no text', note: 'The panel is awake. No draft is available, so SEND stays quiet.' },
+  { key: 'one', name: 'Text · one agent', note: 'One recipient, one accent rim. SEND is available.' },
+  { key: 'many', name: 'Text · N agents', note: 'Four recipients shown. A segmented rim, not a multicolored face.' },
+];
+for (const state of previewStates) {
+  const study = document.createElement('article');
+  study.className = 'study pearl';
+  study.innerHTML = `<div class="study-head"><h3>${state.name}</h3><p>${state.note}</p></div><div class="scene dark"><div class="mount"></div><span class="mode-label">Dark</span></div><div class="state" role="status">Local state preview · no commands sent</div>`;
+  const content = template.content.cloneNode(true);
+  const panel = content.querySelector('.panel');
+  setPreviewState(panel, state.key);
+  study.querySelector('.mount').append(content);
+  document.querySelector('#state-matrix').append(study);
+}
+for (const panel of studies.querySelectorAll('.panel')) {
+  setPreviewState(panel, 'one');
+}
+
+function setPreviewState(panel, key) {
+  const ready = key === 'one' || key === 'many';
+  panel.dataset.previewState = key;
+  const send = panel.querySelector('.send');
+  send.disabled = !ready;
+  send.setAttribute('aria-label', key === 'off' ? 'Send unavailable: no agents running'
+    : key === 'idle' ? 'Send unavailable: no text'
+      : `Preview send to ${key === 'one' ? '1 agent' : '4 agents'}`);
+  send.title = send.getAttribute('aria-label');
+  panel.querySelector('.recipient-count').textContent = ready ? (key === 'one' ? '1' : '4') : '';
+}
+
+document.querySelector('#panel-readiness').addEventListener('change', event => {
+  for (const panel of studies.querySelectorAll('.panel')) {
+    setPreviewState(panel, event.target.value);
+  }
+});
+document.querySelector('#state-finish').addEventListener('change', event => {
+  for (const study of document.querySelectorAll('#state-matrix .study')) {
+    study.className = `study ${event.target.value}`;
+  }
+});
+document.querySelector('#state-background').addEventListener('change', event => {
+  for (const scene of document.querySelectorAll('#state-matrix .scene')) {
+    scene.className = `scene ${event.target.value}`;
+    scene.querySelector('.mode-label').textContent = event.target.value;
+  }
+});
 
 for (const panel of document.querySelectorAll('.panel')) {
   const status = panel.closest('.study').querySelector('.state');
