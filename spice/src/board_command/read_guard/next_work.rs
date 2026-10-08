@@ -50,11 +50,12 @@ pub(super) fn read_next_work(
     let subscription = allocation_subscription(residency.body(), &principal)?;
     let recent_cell = observed.recent_claim_cell(&principal);
     let environment = observed.environment();
+    let now = current_instant()?;
     let state = if let Some((index, _)) = first_held {
         NextWorkState::Active {
             task: next_task(frontier_heads[index]),
         }
-    } else if let Some(selected) = board::select_with_satisfied(
+    } else if let Some(selected) = board::select_with_satisfied_at(
         &entries,
         &principal,
         &subscription,
@@ -62,6 +63,7 @@ pub(super) fn read_next_work(
         recent_cell.as_ref(),
         &environment,
         &satisfied,
+        now,
     ) {
         let heads = frontier_heads.get(selected.entry_index()).ok_or_else(|| {
             protocol_fault(
@@ -174,6 +176,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
                 .facts()
                 .is_explicit_release(&statement.born, claim.position())
         });
+        let phase_handoff = phase_handoff(observed.facts(), heads)?;
         if observed.facts().has_invalid_creator_team(&statement.born) {
             return Err(protocol_fault(
                 "board::task-creator-team-invalid",
@@ -195,7 +198,8 @@ pub(in crate::board_command) fn project_frontier<'a>(
             )
         })?
         .with_creator_team(statement.creation.creator_team())
-        .with_explicit_release(explicit_release);
+        .with_explicit_release(explicit_release)
+        .with_phase_handoff(phase_handoff);
         origin_threads.push(task_origin_thread(
             observed,
             &statement.born,

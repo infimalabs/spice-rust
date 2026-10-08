@@ -222,13 +222,15 @@ fn select_task(
     subscription: &wire::TeamSubscription,
 ) -> Result<Entry, Outcome<CommandAnswer>> {
     let environment = snapshot.answer.environment();
-    board::select(
+    let now = current_instant()?;
+    board::select_at(
         &snapshot.entries,
         actor,
         subscription,
         snapshot.answer.allocation_band,
         snapshot.answer.recent_cell.as_ref(),
         &environment,
+        now,
     )
     .map(|selection| selection.entry().clone())
     .ok_or_else(|| {

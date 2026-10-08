@@ -24,7 +24,9 @@ use super::lane_surface;
 use super::shutdown::{current_residency, guard_residency};
 use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_fault, write};
 
+mod availability;
 mod materialization;
+use availability::{ready_instant, selected_ready};
 use materialization::Projection;
 pub(super) mod generation_notices;
 mod review_feedback;
@@ -35,7 +37,7 @@ mod startup_tests;
 
 const NORMAL_READY: usize = 2;
 const STARVATION_SECONDS: i64 = 180;
-const SETTLE_SECONDS: i64 = 3;
+const SETTLE_SECONDS: i64 = board::HANDOFF_SECONDS;
 const RETRY_SECONDS: i64 = 5;
 
 /// Closed automatic wake arms, in resolver order.
@@ -69,6 +71,8 @@ enum Available {
 struct SelectedReady {
     at: Instant,
     eligible: usize,
+    handoff: bool,
+    handoff_wait: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -819,6 +823,7 @@ fn available_deadline(
     actor: &Actor,
     subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
+    now: Instant,
 ) -> CommandResult<Available> {
     available_from_selected(selected_ready(
         snapshot,
@@ -827,6 +832,7 @@ fn available_deadline(
         actor,
         subscription,
         allocation,
+        now,
     )?)
 }
 fn drain_available(
@@ -837,55 +843,20 @@ fn drain_available(
     subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
     first_member: bool,
+    now: Instant,
 ) -> CommandResult<Available> {
     drain_from_selected(
-        selected_ready(snapshot, entries, ready_at, actor, subscription, allocation)?,
+        selected_ready(
+            snapshot,
+            entries,
+            ready_at,
+            actor,
+            subscription,
+            allocation,
+            now,
+        )?,
         first_member,
     )
-}
-
-fn selected_ready(
-    snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
-    ready_at: &BTreeMap<TaskStamp, Instant>,
-    actor: &Actor,
-    subscription: &wire::TeamSubscription,
-    allocation: &board::NextConfig,
-) -> CommandResult<Option<SelectedReady>> {
-    let recent_cell =
-        board::recent_claim_cell(entries, snapshot.facts().latest_claim(actor), actor);
-    let appliance = spice::version::running().map_err(Outcome::Fault)?;
-    let environment = snapshot
-        .environment()
-        .with_appliance(appliance.product.clone());
-    let Some(selected) = board::select(
-        entries,
-        actor,
-        subscription,
-        allocation.band(),
-        recent_cell.as_ref(),
-        &environment,
-    ) else {
-        return Ok(None);
-    };
-    let at = ready_instant(selected.entry(), ready_at)?;
-    let eligible = entries
-        .iter()
-        .filter(|entry| board::selectable_entry(entries, entry, actor, subscription, &environment))
-        .count();
-    Ok(Some(SelectedReady { at, eligible }))
-}
-
-fn ready_instant(entry: &Entry, ready_at: &BTreeMap<TaskStamp, Instant>) -> CommandResult<Instant> {
-    ready_at.get(entry.born()).copied().ok_or_else(|| {
-        store_fault(
-            "lifecycle::task-ready-fact-missing",
-            &format!(
-                "task {} has no durable READY transition instant",
-                entry.handle()
-            ),
-        )
-    })
 }
 
 fn drain_from_selected(
@@ -894,6 +865,8 @@ fn drain_from_selected(
 ) -> CommandResult<Available> {
     match selected {
         None => Ok(Available::None),
+        Some(selected) if selected.handoff_wait => Ok(Available::At(selected.at)),
+        Some(selected) if selected.handoff => Ok(Available::Ready),
         Some(selected) if first_member || selected.eligible >= NORMAL_READY => {
             after(selected.at, SETTLE_SECONDS).map(Available::At)
         }
@@ -904,6 +877,8 @@ fn drain_from_selected(
 fn available_from_selected(selected: Option<SelectedReady>) -> CommandResult<Available> {
     match selected {
         None => Ok(Available::None),
+        Some(selected) if selected.handoff_wait => Ok(Available::At(selected.at)),
+        Some(selected) if selected.handoff => Ok(Available::Ready),
         Some(selected) if selected.eligible < NORMAL_READY => {
             after(selected.at, STARVATION_SECONDS).map(Available::At)
         }
@@ -1139,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_ready_task_settles_or_ages_to_starvation_by_capacity() {
+    fn selected_ready_task_settles_ages_or_hands_off_immediately() {
         assert_eq!(
             available_from_selected(None).expect("empty fold resolves"),
             Available::None
@@ -1148,6 +1123,8 @@ mod tests {
             available_from_selected(Some(SelectedReady {
                 at: instant(0),
                 eligible: 1,
+                handoff: false,
+                handoff_wait: false,
             }))
             .expect("lone fold resolves"),
             Available::At(instant_after_minutes(3))
@@ -1156,14 +1133,36 @@ mod tests {
             available_from_selected(Some(SelectedReady {
                 at: instant(0),
                 eligible: 2,
+                handoff: false,
+                handoff_wait: false,
             }))
             .expect("burst fold resolves"),
+            Available::At(instant(3))
+        );
+        assert_eq!(
+            available_from_selected(Some(SelectedReady {
+                at: instant(0),
+                eligible: 1,
+                handoff: true,
+                handoff_wait: false,
+            }))
+            .expect("phase handoff resolves"),
+            Available::Ready
+        );
+        assert_eq!(
+            available_from_selected(Some(SelectedReady {
+                at: instant(3),
+                eligible: 0,
+                handoff: false,
+                handoff_wait: true,
+            }))
+            .expect("blocked handoff deadline resolves"),
             Available::At(instant(3))
         );
     }
 
     #[test]
-    fn drain_capacity_settles_first_member_then_scales_for_age_or_two_tasks() {
+    fn drain_capacity_settles_scales_or_hands_off_immediately() {
         assert_eq!(
             drain_from_selected(None, true).expect("empty drain fold resolves"),
             Available::None
@@ -1173,6 +1172,8 @@ mod tests {
                 Some(SelectedReady {
                     at: instant(0),
                     eligible: 1,
+                    handoff: false,
+                    handoff_wait: false,
                 }),
                 true,
             )
@@ -1184,6 +1185,8 @@ mod tests {
                 Some(SelectedReady {
                     at: instant(0),
                     eligible: 1,
+                    handoff: false,
+                    handoff_wait: false,
                 }),
                 false,
             )
@@ -1195,10 +1198,38 @@ mod tests {
                 Some(SelectedReady {
                     at: instant(0),
                     eligible: 2,
+                    handoff: false,
+                    handoff_wait: false,
                 }),
                 false,
             )
             .expect("drain backlog resolves"),
+            Available::At(instant(3))
+        );
+        assert_eq!(
+            drain_from_selected(
+                Some(SelectedReady {
+                    at: instant(0),
+                    eligible: 1,
+                    handoff: true,
+                    handoff_wait: false,
+                }),
+                false,
+            )
+            .expect("drain phase handoff resolves"),
+            Available::Ready
+        );
+        assert_eq!(
+            drain_from_selected(
+                Some(SelectedReady {
+                    at: instant(3),
+                    eligible: 0,
+                    handoff: false,
+                    handoff_wait: true,
+                }),
+                false,
+            )
+            .expect("blocked drain handoff deadline resolves"),
             Available::At(instant(3))
         );
     }

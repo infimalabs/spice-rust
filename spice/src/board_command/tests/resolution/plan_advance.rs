@@ -109,7 +109,7 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
 }
 
 #[test]
-fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
+fn plan_advance_prefers_its_todo_continuation_over_competing_work() {
     let (root, bus, epoch, seats) = fixture("plan-advance-ownership", 1);
     let lane = Actor::Lane(seats[0].lane);
     let plan = add_raw_task(
@@ -121,11 +121,10 @@ fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
         None,
     );
     claim_task(&bus, epoch, &seats[0], &lane, &plan);
-    let sibling = prepare_plan_advance_competitor(&bus, epoch, &plan);
+    prepare_plan_advance_competitor(&bus, epoch, &plan);
     // The operator edited the held plan, so the holder acknowledges it first.
     reclaim_held(&bus, epoch, &lane, &seats[0], &plan);
-    let (done, answer) =
-        complete_plan_with_ownership_guidance(&bus, epoch, &seats[0], &lane, &plan);
+    let (done, answer) = complete_plan_phase(&bus, epoch, &seats[0], &lane, &plan);
     let released =
         assert_plan_release_and_replay(&bus, epoch, &seats[0], &lane, &plan, &done, &answer);
     let CommandAnswer::Claim(claimed) = assert_committed(issue(
@@ -133,7 +132,7 @@ fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
         epoch,
         lane,
         CommandKind::ClaimWin,
-        claim_expected(&released, &sibling, &seats[0]),
+        claim_expected(&released, &plan, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
             recovery: None,
@@ -141,7 +140,7 @@ fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
     )) else {
         panic!("task next did not return a claim answer")
     };
-    assert_eq!(claimed.task, sibling);
+    assert_eq!(claimed.task, plan);
     clean(&root, bus);
 }
 
@@ -242,7 +241,7 @@ fn prepare_plan_advance_competitor(
     sibling
 }
 
-fn complete_plan_with_ownership_guidance(
+fn complete_plan_phase(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -268,14 +267,7 @@ fn complete_plan_with_ownership_guidance(
     };
     assert_eq!(answer.status, "pending");
     assert_eq!(answer.next.as_deref(), Some("spice task next"));
-    assert_eq!(
-        answer.guidance.map(wire::intent::TaskGuidance::as_str),
-        Some(concat!(
-            "phase ownership: this advance released your claim; only the held plan phase ",
-            "was completed. Run spice task next for another assignment; it may select any ",
-            "eligible work and does not guarantee this task's next phase."
-        ))
-    );
+    assert_eq!(answer.guidance, None);
     (done, answer)
 }
 

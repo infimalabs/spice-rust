@@ -5,6 +5,13 @@ use wire::{Instant, Phase, TaskHandle, WorkflowHead};
 use crate::claim::Active;
 use crate::task::Entry;
 
+/// Exclusive ownership opportunity after one phase advances.
+///
+/// This is the same short settling interval automatic lifecycle uses before it
+/// seats newly ready work. Task birth keeps its existing scheduler treatment;
+/// only transition ownership consults this bound.
+pub const HANDOFF_SECONDS: i64 = 3;
+
 /// One guarded workflow change ready for the journal transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Transition {
@@ -147,15 +154,14 @@ pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     }
 }
 
-/// The review deliverable when the allocator hands an actor its own review.
+/// Deliverable override when an independent phase returns to its prior author.
 ///
-/// Self-review is ranked last, never excluded, so a quiet board hands it out
-/// rather than stalling.
-pub const SELF_REVIEW_DELIVERABLE: &str = "a verdict is the deliverable: the allocator \
-     assigned your own review as the last resort because no peer work is eligible, so this \
-     assignment authorizes and requires you to review it now; do not free or defer it merely \
-     because you authored the implementation. Inspect the integrated diff, check its evidence, \
-     and record a clean or finding review";
+/// Independent handoff is ranked last, never excluded, so a quiet board can
+/// still progress without weakening the preference for another owner.
+pub const SELF_HANDOFF_DELIVERABLE: &str = "the current phase deliverable remains authoritative: \
+     the allocator assigned this independent phase back to its prior author as the last resort \
+     because no peer work is eligible. This assignment authorizes and requires you to complete \
+     the phase now; do not free or defer it merely because you authored the prior phase";
 
 /// What a lane is told when it wins back a row it freed.
 ///

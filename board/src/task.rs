@@ -477,6 +477,50 @@ pub struct Dependency {
     pub after: TaskStamp,
 }
 
+/// Ownership preference carried by a phase transition while its handoff window
+/// is open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhaseHandoffKind {
+    /// The prior phase's claimant should continue the same task.
+    Continue,
+    /// Another eligible lane should take the next phase when one is available.
+    Independent,
+}
+
+/// Durable phase-transition evidence projected into allocator input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhaseHandoff {
+    kind: PhaseHandoffKind,
+    prior: wire::Actor,
+    until: wire::Instant,
+}
+
+impl PhaseHandoff {
+    /// Construct one handoff from the completed phase's durable boundary.
+    #[must_use]
+    pub const fn new(kind: PhaseHandoffKind, prior: wire::Actor, until: wire::Instant) -> Self {
+        Self { kind, prior, until }
+    }
+
+    /// Ownership policy for the new phase.
+    #[must_use]
+    pub const fn kind(&self) -> PhaseHandoffKind {
+        self.kind
+    }
+
+    /// Claimant that completed the prior phase.
+    #[must_use]
+    pub const fn prior(&self) -> &wire::Actor {
+        &self.prior
+    }
+
+    /// End of the exclusive handoff opportunity.
+    #[must_use]
+    pub const fn until(&self) -> wire::Instant {
+        self.until
+    }
+}
+
 /// One task's current journal-head bundle.
 ///
 /// This is a checked view of wire heads, not a mutable board record. Replacing
@@ -491,6 +535,7 @@ pub struct Entry {
     lease: Option<LeaseHead>,
     creator_team: Option<wire::CanonicalUuid>,
     explicit_release: bool,
+    phase_handoff: Option<PhaseHandoff>,
     project: Project,
     family: Family,
 }
@@ -551,6 +596,7 @@ impl Entry {
             lease,
             creator_team: None,
             explicit_release: false,
+            phase_handoff: None,
             project,
             family,
         })
@@ -610,6 +656,20 @@ impl Entry {
     pub const fn with_explicit_release(mut self, explicit_release: bool) -> Self {
         self.explicit_release = explicit_release;
         self
+    }
+
+    /// Attach phase-transition ownership evidence derived from journal facts.
+    #[must_use]
+    pub fn with_phase_handoff(mut self, phase_handoff: Option<PhaseHandoff>) -> Self {
+        self.phase_handoff = phase_handoff;
+        self
+    }
+
+    /// Current phase-transition ownership evidence, when this phase was reached
+    /// from a completed claim.
+    #[must_use]
+    pub const fn phase_handoff(&self) -> Option<&PhaseHandoff> {
+        self.phase_handoff.as_ref()
     }
 
     /// Whether the current freed claim came from an explicit release command.
