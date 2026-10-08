@@ -459,9 +459,13 @@ header gives the complete live status ticker and task strip the width left of
 its compact lane-light stack, which holds the right edge. The ticker keeps its
 relative age, lane standing, agent/tool/command prefix and accent, truncated
 detail, accessible label, and live-region behavior in its status band rather
-than consuming a separate row. The task pill opens the browser-local overview
-with the canonical complete team task set; no local analytical pane or route
-duplicates it.
+than consuming a separate row. A `job` call's detail reads as its typed intent,
+the purpose the agent declared for it, followed by the operation and job id it
+names for correlation, as in `job: Waiting for the gate (wait dVW6Zkf0h)`;
+updates and the result keep that line and append their state, and a call that
+declares no intent shows the operation and id alone. The task pill opens the
+browser-local overview with the canonical complete team task set; no local
+analytical pane or route duplicates it.
 
 The composer, speech and allocation controls, and send action retain their
 geometry and remain mounted. The former standalone ticker row becomes message

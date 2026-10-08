@@ -48,9 +48,17 @@ const ARGUMENT_KEYS: [&str; 8] = [
 /// showing another lane's command would be worse than showing none.
 #[derive(Debug, Default)]
 pub(in crate::resident) struct CallPreviews {
-    by_call: BTreeMap<(CanonicalUuid, String), String>,
+    by_call: BTreeMap<(CanonicalUuid, String), Outstanding>,
     /// Outstanding calls that read a steering attachment the lane was sent.
     attachment_reads: BTreeSet<(CanonicalUuid, String)>,
+}
+
+/// One call still in flight: the preview its result answers with, and the
+/// typed intent its call declared, which its updates do not repeat.
+#[derive(Debug)]
+struct Outstanding {
+    preview: String,
+    intent: Option<String>,
 }
 
 impl CallPreviews {
@@ -70,21 +78,40 @@ pub(super) fn activity(
     let key = (lane, tool.call_id.clone());
     match &tool.moment {
         listen::ToolMoment::Call {
-            name, arguments, ..
+            name,
+            arguments,
+            intent,
         } => {
-            let preview = identified_preview(name, arguments, &tool.call_id);
+            let intent = declared_intent(intent.as_deref());
+            let preview = identified_preview(name, arguments, intent.as_deref(), &tool.call_id);
             if reads_steering_attachment(lane, arguments) {
                 previews.attachment_reads.insert(key.clone());
             }
-            previews.by_call.insert(key, preview.clone());
+            previews.by_call.insert(
+                key,
+                Outstanding {
+                    preview: preview.clone(),
+                    intent,
+                },
+            );
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
-            let preview = identified_preview(name, arguments, &tool.call_id);
+            let intent = previews
+                .by_call
+                .get(&key)
+                .and_then(|outstanding| outstanding.intent.clone());
+            let preview = identified_preview(name, arguments, intent.as_deref(), &tool.call_id);
             if reads_steering_attachment(lane, arguments) {
                 previews.attachment_reads.insert(key.clone());
             }
-            previews.by_call.insert(key, preview.clone());
+            previews.by_call.insert(
+                key,
+                Outstanding {
+                    preview: preview.clone(),
+                    intent,
+                },
+            );
             flatten(&format!("{preview} update"))
         }
         listen::ToolMoment::Result(result) => {
@@ -95,10 +122,15 @@ pub(super) fn activity(
             };
             previews.by_call.remove(&key).map_or_else(
                 || flatten(&format!("{} {outcome}", event_identity(&tool.call_id))),
-                |preview| flatten(&format!("{preview} {outcome}")),
+                |outstanding| flatten(&format!("{} {outcome}", outstanding.preview)),
             )
         }
     }
+}
+
+/// A call's typed intent on one line, absent when it says nothing.
+pub(super) fn declared_intent(intent: Option<&str>) -> Option<String> {
+    intent.map(flatten).filter(|intent| !intent.is_empty())
 }
 
 /// Media a tool result shows as its own card.
@@ -135,7 +167,7 @@ fn reads_steering_attachment(lane: CanonicalUuid, arguments: &str) -> bool {
     })
 }
 
-fn identified_preview(name: &str, arguments: &str, call_id: &str) -> String {
+fn identified_preview(name: &str, arguments: &str, intent: Option<&str>, call_id: &str) -> String {
     let normalized = normalized_name(name);
     if normalized.is_empty() || normalized.eq_ignore_ascii_case("tool") {
         return named_preview(
@@ -144,7 +176,7 @@ fn identified_preview(name: &str, arguments: &str, call_id: &str) -> String {
             "activity",
         );
     }
-    ordinary_call_preview(name, arguments)
+    ordinary_call_preview(name, arguments, intent)
 }
 
 fn event_identity(call_id: &str) -> String {
@@ -179,20 +211,41 @@ pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire:
     }
 }
 
-pub(super) fn call_preview(name: &str, arguments: &str) -> String {
-    ordinary_call_preview(name, arguments)
+/// One call's preview; `intent` is the call's [`declared_intent`].
+pub(super) fn call_preview(name: &str, arguments: &str, intent: Option<&str>) -> String {
+    ordinary_call_preview(name, arguments, intent)
 }
 
-fn ordinary_call_preview(name: &str, arguments: &str) -> String {
+fn ordinary_call_preview(name: &str, arguments: &str, intent: Option<&str>) -> String {
     let name = normalized_name(name);
-    let arguments =
-        targeted_preview(&name, arguments).unwrap_or_else(|| argument_preview(arguments));
-    let fallback = match name.to_ascii_lowercase().as_str() {
+    let target = targeted_preview(&name, arguments);
+    let lowered = name.to_ascii_lowercase();
+    let arguments = match (lowered.as_str(), intent) {
+        ("job", Some(intent)) => intended(&name, intent, target.as_deref()),
+        _ => target.unwrap_or_else(|| argument_preview(arguments)),
+    };
+    let fallback = match lowered.as_str() {
         "bash" | "zsh" => "shell",
         "shell" | "local shell" => "command",
         _ => "tool",
     };
     named_preview(&name, &arguments, fallback)
+}
+
+/// `INTENT (OP ID)`: a job call's declared purpose leads, because an
+/// operation and an opaque job id say nothing a reader recognizes. The target
+/// stays for correlation, so a purpose long enough to fill the line is elided
+/// before the target is.
+fn intended(name: &str, intent: &str, target: Option<&str>) -> String {
+    let suffix = target.map_or_else(String::new, |target| format!(" ({target})"));
+    let budget = MAX_CHARS
+        .saturating_sub(name.chars().count() + ": ".len() + suffix.chars().count())
+        .max(1);
+    if intent.chars().count() <= budget {
+        return format!("{intent}{suffix}");
+    }
+    let kept = intent.chars().take(budget - 1).collect::<String>();
+    format!("{}\u{2026}{suffix}", kept.trim_end())
 }
 
 fn normalized_name(name: &str) -> String {
@@ -237,8 +290,8 @@ fn informative_tokens(preview: &str) -> usize {
 /// An `lsp` call names its operation in `action`, which the generic scan
 /// would show alone; the symbol, query, and file it acted on are what a reader
 /// recognizes. A `grep` pairs its pattern with the path it searched, which the
-/// generic scan reduces to the path, and a `job` names its operation and job
-/// rather than the intent prose the scan would reach first.
+/// generic scan reduces to the path, and a `job` names its operation and job,
+/// which follow the call's typed intent when it declares one.
 fn targeted_preview(name: &str, raw: &str) -> Option<String> {
     let tool = name.to_ascii_lowercase();
     if !matches!(tool.as_str(), "lsp" | "grep" | "job") {
