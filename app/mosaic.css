@@ -493,21 +493,28 @@ path.image-annotation-hit { fill: none; }
   padding: 0;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* The team total stays fixed over the short leading screen while task groups
-   retain their ordinary horizontal scroll. One mirrored alpha fade lets hidden
-   tabs dissolve behind the total on the left and over the wider pip column on
-   the right instead of meeting a hard clip. Matching padding and scroll
-   padding keep the first and last tabs fully legible at either extent. */
+/* The team total holds its own leading column while task groups retain their
+   ordinary horizontal scroll. The scroller reaches a short fade back under the
+   total, and its padding puts the first tab one `--mosaic-gap` past the total,
+   the same gap as between any two tabs whatever the total's width. One
+   mirrored alpha fade lets hidden tabs dissolve behind the total on the left
+   and over the wider pip column on the right instead of meeting a hard clip.
+   Matching padding and scroll padding keep the first and last tabs fully
+   legible at either extent. */
 .team-toolbar > .team-task-rail {
-  --team-task-screen-start: 3rem;
+  --team-task-fade: var(--mosaic-gap);
+  --team-task-screen-start: calc(var(--team-task-fade) + var(--mosaic-gap));
   --team-task-screen-end: var(--team-control-inline-size);
   position: relative; display: grid; grid-area: tasks; align-self: end;
+  grid-template-columns: auto minmax(0, 1fr);
   min-width: 0; margin: 0 8px; overflow: hidden;
 }
-.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { grid-area: 1 / 1; align-self: end; }
-.team-task-rail > [data-work-scope="team"] { z-index: 2; justify-self: start; }
+.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { grid-row: 1; align-self: end; }
+.team-task-rail > [data-work-scope="team"] { grid-column: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
+  grid-column: 2;
   z-index: 1;
+  margin-inline-start: calc(-1 * var(--team-task-fade));
   padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
   scroll-padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
   -webkit-mask-image: linear-gradient(
