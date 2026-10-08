@@ -216,10 +216,12 @@ fn use_route_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<Mou
 }
 
 /// The toolbar colour control: it recolours the selected mark as one edit
-/// and becomes the colour of the next mark drawn.
+/// and becomes the colour of the next mark drawn. An open label is kept
+/// first, so its typing and its recolour stay separate edits.
 #[hook]
 fn use_color_command(session: Session, pen: UseStateHandle<Pen>) -> Callback<Color> {
     use_callback((session, pen), |color: Color, (session, pen)| {
+        label::finish(session, true);
         {
             let mut history = session.history.borrow_mut();
             pointer::cancel(&mut history, &mut session.gesture.borrow_mut());

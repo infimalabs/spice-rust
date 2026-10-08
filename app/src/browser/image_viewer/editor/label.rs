@@ -141,6 +141,8 @@ pub(super) fn finish(session: &Session, keep: bool) {
 #[derive(Properties, PartialEq)]
 pub(super) struct FieldProps {
     pub session: Session,
+    /// The typing session this field belongs to.
+    pub serial: u64,
     pub shape: Shape,
     pub dimensions: (u32, u32),
 }
@@ -148,6 +150,35 @@ pub(super) struct FieldProps {
 /// Field events the label input answers; the pointer press is kept from the
 /// canvas so pressing inside the field never starts a mark.
 const FIELD_EVENTS: [&str; 4] = ["input", "keydown", "blur", "pointerdown"];
+
+/// The field's deferred end of typing: it finishes only its own entry, since
+/// a press elsewhere may already have finished it and opened another, then
+/// hands the keyboard back to the canvas when a key ended it.
+fn settle(
+    session: &Session,
+    serial: u64,
+    keep: bool,
+    field: &web_sys::HtmlInputElement,
+    keyboard: bool,
+) {
+    let own = session
+        .label
+        .borrow()
+        .as_ref()
+        .is_some_and(|typing| typing.serial == serial);
+    if own {
+        finish(session, keep);
+    }
+    if keyboard
+        && let Some(stage) = field
+            .closest(".image-annotation-stage")
+            .ok()
+            .flatten()
+            .and_then(|stage| stage.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = stage.focus();
+    }
+}
 
 /// The in-place text field over a label being typed. It lives in the SVG's
 /// coordinates, so its type is exactly as large as the label it becomes.
@@ -177,6 +208,7 @@ pub(super) fn field(props: &FieldProps) -> Html {
     {
         let input = nodes.1.clone();
         let session = props.session.clone();
+        let serial = props.serial;
         let text = props.shape.text.clone();
         use_effect_with((), move |()| {
             input.set_value(&text);
@@ -200,22 +232,9 @@ pub(super) fn field(props: &FieldProps) -> Html {
                         return;
                     }
                 };
-                let session = session.clone();
-                let field = field.clone();
-                spawn_local(async move {
-                    finish(&session, keep);
-                    if event.type_() == "keydown" {
-                        // Hand the keyboard back to the canvas.
-                        if let Some(stage) = field
-                            .closest(".image-annotation-stage")
-                            .ok()
-                            .flatten()
-                            .and_then(|stage| stage.dyn_into::<web_sys::HtmlElement>().ok())
-                        {
-                            let _ = stage.focus();
-                        }
-                    }
-                });
+                let (session, field) = (session.clone(), field.clone());
+                let keyboard = event.type_() == "keydown";
+                spawn_local(async move { settle(&session, serial, keep, &field, keyboard) });
             });
             for kind in FIELD_EVENTS {
                 let _ =

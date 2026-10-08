@@ -92,7 +92,7 @@ pub(super) fn marks(
             if let Some((_, serial)) = typing.filter(|(typing, _)| *typing == index) {
                 return html! {
                     <g key={format!("label-{serial}")} data-annotation-shape={index.to_string()} data-selected="true">
-                        <label::Field session={session.clone()} shape={shape.clone()} {dimensions} />
+                        <label::Field session={session.clone()} {serial} shape={shape.clone()} {dimensions} />
                     </g>
                 };
             }
