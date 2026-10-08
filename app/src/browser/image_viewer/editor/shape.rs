@@ -1,25 +1,46 @@
 use super::*;
 
-pub(super) fn render(shape: Shape, stroke: f64) -> Html {
+const INK: &str = "#ef4444";
+const HALO: &str = "#ffffff";
+
+pub(super) fn render(shape: &Shape, stroke: f64) -> Html {
     match shape.kind {
         Kind::Rectangle => {
             let (low, high) = shape.bounds();
             html! {
                 <>
-                    <rect class="image-annotation-mark" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} fill="none" stroke="#ef4444" stroke-width={stroke.to_string()} />
+                    <rect class="image-annotation-mark" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} fill="none" stroke={INK} stroke-width={stroke.to_string()} />
                     <rect class="image-annotation-hit" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} />
                 </>
             }
         }
-        Kind::Arrow => {
-            let head = shape.arrowhead(stroke);
+        Kind::Line | Kind::Arrow => {
+            let path = shape.course().path_data();
+            let head = (shape.kind == Kind::Arrow).then(|| shape.arrowhead(stroke));
             html! {
                 <>
-                    <line class="image-annotation-mark" x1={shape.start.x.to_string()} y1={shape.start.y.to_string()} x2={shape.end.x.to_string()} y2={shape.end.y.to_string()} stroke="#ef4444" stroke-width={stroke.to_string()} stroke-linecap="round" />
-                    <polygon fill="#ef4444" points={format!("{},{} {},{} {},{}", head[0].0, head[0].1, head[1].0, head[1].1, head[2].0, head[2].1)} />
-                    <line class="image-annotation-hit" x1={shape.start.x.to_string()} y1={shape.start.y.to_string()} x2={shape.end.x.to_string()} y2={shape.end.y.to_string()} />
+                    <path class="image-annotation-mark" d={path.clone()} fill="none" stroke={INK} stroke-width={stroke.to_string()} stroke-linecap="round" />
+                    if let Some(head) = head {
+                        <polygon fill={INK} points={format!("{},{} {},{} {},{}", head[0].0, head[0].1, head[1].0, head[1].1, head[2].0, head[2].1)} />
+                    }
+                    <path class="image-annotation-hit" d={path} />
+                </>
+            }
+        }
+        Kind::Text => {
+            let (low, high) = shape.bounds();
+            let size = shape.end.y - shape.start.y;
+            html! {
+                <>
+                    <text class="image-annotation-mark" x={shape.start.x.to_string()} y={label_baseline(shape).to_string()} font-size={size.to_string()} font-weight="700" font-family={label::family()} fill={INK} stroke={HALO} stroke-width={label::halo(size).to_string()} stroke-linejoin="round" paint-order="stroke">{shape.text.to_string()}</text>
+                    <rect class="image-annotation-hit" x={low.x.to_string()} y={low.y.to_string()} width={(high.x-low.x).to_string()} height={(high.y-low.y).to_string()} />
                 </>
             }
         }
     }
+}
+
+/// A label's alphabetic baseline, shared by the SVG text and the canvas.
+pub(super) fn label_baseline(shape: &Shape) -> i32 {
+    shape.start.y + (shape.end.y - shape.start.y) * 4 / 5
 }

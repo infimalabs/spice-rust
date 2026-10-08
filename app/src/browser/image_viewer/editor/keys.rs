@@ -3,6 +3,9 @@
 use super::*;
 
 pub(super) fn handle(event: &KeyboardEvent, session: &Session, dimensions: (u32, u32)) {
+    if session.label.borrow().is_some() {
+        return;
+    }
     let handled = {
         let mut gesture = session.gesture.borrow_mut();
         if gesture.is_some() {
@@ -15,6 +18,7 @@ pub(super) fn handle(event: &KeyboardEvent, session: &Session, dimensions: (u32,
             dimensions,
         )
     };
+    let handled = handled || (event.key() == "Enter" && label::reopen(session));
     if handled {
         event.prevent_default();
         event.stop_propagation();

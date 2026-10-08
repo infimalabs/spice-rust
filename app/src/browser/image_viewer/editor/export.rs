@@ -1,5 +1,5 @@
 use super::*;
-use crate::image_annotation::{Kind, stroke_width};
+use crate::image_annotation::{Course, stroke_width};
 
 pub(super) async fn render(
     original: &wire::Media,
@@ -24,12 +24,12 @@ pub(super) async fn render(
         .dyn_into::<web_sys::CanvasRenderingContext2d>()?;
     context.draw_image_with_html_image_element(&image, 0.0, 0.0)?;
     let stroke = stroke_width(image.natural_width(), image.natural_height());
-    context.set_stroke_style_str("#ef4444");
-    context.set_fill_style_str("#ef4444");
-    context.set_line_width(stroke);
     context.set_line_join("round");
     context.set_line_cap("round");
     for shape in shapes {
+        context.set_stroke_style_str("#ef4444");
+        context.set_fill_style_str("#ef4444");
+        context.set_line_width(stroke);
         match shape.kind {
             Kind::Rectangle => {
                 let (low, high) = shape.bounds();
@@ -40,18 +40,50 @@ pub(super) async fn render(
                     f64::from(high.y - low.y),
                 );
             }
-            Kind::Arrow => {
+            Kind::Line | Kind::Arrow => {
                 context.begin_path();
-                context.move_to(f64::from(shape.start.x), f64::from(shape.start.y));
-                context.line_to(f64::from(shape.end.x), f64::from(shape.end.y));
+                match shape.course() {
+                    Course::Polyline(points) => {
+                        for (index, (x, y)) in points.into_iter().enumerate() {
+                            if index == 0 {
+                                context.move_to(x, y);
+                            } else {
+                                context.line_to(x, y);
+                            }
+                        }
+                    }
+                    Course::Quadratic {
+                        start,
+                        control,
+                        end,
+                    } => {
+                        context.move_to(start.0, start.1);
+                        context.quadratic_curve_to(control.0, control.1, end.0, end.1);
+                    }
+                }
                 context.stroke();
-                let [tip, left, right] = shape.arrowhead(stroke);
-                context.begin_path();
-                context.move_to(tip.0, tip.1);
-                context.line_to(left.0, left.1);
-                context.line_to(right.0, right.1);
-                context.close_path();
-                context.fill();
+                if shape.kind == Kind::Arrow {
+                    let [tip, left, right] = shape.arrowhead(stroke);
+                    context.begin_path();
+                    context.move_to(tip.0, tip.1);
+                    context.line_to(left.0, left.1);
+                    context.line_to(right.0, right.1);
+                    context.close_path();
+                    context.fill();
+                }
+            }
+            Kind::Text => {
+                let size = shape.end.y - shape.start.y;
+                let (x, y) = (
+                    f64::from(shape.start.x),
+                    f64::from(shape::label_baseline(shape)),
+                );
+                context.set_font(&label::font(size));
+                context.set_text_baseline("alphabetic");
+                context.set_stroke_style_str("#ffffff");
+                context.set_line_width(label::halo(size));
+                context.stroke_text(&shape.text, x, y)?;
+                context.fill_text(&shape.text, x, y)?;
             }
         }
     }

@@ -229,6 +229,7 @@ fn draft_images_bytes(images: &Vec<DraftImage>) -> usize {
                         .capacity()
                         .saturating_mul(std::mem::size_of::<crate::image_annotation::Shape>()),
                 )
+                .saturating_add(image.shapes.iter().map(|shape| shape.text.len()).sum())
         },
     )
 }
