@@ -60,62 +60,93 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 // Connection is routine state: the Spice button, tab title, and
                 // icon carry it visibly; only assistive technology hears it.
                 <span class="visually-hidden" role="status">{connection_label.clone()}</span>
-                {render_spice_button(&render, runtime, &connection_label)}
+                {render_spice_button(SpiceButton {
+                    connection: render.connection,
+                    app_update: (**render.app_update).as_ref(),
+                    runtime,
+                    place: SpicePlace::Launcher {
+                        expanded: render.spice_sidebar_open,
+                    },
+                    node_ref: NodeRef::default(),
+                    onclick: {
+                        let open = render.open_spice_sidebar.clone();
+                        Callback::from(move |event: MouseEvent| {
+                            if let Some(target) = event
+                                .current_target()
+                                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                            {
+                                open.emit(target);
+                            }
+                        })
+                    },
+                })}
             </div>
         </header>
     }
 }
 
-fn render_spice_button(
-    render: &CommandBarRender<'_>,
-    runtime: Option<&AppRuntime>,
-    connection_label: &str,
-) -> Html {
-    let fast_mode = runtime
+/// One Spice button: the command bar's launcher, or the open Spice sidebar's
+/// close control standing at that same place.
+pub(super) struct SpiceButton<'a> {
+    pub(super) connection: &'a Connection,
+    pub(super) app_update: Option<&'a AppUpdate>,
+    pub(super) runtime: Option<&'a AppRuntime>,
+    pub(super) place: SpicePlace,
+    pub(super) node_ref: NodeRef,
+    pub(super) onclick: Callback<MouseEvent>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SpicePlace {
+    /// In the command bar, opening the sidebar and receiving focus back.
+    Launcher { expanded: bool },
+    /// In the open sidebar over the launcher's place, closing it.
+    Anchor,
+}
+
+pub(super) fn render_spice_button(button: SpiceButton<'_>) -> Html {
+    let fast_mode = button
+        .runtime
         .and_then(AppRuntime::settings)
         .is_some_and(|settings| settings.fast_mode);
-    let update = (**render.app_update).as_ref();
-    let trigger_label = match (update, fast_mode) {
-        (Some(_), true) => "Open Spice - update available; fast mode on",
-        (Some(_), false) => "Open Spice - update available",
-        (None, true) => "Open Spice - fast mode on",
-        (None, false) => "Open Spice",
+    let (verb, expanded, focus_key) = match button.place {
+        SpicePlace::Launcher { expanded } => ("Open", expanded, Some("spice")),
+        SpicePlace::Anchor => ("Close", true, None),
     };
-    let quota = quota_level(runtime);
-    let edge_accent = match (fast_mode, update.is_some()) {
+    let trigger_label = match (button.app_update, fast_mode) {
+        (Some(_), true) => format!("{verb} Spice - update available; fast mode on"),
+        (Some(_), false) => format!("{verb} Spice - update available"),
+        (None, true) => format!("{verb} Spice - fast mode on"),
+        (None, false) => format!("{verb} Spice"),
+    };
+    let quota = quota_level(button.runtime);
+    let edge_accent = match (fast_mode, button.app_update.is_some()) {
         (false, false) => None,
         (true, false) => Some(2),
         (false, true) => Some(1),
         (true, true) => Some(3),
     };
+    let connection_label = button.connection.label();
     let trigger_label: AttrValue = match &quota {
         Some(quota) => format!("{trigger_label} - {connection_label} - {}", quota.label),
         None => format!("{trigger_label} - {connection_label}"),
     }
     .into();
-    let open = render.open_spice_sidebar.clone();
-    let onclick = Callback::from(move |event: MouseEvent| {
-        if let Some(target) = event
-            .current_target()
-            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        {
-            open.emit(target);
-        }
-    });
     html! {
         <button
+            ref={button.node_ref}
             class="app-spice-button"
             type="button"
             data-accent={edge_accent.map(|accent| accent.to_string())}
-            data-connection={render.connection.indicator_state()}
+            data-connection={button.connection.indicator_state()}
             data-quota-stale={quota.as_ref().is_some_and(|quota| quota.stale).then_some("true")}
-            data-sidebar-focus-key="spice"
+            data-sidebar-focus-key={focus_key}
             aria-label={trigger_label.clone()}
             aria-haspopup="dialog"
-            aria-expanded={render.spice_sidebar_open.to_string()}
+            aria-expanded={expanded.to_string()}
             aria-controls="app-sidebar-title"
             title={trigger_label}
-            {onclick}
+            onclick={button.onclick}
         >
             <span class="app-spice-well" aria-hidden="true">
                 {quota.as_ref().map(QuotaLevel::render)}

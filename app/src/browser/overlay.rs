@@ -180,7 +180,12 @@ pub(super) fn reduced_motion() -> bool {
 }
 
 const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
-fn transform_transition_running(element: &web_sys::Element) -> bool {
+/// A sheet leaves by sliding (`transform`) or by shrinking back into its
+/// anchor (`clip-path`); its opacity fade never bounds completion.
+fn closes_layer(property: Option<&str>) -> bool {
+    matches!(property, Some("transform" | "clip-path"))
+}
+fn close_transition_running(element: &web_sys::Element) -> bool {
     let Ok(get_animations) =
         js_sys::Reflect::get(element.as_ref(), &JsValue::from_str("getAnimations"))
     else {
@@ -193,17 +198,18 @@ fn transform_transition_running(element: &web_sys::Element) -> bool {
         return false;
     };
     js_sys::Array::from(&animations).iter().any(|animation| {
-        js_sys::Reflect::get(&animation, &JsValue::from_str("transitionProperty"))
-            .ok()
-            .and_then(|property| property.as_string())
-            .as_deref()
-            == Some("transform")
+        closes_layer(
+            js_sys::Reflect::get(&animation, &JsValue::from_str("transitionProperty"))
+                .ok()
+                .and_then(|property| property.as_string())
+                .as_deref(),
+        )
     })
 }
 
-/// Finish a closing layer when its own `transform` slide ends or is canceled,
-/// or at once when no transform transition is running. Completion always has
-/// an actual boundary; nothing waits on a clock.
+/// Finish a closing layer when its own slide or shrink ends or is canceled,
+/// or at once when no such transition is running. Completion always has an
+/// actual boundary; nothing waits on a clock.
 #[hook]
 pub(super) fn use_close_transition(
     closing: bool,
@@ -219,7 +225,7 @@ pub(super) fn use_close_transition(
         let transition_running = *rendered
             && transition_layer
                 .cast::<web_sys::Element>()
-                .is_some_and(|element| transform_transition_running(&element));
+                .is_some_and(|element| close_transition_running(&element));
         if *closing && !transition_running {
             finish_without_transition.emit(());
         }
@@ -251,7 +257,7 @@ pub(super) fn use_close_transition(
                                 .is_some_and(|element| element == target);
                             if *closing_now.borrow()
                                 && from_layer
-                                && property.as_deref() == Some("transform")
+                                && closes_layer(property.as_deref())
                             {
                                 complete.emit(());
                             }

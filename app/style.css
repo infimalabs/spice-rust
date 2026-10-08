@@ -503,6 +503,29 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   opacity: 1;
   transform: translateX(0);
 }
+/* An anchored sheet forms around its launcher's twin, which stands at the
+   launcher's own place: the sheet grows out of the button's circle and
+   shrinks back into it, so the button never moves. */
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar {
+  --app-sidebar-anchor-x: calc(100% - var(--app-commandbar-inset-end) - var(--app-header-control) / 2);
+  --app-sidebar-anchor-y: calc(var(--app-commandbar-block-pad) + var(--app-header-control) / 2);
+  opacity: 1;
+  transform: none;
+  clip-path: circle(calc(var(--app-header-control) / 2) at var(--app-sidebar-anchor-x) var(--app-sidebar-anchor-y));
+  transition: clip-path var(--app-motion-settle) var(--app-ease-standard);
+}
+.app-sidebar-layer[data-sidebar-anchored][data-sidebar-state="open"] .app-sidebar {
+  clip-path: circle(142% at var(--app-sidebar-anchor-x) var(--app-sidebar-anchor-y));
+}
+.app-sidebar > .app-spice-button {
+  position: absolute;
+  z-index: 3;
+  top: var(--app-commandbar-block-pad);
+  inset-inline-end: var(--app-commandbar-inset-end);
+}
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
+  padding-inline-end: calc(var(--app-commandbar-inset-end) + var(--app-header-control) + 12px);
+}
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
   backdrop-filter: none;
