@@ -256,6 +256,10 @@ replaying it. History outside the decoded window reports the exact withheld
 source-byte count and its authenticated older cursor. A cursor from a replaced
 tape is refused rather than replayed against the new generation.
 
+Decoded reasoning remains a visible event on `spice retro` and `spice watch`,
+but every CLI form, including export, represents it only by the count of
+withheld UTF-8 bytes and never emits the provider's reasoning text.
+
 `spice retro [LANE|LOCUS|PATH]` is that reader's CLI. A selector that resolves
 one session tape prints one newest-first page from a 256 KiB scan window under
 the interactive limits; `--kind KIND` (repeatable) selects event kinds. Every
