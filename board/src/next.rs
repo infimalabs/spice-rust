@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use wire::{Actor, ClaimCell, ClaimDisposition, TaskStamp, TeamSubscription};
+use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -14,6 +14,7 @@ pub struct Selection<'a> {
     effective_priority: i64,
     downstream_weight: usize,
     last_resort: bool,
+    preferred: bool,
     peer_occupied: bool,
     movement: u8,
 }
@@ -46,16 +47,16 @@ impl<'a> Selection<'a> {
 
 /// Select the highest-ranked subscribed and eligible task for `actor`.
 ///
-/// This is the only allocation path in `board`. It derives completed
-/// dependencies from the same supplied head set, applies ordinary task
-/// winnowing and then the one derived environment filter, ranks peer work before
-/// the actor's last-resort rows (its own review, and rows it freed), then
-/// effective priority and downstream weight. Queue
-/// ages within `band` of that group's oldest row admit locality: an active peer
-/// in the same project/phase cell repels, then movement from `recent_cell`
-/// costs one each for changing project and phase. Rows outside the band cannot
-/// be rescued by locality. Identical evidence always returns the same task
-/// regardless of slice order.
+/// This is the only allocation policy in `board`. It derives completed
+/// dependencies from the same supplied head set, applies ordinary task and
+/// environment filters, then ranks a prior claimant's continuation first.
+/// Independent handoffs back to their prior claimant, self-authored reviews,
+/// and explicitly freed rows form the last-resort class. Effective priority and
+/// downstream weight follow. Queue ages within `band` of that group's oldest
+/// row admit locality: an active peer in the same project/phase cell repels,
+/// then movement from `recent_cell` costs one each for changing project and
+/// phase. Rows outside the band cannot be rescued by locality. Identical
+/// evidence always returns the same task regardless of slice order.
 #[must_use]
 pub fn select<'a>(
     entries: &'a [Entry],
@@ -73,6 +74,30 @@ pub fn select<'a>(
         recent_cell,
         environment,
         &satisfied_tasks(entries),
+    )
+}
+
+/// [`select`] at an explicit allocation instant, including an open phase
+/// handoff window.
+#[must_use]
+pub fn select_at<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    now: Instant,
+) -> Option<Selection<'a>> {
+    select_with_satisfied_at(
+        entries,
+        actor,
+        subscription,
+        band,
+        recent_cell,
+        environment,
+        &satisfied_tasks(entries),
+        now,
     )
 }
 
@@ -98,6 +123,31 @@ pub fn select_with_satisfied<'a>(
         recent_cell,
         environment,
         satisfied,
+        None,
+    );
+    choose(&candidates, band).map(|index| candidates[index])
+}
+
+/// [`select_with_satisfied`] at an explicit allocation instant.
+#[must_use]
+pub fn select_with_satisfied_at<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    satisfied: &BTreeSet<TaskStamp>,
+    now: Instant,
+) -> Option<Selection<'a>> {
+    let candidates = candidates(
+        entries,
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+        satisfied,
+        Some(now),
     );
     choose(&candidates, band).map(|index| candidates[index])
 }
@@ -117,6 +167,48 @@ pub fn offer_order<'a>(
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Vec<Selection<'a>> {
+    offer_order_at_inner(
+        entries,
+        actor,
+        subscription,
+        band,
+        recent_cell,
+        environment,
+        None,
+    )
+}
+
+/// [`offer_order`] at an explicit allocation instant.
+#[must_use]
+pub fn offer_order_at<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    now: Instant,
+) -> Vec<Selection<'a>> {
+    offer_order_at_inner(
+        entries,
+        actor,
+        subscription,
+        band,
+        recent_cell,
+        environment,
+        Some(now),
+    )
+}
+
+fn offer_order_at_inner<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    now: Option<Instant>,
+) -> Vec<Selection<'a>> {
     let completed = satisfied_tasks(entries);
     let mut remaining = candidates(
         entries,
@@ -125,6 +217,7 @@ pub fn offer_order<'a>(
         recent_cell,
         environment,
         &completed,
+        now,
     );
     let mut order = Vec::with_capacity(remaining.len());
     while let Some(index) = choose(&remaining, band) {
@@ -141,6 +234,7 @@ fn candidates<'a>(
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
     completed: &BTreeSet<TaskStamp>,
+    now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
     let graph = RankingGraph::new(entries);
     let priorities = effective_priorities(entries, &graph);
@@ -148,7 +242,7 @@ fn candidates<'a>(
     entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| selectable(entry, actor, subscription, completed))
+        .filter(|(_, entry)| selectable(entry, actor, subscription, completed, now))
         .filter(|(_, entry)| environment_satisfied(entry, environment))
         .map(|(entry_index, entry)| {
             let node = graph.entry_nodes[entry_index];
@@ -158,7 +252,8 @@ fn candidates<'a>(
                 urgency: Urgency::from_heads(entry),
                 effective_priority: priorities[node],
                 downstream_weight: downstream[node],
-                last_resort: is_self_review(entry, actor) || is_released_by(entry, actor),
+                preferred: is_preferred_continuation(entry, actor),
+                last_resort: is_independent_handoff(entry, actor) || is_released_by(entry, actor),
                 peer_occupied: peer_occupies(entries, entry, actor),
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
             }
@@ -168,20 +263,26 @@ fn candidates<'a>(
 
 /// Index of the one candidate the allocator hands out first.
 ///
-/// Ordinary work outranks the actor's last-resort rows, then effective priority, then
+/// A prior claimant's continuation outranks other work. Within that class,
+/// ordinary work outranks last-resort rows, then effective priority and
 /// downstream weight. Within `band` of that group's greatest urgency, peer
 /// occupancy repels, then locality movement costs, then the handle decides.
 fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
-    let peer_class = candidates.iter().any(|candidate| !candidate.last_resort);
+    let preferred = candidates.iter().any(|candidate| candidate.preferred);
+    let peer_class = candidates
+        .iter()
+        .filter(|candidate| candidate.preferred == preferred)
+        .any(|candidate| !candidate.last_resort);
     let effective_priority = candidates
         .iter()
-        .filter(|candidate| candidate.last_resort != peer_class)
+        .filter(|candidate| candidate.preferred == preferred && candidate.last_resort != peer_class)
         .map(|candidate| candidate.effective_priority)
         .max()?;
     let downstream_weight = candidates
         .iter()
         .filter(|candidate| {
-            candidate.last_resort != peer_class
+            candidate.preferred == preferred
+                && candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
         })
         .map(|candidate| candidate.downstream_weight)
@@ -189,7 +290,8 @@ fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
     let urgency = candidates
         .iter()
         .filter(|candidate| {
-            candidate.last_resort != peer_class
+            candidate.preferred == preferred
+                && candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
         })
@@ -199,7 +301,8 @@ fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
         .iter()
         .enumerate()
         .filter(|(_, candidate)| {
-            candidate.last_resort != peer_class
+            candidate.preferred == preferred
+                && candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
                 && urgency.value().abs_diff(candidate.urgency.value()) <= band
@@ -263,17 +366,21 @@ pub fn recent_claim_cell(
     })
 }
 
-/// Whether `entry` is `actor`'s own unassigned review: the class the allocator
-/// hands out only when no peer work is eligible.
+/// Whether `entry` is an independent handoff back to its prior claimant.
+///
+/// The allocator ranks this class last so peer work wins, without coupling the
+/// ownership rule to any phase name.
 #[must_use]
-pub fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
-    let workflow = entry.workflow();
-    workflow.phase.as_str() == "review"
-        && workflow.review == "unassigned"
-        && workflow.assignment.is_none()
-        && entry.claim().is_some_and(|claim| {
-            claim.disposition == ClaimDisposition::Freed && &claim.actor == actor
-        })
+pub fn is_independent_handoff(entry: &Entry, actor: &Actor) -> bool {
+    entry.phase_handoff().is_some_and(|handoff| {
+        handoff.kind() == crate::PhaseHandoffKind::Independent && handoff.prior() == actor
+    })
+}
+
+fn is_preferred_continuation(entry: &Entry, actor: &Actor) -> bool {
+    entry.phase_handoff().is_some_and(|handoff| {
+        handoff.kind() == crate::PhaseHandoffKind::Continue && handoff.prior() == actor
+    })
 }
 
 /// Dense live-graph indexes used by every repeated ranking traversal.
@@ -412,8 +519,27 @@ fn selectable(
     actor: &Actor,
     subscription: &TeamSubscription,
     completed: &BTreeSet<TaskStamp>,
+    now: Option<Instant>,
 ) -> bool {
-    subscription.admits_creator_team(entry.creator_team()) && eligible(entry, actor, completed)
+    subscription.admits_creator_team(entry.creator_team())
+        && handoff_admits(entry, actor, now)
+        && eligible(entry, actor, completed)
+}
+
+fn handoff_admits(entry: &Entry, actor: &Actor, now: Option<Instant>) -> bool {
+    let Some(now) = now else {
+        return true;
+    };
+    let Some(handoff) = entry.phase_handoff() else {
+        return true;
+    };
+    if now >= handoff.until() {
+        return true;
+    }
+    match handoff.kind() {
+        crate::PhaseHandoffKind::Continue => handoff.prior() == actor,
+        crate::PhaseHandoffKind::Independent => handoff.prior() != actor,
+    }
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
@@ -542,8 +668,50 @@ pub fn selectable_entry(
     subscription: &TeamSubscription,
     environment: &wire::Environment,
 ) -> bool {
-    selectable(entry, actor, subscription, &satisfied_tasks(entries))
+    selectable(entry, actor, subscription, &satisfied_tasks(entries), None)
         && environment_satisfied(entry, environment)
+}
+
+/// [`selectable_entry`] at an explicit allocation instant.
+#[must_use]
+pub fn selectable_entry_at(
+    entries: &[Entry],
+    entry: &Entry,
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    environment: &wire::Environment,
+    now: Instant,
+) -> bool {
+    selectable(
+        entry,
+        actor,
+        subscription,
+        &satisfied_tasks(entries),
+        Some(now),
+    ) && environment_satisfied(entry, environment)
+}
+
+/// Earliest future phase-handoff instant that currently blocks `actor`.
+///
+/// Ordinary route, workflow, dependency, environment, assignment, and
+/// possession predicates must already admit the row. This lets lifecycle arm
+/// the exact durable handoff deadline when the actor has no candidate yet.
+#[must_use]
+pub fn blocked_handoff_until(
+    entries: &[Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    environment: &wire::Environment,
+    now: Instant,
+) -> Option<Instant> {
+    let completed = satisfied_tasks(entries);
+    entries
+        .iter()
+        .filter(|entry| selectable(entry, actor, subscription, &completed, None))
+        .filter(|entry| environment_satisfied(entry, environment))
+        .filter(|entry| !handoff_admits(entry, actor, Some(now)))
+        .filter_map(|entry| entry.phase_handoff().map(|handoff| handoff.until()))
+        .min()
 }
 
 /// Whether one named entry may be taken from whoever currently holds it.

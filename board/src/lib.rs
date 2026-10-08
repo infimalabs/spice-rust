@@ -29,15 +29,17 @@ pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    Selection, capturable_entry, eligible_entry, environment_satisfied, is_released_by,
-    is_self_review, offer_order, recent_claim_cell, satisfied_tasks, select, select_with_satisfied,
-    selectable_entry, stealable_entry,
+    Selection, blocked_handoff_until, capturable_entry, eligible_entry, environment_satisfied,
+    is_independent_handoff, is_released_by, offer_order, offer_order_at, recent_claim_cell,
+    satisfied_tasks, select, select_at, select_with_satisfied, select_with_satisfied_at,
+    selectable_entry, selectable_entry_at, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
-pub use phase::{PhaseRefusal, Transition, TransitionKind};
+pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};
 pub use task::{
-    BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, Project, ProjectError,
-    ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
+    BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, PhaseHandoff,
+    PhaseHandoffKind, Project, ProjectError, ProjectPolicy, ProjectPolicyError, SystemTaskRoute,
+    TaskError,
 };
 pub use urgency::{
     PRIORITY_TAG_PREFIX, Urgency, priority_from_authored, priority_from_tag, priority_from_wire,

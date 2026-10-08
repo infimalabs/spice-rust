@@ -370,10 +370,10 @@ pub struct TaskAssign {
     pub reviewer: Actor,
 }
 
-/// Closed agent-facing guidance attached to a task transition.
+/// Legacy agent-facing guidance retained for exact replay of older task facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskGuidance {
-    /// A plan advance released its claim without reserving the following phase.
+    /// Historical plan advance warning, superseded by allocator handoff policy.
     #[serde(
         rename = "phase ownership: this advance released your claim; only the held plan phase was completed. Run spice task next for another assignment; it may select any eligible work and does not guarantee this task's next phase."
     )]

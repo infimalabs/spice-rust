@@ -53,6 +53,7 @@ pub(super) fn project_targets(
                 subscription.as_ref(),
                 allocation,
                 first_drain_member,
+                now,
             )?
         };
         targets.push(Target {
@@ -140,6 +141,7 @@ fn work_availability(
     subscription: Option<&wire::TeamSubscription>,
     allocation: &board::NextConfig,
     first_drain_member: bool,
+    now: Instant,
 ) -> CommandResult<(Available, Available)> {
     let actor = Actor::Lane(row.lane);
     match subscription {
@@ -152,6 +154,7 @@ fn work_availability(
                 subscription,
                 allocation,
                 first_drain_member,
+                now,
             )?,
             Available::None,
         )),
@@ -164,6 +167,7 @@ fn work_availability(
                 &actor,
                 subscription,
                 allocation,
+                now,
             )?,
         )),
         Some(_) | None => Ok((Available::None, Available::None)),

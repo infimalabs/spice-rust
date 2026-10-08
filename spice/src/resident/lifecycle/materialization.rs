@@ -251,7 +251,11 @@ impl Projection {
                 .or_else(|| self.creator_teams.get(task))
                 .copied()
                 .flatten();
-            let entry = entry(&heads, projects)?.with_creator_team(creator_team);
+            let phase_handoff = crate::board_command::phase_handoff(snapshot.facts(), &heads)
+                .map_err(super::unit_outcome)?;
+            let entry = entry(&heads, projects)?
+                .with_creator_team(creator_team)
+                .with_phase_handoff(phase_handoff);
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)

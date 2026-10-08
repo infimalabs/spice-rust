@@ -410,8 +410,8 @@ fn claim_activation_next_action(selected: &Entry) -> Box<str> {
 /// and a freed row carries the reminder of how to say what it waits on.
 fn claim_phase(selected: &Entry, actor: &wire::Actor) -> wire::intent::ClaimPhase {
     let workflow = selected.workflow();
-    let deliverable = if board::is_self_review(selected, actor) {
-        Some(board::phase::SELF_REVIEW_DELIVERABLE)
+    let deliverable = if board::is_independent_handoff(selected, actor) {
+        Some(board::phase::SELF_HANDOFF_DELIVERABLE)
     } else {
         board::phase::deliverable(&workflow.phase)
     };
@@ -503,13 +503,15 @@ fn allocator_claim_selection<'a>(
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     let subscription = allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
     let environment = snapshot.answer.environment();
-    let selected = board::select(
+    let now = current_instant()?;
+    let selected = board::select_at(
         &snapshot.entries,
         command.actor(),
         &subscription,
         snapshot.answer.allocation_band,
         snapshot.answer.recent_cell.as_ref(),
         &environment,
+        now,
     )
     .map(|selected| selected.entry())
     .ok_or_else(|| {

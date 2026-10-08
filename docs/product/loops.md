@@ -320,10 +320,12 @@ The wake decision itself is the hardened part:
 
 ```mermaid
 flowchart TD
-  B["board scan"] --> R{"derived eligible count<br/>is at least 2?"}
+  B["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
+  H -- yes --> W["select ONE vacant lane immediately"]
+  H -- no --> R{"derived eligible count<br/>is at least 2?"}
   R -- yes --> S{"newest eligible origin<br/>aged at least 3s?"}
   R -- no --> L{"lone row aged<br/>at least 3 min?"}
-  S -- yes --> W["select ONE vacant lane"]
+  S -- yes --> W
   S -- no --> B
   L -- yes --> W
   L -- no --> B
@@ -350,14 +352,14 @@ flowchart TD
 - Two ready tasks are the normal trigger — one for the new occupant to claim,
    one left on the board. READY is a derived eligibility projection and
    excludes active claims, so occupied lanes do not inflate the backlog count.
-- A single ready task is never stranded. After the starvation age, one is
-   enough. This is an *age*, not a retry interval.
-- No row is chosen before settling. With at least two eligible rows, the newest
-   READY origin in the complete eligible set must age through the settle
-   interval before selection; any newly eligible row extends that horizon. This
-   keeps a burst from beating a running occupant's own done-to-next cycle. A
-   lone row riding the starvation escape launches immediately once its own age
-   passes.
+- A single ordinary ready task is never stranded. After the starvation age, one
+   is enough. This is an *age*, not a retry interval.
+- Newly ready ordinary work settles before lifecycle chooses it. With at least
+   two eligible rows, the newest READY origin in the complete eligible set must
+   age through the settle interval; any newly eligible row extends that horizon.
+   A durable phase handoff bypasses both ordinary ages: continuity wakes the
+   prior claimant, while published repository work wakes an eligible peer during
+   its bounded independent-ownership window.
 - Rendering never launches. The snapshot, the live bus, and the UI
    project settled decisions; no read path can start or renew an occupant.
 - Decisions for one worktree are serialized; sibling lanes proceed
@@ -369,9 +371,11 @@ flowchart TD
 supervisor-phase, UI-presentation, and resident-lifecycle vocabularies are not.
 
 **Acceptance** — file two eligible tasks with every lane vacant: exactly one new
-occupant starts. File one and wait: one starts after the starvation age, not
-before. Let any turn exit, including code zero: its lane becomes vacant. File a
-burst at once: occupants still come up one decision at a time.
+occupant starts. File one ordinary task and wait: one starts after the starvation
+age, not before. Transition a phase under a durable handoff: its selected owner
+starts without those ordinary ages. Let any turn exit, including code zero: its
+lane becomes vacant. File a burst at once: occupants still come up one decision
+at a time.
 
 > **Rendering never launches is the invariant most likely to be lost.** It is
 > very natural to let a lane "ensure" an occupant while rendering. That makes

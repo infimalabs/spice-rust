@@ -209,26 +209,154 @@ fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
 }
 
 #[test]
-fn self_review_is_a_last_resort_class_instead_of_an_exclusion() {
-    let mut self_review_head = statement("BOARD-a1");
-    self_review_head.tags.push("priority:critical".to_owned());
-    let self_review = admitted(
-        self_review_head,
-        workflow("review"),
+fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
+    let mut independent_head = statement("BOARD-a1");
+    independent_head.tags.push("priority:critical".to_owned());
+    let prior = Actor::Spice;
+    let independent = admitted(
+        independent_head,
+        workflow("todo"),
         Some(claim(ClaimDisposition::Freed)),
         Some(lease()),
     )
-    .expect("self-authored review");
-    let peer_work = entry("BOARD-z1");
+    .expect("independent phase")
+    .with_phase_handoff(Some(board::PhaseHandoff::new(
+        board::PhaseHandoffKind::Independent,
+        prior.clone(),
+        instant("2026-08-01T06:00:03.000Z"),
+    )));
+    let peer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    let before = instant("2026-08-01T06:00:02.000Z");
+    assert!(
+        board::select_at(
+            std::slice::from_ref(&independent),
+            &prior,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            before,
+        )
+        .is_none(),
+        "the prior author waits through the independent handoff opportunity",
+    );
+    assert_eq!(
+        board::blocked_handoff_until(
+            std::slice::from_ref(&independent),
+            &prior,
+            &all_projects(),
+            &environment(),
+            before,
+        ),
+        Some(instant("2026-08-01T06:00:03.000Z")),
+        "lifecycle can arm the prior author's fallback deadline",
+    );
+    assert_eq!(
+        board::select_at(
+            std::slice::from_ref(&independent),
+            &peer,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            before,
+        )
+        .expect("an eligible peer receives the independent phase")
+        .entry()
+        .handle(),
+        independent.handle(),
+    );
 
-    let entries = [self_review.clone(), peer_work];
-    let selected =
-        select(&entries, &Actor::Spice, &all_projects(), 2).expect("peer work remains eligible");
+    let peer_work = entry("BOARD-z1");
+    let entries = [independent.clone(), peer_work];
+    let after = instant("2026-08-01T06:00:03.000Z");
+    let selected = board::select_at(
+        &entries,
+        &prior,
+        &all_projects(),
+        2,
+        None,
+        &environment(),
+        after,
+    )
+    .expect("ordinary work remains eligible");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
-    let fallback_entries = [self_review];
-    let fallback = select(&fallback_entries, &Actor::Spice, &all_projects(), 2)
-        .expect("own review remains eligible on a quiet board");
-    assert_eq!(fallback.entry().handle(), &handle("BOARD-a1"));
+    let returned = board::select_at(
+        std::slice::from_ref(&independent),
+        &prior,
+        &all_projects(),
+        2,
+        None,
+        &environment(),
+        after,
+    )
+    .expect("the prior author can progress when no peer takes the phase");
+    assert_eq!(returned.entry().handle(), &handle("BOARD-a1"));
+    assert_eq!(
+        board::blocked_handoff_until(
+            std::slice::from_ref(&independent),
+            &prior,
+            &all_projects(),
+            &environment(),
+            after,
+        ),
+        None,
+    );
+}
+
+#[test]
+fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
+    let prior = Actor::Spice;
+    let continuation = entry("BOARD-a1").with_phase_handoff(Some(board::PhaseHandoff::new(
+        board::PhaseHandoffKind::Continue,
+        prior.clone(),
+        instant("2026-08-01T06:00:03.000Z"),
+    )));
+    let mut critical_head = statement("BOARD-z1");
+    critical_head.tags.push("priority:critical".to_owned());
+    let critical =
+        admitted(critical_head, workflow("todo"), None, None).expect("critical peer work");
+    let entries = [continuation.clone(), critical];
+    let before = instant("2026-08-01T06:00:02.000Z");
+    let selected = board::select_at(
+        &entries,
+        &prior,
+        &all_projects(),
+        2,
+        None,
+        &environment(),
+        before,
+    )
+    .expect("the prior author receives its continuation");
+    assert_eq!(selected.entry().handle(), continuation.handle());
+
+    let peer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    assert!(
+        board::select_at(
+            std::slice::from_ref(&continuation),
+            &peer,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            before,
+        )
+        .is_none(),
+        "a peer cannot race the continuation owner",
+    );
+    assert!(
+        board::select_at(
+            std::slice::from_ref(&continuation),
+            &peer,
+            &all_projects(),
+            2,
+            None,
+            &environment(),
+            instant("2026-08-01T06:00:03.000Z"),
+        )
+        .is_some(),
+        "the continuation opens when its prior author does not take it",
+    );
 }
 
 #[test]

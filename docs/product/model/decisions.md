@@ -12,7 +12,8 @@ tie-break for the one above.
 flowchart TD
   subgraph GLOBAL["global work value, strict order"]
     direction LR
-    E["eligible candidates"] --> Class["class<br/>own review and freed rows are last resort"]
+    E["eligible candidates"] --> Handoff["phase handoff<br/>continuity owner or independent peer"]
+    Handoff --> Class["last-resort class<br/>prior independent owner, own review, freed rows"]
     Class --> Priority["effective priority<br/>inherited from work it unblocks"]
     Priority --> Weight["downstream weight<br/>releases more of the graph"]
   end
@@ -37,6 +38,13 @@ reduces context switching but must never starve the graph.
 **Invariant —** Self-review is never *excluded*, only ranked last. A quiet board
 still hands an actor its own review rather than stalling. A row the actor freed
 joins that last-resort class under the same law.
+
+**Invariant —** A phase transition carries a short ownership handoff derived
+from durable transition evidence, not from a phase's spelling. A continuation
+is exclusive to and preferred for its prior claimant during that window.
+Published repository work instead excludes that claimant during the window so
+an eligible peer can take independent ownership; afterward the prior claimant
+is a last-resort owner, never a dead end.
 
 **Invariant —** Peer spread is anti-affinity: prefer a cell peers are not in, so
 a fleet spreads across the board instead of converging on one area.
@@ -98,10 +106,12 @@ allowed to speak.
 
 ```mermaid
 flowchart TD
-  S["board scan"] --> N{"ready count is at least 2?"}
+  S["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
+  H -- yes --> W["wake ONE lane immediately"]
+  H -- no --> N{"ready count is at least 2?"}
   N -- yes --> ST{"newest eligible READY origin<br/>aged past the settle interval?"}
   N -- no --> LO{"lone row aged<br/>at least the starvation age?"}
-  ST -- yes --> W["wake ONE lane"]
+  ST -- yes --> W
   ST -- no --> S
   LO -- yes --> W
   LO -- no --> S
@@ -119,11 +129,12 @@ occupied lanes do not inflate the count.
 **Invariant —** Starvation is an **age**, not a retry interval. After it, one is
 enough.
 
-**Invariant —** No row is chosen before settling. With at least two eligible
-rows, the clock is the newest READY origin in the whole eligible set; selection
-waits until that origin has aged through the settle interval. A newly eligible
-row therefore extends the horizon instead of being grabbed immediately. This
-prevents a burst from beating a running agent's own done-to-next cycle.
+**Invariant —** Newly ready work settles before lifecycle chooses it. With at
+least two ordinary eligible rows, the clock is the newest READY origin in the
+whole eligible set; a newly eligible row extends that horizon. A durable phase
+handoff is the exception: its ownership window already resolves the race, so an
+eligible handoff owner wakes immediately instead of waiting through ordinary
+settle or starvation age.
 
 **Policy —** threshold 2, settle 3s, starvation 3min, ensure retry 5s.
 

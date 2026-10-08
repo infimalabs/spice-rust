@@ -402,7 +402,7 @@ fn append_done(
     parked: Option<&body::TaskParkedCommits>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let status = transition.next().status.clone();
-    let guidance = plan_advance_guidance(transition);
+    let guidance = None;
     let completed = write
         .fact(
             body::TaskDone {
@@ -468,14 +468,6 @@ fn append_done(
         claim: None,
         next,
     })
-}
-
-fn plan_advance_guidance(transition: &board::Transition) -> Option<wire::intent::TaskGuidance> {
-    matches!(
-        transition.kind(),
-        board::TransitionKind::Advance { from, .. } if from.as_str() == "plan"
-    )
-    .then_some(wire::intent::TaskGuidance::PlanAdvanceOwnership)
 }
 
 fn projected_done_next_action(

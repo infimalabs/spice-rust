@@ -244,6 +244,7 @@ impl TaskProjection<'_> {
                 .and_then(|envelope| envelope.fact.read::<body::ClaimFreed>())
                 .and_then(|freed| freed.parked)
         });
+        let phase_handoff = phase_handoff(self.facts, heads)?;
         let claim_context = current_claim_context(
             &statement.body.born,
             claim.as_ref().map(|head| &head.body),
@@ -270,7 +271,8 @@ impl TaskProjection<'_> {
             )
         })?
         .with_creator_team(creator_team)
-        .with_explicit_release(explicit_release);
+        .with_explicit_release(explicit_release)
+        .with_phase_handoff(phase_handoff);
         let visibility = entry.project().visibility().clone();
         let origin_thread = self
             .origin_threads
