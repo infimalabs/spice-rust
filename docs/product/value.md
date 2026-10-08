@@ -585,13 +585,17 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
-Beside the draft, one compact framed column holds, top to bottom, the round
-`Send`, a row of two small round button slots, the quiet/speak/narrate speech
-range, and the lifetime range. Both ranges run left to right, minimum on the
-left and maximum on the right; their bars stay neutral, and each thumb wears its
-current value as a word drawn to fill it, so every value occupies the same
-width. Send, the round buttons, and the thumbs share one tactile face whose
-color carries state. `Send` lights only when a press would submit something:
+Beside the draft, one fixed 80 × 160 control panel has four rows separated by
+three four-pixel gaps: 56 pixels for `Send`, 34 for two equal small-button
+slots, then two equal 29-pixel range rows because
+$(160 - 56 - 34 - 3 \times 4) / 2 = 29$. `TURBO` occupies the small row's
+first slot; its second stays available for the team menu. Each range runs left
+to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside a
+neutral 76 × 26 pill groove: two pixels of clearance above and below, and two
+pixels of panel inset at each end. Every current-value word is drawn to fill its
+thumb, so every value occupies the same width. Send, the round buttons, and the
+thumbs share one tactile face whose color carries state.
+`Send` lights only when a press would submit something:
 it fills with one ring per agent that would receive a message, each holding an
 equal share of the face's area, in that agent's accent with member zero at the
 core, its word on a flat plate set into the rings. Unlit, it keeps the raised
