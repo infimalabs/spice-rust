@@ -32,8 +32,8 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 12 carries each worktree's ordered speech voice list.
-    pub const CURRENT: Self = Self(12);
+    /// Version 13 carries each provider account's optional raw credit balance.
+    pub const CURRENT: Self = Self(13);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

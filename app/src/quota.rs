@@ -717,6 +717,7 @@ mod tests {
                     },
                 )
                 .collect(),
+            credit_balance: None,
             reset_credits: None,
         }
     }

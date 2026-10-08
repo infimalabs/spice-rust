@@ -87,6 +87,7 @@ pub(crate) struct Report {
     pub(crate) fetched_at_ms: i64,
     pub(crate) account: ReportAccount,
     pub(crate) limits: Vec<Limit>,
+    pub(crate) credit_balance: Option<Amount>,
     pub(crate) reset_credits: Option<ResetCredits>,
 }
 
@@ -586,6 +587,7 @@ struct ReportInput {
     fetched_at: i64,
     #[serde(default)]
     limits: Vec<Limit>,
+    credit_balance: Option<Amount>,
     reset_credits: Option<ResetCredits>,
     metadata: Option<ReportAccount>,
 }
@@ -602,6 +604,9 @@ impl ReportInput {
             fetched_at_ms: self.fetched_at,
             account,
             limits: self.limits,
+            credit_balance: self.credit_balance.filter(|balance| {
+                balance.unit.eq_ignore_ascii_case("credits") && balance.remaining.is_some()
+            }),
             reset_credits: self.reset_credits,
         }
     }
@@ -779,17 +784,11 @@ fn wire_report(report: &Report) -> wire::QuotaReport {
                     resets_at: window.resets_at,
                     reset_label: window.reset_label.clone(),
                 }),
-                amount: wire::QuotaAmount {
-                    used: limit.amount.used.map(quantity),
-                    limit: limit.amount.limit.map(quantity),
-                    remaining: limit.amount.remaining.map(quantity),
-                    used_fraction: limit.amount.used_fraction.map(quantity),
-                    remaining_fraction: limit.amount.remaining_fraction.map(quantity),
-                    unit: limit.amount.unit.clone(),
-                },
+                amount: wire_amount(&limit.amount),
                 status: limit.status.clone(),
             })
             .collect(),
+        credit_balance: report.credit_balance.as_ref().map(wire_amount),
         reset_credits: report
             .reset_credits
             .as_ref()
@@ -830,6 +829,17 @@ fn wire_account_fields(
         org_id: org_id.clone(),
         org_name: org_name.clone(),
         ..wire::QuotaAccount::default()
+    }
+}
+
+fn wire_amount(amount: &Amount) -> wire::QuotaAmount {
+    wire::QuotaAmount {
+        used: amount.used.map(quantity),
+        limit: amount.limit.map(quantity),
+        remaining: amount.remaining.map(quantity),
+        used_fraction: amount.used_fraction.map(quantity),
+        remaining_fraction: amount.remaining_fraction.map(quantity),
+        unit: amount.unit.clone(),
     }
 }
 
@@ -896,6 +906,10 @@ mod tests {
           },
           "status": "ok"
         }],
+        "creditBalance": {
+          "remaining": 62000,
+          "unit": "credits"
+        },
         "resetCredits": {
           "availableCount": 1,
           "redeemableCount": 1,
@@ -909,6 +923,28 @@ mod tests {
             "status": "available"
           }]
         }
+      }, {
+        "provider": "openai-codex",
+        "fetchedAt": 1700000000200,
+        "metadata": {
+          "email": "ot*",
+          "accountId": "o2*",
+          "planType": "pro"
+        },
+        "limits": [],
+        "creditBalance": {
+          "remaining": 61500.25,
+          "unit": "credits"
+        }
+      }, {
+        "provider": "openai-codex",
+        "fetchedAt": 1700000000300,
+        "metadata": {
+          "email": "mi*",
+          "accountId": "m3*",
+          "planType": "pro"
+        },
+        "limits": []
       }],
       "accountsWithoutUsage": [{
         "provider": "xai",
@@ -1038,6 +1074,21 @@ mod tests {
         assert_eq!(snapshot.reports[0].limits[0].amount.remaining, Some(91.0));
         assert_eq!(
             snapshot.reports[0]
+                .credit_balance
+                .as_ref()
+                .and_then(|balance| balance.remaining),
+            Some(62_000.0)
+        );
+        assert_eq!(
+            snapshot.reports[1]
+                .credit_balance
+                .as_ref()
+                .and_then(|balance| balance.remaining),
+            Some(61_500.25)
+        );
+        assert_eq!(snapshot.reports[2].credit_balance, None);
+        assert_eq!(
+            snapshot.reports[0]
                 .reset_credits
                 .as_ref()
                 .expect("reset credits")
@@ -1071,7 +1122,7 @@ mod tests {
         ] {
             assert!(!encoded.contains(secret), "{secret} crossed the quota wire");
         }
-        for mask in ["us*", "sc*", "no*", "di*"] {
+        for mask in ["us*", "sc*", "ot*", "o2*", "mi*", "m3*", "no*", "di*"] {
             assert!(encoded.contains(mask), "{mask} redaction was lost");
         }
     }

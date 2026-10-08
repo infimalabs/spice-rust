@@ -904,6 +904,9 @@ a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) 
 .quota-limit[data-limit-status] .quota-meter-fill { fill: var(--triage); }
 .quota-limit-amount { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .quota-limit-reset { color: var(--muted); text-align: right; white-space: nowrap; }
+.quota-credit-balance { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 0; font-size: var(--app-type-control); }
+.quota-credit-balance dt { font-weight: 650; }
+.quota-credit-balance dd { margin: 0; font-variant-numeric: tabular-nums; }
 .quota-reset-credits { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 0; color: var(--muted); font-size: var(--app-type-meta); }
 .quota-reset-credits strong { color: var(--ink); }
 .quota-reset-credit { display: flex; flex: 0 0 100%; align-items: center; min-width: 0; max-width: 100%; height: 13px; gap: 4px; }

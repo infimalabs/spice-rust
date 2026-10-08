@@ -321,7 +321,12 @@ the same fixed-width place shows a loading or unavailable mark.
 Provider quota detail rows preserve each provider's authoritative remaining
 quantity. Percent limits label that capacity `N% full`; their filled segment
 starts at the left edge, so consumption exposes the track from the right.
-Counted limits retain their explicit remaining and total units. Each row keeps
+Counted limits retain their explicit remaining and total units. A
+provider-reported raw credit balance appears on its own account row as
+**Credits**, separate from time-window quota and banked reset grants; balances
+are never inferred, combined across accounts, or treated as API-dollar credit.
+No balance is shown until OMP normalizes that provider datum into the
+machine-readable usage report's `creditBalance` amount. Each limit row keeps
 its amount and compact reset cadence beside the meter at ordinary and narrow
 sidebar widths; a long limit name wraps rather than forcing horizontal
 overflow.
