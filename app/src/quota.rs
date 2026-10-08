@@ -367,6 +367,21 @@ pub fn whole_percent(value: &str) -> String {
         )
 }
 
+/// A provider's credit balance as whole credits, truncated toward zero so a
+/// fractional balance never reads as more than can be spent. The value is
+/// settled at a millionth first, as in [`whole_percent`], so floating-point
+/// noise does not drop a whole credit. `None` when the balance is not a finite
+/// number.
+#[must_use]
+pub fn whole_credits(value: &str) -> Option<f64> {
+    let value = value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())?;
+    let settled = (value * 1e6).round() / 1e6;
+    Some(if settled.is_finite() { settled } else { value }.trunc() + 0.0)
+}
+
 fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
     const FREE: f64 = 0.2;
     const BASELINE: f64 = 1.0;
@@ -735,6 +750,20 @@ mod tests {
             ("n/a", "n/a"),
         ] {
             assert_eq!(whole_percent(reported), shown, "{reported}");
+        }
+    }
+
+    #[test]
+    fn credit_balances_never_read_above_the_reported_amount() {
+        for (reported, shown) in [
+            ("61500.25", Some(61_500.0)),
+            ("62000", Some(62_000.0)),
+            ("61499.99999999999", Some(61_500.0)),
+            ("0.9", Some(0.0)),
+            ("-0.4", Some(0.0)),
+            ("n/a", None),
+        ] {
+            assert_eq!(whole_credits(reported), shown, "{reported}");
         }
     }
 
