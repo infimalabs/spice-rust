@@ -39,6 +39,10 @@ designs for the 80 × 160 composer control panel, each against dark and light
 backgrounds. These are interactive visual mockups, not resident controls or a
 production style change. Browser screenshots of the gallery can be retained
 as task artifacts without adding generated images to the application sources.
+The designs use symmetric smoked, frosted, and restrained pearlescent surfaces.
+Every layout places SEND between the utility buttons and the two sliders.
+The rim-light selector previews neutral, mint, amber, or lilac agent accents
+without filling the glass faces with the accent color.
 
 Serve `app/design` with a local static server, then open `glass-controls.html`.
 The actual-size toggle shows the existing footprint; the detail toggle doubles

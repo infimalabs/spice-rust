@@ -9,14 +9,22 @@
 </head>
 <body>
 <header class="page-head">
-  <div><p class="eyebrow">SPICE / CONTROL STUDIES</p><h1>Small panel. Real glass.</h1><p class="intro">Six directions. Two sliders. Three buttons. Nothing outside the control panel changes.</p></div>
+  <div><p class="eyebrow">SPICE / CONTROL STUDIES · SET 02</p><h1>Smoked glass. Softer pearl.</h1><p class="intro">Six focused directions. SEND in the middle. Two sliders. Three buttons. The same small footprint.</p></div>
   <fieldset class="size-picker"><legend>Preview scale</legend><button type="button" data-scale="1" aria-pressed="false">Actual · 80 × 160</button><button type="button" data-scale="2" aria-pressed="true">Detail · 2×</button></fieldset>
+  <label class="accent-picker">Rim light
+    <select id="rim-accent" aria-label="Agent accent rim preview">
+      <option value="">Neutral</option>
+      <option value="#7de0b4">Agent · mint</option>
+      <option value="#efc36b">Agent · amber</option>
+      <option value="#b8a2eb">Agent · lilac</option>
+    </select>
+  </label>
 </header>
 <main id="studies" aria-label="Glass control panel concepts"></main>
 <footer>
   <p>Standalone visual studies, not connected to a resident. Try BASIC / TURBO, the menu, SEND, and both sliders. Every action stays in this page.</p>
   <p>References: <a href="https://codepen.io/Petr-Knoll/pen/QwWLZdx">Petr Knoll · Glass Button</a> / <a href="https://freefrontend.com/css-liquid-glass/">Liquid glass collection</a>. Optical vocabulary: transparent faces, opposing rim highlights, inset lens shading, blurred transmitted background. CodePen’s live preview requires security verification; its source was not available for direct inspection.</p>
-  <p>Recommendation: <strong>01 Clear lens</strong> for continuity with the current hamburger; <strong>06 Split rail</strong> for the strongest layout departure. No SVG displacement shaders here: the glass is CSS, with a solid fallback when backdrop filtering is unavailable.</p>
+  <p>Start with <strong>01 Smoked optical</strong> or <strong>04 Smoked pearl</strong> for the material; compare <strong>02 Split rail</strong> for the chassis. All six keep SEND in the middle and use symmetric geometry. No SVG displacement shaders here: the glass is CSS, with a solid fallback when backdrop filtering is unavailable.</p>
 </footer>
 <template id="panel-template">
   <div class="panel">
