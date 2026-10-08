@@ -145,12 +145,28 @@ margin of its own.
 
 ## Team composer controls
 
-The 34px Turbo action leads in the top-left 40px grid slot, leaving three
-pixels above and beside it. The 56px Send action follows, centered in a
-full-width 62px row; speech and allocation ranges split the remaining height.
-Its label stays “SEND”; color and the adjacent allocation value distinguish
-Steer, Drive, and Drain. Hover, press, reduced-motion, ordinary-submit, and
-broadcast-preview states change paint only, never geometry.
+The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
+Round 34px BASIC/TURBO and team-menu buttons share the first row; round 56px SEND
+sits in the middle, above two pill-shaped slider flyers. Faces transmit the
+neutral background, with fine etched edges and no opaque recipient-color fill,
+domes, or nested ridges. Global-menu TURBO and task-observation Add/Close retain
+their independent appearances outside the primary panel.
+
+SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
+for one recipient, equal separated arcs for several. Its small count follows
+sendable typed text, quotes, and images under current command admission. A running
+team without drafted content has no recipient light; an idle team without agents
+or drafts dims and disables SEND. A pending allocation-policy command admits no
+send and lights no recipients. Existing wake/send and attachment behavior stays
+authoritative, not the reference gallery's simulated readiness.
+
+Pointer and keyboard contact move SEND down 1.5px, deepen its upper contact
+shadow, and dim the rim; release restores its flat face without grid reflow.
+Touch-only contact is projected from native pointer events and clears on release,
+cancellation, or lost capture without intercepting activation. Reduced motion
+removes transitions, not contact feedback. Held ordinary-submit modifiers add a
+focused-agent command ring; a held broadcast uses its occupied recipients' rim
+and count while retaining the neutral face.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
@@ -203,10 +219,12 @@ edge through resizes only while the operator leaves it there; once they scroll
 to another team, a keyboard opening or closing, a rotation, or a team arriving
 keeps their place.
 
-The range values sit outside their thumbs as one centered phrase. Quiet and
-Steer are neutral, Speak and Drive use the active accent, and Narrate and Drain
-use warning. Every engine maps Up/Right upward and Down/Left downward. Narrate
-voices live card edges; Speak voices resident-classified final answers and
+The range words ride inside their pill flyers. Each 22px-high thumb travels
+inside a 26px-high groove, inset 2px at both ends; label travel follows that same
+rail at every stop. Quiet and Steer have neutral edges, Speak and Drive active
+accent edges, and Narrate and Drain warning edges. Allocation reads
+STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and Down/Left downward.
+Narrate voices live card edges; Speak voices resident-classified final answers and
 acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
 history never auto-plays.
 

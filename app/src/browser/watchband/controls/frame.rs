@@ -113,34 +113,28 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         .filter(|slot| slot.broadcast)
         .map(|slot| slot.accent)
         .collect::<Vec<_>>();
+    let broadcast_count = broadcast.len();
     {
-        // Each face is a gradient over its recipients' accents; the app CSP
-        // refuses style attributes, so the values reach the button through
-        // CSSOM. The broadcast face is published beside the ordinary one and
-        // CSS selects it while a broadcast preview is held, so pressing and
-        // releasing the modifiers changes no state here.
+        // Recipient gradients paint only the rim. The CSP requires CSSOM
+        // rather than style attributes; broadcast previews select their
+        // own rim without changing drafting state on modifier presses.
         let send = send.clone();
         use_effect_with((lit.clone(), broadcast), move |(lit, broadcast)| {
             if let Some(button) = send.cast::<web_sys::HtmlElement>() {
                 let style = button.style();
                 for (property, accents) in [
-                    ("--team-send-pinwheel", lit),
-                    ("--team-send-broadcast-pinwheel", broadcast),
+                    ("--team-send-recipient-rim", lit),
+                    ("--team-send-broadcast-rim", broadcast),
                 ] {
                     let _ = if accents.is_empty() {
                         style.remove_property(property).map(drop)
                     } else {
-                        style.set_property(property, &pinwheel(accents))
+                        style.set_property(property, &recipient_rim(accents))
                     };
                 }
             }
         });
     }
-    let title = match lit.len() {
-        0 => "Send".to_owned(),
-        1 => "Send to 1 agent".to_owned(),
-        count => format!("Send to {count} agents"),
-    };
     html! {
         <aside
             ref={root}
@@ -152,33 +146,87 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         >
             {props.turbo.clone()}
             {props.menu.clone()}
-            <button
-                ref={send}
-                class="team-send"
-                type="submit"
-                data-lit={(!lit.is_empty()).to_string()}
-                disabled={idle || !props.ready}
-                {title}
-            ><span class="team-send-word">{"Send"}</span></button>
+            {send_button(send, idle || !props.ready, lit.len(), broadcast_count)}
             {props.children.clone()}
         </aside>
     }
 }
 
-/// Angular width of the seam that opens each pinwheel slice.
+fn send_button(
+    send: NodeRef,
+    disabled: bool,
+    recipients: usize,
+    broadcast_recipients: usize,
+) -> Html {
+    let title = match recipients {
+        0 => "Send".to_owned(),
+        1 => "Send to 1 agent".to_owned(),
+        count => format!("Send to {count} agents"),
+    };
+    // Touch engines need not hold :active until release. Project contact
+    // only: do not prevent native activation or change submission authority.
+    let touch_down = {
+        let send = send.clone();
+        Callback::from(move |event: web_sys::PointerEvent| {
+            if !event.is_primary() || event.pointer_type() != "touch" {
+                return;
+            }
+            if let Some(button) = send.cast::<web_sys::HtmlElement>()
+                && !button.has_attribute("disabled")
+            {
+                let _ = button.set_attribute("data-touch-contact", "true");
+            }
+        })
+    };
+    let touch_release = {
+        let send = send.clone();
+        Callback::from(move |event: web_sys::PointerEvent| {
+            if event.is_primary()
+                && event.pointer_type() == "touch"
+                && let Some(button) = send.cast::<web_sys::HtmlElement>()
+            {
+                let _ = button.remove_attribute("data-touch-contact");
+            }
+        })
+    };
+    html! {
+        <button
+            ref={send}
+            class="team-send"
+            type="submit"
+            data-lit={(recipients != 0).to_string()}
+            data-recipient-count={recipients.to_string()}
+            data-broadcast-recipient-count={broadcast_recipients.to_string()}
+            {disabled}
+            {title}
+            onpointerdown={touch_down}
+            onpointerup={touch_release.clone()}
+            onpointercancel={touch_release.clone()}
+            onlostpointercapture={touch_release}
+        >
+            <span class="team-send-word">{"Send"}</span>
+            if recipients != 0 {
+                <span class="team-send-recipient-count" aria-hidden="true">{recipients}</span>
+            }
+            if broadcast_recipients != 0 {
+                <span class="team-send-broadcast-count" aria-hidden="true">{broadcast_recipients}</span>
+            }
+        </button>
+    }
+}
+
+/// Angular width of the seam separating recipient accents on the rim.
 const SEAM_DEGREES: f64 = 1.4;
 
-/// One equal slice per member in its accent, in mathematical order: the first
-/// member opens at the right edge and the rest follow counterclockwise, so a
-/// pair splits the face into upper and lower halves. A darker seam opens each
-/// slice, so neighbours read as separate even when two members share an
-/// accent; a lone member fills the face whole.
-fn pinwheel(accents: &[usize]) -> String {
+/// One equal arc per recipient: the first opens at the right edge and the
+/// rest follow counterclockwise. A darker seam distinguishes neighbours
+/// even when they share an accent; one recipient colors the whole rim.
+fn recipient_rim(accents: &[usize]) -> String {
     if let [accent] = accents {
         return format!("var(--accent-{accent})");
     }
     // CSS sweeps clockwise from its origin, so lay the members out in reverse
-    // from the right edge and put each seam where its counterclockwise slice opens.
+    // from the right edge and put each seam where its counterclockwise arc opens.
     let slice = 360.0 / accents.len() as f64;
     let mut gradient = String::from("conic-gradient(from 90deg");
     for (position, accent) in accents.iter().rev().enumerate() {
