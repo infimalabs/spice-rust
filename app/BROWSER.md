@@ -140,6 +140,9 @@ remains opaque and theme-derived
 for other control consumers. Member headings retain
 their accent underline, focused or broadcast drafts merge their full-width
 highlight, and vacant members mute content without changing the surface.
+An empty message plane reserves that same continuation depth below the composer
+before the pending-direction notice, so its overflow clip retains the full
+feather even before an agent has emitted prose.
 The composer rides in the Chat plane's own scroll content, so every engine's
 scroll moves it in the same frame as the cards. It sticks to the plane's top
 edge, so scrolling back never opens a gap above it, and measured composer

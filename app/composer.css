@@ -362,8 +362,8 @@
 }
 /* The overhang is the paint's continuation below the box. Rust reads it, so
    full collapse waits until the continuation has also left the plane. */
+.team-compose { --team-composer-overhang: 10px; }
 .team-compose .team-composer {
-  --team-composer-overhang: 10px;
   position: sticky; bottom: 100%;
   isolation: isolate;
   flex: none; pointer-events: auto;
@@ -445,9 +445,10 @@
 @media (prefers-reduced-motion: reduce) {
   .team-compose .team-activity-grid { transition: none; }
 }
-/* An empty team's plane is only its composer, with the notice below it. */
+/* An empty plane reserves the composer and its paint before the notice. */
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane {
   flex: none; height: auto; overflow: hidden;
+  padding-bottom: var(--team-composer-overhang);
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-track { display: none; }
 .team-activity-grid[data-empty="true"] .mosaic-message-empty { order: 1; }
