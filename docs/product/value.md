@@ -586,10 +586,11 @@ re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
 Beside the draft, one fixed 80 × 160 control panel has four rows separated by
-three four-pixel gaps: 56 pixels for `Send`, 34 for two equal small-button
-slots, then two equal 29-pixel range rows because
-$(160 - 56 - 34 - 3 \times 4) / 2 = 29$. `TURBO` occupies the small row's
-first slot; its second stays available for the team menu. Each range runs left
+three four-pixel gaps: a 34-pixel two-slot button row, a 56-pixel `Send` row,
+then two equal 29-pixel range rows because
+$(160 - 34 - 56 - 3 \times 4) / 2 = 29$. `TURBO` occupies the upper-left slot
+at the same diameter as the global `Spice` control; the upper-right slot stays
+available for the team menu. Each range runs left
 to right, minimum to maximum, as a 46 × 22 labeled thumb traveling inside a
 neutral 76 × 26 pill groove: two pixels of clearance above and below, and two
 pixels of panel inset at each end. Every current-value word is drawn to fill its

@@ -847,9 +847,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The 80 × 160 control panel has four rows and three equal row gaps. SEND
-   occupies its fixed diameter first; the next row has two equal slots for
-   TURBO and the future team menu. Each range then receives exactly half the
+/* The 80 × 160 control panel has four rows and three equal row gaps. TURBO
+   occupies the first row's left slot, leaving the right slot for the future
+   team menu; SEND spans the next row. Each range then receives exactly half the
    residual height:
 
      range row = (panel height - SEND - small button - 3 gaps) / 2
@@ -859,7 +859,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-composer-controls {
   --team-control-gap: 4px;
   --team-control-send-size: 56px;
-  --team-control-button-size: 34px;
+  --team-control-button-size: var(--app-round-control-size);
   --team-control-fixed-block: calc(var(--team-control-send-size) + var(--team-control-button-size) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap));
   --team-slider-row-block: calc((var(--team-composer-block-size) - var(--team-control-fixed-block)) / 2);
   --team-slider-inset: 2px;
@@ -868,7 +868,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-slider-thumb-block: 22px;
   position: relative; display: grid; gap: var(--team-control-gap); inline-size: var(--team-control-inline-size);
   margin-block-start: 0; block-size: var(--team-composer-block-size);
-  grid-template: var(--team-control-send-size) var(--team-control-button-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
+  grid-template: var(--team-control-button-size) var(--team-control-send-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
@@ -893,8 +893,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 700 var(--app-type-primary-action)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.025em; text-transform: uppercase; transform: translateY(0); transition: filter var(--app-motion-fast) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 2; grid-column: 1; cursor: pointer; }
-.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 1; grid-column: 1 / -1; }
+.team-composer .team-turbo { --team-knob-size: var(--team-control-button-size); grid-row: 1; grid-column: 1; cursor: pointer; }
+.team-composer .team-send { --team-knob-size: var(--team-control-send-size); grid-row: 2; grid-column: 1 / -1; }
 .team-composer :is(.team-send, .team-turbo)::before { position: absolute; inset: 0; border: 0; border-radius: var(--app-radius-circle); background: var(--team-knob-highlight); box-shadow: none; content: ""; pointer-events: none; }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):hover { filter: brightness(1.035) saturate(1.025); }
 .team-composer :is(.team-send, .team-turbo):not(:disabled):active { filter: brightness(.985); transform: translateY(1px); }
