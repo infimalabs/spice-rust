@@ -144,6 +144,9 @@ pub(super) fn down(
                 Some(index) => label::edit(session, index),
                 None => label::place(session, point, canvas.dimensions, pen.color),
             }
+            // The click this press generates places the label; the backdrop
+            // must not take it as a press on bare image and deselect it.
+            *session.gesture_click.borrow_mut() = true;
             session.repaint.emit(());
             return;
         }
