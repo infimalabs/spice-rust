@@ -141,28 +141,32 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
                 data-rings={lit.len().to_string()}
                 disabled={idle || !props.ready}
                 {title}
-            >{"Send"}</button>
+            ><span class="team-send-word">{"Send"}</span></button>
             {props.children.clone()}
         </aside>
     }
 }
 
-/// Concentric bands filling the button, member zero at the core. Each band is
-/// lit at its inner edge and shaded toward its outer edge, so neighbours read
-/// as separate rings even when two members share an accent.
+/// Concentric bands filling the button, member zero at the core. Every band
+/// holds an equal share of the face's area, so band `k` ends at `sqrt(k/n)` of
+/// the radius; a hairline seam opens each outer band, so neighbours read as
+/// separate rings even when two members share an accent.
 fn rings(accents: &[usize]) -> String {
     let count = accents.len() as f64;
     let mut gradient = String::from("radial-gradient(circle closest-side");
     for (index, accent) in accents.iter().enumerate() {
-        let inner = index as f64 / count * 100.0;
-        let outer = (index + 1) as f64 / count * 100.0;
-        let crest = inner + (outer - inner) * 0.45;
-        let _ = write!(
-            gradient,
-            ", color-mix(in srgb, var(--accent-{accent}) 78%, var(--app-highlight-source)) {inner:.2}%\
-             , var(--accent-{accent}) {crest:.2}%\
-             , color-mix(in srgb, var(--accent-{accent}) 72%, var(--app-shadow-source)) {outer:.2}%"
-        );
+        let inner = (index as f64 / count).sqrt() * 100.0;
+        let outer = ((index + 1) as f64 / count).sqrt() * 100.0;
+        if index == 0 {
+            let _ = write!(gradient, ", var(--accent-{accent}) 0 {outer:.2}%");
+        } else {
+            let _ = write!(
+                gradient,
+                ", color-mix(in srgb, var(--accent-{accent}) 55%, var(--app-shadow-source)) \
+                 {inner:.2}% calc({inner:.2}% + 1px)\
+                 , var(--accent-{accent}) calc({inner:.2}% + 1px) {outer:.2}%"
+            );
+        }
     }
     gradient.push(')');
     gradient
