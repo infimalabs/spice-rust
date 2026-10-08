@@ -19,6 +19,7 @@ fn fresh_launch_without_a_claim_has_no_assignment_banner() {
         Selection {
             vendor: &fixture.vendor,
             lane: fixture.lane,
+            fresh: true,
             pinned: Pinned::nothing(vendor::Resume::Fresh),
             fast_mode: false,
             model: None,
@@ -28,6 +29,43 @@ fn fresh_launch_without_a_claim_has_no_assignment_banner() {
     .expect("fresh launch plan composes");
     assert!(plan.launch().prompt.contains("<system-notice>"));
     assert!(!plan.launch().prompt.contains("# Task already assigned"));
+}
+
+#[test]
+fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
+    let fixture = AdvisoryRtkFixture::new();
+    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
+    let resolved =
+        spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
+    // omp pins a minted session for a fresh start too, so both seats carry one.
+    let prompt = |fresh| {
+        let session = vendor::SessionId::new("019a0000-0000-7000-8000-000000000000".to_owned())
+            .expect("fixture session identity is valid");
+        let (plan, _) = launch_plan(
+            &repository,
+            &resolved,
+            Selection {
+                vendor: &fixture.vendor,
+                lane: fixture.lane,
+                fresh,
+                pinned: Pinned::nothing(vendor::Resume::Session(session)),
+                fast_mode: false,
+                model: None,
+                effort: None,
+            },
+        )
+        .expect("launch plan composes");
+        plan.launch().prompt.clone()
+    };
+    let resumed = prompt(false);
+    assert!(
+        resumed.contains("<system-notice>\n# Seat resumed"),
+        "{resumed}"
+    );
+    assert!(!resumed.contains("# Spice briefing"), "{resumed}");
+    let fresh = prompt(true);
+    assert!(fresh.contains("# Spice briefing"), "{fresh}");
+    assert!(!fresh.contains("# Seat resumed"), "{fresh}");
 }
 
 #[test]

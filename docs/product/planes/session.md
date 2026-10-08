@@ -159,11 +159,17 @@ closing lines under `spice session briefing --json`.
 
 **Invariant —** The resident delivers the page itself: appended to the first
 prompt of a fresh session, and queued beside the replayed steering after every
-compaction. Ordinary turns, steering, and a resumed session carry no page. A
-supervisor reads its lane by identity, so the transcript it folds is the
-session the residency head records for the lane; a briefing that fails or
-outlives its deadline is delivered as a page naming the refusal and the
-commands that read the same ground.
+compaction. Freshness is the launch request's: a session omp pins before its
+first turn is still fresh. A resumed session still holds its context, so its
+first prompt carries only a `# Seat resumed` notice naming the held claim and
+the pending steering count, read from the journal without folding the
+transcript. Ordinary turns and steering carry no page. A compaction's page
+describes the compaction instant and is composed while the agent keeps
+working, so it can arrive after further tool calls. A supervisor reads its
+lane by identity, so the transcript it folds is the session the residency head
+records for the lane; a briefing that fails or outlives its deadline is
+delivered as a page naming the refusal and the commands that read the same
+ground.
 
 **Invariant —** Pending asks are their own bounded page (16 rows, 16 KiB,
 1 KiB of text per ask); when asks are withheld the page names

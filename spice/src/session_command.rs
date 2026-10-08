@@ -161,6 +161,55 @@ pub(crate) fn lane_briefing(
     render_lane_briefing(environment, lane, configuration, BriefingMoment::Refresh)
 }
 
+/// The short notice a resumed seat receives in place of the briefing page.
+///
+/// The resumed agent still holds its context, so it learns only that this
+/// start is a resume, which claim it holds, and how many steering keys wait.
+/// The read skips the transcript fold that makes the full page heavy.
+pub(crate) fn lane_resume_notice(
+    environment: &Environment,
+    lane: wire::CanonicalUuid,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> String {
+    let context = DeadlineContext {
+        action: "resume".to_owned(),
+        requested: vec![format!("lane {lane}")],
+        budget: LANE_BRIEFING_DEADLINE,
+    };
+    let environment = environment.clone();
+    let configuration = configuration.cloned();
+    let observed = run_deadline(&context, std::time::Instant::now(), move |sender| {
+        let authorities = authority::observe_lane(&environment, lane, configuration.as_ref());
+        let _ = sender.send(DeadlineEvent::Complete(
+            Ok(authorities),
+            std::time::Instant::now(),
+        ));
+    });
+    format!(
+        "<system-notice>\n{}\n</system-notice>",
+        resume_page(observed.as_ref().ok())
+    )
+}
+
+fn resume_page(authorities: Option<&authority::RecallAuthorities>) -> String {
+    const UNREAD: &str = "unread; `spice session briefing` reads it";
+    let claim = authorities.map_or_else(
+        || UNREAD.to_owned(),
+        |read| {
+            read.held_work.own_claim.as_ref().map_or_else(
+                || "none".to_owned(),
+                |claim| format!("`{}` in phase `{}`", claim.handle, claim.phase),
+            )
+        },
+    );
+    let pending = authorities
+        .and_then(|read| read.asks.as_ref())
+        .map_or_else(|| UNREAD.to_owned(), |asks| asks.len().to_string());
+    format!(
+        "# Seat resumed\n\nThis seat resumes its previous session with its context intact, so no briefing page is attached; continue from your context.\n- held claim: {claim}\n- pending steering keys: {pending}"
+    )
+}
+
 fn render_lane_briefing(
     environment: &Environment,
     lane: wire::CanonicalUuid,
