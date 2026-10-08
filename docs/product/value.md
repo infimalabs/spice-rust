@@ -398,9 +398,13 @@ and Lifecycle lenses within their protocol root and node bounds, but those
 bounds never remove a selected root. Lens, direction, depth, and enrichment
 expansion controls qualify only the typed read they change. The graph has no
 zoom, pan, or reset rail: wheel, touch, pointer drag, pinch, and keyboard input
-manipulate its viewport directly, with fit as the lower bound. The graph,
-relationship list, code blocks, and tables hand vertical input to the overview
-sheet whenever they have no vertical range left to consume. Loading, refusal,
+manipulate its viewport directly, with fit as the lower bound. A plain vertical
+wheel event consumes the graph range available in its direction and transfers
+only the remainder to the overview sheet; at fit or an existing boundary the
+whole delta advances the sheet, including later deltas in the same wheel
+transaction. Relationship lists, code blocks, and tables likewise hand
+vertical input to the overview sheet whenever they have no range left to
+consume. Loading, refusal,
 retry, and truncation remain explicit. A streamed task fact re-reads a cached
 lens only when it changes
 a displayed task or can add an edge into that graph; unrelated task activity
