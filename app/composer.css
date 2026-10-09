@@ -638,9 +638,9 @@
    Both controls leave their right edge open, so Quote's left edge is the pair's
    one seam and the depth-compensated pair meets the card's inline-end without
    another line. Each control fills with the accent of the rail that contains
-   it, the card's or a quote's, at a final answer's 5% rest wash over the stream
-   surface: on a final card a control melts into the card and only its glyph
-   shows, and a hovered card's 10% wash reveals it. The remaining static edges
+   it, the card's or a quote's, at the card's 5% rest wash over the stream
+   surface: at rest a control melts into its card and only its glyph shows, and
+   a hovered card's 10% wash reveals it. The remaining static edges
    use the stream surface colour in every state. Hovered, pressed, or speaking,
    the control fills at the 10% hover strength and its glyph lights to ink;
    nothing else changes. */
@@ -893,24 +893,19 @@
   border: 0;
   border-radius: 0;
 }
-/* A final answer rests washed 5% toward its lane accent; hover raises any card
-   to the 10% --card-hover-wash. */
-.team-surface .mosaic-message-card.final {
-  --card-rest-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 5%, transparent);
-}
 /* One card-sized square overlay owns the permanent lane rail and every
    interaction edge above the cover. A padding reserve holds the image geometry;
    outlining the square image or repeating the card rail creates clipped,
    washed-out layers at the corners. A cover hides any background wash, so the
-   same overlay screens the image in the lane accent instead: at rest with a
-   final answer's wash, and on hover with the hover wash. */
+   same overlay screens the image in the lane accent instead: at rest with the
+   rest wash, and on hover with the hover wash. */
 .team-surface .mosaic-message-card--image-cover::after {
   position: absolute;
   z-index: 4;
   inset: 0;
   border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent));
   border-radius: inherit;
-  background: var(--card-rest-wash, transparent);
+  background: var(--card-rest-wash);
   content: "";
   pointer-events: none;
 }
