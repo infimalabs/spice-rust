@@ -3,6 +3,12 @@ const concepts = [
   { key: 'frost', name: 'Frosted instrument', note: 'Reference-only alternative. Softly diffused glass in the same sharp-corner panel.' },
   { key: 'flush', name: 'Flush etched glass', note: 'Shipped production panel: flat transmitted glass at rest, a clear tactile depression on press.' },
 ];
+const underglowConcepts = [
+  { key: 'baseline', name: 'Shipped baseline', note: 'Untouched Flush groove. Neutral backplane, no colored light.' },
+  { key: 'wash', name: 'Flat active wash', note: 'One low-contrast hue spans the full backplane and changes with the selected stop.' },
+  { key: 'balanced', name: 'Flat + edge', note: 'A quiet full wash gains shallow edge depth and a pearlescent glass caustic.' },
+  { key: 'haze', name: 'Active edge haze', note: 'Broad upper and lower haze carries the selected hue without a visible emitter.' },
+];
 const speechModes = ['Quiet', 'Speak', 'Narrate'];
 const allocationModes = ['Steer', 'Drive', 'Drain'];
 const template = document.querySelector('#panel-template');
@@ -27,6 +33,29 @@ for (const [index, concept] of concepts.entries()) {
     study.querySelector('.pair').append(scene);
   }
   studies.append(study);
+}
+
+for (const [index, concept] of underglowConcepts.entries()) {
+  const study = document.createElement('article');
+  study.className = `study flush underglow-${concept.key}`;
+  study.innerHTML = `<div class="study-head"><h2><span class="number">U${index}</span>${concept.name}</h2><p>${concept.note}</p></div><div class="pair"></div><div class="state" role="status">Drag either slider · local light study</div>`;
+  for (const theme of ['dark', 'light']) {
+    const scene = document.createElement('div');
+    scene.className = `scene ${theme}`;
+    scene.setAttribute('aria-label', `${concept.name}, ${theme} background`);
+    const mount = document.createElement('div');
+    mount.className = 'mount';
+    const content = template.content.cloneNode(true);
+    setPreviewState(content.querySelector('.panel'), 'one');
+    mount.append(content);
+    scene.append(mount);
+    const caption = document.createElement('span');
+    caption.className = 'mode-label';
+    caption.textContent = theme;
+    scene.append(caption);
+    study.querySelector('.pair').append(scene);
+  }
+  document.querySelector('#underglow-studies').append(study);
 }
 const previewStates = [
   { key: 'off', name: 'Totally off', note: 'No agents running. The whole panel rests; SEND is unavailable.' },
@@ -127,9 +156,11 @@ for (const panel of document.querySelectorAll('.panel')) {
   for (const [selector, modes] of [['.speech', speechModes], ['.life', allocationModes]]) {
     const slider = panel.querySelector(selector);
     const input = slider.querySelector('input');
+    slider.dataset.step = input.value;
     input.addEventListener('input', () => {
       const mode = modes[Number(input.value)];
       slider.style.setProperty('--position', Number(input.value) / 2);
+      slider.dataset.step = input.value;
       slider.querySelector('.flyer > span').textContent = mode.toUpperCase();
       input.setAttribute('aria-valuetext', mode);
       status.textContent = `${mode} · local slider state`;
