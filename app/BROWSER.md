@@ -220,14 +220,16 @@ attachment behavior stays authoritative, not the reference gallery's simulated
 readiness.
 
 For teams with multiple members, `FULL SEND` materializes as one compact
-lockup exactly when the active submission reaches every member. `FULL` uses the
-focus color, and both words compress into the ordinary `SEND` label's width.
-Ordinary submission derives that state from the reachable members whose
-composers hold text, quotes, or images, including wakeable non-running members.
-While a broadcast preview is active, its actual broadcast recipients replace
-that calculation; broadcast mode alone never implies full coverage. Partial
-sends and single-member teams show only `SEND`. The lockup stays inside the
-existing button geometry and does not change its accessible name.
+lockup exactly when the active submission reaches every member. Its outer box
+always stays the width and center of ordinary `SEND`: condensed `FULL` occupies
+the original `SE` half, condensed `SEND` occupies the original `ND` half, and
+`FULL` uses the focus color. Ordinary submission derives that state from the
+reachable members whose composers hold text, quotes, or images, including
+wakeable non-running members. While a broadcast preview is active, its actual
+broadcast recipients replace that calculation; broadcast mode alone never
+implies full coverage. Partial sends and single-member teams show only `SEND`.
+The lockup stays inside the existing button geometry and does not change its
+accessible name.
 
 Pointer and keyboard contact move SEND down 1.5px, deepen its upper contact
 shadow, and dim the rim; release restores its flat face without grid reflow.
