@@ -262,10 +262,13 @@ to another team, a keyboard opening or closing, a rotation, or a team arriving
 keeps their place.
 
 The range words ride inside their pill flyers. Each 22px-high thumb travels
-inside a 26px-high groove, inset 2px at both ends; label travel follows that same
-rail at every stop. Quiet and Steer have neutral edges, Speak and Drive active
-accent edges, and Narrate and Drain warning edges. Allocation reads
-STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and Down/Left downward.
+inside a 26px-high groove, inset 2px at both ends; label travel follows that
+same rail at every stop. Both rows use one light map: Quiet and Steer keep the
+neutral groove, Speak and Drive illuminate its complete backplane green, and
+Narrate and Drain illuminate it amber. The colored stops remain broad washes,
+without visible point emitters; their translucent flyers blur and refract that
+light without becoming opaque colored faces. Allocation reads STEER / DRIVE /
+DRAIN. Every engine maps Up/Right upward and Down/Left downward.
 Narrate voices live card edges; Speak voices resident-classified final answers and
 acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
 history never auto-plays.

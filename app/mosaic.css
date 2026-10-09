@@ -940,21 +940,19 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
 }
 .team-slider {
-  --team-slider-position: 0;
-  --team-slider-groove-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 16%, transparent);
-  --team-slider-groove-face: color-mix(in srgb, var(--control) 5%, transparent); --team-slider-groove-shadow: inset 0 1px 2px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent);
-  position: relative; display: grid; align-items: center;
-  min-width: 0; min-height: 0; padding: 0 var(--team-slider-inset); cursor: ew-resize;
+  --team-slider-position: 0; --team-slider-accent: transparent; --team-slider-groove-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 16%, transparent); --team-slider-groove-face: color-mix(in srgb, var(--control) 5%, transparent); --team-slider-groove-wash: linear-gradient(180deg, color-mix(in srgb, var(--team-slider-accent) 30%, transparent), color-mix(in srgb, var(--team-slider-accent) 18%, transparent) 48%, color-mix(in srgb, var(--team-slider-accent) 28%, transparent));
+  --team-slider-groove-shadow: inset 0 1px 2px color-mix(in srgb, var(--app-shadow-source) 20%, transparent), 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent); --team-slider-light-shadow: inset 0 0 9px color-mix(in srgb, var(--team-slider-accent) 20%, transparent), 0 0 5px color-mix(in srgb, var(--team-slider-accent) 10%, transparent); --team-slider-thumb-face: linear-gradient(105deg, transparent 12%, color-mix(in srgb, var(--team-slider-accent) 18%, transparent) 44%, transparent 68%), var(--team-control-face); --team-slider-thumb-shadow: var(--team-control-rest), inset 0 -2px 4px color-mix(in srgb, var(--team-slider-accent) 24%, transparent);
+  position: relative; display: grid; align-items: center; min-width: 0; min-height: 0; padding: 0 var(--team-slider-inset); cursor: ew-resize;
 }
-.team-slider::before {
-  position: absolute; inset-block: 0; margin-block: auto; inset-inline: var(--team-slider-inset); block-size: var(--team-slider-groove-block); content: ""; pointer-events: none;
-  border: var(--team-slider-groove-edge); border-radius: var(--app-radius-pill);
-  background: var(--team-slider-groove-face); box-shadow: var(--team-slider-groove-shadow);
+.team-slider::before { position: absolute; inset-block: 0; margin-block: auto; inset-inline: var(--team-slider-inset); block-size: var(--team-slider-groove-block); content: ""; pointer-events: none; border: var(--team-slider-groove-edge); border-radius: var(--app-radius-pill); background: var(--team-slider-groove-wash), var(--team-slider-groove-face); box-shadow: var(--team-slider-groove-shadow), var(--team-slider-light-shadow); }
+.team-slider::after {
+  position: absolute; inset-block: 0; margin-block: auto; inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-thumb-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - 2 * var(--team-slider-thumb-inset) - var(--team-slider-thumb-inline))); inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block); box-sizing: border-box; border: var(--team-control-edge); border-radius: var(--app-radius-pill);
+  background: var(--team-slider-thumb-face); box-shadow: var(--team-slider-thumb-shadow); content: ""; pointer-events: none; transition: inset-inline-start var(--app-motion-settle) var(--app-ease-standard), background var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
-.team-slider::after { position: absolute; inset-block: 0; margin-block: auto; inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-thumb-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - 2 * var(--team-slider-thumb-inset) - var(--team-slider-thumb-inline))); inline-size: var(--team-slider-thumb-inline); block-size: var(--team-slider-thumb-block); box-sizing: border-box; border: var(--team-control-edge); border-radius: var(--app-radius-pill); background: var(--team-control-face); box-shadow: var(--team-control-rest); content: ""; pointer-events: none; transition: inset-inline-start var(--app-motion-settle) var(--app-ease-standard); }
+.team-slider:is([data-stop="1"], [data-stop="2"])::after { backdrop-filter: blur(3.5px) saturate(1.55) contrast(1.08); -webkit-backdrop-filter: blur(3.5px) saturate(1.55) contrast(1.08); }
 .team-slider:has(input:focus-visible)::after { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 1px; }
-.team-slider[data-stop="1"] { --team-slider-position: .5; }
-.team-slider[data-stop="2"] { --team-slider-position: 1; }
+.team-slider[data-stop="1"] { --team-slider-position: .5; --team-slider-accent: #7de0b4; }
+.team-slider[data-stop="2"] { --team-slider-position: 1; --team-slider-accent: #efc36b; }
 /* Pill flyers use the same flush face and fine optical edge as the buttons. */
 .team-composer .team-slider { grid-column: 1 / -1; }
 .team-composer .team-speech { grid-row: 3; }
