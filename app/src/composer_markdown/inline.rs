@@ -65,6 +65,7 @@ pub(crate) fn render_line(markdown: &str, controls: &LineControls<'_>) -> String
 pub(crate) fn plain_text(markdown: &str) -> String {
     let math = math::normalize(markdown, &[], &[], OPTIONS);
     let mut text = String::new();
+    let mut pending_space = false;
     for event in line_events(&math.markdown) {
         if let MarkdownEvent::Text(value)
         | MarkdownEvent::Code(value)
@@ -72,10 +73,20 @@ pub(crate) fn plain_text(markdown: &str) -> String {
         | MarkdownEvent::Html(value)
         | MarkdownEvent::InlineHtml(value) = event
         {
-            text.push_str(&value);
+            for character in value.chars() {
+                if character.is_whitespace() {
+                    pending_space = !text.is_empty();
+                } else {
+                    if pending_space {
+                        text.push(' ');
+                        pending_space = false;
+                    }
+                    text.push(character);
+                }
+            }
         }
     }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text
 }
 
 /// The inline events of one authored line, every block construct dissolved
@@ -128,14 +139,21 @@ fn line_events(markdown: &str) -> Vec<MarkdownEvent<'_>> {
 /// Literal source between inline content, with its whitespace folded to the
 /// single spaces one line keeps.
 fn push_gap(gap: &str, last: bool, events: &mut Vec<MarkdownEvent<'_>>) {
-    let words = gap.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut text = String::new();
-    if !events.is_empty() && gap.starts_with(char::is_whitespace) && !(last && words.is_empty()) {
+    let mut words = gap.split_whitespace();
+    let first = words.next();
+    let mut text = String::with_capacity(gap.len());
+    if !events.is_empty() && gap.starts_with(char::is_whitespace) && !(last && first.is_none()) {
         text.push(' ');
     }
-    text.push_str(&words);
-    if !last && !words.is_empty() && gap.ends_with(char::is_whitespace) {
-        text.push(' ');
+    if let Some(first) = first {
+        text.push_str(first);
+        for word in words {
+            text.push(' ');
+            text.push_str(word);
+        }
+        if !last && gap.ends_with(char::is_whitespace) {
+            text.push(' ');
+        }
     }
     if !text.is_empty() {
         events.push(MarkdownEvent::Text(text.into()));

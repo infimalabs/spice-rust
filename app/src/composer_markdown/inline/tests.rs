@@ -38,6 +38,7 @@ fn a_line_renders_inline_forms_and_projects_their_text() {
         plain_text(&title),
         format!("Fix Foo::bar now later in O(n) for {KNOWN} and {UNKNOWN}")
     );
+    assert_eq!(plain_text("pre*mid*post"), "premidpost");
 }
 
 #[test]
