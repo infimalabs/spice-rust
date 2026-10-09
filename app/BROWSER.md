@@ -416,15 +416,15 @@ unchanged.
 
 Committed cards occupy a fixed 9px lattice perimeter and shared seams carved
 from the admitted rectangle. Prose cards center their painted height within
-whole-row cells; cards add no private fill, retaining their lane rail, matching
-rail-radius corners, final-answer wash, and hover wash. Measurement clones use
-the same geometry.
+whole-row cells; every card rests in a 5% lane-accent wash and hover raises it
+to 10%, while retaining its lane rail and matching rail-radius corners.
+Measurement clones use the same geometry.
 
 A single-image message uses its card as an edge-to-edge cover. Focus paints one
-card-sized boundary, hover and FINAL use whole-cover screens, and attribution
-stays in a compact top-left frost while actions remain top-right. Multi-image
-or mixed-content hunks instead use one inline-start row with stable preferred
-sizes; prose wraps beside it and narrow rows shrink images evenly.
+card-sized boundary, and the rest and hover washes use whole-cover screens;
+attribution stays in a compact top-left frost while actions remain top-right.
+Multi-image or mixed-content hunks instead use one inline-start row with
+stable preferred sizes; prose wraps beside it and narrow rows shrink images evenly.
 
 ## Attribution placement
 
