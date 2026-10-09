@@ -1228,6 +1228,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_boundary_refuses_silent_extension_fallback() {
+        let fixture = Fixture::new();
+        let unstamped =
+            VALID_JSON.replacen("\"spiceExtension\": \"openai-credit-balance\",", "", 1);
+        let script = fixture.script(
+            "unstamped",
+            &format!("printf '%s' '{}'", unstamped.replace('\'', "'\\''")),
+        );
+        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
+
+        runtime.request();
+        settle(&mut runtime).await;
+
+        let state = runtime.current();
+        assert_eq!(latest_failure(&state).kind, FailureKind::ExtensionUnloaded);
+        assert!(
+            state.last_good.is_none(),
+            "an unstamped Codex report must not become accepted quota state"
+        );
+    }
+
+    #[tokio::test]
     async fn timeout_and_each_output_ceiling_are_nonfatal_failures() {
         // Only the timeout case races its deadline. The overflow cases end as
         // soon as a ceiling is crossed, so their deadline merely bounds a hang
