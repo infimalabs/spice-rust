@@ -672,6 +672,11 @@ grid. A running team with no sendable draft has no rim. A
 vacant member with a sendable draft joins the ordinary rim because that press
 wakes and delivers to it; an empty vacant member contributes no arc. With no
 running agent and no draft, the controls dim and `Send` is disabled.
+For a team with more than one member, `FULL SEND` appears as a single compact
+lockup only when the pending submission reaches every member. `FULL` uses the
+focus color, while both words compress into the ordinary `SEND` label's width.
+Ordinary submission qualifies when every member is reachable and holds sendable
+content, including a wakeable non-running member; a partial set never qualifies.
 The command-modifier `Send` ring shares the lane accents' two-pixel width;
 focus rings remain visible around admitted actions.
 
@@ -680,14 +685,16 @@ While the keyboard broadcast preview is held from an eligible primary composer,
 the broadcast would reach, whatever the drafts hold. Its command ring takes no
 single accent: the recipients' light combines into the theme's ink
 signal, near white on dark glass and near black on light. Releasing the
-modifiers restores the ordinary face. Team `TURBO` keeps its lettering in both
-states, muted when off and brighter with a neutral glass wash when on, without a
-colored edge; the range flyers keep neutral edges at every stop. Pressing the
-composer's `TURBO` flips that team flag, which the resident keeps across
-restarts. The button shows the requested state at once and holds it until the
-resident answers that request; a refusal, fault, or reply that cannot advance
-the current lane authority restores the resident's flag and reports the team
-issue.
+modifiers restores the ordinary face. During that preview, `FULL` instead
+follows the actual broadcast recipients and appears only when they cover every
+member, so broadcast mode is not itself a full send. Single-member teams always
+retain the plain `SEND` label. Team `TURBO` keeps its lettering in both states,
+muted when off and brighter with a neutral glass wash when on, without a colored
+edge; the range flyers keep neutral edges at every stop. Pressing the composer's
+`TURBO` flips that team flag, which the resident keeps across restarts. The
+button shows the requested state at once and holds it until the resident answers
+that request; a refusal, fault, or reply that cannot advance the current lane
+authority restores the resident's flag and reports the team issue.
 
 Settings is the first section of the Spice side view. Its separately admitted
 global `TURBO` control stands at the right end of the heading row, with the
