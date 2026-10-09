@@ -161,12 +161,8 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
     };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let cursor = runtime
-        .and_then(AppRuntime::resume)
-        .map(|cursor| cursor.seq.to_string())
-        .unwrap_or_else(|| "-".to_owned());
     let content = match content {
-        super::sidebar::Content::Spice => render_spice_sidebar(render, runtime, &cursor),
+        super::sidebar::Content::Spice => render_spice_sidebar(render, runtime),
         super::sidebar::Content::Tasks(selection) => {
             let Some(work) = work else {
                 return Html::default();
@@ -202,22 +198,17 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
         close: render.close_sidebar.clone(),
     })
 }
-fn render_spice_sidebar(
-    render: &AppRender<'_>,
-    runtime: Option<&AppRuntime>,
-    cursor: &str,
-) -> sidebar::Content {
+fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> sidebar::Content {
     let body = html! {
         <div class="app-spice-sidebar-content">
-            {spice_sidebar::render_global_settings(runtime, render.sender)}
-            {spice_sidebar::render_operator(runtime)}
-            {spice_sidebar::render_resident(
+            {spice_sidebar::render_global_settings(
                 render.connection,
                 runtime,
-                cursor,
                 (**render.identity).as_ref(),
                 (**render.app_update).as_ref(),
+                render.sender,
             )}
+            {spice_sidebar::render_operator(runtime)}
             {quota::render_sidebar(runtime)}
             {render_spice_topology(render, runtime)}
         </div>

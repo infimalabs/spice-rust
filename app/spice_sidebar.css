@@ -39,11 +39,32 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Settings is the first row under the header: kicker left, global TURBO right. */
-.app-spice-sidebar-content > .app-spice-settings { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-/* Identity and resident facts are dense reference rows: labels sit beside
-   their values instead of above them, and the sections stand tighter. */
-.app-spice-sidebar-content > :is(.app-spice-operator, .app-spice-resident) {
+/* The first row keeps resident state and product identity beside the global
+   TURBO control, with no heading or diagnostic identifiers consuming space. */
+.app-spice-sidebar-content > .app-spice-settings {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-block: 12px;
+}
+.app-resident-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-resident-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Identity facts are dense reference rows: labels sit beside their values and
+   the section stands tighter. */
+.app-spice-sidebar-content > .app-spice-operator {
   gap: 8px;
   padding-block: 12px;
 }
@@ -85,25 +106,13 @@
   text-align: center;
 }
 .app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
-.app-spice-resident-facts {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 16px;
-  margin: 0;
-}
-.app-spice-resident-facts > div {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-}
-:is(.app-spice-resident-facts, .app-spice-operator-facts) dt {
+.app-spice-operator-facts dt {
   color: var(--muted);
   font: 700 var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-:is(.app-spice-resident-facts, .app-spice-operator-facts) dd {
+.app-spice-operator-facts dd {
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -117,15 +126,6 @@
   border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
 }
-.app-resident-footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  color: var(--muted);
-  font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 /* The theme selector shares the header anchor with the Spice button. */
 .app-theme-selector { flex: 0 0 auto; }
 .app-theme-icon {
@@ -138,10 +138,10 @@
   stroke-linejoin: round;
 }
 .app-product-version {
-  flex: 1 1 auto;
+  display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink);
+  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -175,20 +175,6 @@
   border-radius: var(--app-radius-micro);
   outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
-}
-.app-product-version-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.app-resident-cursor {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .app-open-teams { display: grid; gap: 10px; }
 .app-team {

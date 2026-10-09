@@ -80,7 +80,13 @@ pub(super) fn render_arrangement(
     }
 }
 
-pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+pub(super) fn render_global_settings(
+    connection: &Connection,
+    runtime: Option<&AppRuntime>,
+    identity: Option<&AppIdentity>,
+    update: Option<&AppUpdate>,
+    sender: &SenderHandle,
+) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let enabled = settings.is_some()
@@ -104,9 +110,32 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
         (true, true, true) => "Turbo: every agent runs in fast mode",
         (true, true, false) => "Turbo off: press to run every agent in fast mode",
     };
+    let (status, status_details) = match connection {
+        Connection::Starting => ("Starting Spice", "Starting Spice".to_owned()),
+        Connection::Connecting => (
+            "Opening current resident",
+            "Opening current resident".to_owned(),
+        ),
+        Connection::Online { .. } => ("Connected", "Connected".to_owned()),
+        Connection::Offline(reason) => ("Reconnecting", format!("Reconnecting / {reason}")),
+    };
     html! {
-        <section class="app-sheet-section app-spice-settings">
-            <h2>{"Settings"}</h2>
+        <section
+            class="app-sheet-section app-spice-settings"
+            aria-label="Resident and global settings"
+            data-connection={connection.indicator_state()}
+        >
+            <div class="app-resident-summary">
+                <span
+                    class="app-resident-status"
+                    role="status"
+                    aria-label={status_details.clone()}
+                    title={status_details}
+                >
+                    {status}
+                </span>
+                {render_product_version(identity, update)}
+            </div>
             <chrome::TurboButton
                 class={classes!("app-spice-turbo")}
                 engaged={fast_mode}
@@ -200,52 +229,7 @@ pub(super) fn render_operator(runtime: Option<&AppRuntime>) -> Html {
     }
 }
 
-pub(super) fn render_resident(
-    connection: &Connection,
-    runtime: Option<&AppRuntime>,
-    cursor: &str,
-    identity: Option<&AppIdentity>,
-    update: Option<&AppUpdate>,
-) -> Html {
-    let status = match connection {
-        Connection::Starting => "Starting Spice".to_owned(),
-        Connection::Connecting => "Opening current resident".to_owned(),
-        Connection::Online { .. } => "Connected".to_owned(),
-        Connection::Offline(reason) => format!("Reconnecting / {reason}"),
-    };
-    let epoch = runtime
-        .and_then(AppRuntime::lanes)
-        .map(|lanes| lanes.epoch.to_string())
-        .or_else(|| match connection {
-            Connection::Online { epoch } => Some(epoch.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "loading".to_owned());
-    html! {
-        <section
-            class="app-sheet-section app-spice-resident"
-            data-connection={connection.indicator_state()}
-        >
-            <h2>{"Resident"}</h2>
-            <dl class="app-spice-resident-facts">
-                <div>
-                    <dt>{"Status"}</dt>
-                    <dd>{status}</dd>
-                </div>
-                <div>
-                    <dt>{"Epoch"}</dt>
-                    <dd>{epoch}</dd>
-                </div>
-            </dl>
-            {render_version_footer(cursor, identity, update)}
-        </section>
-    }
-}
-fn render_version_footer(
-    cursor: &str,
-    identity: Option<&AppIdentity>,
-    update: Option<&AppUpdate>,
-) -> Html {
+fn render_product_version(identity: Option<&AppIdentity>, update: Option<&AppUpdate>) -> Html {
     let IdentityPresentation {
         label,
         details,
@@ -265,7 +249,7 @@ fn render_version_footer(
             .reload()
             .expect("app update action reloads the current document");
     });
-    let version = if let Some(update) = update {
+    if let Some(update) = update {
         let product = product_version.as_deref().unwrap_or("loading");
         let mut update_rows = vec![format!("Current product: {product}")];
         if let Some(identity) = identity {
@@ -323,16 +307,6 @@ fn render_version_footer(
                 data-served-app-generation={served_app}
             >{label}</strong>
         }
-    };
-    html! {
-        <footer class="app-resident-footer">
-            <div class="app-product-version-group">
-                {version}
-            </div>
-            <span class="bar-meta app-resident-cursor" aria-label="Global cursor">
-                {format!("cursor {cursor}")}
-            </span>
-        </footer>
     }
 }
 
