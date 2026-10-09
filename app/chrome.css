@@ -21,9 +21,11 @@
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
   --app-commandbar-inset-end: calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
-  /* One message-rail width of extra band, split evenly, clears the trigger
-     from both the hanging global tabs and the rising team tabs. */
-  --app-commandbar-block-pad: calc(8px + var(--message-rail) / 2);
+  /* The trigger clears the hanging global tabs and the rising team tabs by
+     two message-rail widths each. Centered between them, its clearance is the
+     block pad plus half the status band, less one tab height. */
+  --app-spice-tab-clearance: calc(2 * var(--message-rail));
+  --app-commandbar-block-pad: calc(var(--app-spice-tab-clearance) + var(--app-horn-tab-block-size) - var(--app-status-line-band) / 2);
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-commandbar-gap: 7px;
   /* The trigger centers over the pip/control column and halfway between the
