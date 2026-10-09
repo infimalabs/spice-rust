@@ -194,14 +194,14 @@ when a message arrives for you, is kept as a \
 job: you get its output so far at once, it keeps running, and its result is delivered \
 automatically when it ends. A long-lived development service (a dev server, a watcher) \
 is the one thing that runs without a deadline: set `service` and it is kept as a job at \
-once; inspect it with `logs`, and end it with `stop` or by waiting on it.";
+once; inspect it with `logs`, and end it with `stop` once you no longer need it.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
 
 /// What the model reads about the service parameter.
 const SHELL_SERVICE_DESCRIPTION: &str = "true runs a long-lived development service with no \
-deadline, kept as a job at once until you stop it or wait on it; takes no timeout";
+deadline, kept as a job at once until you stop it; takes no timeout";
 
 /// What the model reads about the lane's job tool.
 const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
@@ -209,8 +209,9 @@ is delivered automatically when it ends, so you never need to poll: use `list` t
 job still running or ended but not yet delivered to you, `history` to page through jobs \
 already delivered, newest first, `logs` to read what one has said so far, and `stop` to end \
 one. Use `wait` only when blocked on a finite job: it passively follows that job until it \
-ends, the timeout elapses, or a message arrives. Waiting on a service instead stops and \
-joins it within that bound; inspect its logs or exercise its served surface for readiness.";
+ends, the timeout elapses, or a message arrives. A running service never ends on its own, \
+so `wait` on one returns at once and leaves it running; inspect its logs or exercise its \
+served surface for readiness.";
 
 /// What the model reads about the job operation parameter.
 const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop";

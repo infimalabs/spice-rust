@@ -374,6 +374,29 @@ pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
         .collect()
 }
 
+/// The seat-start notice naming this lane's kept commands that still run, so
+/// no seat inherits a forgotten service unawares; `None` when nothing runs.
+/// Ended commands are not listed: startup catch-up delivers those.
+pub(in crate::resident) fn running_notice(jobs: &Jobs) -> Option<String> {
+    let mut rows = String::new();
+    for job in undelivered(jobs) {
+        if job.ended().is_some() {
+            continue;
+        }
+        let kind = if job.timeout().is_none() {
+            "service"
+        } else {
+            "job"
+        };
+        rows.push_str(&format!("\n- {kind} {}: {}", job.id(), job.command()));
+    }
+    (!rows.is_empty()).then(|| {
+        format!(
+            "<system-notice>\n# Kept jobs still running\n\nThese commands keep running under this lane's keeper; follow them with the `job` tool. A service runs until `stop` ends it: stop each one no longer needed.{rows}\n</system-notice>"
+        )
+    })
+}
+
 /// One delivered job as a history page shows it: its encoded length is what
 /// the page's byte limit charges.
 #[derive(serde::Serialize)]
@@ -414,26 +437,25 @@ impl Report {
     }
 }
 
-/// Follow a finite job without changing it; waiting on a running service is
-/// instead its stop-and-join operation. The caller's bound applies to the
-/// join, not the keeper's teardown: a slow service remains in the stop
-/// transition and can be observed again.
+/// Follow a finite job without changing it. A running service never ends on
+/// its own, so waiting on one answers at once with what it has said so far;
+/// only `stop` ends it.
 fn wait(job: &Job, control: &Control, bound: Duration) -> Report {
-    let stopping_service = job.timeout().is_none() && job.ended().is_none();
-    if stopping_service && let Err(error) = job.stop() {
-        return Report::refused(&format!("job {} could not be stopped: {error}", job.id()));
+    if job.timeout().is_none() && job.ended().is_none() {
+        return still(job, SERVICE_WAIT);
     }
     match job.observe(control, bound) {
         Ok(Observed::Ended(ended)) => told(job, &ended),
-        Ok(Observed::Elapsed) if stopping_service => {
-            still(job, "service stop did not complete within the wait timeout")
-        }
         Ok(Observed::Elapsed) => snapshot(job, None),
         Ok(Observed::Interrupted) => still(job, "wait interrupted by an incoming message"),
         Ok(Observed::Cancelled) => still(job, "wait cancelled"),
         Err(error) => Report::refused(&format!("job {} could not be observed: {error}", job.id())),
     }
 }
+
+/// Why a wait on a running service returned without following it.
+const SERVICE_WAIT: &str = "a service runs until `stop` ends it, so wait does not follow it; \
+read its logs or exercise its served surface for readiness";
 
 /// Ask the keeper to end the command and wait briefly for its ending.
 fn stop(job: &Job, control: &Control) -> Option<Ended> {
@@ -855,29 +877,25 @@ mod tests {
     }
 
     #[test]
-    fn waiting_on_a_service_stops_and_joins_it() {
+    fn waiting_on_a_service_leaves_it_running_until_stop_ends_it() {
         let root = scratch("service");
         hold(&root);
         let terminal = terminal(&root, Environment::empty());
         let control = Control::new();
         let mut service = call("cat hold");
         service.lifetime = Lifetime::Service;
-        let (report, job) = kept(terminal.run(&service, &control));
-        assert_eq!(
-            report.output,
-            format!(
-                "Backgrounded as job {}; result will be delivered automatically.",
-                job.id()
-            )
-        );
-        assert_eq!(job.timeout(), None);
-        let wait = JobCall {
-            op: JobOp::Wait,
+        let (_, job) = kept(terminal.run(&service, &control));
+        let op = |op, timeout| JobCall {
+            op,
             id: Some(job.id().to_owned()),
-            timeout: Duration::from_secs(1),
+            timeout,
         };
-        let report = terminal.job(&wait, &Control::new());
+
+        let report = terminal.job(&op(JobOp::Wait, Duration::from_secs(1)), &control);
         assert!(!report.failed);
+        assert!(job.ended().is_none(), "waiting never ends a service");
+
+        terminal.job(&op(JobOp::Stop, Duration::ZERO), &control);
         assert!(matches!(
             job.ended(),
             Some(Ended {
@@ -885,39 +903,27 @@ mod tests {
                 ..
             })
         ));
-        assert!(!job.claim_heard().expect("the service ending is delivered"));
-        assert_eq!(terminal.follow(&job, &control), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn a_service_wait_returns_at_its_bound_while_teardown_finishes() {
-        let root = scratch("service-wait-bound");
+    fn a_seat_start_names_only_kept_jobs_still_running() {
+        let root = scratch("running-notice");
+        hold(&root);
         let terminal = terminal(&root, Environment::empty());
-        let command = "trap '' TERM; touch ready; while :; do sleep 1; done";
-        let mut service = call(command);
+        let control = Control::new();
+        assert_eq!(running_notice(&terminal.jobs), None);
+        let mut service = call("cat hold");
         service.lifetime = Lifetime::Service;
-        let (_, job) = kept(terminal.run(&service, &Control::new()));
-        touched(&root.join("ready"));
-
-        let wait = JobCall {
-            op: JobOp::Wait,
-            id: Some(job.id().to_owned()),
-            timeout: Duration::from_millis(20),
-        };
-        let report = terminal.job(&wait, &Control::new());
-        assert!(!report.failed);
-        assert!(
-            job.ended().is_none(),
-            "the bounded wait returns before the keeper's teardown grace"
+        let (_, job) = kept(terminal.run(&service, &control));
+        let notice = running_notice(&terminal.jobs).expect("a running service is named");
+        assert!(notice.contains(job.id()), "{notice}");
+        assert!(stop(&job, &control).is_some());
+        assert_eq!(
+            running_notice(&terminal.jobs),
+            None,
+            "an ended job is catch-up's"
         );
-        assert!(matches!(
-            job.observe(&Control::new(), TEST_BOUND),
-            Ok(Observed::Ended(Ended {
-                ending: Ending::Stopped,
-                ..
-            }))
-        ));
         let _ = std::fs::remove_dir_all(&root);
     }
 
