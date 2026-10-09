@@ -302,8 +302,8 @@ around the button: the fixed 34-pixel square trigger stays circular with its
 inline center over the shared 80-pixel pip and composer-control column, and its
 block center halfway between the global and team task-tab rows. One pip
 therefore sits exactly beneath it while larger pip sets spread around the same
-axis. The trigger remains unmoved and unfaded above the sheet beside the quota
-percentage while the view fades in behind it. Pressing the button again, Escape,
+axis. The trigger remains unmoved and unfaded above the sheet, beneath the quota
+percentage, while the view fades in behind it. Pressing the button again, Escape,
 or the backdrop closes it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
