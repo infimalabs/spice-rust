@@ -110,6 +110,7 @@ fn retained(name: &OsStr) -> bool {
         && bytes != b"GIT_EDITOR"
         && bytes != b"GIT_EXEC_PATH"
         && bytes != b"GIT_OPTIONAL_LOCKS"
+        && bytes != b"GIT_PAGER"
         && !SESSION_IDENTITY
             .iter()
             .any(|candidate| name == OsStr::new(candidate))
