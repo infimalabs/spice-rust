@@ -33,11 +33,6 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef) -> Html {
             <section class="team-surface" data-team-weight="1">
                 <header class="team-toolbar">
                     {view::chrome::render_empty_team_ticker()}
-                    <span
-                        class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
-                        role="group"
-                        aria-label="0 admitted agents"
-                    ></span>
                 </header>
                 <div class="team-pane">
                     {empty("No teams are assigned.")}
@@ -221,62 +216,63 @@ fn render_team_toolbar(
         render.team_drag,
     );
     let lost_capture = dragging.cancel.clone();
+    let lights = html! {
+        <span
+            class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
+            role={if can_arrange { "button" } else { "group" }}
+            aria-label={lights_label}
+            aria-haspopup={can_arrange.then_some("menu")}
+            aria-expanded={can_arrange.then(|| control.arrangement_open.to_string())}
+            aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
+            tabindex={can_arrange.then_some("0")}
+            title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
+            data-lane-drag-handle={can_arrange.then_some("")}
+            data-team-drag-id={can_arrange.then(|| team.lane.to_string())}
+            onpointerdown={dragging.start}
+            onpointermove={dragging.movement}
+            onpointerup={dragging.finish}
+            onpointercancel={dragging.cancel}
+            onlostpointercapture={lost_capture}
+            onclick={toggle_arrangement}
+            onkeydown={keyboard_arrangement}
+        >
+            if can_arrange {
+                <span id={arrangement_help_id} class="visually-hidden">
+                    {"Press Enter or Space, or tap, to choose where to move or join this team."}
+                </span>
+            }
+            {for standings.iter().enumerate().filter_map(|(index, _)| render_pip(index))}
+        </span>
+    };
     html! {
         <>
         <header class="team-toolbar">
-            {render_team_rail(team.lane, render)}
+            {render_team_rail(team.lane, render, lights)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
-            <span
-                class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
-                role={if can_arrange { "button" } else { "group" }}
-                aria-label={lights_label}
-                aria-haspopup={can_arrange.then_some("menu")}
-                aria-expanded={can_arrange.then(|| control.arrangement_open.to_string())}
-                aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
-                tabindex={can_arrange.then_some("0")}
-                title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
-                data-lane-drag-handle={can_arrange.then_some("")}
-                data-team-drag-id={can_arrange.then(|| team.lane.to_string())}
-                onpointerdown={dragging.start}
-                onpointermove={dragging.movement}
-                onpointerup={dragging.finish}
-                onpointercancel={dragging.cancel}
-                onlostpointercapture={lost_capture}
-                onclick={toggle_arrangement}
-                onkeydown={keyboard_arrangement}
-            >
-                if can_arrange {
-                    <span id={arrangement_help_id} class="visually-hidden">
-                        {"Press Enter or Space, or tap, to choose where to move or join this team."}
-                    </span>
-                }
-                {for standings.iter().enumerate().filter_map(|(index, _)| render_pip(index))}
-            </span>
         </header>
         {arrangement::render(team.lane, &control, &arrangement_context)}
         </>
     }
 }
 
-/// The task tabs in this team's header band: a badge-only team total, then
-/// each visibility-qualified stem once, badged with its open-task count and
-/// followed by all of its open task handles. The fleet never shows over Work,
-/// so none selects.
-fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
-    let Some(work) = render.work else {
-        return Html::default();
-    };
-    let groups = work.team_task_groups(team);
-    if groups.is_empty() {
-        return Html::default();
-    }
+/// The fixed edge tabs and the task scroller between them. Presence is
+/// independent of Work, so this rail remains mounted when task data or groups
+/// are absent.
+fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>, lights: Html) -> Html {
+    let groups = render
+        .work
+        .map(|work| work.team_task_groups(team))
+        .unwrap_or_default();
     html! {
-        <nav class="team-task-rail" aria-label="Open tasks this team created or claims">
-            {render_team_total(team, &groups, render.navigate)}
-            <div class="app-horn-tabs team-tasks">
-                {for groups.iter().map(|group| render_team_task_group(team, group, render))}
-            </div>
-        </nav>
+        <div class="team-task-rail">
+            if !groups.is_empty() {
+                {render_team_total(team, &groups, render.navigate)}
+                <nav class="app-horn-tabs team-tasks" aria-label="Open tasks this team created or claims">
+                    {for groups.iter().map(|group| render_team_task_group(team, group, render))}
+                </nav>
+            }
+            {lights}
+        </div>
     }
 }
 
