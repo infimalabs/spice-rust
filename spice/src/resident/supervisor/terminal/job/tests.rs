@@ -23,9 +23,10 @@ fn argv(command: &str) -> Vec<OsString> {
     ["/bin/sh", "-c", command].map(OsString::from).to_vec()
 }
 
-fn claimed_bus() -> (Bus, ServiceClaim, TaskStamp) {
-    let bus =
-        Bus::start(Journal::in_memory().expect("fixture journal")).expect("fixture bus starts");
+fn claimed_bus(root: &Path) -> (Bus, ServiceClaim, ServiceAuthority, TaskStamp) {
+    let journal = root.join("authority.sqlite3");
+    let bus = Bus::start(Journal::open(&journal).expect("fixture journal opens"))
+        .expect("fixture bus starts");
     let lane = uuid(1);
     let occupant = uuid(2);
     let epoch = uuid(3);
@@ -64,7 +65,12 @@ fn claimed_bus() -> (Bus, ServiceClaim, TaskStamp) {
         lane,
         occupant,
     };
-    (bus, boundary, task)
+    let authority = ServiceAuthority::new(journal, lane, occupant);
+    (bus, boundary, authority, task)
+}
+
+fn service<'a>(authority: &'a ServiceAuthority, claim: ServiceClaim) -> ServiceAdmission<'a> {
+    ServiceAdmission { claim, authority }
 }
 
 fn release(bus: &Bus, task: &TaskStamp, disposition: ClaimDisposition) {
@@ -379,7 +385,8 @@ fn services_stop_when_their_claim_is_freed_or_lapsed() {
             ClaimDisposition::Active => unreachable!(),
         });
         let jobs = Jobs::new(root.join("jobs"));
-        let (bus, boundary, task) = claimed_bus();
+        let (bus, boundary, authority, task) = claimed_bus(&root);
+        let service = service(&authority, boundary);
         let job = jobs
             .start(
                 "service",
@@ -387,7 +394,7 @@ fn services_stop_when_their_claim_is_freed_or_lapsed() {
                 &root,
                 &Environment::empty(),
                 None,
-                Some(boundary),
+                Some(service),
                 &[],
             )
             .expect("service starts");
@@ -415,6 +422,31 @@ fn services_stop_when_their_claim_is_freed_or_lapsed() {
     }
 }
 
+#[test]
+fn a_service_is_refused_when_its_claim_ends_before_request_publication() {
+    let root = scratch("service-release-during-admission");
+    let jobs = Jobs::new(root.join("jobs"));
+    let (bus, boundary, authority, task) = claimed_bus(&root);
+    let service = service(&authority, boundary);
+    release(&bus, &task, ClaimDisposition::Freed);
+
+    let error = jobs
+        .start(
+            "service",
+            argv("touch started"),
+            &root,
+            &Environment::empty(),
+            None,
+            Some(service),
+            &[],
+        )
+        .expect_err("released claim refuses service launch");
+
+    assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+    assert!(!root.join("started").exists());
+    assert!(jobs.kept().expect("job records read").is_empty());
+    let _ = fs::remove_dir_all(root);
+}
 #[test]
 fn claim_reconciliation_never_stops_a_finite_job() {
     let root = scratch("finite-unbound");
@@ -447,7 +479,8 @@ fn claim_reconciliation_never_stops_a_finite_job() {
 fn a_carried_claim_keeps_its_service_running() {
     let root = scratch("service-carried");
     let jobs = Jobs::new(root.join("jobs"));
-    let (bus, boundary, task) = claimed_bus();
+    let (bus, boundary, authority, task) = claimed_bus(&root);
+    let service = service(&authority, boundary);
     let job = jobs
         .start(
             "service",
@@ -455,7 +488,7 @@ fn a_carried_claim_keeps_its_service_running() {
             &root,
             &Environment::empty(),
             None,
-            Some(boundary),
+            Some(service),
             &[],
         )
         .expect("service starts");

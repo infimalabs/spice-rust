@@ -25,10 +25,12 @@ use wire::output::{Admission, Budget, ClippedText, Resume};
 
 pub(super) mod job;
 
+#[cfg(test)]
+use job::ServiceClaim;
 pub(in crate::resident) use job::{
     Control, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
 };
-use job::{Ended, Ending, Observed, ServiceClaim, Tail};
+use job::{Ended, Ending, Observed, Tail};
 
 /// How long after a stop is asked the lane waits for the keeper's ending
 /// before answering with the command still ending: the keeper's grace and
@@ -172,14 +174,14 @@ impl Terminal {
     }
 
     fn run_command(&self, call: &ShellCall, control: &Control) -> Run {
-        let service_claim: Option<ServiceClaim> = if matches!(call.lifetime, Lifetime::Service) {
+        let service = if matches!(call.lifetime, Lifetime::Service) {
             let Some(authority) = &self.service_authority else {
                 return Run::Ended(Report::refused(
                     "service launch requires an active task claim",
                 ));
             };
-            match authority.claim() {
-                Ok(claim) => Some(claim),
+            match authority.admit() {
+                Ok(service) => Some(service),
                 Err(error) => {
                     return Run::Ended(Report::refused(&format!(
                         "service launch refused: {error}"
@@ -196,7 +198,7 @@ impl Terminal {
             &self.cwd,
             &self.environment,
             call.lifetime.deadline(),
-            service_claim,
+            service,
             &call.notices,
         );
         let job = match started {
@@ -426,7 +428,7 @@ pub(in crate::resident) fn running_notice(jobs: &Jobs) -> Option<String> {
     }
     (!rows.is_empty()).then(|| {
         format!(
-            "<system-notice>\n# Kept jobs still running\n\nThese commands keep running under this lane's keeper; follow them with the `job` tool. A service runs until `stop` ends it: stop each one no longer needed.{rows}\n</system-notice>"
+            "<system-notice>\n# Kept jobs still running\n\nThese commands keep running under this lane's keeper; follow them with the `job` tool. A service runs while its task claim remains active; stop it sooner when no longer needed.{rows}\n</system-notice>"
         )
     })
 }
