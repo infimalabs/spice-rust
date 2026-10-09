@@ -654,13 +654,10 @@ fn lifetime_slider(
 }
 
 fn slider_words(words: [&'static str; 3], selected: usize) -> Html {
+    let word = words[selected.min(words.len() - 1)];
     html! {
         <span class="team-slider-words" aria-hidden="true">
-            {for words.into_iter().enumerate().map(|(index, word)| html! {
-                <span data-selected={(index == selected).to_string()}>
-                    {crate::browser::view::chrome::fit_word(word)}
-                </span>
-            })}
+            <span>{crate::browser::view::chrome::fit_word(word)}</span>
         </span>
     }
 }

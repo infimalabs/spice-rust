@@ -172,14 +172,15 @@ muted when off, brighter ink and a neutral glass wash when on, without colored
 active rims. Each remains its own separately admitted control.
 Task-observation Add/Close retain their independent appearance.
 
-Slider flyers and their riding labels settle together over 180ms; their words
-crossfade over 120ms. The native ranges retain their stops and hit targets,
-including the 2px endpoint inset. Lettering has a subtle etched highlight.
-Speech selection paints in its control first, then commits the browser-local
-speech policy when that movement ends, so a message-rich team cannot consume
-the transition; interrupted movement commits only its final selection. Reduced
-motion removes travel and text transitions and commits immediately, without
-removing state distinctions.
+Slider flyers and their one selected label settle together over 180ms. The
+label remains continuously painted inside its flyer during travel; labels do
+not crossfade, overlap, or disappear between stops. The native ranges retain
+their stops and hit targets, including the 2px endpoint inset. Lettering has a
+subtle etched highlight. Speech selection paints in its control first, then
+commits the browser-local speech policy when that movement ends, so a
+message-rich team cannot consume the transition; interrupted movement commits
+only its final selection. Reduced motion removes travel and commits
+immediately, without removing state distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
 for one recipient, equal separated arcs for several. Its recipient total wears
@@ -265,10 +266,12 @@ The range words ride inside their pill flyers. Each 22px-high thumb travels
 inside a 26px-high groove, inset 2px at both ends; label travel follows that
 same rail at every stop. Both rows use one light map: Quiet and Steer keep the
 neutral groove, Speak and Drive illuminate its complete backplane green, and
-Narrate and Drain illuminate it amber. The colored stops remain broad washes,
-without visible point emitters; their translucent flyers blur and refract that
-light without becoming opaque colored faces. Allocation reads STEER / DRIVE /
-DRAIN. Every engine maps Up/Right upward and Down/Left downward.
+Narrate and Drain illuminate it amber. Each colored stop is one uniform
+full-groove wash, without a dark center band or visible point emitter. Its
+translucent flyer visibly bends the transmitted color through opposing lens
+highlights and shadows without becoming an opaque colored face. Allocation
+reads STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and Down/Left
+downward.
 Narrate voices live card edges; Speak voices resident-classified final answers and
 acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
 history never auto-plays.
