@@ -659,14 +659,16 @@ nested ridge.
 rim divides into an equal arc per agent that would receive the message, in that
 agent's accent and in mathematical order: the first agent opens at the right
 edge and the rest follow counterclockwise. A darker seam separates neighboring
-arcs so two agents sharing an accent remain distinct. The face remains neutral.
-Pointer, touch, and keyboard contact move it down one-and-a-half pixels, deepen
-its upper contact shadow, and quiet the rim; release restores the flat face
-without moving the grid. A running team with no sendable draft has no rim. A
+arcs so two agents sharing an accent remain distinct. The button title names
+how many agents a press reaches. The face remains neutral. Pointer, touch, and
+keyboard contact move it down one-and-a-half pixels, deepen its upper contact
+shadow, and quiet the rim; release restores the flat face without moving the
+grid. A running team with no sendable draft has no rim. A
 vacant member with a sendable draft joins the ordinary rim because that press
 wakes and delivers to it; an empty vacant member contributes no arc. With no
 running agent and no draft, the controls dim and `Send` is disabled.
-Command-modifier and focus rings remain visible around admitted actions.
+The command-modifier `Send` ring shares the lane accents' two-pixel width;
+focus rings remain visible around admitted actions.
 
 While the keyboard broadcast preview is held from an eligible primary composer,
 `Send` replaces the ordinary recipient rim with that of every occupied member
