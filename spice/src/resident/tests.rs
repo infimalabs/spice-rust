@@ -695,9 +695,15 @@ fn team_configuration_changes_only_the_typed_lifetime() {
     })
     .expect("operator team configuration admits");
 
-    let Outcome::Reply(reply) =
-        super::lane_surface::configure(&bus, &paths, epoch, &seats, &command, &request)
-    else {
+    let Outcome::Reply(reply) = super::lane_surface::configure(
+        &bus,
+        &paths,
+        epoch,
+        &seats,
+        &command,
+        &request,
+        &mut CommandEffects::default(),
+    ) else {
         panic!("team configuration replies");
     };
     let committed_reply = reply.clone();

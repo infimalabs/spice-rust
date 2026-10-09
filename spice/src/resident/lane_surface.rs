@@ -50,7 +50,7 @@ use reply::{
     typed_environment_fault,
 };
 pub(super) use restart_claim::append_startup_claims;
-pub(super) use retune::{retune, retune_effort, retune_fast};
+pub(super) use retune::{LiveChange, LiveChanges, retune, retune_effort, retune_fast};
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
     await_session, launch_resume, record_stream, resume_session, session_fact, session_source,
@@ -61,7 +61,7 @@ use super::read_materializations::CurrentReads;
 use super::shutdown::{current_residency, guard_residency};
 use super::supervisor::terminal;
 use super::{
-    CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
+    CommandEffects, CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
     typed_store_fault, write,
 };
 

@@ -134,8 +134,9 @@ impl<'a> Surface<'a> {
         ) {
             return CommandDispatch::ordinary(outcome);
         }
-        if let Some(outcome) = self.dispatch_lane(seats, command) {
-            return CommandDispatch::ordinary(outcome);
+        let mut effects = CommandEffects::default();
+        if let Some(outcome) = self.dispatch_lane(seats, command, &mut effects) {
+            return CommandDispatch::with_effects(outcome, effects);
         }
         if let Some(dispatched) = self.dispatch_controls(command) {
             return dispatched;
@@ -154,6 +155,7 @@ impl<'a> Surface<'a> {
         &self,
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
+        effects: &mut CommandEffects,
     ) -> Option<Outcome<CommandAnswer>> {
         match (command.kind(), command.body()) {
             (CommandKind::UpChange, Intent::UpChange(change)) => Some(dispatch_up_change(
@@ -205,24 +207,26 @@ impl<'a> Surface<'a> {
                 renewal,
             )),
             (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => Some(lane_surface::retune(
-                self.bus, self.paths, self.epoch, seats, command, retune,
+                self.bus, self.paths, self.epoch, seats, command, retune, effects,
             )),
             (CommandKind::LaneEffortRetune, Intent::LaneEffortRetune(retune)) => {
                 Some(lane_surface::retune_effort(
-                    self.bus, self.paths, self.epoch, seats, command, retune,
+                    self.bus, self.paths, self.epoch, seats, command, retune, effects,
                 ))
             }
-            (CommandKind::LaneFastRetune, Intent::LaneFastRetune(retune)) => Some(
-                lane_surface::retune_fast(self.bus, self.paths, self.epoch, seats, command, retune),
-            ),
+            (CommandKind::LaneFastRetune, Intent::LaneFastRetune(retune)) => {
+                Some(lane_surface::retune_fast(
+                    self.bus, self.paths, self.epoch, seats, command, retune, effects,
+                ))
+            }
             (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
                 Some(lane_surface::arrange_teams(
-                    self.bus, self.paths, self.epoch, seats, command, arrange,
+                    self.bus, self.paths, self.epoch, seats, command, arrange, effects,
                 ))
             }
             (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => {
                 Some(lane_surface::configure(
-                    self.bus, self.paths, self.epoch, seats, command, configure,
+                    self.bus, self.paths, self.epoch, seats, command, configure, effects,
                 ))
             }
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => Some(lane_surface::recall(
