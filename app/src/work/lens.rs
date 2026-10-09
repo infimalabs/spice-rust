@@ -213,7 +213,7 @@ fn present_local_node(
                 format!(
                     "{} · {}",
                     row.statement.body.handle,
-                    compact(&row.presentation_title),
+                    compact_title(&row.presentation_title),
                 ),
                 format!("{} · {}", row.workflow.body.phase, row.workflow.body.status),
             )
@@ -226,7 +226,7 @@ fn present_local_node(
                 status,
                 ..
             }) => Some((
-                format!("{handle} · {}", compact(title)),
+                format!("{handle} · {}", compact_title(title)),
                 format!("{phase} · {status}"),
             )),
             _ => None,
@@ -270,7 +270,7 @@ fn present_remote_node(
             phase,
             status,
         } => {
-            let title = compact(title);
+            let title = compact_title(title);
             Node {
                 id,
                 kind: "Related task",
@@ -401,6 +401,11 @@ fn compact(value: &str) -> String {
         value.push('…');
     }
     value
+}
+
+/// A task title's plain-text projection, compacted for a node label.
+fn compact_title(title: &str) -> String {
+    compact(&crate::composer_markdown::inline::plain_text(title))
 }
 
 fn compact_actor(actor: &Actor) -> String {

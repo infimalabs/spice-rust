@@ -83,7 +83,7 @@ pub(super) fn waiting_direction(standing: &Standing) -> Option<String> {
         standing
             .headline
             .as_deref()
-            .map(watchband::one_line)
+            .map(crate::composer_markdown::inline::plain_text)
             .map(|headline| watchband::truncate(&headline, watchband::STATUS_LINE_DOM_LIMIT))
             .unwrap_or_else(|| "Preview unavailable".to_owned())
     })
@@ -188,10 +188,8 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
             select.emit(task.clone());
         })
     };
-    let title = standing
-        .task_title
-        .clone()
-        .unwrap_or_else(|| "Current task".to_owned());
+    let title = standing.task_title.as_deref().unwrap_or("Current task");
+    let label = crate::composer_markdown::inline::plain_text(title);
     let phase = standing.phase.as_deref().unwrap_or("active");
     html! {
         <li class="agent-menu-row" data-menu-row="task">
@@ -201,12 +199,16 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
                 class="agent-menu-value agent-menu-link"
                 data-task-handle={handle.to_owned()}
                 data-sidebar-focus-key={focus_key}
-                aria-label={format!("Open task {handle}: {title}")}
-                title={title.clone()}
+                aria-label={format!("Open task {handle}: {label}")}
+                title={label}
                 onclick={open}
             >
                 <strong>{handle.to_owned()}</strong>
-                {format!(" · {phase} · {title}")}
+                {format!(" · {phase} · ")}
+                {crate::browser::task_detail::render_task_title(
+                    title,
+                    &crate::composer_markdown::inline::LineControls::Nested,
+                )}
             </button>
             // The head already carries the held age; the row keeps the lease's
             // remaining time.

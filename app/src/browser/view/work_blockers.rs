@@ -1,6 +1,7 @@
 //! Stable task-overview home for walls only the operator can move.
 
 use super::*;
+use crate::composer_markdown::inline::LineControls;
 use crate::runtime::BlockerActionState;
 use crate::work::{
     DependencyWall, DependencyWalls, TaskOverviewSelection, WorkProjection, WorkTask,
@@ -23,6 +24,7 @@ impl WalledTask<'_, '_> {
 pub(super) struct BlockerPresentation<'view, 'board> {
     tasks: Vec<WalledTask<'view, 'board>>,
     count: usize,
+    selection: &'view TaskOverviewSelection,
 }
 
 impl<'view, 'board> BlockerPresentation<'view, 'board> {
@@ -62,7 +64,11 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
             .filter(|task| task.count() > 0)
             .collect::<Vec<_>>();
         let count = tasks.iter().map(WalledTask::count).sum();
-        Self { tasks, count }
+        Self {
+            tasks,
+            count,
+            selection,
+        }
     }
 
     pub(super) fn render_rail(&self, review: &UseStateHandle<bool>, launcher: &NodeRef) -> Html {
@@ -154,6 +160,28 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
             let review = review.clone();
             Callback::from(move |_| review.set(false))
         };
+        // A title chip leaves the review for that task's overview article.
+        // Closing returns focus to the review's launcher, so the article takes
+        // focus after that render settles.
+        let focus = {
+            let review = review.clone();
+            let focus = super::work_detail::focus_task_callback();
+            Callback::from(move |task: TaskStamp| {
+                review.set(false);
+                let focus = focus.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    gloo_timers::future::TimeoutFuture::new(0).await;
+                    focus.emit(task);
+                });
+            })
+        };
+        let resolves = |task: &wire::TaskHandle| {
+            task.born()
+                .is_ok_and(|stamp| self.selection.tasks().contains(&stamp))
+        };
+        let controls = LineControls::Live {
+            resolves: &resolves,
+        };
         html! {
             <section
                 class="work-blocker-review app-sheet-overlay"
@@ -176,11 +204,15 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                         onclick={close}
                     >{"Back to overview"}</button>
                 </header>
-                <div class="app-sheet-body work-blocker-review-body">
+                <div
+                    class="app-sheet-body work-blocker-review-body"
+                    onclick={task_detail::task_text_chip_click(&focus)}
+                    onkeydown={task_detail::task_text_chip_keydown(&focus)}
+                >
                     <p class="work-blocker-review-intro">
                         {"Only walls you must move appear here. Work waiting on tasks an agent can claim or is working proceeds on its own."}
                     </p>
-                    {for self.tasks.iter().map(|task| render_task(task, runtime, can_grant, grant))}
+                    {for self.tasks.iter().map(|task| render_task(task, &controls, runtime, can_grant, grant))}
                 </div>
             </section>
         }
@@ -196,6 +228,7 @@ fn requirement_blocked(
 
 fn render_task(
     walled: &WalledTask<'_, '_>,
+    controls: &LineControls<'_>,
     runtime: Option<&AppRuntime>,
     can_grant: bool,
     grant: &Callback<task_detail::TrustGrantRequest>,
@@ -206,7 +239,7 @@ fn render_task(
         <article class="work-blocker-task" data-task-stamp={statement.born.to_string()}>
             <header>
                 <p class="app-sheet-kicker">{"Blocked task"}</p>
-                <h3>{row.presentation_title.clone()}</h3>
+                <h3>{task_detail::render_task_title(&row.presentation_title, controls)}</h3>
                 <code>{statement.handle.to_string()}</code>
             </header>
             <div class="work-blocker-list">

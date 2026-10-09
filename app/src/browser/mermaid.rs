@@ -478,6 +478,9 @@ pub(super) struct MarkdownBodyProps {
     /// Controls for non-prose cards, outside all nested quote blocks.
     #[prop_or_default]
     pub(super) corner: Option<Html>,
+    /// Mount one authored line as phrasing content rather than a body block.
+    #[prop_or_default]
+    pub(super) inline: bool,
 }
 
 const MARKDOWN_BODY_PORTALS: &str = "markdown-body-portals";
@@ -875,14 +878,8 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     // Key each control's portal root; an inner key cannot distinguish sibling
     // providers.
-    html! {
-        <div
-            ref={host}
-            class="message-body markdown-body"
-            onclick={Callback::from(|event: MouseEvent| {
-                super::card_target::remember_quote_return(&event);
-            })}
-        >
+    let content = html! {
+        <>
             {for props.corner.clone()}
             {Html::from_html_unchecked(props.html.clone())}
             if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || !signoff_slots.is_empty() || !control_slots.is_empty() {
@@ -932,6 +929,26 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             {for signoffs}
             </span>
             }
+        </>
+    };
+    markdown_host(props.inline, host, content)
+}
+
+/// The element holding rendered Markdown: a phrasing span for one authored
+/// line, otherwise the message body block.
+fn markdown_host(inline: bool, host: NodeRef, content: Html) -> Html {
+    if inline {
+        return html! { <span ref={host} class="markdown-body markdown-line">{content}</span> };
+    }
+    html! {
+        <div
+            ref={host}
+            class="message-body markdown-body"
+            onclick={Callback::from(|event: MouseEvent| {
+                super::card_target::remember_quote_return(&event);
+            })}
+        >
+            {content}
         </div>
     }
 }

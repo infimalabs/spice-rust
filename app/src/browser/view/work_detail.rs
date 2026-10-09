@@ -2,6 +2,7 @@
 
 use super::super::clock::{TaskTimePresentation, task_time};
 use super::*;
+use crate::composer_markdown::inline::LineControls;
 use crate::runtime::LaneView;
 use crate::work::{TaskOverviewSelection, WorkProjection, WorkTask};
 use wire::TaskStamp;
@@ -71,11 +72,13 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                                 data-task-stamp={task.to_string()}
                                 tabindex="-1"
                                 aria-labelledby={format!("work-overview-task-title-{task}")}
+                                onclick={task_detail::task_text_chip_click(&focus_task)}
+                                onkeydown={task_detail::task_text_chip_keydown(&focus_task)}
                             >
                                 <div class="work-overview-task-heading">
                                     <p class="app-sheet-kicker">{"Selected task"}</p>
                                     <h3 id={format!("work-overview-task-title-{task}")}>
-                                        {detail_title(detail, task)}
+                                        {detail_title(detail, task, render.selection)}
                                     </h3>
                                 </div>
                                 {render_detail_body(&render, task, detail, &focus_task)}
@@ -122,7 +125,8 @@ fn overview_title(selection: &TaskOverviewSelection, lanes: Option<&LaneView>) -
         if count == 1 { "task" } else { "tasks" },
     )
 }
-fn focus_task_callback() -> Callback<TaskStamp> {
+
+pub(super) fn focus_task_callback() -> Callback<TaskStamp> {
     Callback::from(move |task: TaskStamp| {
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
             return;
@@ -138,10 +142,23 @@ fn focus_task_callback() -> Callback<TaskStamp> {
     })
 }
 
-fn detail_title(detail: Option<&TaskDetailState>, selected: &TaskStamp) -> String {
-    detail.and_then(TaskDetailState::answer).map_or_else(
-        || format!("Task {selected}"),
-        |answer| answer.task.presentation_title.clone(),
+fn detail_title(
+    detail: Option<&TaskDetailState>,
+    selected: &TaskStamp,
+    selection: &TaskOverviewSelection,
+) -> Html {
+    let Some(answer) = detail.and_then(TaskDetailState::answer) else {
+        return html! { {format!("Task {selected}")} };
+    };
+    let resolves = |task: &wire::TaskHandle| {
+        task.born()
+            .is_ok_and(|stamp| selection_has(selection, &stamp))
+    };
+    task_detail::render_task_title(
+        &answer.task.presentation_title,
+        &LineControls::Live {
+            resolves: &resolves,
+        },
     )
 }
 
@@ -194,11 +211,7 @@ fn render_available(
     let messages = render.creator_messages.iter().map(AsRef::as_ref);
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     html! {
-        <div
-            class="app-sheet-body"
-            onclick={task_detail::task_text_chip_click(focus_task)}
-            onkeydown={task_detail::task_text_chip_keydown(focus_task)}
-        >
+        <div class="app-sheet-body">
             <div class="app-sheet-identity">
                 <code>{statement.handle.to_string()}</code>
                 <chrome::CopyButton
@@ -512,16 +525,29 @@ fn render_task_link(
         .iter()
         .find(|task| task.row().statement.body.born == *born)
         .map(WorkTask::row);
+    let selected = selection_has(selection, born);
+    // A selected relation is itself a button, so its title holds no control.
+    let resolves = |task: &wire::TaskHandle| {
+        task.born()
+            .is_ok_and(|stamp| selection_has(selection, &stamp))
+    };
+    let controls = if selected {
+        LineControls::Nested
+    } else {
+        LineControls::Live {
+            resolves: &resolves,
+        }
+    };
     let contents = html! {
         <>
-            <span>{if selection_has(selection, born) { relationship } else { "Outside selection" }}</span>
+            <span>{if selected { relationship } else { "Outside selection" }}</span>
             <strong>{row.map_or_else(|| born.to_string(), |row| row.statement.body.handle.to_string())}</strong>
             if let Some(row) = row {
-                <small>{row.presentation_title.clone()}</small>
+                <small>{task_detail::render_task_title(&row.presentation_title, &controls)}</small>
             }
         </>
     };
-    if !selection_has(selection, born) {
+    if !selected {
         return html! {
             <article class="work-relationship-link work-relationship-link--external">{contents}</article>
         };

@@ -17,11 +17,21 @@ use crate::watchband;
 
 mod diagrams;
 mod image_flow;
+pub(crate) mod inline;
 mod math;
 mod quotes;
 mod tables;
 pub(crate) mod task_text;
 mod terminal;
+
+/// The one parser option set for authored Markdown on every surface.
+const OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_SMART_PUNCTUATION)
+    .union(Options::ENABLE_MATH)
+    .union(Options::ENABLE_GFM);
 
 pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
@@ -360,18 +370,11 @@ fn render(
     quote_sources: &QuoteSources,
     finish: Finish<'_>,
 ) -> RenderedMarkdown {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_SMART_PUNCTUATION
-        | Options::ENABLE_MATH
-        | Options::ENABLE_GFM;
-    let math = math::normalize(markdown, classifications, directives, options);
+    let math = math::normalize(markdown, classifications, directives, OPTIONS);
     let markdown = math.markdown;
     let (events, outer_quotes) = parse_events(
         &markdown,
-        options,
+        OPTIONS,
         math.classifications,
         math.directives,
         quote_agents,

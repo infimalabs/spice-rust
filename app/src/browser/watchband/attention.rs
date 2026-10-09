@@ -214,6 +214,7 @@ fn render_task(
     select: &Callback<wire::TaskStamp>,
 ) -> Html {
     let label = reason.label();
+    let title = crate::composer_markdown::inline::plain_text(title);
     html! {
         <button
             type="button"
@@ -301,7 +302,7 @@ fn render_direction(
             type="button"
             class="agent-menu-attention-chip"
             aria-label={format!("Open {}'s oldest waiting direction in task overview", item.label)}
-            title={preview.to_owned()}
+            title={crate::composer_markdown::inline::plain_text(preview)}
             onclick={open}
         >
             <span class="agent-menu-attention-copy">

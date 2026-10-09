@@ -383,7 +383,7 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
     let handle_label = format!(
         "Open {}: {}, {}",
         statement.handle,
-        task.row().presentation_title(),
+        crate::composer_markdown::inline::plain_text(task.row().presentation_title()),
         availability.key(),
     );
     let focus_key = format!("team-task:{}", statement.born);
