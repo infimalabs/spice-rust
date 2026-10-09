@@ -176,11 +176,11 @@ Slider flyers and their one selected label settle together over 180ms. The
 label remains continuously painted inside its flyer during travel; labels do
 not crossfade, overlap, or disappear between stops. The native ranges retain
 their stops and hit targets, including the 2px endpoint inset. Lettering has a
-subtle etched highlight. Speech selection paints in its control first, then
-commits the browser-local speech policy when that movement ends, so a
-message-rich team cannot consume the transition; interrupted movement commits
-only its final selection. Reduced motion removes travel and commits
-immediately, without removing state distinctions.
+subtle etched highlight. A speech selection applies to the team's browser-local
+speech policy in the same input that paints it, so no narration speaks under a
+mode the control no longer shows; message cards do not depend on that mode and
+stay unrendered. Reduced motion removes travel without removing state
+distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
 for one recipient, equal separated arcs for several. The button title names the

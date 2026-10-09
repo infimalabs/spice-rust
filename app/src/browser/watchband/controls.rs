@@ -525,13 +525,13 @@ pub(super) fn render_team_controls(
             {turbo}
             {menu}
         >
-            <SpeechSlider
-                team={team}
-                authoritative_life={authoritative_life}
-                speech={speech}
-                controls={team_controls.clone()}
-                set_automatic_speech={set_automatic_speech.clone()}
-            />
+            {speech_slider(
+                team,
+                authoritative_life,
+                speech,
+                team_controls.clone(),
+                set_automatic_speech.clone(),
+            )}
             {lifetime_slider(
                 selected,
                 !can_configure || control.pending_life.is_some(),
@@ -543,67 +543,31 @@ pub(super) fn render_team_controls(
     }
 }
 
-#[derive(Properties, PartialEq)]
-struct SpeechSliderProps {
+/// The team's speech mode, applied in the input turn that selects it so the
+/// queue never narrates under a mode the control no longer shows.
+fn speech_slider(
     team: CanonicalUuid,
     authoritative_life: wire::intent::TeamLife,
     speech: TeamSpeech,
     controls: UseReducerHandle<TeamControls>,
     set_automatic_speech: Callback<(String, bool)>,
-}
-
-#[function_component(SpeechSlider)]
-fn speech_slider(props: &SpeechSliderProps) -> Html {
-    // Speech changes rerender every message card whose automatic narration
-    // policy changed. Keep that work behind the visual transition so Firefox
-    // can paint the same lightweight motion as the isolated lifetime control.
-    let selected = use_state_eq(|| props.speech);
-    {
-        let selected = selected.clone();
-        use_effect_with(props.speech, move |speech| selected.set(*speech));
-    }
-    let commit = {
-        let automatic_team = props.team.to_string();
-        let set_automatic_speech = props.set_automatic_speech.clone();
-        let controls = props.controls.clone();
-        let team = props.team;
-        let authoritative_life = props.authoritative_life;
-        Callback::from(move |speech: TeamSpeech| {
-            set_automatic_speech.emit((automatic_team.clone(), speech != TeamSpeech::Quiet));
-            controls.dispatch(TeamControlAction::SetSpeech {
-                team,
-                authoritative_life,
-                speech,
-            });
-        })
-    };
-    let oninput = {
-        let selected = selected.clone();
-        let commit = commit.clone();
-        Callback::from(move |event: InputEvent| {
-            let input: HtmlInputElement = event.target_unchecked_into();
-            let index = input.value().parse::<usize>().unwrap_or(1);
-            let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
-            selected.set(speech);
-            if crate::browser::overlay::reduced_motion() {
-                commit.emit(speech);
-            }
-        })
-    };
-    let ontransitionend = {
-        let selected = selected.clone();
-        Callback::from(move |event: web_sys::TransitionEvent| {
-            if event.pseudo_element() == "::after" {
-                commit.emit(*selected);
-            }
-        })
-    };
-    let speech = *selected;
+) -> Html {
+    let automatic_team = team.to_string();
+    let oninput = Callback::from(move |event: InputEvent| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let index = input.value().parse::<usize>().unwrap_or(1);
+        let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
+        set_automatic_speech.emit((automatic_team.clone(), speech != TeamSpeech::Quiet));
+        controls.dispatch(TeamControlAction::SetSpeech {
+            team,
+            authoritative_life,
+            speech,
+        });
+    });
     html! {
         <label
             class="team-slider team-speech"
             data-stop={speech.index().to_string()}
-            {ontransitionend}
         >
             <input
                 type="range"

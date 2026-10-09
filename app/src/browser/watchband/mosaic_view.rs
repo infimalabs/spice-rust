@@ -1259,7 +1259,6 @@ fn render_activity_cards(
                         quote_dispatcher={properties.quote_dispatcher.clone()}
                         open_task={properties.open_message_task.clone()}
                         speech_queue={properties.speak.clone()}
-                        speech={properties.speech}
                         speech_owner={properties.speech_owner.as_ref()
                             .filter(|owner| owner.message_key() == key.as_str())
                             .cloned()}
