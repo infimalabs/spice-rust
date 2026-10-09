@@ -784,8 +784,8 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
                 role="button"
                 tabindex="0"
                 data-task-handle={handle.as_str().to_owned()}
-                aria-label={format!("Inspect task {}", handle.as_str())}
-                title={format!("Inspect {}", handle.as_str())}
+                aria-label={format!("Open task {}", handle.as_str())}
+                title={format!("Open task {}", handle.as_str())}
             >
                 <span class="message-task-chip-label">{handle.as_str()}</span>
             </span>

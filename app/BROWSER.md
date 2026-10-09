@@ -405,6 +405,12 @@ sources retain independent Play controls, and keyed portal roots preserve each
 hunk’s callback. Narrow cards keep this order rather than adding a controls
 header.
 
+Task-handle chips use the surrounding rendered activity prose, without the
+handle itself, as a bounded native hover title. Authored characters are escaped
+before entering the attribute. An isolated handle has the explicit `Open task
+HANDLE` fallback; activation, keyboard semantics, and the visible chip remain
+unchanged.
+
 Committed cards occupy a fixed 9px lattice perimeter and shared seams carved
 from the admitted rectangle. Prose cards center their painted height within
 whole-row cells; cards add no private fill, retaining their lane rail, matching
