@@ -6,7 +6,7 @@
 //! workflow head, and all future work is returned as one UTC deadline for the
 //! resident timer worker.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use board::Entry;
@@ -26,12 +26,15 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 
 mod availability;
 mod holds;
+mod launch;
 mod materialization;
 use availability::{ready_instant, selected_ready};
 use materialization::Projection;
 pub(super) mod generation_notices;
 mod review_feedback;
 mod targets;
+pub(in crate::resident) use launch::PendingLaunch;
+use launch::{Launching, pending_launch};
 use targets::project_targets;
 #[cfg(test)]
 mod startup_tests;
@@ -104,6 +107,7 @@ enum Resolution {
 enum Attempted {
     Started,
     DeadLettered(Vec<super::steering::DeadLetter>),
+    Launching(Launching),
 }
 
 /// Process-local lifecycle backoff; durable eligibility remains in the bus.
@@ -186,6 +190,7 @@ impl Backoff {
 pub(super) struct Runtime {
     backoff: Backoff,
     holds: Holds,
+    launching: BTreeSet<CanonicalUuid>,
     /// How long after its seating an occupant's unsettled death is young.
     young: Duration,
     /// How long a hold keeps the lane from its next wake.
@@ -280,6 +285,7 @@ impl Runtime {
     pub(super) fn new(config: &lane::Config) -> Self {
         Self {
             backoff: Backoff::default(),
+            launching: BTreeSet::new(),
             holds: Holds::new(config.deaths()),
             young: config.young().get(),
             hold: config.hold().get(),
@@ -301,6 +307,7 @@ impl Runtime {
         seats: &mut Seats,
         lane_runtime: &lane_surface::Runtime<'_>,
         config: &SurfaceConfig,
+        launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
         let now = current_instant()?;
@@ -313,6 +320,7 @@ impl Runtime {
             seats,
             lane_runtime,
             config,
+            launches,
             diagnostic,
         )
     }
@@ -331,6 +339,7 @@ impl Runtime {
         seats: &mut Seats,
         lane_runtime: &lane_surface::Runtime<'_>,
         config: &SurfaceConfig,
+        launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
         lane_surface::reconcile_renewal(bus, paths, epoch, &config.steering)?;
@@ -361,13 +370,14 @@ impl Runtime {
             })?;
             self.synchronize_holds(&snapshot, self.projection.cursor())?;
         }
-        let targets = project_targets(
+        let mut targets = project_targets(
             &snapshot,
             &self.projection,
             now,
             &self.holds,
             &config.allocation,
         )?;
+        targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
         let task = match resolve(&targets, &self.backoff, now, config.lane.wake_order()) {
             Resolution::Idle => None,
@@ -395,41 +405,7 @@ impl Runtime {
                     config,
                     &snapshot,
                 );
-                match result {
-                    Ok(Attempted::Started) => {
-                        self.backoff.release(lane);
-                        let _ = writeln!(
-                            diagnostic,
-                            "lifecycle started trigger={} lane={}",
-                            trigger.as_str(),
-                            lane
-                        );
-                        None
-                    }
-                    Ok(Attempted::DeadLettered(parked)) => {
-                        self.backoff.release(lane);
-                        for directive in parked {
-                            let _ = writeln!(
-                                diagnostic,
-                                "lifecycle dead-lettered trigger={} lane={} key={} directive={} requeue={}",
-                                trigger.as_str(),
-                                lane,
-                                directive.key,
-                                directive.directive,
-                                directive.requeue,
-                            );
-                        }
-                        None
-                    }
-                    Err(Outcome::Refusal(refusal)) => {
-                        self.backoff
-                            .refused(trigger, lane, refusal.reason(), now, diagnostic)?
-                    }
-                    Err(Outcome::Fault(fault)) => return Err(Outcome::Fault(fault)),
-                    Err(Outcome::Reply(_)) => {
-                        unreachable!("unit lifecycle failures carry no reply")
-                    }
-                }
+                self.settle_attempt(now, trigger, lane, result, launches, diagnostic)?
             }
         };
         let hold = self.holds.next().map(|(lane, at)| WakeDeadline {
@@ -438,6 +414,63 @@ impl Runtime {
             kind: WakeKind::Hold,
         });
         Ok(earliest(task, hold))
+    }
+
+    fn settle_attempt(
+        &mut self,
+        now: Instant,
+        trigger: Trigger,
+        lane: CanonicalUuid,
+        result: CommandResult<Attempted>,
+        launches: &mut super::launch_runtime::Runtime,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> CommandResult<Option<WakeDeadline>> {
+        match result {
+            Ok(Attempted::Started) => {
+                self.backoff.release(lane);
+                let _ = writeln!(
+                    diagnostic,
+                    "lifecycle started trigger={} lane={}",
+                    trigger.as_str(),
+                    lane
+                );
+                Ok(None)
+            }
+            Ok(Attempted::Launching(launching)) => {
+                self.launching.insert(lane);
+                launches.start_automatic(launching.launch, launching.pending);
+                let _ = writeln!(
+                    diagnostic,
+                    "lifecycle establishing trigger={} lane={}",
+                    trigger.as_str(),
+                    lane
+                );
+                Ok(None)
+            }
+            Ok(Attempted::DeadLettered(parked)) => {
+                self.backoff.release(lane);
+                for directive in parked {
+                    let _ = writeln!(
+                        diagnostic,
+                        "lifecycle dead-lettered trigger={} lane={} key={} directive={} requeue={}",
+                        trigger.as_str(),
+                        lane,
+                        directive.key,
+                        directive.directive,
+                        directive.requeue,
+                    );
+                }
+                Ok(None)
+            }
+            Err(Outcome::Refusal(refusal)) => {
+                self.backoff
+                    .refused(trigger, lane, refusal.reason(), now, diagnostic)
+            }
+            Err(Outcome::Fault(fault)) => Err(Outcome::Fault(fault)),
+            Err(Outcome::Reply(_)) => {
+                unreachable!("unit lifecycle failures carry no reply")
+            }
+        }
     }
 
     /// A same-lane command is the event that can make a parked local
@@ -475,6 +508,18 @@ impl Runtime {
         self.backoff.release_all();
     }
 
+    pub(super) fn launch_pending(&self, lane: CanonicalUuid) -> bool {
+        self.launching.contains(&lane)
+    }
+
+    pub(super) fn begin_external_launch(&mut self, lane: CanonicalUuid) {
+        self.launching.insert(lane);
+    }
+
+    pub(super) fn finish_external_launch(&mut self, lane: CanonicalUuid) {
+        self.launching.remove(&lane);
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "one lifecycle attempt owns the complete resident effect boundary"
@@ -498,7 +543,7 @@ impl Runtime {
         let occupant = new_uuid();
         match trigger {
             Trigger::PendingInbox => {
-                let wake = lane_surface::wake_automatic(
+                let wake = lane_surface::begin_automatic_wake(
                     bus,
                     paths,
                     epoch,
@@ -511,8 +556,10 @@ impl Runtime {
                     None,
                 );
                 match wake {
-                    Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
-                    Ok(lane_surface::AutomaticWake::Unstarted(failure)) => {
+                    Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {
+                        Ok(pending_launch(trigger, lane, cursor, None, launch))
+                    }
+                    Ok(lane_surface::BeginAutomaticWake::Unstarted(failure)) => {
                         super::steering::dead_letter_pending(
                             bus, paths, epoch, lane, cursor, &failure,
                         )
@@ -527,7 +574,7 @@ impl Runtime {
                     Err(failure) => Err(failure),
                 }
             }
-            Trigger::HeldClaim => match lane_surface::wake_automatic(
+            Trigger::HeldClaim => match lane_surface::begin_automatic_wake(
                 bus,
                 paths,
                 epoch,
@@ -539,8 +586,10 @@ impl Runtime {
                 Some(snapshot),
                 None,
             )? {
-                lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
-                lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),
+                lane_surface::BeginAutomaticWake::Launch(launch) => {
+                    Ok(pending_launch(trigger, lane, cursor, None, launch))
+                }
+                lane_surface::BeginAutomaticWake::Unstarted(failure) => Err(failure),
             },
             Trigger::DrainQueue | Trigger::AvailableWork => {
                 let claim = crate::board_command::claim_automatic(
@@ -554,7 +603,7 @@ impl Runtime {
                     &config.allocation,
                 )
                 .map_err(unit_outcome)?;
-                let launched = lane_surface::wake_automatic(
+                let launched = lane_surface::begin_automatic_wake(
                     bus,
                     paths,
                     epoch,
@@ -567,10 +616,12 @@ impl Runtime {
                     Some(&claim),
                 );
                 match launched {
-                    Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
-                    Ok(lane_surface::AutomaticWake::Unstarted(launch)) | Err(launch) => {
+                    Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {
+                        Ok(pending_launch(trigger, lane, cursor, Some(claim), launch))
+                    }
+                    Ok(lane_surface::BeginAutomaticWake::Unstarted(failure)) | Err(failure) => {
                         match crate::board_command::release_automatic(bus, repository, &claim) {
-                            Ok(()) => Err(launch),
+                            Ok(()) => Err(failure),
                             Err(release) => Err(unit_outcome(release)),
                         }
                     }

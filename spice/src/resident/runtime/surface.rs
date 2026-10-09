@@ -1,10 +1,13 @@
 //! App publication and the resident's live surface loop.
 mod capabilities;
+mod control_dispatch;
 mod input;
+mod launch_completion;
 
 use std::sync::Arc;
 
 use super::*;
+use control_dispatch::{ControlDispatch, dispatch_control_burst};
 
 struct StartedSurface<'a> {
     capabilities: serve::axum::Capabilities,
@@ -227,6 +230,20 @@ fn runtimes<'a>(
     )
 }
 
+fn taste_parts(
+    runtime: &mut Option<taste_surface::AdjudicationRuntime>,
+) -> (
+    Option<&mut taste_surface::AdjudicationSubmitter>,
+    Option<&mut taste_surface::AdjudicationCompletions>,
+) {
+    runtime
+        .as_mut()
+        .map(taste_surface::AdjudicationRuntime::parts)
+        .map_or((None, None), |(submitter, completions)| {
+            (Some(submitter), Some(completions))
+        })
+}
+
 pub(super) async fn run_surface(
     bus: &Bus,
     repository: &Repository,
@@ -275,13 +292,8 @@ pub(super) async fn run_surface(
         config,
         &reads,
     );
-    let (taste_submitter, taste_completions) = backgrounds
-        .taste_adjudication
-        .as_mut()
-        .map(taste_surface::AdjudicationRuntime::parts)
-        .map_or((None, None), |(submitter, completions)| {
-            (Some(submitter), Some(completions))
-        });
+    let mut launches = super::launch_runtime::Runtime::new();
+    let (taste_submitter, taste_completions) = taste_parts(&mut backgrounds.taste_adjudication);
     publish_ready_surface(
         bus,
         epoch,
@@ -291,6 +303,7 @@ pub(super) async fn run_surface(
         &mut backgrounds.timers,
         &mut backgrounds.lifecycle,
         &mut supervisor_reports,
+        &mut launches,
         &mut publication,
     )
     .await?;
@@ -303,6 +316,7 @@ pub(super) async fn run_surface(
         seats,
         &mut backgrounds.lifecycle,
         &mut backgrounds.timers,
+        &mut launches,
         &mut supervisor_reports,
         &mut control,
         &mut server_task,
@@ -342,6 +356,7 @@ pub(super) async fn run_surface(
         backgrounds.quota_triggers,
         backgrounds.timer_commits,
         backgrounds.lifecycle,
+        launches,
         inbox_deliveries,
         lifecycle_reconciliation,
     )
@@ -361,6 +376,7 @@ async fn publish_ready_surface(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
     door: &mut capture::SupervisorReports,
+    launches: &mut super::launch_runtime::Runtime,
     publication: &mut SurfacePublication<'_>,
 ) -> CommandResult<()> {
     reconcile_wakes(
@@ -370,6 +386,7 @@ async fn publish_ready_surface(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     )?;
     command_surface.synchronize_reads_before_publish()?;
@@ -433,6 +450,7 @@ async fn await_message_startup(
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     timers: &mut timers::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
     control: &mut serve::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
@@ -455,11 +473,11 @@ async fn await_message_startup(
                 ControlDeliveryTurn::Control => {
                     reconcile_for_control(
                         lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
-                        lifecycle, door,
+                        lifecycle, launches, door,
                     )?;
                     if dispatch_control_delivery_burst(
                         command_surface, seats, lifecycle, control, request, inbox_deliveries,
-                        lifecycle_reconciliation,
+                        lifecycle_reconciliation, launches,
                     ).await? {
                         return Ok(None);
                     }
@@ -468,6 +486,10 @@ async fn await_message_startup(
                     deliver_owed_inbox(command_surface, inbox_deliveries).await?;
                 }
             },
+            completed = launches.recv() => launch_completion::accept(
+                bus, command_surface, seats, lifecycle, lifecycle_reconciliation,
+                timers, launches, door, diagnostic, completed,
+            ).await?,
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
     }
@@ -561,6 +583,7 @@ async fn drive_surface(
     mut quota_triggers: quota::Triggers,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
+    mut launches: super::launch_runtime::Runtime,
     mut inbox_deliveries: InboxDeliveries,
     mut lifecycle_reconciliation: lifecycle::Reconciliation,
 ) -> CommandResult<()> {
@@ -570,10 +593,8 @@ async fn drive_surface(
             .narration
             .next_deadline();
         tokio::select! {
-            // Every reconciliation sweep asks the supervisor door itself, so
-            // selecting another ready source first cannot lose an ending.
-            // Rotate the three inputs that can remain ready continuously.
-            // Record turns own both durable accounting and app publication.
+            // Reconciliation always probes the supervisor door; rotate the
+            // three inputs that can remain continuously ready.
             input = input::next(
                 &mut input_lead,
                 supervisor_reports.recv(),
@@ -593,11 +614,11 @@ async fn drive_surface(
                     ControlDeliveryTurn::Control => {
                         reconcile_for_control(
                             &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
-                            &mut timers, &mut lifecycle, &mut supervisor_reports,
+                            &mut timers, &mut lifecycle, &mut launches, &mut supervisor_reports,
                         )?;
                         if dispatch_control_delivery_burst(
                             command_surface, seats, &mut lifecycle, &mut control, request,
-                            &mut inbox_deliveries, &mut lifecycle_reconciliation,
+                            &mut inbox_deliveries, &mut lifecycle_reconciliation, &mut launches,
                         ).await? {
                             timers.synchronize(bus)?;
                             return stop_surface(publication, shutdown, server_task).await;
@@ -613,14 +634,9 @@ async fn drive_surface(
                     message_state.as_ref(), diagnostic,
                 )?,
             },
-            () = narration::wait(narration_deadline) => {
-                let steps = message_surface::lock_state(message_state.as_ref())?
-                    .narration
-                    .due(std::time::Instant::now(), |lane, occupant| {
-                        seats.activity(lane).is_some_and(|activity| activity.occupant() == occupant)
-                    });
-                narration::record(bus, command_surface.paths, epoch, steps, diagnostic)?;
-            },
+            () = narration::wait(narration_deadline) => accept_narration(
+                bus, epoch, seats, command_surface, message_state.as_ref(), diagnostic,
+            )?,
             completed = receive_judgment(&mut taste_completions) => accept_judgment(
                 bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
             )?,
@@ -634,15 +650,20 @@ async fn drive_surface(
             )?,
             timer = timers.recv() => accept_timer_turn(
                 bus, seats, command_surface, &mut lifecycle, &mut supervisor_reports,
-                diagnostic, &mut timers, &mut lifecycle_reconciliation, timer,
+                diagnostic, &mut timers, &mut lifecycle_reconciliation, &mut launches, timer,
             )?,
             () = quota_triggers.wait_periodic() => request_quota(&mut quota, &mut quota_triggers),
             completed = quota.recv() => quota.accept(completed),
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
                 &mut supervisor_reports, message_state.as_ref(), diagnostic, &mut timers,
-                &mut quota, &mut quota_triggers, &mut lifecycle_reconciliation, committed,
+                &mut quota, &mut quota_triggers, &mut lifecycle_reconciliation, &mut launches,
+                committed,
             )?,
+            completed = launches.recv() => launch_completion::accept(
+                bus, command_surface, seats, &mut lifecycle, &mut lifecycle_reconciliation,
+                &mut timers, &mut launches, &mut supervisor_reports, diagnostic, completed,
+            ).await?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
         reap::present_closed_transcripts(
@@ -656,6 +677,25 @@ async fn drive_surface(
             diagnostic,
         )?;
     }
+}
+
+fn accept_narration(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let steps = message_surface::lock_state(message_state)?.narration.due(
+        std::time::Instant::now(),
+        |lane, occupant| {
+            seats
+                .activity(lane)
+                .is_some_and(|activity| activity.occupant() == occupant)
+        },
+    );
+    narration::record(bus, command_surface.paths, epoch, steps, diagnostic)
 }
 
 pub(in crate::resident) enum ControlDeliveryTurn {
@@ -693,6 +733,7 @@ async fn dispatch_control_delivery_burst(
     request: Option<serve::axum::ControlRequest>,
     inbox_deliveries: &mut InboxDeliveries,
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
+    launches: &mut super::launch_runtime::Runtime,
 ) -> CommandResult<bool> {
     let dispatched = dispatch_control_burst(
         command_surface,
@@ -701,6 +742,7 @@ async fn dispatch_control_delivery_burst(
         control,
         request,
         inbox_deliveries,
+        launches,
     )
     .await?;
     request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
@@ -854,6 +896,7 @@ fn accept_timer_turn(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     reconciliation: &mut lifecycle::Reconciliation,
+    launches: &mut super::launch_runtime::Runtime,
     timer: Option<bus::timer::TimerEvent>,
 ) -> CommandResult<()> {
     let timer = timer.ok_or_else(|| {
@@ -872,6 +915,7 @@ fn accept_timer_turn(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     )
 }
@@ -1181,6 +1225,7 @@ fn accept_commit_turn(
     quota: &mut quota::Runtime,
     quota_triggers: &mut quota::Triggers,
     reconciliation: &mut lifecycle::Reconciliation,
+    launches: &mut super::launch_runtime::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
     match accept_commit(
@@ -1190,6 +1235,7 @@ fn accept_commit_turn(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
         committed,
     )? {
@@ -1213,6 +1259,7 @@ fn accept_commit(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<Option<JournalCommit>> {
@@ -1228,6 +1275,7 @@ fn accept_commit(
                         diagnostic,
                         timers,
                         lifecycle,
+                        launches,
                         door,
                     ),
                     diagnostic,
@@ -1246,6 +1294,7 @@ fn accept_commit(
                     diagnostic,
                     timers,
                     lifecycle,
+                    launches,
                     door,
                 ),
                 diagnostic,
@@ -1299,6 +1348,7 @@ fn reconcile_for_control(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     if reconciliation.control_settles() {
@@ -1310,6 +1360,7 @@ fn reconcile_for_control(
             diagnostic,
             timers,
             lifecycle,
+            launches,
             door,
         )?;
     }
@@ -1328,6 +1379,7 @@ fn reconcile_lifecycle(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     // A deferred sweep leaves the demand pending, so the next control turn
@@ -1339,6 +1391,7 @@ fn reconcile_lifecycle(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     );
     if swept.is_ok() {
@@ -1354,103 +1407,15 @@ fn reconcile_wakes(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
     super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic, door)?;
     let (paths, epoch) = (command_surface.paths, command_surface.epoch());
     lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
-    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
+    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, launches, diagnostic)?;
     timers.synchronize_wake(wake)
-}
-pub(in crate::resident) struct ControlDispatch {
-    pub(in crate::resident) reached_dark: bool,
-    lifecycle_witness: Option<lifecycle::ReconciliationWitness>,
-    inbox_delivery: Option<CanonicalUuid>,
-}
-
-pub(in crate::resident) async fn dispatch_control(
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    lifecycle: &mut lifecycle::Runtime,
-    control: &mut serve::axum::Control,
-    request: Option<serve::axum::ControlRequest>,
-) -> CommandResult<ControlDispatch> {
-    let request = request
-        .ok_or_else(|| environment_fault("serve::control-closed", "app control receiver closed"))?;
-    let replayed = command_surface.replay(seats, request.command());
-    let is_replay = replayed.is_some();
-    let lifecycle_released = if is_replay {
-        false
-    } else {
-        command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
-    };
-    let dark = is_dark_command(request.command());
-    let command = request.command().id();
-    let epoch = request.command().epoch();
-    let dispatched = replayed.map_or_else(
-        || command_surface.dispatch_fresh(seats, request.command()),
-        CommandDispatch::ordinary,
-    );
-    let (outcome, effects) = dispatched.into_parts();
-    let lifecycle_witness = lifecycle_released.then(|| {
-        let position = match &outcome {
-            Outcome::Reply(reply) => Some(reply.position),
-            Outcome::Refusal(_) | Outcome::Fault(_) => None,
-        };
-        lifecycle::ReconciliationWitness::new(command, epoch, position)
-    });
-    let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
-    complete_response(request, outcome).await;
-    if reached_dark {
-        control.close();
-    }
-    Ok(ControlDispatch {
-        reached_dark,
-        lifecycle_witness,
-        inbox_delivery: effects.inbox_delivery,
-    })
-}
-
-pub(in crate::resident) async fn dispatch_control_burst(
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    lifecycle: &mut lifecycle::Runtime,
-    control: &mut serve::axum::Control,
-    request: Option<serve::axum::ControlRequest>,
-    inbox_deliveries: &mut InboxDeliveries,
-) -> CommandResult<ControlDispatch> {
-    let mut request = request;
-    let mut burst = ControlDispatch {
-        reached_dark: false,
-        lifecycle_witness: None,
-        inbox_delivery: None,
-    };
-    for turn in 0..serve::axum::Control::FAIR_CYCLE_LIMIT {
-        let dispatched =
-            dispatch_control(command_surface, seats, lifecycle, control, request.take()).await?;
-        if let Some(lane) = dispatched.inbox_delivery {
-            inbox_deliveries.insert(lane);
-        }
-        burst.reached_dark |= dispatched.reached_dark;
-        if dispatched.lifecycle_witness.is_some() {
-            burst.lifecycle_witness = dispatched.lifecycle_witness;
-        }
-        if burst.reached_dark
-            || burst.lifecycle_witness.is_some()
-            || turn + 1 == serve::axum::Control::FAIR_CYCLE_LIMIT
-        {
-            break;
-        }
-        request = match control.try_recv() {
-            Ok(request) => Some(request),
-            Err(
-                tokio::sync::mpsc::error::TryRecvError::Empty
-                | tokio::sync::mpsc::error::TryRecvError::Disconnected,
-            ) => break,
-        };
-    }
-    Ok(burst)
 }
 
 async fn complete_response(request: serve::axum::ControlRequest, outcome: Outcome<CommandAnswer>) {

@@ -18,6 +18,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     };
     let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut runtime = Runtime::new(&surface.config.lane);
+    let mut launches = super::super::launch_runtime::Runtime::new();
     let mut seats = Seats::new();
     let mut diagnostic = Vec::new();
 
@@ -30,6 +31,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
             &mut seats,
             &lane_runtime,
             &surface.config,
+            &mut launches,
             &mut diagnostic,
         )
         .expect("Drain startup reconciles");
