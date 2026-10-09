@@ -378,8 +378,10 @@ Pulldown-cmark owns `$...$` and `$$...$$` math. The app maps model-common
 `\(...\)` and `\[...\]` delimiters onto that parser only when its first pass
 exposes both delimiters as prose; escaped text and inline or fenced code remain
 literal. KaTeX produces native MathML with system fonts. The renderer wraps it
-in bounded SVG, and the parent admits only the decoded image, never renderer
-markup in its DOM. Invalid TeX retains its authored source.
+in bounded SVG whose viewport contains every laid-out glyph, even where an engine
+sizes the MathML box narrower than its content. The parent admits only the
+decoded image, never renderer markup in its DOM. Invalid TeX retains its authored
+source.
 
 [`mermaid.rs`](../../app/src/browser/mermaid.rs) owns a lazy, measurable,
 offscreen `allow-scripts` sandbox pinned to the **loaded page's** generation and

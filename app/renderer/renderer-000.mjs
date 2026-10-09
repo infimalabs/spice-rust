@@ -168,6 +168,7 @@ function renderMath(source, display, theme) {
   ].join(';');
   body.appendChild(document.importNode(parsedMath, true));
   renderHost.replaceChildren(body);
+  containOverflow(body);
   const bounds = body.getBoundingClientRect();
   const width = Math.ceil(bounds.width);
   const height = Math.ceil(bounds.height);
@@ -184,6 +185,25 @@ function renderMath(source, display, theme) {
   foreign.appendChild(body);
   root.appendChild(foreign);
   return root;
+}
+
+// Firefox sizes a MathML box before display-style operators grow, so laid-out
+// descendants can extend past it. Padding the host by that overflow keeps every
+// glyph inside the measured box that becomes the image viewport.
+function containOverflow(body) {
+  const box = body.getBoundingClientRect();
+  let { left, top, right, bottom } = box;
+  for (const element of body.querySelectorAll('*')) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 && rect.height <= 0) continue;
+    left = Math.min(left, rect.left);
+    top = Math.min(top, rect.top);
+    right = Math.max(right, rect.right);
+    bottom = Math.max(bottom, rect.bottom);
+  }
+  const pad = overflow => `${1 + Math.ceil(overflow)}px`;
+  body.style.padding = [box.top - top, right - box.right, bottom - box.bottom, box.left - left]
+    .map(pad).join(' ');
 }
 
 addEventListener('message', async event => {
