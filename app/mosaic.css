@@ -1166,11 +1166,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
 @media (prefers-reduced-motion: reduce) {
   .lane-mosaic-plane .mosaic-message-card.liquid { transition: none; }
 }
-/* Message cards paint no fill of their own: the stream field behind them shows
-   through, and the thick left lane rail, its rail-width corners and the gutters
-   set each card apart. A final answer rests in --card-rest-wash; hovering any
-   card washes --card-hover-wash, for prose cards and image covers alike. */
+/* Message cards paint no fill of their own: the stream field shows through,
+   and the thick left lane rail, its corners and the gutters set each card apart.
+   Every card rests in its lane's 5% rest wash; hover raises it to the 10% wash. */
 .team-surface .mosaic-message-card {
+  --card-rest-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 5%, transparent);
   --card-hover-wash: color-mix(in srgb, var(--accent-slot, var(--accent)) 10%, transparent);
   container-type: inline-size;
   gap: 0;
@@ -1180,7 +1180,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   border: 0;
   border-inline-start: var(--message-rail) solid var(--accent-slot, var(--accent-neutral));
   border-radius: var(--app-radius-card);
-  background: var(--card-rest-wash, transparent);
+  background: var(--card-rest-wash);
   font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
   font-size: var(--app-type-copy);
   line-height: 1.25;
