@@ -135,43 +135,48 @@ fn arrangement_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<
     })
 }
 
-/// An open team arrangement owns Escape only while Chat shows it. Focus stays
-/// on an expanded team menu that opened it, otherwise returns to the lights.
+/// An open team arrangement owns Escape only while Chat shows it. Opening it
+/// moves focus to its first available choice, so either opener reaches the
+/// choices directly; Escape returns focus to the control that opened it.
 #[hook]
-pub(in crate::browser) fn use_team_arrangement_escape(
+pub(in crate::browser) fn use_team_arrangement_focus(
     controls: &UseReducerHandle<TeamControls>,
     visible: bool,
 ) {
+    let open = controls.open_arrangement();
+    use_effect_with(open, |open| {
+        if let Some((team, _)) = open
+            && let Some(choice) = team_element(*team, ".team-arrangement-action:not([disabled])")
+        {
+            let _ = choice.focus();
+        }
+    });
     let dismiss = {
         let controls = controls.clone();
         Callback::from(move |()| {
-            let document = web_sys::window().and_then(|window| window.document());
-            let opener_focused = document
-                .as_ref()
-                .and_then(web_sys::Document::active_element)
-                .is_some_and(|active| {
-                    active
-                        .matches(".team-menu[aria-expanded=\"true\"]")
-                        .unwrap_or(false)
-                });
-            if !opener_focused
-                && let Some(trigger) = document
-                    .and_then(|document| {
-                        document
-                            .query_selector(
-                                ".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]",
-                            )
-                            .ok()
-                            .flatten()
-                    })
-                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let _ = trigger.focus();
+            if let Some((team, opener)) = open {
+                let selector = match opener {
+                    ArrangementOpener::Lights => ".team-lights[data-lane-drag-handle]",
+                    ArrangementOpener::Menu => ".team-menu",
+                };
+                if let Some(trigger) = team_element(team, selector) {
+                    crate::browser::overlay::return_focus(&trigger);
+                }
             }
             controls.dispatch(TeamControlAction::CloseArrangement);
         })
     };
-    crate::browser::overlay::use_escape_owner(visible && controls.any_arrangement_open(), dismiss);
+    crate::browser::overlay::use_escape_owner(visible && open.is_some(), dismiss);
+}
+
+fn team_element(team: CanonicalUuid, selector: &str) -> Option<web_sys::HtmlElement> {
+    web_sys::window()?
+        .document()?
+        .query_selector(&format!(".team-surface[data-team=\"{team}\"] {selector}"))
+        .ok()
+        .flatten()?
+        .dyn_into()
+        .ok()
 }
 
 fn render_team_toolbar(
@@ -233,7 +238,7 @@ fn render_team_toolbar(
             role={if can_arrange { "button" } else { "group" }}
             aria-label={lights_label}
             aria-haspopup={can_arrange.then_some("menu")}
-            aria-expanded={can_arrange.then(|| control.arrangement_open.to_string())}
+            aria-expanded={can_arrange.then(|| control.arrangement.is_some().to_string())}
             aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
             tabindex={can_arrange.then_some("0")}
             title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
@@ -429,7 +434,10 @@ fn team_arrangement_click(
     Callback::from(move |event: MouseEvent| {
         event.stop_propagation();
         if can_arrange {
-            controls.dispatch(TeamControlAction::ToggleArrangement { team });
+            controls.dispatch(TeamControlAction::ToggleArrangement {
+                team,
+                opener: ArrangementOpener::Lights,
+            });
         }
     })
 }
@@ -446,6 +454,9 @@ fn team_arrangement_key(
         }
         event.prevent_default();
         event.stop_propagation();
-        controls.dispatch(TeamControlAction::ToggleArrangement { team });
+        controls.dispatch(TeamControlAction::ToggleArrangement {
+            team,
+            opener: ArrangementOpener::Lights,
+        });
     })
 }

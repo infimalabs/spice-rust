@@ -145,6 +145,10 @@ outer fifth joins into the team under the pointer: the receiver keeps its
 identity, primary composer, and member order, then receives the source members
 in their existing order.
 
+The status-pip stack and the team menu both open the same swap/join choices.
+Opening either moves focus to the first available choice; Escape closes the
+choices and returns focus to whichever of the two opened them.
+
 A team is named by its lead agent, canonical member zero, using the same label
 its messages carry: the configured name, else the worktree leaf. The task
 overview heading, arrangement targets, team menu, and team request toasts all

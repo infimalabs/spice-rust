@@ -14,7 +14,7 @@ pub(super) struct Context<'a> {
 }
 
 pub(super) fn render(team: CanonicalUuid, control: &TeamControl, context: &Context<'_>) -> Html {
-    if control.arrangement_open {
+    if control.arrangement.is_some() {
         render_arrangement(team, context)
     } else {
         Html::default()

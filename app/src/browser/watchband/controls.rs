@@ -96,9 +96,16 @@ impl TeamSpeech {
     }
 }
 
+/// The control that opened a team's arrangement, where dismissal returns focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::browser) enum ArrangementOpener {
+    Lights,
+    Menu,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TeamControl {
-    pub(super) arrangement_open: bool,
+    pub(super) arrangement: Option<ArrangementOpener>,
     pub(super) speech: TeamSpeech,
     pub(super) life: TeamLife,
     preview_life: Option<TeamLife>,
@@ -112,7 +119,7 @@ pub(super) struct TeamControl {
 impl Default for TeamControl {
     fn default() -> Self {
         Self {
-            arrangement_open: false,
+            arrangement: None,
             speech: TeamSpeech::Quiet,
             life: TeamLife::Steer,
             preview_life: None,
@@ -142,6 +149,7 @@ pub(crate) struct TeamRequest {
 pub(crate) enum TeamControlAction {
     ToggleArrangement {
         team: CanonicalUuid,
+        opener: ArrangementOpener,
     },
     CloseArrangement,
     SetSpeech {
@@ -191,8 +199,8 @@ impl Reducible for TeamControls {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
-            TeamControlAction::ToggleArrangement { team } => {
-                next.toggle_arrangement(team);
+            TeamControlAction::ToggleArrangement { team, opener } => {
+                next.toggle_arrangement(team, opener);
             }
             TeamControlAction::CloseArrangement => next.close_arrangements(),
             TeamControlAction::SetSpeech {
@@ -270,22 +278,27 @@ impl TeamControls {
             })
     }
 
-    pub(in crate::browser) fn any_arrangement_open(&self) -> bool {
-        self.teams.values().any(|team| team.arrangement_open)
+    /// The open arrangement's team and the control that opened it.
+    pub(in crate::browser) fn open_arrangement(
+        &self,
+    ) -> Option<(CanonicalUuid, ArrangementOpener)> {
+        self.teams
+            .iter()
+            .find_map(|(team, state)| state.arrangement.map(|opener| (*team, opener)))
     }
 
-    fn toggle_arrangement(&mut self, team: CanonicalUuid) {
+    fn toggle_arrangement(&mut self, team: CanonicalUuid, opener: ArrangementOpener) {
         let open = !self
             .teams
             .get(&team)
-            .is_some_and(|state| state.arrangement_open);
+            .is_some_and(|state| state.arrangement.is_some());
         self.close_arrangements();
-        self.teams.entry(team).or_default().arrangement_open = open;
+        self.teams.entry(team).or_default().arrangement = open.then_some(opener);
     }
 
     fn close_arrangements(&mut self) {
         for state in self.teams.values_mut() {
-            state.arrangement_open = false;
+            state.arrangement = None;
         }
     }
 
@@ -573,18 +586,21 @@ pub(super) fn render_team_controls(
                 disabled={arrange_refusal.is_some()}
                 aria-label="Team menu"
                 aria-haspopup="menu"
-                aria-expanded={control.arrangement_open.to_string()}
+                aria-expanded={control.arrangement.is_some().to_string()}
                 title={arrange_refusal.unwrap_or("Arrange this team")}
                 onclick={Callback::from(move |event: MouseEvent| {
                     event.stop_propagation();
-                    // Safari does not focus a clicked button; Escape returns here.
+                    // Safari does not focus a clicked button; closing from here keeps focus here.
                     if let Some(button) = event
                         .current_target()
                         .and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok())
                     {
                         let _ = button.focus();
                     }
-                    controls.dispatch(TeamControlAction::ToggleArrangement { team });
+                    controls.dispatch(TeamControlAction::ToggleArrangement {
+                        team,
+                        opener: ArrangementOpener::Menu,
+                    });
                 })}
             >
                 <span class="composer-menu-icon" aria-hidden="true">
