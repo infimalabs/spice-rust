@@ -26,6 +26,7 @@ type CommandResult<T> = Result<T, Outcome<()>>;
 #[derive(Default)]
 struct CommandEffects {
     inbox_delivery: Option<CanonicalUuid>,
+    live_changes: Vec<lane_surface::LiveChange>,
 }
 
 impl CommandEffects {
@@ -34,6 +35,11 @@ impl CommandEffects {
             self.inbox_delivery.replace(lane).is_none(),
             "one command cannot notify more than one lane inbox"
         );
+    }
+
+    /// Owe a running occupant one live change after this command's write.
+    fn owe_live(&mut self, change: lane_surface::LiveChange) {
+        self.live_changes.push(change);
     }
 }
 

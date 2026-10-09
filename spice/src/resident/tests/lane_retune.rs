@@ -81,15 +81,34 @@ impl Seated {
             epoch: self.epoch,
         })
         .expect("operator retune admits");
-        super::super::lane_surface::retune(
+        let mut effects = CommandEffects::default();
+        let outcome = super::super::lane_surface::retune(
             &self.bus,
             &self.paths,
             self.epoch,
             &self.seats,
             &command,
             &request,
-        )
+            &mut effects,
+        );
+        self.settle(outcome, effects)
     }
+
+    /// Ask for and journal every live change a command owed, as the
+    /// resident's live-change worker and loop do after the reply.
+    fn settle(
+        &self,
+        outcome: Outcome<CommandAnswer>,
+        effects: CommandEffects,
+    ) -> Outcome<CommandAnswer> {
+        for change in effects.live_changes {
+            if change.confirm(&self.paths) {
+                change.record(&self.bus, self.epoch);
+            }
+        }
+        outcome
+    }
+
     fn retune_effort(
         &self,
         id: u8,
@@ -97,14 +116,17 @@ impl Seated {
         topology_revision: u64,
     ) -> Outcome<CommandAnswer> {
         let (command, request) = self.effort_command(id, effort, topology_revision);
-        super::super::lane_surface::retune_effort(
+        let mut effects = CommandEffects::default();
+        let outcome = super::super::lane_surface::retune_effort(
             &self.bus,
             &self.paths,
             self.epoch,
             &self.seats,
             &command,
             &request,
-        )
+            &mut effects,
+        );
+        self.settle(outcome, effects)
     }
 
     fn effort_command(
@@ -142,14 +164,17 @@ impl Seated {
             fast_mode,
         };
         let command = self.operator_command(id, CommandKind::LaneFastRetune, &request);
-        super::super::lane_surface::retune_fast(
+        let mut effects = CommandEffects::default();
+        let outcome = super::super::lane_surface::retune_fast(
             &self.bus,
             &self.paths,
             self.epoch,
             &self.seats,
             &command,
             &request,
-        )
+            &mut effects,
+        );
+        self.settle(outcome, effects)
     }
 
     /// Turn the fixture lane's own team fast-mode flag on or off.
@@ -162,14 +187,17 @@ impl Seated {
             fast_mode: Some(fast_mode),
         };
         let command = self.operator_command(id, CommandKind::TeamConfigure, &request);
-        super::super::lane_surface::configure(
+        let mut effects = CommandEffects::default();
+        let outcome = super::super::lane_surface::configure(
             &self.bus,
             &self.paths,
             self.epoch,
             &self.seats,
             &command,
             &request,
-        )
+            &mut effects,
+        );
+        self.settle(outcome, effects)
     }
 
     fn operator_command(
@@ -576,14 +604,17 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
                 )
                 .expect("applied reply sends");
         });
-        super::super::lane_surface::retune_effort(
+        let mut effects = CommandEffects::default();
+        let outcome = super::super::lane_surface::retune_effort(
             &fixture.bus,
             &fixture.paths,
             fixture.epoch,
             &fixture.seats,
             &command,
             &request,
-        )
+            &mut effects,
+        );
+        fixture.settle(outcome, effects)
     });
     let _ = std::fs::remove_file(&door);
     let replayed = super::super::command_surface::replay_command(&fixture.bus, &command)

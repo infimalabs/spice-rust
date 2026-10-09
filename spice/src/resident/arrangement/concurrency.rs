@@ -74,6 +74,7 @@ impl Arranged {
             &self.seats,
             &command,
             &request,
+            &mut crate::resident::CommandEffects::default(),
         )
     }
 
@@ -112,6 +113,7 @@ impl Arranged {
             &self.seats,
             &command,
             &request,
+            &mut crate::resident::CommandEffects::default(),
         )
     }
 

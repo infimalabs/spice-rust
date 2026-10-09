@@ -263,6 +263,7 @@ fn configure_member(
         &fixture.seats,
         &command,
         &request,
+        &mut crate::resident::CommandEffects::default(),
     );
     let Outcome::Reply(reply) = outcome else {
         panic!("team configuration must commit rather than refuse: {outcome:?}");

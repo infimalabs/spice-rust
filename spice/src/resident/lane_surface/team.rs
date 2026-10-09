@@ -52,6 +52,7 @@ pub(in crate::resident) fn configure(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &TeamConfigure,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
@@ -112,10 +113,10 @@ pub(in crate::resident) fn configure(
     };
     commit_configured(
         bus,
-        paths,
         epoch,
         command,
         request,
+        effects,
         &observed,
         ConfiguredTeam {
             membership,
@@ -132,10 +133,10 @@ pub(in crate::resident) fn configure(
 
 fn commit_configured(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &TeamConfigure,
+    effects: &mut CommandEffects,
     observed: &journal::JournalHead<wire::ResidencyHead>,
     configured: ConfiguredTeam,
 ) -> Outcome<CommandAnswer> {
@@ -189,7 +190,7 @@ fn commit_configured(
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    super::retune::apply_fast_flips(bus, paths, epoch, command, configured.flips);
+    super::retune::owe_fast_flips(effects, command, configured.flips);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),
@@ -628,6 +629,7 @@ pub(in crate::resident) fn arrange(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &TeamArrange,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
@@ -712,7 +714,7 @@ pub(in crate::resident) fn arrange(
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    super::retune::apply_fast_flips(bus, paths, epoch, command, flips);
+    super::retune::owe_fast_flips(effects, command, flips);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),

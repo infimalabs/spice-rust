@@ -88,25 +88,21 @@ impl Selection<'_> {
 
     /// The live model or effort change this selection asks of the running
     /// occupant, if any. Clears keep the running value; fast mode is
-    /// resolved across its levels by [`fast_flips`] instead.
+    /// resolved across its levels by [`fast_flips`] instead. The recorded
+    /// launch can lag a change still awaiting confirmation, so it is not
+    /// compared; recording skips a confirmation that changes nothing.
     fn live_request(self, row: &wire::LaneResidency) -> Option<LiveRetune> {
         if row.vendor.as_str() != "omp" || row.occupant.is_none() {
             return None;
         }
-        let launch = row.session.as_ref()?.launch.as_ref()?;
+        row.session.as_ref()?.launch.as_ref()?;
         match self {
-            Self::Effort(request) => {
-                let effort = request.effort.as_ref()?;
-                (launch.effort != *effort).then(|| LiveRetune::Effort {
-                    effort: effort.clone(),
-                })
-            }
+            Self::Effort(request) => request
+                .effort
+                .clone()
+                .map(|effort| LiveRetune::Effort { effort }),
             Self::Model(request) => {
-                let model = request.model.as_ref()?;
-                if launch.model == *model {
-                    return None;
-                }
-                let (provider, model) = model.split_once('/')?;
+                let (provider, model) = request.model.as_ref()?.split_once('/')?;
                 if provider.is_empty() || model.is_empty() {
                     return None;
                 }
@@ -131,7 +127,8 @@ pub(super) struct FastFlip {
 ///
 /// A member owes one only when the write flips its effective fast mode,
 /// resolved additively across its own flag, its team's flag, and the global
-/// setting, and its running OMP launch does not already match the new value.
+/// setting, and it runs an OMP launch with recorded identity. That identity
+/// can lag a change still awaiting confirmation, so it is not compared.
 pub(super) fn fast_flips(
     before: &wire::ResidencyHead,
     after: &wire::ResidencyHead,
@@ -147,8 +144,8 @@ pub(super) fn fast_flips(
                 return None;
             }
             let occupant = row.occupant?;
-            let launch = row.session.as_ref()?.launch.as_ref()?;
-            (launch.fast_mode != enabled).then_some(FastFlip {
+            row.session.as_ref()?.launch.as_ref()?;
+            Some(FastFlip {
                 lane: row.lane,
                 occupant,
                 live: LiveRetune::Fast { enabled },
@@ -157,57 +154,167 @@ pub(super) fn fast_flips(
         .collect()
 }
 
-/// Ask each running member for its owed fast-mode change and journal every
-/// change its provider confirms. The write that owed them is already durable.
-pub(super) fn apply_fast_flips(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
+/// Owe each running member its fast-mode change. The write that owed them
+/// is already durable.
+pub(super) fn owe_fast_flips(
+    effects: &mut CommandEffects,
     command: &wire::AdmittedCommand,
     flips: Vec<FastFlip>,
 ) {
     for flip in flips {
-        apply_live(
-            bus,
-            paths,
-            epoch,
+        effects.owe_live(LiveChange::new(
             command,
             flip.lane,
             flip.occupant,
-            &flip.live,
+            flip.live,
+        ));
+    }
+}
+
+/// One live change a running OMP occupant owes after its durable write.
+///
+/// Asking the occupant waits on the provider, so it runs outside the
+/// resident loop; only a confirmed change returns to be journaled.
+pub(in crate::resident) struct LiveChange {
+    actor: wire::Actor,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    live: LiveRetune,
+}
+
+impl LiveChange {
+    fn new(
+        command: &wire::AdmittedCommand,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        live: LiveRetune,
+    ) -> Self {
+        Self {
+            actor: command.actor().clone(),
+            lane,
+            occupant,
+            live,
+        }
+    }
+
+    /// Ask the occupant's supervisor for this change and wait for the
+    /// provider's correlated answer; true only when the provider applied it.
+    pub(in crate::resident) fn confirm(&self, paths: &RuntimePaths) -> bool {
+        matches!(
+            super::super::supervisor::command::retune(
+                paths,
+                self.lane,
+                self.occupant,
+                self.live.clone(),
+            ),
+            Ok(LiveRetuneResult::Applied)
+        )
+    }
+
+    /// Journal this confirmed change against the current head.
+    pub(in crate::resident) fn record(&self, bus: &Bus, epoch: CanonicalUuid) {
+        record_runtime(
+            bus,
+            epoch,
+            &self.actor,
+            self.lane,
+            self.occupant,
+            &self.live,
         );
     }
 }
 
-fn apply_live(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    live: &LiveRetune,
-) {
-    if matches!(
-        super::super::supervisor::command::retune(paths, lane, occupant, live.clone()),
-        Ok(LiveRetuneResult::Applied)
-    ) {
-        record_runtime(bus, epoch, command, lane, occupant, live);
+/// Asks running occupants for owed live changes on one worker outside the
+/// resident loop, one at a time in the order their writes committed, so a
+/// later change to the same occupant is never applied before an earlier one.
+/// Confirmed changes return through [`LiveChanges::recv`] for the loop to
+/// journal, which keeps the loop the only residency writer.
+pub(in crate::resident) struct LiveChanges {
+    owed: Option<mpsc::Sender<LiveChange>>,
+    confirmed: tokio::sync::mpsc::UnboundedReceiver<LiveChange>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LiveChanges {
+    pub(in crate::resident) fn start(paths: &RuntimePaths) -> io::Result<Self> {
+        let (owed, asks) = mpsc::channel::<LiveChange>();
+        let (confirm, confirmed) = tokio::sync::mpsc::unbounded_channel();
+        let paths = paths.clone();
+        let worker = std::thread::Builder::new()
+            .name("spice-live-retune".to_owned())
+            .spawn(move || {
+                for change in asks {
+                    if confirm.is_closed() {
+                        return;
+                    }
+                    if change.confirm(&paths) && confirm.send(change).is_err() {
+                        return;
+                    }
+                }
+            })?;
+        Ok(Self {
+            owed: Some(owed),
+            confirmed,
+            worker: Some(worker),
+        })
+    }
+
+    /// Queue the changes one dispatched command owes.
+    pub(in crate::resident) fn owe(&self, changes: Vec<LiveChange>) {
+        let Some(owed) = &self.owed else {
+            return;
+        };
+        for change in changes {
+            let _ = owed.send(change);
+        }
+    }
+
+    /// The next change its provider confirmed.
+    pub(in crate::resident) async fn recv(&mut self) -> Option<LiveChange> {
+        self.confirmed.recv().await
     }
 }
 
-/// Apply one confirmed live change to the running launch identity.
-fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) {
+impl Drop for LiveChanges {
+    fn drop(&mut self) {
+        drop(self.owed.take());
+        self.confirmed.close();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Apply one confirmed live change to the running launch identity, saying
+/// whether it changed anything.
+fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) -> bool {
     let launch = row
         .session
         .as_mut()
         .and_then(|session| session.launch.as_mut())
         .expect("a live request requires recorded launch identity");
     match live {
-        LiveRetune::Model { provider, model } => launch.model = format!("{provider}/{model}"),
-        LiveRetune::Effort { effort } => launch.effort.clone_from(effort),
-        LiveRetune::Fast { enabled } => launch.fast_mode = *enabled,
+        LiveRetune::Model { provider, model } => {
+            let model = format!("{provider}/{model}");
+            if launch.model == model {
+                return false;
+            }
+            launch.model = model;
+        }
+        LiveRetune::Effort { effort } => {
+            if launch.effort == *effort {
+                return false;
+            }
+            launch.effort.clone_from(effort);
+        }
+        LiveRetune::Fast { enabled } => {
+            if launch.fast_mode == *enabled {
+                return false;
+            }
+            launch.fast_mode = *enabled;
+        }
     }
+    true
 }
 
 fn runtime_fact(
@@ -230,7 +337,7 @@ fn runtime_fact(
     fact
 }
 
-/// Commit one seated lane's model selection and apply an exact live OMP model
+/// Commit one seated lane's model selection and owe an exact live OMP model
 /// when the spelling carries both provider and model identity.
 pub(in crate::resident) fn retune(
     bus: &Bus,
@@ -239,11 +346,20 @@ pub(in crate::resident) fn retune(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &LaneRetune,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
-    change(bus, paths, epoch, seats, command, Selection::Model(request))
+    change(
+        bus,
+        paths,
+        epoch,
+        seats,
+        command,
+        Selection::Model(request),
+        effects,
+    )
 }
 
-/// Commit one seated lane's effort selection and apply a named live OMP level.
+/// Commit one seated lane's effort selection and owe a named live OMP level.
 pub(in crate::resident) fn retune_effort(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -251,6 +367,7 @@ pub(in crate::resident) fn retune_effort(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &LaneEffortRetune,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     change(
         bus,
@@ -259,10 +376,11 @@ pub(in crate::resident) fn retune_effort(
         seats,
         command,
         Selection::Effort(request),
+        effects,
     )
 }
 
-/// Commit one seated lane's fast-mode selection and apply the disposition it
+/// Commit one seated lane's fast-mode selection and owe the disposition it
 /// resolves to on a live OMP occupant.
 pub(in crate::resident) fn retune_fast(
     bus: &Bus,
@@ -271,8 +389,17 @@ pub(in crate::resident) fn retune_fast(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &LaneFastRetune,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
-    change(bus, paths, epoch, seats, command, Selection::Fast(request))
+    change(
+        bus,
+        paths,
+        epoch,
+        seats,
+        command,
+        Selection::Fast(request),
+        effects,
+    )
 }
 
 fn change(
@@ -282,6 +409,7 @@ fn change(
     seats: &Seats,
     command: &wire::AdmittedCommand,
     selection: Selection<'_>,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if let Some(refusal) = selection.validate() {
         return refusal;
@@ -371,17 +499,9 @@ fn change(
     // unchanged; a confirmed runtime change is a later residency fact that
     // lane reads observe.
     if let Some((live, occupant)) = live {
-        apply_live(
-            bus,
-            paths,
-            epoch,
-            command,
-            selection.lane(),
-            occupant,
-            &live,
-        );
+        effects.owe_live(LiveChange::new(command, selection.lane(), occupant, live));
     }
-    apply_fast_flips(bus, paths, epoch, command, flips);
+    owe_fast_flips(effects, command, flips);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
         body: CommandAnswer::Lane(Box::new(answer)),
@@ -397,7 +517,7 @@ const RUNTIME_RECORD_ATTEMPTS: usize = 3;
 fn record_runtime(
     bus: &Bus,
     epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
+    actor: &wire::Actor,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     live: &LiveRetune,
@@ -417,12 +537,10 @@ fn record_runtime(
         if row.occupant != Some(occupant) || !launched {
             return;
         }
-        apply_runtime(row, live);
-        let Ok(mut write) = write(
-            command.actor().clone(),
-            epoch,
-            Producer::ResidentRecognition,
-        ) else {
+        if !apply_runtime(row, live) {
+            return;
+        }
+        let Ok(mut write) = write(actor.clone(), epoch, Producer::ResidentRecognition) else {
             return;
         };
         guard_residency(&mut write, &observed);
