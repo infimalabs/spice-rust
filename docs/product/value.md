@@ -642,13 +642,16 @@ a 74 × 26 pill groove: two pixels of clearance above and below, and three
 pixels of panel inset at each end. Every current-value word fills the same
 32 × 9 label box, centered with seven pixels of horizontal and six-and-a-half
 pixels of vertical thumb clearance; the box clips overscan before it reaches
-the rounded edge. Both ranges use the same continuous backplane light map: the
-left stop remains neutral, the middle stop glows green, and the right stop
-glows amber. No point emitter is visible. `Send`, team `TURBO`/`BASIC`, the
-menu button, and both flyers share one Flush etched-glass material. Colored
-light originates in the groove and refracts through the transparent flyer;
-the flyer itself retains one fine optical edge and never becomes an opaque
-state fill, raised dome, or nested ridge.
+the rounded edge. One current-value word remains continuously visible and
+travels with its flyer; no label crossfade or replacement gap occurs. Both
+ranges use the same continuous backplane light map: the left stop remains
+neutral, the middle stop glows green, and the right stop glows amber. Each
+active groove is uniformly lit through its center with no visible point
+emitter. `Send`, team `TURBO`/`BASIC`, the menu button, and both flyers share
+one Flush etched-glass material. Colored light originates in the groove and
+bends visibly through opposing highlights and shadows in the transparent
+flyer; the flyer itself retains one fine optical edge and never becomes an
+opaque state fill, raised dome, or nested ridge.
 
 `Send` lights only when a press would submit something. One two-pixel perimeter
 rim divides into an equal arc per agent that would receive the message, in that
