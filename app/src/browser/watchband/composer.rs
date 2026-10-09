@@ -359,7 +359,6 @@ pub(super) struct AgentMessageCardProps {
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
     pub(super) open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(super) speech_queue: Callback<SpeechRequest>,
-    pub(super) speech: TeamSpeech,
     pub(super) speech_owner: Option<SpeechOwner>,
     pub(super) lane: CanonicalUuid,
     pub(super) order: u64,
@@ -380,7 +379,6 @@ impl PartialEq for AgentMessageCardProps {
             && self.quote_dispatcher == other.quote_dispatcher
             && self.open_task == other.open_task
             && self.speech_queue == other.speech_queue
-            && self.speech == other.speech
             && self.speech_owner == other.speech_owner
             && self.lane == other.lane
             && self.order == other.order
