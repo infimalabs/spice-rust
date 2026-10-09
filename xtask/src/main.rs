@@ -13,7 +13,7 @@ const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
     "usage: spice dev xtask -- <help|verify --package PACKAGE|",
-    "gate [--report] ARM|app|",
+    "gate [--report] ARM|app|app-demo [--open]|",
     "install [--host IP] [--port PORT] [--release] [--no-symbols] [--no-resident] ",
     "[-- UP-OPTION...]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
@@ -64,6 +64,10 @@ fn main() -> ExitCode {
             run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("app-demo") => {
+            run_app_demo(arguments.collect(), &mut output)
+        }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("report") => {
             xtask::report(arguments.collect(), &mut output)
@@ -130,6 +134,18 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
 fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
     match arguments.as_slice() {
         [] => xtask::app(&release_environment(), output).map_err(Into::into),
+        _ => {
+            eprintln!("{}", help());
+            Err(usage_error().into())
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_app_demo(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    match arguments.as_slice() {
+        [] => xtask::app_demo(false, output).map_err(Into::into),
+        [open] if open == OsStr::new("--open") => xtask::app_demo(true, output).map_err(Into::into),
         _ => {
             eprintln!("{}", help());
             Err(usage_error().into())
