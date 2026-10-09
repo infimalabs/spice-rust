@@ -96,6 +96,7 @@ pub(crate) fn failure_label(kind: QuotaFailureKind) -> &'static str {
         QuotaFailureKind::StderrOverflow => "diagnostic output exceeded its bound",
         QuotaFailureKind::NonzeroExit => "OMP returned a nonzero exit",
         QuotaFailureKind::MalformedOutput => "OMP returned malformed usage data",
+        QuotaFailureKind::ExtensionUnloaded => "OMP did not load the credit-balance extension",
         QuotaFailureKind::OutputIncomplete => "OMP output did not drain completely",
         QuotaFailureKind::Supervisor => "process supervision failed",
         QuotaFailureKind::WorkerStart => "sampler worker could not start",

@@ -364,6 +364,21 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
 /// transcript keeps the flag, the text, and any images.
 pub const STEERING_EXTENSION: &str = ::std::include_str!("omp/steering.mjs");
 
+/// The extension the resident writes into its runtime directory and loads
+/// with `--extension` on every quota sample, so OpenAI Codex reports carry
+/// the provider's credit balance as omp's canonical `balance` limit.
+///
+/// omp's built-in Codex usage provider leaves that balance in its raw report.
+/// The extension delegates to it once per fetch, appends the balance only
+/// when the report lacks one, and stamps every report it returns with
+/// [`CREDIT_BALANCE_STAMP`], because omp silently serves the built-in
+/// provider when it cannot load a named extension.
+pub const CREDIT_BALANCE_EXTENSION: &str = ::std::include_str!("omp/openai-credit-balance.mjs");
+
+/// The `metadata.spiceExtension` value every report the credit-balance
+/// extension returns carries.
+pub const CREDIT_BALANCE_STAMP: &str = "openai-credit-balance";
+
 /// The session file a lane writes before launch so the identity is known.
 ///
 /// omp names a session only once it starts, so a fresh lane writes the file
