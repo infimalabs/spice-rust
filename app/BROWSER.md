@@ -161,6 +161,13 @@ The activity age keeps its fixed three-character measure and meets the main
 status with only the status line's ordinary inline spacing. It adds no trailing
 margin of its own.
 
+## Work tabs
+
+Global totals and stems, plus team totals and stem containers, use the same
+four-pixel outer inline rails. Task handles remain borderless segments inside
+their stem container; the final handle meets the container's single right rail.
+The rows keep their existing shapes, spacing, scrolling, counts, and navigation.
+
 ## Team composer controls
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.

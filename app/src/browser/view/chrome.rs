@@ -239,7 +239,7 @@ fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Int
     html! {
         <button
             key="global-work"
-            class="app-horn-tab app-horn-tab--down app-horn-tab--wide"
+            class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}
             aria-label={title}
