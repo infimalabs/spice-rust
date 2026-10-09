@@ -366,6 +366,9 @@ selectors. It never moves upward, so it starts level with its hunk's first
 line and cannot reach text it would not reflow, such as an inner quote's last
 line or task badges. Every pair wears the same edges wherever it stands. A
 zero-width two-line prop keeps associated image rows below the controls.
+Each hunk directly owned by the message body starts one quote-block padding
+unit lower, matching the quote control cadence. A hunk nested under a quote
+card does not inherit that outer margin; its quote shell owns the spacing.
 
 Quote and Play form one 35px control pair with one internal seam and no outer
 right edge. Their fill follows the owning lane or quote accent, with neutral
