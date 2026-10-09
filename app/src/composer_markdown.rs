@@ -10,7 +10,7 @@ use std::borrow::{Borrow, Cow};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CowStr, Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirective};
 
 use crate::watchband;
@@ -330,7 +330,7 @@ fn render_quote_card_body(
 }
 
 /// How a rendering presents its body.
-enum Finish {
+enum Finish<'r> {
     /// Received text as written.
     Received,
     /// Assistant prose split into attributed hunks around every quote.
@@ -341,7 +341,15 @@ enum Finish {
         /// Quote shells around this card's hunks, raw and authenticated alike.
         quote_depth: usize,
     },
+    /// Authored task text nested under a detail's own headings, whose chips
+    /// name only the tasks `resolves` admits.
+    TaskText {
+        resolves: &'r dyn Fn(&wire::TaskHandle) -> bool,
+    },
 }
+
+/// Headings in task text nest under the detail's own section headings.
+const TASK_TEXT_HEADING: HeadingLevel = HeadingLevel::H5;
 
 fn render(
     markdown: &str,
@@ -350,7 +358,7 @@ fn render(
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    finish: Finish,
+    finish: Finish<'_>,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -372,18 +380,22 @@ fn render(
     let events = coalesce_text_events(events);
     let quote_depth = match &finish {
         Finish::QuoteCard { quote_depth, .. } => *quote_depth,
-        Finish::Received | Finish::ProseCard => 0,
+        Finish::Received | Finish::ProseCard | Finish::TaskText { .. } => 0,
     };
+    let resolves: &dyn Fn(&wire::TaskHandle) -> bool = match &finish {
+        Finish::TaskText { resolves } => *resolves,
+        Finish::Received | Finish::ProseCard | Finish::QuoteCard { .. } => &|_| true,
+    };
+    let heading = matches!(finish, Finish::TaskText { .. }).then_some(TASK_TEXT_HEADING);
     let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_count = markdown_image_only_count(&events, has_diagrams);
     let image_only = image_count > 0;
     // Diagram controls and nested block structure must not collapse into an image row.
-    let mut task_code_block = false;
     let mut events = decorate_markdown_images(events, image_only && !has_diagrams);
     let attribution = match finish {
-        Finish::Received => None,
+        Finish::Received | Finish::TaskText { .. } => None,
         Finish::ProseCard => {
             terminal::period(&mut events);
             Some(image_flow::Attribution {
@@ -406,17 +418,36 @@ fn render(
         &quote_attributions,
         quote_depth,
     );
-    let events = events.into_iter().flat_map(|event| match &event {
-        MarkdownEvent::Start(Tag::CodeBlock(_)) => {
-            task_code_block = true;
+    // Code blocks and link text stay literal: a chip inside a link would be a
+    // control nested in another.
+    let mut literal = 0usize;
+    let events = events.into_iter().flat_map(|event| match event {
+        MarkdownEvent::Start(Tag::CodeBlock(_) | Tag::Link { .. }) => {
+            literal += 1;
             vec![event]
         }
-        MarkdownEvent::End(TagEnd::CodeBlock) => {
-            task_code_block = false;
+        MarkdownEvent::End(TagEnd::CodeBlock | TagEnd::Link) => {
+            literal = literal.saturating_sub(1);
             vec![event]
         }
-        _ if task_code_block => vec![event],
-        _ => inline_task_chips(event),
+        _ if literal > 0 => vec![event],
+        MarkdownEvent::Start(Tag::Heading {
+            level,
+            id,
+            classes,
+            attrs,
+        }) => vec![MarkdownEvent::Start(Tag::Heading {
+            level: heading.unwrap_or(level),
+            id,
+            classes,
+            attrs,
+        })],
+        MarkdownEvent::End(TagEnd::Heading(level)) => {
+            vec![MarkdownEvent::End(TagEnd::Heading(
+                heading.unwrap_or(level),
+            ))]
+        }
+        event => inline_task_chips(event, resolves),
     });
     let mut events = events.collect::<Vec<_>>();
     accent_directive_contexts(&mut events, &outer_quotes);
@@ -986,21 +1017,31 @@ fn escape_html_attribute(value: &str) -> String {
     escaped
 }
 
-fn inline_task_chips(event: MarkdownEvent<'_>) -> Vec<MarkdownEvent<'_>> {
+/// Chip every mentioned task `resolves` admits, in prose or as a whole code span.
+fn inline_task_chips<'e>(
+    event: MarkdownEvent<'e>,
+    resolves: &dyn Fn(&wire::TaskHandle) -> bool,
+) -> Vec<MarkdownEvent<'e>> {
     match event {
-        MarkdownEvent::Text(text) => inline_task_text(text),
-        MarkdownEvent::Code(code) => {
-            let Some(task) = watchband::canonical_task_handle(&code) else {
-                return vec![MarkdownEvent::Code(code)];
-            };
-            vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
-        }
+        MarkdownEvent::Text(text) => inline_task_text(text, resolves),
+        MarkdownEvent::Code(code) => match watchband::canonical_task_handle(&code) {
+            Some(task) if resolves(&task) => {
+                vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
+            }
+            _ => vec![MarkdownEvent::Code(code)],
+        },
         other => vec![other],
     }
 }
 
-fn inline_task_text(text: CowStr<'_>) -> Vec<MarkdownEvent<'_>> {
-    let mentions = watchband::task_mentions(&text);
+fn inline_task_text<'e>(
+    text: CowStr<'e>,
+    resolves: &dyn Fn(&wire::TaskHandle) -> bool,
+) -> Vec<MarkdownEvent<'e>> {
+    let mentions = watchband::task_mentions(&text)
+        .into_iter()
+        .filter(|(_, task)| resolves(task))
+        .collect::<Vec<_>>();
     if mentions.is_empty() {
         return vec![MarkdownEvent::Text(text)];
     }

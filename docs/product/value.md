@@ -449,14 +449,16 @@ contract, attachments, state, ownership, blockers, relationships, provenance,
 closure evidence, observations, and composer. Loading or unavailable evidence
 occupies that task's own article and does not hide its siblings.
 
-Descriptions, acceptance criteria, observations, and closure evidence render
-through the sanitized task-text renderer. Wide code and tables scroll in their
-own box, raw HTML stays literal, and unsafe link schemes lose their
-destination. A handle already selected becomes a task chip that focuses its
-article; unrelated literal handles, code, and link text remain literal. A
-retained creator-context link opens the newest retained Chat message at or
-before the recorded creation boundary and appears only when the lane proves
-the recorded transcript generation.
+Descriptions, acceptance criteria, observations, and closure evidence render in
+the same sanitized Markdown dialect as Chat messages: math, Mermaid diagrams
+with their source toggle and full-size view, footnotes, tables, and image
+previews. Headings nest under the article's own. Wide code and tables scroll in
+their own box, raw HTML stays literal, and unsafe link schemes lose their
+destination. A handle already selected, in prose or as a whole code span,
+becomes a task chip that focuses its article; unrelated handles, code blocks,
+and link text remain literal. A retained creator-context link opens the newest
+retained Chat message at or before the recorded creation boundary and appears
+only when the lane proves the recorded transcript generation.
 
 The observation composer mirrors Chat: the draft is on the left and equal
 action pills on the right hold **Add** and, for an operator, **Close**. Enter

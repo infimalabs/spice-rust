@@ -5,6 +5,10 @@ const ALSO_KNOWN: &str = "CONTROL-1kKbC3j4";
 const UNKNOWN: &str = "IDENTIT-dRyDYZqJJ";
 
 fn render(markdown: &str) -> String {
+    rendered(markdown).html
+}
+
+fn rendered(markdown: &str) -> super::RenderedMarkdown {
     let known = [KNOWN, ALSO_KNOWN].map(|handle| {
         handle
             .parse::<wire::TaskHandle>()
@@ -40,19 +44,39 @@ fn only_board_resolved_handles_become_chips_at_every_mention() {
 }
 
 #[test]
-fn code_and_link_text_never_gain_task_navigation() {
+fn code_blocks_and_link_text_never_gain_task_navigation() {
     let html = render(&format!(
-        "Run `{KNOWN}` and [{ALSO_KNOWN}](https://example.test/a).\n\n```\n{KNOWN}\n```"
+        "Run `{KNOWN}`, `{UNKNOWN}`, and [{ALSO_KNOWN}](https://example.test/a).\n\n```\n{KNOWN}\n```"
     ));
 
-    assert!(chips(&html).is_empty(), "{html}");
-    assert!(html.contains(&format!("<code>{KNOWN}</code>")), "{html}");
+    assert_eq!(chips(&html), [KNOWN], "{html}");
+    assert!(html.contains(&format!("<code>{UNKNOWN}</code>")), "{html}");
     assert!(
         html.contains(&format!(
             "<a href=\"https://example.test/a\">{ALSO_KNOWN}</a>"
         )),
         "{html}"
     );
+    assert!(html.contains(&format!("<code>{KNOWN}\n</code>")), "{html}");
+}
+
+#[test]
+fn task_text_speaks_the_message_dialect() {
+    let rendered = rendered(
+        "Bound $x^2$ and \\(y\\).\n\n\\[z\\]\n\n```mermaid\nflowchart LR\n  a --> b\n```\n\nCited.[^1]\n\n[^1]: Source.",
+    );
+
+    assert_eq!(rendered.diagrams, ["flowchart LR\n  a --> b\n"]);
+    assert_eq!(
+        rendered.html.matches("class=\"math math-inline\"").count(),
+        2
+    );
+    assert_eq!(
+        rendered.html.matches("class=\"math math-display\"").count(),
+        1
+    );
+    assert!(rendered.html.contains("data-mermaid-slot=\"0\""));
+    assert!(rendered.html.contains("footnote-definition"));
 }
 
 #[test]
@@ -80,7 +104,6 @@ fn authored_structure_survives_under_the_detail_headings() {
     ));
 
     assert!(html.contains("<h5>Scope</h5>"), "{html}");
-    assert!(html.contains("first line<br />"), "{html}");
     assert!(html.contains("<li>one</li>\n<li>two</li>"), "{html}");
     assert_eq!(chips(&html), [KNOWN]);
 }
