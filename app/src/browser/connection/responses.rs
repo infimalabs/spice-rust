@@ -327,13 +327,20 @@ fn apply_mutating_response(
         PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
             apply_wake_submission_response(session, handles, submission, lane, bytes)?,
         ),
-        PendingKind::TeamConfigure { team, life } => {
+        PendingKind::TeamConfigure {
+            team,
+            life,
+            fast_mode,
+        } => {
             let (refresh, applied) = apply_team_configuration(
                 session,
                 &handles.team_controls,
                 runtime,
-                team,
-                life,
+                TeamRequest {
+                    team,
+                    life: life.map(Into::into),
+                    fast_mode,
+                },
                 bytes,
             )?;
             CommandApplication {

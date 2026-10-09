@@ -340,49 +340,6 @@ fn render_fast_toggle(
     }
 }
 
-/// The team's fast-mode toggle retains TURBO lettering in both states.
-/// Fast mode is additive: switching this flag off does not turn off a member
-/// whose own flag or the global setting keeps it fast. Running OMP agents
-/// whose effective value changes take it at once.
-pub(super) fn render_turbo(
-    team: &crate::runtime::LaneRow,
-    topology_revision: u64,
-    sender: &SenderHandle,
-    can_configure: bool,
-) -> Html {
-    let engaged = team.fast_mode;
-    let onclick = {
-        let sender = sender.clone();
-        let team = team.lane;
-        Callback::from(move |_: MouseEvent| {
-            admit_action(
-                &sender,
-                ClientAction::ConfigureTeam {
-                    topology_revision,
-                    team,
-                    member: None,
-                    life: None,
-                    fast_mode: Some(!engaged),
-                },
-            );
-        })
-    };
-    let title = if engaged {
-        "Turbo: every agent in this team runs in fast mode"
-    } else {
-        "Turbo off: press to run every agent in this team in fast mode"
-    };
-    html! {
-        <crate::browser::view::chrome::TurboButton
-            class={classes!("team-turbo")}
-            {engaged}
-            disabled={!can_configure}
-            {title}
-            {onclick}
-        />
-    }
-}
-
 fn render_retune(
     runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,

@@ -124,6 +124,7 @@ pub(crate) enum PendingKind {
     TeamConfigure {
         team: wire::CanonicalUuid,
         life: Option<wire::intent::TeamLife>,
+        fast_mode: Option<bool>,
     },
     TeamArrange,
     Steer,
