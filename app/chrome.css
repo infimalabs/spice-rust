@@ -76,8 +76,12 @@ body:has(.shell),
 }
 .app-spice-button {
   --app-spice-edge: var(--accent-slot, var(--line));
-  --app-spice-border: color-mix(in srgb, var(--app-spice-edge) 68%, var(--line));
-  --app-spice-surface: var(--control-surface-soft);
+  --app-spice-rest-border: color-mix(in srgb, var(--app-spice-edge) 68%, var(--line));
+  --app-spice-border: var(--app-spice-rest-border);
+  --app-spice-flush-face: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 8.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
+  --app-spice-surface: var(--app-spice-flush-face);
+  --app-spice-rest: inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
+  --app-spice-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
   position: relative;
   display: grid;
   flex: 0 0 var(--app-header-control);
@@ -95,7 +99,8 @@ body:has(.shell),
   border-radius: var(--app-radius-circle);
   background: var(--app-spice-surface);
   color: var(--ink);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--app-spice-border) 28%, transparent);
+  box-shadow: var(--app-spice-rest);
+  transition: transform var(--app-motion-fast) var(--app-ease-standard), background var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard), border-color var(--app-motion-fast) var(--app-ease-standard);
   cursor: pointer;
 }
 .commandbar--mosaic .app-commandbar-content > .app-spice-button {
@@ -105,15 +110,24 @@ body:has(.shell),
 }
 .app-spice-button:hover,
 .app-spice-button:focus-visible {
-  --app-spice-surface: var(--control);
-  --app-spice-border: color-mix(in srgb, var(--app-spice-edge) 78%, var(--line));
+  --app-spice-border: var(--app-spice-rest-border);
+  --app-spice-surface: var(--app-spice-flush-face);
+  border-color: var(--app-spice-border);
   background: var(--app-spice-surface);
+  box-shadow: var(--app-spice-rest);
 }
-.app-spice-button:active,
 .app-spice-button[aria-expanded="true"] {
-  --app-spice-surface: var(--control);
+  --app-spice-surface: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 12%, transparent), color-mix(in srgb, var(--app-highlight-source) 4%, transparent));
   --app-spice-border: var(--app-spice-edge);
+  border-color: var(--app-spice-border);
   background: var(--app-spice-surface);
+  box-shadow: var(--app-spice-rest);
+}
+.app-spice-button:active {
+  transform: translateY(1.5px);
+  border-color: var(--app-spice-border);
+  background: var(--app-spice-surface);
+  box-shadow: var(--app-spice-contact);
 }
 .app-spice-well {
   grid-area: 1 / 1;

@@ -291,8 +291,13 @@ Usage therefore moves layer surfaces and positions, never colors; a failed
 refresh desaturates them. Spent capacity above the layers is a faint neutral
 hatch rather than bare page, so the well never reads as a hole in the button,
 and its texture stays distinct from any desaturated layer. The button's
-two-pixel ring and shadow are neutral, reddish for Fast mode whether or not an
-app update is available, and blue for an update alone; quota colors never change.
+Flush-glass face and inset shadow stay neutral. Its two-pixel ring is neutral
+by default, reddish for Fast mode whether or not an app update is available,
+and blue for an update alone; quota colors never change. Hover preserves that
+admitted ring, face, and shadow instead of
+adding an accent. Pointer contact depresses the button by 1.5 pixels with the
+same inset pressure shadow as the composer controls, then release restores its
+anchor before the open view persists.
 Every sidebar is one side view in a standard width: the Spice sidebar takes
 the small width and task overview the large one. A side view and its frosted
 veil simply fade in on open and fade out on close, with no movement or
