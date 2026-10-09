@@ -146,7 +146,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         >
             {props.turbo.clone()}
             {props.menu.clone()}
-            {send_button(send, idle || !props.ready, lit.len(), broadcast_count)}
+            {send_button(send, idle || !props.ready, lit.len(), broadcast_count, props.slots.len())}
             {props.children.clone()}
         </aside>
     }
@@ -157,12 +157,15 @@ fn send_button(
     disabled: bool,
     recipients: usize,
     broadcast_recipients: usize,
+    members: usize,
 ) -> Html {
     let title = match recipients {
         0 => "Send".to_owned(),
         1 => "Send to 1 agent".to_owned(),
         count => format!("Send to {count} agents"),
     };
+    let full_send = members > 1 && recipients == members;
+    let full_broadcast = members > 1 && broadcast_recipients == members;
     // Touch engines need not hold :active until release. Project contact
     // only: do not prevent native activation or change submission authority.
     let touch_down = {
@@ -197,6 +200,8 @@ fn send_button(
             data-lit={(recipients != 0).to_string()}
             data-recipient-count={recipients.to_string()}
             data-broadcast-recipient-count={broadcast_recipients.to_string()}
+            data-full-send={full_send.to_string()}
+            data-full-broadcast={full_broadcast.to_string()}
             {disabled}
             {title}
             onpointerdown={touch_down}
@@ -204,7 +209,12 @@ fn send_button(
             onpointercancel={touch_release.clone()}
             onlostpointercapture={touch_release}
         >
-            <span class="team-send-word">{"Send"}</span>
+            <span class="team-send-label">
+                if members > 1 {
+                    <span class="team-send-full" aria-hidden="true">{"Full"}</span>
+                }
+                <span class="team-send-word">{"Send"}</span>
+            </span>
         </button>
     }
 }

@@ -925,8 +925,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   mask: radial-gradient(closest-side, transparent calc(100% - var(--team-control-rim-width)), var(--app-mask-opaque) calc(100% - var(--team-control-rim-width) + .5px));
 }
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact])::after { opacity: .4; }
-.team-composer .team-send .team-send-word { position: relative; z-index: 1; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); }
-.team-composer .team-send:not(:disabled):is(:active, [data-touch-contact]) .team-send-word { transform: translateY(.5px); }
+.team-composer .team-send-label { position: relative; z-index: 1; display: inline-flex; align-items: baseline; justify-content: center; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); transform: scaleX(var(--team-send-label-scale, 1)); transition: transform var(--app-motion-fast) var(--app-ease-standard); }
+.team-composer .team-send:not(:disabled):is(:active, [data-touch-contact]) .team-send-label { translate: 0 .5px; }
+/* A multi-member send names complete actual coverage without enlarging the
+   control or changing its accessible Send name. */
+.team-composer .team-send-full { display: inline-block; max-width: var(--team-send-full-width, 0); margin-inline-end: var(--team-send-full-gap, 0); overflow: hidden; opacity: var(--team-send-full-opacity, 0); pointer-events: none; color: var(--focus); font-weight: 800; transition: max-width var(--app-motion-fast) var(--app-ease-standard), margin-inline-end var(--app-motion-fast) var(--app-ease-standard), opacity var(--app-motion-fast) var(--app-ease-standard); }
+.team-composer .team-send[data-full-send="true"] { --team-send-label-scale: .485; --team-send-full-width: 4ch; --team-send-full-gap: .25ch; --team-send-full-opacity: 1; }
 .team-composer .team-turbo:disabled,
 .team-composer .team-menu:disabled,
 .app-spice-settings .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
@@ -1007,6 +1011,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 @media (prefers-reduced-motion: reduce) {
   .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
   .app-spice-settings .app-spice-turbo, .agent-menu > .agent-menu-button, .app-turbo-button .fit-word, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
+  .team-composer :is(.team-send-label, .team-send-full) { transition: none; }
 }
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
 .team-composer .team-composer-controls[data-idle="true"] > :is(.team-turbo, .team-menu, .team-slider) { filter: saturate(.55); }
@@ -1027,6 +1032,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send::after { background: var(--team-send-broadcast-rim, transparent); }
 html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-label-scale: 1; --team-send-full-width: 0; --team-send-full-gap: 0; --team-send-full-opacity: 0; }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send[data-full-broadcast="true"] { --team-send-label-scale: .485; --team-send-full-width: 4ch; --team-send-full-gap: .25ch; --team-send-full-opacity: 1; }
 html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-note-composer:has(textarea:focus) .team-send[value="close"]:not(:disabled) { box-shadow: inset 0 0 0 3px var(--focus); }
 /* A narrow viewport trims button inline padding rather than letting controls
