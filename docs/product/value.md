@@ -701,10 +701,12 @@ vacant member with a sendable draft joins the ordinary rim because that press
 wakes and delivers to it; an empty vacant member contributes no arc. With no
 running agent and no draft, the controls dim and `Send` is disabled.
 For a team with more than one member, `FULL SEND` appears as a single compact
-lockup only when the pending submission reaches every member. `FULL` uses the
-focus color, while both words compress into the ordinary `SEND` label's width.
-Ordinary submission qualifies when every member is reachable and holds sendable
-content, including a wakeable non-running member; a partial set never qualifies.
+lockup only when the pending submission reaches every member. Its outer box
+keeps ordinary `SEND`'s width and center while condensed `FULL` occupies the
+original `SE` half and condensed `SEND` occupies the original `ND` half; `FULL`
+uses the focus color. Ordinary submission qualifies when every member is
+reachable and holds sendable content, including a wakeable non-running member;
+a partial set never qualifies.
 The command-modifier `Send` ring shares the lane accents' two-pixel width;
 focus rings remain visible around admitted actions.
 
