@@ -101,6 +101,27 @@ impl ServiceClaim {
     }
 }
 
+/// One initially admitted claim, retained until its durable request is
+/// published and the same authority can validate it again.
+pub(in crate::resident) struct ServiceAdmission<'a> {
+    claim: ServiceClaim,
+    authority: &'a ServiceAuthority,
+}
+
+impl ServiceAdmission<'_> {
+    fn validate(&self) -> io::Result<()> {
+        self.authority
+            .owns(&self.claim)?
+            .then_some(())
+            .ok_or_else(|| {
+                io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "the service task claim ended during launch",
+                )
+            })
+    }
+}
+
 /// Read-only task authority available to a detached occupant's terminal.
 #[derive(Clone, Debug)]
 pub(in crate::resident) struct ServiceAuthority {
@@ -136,7 +157,14 @@ impl ServiceAuthority {
         }
     }
 
-    pub(in crate::resident) fn claim(&self) -> io::Result<ServiceClaim> {
+    pub(in crate::resident) fn admit(&self) -> io::Result<ServiceAdmission<'_>> {
+        Ok(ServiceAdmission {
+            claim: self.claim()?,
+            authority: self,
+        })
+    }
+
+    fn claim(&self) -> io::Result<ServiceClaim> {
         #[cfg(test)]
         if let Some(claim) = &self.fixture {
             return Ok(claim.clone());
@@ -187,6 +215,20 @@ impl ServiceAuthority {
                     lane: self.lane,
                     occupant: self.occupant,
                 })
+            })
+            .map_err(io::Error::other)
+    }
+
+    fn owns(&self, claim: &ServiceClaim) -> io::Result<bool> {
+        #[cfg(test)]
+        if let Some(fixture) = &self.fixture {
+            return Ok(fixture == claim);
+        }
+        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        reader
+            .read_with(|read| {
+                let heads = read.task_heads_for(&claim.task).map_err(io::Error::other)?;
+                Ok::<bool, io::Error>(heads.as_ref().is_some_and(|heads| claim.matches(heads)))
             })
             .map_err(io::Error::other)
     }
@@ -651,7 +693,8 @@ impl Jobs {
     ///
     /// # Errors
     ///
-    /// Returns the failure of recording the request or launching the keeper.
+    /// Returns the failure of recording the request, revalidating a service's
+    /// claim after publication, or launching the keeper.
     pub(in crate::resident) fn start(
         &self,
         command: &str,
@@ -659,9 +702,10 @@ impl Jobs {
         cwd: &Path,
         environment: &Environment,
         timeout: Option<Duration>,
-        service_claim: Option<ServiceClaim>,
+        service: Option<ServiceAdmission<'_>>,
         notices: &[String],
     ) -> io::Result<Job> {
+        let service_claim = service.as_ref().map(|service| service.claim.clone());
         fs::create_dir_all(&self.root)?;
         let (id, directory) = self.claim()?;
         let request_path = directory.join(REQUEST);
@@ -683,6 +727,22 @@ impl Jobs {
                 lane: self.lane,
             },
         )?;
+        if let Some(service) = service {
+            let validation = service.validate().and_then(|()| {
+                (!directory.join(STOP).exists())
+                    .then_some(())
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            ErrorKind::PermissionDenied,
+                            "the service task claim ended during launch",
+                        )
+                    })
+            });
+            if let Err(error) = validation {
+                let _ = fs::remove_dir_all(&directory);
+                return Err(error);
+            }
+        }
         let keeper = launch(&directory, &request_path, cwd, environment)?;
         Ok(Job {
             directory,
