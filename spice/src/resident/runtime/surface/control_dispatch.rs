@@ -38,6 +38,7 @@ pub(super) async fn dispatch_control_delivery_burst(
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
     launches: &mut super::super::launch_runtime::Runtime,
     live_changes: &lane_surface::LiveChanges,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<bool> {
     let dispatched = dispatch_control_burst(
         command_surface,
@@ -48,6 +49,7 @@ pub(super) async fn dispatch_control_delivery_burst(
         inbox_deliveries,
         launches,
         live_changes,
+        diagnostic,
     )
     .await?;
     if let Some(witness) = dispatched.lifecycle_witness {
@@ -73,17 +75,28 @@ pub(super) async fn dispatch_control(
     request: Option<serve::axum::ControlRequest>,
     launches: &mut super::super::launch_runtime::Runtime,
     live_changes: &lane_surface::LiveChanges,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<ControlDispatch> {
     let request = request
         .ok_or_else(|| environment_fault("serve::control-closed", "app control receiver closed"))?;
     let replayed = command_surface.replay(seats, request.command());
     let is_replay = replayed.is_some();
+    let dark = is_dark_command(request.command());
+    if dark && !is_replay {
+        launch_completion::settle_before_dark(
+            command_surface,
+            seats,
+            lifecycle,
+            launches,
+            diagnostic,
+        )
+        .await?;
+    }
     let lifecycle_released = if is_replay {
         false
     } else {
         command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
     };
-    let dark = is_dark_command(request.command());
     let command = request.command().id();
     let epoch = request.command().epoch();
     let dispatched = replayed.map_or_else(
@@ -131,6 +144,7 @@ pub(super) async fn dispatch_control_burst(
     inbox_deliveries: &mut InboxDeliveries,
     launches: &mut super::super::launch_runtime::Runtime,
     live_changes: &lane_surface::LiveChanges,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<ControlDispatch> {
     let mut request = request;
     let mut burst = ControlDispatch {
@@ -147,6 +161,7 @@ pub(super) async fn dispatch_control_burst(
             request.take(),
             launches,
             live_changes,
+            diagnostic,
         )
         .await?;
         if let Some(lane) = dispatched.inbox_delivery {
