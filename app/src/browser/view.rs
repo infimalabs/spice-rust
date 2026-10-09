@@ -401,7 +401,7 @@ fn render_topology_agent(
                 }
             </header>
             <p>{format!("{} pending, {}", standing.pending, standing.liveness.as_str())}</p>
-            <p class="app-spice-topology-agent-task" title={standing.task_title.clone()}>{
+            <p class="app-spice-topology-agent-task" title={standing.task_title.as_deref().map(crate::composer_markdown::inline::plain_text)}>{
                 match (&standing.handle, &standing.phase) {
                     (Some(handle), Some(phase)) => format!("{handle}, {phase}"),
                     (Some(handle), None) => handle.clone(),

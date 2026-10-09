@@ -41,7 +41,7 @@
 .task-text pre { overflow-x: auto; }
 .task-text img { max-width: 100%; }
 .task-text a { color: var(--accent); }
-.app-sidebar .task-text .message-task-chip:focus-visible {
+.app-sidebar :is(.task-text, .markdown-line) .message-task-chip:focus-visible {
   outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }

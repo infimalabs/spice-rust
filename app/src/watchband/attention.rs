@@ -80,6 +80,7 @@ pub enum AttentionSubject {
         directive: CanonicalUuid,
         pending: usize,
         oldest: i64,
+        /// The oldest direction's authored Markdown preview.
         preview: String,
     },
 }
@@ -206,7 +207,7 @@ pub fn team_attention(
                     directive: oldest.directive,
                     pending: row.pending.len(),
                     oldest: authored,
-                    preview: super::one_line(&preview),
+                    preview,
                 },
             )
         })

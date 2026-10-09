@@ -464,6 +464,16 @@ link opens the newest retained Chat message at or before the recorded creation
 boundary and appears only when the lane proves the recorded transcript
 generation.
 
+A task title is one line of the same dialect wherever it shows as content
+(article and blocker headings, relationship rows, and the agent menu's task
+row): code spans, emphasis, strikethrough, inline math, links, and chips
+render, while block constructs never apply and their markers stay literal. A
+title inside another control renders its links and handles as text, so no
+control nests inside another. Tooltips, accessible names, work-map labels and
+nodes, and one-line previews of waiting directions read one plain-text
+projection of the same Markdown: markers removed, code and math source kept.
+The stored title stays the authored source.
+
 The observation composer mirrors Chat: the draft is on the left and equal
 action pills on the right hold **Add** and, for an operator, **Close**. Enter
 inserts a newline; Command or Control + Enter adds an observation. Holding

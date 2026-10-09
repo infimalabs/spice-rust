@@ -190,6 +190,27 @@ pub(super) fn render_task_text(
     }
 }
 
+/// One authored task title as an inline Markdown line in the message dialect.
+///
+/// A live line chips the tasks its controls admit and leaves activating them
+/// to the surrounding surface; a line inside another control renders handles
+/// and links as text.
+pub(super) fn render_task_title(
+    title: &str,
+    controls: &crate::composer_markdown::inline::LineControls<'_>,
+) -> Html {
+    let html = crate::composer_markdown::inline::render_line(title, controls);
+    html! {
+        <super::mermaid::MarkdownBody
+            html={AttrValue::from(html)}
+            sources={std::rc::Rc::default()}
+            final_answer=true
+            quote_tasks={std::rc::Rc::default()}
+            inline=true
+        />
+    }
+}
+
 /// A task's authored contract: quick detail shows the description alone, and
 /// deep detail adds every acceptance criterion.
 pub(super) fn render_contract(
@@ -247,7 +268,7 @@ fn task_text_chip_task(target: Option<web_sys::EventTarget>) -> Option<TaskStamp
     target?
         .dyn_into::<web_sys::Element>()
         .ok()?
-        .closest(".task-text .message-task-chip")
+        .closest(":is(.task-text, .markdown-line) .message-task-chip")
         .ok()??
         .get_attribute("data-task-handle")?
         .parse::<wire::TaskHandle>()
