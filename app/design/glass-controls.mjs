@@ -5,9 +5,9 @@ const concepts = [
 ];
 const underglowConcepts = [
   { key: 'baseline', name: 'Shipped baseline', note: 'Untouched Flush groove. Neutral backplane, no colored light.' },
-  { key: 'diffuse', name: 'Three-stop bed', note: 'Cool lilac, green, and amber wells remain visible across the groove.' },
-  { key: 'tracking', name: 'Active pool', note: 'One concentrated light follows the flyer and changes color at each stop.' },
-  { key: 'rails', name: 'Active edge rails', note: 'Fine perimeter lights follow the flyer’s selected lilac, green, or amber stop.' },
+  { key: 'wash', name: 'Flat active wash', note: 'One low-contrast hue spans the full backplane and changes with the selected stop.' },
+  { key: 'balanced', name: 'Flat + edge', note: 'A quiet full wash gains shallow edge depth and a pearlescent glass caustic.' },
+  { key: 'haze', name: 'Active edge haze', note: 'Broad upper and lower haze carries the selected hue without a visible emitter.' },
 ];
 const speechModes = ['Quiet', 'Speak', 'Narrate'];
 const allocationModes = ['Steer', 'Drive', 'Drain'];
