@@ -453,8 +453,11 @@ Descriptions, acceptance criteria, observations, and closure evidence render
 through the sanitized task-text renderer. Wide code and tables scroll in their
 own box, raw HTML stays literal, and unsafe link schemes lose their
 destination. A handle already selected becomes a task chip that focuses its
-article; unrelated literal handles, code, and link text remain literal. A
-retained creator-context link opens the newest retained Chat message at or
+article; unrelated literal handles, code, and link text remain literal. A task
+chip's bounded hover text uses the task-specific prose rendered with that handle
+instead of a generic inspection label; an isolated handle says `Open task
+HANDLE`.
+A retained creator-context link opens the newest retained Chat message at or
 before the recorded creation boundary and appears only when the lane proves
 the recorded transcript generation.
 

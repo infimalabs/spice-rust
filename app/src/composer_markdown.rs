@@ -993,7 +993,9 @@ fn inline_task_chips(event: MarkdownEvent<'_>) -> Vec<MarkdownEvent<'_>> {
             let Some(task) = watchband::canonical_task_handle(&code) else {
                 return vec![MarkdownEvent::Code(code)];
             };
-            vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
+            vec![MarkdownEvent::InlineHtml(
+                task_chip_html(&task, None).into(),
+            )]
         }
         other => vec![other],
     }
@@ -1012,7 +1014,10 @@ fn inline_task_text(text: CowStr<'_>) -> Vec<MarkdownEvent<'_>> {
                 text[cursor..range.start].to_owned().into(),
             ));
         }
-        events.push(MarkdownEvent::InlineHtml(task_chip_html(&task).into()));
+        let context = task_chip_context(&text, &range);
+        events.push(MarkdownEvent::InlineHtml(
+            task_chip_html(&task, context.as_deref()).into(),
+        ));
         cursor = range.end;
     }
     if cursor < text.len() {
@@ -1021,13 +1026,63 @@ fn inline_task_text(text: CowStr<'_>) -> Vec<MarkdownEvent<'_>> {
     events
 }
 
-fn task_chip_html(task: &wire::TaskHandle) -> String {
+const TASK_CHIP_CONTEXT_CHARS: usize = 180;
+
+fn task_chip_context(text: &str, mention: &std::ops::Range<usize>) -> Option<String> {
+    let mut compact = String::with_capacity(text.len() - mention.len());
+    for word in text[..mention.start]
+        .split_whitespace()
+        .chain(text[mention.end..].split_whitespace())
+    {
+        let word = if compact.is_empty() {
+            word.trim_start_matches(task_context_edge)
+        } else {
+            word
+        };
+        if word.is_empty() {
+            continue;
+        }
+        if !compact.is_empty() {
+            compact.push(' ');
+        }
+        compact.push_str(word);
+    }
+    let trimmed = compact.trim_end_matches(task_context_edge).len();
+    compact.truncate(trimmed);
+    if compact.is_empty() {
+        return None;
+    }
+    if compact.chars().count() > TASK_CHIP_CONTEXT_CHARS {
+        let end = compact
+            .char_indices()
+            .nth(TASK_CHIP_CONTEXT_CHARS - 1)
+            .map_or(compact.len(), |(index, _)| index);
+        compact.truncate(end);
+        while compact.ends_with(' ') {
+            compact.pop();
+        }
+        compact.push('…');
+    }
+    Some(compact)
+}
+
+fn task_context_edge(character: char) -> bool {
+    matches!(
+        character,
+        ',' | '.' | ';' | ':' | '·' | '—' | '–' | '-' | '|'
+    )
+}
+
+fn task_chip_html(task: &wire::TaskHandle, context: Option<&str>) -> String {
     // TaskHandle parsing admits only the canonical ASCII handle grammar, so
     // these fixed attributes cannot acquire markup from authored prose.
     let handle = task.to_string();
+    let title = context
+        .map(escape_html_attribute)
+        .unwrap_or_else(|| format!("Open task {handle}"));
     format!(
         "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" role=\"button\" \
-         tabindex=\"0\" aria-label=\"Inspect task {handle}\" title=\"Inspect {handle}\">\
+         tabindex=\"0\" aria-label=\"Open task {handle}\" title=\"{title}\">\
          <span class=\"message-task-chip-label\">{handle}</span></span>"
     )
 }

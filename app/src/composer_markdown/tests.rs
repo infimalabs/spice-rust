@@ -136,35 +136,58 @@ fn whitespace_only_operator_block_quote_text_composes_to_nothing() {
 
 #[test]
 fn every_task_handle_occurrence_renders_in_source_order() {
-    let control = "CONTROL-1kKbC3j4"
-        .parse::<wire::TaskHandle>()
-        .expect("fixture handle parses");
-    let mosaic = "MOSAIC-1kRYqQxy"
-        .parse::<wire::TaskHandle>()
-        .expect("fixture handle parses");
-    let identity = "IDENTIT-dRyDYZqJJ"
-        .parse::<wire::TaskHandle>()
-        .expect("current fixture handle parses");
-    let control_chip = task_chip_html(&control);
-    let mosaic_chip = task_chip_html(&mosaic);
-    let identity_chip = task_chip_html(&identity);
-
     let rendered = render_received(
         "Plain CONTROL-1kKbC3j4, CONTROL-1kKbC3j4, and `CONTROL-1kKbC3j4`.\n\n\
              Then MOSAIC-1kRYqQxy, IDENTIT-dRyDYZqJJ, and CONTROL-1kKbC3j4!",
     );
+    let handles = rendered
+        .html
+        .split("data-task-handle=\"")
+        .skip(1)
+        .filter_map(|tail| tail.split('"').next())
+        .collect::<Vec<_>>();
 
     assert_eq!(
-        rendered.html,
-        format!(
-            "<p>Plain {control_chip}, {control_chip}, and {control_chip}.</p>\n\
-                 <p>Then {mosaic_chip}, {identity_chip}, and {control_chip}!</p>\n"
+        handles,
+        [
+            "CONTROL-1kKbC3j4",
+            "CONTROL-1kKbC3j4",
+            "CONTROL-1kKbC3j4",
+            "MOSAIC-1kRYqQxy",
+            "IDENTIT-dRyDYZqJJ",
+            "CONTROL-1kKbC3j4",
+        ]
+    );
+}
+
+#[test]
+fn task_chip_hover_uses_escaped_context_and_an_explicit_fallback() {
+    let contextual =
+        render_received("CONTROL-1kKbC3j4 · Diagnose \"quoted\" rollbacks & preserve authority.");
+    assert!(
+        contextual.html.contains(
+            "aria-label=\"Open task CONTROL-1kKbC3j4\" \
+             title=\"Diagnose “quoted” rollbacks &amp; preserve authority\""
         ),
+        "{}",
+        contextual.html
     );
-    assert_eq!(
-        rendered.html.matches("class=\"message-task-chip\"").count(),
-        6
-    );
+
+    let isolated = render_received("`CONTROL-1kKbC3j4`");
+    assert!(isolated.html.contains(
+        "aria-label=\"Open task CONTROL-1kKbC3j4\" \
+         title=\"Open task CONTROL-1kKbC3j4\""
+    ));
+}
+
+#[test]
+fn task_chip_hover_context_stops_at_its_unicode_boundary() {
+    let handle = "CONTROL-1kKbC3j4";
+    let text = format!("{handle} · {}", "é".repeat(TASK_CHIP_CONTEXT_CHARS + 20));
+    let context = task_chip_context(&text, &(0..handle.len())).expect("context remains");
+
+    assert_eq!(context.chars().count(), TASK_CHIP_CONTEXT_CHARS);
+    assert!(context.ends_with('…'));
 }
 
 #[test]

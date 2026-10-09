@@ -11,7 +11,9 @@
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use wire::TaskStamp;
 
-use super::{coalesce_text_events, sanitize_markdown_event, tables, task_chip_html};
+use super::{
+    coalesce_text_events, sanitize_markdown_event, tables, task_chip_context, task_chip_html,
+};
 use crate::watchband;
 
 /// Headings nest under the detail's own section and subsection headings.
@@ -86,7 +88,10 @@ fn push_task_chips<'a>(
                 text[cursor..range.start].to_owned().into(),
             ));
         }
-        events.push(MarkdownEvent::InlineHtml(task_chip_html(&task).into()));
+        let context = task_chip_context(&text, &range);
+        events.push(MarkdownEvent::InlineHtml(
+            task_chip_html(&task, context.as_deref()).into(),
+        ));
         cursor = range.end;
     }
     if cursor < text.len() {
