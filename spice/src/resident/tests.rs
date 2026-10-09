@@ -499,17 +499,13 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
         steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head is valid")
     });
     commit(&bus, sent).expect("pending steering commits");
-    let cursor = bus
-        .task_snapshot()
-        .expect("task snapshot reads")
-        .cursor()
-        .expect("pending fact establishes cursor");
+    let woken = super::steering::woken_inbox(&bus, lane).expect("pending steering reads");
     let failure = Outcome::Refusal(Refusal::bare(
         wire::RefusalDiagnostic::new("lifecycle::wake-launch-failed".to_owned(), None, None, None)
             .with_detail("repair the vendor launch"),
     ));
 
-    let parked = super::steering::dead_letter_pending(&bus, &paths, epoch, lane, cursor, &failure)
+    let parked = super::steering::dead_letter_pending(&bus, &paths, epoch, lane, &woken, &failure)
         .expect("terminal start failure parks pending steering");
 
     assert_eq!(parked.len(), 1);

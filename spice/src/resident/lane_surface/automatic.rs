@@ -123,9 +123,16 @@ pub(in crate::resident) fn finish_wake(
     {
         return typed_environment_fault("lane::wake-failed", &error.to_string());
     }
+    let observed = match rebase_lane(bus, epoch, &pending.observed, pending.request.lane) {
+        Ok(observed) => observed,
+        Err(outcome) => {
+            stop_lane(seats, pending.request.lane);
+            return typed_outcome(outcome);
+        }
+    };
     let answer = LaneChangeAnswer {
         lane: pending.request.lane,
-        topology_revision: pending.observed.body().topology_revision,
+        topology_revision: observed.body().topology_revision,
         from: pending.row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),
@@ -138,7 +145,7 @@ pub(in crate::resident) fn finish_wake(
     let proposal = propose_wake(
         command,
         &pending.request,
-        &pending.observed,
+        &observed,
         epoch,
         &proven,
         pending.renewal.as_ref(),
@@ -212,12 +219,6 @@ fn wake_resume(
     Ok(vendor::Resume::Fresh)
 }
 
-/// Launch one occupant selected by the resident lifecycle authority.
-///
-/// An available-work caller passes the exact claim it minted before launch.
-/// A pending-inbox caller passes none; if the lane instead carries an older
-/// live claim, this path transfers that claim to the successor in the same
-/// resident-recognition transaction that starts it.
 /// Whether launch crossed the session-proof boundary.
 pub(in crate::resident) enum AutomaticWake {
     Started,
@@ -246,10 +247,12 @@ struct WakeRequest<'a> {
     lane: CanonicalUuid,
     decision: Option<&'a bus::TaskSnapshot>,
     reserved: Option<&'a crate::board_command::AutomaticClaim>,
+    /// Whether the lane was woken to deliver its pending steering.
+    inbox: bool,
 }
 
 struct WakeAdmission {
-    expected_cursor: Option<wire::Seq>,
+    inbox: bool,
     observed: journal::JournalHead<wire::ResidencyHead>,
     row: wire::LaneResidency,
     claim: Option<AutomaticClaimAuthority>,
@@ -287,6 +290,14 @@ pub(in crate::resident) struct PendingAutomaticWake {
     fresh_session: bool,
 }
 
+/// Admit and spawn one occupant selected by the resident lifecycle authority.
+///
+/// An available-work caller passes the exact claim it minted before launch.
+/// A pending-inbox caller passes none; if the lane instead carries an older
+/// live claim, the start transfers that claim to the successor in the same
+/// resident-recognition transaction that seats it. The start commits against
+/// the lane's authority current at completion, so commits elsewhere while the
+/// session proves itself never refuse it.
 #[allow(
     clippy::too_many_arguments,
     reason = "one automatic wake owns the complete resident launch boundary"
@@ -302,11 +313,13 @@ pub(in crate::resident) fn begin_automatic_wake(
     occupant: CanonicalUuid,
     decision: Option<&bus::TaskSnapshot>,
     reserved: Option<&crate::board_command::AutomaticClaim>,
+    inbox: bool,
 ) -> CommandResult<BeginAutomaticWake> {
     let request = WakeRequest {
         lane,
         decision,
         reserved,
+        inbox,
     };
     let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
     if let Some(renewal) = admitted.renewal.as_ref() {
@@ -379,7 +392,7 @@ pub(in crate::resident) fn finish_automatic_wake(
         &pending.admitted.row,
         &proven,
         WakeCommitAuthority {
-            expected_cursor: pending.admitted.expected_cursor,
+            inbox: pending.admitted.inbox,
             claim: pending.admitted.claim.as_ref(),
             renewal: pending.admitted.renewal.as_ref(),
         },
@@ -406,9 +419,10 @@ pub(in crate::resident) fn wake_automatic(
     occupant: CanonicalUuid,
     decision: Option<&bus::TaskSnapshot>,
     reserved: Option<&crate::board_command::AutomaticClaim>,
+    inbox: bool,
 ) -> CommandResult<AutomaticWake> {
     match begin_automatic_wake(
-        bus, paths, epoch, seats, runtime, steering, lane, occupant, decision, reserved,
+        bus, paths, epoch, seats, runtime, steering, lane, occupant, decision, reserved, inbox,
     )? {
         BeginAutomaticWake::Unstarted(outcome) => Ok(AutomaticWake::Unstarted(outcome)),
         BeginAutomaticWake::Launch(launch) => {
@@ -425,7 +439,6 @@ fn admit_automatic_wake(
     seats: &Seats,
     request: &WakeRequest<'_>,
 ) -> CommandResult<WakeAdmission> {
-    let expected_cursor = request.decision.and_then(bus::TaskSnapshot::cursor);
     let observed = current_residency(bus, epoch)?;
     let row = observed
         .body()
@@ -479,7 +492,7 @@ fn admit_automatic_wake(
     };
     let fast_mode = super::super::settings_surface::lane_fast_mode(bus, observed.body(), &row)?;
     Ok(WakeAdmission {
-        expected_cursor,
+        inbox: request.inbox,
         observed,
         row,
         claim,
@@ -690,7 +703,7 @@ fn should_promote_lease(authority: &AutomaticClaimAuthority) -> bool {
 }
 
 struct WakeCommitAuthority<'a> {
-    expected_cursor: Option<wire::Seq>,
+    inbox: bool,
     claim: Option<&'a AutomaticClaimAuthority>,
     renewal: Option<&'a wire::LaneRenewalRecord>,
 }
@@ -704,14 +717,15 @@ fn commit_automatic_wake(
     authority: WakeCommitAuthority<'_>,
 ) -> CommandResult<()> {
     let WakeCommitAuthority {
-        expected_cursor,
+        inbox,
         claim,
         renewal,
     } = authority;
     let at = wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| store_fault("lifecycle::claim-promotion-clock", &error.to_string()))?;
+    let observed = rebase_lane(bus, epoch, observed, row.lane)?;
     let (mut next, mut write, started) =
-        prepare_wake_commit(epoch, observed, row, proven, expected_cursor, claim)?;
+        prepare_wake_commit(epoch, &observed, row, proven, inbox, claim)?;
     let mut head = match claim {
         Some(claim) if claim.claim.body().occupant != proven.occupant => {
             carry_automatic_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
@@ -746,7 +760,7 @@ fn prepare_wake_commit(
     observed: &journal::JournalHead<wire::ResidencyHead>,
     row: &wire::LaneResidency,
     proven: &ProvenOccupant,
-    expected_cursor: Option<wire::Seq>,
+    inbox: bool,
     claim: Option<&AutomaticClaimAuthority>,
 ) -> CommandResult<(wire::ResidencyHead, JournalWrite, PendingFact)> {
     let mut next = observed.body().clone();
@@ -761,12 +775,13 @@ fn prepare_wake_commit(
     next_row.disposition = OCCUPIED.to_owned();
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut write, observed);
-    if let Some(expected) = expected_cursor {
+    if inbox {
+        let lane = row.lane;
         write.guard(JournalGuard::new(move |read| {
-            if read.cursor()? == Some(expected) {
-                Ok(())
+            if crate::steering_read::pending(read, Some(lane))?.is_empty() {
+                Err(journal::GuardError::refused("lifecycle::wake-inbox-moved"))
             } else {
-                Err(journal::GuardError::refused("lifecycle::snapshot-moved"))
+                Ok(())
             }
         }));
     }

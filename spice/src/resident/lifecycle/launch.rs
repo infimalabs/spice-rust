@@ -5,7 +5,8 @@ use super::*;
 pub(in crate::resident) struct PendingLaunch {
     trigger: Trigger,
     lane: CanonicalUuid,
-    cursor: Seq,
+    /// The steering an inbox wake was admitted to deliver.
+    woken: Option<super::super::steering::WokenInbox>,
     claim: Option<crate::board_command::AutomaticClaim>,
     wake: lane_surface::PendingAutomaticWake,
 }
@@ -18,7 +19,7 @@ pub(super) struct Launching {
 pub(super) fn pending_launch(
     trigger: Trigger,
     lane: CanonicalUuid,
-    cursor: Seq,
+    woken: Option<super::super::steering::WokenInbox>,
     claim: Option<crate::board_command::AutomaticClaim>,
     launch: lane_surface::AutomaticLaunch,
 ) -> Attempted {
@@ -28,7 +29,7 @@ pub(super) fn pending_launch(
         pending: PendingLaunch {
             trigger,
             lane,
-            cursor,
+            woken,
             claim,
             wake,
         },
@@ -61,7 +62,7 @@ impl Runtime {
             epoch,
             pending.trigger,
             pending.lane,
-            pending.cursor,
+            pending.woken.as_ref(),
             pending.claim.as_ref(),
             result,
         );
@@ -124,27 +125,30 @@ fn settle_launch(
     epoch: CanonicalUuid,
     trigger: Trigger,
     lane: CanonicalUuid,
-    cursor: Seq,
+    woken: Option<&super::super::steering::WokenInbox>,
     claim: Option<&crate::board_command::AutomaticClaim>,
     launched: CommandResult<lane_surface::AutomaticWake>,
 ) -> CommandResult<Attempted> {
     match trigger {
-        Trigger::PendingInbox => match launched {
-            Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
-            Ok(lane_surface::AutomaticWake::Unstarted(failure)) => {
-                super::super::steering::dead_letter_pending(
-                    bus, paths, epoch, lane, cursor, &failure,
-                )
-                .map(Attempted::DeadLettered)
+        Trigger::PendingInbox => {
+            let woken = woken.expect("an inbox wake retains the steering it was woken for");
+            match launched {
+                Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
+                Ok(lane_surface::AutomaticWake::Unstarted(failure)) => {
+                    super::super::steering::dead_letter_pending(
+                        bus, paths, epoch, lane, woken, &failure,
+                    )
+                    .map(Attempted::DeadLettered)
+                }
+                Err(failure) if pending_start_failure_is_terminal(&failure) => {
+                    super::super::steering::dead_letter_pending(
+                        bus, paths, epoch, lane, woken, &failure,
+                    )
+                    .map(Attempted::DeadLettered)
+                }
+                Err(failure) => Err(failure),
             }
-            Err(failure) if pending_start_failure_is_terminal(&failure) => {
-                super::super::steering::dead_letter_pending(
-                    bus, paths, epoch, lane, cursor, &failure,
-                )
-                .map(Attempted::DeadLettered)
-            }
-            Err(failure) => Err(failure),
-        },
+        }
         Trigger::HeldClaim => match launched? {
             lane_surface::AutomaticWake::Started => Ok(Attempted::Started),
             lane_surface::AutomaticWake::Unstarted(failure) => Err(failure),

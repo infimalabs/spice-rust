@@ -1,7 +1,10 @@
 use bus::Bus;
 use journal::{FactCause, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
-use wire::{Actor, CanonicalUuid, Outcome, Producer, ResidencyHead, ResidentState};
+use wire::{
+    Actor, CanonicalUuid, LaneRenewalRecord, LaneResidency, Outcome, Producer, Refusal,
+    ResidencyHead, ResidentState, TeamSubscription,
+};
 
 use super::{CommandResult, RuntimePaths, commit, committed_reply, store_fault, write};
 
@@ -69,6 +72,58 @@ pub(super) fn current_residency(
         ));
     }
     Ok(head)
+}
+
+/// The current head a launch proven off the resident loop commits against.
+///
+/// Session proof runs while unrelated commits proceed, so a proven occupant
+/// revalidates only its own lane's authority: the resident generation and life,
+/// the lane row, its team's subscription, and its renewal records. When that
+/// authority is unchanged the start folds onto the current head; otherwise it
+/// refuses exactly as a moved head would.
+pub(super) fn rebase_lane(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    admitted: &journal::JournalHead<ResidencyHead>,
+    lane: CanonicalUuid,
+) -> CommandResult<journal::JournalHead<ResidencyHead>> {
+    let current = current_residency(bus, epoch)?;
+    if current.position() == admitted.position()
+        || lane_authority(current.body(), lane) == lane_authority(admitted.body(), lane)
+    {
+        return Ok(current);
+    }
+    Err(Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "resident::head-moved".to_owned(),
+            Some("lane".to_owned()),
+            Some(lane.to_string()),
+            None,
+        )
+        .with_detail("the lane's own residency changed while its occupant proved its session"),
+    )))
+}
+
+type LaneAuthority<'h> = (
+    &'h ResidentState,
+    Option<&'h LaneResidency>,
+    Option<&'h TeamSubscription>,
+    Vec<&'h LaneRenewalRecord>,
+);
+
+fn lane_authority(head: &ResidencyHead, lane: CanonicalUuid) -> LaneAuthority<'_> {
+    let row = head.lanes.iter().find(|row| row.lane == lane);
+    let subscription = row.and_then(|row| {
+        head.subscriptions
+            .iter()
+            .find(|subscription| subscription.team == row.team)
+    });
+    let renewals = head
+        .renewals
+        .iter()
+        .filter(|renewal| renewal.lane == lane)
+        .collect();
+    (&head.state, row, subscription, renewals)
 }
 
 pub(super) fn guard_residency(

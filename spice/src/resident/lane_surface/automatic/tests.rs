@@ -1,6 +1,8 @@
 use super::super::launch::test_support::AdvisoryRtkFixture;
 use super::*;
 
+mod proof_window;
+
 #[test]
 fn automatic_wake_refuses_an_already_seated_drain_lane() {
     let fixture = AdvisoryRtkFixture::new();
@@ -26,6 +28,7 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
         fixture.occupant,
         None,
         None,
+        false,
     );
 
     match outcome {
@@ -87,6 +90,7 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         fixture.occupant,
         None,
         None,
+        false,
     );
 
     match outcome {
