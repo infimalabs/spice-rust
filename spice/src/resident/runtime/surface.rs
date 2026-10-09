@@ -42,10 +42,13 @@ struct SurfaceRuntimes {
 }
 
 impl SurfaceRuntimes {
-    fn start(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
+    fn start(bus: &Bus, config: &SurfaceConfig, paths: &RuntimePaths) -> CommandResult<Self> {
         let timer_commits = bus.reader().subscribe();
         let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
-        let mut quota = quota::Runtime::start(config.omp_binary.clone());
+        let extension = quota::pin_extension(&paths.runtime).map_err(|error| {
+            environment_fault("resident::quota-extension-unavailable", &error.to_string())
+        })?;
+        let mut quota = quota::Runtime::start(config.omp_binary.clone(), extension);
         let quota_triggers = quota::Triggers::start(bus)?;
         quota.request();
         let lifecycle = lifecycle::Runtime::new(&config.lane);
@@ -234,7 +237,7 @@ pub(super) async fn run_surface(
     launch: SurfaceLaunch<'_>,
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
-    let mut backgrounds = SurfaceRuntimes::start(bus, config)?;
+    let mut backgrounds = SurfaceRuntimes::start(bus, config, paths)?;
     let operator = settings_surface::current(bus, repository)?.operator;
     let StartedSurface {
         capabilities,

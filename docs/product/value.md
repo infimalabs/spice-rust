@@ -329,10 +329,17 @@ banked reset grants; balances are never inferred, combined across accounts, or
 treated as API-dollar credit. A balance is OMP's normalized `balance`-scoped
 windowless limit whose `credits` amount reports what remains and no total;
 windowed, differently scoped, or capped credit allowances stay meters. OpenAI
-Codex balances appear only once the installed OMP normalizes the provider's
-credit balance that way. Each limit row keeps its amount and compact reset
-cadence beside the meter at ordinary and narrow sidebar widths; a long limit
-name wraps rather than forcing horizontal overflow.
+Codex balances reach that shape through Spice's one maintained OMP extension,
+which the appliance carries and the resident pins in its runtime directory and
+names by exact path on every sample: it delegates to OMP's built-in Codex usage
+provider once, keeps a balance the provider already normalizes, leaves a
+missing balance missing, and fails the account's report on a balance that is
+not a finite decimal. Every Codex report it returns carries its stamp, and a
+sample with an unstamped Codex report fails, because OMP serves its built-in
+provider without a word when it cannot load a named extension. Each limit row
+keeps its amount and compact reset cadence beside the meter at ordinary and
+narrow sidebar widths; a long limit name wraps rather than forcing horizontal
+overflow.
 
 Inside the Spice sidebar, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,

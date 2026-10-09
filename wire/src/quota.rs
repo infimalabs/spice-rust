@@ -58,6 +58,8 @@ pub enum QuotaFailureKind {
     StderrOverflow,
     NonzeroExit,
     MalformedOutput,
+    /// OMP returned reports without loading Spice's credit-balance extension.
+    ExtensionUnloaded,
     OutputIncomplete,
     Supervisor,
     WorkerStart,

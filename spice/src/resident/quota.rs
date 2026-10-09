@@ -5,7 +5,7 @@ pub(super) use triggers::Triggers;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -24,6 +24,19 @@ const REAP_LIMIT: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const STDOUT_LIMIT: usize = 64 * 1024;
 const STDERR_LIMIT: usize = 16 * 1024;
+/// Where the resident pins the credit-balance extension in its runtime
+/// directory.
+const CREDIT_BALANCE_EXTENSION: &str = "omp-credit-balance.mjs";
+/// The provider whose reports the extension owns.
+const CREDIT_BALANCE_PROVIDER: &str = "openai-codex";
+
+/// Write the credit-balance extension this appliance carries into the
+/// resident's runtime directory, where every quota sample names it.
+pub(super) fn pin_extension(runtime: &Path) -> std::io::Result<PathBuf> {
+    let path = runtime.join(CREDIT_BALANCE_EXTENSION);
+    std::fs::write(&path, vendor::omp::CREDIT_BALANCE_EXTENSION)?;
+    Ok(path)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct State {
@@ -66,6 +79,7 @@ pub(crate) enum FailureKind {
     StderrOverflow,
     NonzeroExit,
     MalformedOutput,
+    ExtensionUnloaded,
     OutputIncomplete,
     Supervisor,
     WorkerStart,
@@ -219,6 +233,7 @@ pub(crate) struct Capacity {
 
 struct Settings {
     binary: OsString,
+    extension: PathBuf,
     cwd: PathBuf,
     environment: Environment,
     runtime: Duration,
@@ -230,9 +245,10 @@ struct Settings {
 }
 
 impl Settings {
-    fn production(binary: impl Into<OsString>) -> Self {
+    fn production(binary: impl Into<OsString>, extension: PathBuf) -> Self {
         Self {
             binary: binary.into(),
+            extension,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             environment: Environment::new(std::env::vars_os())
                 .expect("the inherited process environment has unique nonempty keys"),
@@ -249,7 +265,13 @@ impl Settings {
         Ok(Spec {
             argv: Argv::new(
                 self.binary.clone(),
-                ["usage", "--json", "--redact"].map(OsString::from),
+                [
+                    OsString::from("usage"),
+                    OsString::from("--json"),
+                    OsString::from("--redact"),
+                    OsString::from("--extension"),
+                    self.extension.clone().into_os_string(),
+                ],
             )
             .map_err(|_| FailureKind::Spawn)?,
             cwd: self.cwd.clone(),
@@ -322,8 +344,8 @@ impl SampleFailure {
 }
 
 impl Runtime {
-    pub(super) fn start(binary: impl Into<OsString>) -> Self {
-        Self::start_with(Settings::production(binary))
+    pub(super) fn start(binary: impl Into<OsString>, extension: PathBuf) -> Self {
+        Self::start_with(Settings::production(binary, extension))
     }
 
     fn start_with(settings: Settings) -> Self {
@@ -528,11 +550,19 @@ fn sample(settings: &Settings, cancellation: CancellationToken) -> Result<Snapsh
         }
         ProcessCompletion::Exited(_) => {}
     }
-    decode(stdout.bytes()).map_err(|_| SampleFailure::new(FailureKind::MalformedOutput))
+    decode(stdout.bytes()).map_err(SampleFailure::new)
 }
 
-fn decode(bytes: &[u8]) -> Result<Snapshot, serde_json::Error> {
-    let input: UsageInput = serde_json::from_slice(bytes)?;
+fn decode(bytes: &[u8]) -> Result<Snapshot, FailureKind> {
+    let input: UsageInput =
+        serde_json::from_slice(bytes).map_err(|_| FailureKind::MalformedOutput)?;
+    if input
+        .reports
+        .iter()
+        .any(|report| report.provider == CREDIT_BALANCE_PROVIDER && !report.stamped())
+    {
+        return Err(FailureKind::ExtensionUnloaded);
+    }
     Ok(input.normalize())
 }
 
@@ -588,12 +618,31 @@ struct ReportInput {
     #[serde(default)]
     limits: Vec<Limit>,
     reset_credits: Option<ResetCredits>,
-    metadata: Option<ReportAccount>,
+    metadata: Option<ReportMetadata>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportMetadata {
+    #[serde(flatten)]
+    account: ReportAccount,
+    spice_extension: Option<String>,
 }
 
 impl ReportInput {
+    fn stamped(&self) -> bool {
+        self.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.spice_extension.as_deref())
+            == Some(vendor::omp::CREDIT_BALANCE_STAMP)
+    }
+
     fn normalize(mut self) -> Report {
-        let mut account = self.metadata.take().unwrap_or_default();
+        let mut account = self
+            .metadata
+            .take()
+            .map(|metadata| metadata.account)
+            .unwrap_or_default();
         account.redact();
         for limit in &mut self.limits {
             limit.scope.redact();
@@ -697,6 +746,7 @@ fn wire_failure_kind(kind: FailureKind) -> wire::QuotaFailureKind {
         FailureKind::StderrOverflow => wire::QuotaFailureKind::StderrOverflow,
         FailureKind::NonzeroExit => wire::QuotaFailureKind::NonzeroExit,
         FailureKind::MalformedOutput => wire::QuotaFailureKind::MalformedOutput,
+        FailureKind::ExtensionUnloaded => wire::QuotaFailureKind::ExtensionUnloaded,
         FailureKind::OutputIncomplete => wire::QuotaFailureKind::OutputIncomplete,
         FailureKind::Supervisor => wire::QuotaFailureKind::Supervisor,
         FailureKind::WorkerStart => wire::QuotaFailureKind::WorkerStart,
@@ -888,6 +938,7 @@ mod tests {
           "orgId": "or*",
           "orgName": "te*",
           "planType": "pro",
+          "spiceExtension": "openai-credit-balance",
           "allowed": true,
           "limitReached": false,
           "endpoint": "https://secret.invalid",
@@ -945,7 +996,8 @@ mod tests {
         "metadata": {
           "email": "ot*",
           "accountId": "o2*",
-          "planType": "pro"
+          "planType": "pro",
+          "spiceExtension": "openai-credit-balance"
         },
         "limits": [{
           "id": "openai-codex:credits",
@@ -959,7 +1011,8 @@ mod tests {
         "metadata": {
           "email": "mi*",
           "accountId": "m3*",
-          "planType": "pro"
+          "planType": "pro",
+          "spiceExtension": "openai-credit-balance"
         },
         "limits": [{
           "id": "openai-codex:credits:1w",
@@ -1039,10 +1092,9 @@ mod tests {
         }
     }
 
-    fn settings(binary: PathBuf, cwd: &Path) -> Settings {
+    fn settings(binary: PathBuf, runtime: &Path) -> Settings {
         Settings {
-            binary: binary.into_os_string(),
-            cwd: cwd.to_path_buf(),
+            cwd: runtime.to_path_buf(),
             environment: Environment::new(std::env::vars_os()).expect("valid test environment"),
             runtime: Duration::from_secs(2),
             output_drain: Duration::from_millis(100),
@@ -1050,6 +1102,10 @@ mod tests {
             grace: Duration::from_millis(20),
             stdout_limit: 64 * 1024,
             stderr_limit: 4 * 1024,
+            ..Settings::production(
+                binary,
+                pin_extension(runtime).expect("pin the credit-balance extension"),
+            )
         }
     }
 
@@ -1071,7 +1127,8 @@ mod tests {
         let script = fixture.script(
             "success",
             &format!(
-                "[ \"${{1-}}\" = usage ] && [ \"${{2-}}\" = --json ] && [ \"${{3-}}\" = --redact ] || exit 64\nprintf '%s' '{}'",
+                "[ $# -eq 5 ] && [ \"$1\" = usage ] && [ \"$2\" = --json ] && [ \"$3\" = --redact ] && [ \"$4\" = --extension ] && [ \"$5\" = '{}/omp-credit-balance.mjs' ] && [ -s \"$5\" ] || exit 64\nprintf '%s' '{}'",
+                fixture.root.display(),
                 VALID_JSON.replace('\'', "'\\''")
             ),
         );
@@ -1249,6 +1306,28 @@ mod tests {
         let failure = latest_failure(&runtime.current()).clone();
         assert_eq!(failure.kind, FailureKind::NonzeroExit);
         assert_eq!(failure.exit_code, Some(17));
+    }
+
+    #[test]
+    fn only_an_unstamped_codex_report_refuses_the_sample() {
+        // OMP serves its built-in provider when it cannot load the named
+        // extension, so one unstamped Codex report means the balance source
+        // reverted.
+        let unstamped =
+            VALID_JSON.replacen("\"spiceExtension\": \"openai-credit-balance\",", "", 1);
+        assert_eq!(
+            decode(unstamped.as_bytes()),
+            Err(FailureKind::ExtensionUnloaded)
+        );
+        let restamped =
+            VALID_JSON.replacen("\"openai-credit-balance\"", "\"another-extension\"", 1);
+        assert_eq!(
+            decode(restamped.as_bytes()),
+            Err(FailureKind::ExtensionUnloaded)
+        );
+        let other_provider =
+            br#"{"generatedAt": 1, "reports": [{"provider": "anthropic", "fetchedAt": 2, "limits": []}]}"#;
+        assert!(decode(other_provider).is_ok());
     }
 
     #[tokio::test]
