@@ -434,7 +434,7 @@ fn compact_identity(identity: impl ToString) -> String {
 pub(crate) const fn edge_label(relation: TaskRelationKind) -> &'static str {
     match relation {
         TaskRelationKind::Origin => "origin",
-        TaskRelationKind::Dependency => "unblocks",
+        TaskRelationKind::Dependency => "then",
         TaskRelationKind::Review => "review",
         TaskRelationKind::Lifecycle => "transition",
         TaskRelationKind::Claim => "held by",
