@@ -58,8 +58,22 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
 | App-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- app-wasm-typecheck`. |
 | App pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
-| Browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and remove the experiment. |
+| Browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then launch the current worktree through `spice dev xtask -- app-demo` (`--open` also opens the system browser), under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and stop the disposable resident when finished. |
 | Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
+
+Current-source browser checks use the worktree-owned path:
+
+```sh
+spice dev xtask -- app
+spice dev xtask -- app-demo --open
+```
+
+`app-demo` builds the current worktree's native `spice`, copies only that
+worktree's `dist/stage-app/current` into an isolated demo root, and refuses a
+missing, incomplete, or moving generation. Its `staged_generation` and
+`served_generation` output values must match. Plain `spice demo` continues to
+exercise the installed appliance and its bundled app; it is not current-source
+browser evidence.
 
 Metadata selection is conservative target-root reachability, not line coverage.
 Overlap or an advisory subsumption finding never authorizes deletion; removal

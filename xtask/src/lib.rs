@@ -6,6 +6,8 @@ use std::io::{self, Write};
 use sill::CancellationToken;
 
 mod app;
+#[cfg(not(target_arch = "wasm32"))]
+mod app_demo;
 mod build_cache;
 mod develop;
 mod gate_command;
@@ -22,6 +24,8 @@ mod verify_timing;
 mod workspace_tests;
 
 pub use app::{AppBuildError, app};
+#[cfg(not(target_arch = "wasm32"))]
+pub use app_demo::{AppDemoError, app_demo};
 pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
     BuildCacheRootKind, BuildCacheRootReport, BuildCacheTargetDirectory, build_cache,
