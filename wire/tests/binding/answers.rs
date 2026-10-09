@@ -283,8 +283,6 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::GlobalSettings,
         r#"{
   "fast_mode": true,
-  "operator_name": "C Adams",
-  "operator_email": "c@example.invalid",
   "operator": {
     "name": "C Adams",
     "email": "c@example.invalid",

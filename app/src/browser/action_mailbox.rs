@@ -436,12 +436,8 @@ impl ClientAction {
                     .saturating_add(attachment.content_type.len())
                     .saturating_add(attachment.data_url.len())
             }),
-            Self::GlobalSettings(settings) => settings
-                .operator_name
-                .as_ref()
-                .map_or(0, String::len)
-                .saturating_add(settings.operator_email.as_ref().map_or(0, String::len)),
-            Self::DrainSubmissions
+            Self::GlobalSettings(_)
+            | Self::DrainSubmissions
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
@@ -973,11 +969,7 @@ mod tests {
     }
 
     fn settings() -> ClientAction {
-        ClientAction::GlobalSettings(wire::intent::GlobalSettingsSet {
-            fast_mode: false,
-            operator_name: None,
-            operator_email: None,
-        })
+        ClientAction::GlobalSettings(wire::intent::GlobalSettingsSet { fast_mode: false })
     }
 
     #[test]
