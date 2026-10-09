@@ -135,7 +135,8 @@ fn arrangement_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<
     })
 }
 
-/// An open team arrangement owns Escape only while Chat shows it.
+/// An open team arrangement owns Escape only while Chat shows it. Focus stays
+/// on an expanded team menu that opened it, otherwise returns to the lights.
 #[hook]
 pub(in crate::browser) fn use_team_arrangement_escape(
     controls: &UseReducerHandle<TeamControls>,
@@ -144,17 +145,26 @@ pub(in crate::browser) fn use_team_arrangement_escape(
     let dismiss = {
         let controls = controls.clone();
         Callback::from(move |()| {
-            if let Some(trigger) = web_sys::window()
-                .and_then(|window| window.document())
-                .and_then(|document| {
-                    document
-                        .query_selector(
-                            ".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]",
-                        )
-                        .ok()
-                        .flatten()
-                })
-                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+            let document = web_sys::window().and_then(|window| window.document());
+            let opener_focused = document
+                .as_ref()
+                .and_then(web_sys::Document::active_element)
+                .is_some_and(|active| {
+                    active
+                        .matches(".team-menu[aria-expanded=\"true\"]")
+                        .unwrap_or(false)
+                });
+            if !opener_focused
+                && let Some(trigger) = document
+                    .and_then(|document| {
+                        document
+                            .query_selector(
+                                ".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]",
+                            )
+                            .ok()
+                            .flatten()
+                    })
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
             {
                 let _ = trigger.focus();
             }
@@ -169,7 +179,7 @@ fn render_team_toolbar(
     standings: &[Standing],
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    let can_arrange = render.can_arrange_teams && watchband::teams(&render.topology).count() > 1;
+    let can_arrange = render.can_arrange_teams && watchband::rearrangeable(&render.topology);
     let id = team.lane;
     let arrangement_help_id = format!("team-arrangement-help-{id}");
     let lights_label = if can_arrange {

@@ -354,7 +354,7 @@ fn render_compose(
                 team_controls,
                 &controls.set_automatic_speech,
                 sender,
-                can_arrange,
+                arrange_refusal(can_arrange, topology),
                 can_configure,
                 ready,
                 dormant,
@@ -663,6 +663,20 @@ struct PrimaryComposerDragging {
 struct AgentTeamControl {
     disabled: bool,
     activate: Callback<MouseEvent>,
+}
+
+/// Why the team menu cannot open arrangement choices, if it cannot.
+fn arrange_refusal(
+    can_arrange: bool,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+) -> Option<&'static str> {
+    if !can_arrange {
+        Some("Team arrangement is unavailable")
+    } else if !watchband::rearrangeable(topology) {
+        Some("No other team to swap with or join")
+    } else {
+        None
+    }
 }
 
 fn agent_split_control(

@@ -668,7 +668,9 @@ two-slot button row, a 56-pixel `Send` row, then two equal 29-pixel range rows
 because $(160 - 3 - 34 - 56 - 3 \times 3) / 2 = 29$. `TURBO` occupies the
 upper-left slot at the same diameter as the global `Spice` control, giving it
 equal three-pixel top and left clearance. A same-diameter hamburger in the
-upper-right slot opens the team's swap/join arrangement menu. Both utility
+upper-right slot opens the team's swap/join arrangement menu beside the
+control column, so the same button closes it; with no other team it stays
+disabled and names that reason. Both utility
 buttons use the primary panel's Flush etched-glass surface.
 Each range runs left to right, minimum to maximum, as a 46 × 22 labeled thumb in
 a 74 × 26 pill groove: two pixels of clearance above and below, and three
