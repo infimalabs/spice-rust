@@ -494,17 +494,20 @@ kept behind the overview.
 Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
-header gives the complete live status ticker and task strip the width left of
-its compact lane-light stack, which holds the right edge. The ticker keeps its
-relative age, lane standing, agent/tool/command prefix and accent, truncated
-detail, accessible label, and live-region behavior in its status band rather
-than consuming a separate row. A `job` call's detail reads as its typed intent,
-the purpose the agent declared for it, followed by the operation and job id it
-names for correlation, as in `job: Waiting for the gate (wait dVW6Zkf0h)`;
-updates and the result keep that line and append their state, and a call that
-declares no intent shows the operation and id alone. The task pill opens the
-browser-local overview with the canonical complete team task set; no local
-analytical pane or route duplicates it.
+header's first row fixes the team total at the left when work exists and the
+ordered lane-light stack in an 80-pixel rising tab at the right, aligned with
+the composer controls. Task tabs scroll between those edges and fade beneath
+both fixed tabs. The complete live status ticker owns the second header row,
+using all of its inline width for relative age, lane standing,
+agent/tool/command prefix and accent, truncated detail, accessible label, and
+live-region behavior. A `job` call's detail reads as its typed intent, the
+purpose the agent declared for it, followed by the operation and job id it
+names for correlation, as in
+`job: Waiting for the gate (wait dVW6Zkf0h)`; updates and the result keep that
+line and append their state, and a call that declares no intent shows the
+operation and id alone. The task pill opens the browser-local overview with the
+canonical complete team task set; no local analytical pane or route duplicates
+it.
 
 The composer, speech and allocation controls, and send action retain their
 geometry and remain mounted. The former standalone ticker row becomes message
@@ -734,9 +737,9 @@ as the cards scroll until hidden or revealed; it never cancels an event or
 writes the plane's scroll position. The plane is one lower paint context, so no
 card or nested control crosses the still-visible composer while its transform
 catches up to scrolling. Home and End also set composer exposure.
-The toolbar remains fixed, with the status ticker beside the lane-light stack
-at the right edge, and the message stream owns the row the standalone ticker
-once occupied.
+The toolbar remains fixed, with the lane-light stack in the right task tab and
+the status ticker owning the full row below it. The message stream owns the row
+the standalone ticker once occupied.
 
 Creator-context and actor links enter the exact Chat card or composer. Return
 anchors retain card identity and scroll offset only; Back and Forward do not

@@ -131,12 +131,13 @@ fill it.
 
 ## Arrange whole teams
 
-Pick up a team from its status-pip stack. After the same six-pixel lift
-threshold used by composer movement, the source surface stays reserved and a
-bounded ghost follows the pointer. The middle three fifths of another team
-exchanges exactly those two team positions. Either outer fifth joins into the
-team under the pointer: the receiver keeps its identity, primary composer, and
-member order, then receives the source members in their existing order.
+Pick up a team from the status-pip stack in the permanent right header tab.
+After the same six-pixel lift threshold used by composer movement, the source
+surface stays reserved and a bounded ghost follows the pointer. The middle
+three fifths of another team exchanges exactly those two team positions. Either
+outer fifth joins into the team under the pointer: the receiver keeps its
+identity, primary composer, and member order, then receives the source members
+in their existing order.
 
 A team is named by its lead agent, canonical member zero, using the same label
 its messages carry: the configured name, else the worktree leaf. The task
@@ -159,14 +160,18 @@ the lift without sending.
 
 The activity age keeps its fixed three-character measure and meets the main
 status with only the status line's ordinary inline spacing. It adds no trailing
-margin of its own.
+margin of its own. The status line owns the complete second header row.
 
 ## Work tabs
 
 Global totals and stems, plus team totals and stem containers, use the same
-four-pixel outer inline rails. Task handles remain borderless segments inside
-their stem container; the final handle meets the container's single right rail.
-The rows keep their existing shapes, spacing, scrolling, counts, and navigation.
+four-pixel outer inline rails. Each populated team keeps its ordered presence
+pips in a permanent right rising tab aligned with the composer controls; the
+team total remains fixed at the left when tasks exist. Task handles remain
+borderless segments inside their stem container; the final handle meets the
+container's single right rail. The middle scroller uses mirrored fade, padding,
+and scroll-padding boundaries beneath the two fixed edge tabs. The rows keep
+their existing shapes, spacing, scrolling, counts, and navigation.
 
 ## Team composer controls
 
