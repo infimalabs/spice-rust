@@ -161,21 +161,31 @@ fn use_blocker_review_focus(open: bool, launcher: NodeRef, close: NodeRef) {
     });
 }
 
-/// One authored task text field through the sanitized, task-aware renderer.
+/// One authored task text field through the shared Markdown dialect and the
+/// message body surface, so math, diagrams, and images render as in cards.
 ///
-/// Descriptions, acceptance criteria, and observations all render here, so
-/// every detail surface shows the same Markdown and the same chips. Chips name
-/// only tasks `resolves` admits, and the surrounding surface decides what
-/// activating one opens.
+/// Descriptions, acceptance criteria, observations, and closure validation all
+/// render here. Chips name only tasks `resolves` admits, and the surrounding
+/// surface decides what activating one opens.
 pub(super) fn render_task_text(
     markdown: &str,
     class: &'static str,
     resolves: impl Fn(&TaskStamp) -> bool,
 ) -> Html {
-    let html = crate::composer_markdown::task_text::render_task_text(markdown, resolves);
+    let rendered = crate::composer_markdown::task_text::render_task_text(markdown, resolves);
+    let sources = rendered
+        .diagrams
+        .into_iter()
+        .map(AttrValue::from)
+        .collect::<Vec<_>>();
     html! {
         <div class={classes!("task-text", class)}>
-            {Html::from_html_unchecked(html.into())}
+            <super::mermaid::MarkdownBody
+                html={AttrValue::from(rendered.html)}
+                sources={std::rc::Rc::new(sources)}
+                final_answer=true
+                quote_tasks={std::rc::Rc::default()}
+            />
         </div>
     }
 }

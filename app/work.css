@@ -32,10 +32,9 @@
 
 /* Authored task Markdown: block spacing comes from its own elements, so
    the source newlines between them must not render as blank lines. Wide or
-   long blocks scroll inside their own box instead of stretching the detail. */
-.task-text { min-width: 0; overflow-wrap: anywhere; }
-.task-text > :first-child { margin-top: 0; }
-.task-text > :last-child { margin-bottom: 0; }
+   long blocks scroll inside their own box instead of stretching the detail.
+   Images and diagrams preview at the message-card size and open full size. */
+.task-text { --mosaic-image-size: 8.75rem; min-width: 0; overflow-wrap: anywhere; }
 .task-text :is(p, ul, ol, pre, blockquote, .markdown-table) { margin: 0 0 8px; }
 .task-text h5 { margin: 12px 0 6px; font-size: var(--app-type-summary); }
 /* Code scrolls only sideways; the side view owns vertical scrolling. */
