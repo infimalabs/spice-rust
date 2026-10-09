@@ -25,8 +25,10 @@ use wire::output::{Admission, Budget, ClippedText, Resume};
 
 pub(super) mod job;
 
-pub(in crate::resident) use job::{Control, Handle, Job, Jobs};
-use job::{Ended, Ending, Observed, Tail};
+pub(in crate::resident) use job::{
+    Control, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
+};
+use job::{Ended, Ending, Observed, ServiceClaim, Tail};
 
 /// How long after a stop is asked the lane waits for the keeper's ending
 /// before answering with the command still ending: the keeper's grace and
@@ -63,6 +65,7 @@ pub(in crate::resident) struct Terminal {
     cwd: PathBuf,
     environment: Environment,
     jobs: Jobs,
+    service_authority: Option<ServiceAuthority>,
     /// How long a command runs in the foreground before it is kept.
     foreground: Duration,
 }
@@ -98,6 +101,7 @@ impl Terminal {
             cwd: cwd.into(),
             environment,
             jobs,
+            service_authority: None,
             foreground: Duration::from_secs(vendor::omp::SHELL_FOREGROUND),
         }
     }
@@ -105,6 +109,11 @@ impl Terminal {
     #[cfg(test)]
     pub(in crate::resident::supervisor) fn foreground(self, foreground: Duration) -> Self {
         Self { foreground, ..self }
+    }
+
+    fn with_service_authority(mut self, authority: ServiceAuthority) -> Self {
+        self.service_authority = Some(authority);
+        self
     }
 
     /// The foreground window for one command: the threshold, or the deadline
@@ -124,7 +133,11 @@ impl Terminal {
     /// in its working directory, under its environment with the interception
     /// lifted and `SHELL` naming the native shell. An occupant launched with
     /// no shell has no terminal.
-    pub(in crate::resident) fn from_launch(spec: &Spec, jobs: Jobs) -> Option<Self> {
+    pub(in crate::resident) fn from_launch(
+        spec: &Spec,
+        jobs: Jobs,
+        service_authority: ServiceAuthority,
+    ) -> Option<Self> {
         let entries = spec.environment.entries();
         let value = |name: &str| {
             entries
@@ -141,7 +154,10 @@ impl Terminal {
                 .chain([(OsString::from("SHELL"), shell.clone())]),
         )
         .expect("lifting entries from a valid environment preserves validity");
-        Some(Self::new(shell, spec.cwd(), environment, jobs))
+        Some(
+            Self::new(shell, spec.cwd(), environment, jobs)
+                .with_service_authority(service_authority),
+        )
     }
 
     /// Run one command: to its end within the foreground window, or until a
@@ -156,6 +172,23 @@ impl Terminal {
     }
 
     fn run_command(&self, call: &ShellCall, control: &Control) -> Run {
+        let service_claim: Option<ServiceClaim> = if matches!(call.lifetime, Lifetime::Service) {
+            let Some(authority) = &self.service_authority else {
+                return Run::Ended(Report::refused(
+                    "service launch requires an active task claim",
+                ));
+            };
+            match authority.claim() {
+                Ok(claim) => Some(claim),
+                Err(error) => {
+                    return Run::Ended(Report::refused(&format!(
+                        "service launch refused: {error}"
+                    )));
+                }
+            }
+        } else {
+            None
+        };
         let (argv, diagnostic) = self.argv(call);
         let started = self.jobs.start(
             &call.command,
@@ -163,6 +196,7 @@ impl Terminal {
             &self.cwd,
             &self.environment,
             call.lifetime.deadline(),
+            service_claim,
             &call.notices,
         );
         let job = match started {
@@ -681,6 +715,26 @@ mod tests {
         Terminal::new("/bin/sh", root, environment, Jobs::new(root.join("jobs")))
     }
 
+    fn claimed_terminal(root: &std::path::Path) -> Terminal {
+        let lane = uuid(1);
+        let occupant = uuid(2);
+        let claim = ServiceClaim::fixture(
+            "1kKRRsDP".parse().expect("fixture task"),
+            wire::Seq::new(7).expect("fixture claim position"),
+            "todo",
+            lane,
+            occupant,
+        );
+        terminal(root, Environment::empty())
+            .with_service_authority(ServiceAuthority::fixture(claim))
+    }
+
+    fn uuid(value: u64) -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-{value:012x}")
+            .parse()
+            .expect("fixture UUID")
+    }
+
     /// A fifo nobody writes holds its reader open, so `cat hold` ends only
     /// because the lane ends it.
     fn hold(root: &std::path::Path) {
@@ -877,10 +931,30 @@ mod tests {
     }
 
     #[test]
+    fn a_service_without_an_active_claim_is_refused_before_a_job_exists() {
+        let root = scratch("unclaimed-service");
+        let terminal = terminal(&root, Environment::empty());
+        let mut service = call("touch started");
+        service.lifetime = Lifetime::Service;
+
+        let report = ended(terminal.run(&service, &Control::new()));
+
+        assert!(report.failed);
+        assert!(
+            report.output.contains("requires an active task claim"),
+            "{}",
+            report.output
+        );
+        assert!(!root.join("started").exists());
+        assert!(terminal.jobs.kept().expect("jobs list reads").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn waiting_on_a_service_leaves_it_running_until_stop_ends_it() {
         let root = scratch("service");
         hold(&root);
-        let terminal = terminal(&root, Environment::empty());
+        let terminal = claimed_terminal(&root);
         let control = Control::new();
         let mut service = call("cat hold");
         service.lifetime = Lifetime::Service;
@@ -910,7 +984,7 @@ mod tests {
     fn a_seat_start_names_only_kept_jobs_still_running() {
         let root = scratch("running-notice");
         hold(&root);
-        let terminal = terminal(&root, Environment::empty());
+        let terminal = claimed_terminal(&root);
         let control = Control::new();
         assert_eq!(running_notice(&terminal.jobs), None);
         let mut service = call("cat hold");
@@ -1073,7 +1147,7 @@ mod tests {
     fn a_long_history_neither_buries_the_running_job_nor_loses_a_delivered_one() {
         let root = scratch("history");
         hold(&root);
-        let terminal = terminal(&root, Environment::empty());
+        let terminal = claimed_terminal(&root);
         let control = Control::new();
         let template = ended(terminal.run(&call("printf old"), &control));
         assert_eq!(template.exit_code, Some(0));

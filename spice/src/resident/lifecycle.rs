@@ -346,13 +346,17 @@ impl Runtime {
         let mut snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
-        self.synchronize_holds(&snapshot, self.projection.cursor())?;
+        let cursor = self.projection.cursor();
+        self.synchronize_holds(&snapshot, cursor)?;
+        if cursor.is_none() || snapshot.facts().after(cursor).next().is_some() {
+            super::supervisor::terminal::reconcile_services(paths, &snapshot, diagnostic);
+        }
         if generation_notices::reconcile(
             bus,
             paths,
             epoch,
             &snapshot,
-            self.projection.cursor(),
+            cursor,
             config.steering.expiry().get(),
         )? {
             snapshot = bus.task_snapshot().map_err(|error| {

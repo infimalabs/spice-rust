@@ -594,7 +594,9 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let proof = launch.session;
     let started_millis = now_millis()?;
     let jobs = terminal::Jobs::for_lane(&paths, request.lane);
-    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs);
+    let service_authority =
+        terminal::ServiceAuthority::new(paths.journal.clone(), request.lane, request.occupant);
+    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, service_authority);
     let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();

@@ -22,10 +22,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant as Monotonic};
 
+use journal::JournalReader;
 use serde::{Deserialize, Serialize};
 use sill::Environment;
 use steer::Key;
-use wire::CanonicalUuid;
+use wire::{Actor, CanonicalUuid, ClaimDisposition, Seq, TaskStamp};
 
 use super::super::super::RuntimePaths;
 use super::super::super::daemon::observer;
@@ -56,6 +57,141 @@ const TERMINATE_GRACE: Duration = Duration::from_secs(1);
 /// lane to deliver it.
 const DELIVERY_GRACE: Duration = Duration::from_secs(2);
 
+/// The exact task possession that owns one unbounded command.
+///
+/// A new phase or possession mints another win, so neither can inherit the
+/// service. Occupant succession inside the same lane and claim does not.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(in crate::resident) struct ServiceClaim {
+    task: TaskStamp,
+    claimed: Seq,
+    phase: String,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+}
+
+impl ServiceClaim {
+    fn matches(&self, heads: &journal::TaskHeads) -> bool {
+        heads.statement().body().born == self.task
+            && heads.workflow().body().phase.as_str() == self.phase
+            && heads.claim().is_some_and(|head| {
+                let claim = head.body();
+                claim.disposition == ClaimDisposition::Active
+                    && claim.actor == Actor::Lane(self.lane)
+                    && claim.claimed == self.claimed
+                    && claim.lane == self.lane
+            })
+    }
+
+    #[cfg(test)]
+    pub(in crate::resident::supervisor) fn fixture(
+        task: TaskStamp,
+        claimed: Seq,
+        phase: &str,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Self {
+        Self {
+            task,
+            claimed,
+            phase: phase.to_owned(),
+            lane,
+            occupant,
+        }
+    }
+}
+
+/// Read-only task authority available to a detached occupant's terminal.
+#[derive(Clone, Debug)]
+pub(in crate::resident) struct ServiceAuthority {
+    journal: PathBuf,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    #[cfg(test)]
+    fixture: Option<ServiceClaim>,
+}
+
+impl ServiceAuthority {
+    pub(in crate::resident) fn new(
+        journal: PathBuf,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Self {
+        Self {
+            journal,
+            lane,
+            occupant,
+            #[cfg(test)]
+            fixture: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::resident::supervisor) fn fixture(claim: ServiceClaim) -> Self {
+        Self {
+            journal: PathBuf::new(),
+            lane: claim.lane,
+            occupant: claim.occupant,
+            fixture: Some(claim),
+        }
+    }
+
+    pub(in crate::resident) fn claim(&self) -> io::Result<ServiceClaim> {
+        #[cfg(test)]
+        if let Some(claim) = &self.fixture {
+            return Ok(claim.clone());
+        }
+        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        reader
+            .read_with(|read| {
+                let residency = read
+                    .residency_head()
+                    .map_err(io::Error::other)?
+                    .ok_or_else(|| {
+                        io::Error::new(ErrorKind::PermissionDenied, "resident authority is absent")
+                    })?;
+                let seated = residency
+                    .body()
+                    .lanes
+                    .iter()
+                    .any(|row| row.lane == self.lane && row.occupant == Some(self.occupant));
+                if !seated {
+                    return Err(io::Error::new(
+                        ErrorKind::PermissionDenied,
+                        "the service caller is not the lane's current occupant",
+                    ));
+                }
+                let heads = read
+                    .active_claim_for_actor(&Actor::Lane(self.lane))
+                    .map_err(io::Error::other)?
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            ErrorKind::PermissionDenied,
+                            "service launch requires an active task claim",
+                        )
+                    })?;
+                let claim = heads
+                    .claim()
+                    .expect("an active claim lookup returns a claim head")
+                    .body();
+                if claim.lane != self.lane || claim.occupant != self.occupant {
+                    return Err(io::Error::new(
+                        ErrorKind::PermissionDenied,
+                        "the active task claim belongs to another lane occupant",
+                    ));
+                }
+                Ok(ServiceClaim {
+                    task: heads.statement().body().born.clone(),
+                    claimed: claim.claimed,
+                    phase: heads.workflow().body().phase.to_string(),
+                    lane: self.lane,
+                    occupant: self.occupant,
+                })
+            })
+            .map_err(io::Error::other)
+    }
+}
+
 /// What the keeper reads: the command as the model wrote it, the argv the
 /// lane runs, and where and under what to run it.
 #[derive(Deserialize, Serialize)]
@@ -71,6 +207,9 @@ struct Request {
     /// What the results carry ahead of the command's output, as omp noted it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     notices: Vec<String>,
+    /// The exact active claim that owns an unbounded service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    service_claim: Option<ServiceClaim>,
     /// The lane to wake when nobody hears the ending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lane: Option<CanonicalUuid>,
@@ -484,6 +623,7 @@ pub(in crate::resident) struct Job {
     id: String,
     command: String,
     timeout: Option<Duration>,
+    service_claim: Option<ServiceClaim>,
     notices: Vec<String>,
     keeper: Option<u32>,
 }
@@ -519,6 +659,7 @@ impl Jobs {
         cwd: &Path,
         environment: &Environment,
         timeout: Option<Duration>,
+        service_claim: Option<ServiceClaim>,
         notices: &[String],
     ) -> io::Result<Job> {
         fs::create_dir_all(&self.root)?;
@@ -538,6 +679,7 @@ impl Jobs {
                     .transpose()
                     .map_err(io::Error::other)?,
                 notices: notices.to_vec(),
+                service_claim: service_claim.clone(),
                 lane: self.lane,
             },
         )?;
@@ -547,6 +689,7 @@ impl Jobs {
             id,
             command: command.to_owned(),
             timeout,
+            service_claim,
             notices: notices.to_vec(),
             keeper,
         })
@@ -599,6 +742,7 @@ impl Jobs {
             id: request.id,
             command: request.command,
             timeout: request.timeout_millis.map(Duration::from_millis),
+            service_claim: request.service_claim,
             notices: request.notices,
             keeper,
         })
@@ -669,6 +813,87 @@ impl Jobs {
             Ok(job) => Ok(Some(job)),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
+        }
+    }
+}
+
+/// Stop every running service whose exact task possession is no longer active.
+///
+/// Finite jobs are lane-owned and never enter this reconciliation. A malformed
+/// undelivered record is stopped fail-closed because it cannot prove a bound.
+pub(in crate::resident) fn reconcile_services(
+    paths: &RuntimePaths,
+    snapshot: &bus::TaskSnapshot,
+    diagnostic: &mut dyn io::Write,
+) {
+    let lanes = match fs::read_dir(&paths.supervisors) {
+        Ok(lanes) => lanes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return,
+        Err(error) => {
+            let _ = writeln!(diagnostic, "service reconciliation unavailable: {error}");
+            return;
+        }
+    };
+    for lane in lanes {
+        let Ok(lane) = lane else {
+            continue;
+        };
+        let Some(name) = lane.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(lane) = name.parse::<CanonicalUuid>() else {
+            continue;
+        };
+        Jobs::for_lane(paths, lane).reconcile_services(snapshot, diagnostic);
+    }
+}
+
+impl Jobs {
+    fn reconcile_services(&self, snapshot: &bus::TaskSnapshot, diagnostic: &mut dyn io::Write) {
+        let ids = match self.ids(|directory| !directory.join(DELIVERED).exists()) {
+            Ok(ids) => ids,
+            Err(error) => {
+                let _ = writeln!(diagnostic, "service records unavailable: {error}");
+                return;
+            }
+        };
+        for id in ids {
+            let directory = self.root.join(&id);
+            let job = match self.open(&id) {
+                Ok(job) => job,
+                Err(error) => {
+                    let _ = File::create(directory.join(STOP));
+                    let _ = writeln!(
+                        diagnostic,
+                        "stopping unbound job {id}: its durable request is invalid: {error}"
+                    );
+                    continue;
+                }
+            };
+            if job.timeout.is_some()
+                || job
+                    .state()
+                    .ok()
+                    .flatten()
+                    .is_some_and(|state| state.ending.is_some())
+            {
+                continue;
+            }
+            let owned = job
+                .service_claim
+                .as_ref()
+                .is_some_and(|claim| snapshot.tasks().iter().any(|heads| claim.matches(heads)));
+            if !owned {
+                let stopped = job.stop();
+                let _ = writeln!(
+                    diagnostic,
+                    "stopping service {} after its task claim ended{}",
+                    job.id,
+                    stopped
+                        .err()
+                        .map_or_else(String::new, |error| format!(": {error}"))
+                );
+            }
         }
     }
 }
