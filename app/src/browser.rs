@@ -885,6 +885,9 @@ fn apply_team_configuration(
                 settle: Some(request),
             });
         }
+        wire::Outcome::Reply(_) if runtime.lane_reply_superseded(&admitted) => {
+            team_controls.dispatch(TeamControlAction::SettleSuperseded { request });
+        }
         wire::Outcome::Reply(_) => {
             team_controls.dispatch(TeamControlAction::SettleIssue {
                 request,

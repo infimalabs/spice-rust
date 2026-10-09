@@ -499,6 +499,15 @@ pub struct AppRuntime {
     presence_transitions: Vec<LanePresenceTransition>,
 }
 
+/// The lane authority position a reply carries; a direct reply carries none.
+const fn lane_reply_seq(position: wire::ReplyPosition) -> Option<Seq> {
+    match position {
+        wire::ReplyPosition::Committed(range) => Some(range.last),
+        wire::ReplyPosition::Snapshot(cursor) => Some(cursor),
+        wire::ReplyPosition::Direct {} => None,
+    }
+}
+
 impl AppRuntime {
     /// Begin empty for the principal named by an admitted acceptance.
     #[must_use]
@@ -1005,16 +1014,13 @@ impl AppRuntime {
             return false;
         }
         let position = match &admitted.get().outcome {
-            Outcome::Reply(reply) => match reply.position {
-                wire::ReplyPosition::Committed(range) => Some(range.last),
-                wire::ReplyPosition::Snapshot(cursor) => Some(cursor),
-                wire::ReplyPosition::Direct {} => return false,
+            Outcome::Reply(reply) => match lane_reply_seq(reply.position) {
+                Some(position) => Some(position),
+                None => return false,
             },
             Outcome::Refusal(_) | Outcome::Fault(_) => None,
         };
-        if position
-            .is_some_and(|position| self.lane_position.is_some_and(|current| position < current))
-        {
+        if position.is_some_and(|position| self.lane_superseded(position)) {
             return false;
         }
         if let Some(position) = position {
@@ -1026,6 +1032,20 @@ impl AppRuntime {
                 .replace(admitted.scope(), LaneView::from(answer));
         });
         matches!(&admitted.get().outcome, Outcome::Reply(_))
+    }
+
+    /// Whether a lane reply for this scope is older than the lane authority
+    /// already held, so a newer read has answered for it.
+    pub fn lane_reply_superseded(&self, admitted: &Admitted<Response<LaneAnswer>>) -> bool {
+        let Outcome::Reply(reply) = &admitted.get().outcome else {
+            return false;
+        };
+        admitted.scope() == self.accepted.scope()
+            && lane_reply_seq(reply.position).is_some_and(|position| self.lane_superseded(position))
+    }
+
+    fn lane_superseded(&self, position: Seq) -> bool {
+        self.lane_position.is_some_and(|current| position < current)
     }
 
     pub fn apply_inbox(&mut self, admitted: &Admitted<Response<InboxAnswer>>) {

@@ -685,9 +685,10 @@ states, muted when off and brighter with a neutral glass wash when on, without a
 colored edge; the range flyers keep neutral edges at every stop. Pressing the
 composer's `TURBO` flips that team flag, which the resident keeps across
 restarts. The button shows the requested state at once and holds it until the
-resident answers that request; a refusal, fault, or reply that cannot advance
-the current lane authority restores the resident's flag and reports the team
-issue.
+resident answers that request. A reply older than lane authority the app
+already holds settles to that authority without an issue; a refusal, a fault,
+or a reply that carries no lane authority for this session restores the
+resident's flag and reports the team issue.
 
 Settings is the first section of the Spice side view. Its separately admitted
 global `TURBO` control stands at the right end of the heading row, with the

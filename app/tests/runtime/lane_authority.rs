@@ -85,7 +85,29 @@ fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
         .admit_frame(&older)
         .expect("older lane result admits");
 
+    assert!(
+        !runtime.lane_reply_superseded(&older),
+        "with no lane authority held, nothing supersedes a reply"
+    );
     assert!(runtime.apply_lanes(&later));
+    assert!(!runtime.lane_reply_superseded(&later));
+    assert!(
+        runtime.lane_reply_superseded(&older),
+        "a later commit has answered for the older one"
+    );
+    let direct = lane_response_at(
+        &rows,
+        ReplyPosition::Direct {},
+        12,
+        wire::intent::TeamLife::Drain,
+    );
+    let direct = session
+        .admit_frame(&direct)
+        .expect("positionless lane response admits structurally");
+    assert!(
+        !runtime.lane_reply_superseded(&direct),
+        "a positionless reply is declined, not superseded"
+    );
     assert!(!runtime.apply_lanes(&older));
     let lanes = runtime.lanes().expect("later lane table remains");
     assert_eq!(lanes.topology_revision, 11);
