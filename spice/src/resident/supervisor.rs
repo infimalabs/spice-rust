@@ -215,6 +215,27 @@ pub(super) struct Launch {
     pub(super) process: Box<dyn DetachedProcess>,
 }
 
+/// Spawned supervisor whose session authority is not proven yet.
+///
+/// Admission, request publication, and process creation happen before this
+/// value exists. Establishment may block until the supervisor publishes its
+/// session, so only a worker outside the resident writer loop may consume it.
+pub(super) struct PendingLaunch {
+    establish: Box<dyn FnOnce() -> CommandResult<Launch> + Send>,
+}
+
+impl PendingLaunch {
+    fn new(establish: impl FnOnce() -> CommandResult<Launch> + Send + 'static) -> Self {
+        Self {
+            establish: Box::new(establish),
+        }
+    }
+
+    pub(super) fn establish(self) -> CommandResult<Launch> {
+        (self.establish)()
+    }
+}
+
 /// Durable supervisor state found for an occupied lane during replacement.
 pub(super) enum Adoption {
     /// The same supervisor and agent remain live.
@@ -225,16 +246,14 @@ pub(super) enum Adoption {
     Failed(String),
 }
 
-/// Launch a new detached supervisor from this exact executable generation.
+/// Admit and spawn a new detached supervisor from this exact executable
+/// generation. Session proof remains pending for an off-loop worker.
 #[cfg(not(test))]
-pub(super) use launch_detached as launch;
-
-#[cfg(not(test))]
-pub(super) fn launch_detached(
+pub(super) fn begin_launch(
     paths: &RuntimePaths,
     request: OccupantLaunchRequest<'_>,
     _reporter: Arc<dyn CaptureReporter>,
-) -> CommandResult<Launch> {
+) -> CommandResult<PendingLaunch> {
     #[cfg(not(unix))]
     {
         let _ = (paths, request);
@@ -244,18 +263,15 @@ pub(super) fn launch_detached(
         ));
     }
     #[cfg(unix)]
-    launch_unix(paths, request)
+    begin_launch_unix(paths, request)
 }
 
 #[cfg(test)]
-pub(super) use launch_direct as launch;
-
-#[cfg(test)]
-pub(super) fn launch_direct(
+pub(super) fn begin_launch_test(
     paths: &RuntimePaths,
     request: OccupantLaunchRequest<'_>,
     reporter: Arc<dyn CaptureReporter>,
-) -> CommandResult<Launch> {
+) -> CommandResult<PendingLaunch> {
     let occupant = request.occupant;
     let launch = occupant_launch(paths, request, reporter)?;
     let git = launch.git;
@@ -263,18 +279,26 @@ pub(super) fn launch_direct(
     let running = sill::spawn_observed(launch.spec, launch.observation)
         .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
     let group = running.id();
-    let session = await_session(proof).map_err(|error| wire::Outcome::Refusal(error.refusal()))?;
-    Ok(Launch {
-        occupant,
-        group,
-        session,
-        git,
-        process: Box::new(DirectHandle(running)),
-    })
+    Ok(PendingLaunch::new(move || {
+        let session =
+            await_session(proof).map_err(|error| wire::Outcome::Refusal(error.refusal()))?;
+        Ok(Launch {
+            occupant,
+            group,
+            session,
+            git,
+            process: Box::new(DirectHandle(running)),
+        })
+    }))
 }
+#[cfg(test)]
+pub(super) use begin_launch_test as begin_launch;
 
 #[cfg(all(unix, not(test)))]
-fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> CommandResult<Launch> {
+fn begin_launch_unix(
+    paths: &RuntimePaths,
+    request: OccupantLaunchRequest<'_>,
+) -> CommandResult<PendingLaunch> {
     // The detached child derives its runtime paths from this worktree, so its
     // own admission cannot tell a foreign repository apart; admit it here.
     admit_worktree(paths, request.worktree)?;
@@ -331,7 +355,12 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
         .spawn(move || {
             let _ = supervisor.wait();
         });
-    await_running(paths, &state, request.lane, request.occupant, events)
+    let paths = paths.clone();
+    let lane = request.lane;
+    let occupant = request.occupant;
+    Ok(PendingLaunch::new(move || {
+        await_running(&paths, &state, lane, occupant, events)
+    }))
 }
 
 /// Adopt the exact live supervisor already naming a durable lane occupant.

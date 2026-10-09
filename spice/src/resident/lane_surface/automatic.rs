@@ -2,60 +2,70 @@
 
 use super::*;
 
+pub(in crate::resident) struct WakeLaunch {
+    launch: super::super::supervisor::PendingLaunch,
+    pending: PendingWake,
+}
+
+impl WakeLaunch {
+    pub(in crate::resident) fn lane(&self) -> CanonicalUuid {
+        self.pending.request.lane
+    }
+
+    pub(in crate::resident) fn into_parts(
+        self,
+    ) -> (super::super::supervisor::PendingLaunch, PendingWake) {
+        (self.launch, self.pending)
+    }
+}
+
+pub(in crate::resident) struct PendingWake {
+    observed: journal::JournalHead<wire::ResidencyHead>,
+    row: wire::LaneResidency,
+    renewal: Option<wire::LaneRenewalRecord>,
+    request: LaneState,
+    occupant: CanonicalUuid,
+    fresh_session: bool,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one manual wake needs the whole command context"
 )]
-pub(super) fn wake(
+pub(in crate::resident) fn begin_wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seats: &mut Seats,
+    seats: &Seats,
     runtime: &Runtime<'_>,
     steering: &steer::Config,
-    command: &wire::AdmittedCommand,
     request: &LaneState,
-) -> Outcome<CommandAnswer> {
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let topology_revision = observed.body().topology_revision;
-    let Some(row) = observed
+) -> Result<WakeLaunch, Outcome<CommandAnswer>> {
+    let observed = current_residency(bus, epoch).map_err(typed_outcome)?;
+    let row = observed
         .body()
         .lanes
         .iter()
         .find(|row| row.lane == request.lane)
-    else {
-        return missing_lane(request.lane);
-    };
+        .cloned()
+        .ok_or_else(|| missing_lane(request.lane))?;
     if row.occupant.is_some() || seats.occupied(request.lane) {
-        return lane_refusal(
+        return Err(lane_refusal(
             "lane::already-occupied",
             Some(VACANT.to_owned()),
             Some(row.disposition.clone()),
             "drain the current occupant before waking a successor",
-        );
+        ));
     }
-    if let Err(outcome) = super::super::steering::lane_capability(row) {
-        return typed_outcome(outcome);
-    }
-    let renewal = match super::renewal::pending_for(observed.body(), request.lane) {
-        Ok(renewal) => renewal,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let resume = match wake_resume(bus, paths, epoch, steering, runtime, row, renewal.as_ref()) {
-        Ok(resume) => resume,
-        Err(outcome) => return outcome,
-    };
-    let fast_mode = match super::super::settings_surface::lane_fast_mode(bus, observed.body(), row)
-    {
-        Ok(fast_mode) => fast_mode,
-        Err(outcome) => return typed_outcome(outcome),
-    };
+    super::super::steering::lane_capability(&row).map_err(typed_outcome)?;
+    let renewal =
+        super::renewal::pending_for(observed.body(), request.lane).map_err(typed_outcome)?;
+    let resume = wake_resume(bus, paths, epoch, steering, runtime, &row, renewal.as_ref())?;
+    let fast_mode = super::super::settings_surface::lane_fast_mode(bus, observed.body(), &row)
+        .map_err(typed_outcome)?;
     let occupant = new_uuid();
     let fresh_session = matches!(resume, vendor::Resume::Fresh);
-    let launch = match super::super::supervisor::launch(
+    let launch = super::super::supervisor::begin_launch(
         paths,
         OccupantLaunchRequest {
             worktree: &row.worktree,
@@ -69,7 +79,31 @@ pub(super) fn wake(
             effort: row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
-    ) {
+    )
+    .map_err(typed_outcome)?;
+    Ok(WakeLaunch {
+        launch,
+        pending: PendingWake {
+            observed,
+            row,
+            renewal,
+            request: request.clone(),
+            occupant,
+            fresh_session,
+        },
+    })
+}
+
+pub(in crate::resident) fn finish_wake(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command: &wire::AdmittedCommand,
+    pending: PendingWake,
+    launched: CommandResult<super::super::supervisor::Launch>,
+) -> Outcome<CommandAnswer> {
+    let launch = match launched {
         Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -83,16 +117,16 @@ pub(super) fn wake(
         session: launch.session,
         source,
         git: launch.git,
-        fresh_session,
+        fresh_session: pending.fresh_session,
     };
-    match seats.seat_detached(request.lane, occupant, launch.process) {
-        Ok(_) => {}
-        Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
+    if let Err(error) = seats.seat_detached(pending.request.lane, pending.occupant, launch.process)
+    {
+        return typed_environment_fault("lane::wake-failed", &error.to_string());
     }
     let answer = LaneChangeAnswer {
-        lane: request.lane,
-        topology_revision,
-        from: row.disposition.clone(),
+        lane: pending.request.lane,
+        topology_revision: pending.observed.body().topology_revision,
+        from: pending.row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),
         rtk: proven
@@ -103,27 +137,57 @@ pub(super) fn wake(
     };
     let proposal = propose_wake(
         command,
-        request,
-        &observed,
+        &pending.request,
+        &pending.observed,
         epoch,
         &proven,
-        renewal.as_ref(),
+        pending.renewal.as_ref(),
         answer.clone(),
     );
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
-            stop_lane(seats, request.lane);
+            stop_lane(seats, pending.request.lane);
             return typed_outcome(outcome);
         }
     };
     match commit(bus, proposal) {
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
-            stop_lane(seats, request.lane);
+            stop_lane(seats, pending.request.lane);
             typed_outcome(outcome)
         }
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the synchronous test boundary exercises the same split launch continuation"
+)]
+pub(super) fn wake(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    steering: &steer::Config,
+    command: &wire::AdmittedCommand,
+    request: &LaneState,
+) -> Outcome<CommandAnswer> {
+    let launch = match begin_wake(bus, paths, epoch, seats, runtime, steering, request) {
+        Ok(launch) => launch,
+        Err(outcome) => return outcome,
+    };
+    let (launch, pending) = launch.into_parts();
+    finish_wake(
+        bus,
+        paths,
+        epoch,
+        seats,
+        command,
+        pending,
+        launch.establish(),
+    )
 }
 
 /// The successor's resume posture, with any renewal context published first.
@@ -178,41 +242,8 @@ fn automatic_refusal(
     ))
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one automatic wake owns the complete resident launch boundary"
-)]
-pub(in crate::resident) fn wake_automatic(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    runtime: &Runtime<'_>,
-    steering: &steer::Config,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    decision: Option<&bus::TaskSnapshot>,
-    reserved: Option<&crate::board_command::AutomaticClaim>,
-) -> CommandResult<AutomaticWake> {
-    wake_automatic_with(
-        bus,
-        paths,
-        epoch,
-        seats,
-        runtime,
-        steering,
-        WakeRequest {
-            lane,
-            occupant,
-            decision,
-            reserved,
-        },
-    )
-}
-
 struct WakeRequest<'a> {
     lane: CanonicalUuid,
-    occupant: CanonicalUuid,
     decision: Option<&'a bus::TaskSnapshot>,
     reserved: Option<&'a crate::board_command::AutomaticClaim>,
 }
@@ -228,35 +259,98 @@ struct WakeAdmission {
     renewal: Option<wire::LaneRenewalRecord>,
 }
 
-fn wake_automatic_with(
+pub(in crate::resident) enum BeginAutomaticWake {
+    Launch(AutomaticLaunch),
+    Unstarted(Outcome<()>),
+}
+
+pub(in crate::resident) struct AutomaticLaunch {
+    launch: super::super::supervisor::PendingLaunch,
+    pending: PendingAutomaticWake,
+}
+
+impl AutomaticLaunch {
+    pub(in crate::resident) fn into_parts(
+        self,
+    ) -> (
+        super::super::supervisor::PendingLaunch,
+        PendingAutomaticWake,
+    ) {
+        (self.launch, self.pending)
+    }
+}
+
+pub(in crate::resident) struct PendingAutomaticWake {
+    admitted: WakeAdmission,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    fresh_session: bool,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one automatic wake owns the complete resident launch boundary"
+)]
+pub(in crate::resident) fn begin_automatic_wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seats: &mut Seats,
+    seats: &Seats,
     runtime: &Runtime<'_>,
     steering: &steer::Config,
-    request: WakeRequest<'_>,
-) -> CommandResult<AutomaticWake> {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    decision: Option<&bus::TaskSnapshot>,
+    reserved: Option<&crate::board_command::AutomaticClaim>,
+) -> CommandResult<BeginAutomaticWake> {
+    let request = WakeRequest {
+        lane,
+        decision,
+        reserved,
+    };
     let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
     if let Some(renewal) = admitted.renewal.as_ref() {
         super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)?;
     }
     let fresh_session = matches!(admitted.resume, vendor::Resume::Fresh);
-    let launch = match super::super::supervisor::launch(
+    let launch = match super::super::supervisor::begin_launch(
         paths,
         OccupantLaunchRequest {
             worktree: &admitted.row.worktree,
             vendor: &admitted.row.vendor,
             epoch,
-            lane: request.lane,
-            occupant: request.occupant,
-            resume: admitted.resume,
+            lane,
+            occupant,
+            resume: admitted.resume.clone(),
             fast_mode: admitted.fast_mode,
             model: admitted.row.model.as_deref(),
             effort: admitted.row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
     ) {
+        Ok(launch) => launch,
+        Err(outcome) => return Ok(BeginAutomaticWake::Unstarted(outcome)),
+    };
+    Ok(BeginAutomaticWake::Launch(AutomaticLaunch {
+        launch,
+        pending: PendingAutomaticWake {
+            admitted,
+            lane,
+            occupant,
+            fresh_session,
+        },
+    }))
+}
+
+pub(in crate::resident) fn finish_automatic_wake(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    pending: PendingAutomaticWake,
+    launched: CommandResult<super::super::supervisor::Launch>,
+) -> CommandResult<AutomaticWake> {
+    let launch = match launched {
         Ok(launch) => launch,
         Err(outcome) => return Ok(AutomaticWake::Unstarted(outcome)),
     };
@@ -270,9 +364,9 @@ fn wake_automatic_with(
         session: launch.session,
         source,
         git: launch.git,
-        fresh_session,
+        fresh_session: pending.fresh_session,
     };
-    if let Err(error) = seats.seat_detached(request.lane, request.occupant, launch.process) {
+    if let Err(error) = seats.seat_detached(pending.lane, pending.occupant, launch.process) {
         return Ok(AutomaticWake::Unstarted(super::super::environment_fault(
             "lifecycle::wake-launch-failed",
             &error.to_string(),
@@ -281,19 +375,47 @@ fn wake_automatic_with(
     if let Err(outcome) = commit_automatic_wake(
         bus,
         epoch,
-        &admitted.observed,
-        &admitted.row,
+        &pending.admitted.observed,
+        &pending.admitted.row,
         &proven,
         WakeCommitAuthority {
-            expected_cursor: admitted.expected_cursor,
-            claim: admitted.claim.as_ref(),
-            renewal: admitted.renewal.as_ref(),
+            expected_cursor: pending.admitted.expected_cursor,
+            claim: pending.admitted.claim.as_ref(),
+            renewal: pending.admitted.renewal.as_ref(),
         },
     ) {
-        stop_lane(seats, request.lane);
+        stop_lane(seats, pending.lane);
         return Err(outcome);
     }
     Ok(AutomaticWake::Started)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the synchronous test boundary exercises the same split launch continuation"
+)]
+pub(in crate::resident) fn wake_automatic(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    steering: &steer::Config,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    decision: Option<&bus::TaskSnapshot>,
+    reserved: Option<&crate::board_command::AutomaticClaim>,
+) -> CommandResult<AutomaticWake> {
+    match begin_automatic_wake(
+        bus, paths, epoch, seats, runtime, steering, lane, occupant, decision, reserved,
+    )? {
+        BeginAutomaticWake::Unstarted(outcome) => Ok(AutomaticWake::Unstarted(outcome)),
+        BeginAutomaticWake::Launch(launch) => {
+            let (launch, pending) = launch.into_parts();
+            finish_automatic_wake(bus, paths, epoch, seats, pending, launch.establish())
+        }
+    }
 }
 
 fn admit_automatic_wake(

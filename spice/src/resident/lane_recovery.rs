@@ -61,6 +61,143 @@ struct CarriedClaim {
     source: wire::body::SourceBoundary,
 }
 
+pub(super) struct ImportLaunch {
+    launch: super::supervisor::PendingLaunch,
+    pending: PendingImport,
+}
+
+impl ImportLaunch {
+    pub(super) fn lane(&self) -> CanonicalUuid {
+        self.pending.request.lane
+    }
+
+    pub(super) fn into_parts(self) -> (super::supervisor::PendingLaunch, PendingImport) {
+        (self.launch, self.pending)
+    }
+}
+
+pub(super) struct PendingImport {
+    context: ImportContext,
+    request: LaneState,
+    occupant: CanonicalUuid,
+}
+
+pub(super) fn begin_import(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    runtime: &Runtime,
+    request: &LaneState,
+) -> Result<ImportLaunch, Outcome<CommandAnswer>> {
+    if request.action != wire::intent::LaneAction::Wake {
+        return Err(lane_refusal(
+            "lane::state-shape",
+            Some("wake action with successor worktree".into()),
+            Some(format!("{:?}", request.action).to_lowercase()),
+            "use lane import through its registered CLI contract",
+        ));
+    }
+    let context = admit_import(bus, paths, epoch, seats, request).map_err(typed_outcome)?;
+    let occupant = new_uuid();
+    let fast_mode =
+        super::settings_surface::lane_fast_mode(bus, context.observed.body(), &context.row)
+            .map_err(typed_outcome)?;
+    let launch = super::supervisor::begin_launch(
+        paths,
+        OccupantLaunchRequest {
+            worktree: &context.worktree,
+            vendor: &context.row.vendor,
+            epoch,
+            lane: context.row.lane,
+            occupant,
+            resume: context.resume.clone(),
+            fast_mode,
+            model: context.row.model.as_deref(),
+            effort: context.row.effort.as_deref(),
+        },
+        Arc::clone(&runtime.capture),
+    )
+    .map_err(typed_outcome)?;
+    Ok(ImportLaunch {
+        launch,
+        pending: PendingImport {
+            context,
+            request: request.clone(),
+            occupant,
+        },
+    })
+}
+
+pub(super) fn finish_import(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command: &wire::AdmittedCommand,
+    pending: PendingImport,
+    launched: CommandResult<super::supervisor::Launch>,
+) -> Outcome<CommandAnswer> {
+    let launch = match launched {
+        Ok(launch) => launch,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let source = match session_source(paths, &launch.session) {
+        Ok(source) => source,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let proven = ProvenOccupant {
+        occupant: launch.occupant,
+        group: launch.group,
+        session: launch.session,
+        source,
+        git: launch.git,
+    };
+    if let Err(error) =
+        seats.seat_detached(pending.context.row.lane, pending.occupant, launch.process)
+    {
+        return typed_outcome(store_fault(
+            "lane::import-launch-failed",
+            &error.to_string(),
+        ));
+    }
+    let answer = LaneChangeAnswer {
+        lane: pending.request.lane,
+        topology_revision: pending.context.observed.body().topology_revision,
+        from: pending.context.row.worktree.clone(),
+        to: pending.context.worktree.clone(),
+        git: Some(proven.git.clone().into_boxed_str()),
+        rtk: proven
+            .session
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.rtk.clone()),
+    };
+    let proposal = propose_import(
+        command,
+        epoch,
+        &pending.request,
+        &pending.context,
+        &proven,
+        answer.clone(),
+    );
+    let proposal = match proposal {
+        Ok(proposal) => proposal,
+        Err(outcome) => {
+            stop_lane(seats, pending.request.lane);
+            return typed_outcome(outcome);
+        }
+    };
+    match commit(bus, proposal) {
+        Ok(committed) => committed_reply(committed, answer),
+        Err(outcome) => {
+            stop_lane(seats, pending.request.lane);
+            typed_outcome(outcome)
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn import(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -70,49 +207,20 @@ pub(super) fn import(
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
-    if request.action != wire::intent::LaneAction::Wake {
-        return lane_refusal(
-            "lane::state-shape",
-            Some("wake action with successor worktree".into()),
-            Some(format!("{:?}", request.action).to_lowercase()),
-            "use lane import through its registered CLI contract",
-        );
-    }
-    let context = match admit_import(bus, paths, epoch, seats, request) {
-        Ok(context) => context,
-        Err(outcome) => return typed_outcome(outcome),
+    let launch = match begin_import(bus, paths, epoch, seats, runtime, request) {
+        Ok(launch) => launch,
+        Err(outcome) => return outcome,
     };
-    let proven = match launch_import(bus, paths, epoch, seats, runtime, &context) {
-        Ok(proven) => proven,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let answer = LaneChangeAnswer {
-        lane: request.lane,
-        topology_revision: context.observed.body().topology_revision,
-        from: context.row.worktree.clone(),
-        to: context.worktree.clone(),
-        git: Some(proven.git.clone().into_boxed_str()),
-        rtk: proven
-            .session
-            .launch
-            .as_ref()
-            .and_then(|launch| launch.rtk.clone()),
-    };
-    let proposal = propose_import(command, epoch, request, &context, &proven, answer.clone());
-    let proposal = match proposal {
-        Ok(proposal) => proposal,
-        Err(outcome) => {
-            stop_lane(seats, request.lane);
-            return typed_outcome(outcome);
-        }
-    };
-    match commit(bus, proposal) {
-        Ok(committed) => committed_reply(committed, answer),
-        Err(outcome) => {
-            stop_lane(seats, request.lane);
-            typed_outcome(outcome)
-        }
-    }
+    let (launch, pending) = launch.into_parts();
+    finish_import(
+        bus,
+        paths,
+        epoch,
+        seats,
+        command,
+        pending,
+        launch.establish(),
+    )
 }
 
 fn admit_import(
@@ -203,49 +311,6 @@ fn admit_row(
         ));
     }
     validate_worktree(paths, worktree)
-}
-
-fn launch_import(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    runtime: &Runtime,
-    context: &ImportContext,
-) -> CommandResult<ProvenOccupant> {
-    let occupant = new_uuid();
-    let launch = super::supervisor::launch(
-        paths,
-        OccupantLaunchRequest {
-            worktree: &context.worktree,
-            vendor: &context.row.vendor,
-            epoch,
-            lane: context.row.lane,
-            occupant,
-            resume: context.resume.clone(),
-            fast_mode: super::settings_surface::lane_fast_mode(
-                bus,
-                context.observed.body(),
-                &context.row,
-            )?,
-            model: context.row.model.as_deref(),
-            effort: context.row.effort.as_deref(),
-        },
-        Arc::clone(&runtime.capture),
-    )?;
-    let source = session_source(paths, &launch.session)?;
-    let proven = ProvenOccupant {
-        occupant: launch.occupant,
-        group: launch.group,
-        session: launch.session,
-        source,
-        git: launch.git,
-    };
-    let _group = seats
-        .seat_detached(context.row.lane, occupant, launch.process)
-        .map_err(|error| store_fault("lane::import-launch-failed", &error.to_string()))?
-        .group();
-    Ok(proven)
 }
 
 fn propose_import(

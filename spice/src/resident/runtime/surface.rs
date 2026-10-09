@@ -1,11 +1,14 @@
 //! App publication and the resident's live surface loop.
 mod capabilities;
-mod control;
+mod control_dispatch;
 mod input;
+mod launch_completion;
 
 use std::sync::Arc;
 
-use control::{ControlDeliveryTurn, control_delivery_turn, dispatch_control_delivery_burst};
+use control_dispatch::{
+    ControlDeliveryTurn, control_delivery_turn, dispatch_control_delivery_burst,
+};
 
 use super::*;
 
@@ -297,6 +300,7 @@ pub(super) async fn run_surface(
         config,
         &reads,
     );
+    let mut launches = super::launch_runtime::Runtime::new();
     let (taste_submitter, taste_completions) = taste_parts(backgrounds.taste_adjudication.as_mut());
     publish_ready_surface(
         bus,
@@ -307,6 +311,7 @@ pub(super) async fn run_surface(
         &mut backgrounds.timers,
         &mut backgrounds.lifecycle,
         &mut supervisor_reports,
+        &mut launches,
         &mut publication,
     )
     .await?;
@@ -319,6 +324,7 @@ pub(super) async fn run_surface(
         seats,
         &mut backgrounds.lifecycle,
         &mut backgrounds.timers,
+        &mut launches,
         &mut supervisor_reports,
         &mut control,
         &mut server_task,
@@ -359,6 +365,7 @@ pub(super) async fn run_surface(
         backgrounds.quota_triggers,
         backgrounds.timer_commits,
         backgrounds.lifecycle,
+        launches,
         inbox_deliveries,
         lifecycle_reconciliation,
         backgrounds.live_changes,
@@ -379,6 +386,7 @@ async fn publish_ready_surface(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
     door: &mut capture::SupervisorReports,
+    launches: &mut super::launch_runtime::Runtime,
     publication: &mut SurfacePublication<'_>,
 ) -> CommandResult<()> {
     reconcile_wakes(
@@ -388,6 +396,7 @@ async fn publish_ready_surface(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     )?;
     command_surface.synchronize_reads_before_publish()?;
@@ -451,6 +460,7 @@ async fn await_message_startup(
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     timers: &mut timers::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
     control: &mut serve::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
@@ -474,11 +484,11 @@ async fn await_message_startup(
                 ControlDeliveryTurn::Control => {
                     reconcile_for_control(
                         lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
-                        lifecycle, door,
+                        lifecycle, launches, door,
                     )?;
                     if dispatch_control_delivery_burst(
                         command_surface, seats, lifecycle, control, request, inbox_deliveries,
-                        lifecycle_reconciliation, live_changes,
+                        lifecycle_reconciliation, launches, live_changes,
                     ).await? {
                         return Ok(None);
                     }
@@ -487,6 +497,10 @@ async fn await_message_startup(
                     deliver_owed_inbox(command_surface, inbox_deliveries).await?;
                 }
             },
+            completed = launches.recv() => launch_completion::accept(
+                bus, command_surface, seats, lifecycle, lifecycle_reconciliation,
+                timers, launches, door, diagnostic, completed,
+            ).await?,
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
     }
@@ -580,6 +594,7 @@ async fn drive_surface(
     mut quota_triggers: quota::Triggers,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
+    mut launches: super::launch_runtime::Runtime,
     mut inbox_deliveries: InboxDeliveries,
     mut lifecycle_reconciliation: lifecycle::Reconciliation,
     mut live_changes: lane_surface::LiveChanges,
@@ -590,10 +605,8 @@ async fn drive_surface(
             .narration
             .next_deadline();
         tokio::select! {
-            // Every reconciliation sweep asks the supervisor door itself, so
-            // selecting another ready source first cannot lose an ending.
-            // Rotate the three inputs that can remain ready continuously.
-            // Record turns own both durable accounting and app publication.
+            // Reconciliation always probes the supervisor door; rotate the
+            // three inputs that can remain continuously ready.
             input = input::next(
                 &mut input_lead,
                 supervisor_reports.recv(),
@@ -613,11 +626,12 @@ async fn drive_surface(
                     ControlDeliveryTurn::Control => {
                         reconcile_for_control(
                             &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
-                            &mut timers, &mut lifecycle, &mut supervisor_reports,
+                            &mut timers, &mut lifecycle, &mut launches, &mut supervisor_reports,
                         )?;
                         if dispatch_control_delivery_burst(
                             command_surface, seats, &mut lifecycle, &mut control, request,
-                            &mut inbox_deliveries, &mut lifecycle_reconciliation, &live_changes,
+                            &mut inbox_deliveries, &mut lifecycle_reconciliation, &mut launches,
+                            &live_changes,
                         ).await? {
                             timers.synchronize(bus)?;
                             return stop_surface(publication, shutdown, server_task).await;
@@ -649,7 +663,7 @@ async fn drive_surface(
             )?,
             timer = timers.recv() => accept_timer_turn(
                 bus, seats, command_surface, &mut lifecycle, &mut supervisor_reports,
-                diagnostic, &mut timers, &mut lifecycle_reconciliation, timer,
+                diagnostic, &mut timers, &mut lifecycle_reconciliation, &mut launches, timer,
             )?,
             () = quota_triggers.wait_periodic() => request_quota(&mut quota, &mut quota_triggers),
             completed = quota.recv() => quota.accept(completed),
@@ -657,8 +671,13 @@ async fn drive_surface(
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
                 &mut supervisor_reports, message_state.as_ref(), diagnostic, &mut timers,
-                &mut quota, &mut quota_triggers, &mut lifecycle_reconciliation, committed,
+                &mut quota, &mut quota_triggers, &mut lifecycle_reconciliation, &mut launches,
+                committed,
             )?,
+            completed = launches.recv() => launch_completion::accept(
+                bus, command_surface, seats, &mut lifecycle, &mut lifecycle_reconciliation,
+                &mut timers, &mut launches, &mut supervisor_reports, diagnostic, completed,
+            ).await?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
         reap::present_closed_transcripts(
@@ -818,6 +837,7 @@ fn accept_timer_turn(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     reconciliation: &mut lifecycle::Reconciliation,
+    launches: &mut super::launch_runtime::Runtime,
     timer: Option<bus::timer::TimerEvent>,
 ) -> CommandResult<()> {
     let timer = timer.ok_or_else(|| {
@@ -836,6 +856,7 @@ fn accept_timer_turn(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     )
 }
@@ -1166,6 +1187,7 @@ fn accept_commit_turn(
     quota: &mut quota::Runtime,
     quota_triggers: &mut quota::Triggers,
     reconciliation: &mut lifecycle::Reconciliation,
+    launches: &mut super::launch_runtime::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
     match accept_commit(
@@ -1175,6 +1197,7 @@ fn accept_commit_turn(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
         committed,
     )? {
@@ -1198,6 +1221,7 @@ fn accept_commit(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<Option<JournalCommit>> {
@@ -1213,6 +1237,7 @@ fn accept_commit(
                         diagnostic,
                         timers,
                         lifecycle,
+                        launches,
                         door,
                     ),
                     diagnostic,
@@ -1231,6 +1256,7 @@ fn accept_commit(
                     diagnostic,
                     timers,
                     lifecycle,
+                    launches,
                     door,
                 ),
                 diagnostic,
@@ -1275,6 +1301,7 @@ fn reconcile_for_control(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     if reconciliation.control_settles() {
@@ -1286,6 +1313,7 @@ fn reconcile_for_control(
             diagnostic,
             timers,
             lifecycle,
+            launches,
             door,
         )?;
     }
@@ -1304,6 +1332,7 @@ fn reconcile_lifecycle(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     // A deferred sweep leaves the demand pending, so the next control turn
@@ -1315,6 +1344,7 @@ fn reconcile_lifecycle(
         diagnostic,
         timers,
         lifecycle,
+        launches,
         door,
     );
     if swept.is_ok() {
@@ -1330,13 +1360,14 @@ fn reconcile_wakes(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::launch_runtime::Runtime,
     door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
     super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic, door)?;
     let (paths, epoch) = (command_surface.paths, command_surface.epoch());
     lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
-    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
+    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, launches, diagnostic)?;
     timers.synchronize_wake(wake)
 }
 

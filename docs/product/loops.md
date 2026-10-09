@@ -362,6 +362,12 @@ flowchart TD
    selection, claim win, and startup are a single serialized decision; a later
    inventory refresh must observe the occupied lane before capacity can expand
    again.
+- Supervisor session proof does not occupy the resident writer. Admission and
+  spawn remain part of the serialized decision; a worker blocks on the
+  supervisor's state watcher, and one completion event returns the retained
+  authority to the resident for revalidation, start commit or failure
+  compensation, and only then the wake answer. No resident timer observes
+  progress, so unrelated controls continue while proof is pending.
 - Two ready tasks are the normal trigger — one for the new occupant to claim,
    one left on the board. READY is a derived eligibility projection and
    excludes active claims, so occupied lanes do not inflate the backlog count.

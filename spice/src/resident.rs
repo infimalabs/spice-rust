@@ -140,25 +140,55 @@ impl InboxDeliveries {
     }
 }
 
-struct CommandDispatch {
-    outcome: Outcome<CommandAnswer>,
-    effects: CommandEffects,
+enum CommandDispatch {
+    Complete {
+        outcome: Outcome<CommandAnswer>,
+        effects: CommandEffects,
+    },
+    Launch(CommandLaunch),
+}
+
+struct CommandLaunch {
+    lane: CanonicalUuid,
+    launch: supervisor::PendingLaunch,
+    completion: CommandLaunchCompletion,
+}
+
+enum CommandLaunchCompletion {
+    Wake(lane_surface::PendingWake),
+    Import(lane_recovery::PendingImport),
 }
 
 impl CommandDispatch {
     fn ordinary(outcome: Outcome<CommandAnswer>) -> Self {
-        Self {
+        Self::Complete {
             outcome,
             effects: CommandEffects::default(),
         }
     }
 
     fn with_effects(outcome: Outcome<CommandAnswer>, effects: CommandEffects) -> Self {
-        Self { outcome, effects }
+        Self::Complete { outcome, effects }
     }
 
-    fn into_parts(self) -> (Outcome<CommandAnswer>, CommandEffects) {
-        (self.outcome, self.effects)
+    fn wake(launch: lane_surface::WakeLaunch) -> Self {
+        let lane = launch.lane();
+        let (launch, pending) = launch.into_parts();
+        Self::Launch(CommandLaunch {
+            lane,
+            launch,
+            completion: CommandLaunchCompletion::Wake(pending),
+        })
+    }
+
+    fn import(launch: lane_recovery::ImportLaunch) -> Self {
+        let lane = launch.lane();
+        let (launch, pending) = launch.into_parts();
+        Self::Launch(CommandLaunch {
+            lane,
+            launch,
+            completion: CommandLaunchCompletion::Import(pending),
+        })
     }
 }
 
@@ -175,6 +205,7 @@ mod consent_surface;
 mod daemon;
 mod lane_recovery;
 mod lane_surface;
+mod launch_runtime;
 mod lifecycle;
 mod log;
 mod message_surface;

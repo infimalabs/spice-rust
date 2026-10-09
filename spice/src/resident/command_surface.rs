@@ -134,9 +134,8 @@ impl<'a> Surface<'a> {
         ) {
             return CommandDispatch::ordinary(outcome);
         }
-        let mut effects = CommandEffects::default();
-        if let Some(outcome) = self.dispatch_lane(seats, command, &mut effects) {
-            return CommandDispatch::with_effects(outcome, effects);
+        if let Some(dispatched) = self.dispatch_lane(seats, command) {
+            return dispatched;
         }
         if let Some(dispatched) = self.dispatch_controls(command) {
             return dispatched;
@@ -155,39 +154,60 @@ impl<'a> Surface<'a> {
         &self,
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
-        effects: &mut CommandEffects,
-    ) -> Option<Outcome<CommandAnswer>> {
+    ) -> Option<CommandDispatch> {
+        let mut effects = CommandEffects::default();
+        let ordinary = |outcome| Some(CommandDispatch::ordinary(outcome));
         match (command.kind(), command.body()) {
-            (CommandKind::UpChange, Intent::UpChange(change)) => Some(dispatch_up_change(
+            (CommandKind::UpChange, Intent::UpChange(change)) => ordinary(dispatch_up_change(
                 self.bus, self.paths, self.epoch, seats, command, change,
             )),
-            (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => Some(
+            (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => ordinary(
                 dispatch_release_publish(self.bus, self.paths, self.epoch, command, publish),
             ),
-            (CommandKind::ProofRecognize, Intent::Recognize(recognize)) => Some(
+            (CommandKind::ProofRecognize, Intent::Recognize(recognize)) => ordinary(
                 dispatch_proof_recognize(self.bus, self.paths, self.epoch, command, recognize),
             ),
-            (CommandKind::LaneRead, Intent::LaneRead(_)) => Some(lane_surface::read(
+            (CommandKind::LaneRead, Intent::LaneRead(_)) => ordinary(lane_surface::read(
                 self.bus, self.paths, self.epoch, seats, command,
             )),
-            (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => Some(lane_surface::seat(
+            (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => ordinary(lane_surface::seat(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             )),
-            (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => Some(
+            (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => ordinary(
                 lane_surface::arrange(self.bus, self.paths, self.epoch, seats, command, arrange),
             ),
-            (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
-                Some(lane_recovery::import(
+            (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => Some(
+                match lane_recovery::begin_import(
                     self.bus,
                     self.paths,
                     self.epoch,
                     seats,
                     &self.recovery,
-                    command,
                     state,
-                ))
+                ) {
+                    Ok(launch) => CommandDispatch::import(launch),
+                    Err(outcome) => CommandDispatch::ordinary(outcome),
+                },
+            ),
+            (CommandKind::LaneState, Intent::LaneState(state))
+                if state.action == wire::intent::LaneAction::Wake =>
+            {
+                Some(
+                    match lane_surface::begin_wake(
+                        self.bus,
+                        self.paths,
+                        self.epoch,
+                        seats,
+                        &self.lane,
+                        &self.config.steering,
+                        state,
+                    ) {
+                        Ok(launch) => CommandDispatch::wake(launch),
+                        Err(outcome) => CommandDispatch::ordinary(outcome),
+                    },
+                )
             }
-            (CommandKind::LaneState, Intent::LaneState(state)) => Some(lane_surface::state(
+            (CommandKind::LaneState, Intent::LaneState(state)) => ordinary(lane_surface::state(
                 self.bus,
                 self.paths,
                 self.epoch,
@@ -197,41 +217,80 @@ impl<'a> Surface<'a> {
                 command,
                 state,
             )),
-            (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => Some(lane_surface::renew(
-                self.bus,
-                self.paths,
-                self.epoch,
-                seats,
-                &self.config.steering,
-                command,
-                renewal,
-            )),
-            (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => Some(lane_surface::retune(
-                self.bus, self.paths, self.epoch, seats, command, retune, effects,
-            )),
-            (CommandKind::LaneEffortRetune, Intent::LaneEffortRetune(retune)) => {
-                Some(lane_surface::retune_effort(
-                    self.bus, self.paths, self.epoch, seats, command, retune, effects,
+            (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => {
+                ordinary(lane_surface::renew(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    &self.config.steering,
+                    command,
+                    renewal,
                 ))
+            }
+            (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => {
+                let outcome = lane_surface::retune(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    command,
+                    retune,
+                    &mut effects,
+                );
+                Some(CommandDispatch::with_effects(outcome, effects))
+            }
+            (CommandKind::LaneEffortRetune, Intent::LaneEffortRetune(retune)) => {
+                let outcome = lane_surface::retune_effort(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    command,
+                    retune,
+                    &mut effects,
+                );
+                Some(CommandDispatch::with_effects(outcome, effects))
             }
             (CommandKind::LaneFastRetune, Intent::LaneFastRetune(retune)) => {
-                Some(lane_surface::retune_fast(
-                    self.bus, self.paths, self.epoch, seats, command, retune, effects,
-                ))
+                let outcome = lane_surface::retune_fast(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    command,
+                    retune,
+                    &mut effects,
+                );
+                Some(CommandDispatch::with_effects(outcome, effects))
             }
             (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
-                Some(lane_surface::arrange_teams(
-                    self.bus, self.paths, self.epoch, seats, command, arrange, effects,
-                ))
+                let outcome = lane_surface::arrange_teams(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    command,
+                    arrange,
+                    &mut effects,
+                );
+                Some(CommandDispatch::with_effects(outcome, effects))
             }
             (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => {
-                Some(lane_surface::configure(
-                    self.bus, self.paths, self.epoch, seats, command, configure, effects,
-                ))
+                let outcome = lane_surface::configure(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    command,
+                    configure,
+                    &mut effects,
+                );
+                Some(CommandDispatch::with_effects(outcome, effects))
             }
-            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => Some(lane_surface::recall(
-                self.bus, self.paths, self.epoch, seats, command, recall,
-            )),
+            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => ordinary(
+                lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall),
+            ),
             _ => None,
         }
     }
@@ -351,6 +410,43 @@ impl<'a> Surface<'a> {
         current_residency(self.bus, self.epoch)
     }
 
+    pub(super) fn complete_command_launch(
+        &self,
+        seats: &mut Seats,
+        command: &wire::AdmittedCommand,
+        completion: super::CommandLaunchCompletion,
+        launched: super::CommandResult<super::supervisor::Launch>,
+    ) -> Outcome<CommandAnswer> {
+        match completion {
+            super::CommandLaunchCompletion::Wake(pending) => lane_surface::finish_wake(
+                self.bus, self.paths, self.epoch, seats, command, pending, launched,
+            ),
+            super::CommandLaunchCompletion::Import(pending) => lane_recovery::finish_import(
+                self.bus, self.paths, self.epoch, seats, command, pending, launched,
+            ),
+        }
+    }
+
+    pub(super) fn complete_automatic_launch(
+        &self,
+        lifecycle: &mut lifecycle::Runtime,
+        seats: &mut Seats,
+        diagnostic: &mut dyn std::io::Write,
+        pending: lifecycle::PendingLaunch,
+        launched: super::CommandResult<super::supervisor::Launch>,
+    ) -> super::CommandResult<()> {
+        lifecycle.complete_launch(
+            self.bus,
+            self.repository,
+            self.paths,
+            self.epoch,
+            seats,
+            diagnostic,
+            pending,
+            launched,
+        )
+    }
+
     pub(super) fn notify_inbox(&self, lane: CanonicalUuid) {
         steering::notify_inbox(self.paths, lane);
     }
@@ -363,6 +459,7 @@ impl<'a> Surface<'a> {
         &self,
         lifecycle: &mut lifecycle::Runtime,
         seats: &mut Seats,
+        launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> super::CommandResult<Option<lifecycle::WakeDeadline>> {
         lifecycle.reconcile(
@@ -373,6 +470,7 @@ impl<'a> Surface<'a> {
             seats,
             &self.lane,
             self.config,
+            launches,
             diagnostic,
         )
     }
@@ -408,10 +506,24 @@ impl<'a> Surface<'a> {
         if let Intent::LaneState(state) = command.body()
             && command.actor() == &Actor::Operator
             && state.action == wire::intent::LaneAction::Wake
-            && state.worktree.is_none()
         {
-            lifecycle.operator_wake(self.bus, self.epoch, state.lane)?;
-            released = true;
+            if lifecycle.launch_pending(state.lane) {
+                return Err(Outcome::Refusal(Refusal::bare(
+                    wire::RefusalDiagnostic::new(
+                        "lifecycle::launch-pending",
+                        Some("lane".to_owned()),
+                        Some("no launch proof pending for this lane".to_owned()),
+                        Some(state.lane.to_string()),
+                    )
+                    .with_detail(
+                        "wait for the current wake to settle before starting another occupant",
+                    ),
+                )));
+            }
+            if state.worktree.is_none() {
+                lifecycle.operator_wake(self.bus, self.epoch, state.lane)?;
+                released = true;
+            }
         }
         if matches!(command.body(), Intent::LaneRenewal(_)) {
             lifecycle.release_all();
