@@ -39,37 +39,35 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-spice-settings-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
+/* Settings is the first row under the header: kicker left, global TURBO right. */
+.app-spice-sidebar-content > .app-spice-settings { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 /* Identity and resident facts are dense reference rows: labels sit beside
    their values instead of above them, and the sections stand tighter. */
 .app-spice-sidebar-content > :is(.app-spice-operator, .app-spice-resident) {
   gap: 8px;
   padding-block: 12px;
 }
+/* The avatar heads a narrow column with the form's Save action below it; the
+   two field rows take the rest. */
 .app-spice-operator-identity {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  justify-items: center;
   align-items: start;
-  gap: 12px;
+  gap: 5px 12px;
   min-width: 0;
 }
+.app-spice-operator-identity > .app-operator-form { grid-column: 2; grid-row: 1 / span 2; justify-self: stretch; }
 .app-spice-operator .operator-avatar {
   flex-basis: 40px;
   width: 40px;
   height: 40px;
   font-size: var(--app-type-label);
 }
-/* Two field rows; the save action stands beside both instead of taking a
-   row of its own. */
 .app-operator-form {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 5px 10px;
   min-width: 0;
@@ -89,15 +87,19 @@
   font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-operator-form input:focus { border-color: var(--focus); outline: 0; }
-.app-operator-form button { grid-column: 3; grid-row: 1 / span 2; }
-/* The fixed-width weekly percentage sits immediately beside the Spice button
-   without moving it as quota state loads or becomes unavailable. */
+.app-operator-save { grid-column: 1; grid-row: 2; }
+/* The fixed-width weekly percentage stands centered above the Spice button,
+   outside the anchor's box, so the button never moves as quota state loads or
+   becomes unavailable. */
 .app-spice-capacity {
+  position: absolute;
+  bottom: calc(100% + 3px);
+  inset-inline-end: calc((var(--app-header-control) - 4ch) / 2);
   width: 4ch;
   color: var(--ink);
   font: 700 var(--app-type-control)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: center;
 }
 .app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
 .app-spice-resident-facts {
@@ -141,8 +143,7 @@
   color: var(--muted);
   font: var(--app-type-caption)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-/* Appearance is one row under the header: kicker left, selector right. */
-.app-spice-sidebar-content > .app-spice-appearance { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+/* The theme selector shares the header anchor with the Spice button. */
 .app-theme-selector { flex: 0 0 auto; }
 .app-theme-icon {
   width: 15px;

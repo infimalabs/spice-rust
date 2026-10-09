@@ -111,26 +111,24 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
     html! {
         <section class="app-sheet-section app-spice-settings">
             <h2>{"Settings"}</h2>
-            <div class="app-spice-settings-controls">
-                <chrome::TurboButton
-                    class={classes!("app-spice-turbo")}
-                    engaged={fast_mode}
-                    label={format!(
-                        "Global fast mode: {}",
-                        if fast_mode { "on" } else { "off" },
-                    )}
-                    disabled={!enabled}
-                    title={title}
-                    onclick={onclick}
-                />
-            </div>
+            <chrome::TurboButton
+                class={classes!("app-spice-turbo")}
+                engaged={fast_mode}
+                label={format!(
+                    "Global fast mode: {}",
+                    if fast_mode { "on" } else { "off" },
+                )}
+                disabled={!enabled}
+                title={title}
+                onclick={onclick}
+            />
         </section>
     }
 }
 
-/// The cumulative plan-weighted weekly quota remaining across accounts, placed
-/// beside the open sidebar's Spice button. Its fixed-width fallback keeps the
-/// button still while quota state loads.
+/// The cumulative plan-weighted weekly quota remaining across accounts,
+/// stacked above the open sidebar's Spice button. Its fixed-width fallback
+/// keeps the button still while quota state loads.
 pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     let generation = runtime.and_then(AppRuntime::quota);
     let remaining = generation
@@ -172,9 +170,12 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     }
 }
 
-/// The operator's avatar and override form. Until settings arrive the same
-/// form stands disabled and says it is loading, so later admission moves no
-/// section below it.
+/// The identity form, which the Save button outside it names as its owner.
+const OPERATOR_FORM: &str = "operator-identity";
+
+/// The operator's avatar and override form, with the form's Save action below
+/// the avatar. Until settings arrive the same form stands disabled and says it
+/// is loading, so later admission moves no section below it.
 pub(super) fn render_operator_settings(
     runtime: Option<&AppRuntime>,
     sender: &SenderHandle,
@@ -232,7 +233,7 @@ pub(super) fn render_operator_settings(
             <h2>{"You"}</h2>
             <div class="app-spice-operator-identity">
                 {super::render_operator_avatar(operator)}
-                <form class="app-operator-form" {onsubmit}>
+                <form id={OPERATOR_FORM} class="app-operator-form" {onsubmit}>
                 <label for="operator-name">{"Name"}</label>
                 <input
                     id="operator-name"
@@ -251,15 +252,18 @@ pub(super) fn render_operator_settings(
                     autocomplete="email"
                     disabled={!enabled}
                 />
+                </form>
+                // Associated by `form`, so it stays the form's default button
+                // and Enter in either field still submits.
                 <button
                     type="submit"
-                    class="app-compact-control"
+                    form={OPERATOR_FORM}
+                    class="app-compact-control app-operator-save"
                     aria-label="Save identity"
                     disabled={!enabled}
                 >
                     {"Save"}
                 </button>
-                </form>
             </div>
         </section>
     }
@@ -443,16 +447,14 @@ fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation
     }
 }
 
-/// The one theme selector, first in the view so appearance stays at hand.
-pub(super) fn render_appearance() -> Html {
+/// The one theme selector, beside the Spice button in the open view's header.
+pub(super) fn render_theme_selector() -> Html {
     let selected = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
         .and_then(|root| root.get_attribute("data-app-theme"))
         .unwrap_or_else(|| "system".to_owned());
     html! {
-        <section class="app-sheet-section app-spice-appearance">
-            <h2>{"Appearance"}</h2>
             <div class="app-control-rail app-theme-selector" role="group" aria-label="Theme">
                 {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
                     .into_iter()
@@ -500,7 +502,6 @@ pub(super) fn render_appearance() -> Html {
                         }
                     })}
             </div>
-        </section>
     }
 }
 
