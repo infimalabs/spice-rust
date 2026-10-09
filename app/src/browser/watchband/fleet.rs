@@ -34,7 +34,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef) -> Html {
                 <header class="team-toolbar">
                     {view::chrome::render_empty_team_ticker()}
                     <span
-                        class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
+                        class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group team-lights"
                         role="group"
                         aria-label="0 admitted agents"
                     ></span>
@@ -227,7 +227,7 @@ fn render_team_toolbar(
             {render_team_rail(team.lane, render)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
             <span
-                class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
+                class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group team-lights"
                 role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
                 aria-haspopup={can_arrange.then_some("menu")}
@@ -304,7 +304,7 @@ fn render_team_total(
     html! {
         <span
             key="team-total"
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
         >
             <button

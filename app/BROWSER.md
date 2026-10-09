@@ -164,14 +164,15 @@ margin of its own. The status line owns the complete second header row.
 
 ## Work tabs
 
-Global totals and stems, plus team totals and stem containers, use the same
-four-pixel outer inline rails. Each populated team keeps its ordered presence
-pips in a permanent right rising tab aligned with the composer controls; the
-team total remains fixed at the left when tasks exist. Task handles remain
-borderless segments inside their stem container; the final handle meets the
-container's single right rail. The middle scroller uses mirrored fade, padding,
-and scroll-padding boundaries beneath the two fixed edge tabs. The rows keep
-their existing shapes, spacing, scrolling, counts, and navigation.
+Global and team totals use four-pixel outer inline rails. Each populated team
+keeps its ordered presence pips in a permanent right rising tab with the same
+four-pixel rails, aligned with the composer controls. Global stems and team stem
+containers use the thinner ordinary tab rails; task handles remain borderless
+segments inside their stem container, and the final handle meets the
+container's single right rail. The team total remains fixed at the left when
+tasks exist. The middle scroller uses mirrored fade, padding, and scroll-padding
+boundaries beneath the two fixed edge tabs. The rows keep their existing shapes,
+spacing, scrolling, counts, and navigation.
 
 The task overview's Dependency graph points from each prerequisite to every
 dependent it blocks and labels that edge **blocks**. Prerequisite and dependent
