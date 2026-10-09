@@ -55,17 +55,6 @@ or keyboard activation; release restores the resting surface. A released/held
 comparison freezes both views for each finish.
 The rim-light selector previews neutral, mint, amber, or lilac agent accents
 without filling the glass faces with the accent color.
-
-The slider-backplane section compares the untouched shipped Flush groove with
-the preferred flat active-color wash and active edge haze, plus one restrained
-hybrid between them. Every study
-keeps the production 74 × 26 groove and 46 × 22 flyer; none exposes a visually
-distinct point emitter. Experimental flyers use backdrop blur, saturation, and
-an inner color catch to preview transmitted-light distortion rather than a
-light source painted onto the glass. The hybrid adds subtle pearlescent color
-only to that refracted caustic. Dragging either row previews cool lilac at the
-left stop, green in the middle, and amber at the far right, on dark and light
-backgrounds. None of these colored grooves is selected for production.
 The readiness selector applies off, running-without-text, one-recipient, or
 multiple-recipient states to the material previews. A separate complete-panel
 matrix compares all four states, defaulting to the shipped finish, with
