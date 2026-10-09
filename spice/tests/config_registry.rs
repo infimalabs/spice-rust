@@ -575,6 +575,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "lane.young",
     "lane.hold",
     "lane.narration",
+    "lane.wake_order",
     "steer.expiry",
     "steer.resend",
     "vendor.omp.binary",
@@ -718,6 +719,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         [
             "rtk.executable",
             "judge.enabled",
+            "lane.wake_order",
             "listen.window",
             "lock.busy",
             "lock.taken",

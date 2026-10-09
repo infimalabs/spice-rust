@@ -62,7 +62,7 @@ pub mod occupant;
 pub mod renew;
 pub mod table;
 
-pub use config::Config;
+pub use config::{Config, WakeOrder};
 
 #[cfg(test)]
 mod ownership_tests {

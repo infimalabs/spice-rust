@@ -107,7 +107,12 @@ fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override()
         )
         .expect("team policy projects lifecycle targets");
         assert_eq!(
-            resolve(&targets, &Backoff::default(), instant(50)),
+            resolve(
+                &targets,
+                &Backoff::default(),
+                instant(50),
+                lane::WakeOrder::default()
+            ),
             expected
         );
         bus.shutdown().expect("policy fixture bus stops");
@@ -155,7 +160,12 @@ fn a_vacant_lane_without_a_team_projects_no_startup_under_any_policy() {
         )
         .expect("an unteamed lane projects lifecycle targets");
         assert_eq!(
-            resolve(&targets, &Backoff::default(), instant(50)),
+            resolve(
+                &targets,
+                &Backoff::default(),
+                instant(50),
+                lane::WakeOrder::default()
+            ),
             Resolution::Idle,
             "{policy:?} starts no agent on a lane without a team",
         );
@@ -190,7 +200,12 @@ fn drive_burst_uses_the_selected_winners_ready_instant() {
         "the selected older winner settles from its own READY transition rather than the newer nonwinner"
     );
     assert!(matches!(
-        resolve(&targets, &Backoff::default(), instant(8)),
+        resolve(
+            &targets,
+            &Backoff::default(),
+            instant(8),
+            lane::WakeOrder::default()
+        ),
         Resolution::Attempt {
             trigger: Trigger::AvailableWork,
             ..
@@ -232,7 +247,12 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].drain_queue, Available::At(instant(10)));
     assert_eq!(
-        resolve(&targets, &Backoff::default(), instant(8)),
+        resolve(
+            &targets,
+            &Backoff::default(),
+            instant(8),
+            lane::WakeOrder::default()
+        ),
         Resolution::Wait {
             trigger: Trigger::DrainQueue,
             lane: lane(),
@@ -247,7 +267,12 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
         "deadline projection writes no claim or lifecycle fact"
     );
     assert_eq!(
-        resolve(&targets, &Backoff::default(), instant(10)),
+        resolve(
+            &targets,
+            &Backoff::default(),
+            instant(10),
+            lane::WakeOrder::default()
+        ),
         Resolution::Attempt {
             trigger: Trigger::DrainQueue,
             lane: lane(),
@@ -310,7 +335,12 @@ fn projected_resolution(snapshot: &bus::TaskSnapshot, projection: &Projection) -
         &board::NextConfig::default(),
     )
     .expect("guidance lifecycle targets project");
-    resolve(&targets, &Backoff::default(), now)
+    resolve(
+        &targets,
+        &Backoff::default(),
+        now,
+        lane::WakeOrder::default(),
+    )
 }
 
 fn reminder_write() -> JournalWrite {
@@ -478,7 +508,12 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
         &board::NextConfig::default(),
     )
     .expect("wake targets project from incremental state");
-    let resolution = resolve(&targets, &Backoff::default(), now);
+    let resolution = resolve(
+        &targets,
+        &Backoff::default(),
+        now,
+        lane::WakeOrder::default(),
+    );
     let residency = snapshot
         .residency()
         .expect("fixture residency head exists")
