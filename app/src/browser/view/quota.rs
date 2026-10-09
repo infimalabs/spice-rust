@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::clock::{Age, Countdown, local_date_millis};
+use crate::browser::clock::{Age, Countdown};
 
 pub(super) fn render_sidebar(runtime: Option<&AppRuntime>) -> Html {
     render(
@@ -271,31 +271,47 @@ fn iso_millis(value: &str) -> Option<i64> {
     milliseconds.is_finite().then_some(milliseconds as i64)
 }
 
-fn reset_credit_text(credit: &wire::QuotaResetCredit) -> String {
+fn reset_credit_detail(credit: &wire::QuotaResetCredit) -> Option<String> {
     let title = credit.title.as_ref().or(credit.program.as_ref());
     match (title, credit.remaining_count) {
-        (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
-        (Some(title), None) => title.clone(),
-        (None, remaining) => {
-            let text = credit.granted_at.as_deref().and_then(|granted| {
-                iso_millis(granted).map(|millis| {
-                    format!(
-                        "Reset credit granted {}",
-                        local_date_millis(millis, granted)
-                    )
-                })
-            });
-            let text = text.unwrap_or_else(|| "Reset credit".to_owned());
-            match remaining {
-                Some(count) => format!("{text} ({count} remaining)"),
-                None => text,
-            }
-        }
+        (Some(title), Some(count)) => Some(format!("{title} ({count} remaining)")),
+        (Some(title), None) => Some(title.clone()),
+        (None, Some(count)) => Some(format!("{count} remaining")),
+        (None, None) => None,
     }
 }
 
 fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Html {
-    let text = reset_credit_text(credit);
+    let detail = reset_credit_detail(credit);
+    let granted = credit
+        .granted_at
+        .as_deref()
+        .and_then(|exact| iso_millis(exact).map(|granted| (granted, exact)));
+    let (grant, grant_title) = match granted {
+        Some((granted, exact)) => {
+            let exact = format!("Granted {exact}");
+            let grant = html! {
+                <>
+                    {"Granted "}
+                    <Age
+                        authored={granted}
+                        class={classes!("app-quota-age")}
+                        title={exact.clone()}
+                    />
+                    {" ago"}
+                </>
+            };
+            (grant, exact)
+        }
+        None => (
+            html! { "Granted at unknown time" },
+            "Grant time unavailable".to_owned(),
+        ),
+    };
+    let label_title = detail.as_ref().map_or_else(
+        || grant_title.clone(),
+        |detail| format!("{detail} · {grant_title}"),
+    );
     let expiry = credit
         .expires_at
         .as_deref()
@@ -314,8 +330,14 @@ fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Html {
             }
         });
     html! {
-        <span class="quota-reset-credit" title={text.clone()}>
-            <span class="quota-reset-credit-label">{text}</span>
+        <span class="quota-reset-credit">
+            <span class="quota-reset-credit-label" title={label_title}>
+                if let Some(detail) = detail {
+                    {detail}
+                    {" · "}
+                }
+                {grant}
+            </span>
             {expiry}
         </span>
     }
