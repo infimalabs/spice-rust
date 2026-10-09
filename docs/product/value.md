@@ -638,15 +638,17 @@ equal three-pixel top and left clearance. A same-diameter hamburger in the
 upper-right slot opens the team's swap/join arrangement menu. Both utility
 buttons use the primary panel's Flush etched-glass surface.
 Each range runs left to right, minimum to maximum, as a 46 × 22 labeled thumb in
-a neutral 74 × 26 pill groove: two pixels of clearance above and below, and
-three pixels of panel inset at each end. Every current-value word fills the same
+a 74 × 26 pill groove: two pixels of clearance above and below, and three
+pixels of panel inset at each end. Every current-value word fills the same
 32 × 9 label box, centered with seven pixels of horizontal and six-and-a-half
 pixels of vertical thumb clearance; the box clips overscan before it reaches
-the rounded edge. `Send`, team `TURBO`/`BASIC`, the menu button, and both
-flyers share one Flush etched-glass material: the background transmits through
-a neutral face bounded by one fine optical edge, without an opaque state fill,
-raised dome, or nested ridge. Flyer state color stays on that edge and casts no
-light into the groove.
+the rounded edge. Both ranges use the same continuous backplane light map: the
+left stop remains neutral, the middle stop glows green, and the right stop
+glows amber. No point emitter is visible. `Send`, team `TURBO`/`BASIC`, the
+menu button, and both flyers share one Flush etched-glass material. Colored
+light originates in the groove and refracts through the transparent flyer;
+the flyer itself retains one fine optical edge and never becomes an opaque
+state fill, raised dome, or nested ridge.
 
 `Send` lights only when a press would submit something. One two-pixel perimeter
 rim divides into an equal arc per agent that would receive the message, in that
