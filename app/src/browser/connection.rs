@@ -584,9 +584,15 @@ fn topology_pending_kind(action: &ClientAction) -> PendingKind {
         ClientAction::RetuneLane { request, .. } => PendingKind::LaneRetune {
             request: request.clone(),
         },
-        ClientAction::ConfigureTeam { team, life, .. } => PendingKind::TeamConfigure {
+        ClientAction::ConfigureTeam {
+            team,
+            life,
+            fast_mode,
+            ..
+        } => PendingKind::TeamConfigure {
             team: *team,
             life: *life,
+            fast_mode: *fast_mode,
         },
         ClientAction::ArrangeTeams { .. } => PendingKind::TeamArrange,
         _ => unreachable!("only topology mutations have scheduler response state"),

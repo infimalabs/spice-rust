@@ -103,6 +103,8 @@ pub(super) struct TeamControl {
     pub(super) life: TeamLife,
     preview_life: Option<TeamLife>,
     pub(super) pending_life: Option<TeamLife>,
+    /// Team fast-mode flag requested and not yet answered by the resident.
+    pending_fast: Option<bool>,
     authoritative_life: TeamLife,
     issue: Option<String>,
 }
@@ -115,6 +117,7 @@ impl Default for TeamControl {
             life: TeamLife::Steer,
             preview_life: None,
             pending_life: None,
+            pending_fast: None,
             authoritative_life: TeamLife::Steer,
             issue: None,
         }
@@ -125,6 +128,15 @@ impl Default for TeamControl {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct TeamControls {
     teams: BTreeMap<CanonicalUuid, TeamControl>,
+}
+
+/// The selections one in-flight team configuration command carries, which
+/// only that command's own answer settles.
+#[derive(Clone, Copy)]
+pub(crate) struct TeamRequest {
+    pub(crate) team: CanonicalUuid,
+    pub(crate) life: Option<TeamLife>,
+    pub(crate) fast_mode: Option<bool>,
 }
 
 pub(crate) enum TeamControlAction {
@@ -150,18 +162,21 @@ pub(crate) enum TeamControlAction {
         authoritative_life: wire::intent::TeamLife,
         life: TeamLife,
     },
+    RequestFast {
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        fast_mode: bool,
+    },
     SyncLanes {
         answer: wire::intent::LaneAnswer,
-        settle: Option<(CanonicalUuid, TeamLife)>,
+        settle: Option<TeamRequest>,
     },
     SettleIssue {
-        team: CanonicalUuid,
-        life: Option<TeamLife>,
+        request: TeamRequest,
         issue: String,
     },
-    SettleStaleLife {
-        team: CanonicalUuid,
-        life: TeamLife,
+    SettleStale {
+        request: TeamRequest,
     },
 }
 
@@ -193,15 +208,18 @@ impl Reducible for TeamControls {
                 authoritative_life,
                 life,
             } => next.request_life(team, authoritative_life, life),
+            TeamControlAction::RequestFast {
+                team,
+                authoritative_life,
+                fast_mode,
+            } => next.request_fast(team, authoritative_life, fast_mode),
             TeamControlAction::SyncLanes { answer, settle } => {
                 next.sync_lanes(&answer, settle);
             }
-            TeamControlAction::SettleIssue { team, life, issue } => {
-                next.settle_issue(team, life, issue);
+            TeamControlAction::SettleIssue { request, issue } => {
+                next.settle_issue(request, issue);
             }
-            TeamControlAction::SettleStaleLife { team, life } => {
-                next.settle_stale_life(team, life);
-            }
+            TeamControlAction::SettleStale { request } => next.settle_stale(request),
         }
         Rc::new(next)
     }
@@ -324,6 +342,21 @@ impl TeamControls {
         state.issue = None;
     }
 
+    fn request_fast(
+        &mut self,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        fast_mode: bool,
+    ) {
+        let state = self.teams.entry(team).or_insert_with(|| TeamControl {
+            life: authoritative_life.into(),
+            authoritative_life: authoritative_life.into(),
+            ..TeamControl::default()
+        });
+        state.pending_fast = Some(fast_mode);
+        state.issue = None;
+    }
+
     fn preview_life(
         &mut self,
         team: CanonicalUuid,
@@ -352,11 +385,7 @@ impl TeamControls {
 
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
     /// selection; the command's own authoritative reply can.
-    fn sync_lanes(
-        &mut self,
-        answer: &wire::intent::LaneAnswer,
-        settle: Option<(CanonicalUuid, TeamLife)>,
-    ) {
+    fn sync_lanes(&mut self, answer: &wire::intent::LaneAnswer, settle: Option<TeamRequest>) {
         self.close_arrangements();
         // A team that left the authoritative subscription set is gone, not
         // hidden. Drop its browser-local controls.
@@ -372,37 +401,44 @@ impl TeamControls {
             let life = subscription.policy.into();
             let state = self.teams.entry(team).or_default();
             state.authoritative_life = life;
-            let settles_pending = settle.is_some_and(|(settled_team, requested)| {
-                settled_team == team && state.pending_life == Some(requested)
+            let request = settle.filter(|request| request.team == team);
+            let settles_life = request.is_some_and(|request| {
+                request.life.is_some() && state.pending_life == request.life
             });
-            if settles_pending || (state.pending_life.is_none() && state.preview_life.is_none()) {
+            if settles_life || (state.pending_life.is_none() && state.preview_life.is_none()) {
                 state.life = life;
                 state.pending_life = None;
-                if settles_pending {
-                    state.issue = None;
-                }
+            }
+            let settles_fast = request.is_some_and(|request| {
+                request.fast_mode.is_some() && state.pending_fast == request.fast_mode
+            });
+            if settles_fast {
+                state.pending_fast = None;
+            }
+            if settles_life || settles_fast {
+                state.issue = None;
             }
         }
     }
 
-    fn settle_issue(&mut self, team: CanonicalUuid, life: Option<TeamLife>, issue: String) {
-        let state = self.teams.entry(team).or_default();
-        if life.is_some_and(|life| state.pending_life == Some(life)) {
+    fn settle_issue(&mut self, request: TeamRequest, issue: String) {
+        self.settle_stale(request);
+        self.teams.entry(request.team).or_default().issue = Some(issue);
+    }
+
+    /// Restore authority for the selections this unapplied command carried,
+    /// unless a later request has already replaced them.
+    fn settle_stale(&mut self, request: TeamRequest) {
+        let Some(state) = self.teams.get_mut(&request.team) else {
+            return;
+        };
+        if request.life.is_some() && state.pending_life == request.life {
             state.life = state.authoritative_life;
             state.preview_life = None;
             state.pending_life = None;
         }
-        state.issue = Some(issue);
-    }
-
-    fn settle_stale_life(&mut self, team: CanonicalUuid, life: TeamLife) {
-        let Some(state) = self.teams.get_mut(&team) else {
-            return;
-        };
-        if state.pending_life == Some(life) {
-            state.life = state.authoritative_life;
-            state.preview_life = None;
-            state.pending_life = None;
+        if request.fast_mode.is_some() && state.pending_fast == request.fast_mode {
+            state.pending_fast = None;
         }
     }
 }
@@ -478,7 +514,7 @@ pub(super) fn render_team_controls(
     ready: bool,
     dormant: bool,
     slots: Vec<SendSlot>,
-    turbo: Html,
+    fast_mode: bool,
 ) -> Html {
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
@@ -491,6 +527,15 @@ pub(super) fn render_team_controls(
         sender.clone(),
     );
     let cancel_life_preview = cancel_life_preview_callback(team, team_controls.clone());
+    let turbo = turbo_button(
+        team,
+        authoritative_life,
+        topology_revision,
+        control.pending_fast.unwrap_or(fast_mode),
+        team_controls.clone(),
+        sender.clone(),
+        can_configure,
+    );
     let menu = {
         let controls = team_controls.clone();
         html! {
@@ -540,6 +585,54 @@ pub(super) fn render_team_controls(
                 cancel_life_preview,
             )}
         </ControlsFrame>
+    }
+}
+
+/// The team's fast-mode toggle retains TURBO lettering in both states.
+/// Fast mode is additive: switching this flag off does not turn off a member
+/// whose own flag or the global setting keeps it fast. Running OMP agents
+/// whose effective value changes take it at once. A press shows its request
+/// until the resident answers that command.
+fn turbo_button(
+    team: CanonicalUuid,
+    authoritative_life: wire::intent::TeamLife,
+    topology_revision: u64,
+    engaged: bool,
+    controls: UseReducerHandle<TeamControls>,
+    sender: SenderHandle,
+    can_configure: bool,
+) -> Html {
+    let onclick = Callback::from(move |_: MouseEvent| {
+        if admit_action(
+            &sender,
+            ClientAction::ConfigureTeam {
+                topology_revision,
+                team,
+                member: None,
+                life: None,
+                fast_mode: Some(!engaged),
+            },
+        ) {
+            controls.dispatch(TeamControlAction::RequestFast {
+                team,
+                authoritative_life,
+                fast_mode: !engaged,
+            });
+        }
+    });
+    let title = if engaged {
+        "Turbo: every agent in this team runs in fast mode"
+    } else {
+        "Turbo off: press to run every agent in this team in fast mode"
+    };
+    html! {
+        <crate::browser::view::chrome::TurboButton
+            class={classes!("team-turbo")}
+            {engaged}
+            disabled={!can_configure}
+            {title}
+            {onclick}
+        />
     }
 }
 

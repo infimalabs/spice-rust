@@ -677,7 +677,9 @@ modifiers restores the ordinary face. Team `TURBO` keeps its lettering in both
 states, muted when off and brighter with a neutral glass wash when on, without a
 colored edge; the range flyers keep neutral edges at every stop. Pressing the
 composer's `TURBO` flips that team flag, which the resident keeps across
-restarts.
+restarts. The button shows the requested state at once and holds it until the
+resident answers that request; a refusal restores the resident's flag and
+reports the team issue.
 
 Settings is the first section of the Spice side view. Its separately admitted
 global `TURBO` control stands at the right end of the heading row, with the

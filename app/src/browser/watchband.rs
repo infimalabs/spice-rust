@@ -35,7 +35,7 @@ pub(super) use composer::{
     primary_textarea_id, use_primary_composer_drag_state,
 };
 use controls::{SendSlot, TeamLife, render_team_controls};
-pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
+pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest, TeamSpeech};
 pub(in crate::browser) use fleet::use_team_arrangement_escape;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
@@ -359,7 +359,7 @@ fn render_compose(
                 ready,
                 dormant,
                 slots,
-                member_controls::render_turbo(team, topology_revision, sender, can_configure),
+                team.fast_mode,
             )}
             <span id={broadcast_help} class="visually-hidden">
                 {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}

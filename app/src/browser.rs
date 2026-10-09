@@ -16,7 +16,7 @@ use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneEffortRetune, LaneFastRetune,
     LaneRead, LaneRenewal, LaneRetune, LaneState, SteerInbox, SteerSend, TaskAnswer,
-    TeamArrangement, TeamConfigure, TeamLife, VendorCatalog,
+    TeamArrangement, TeamConfigure, VendorCatalog,
 };
 use wire::{
     CanonicalUuid, CommandKind, Response, Seq, StreamRequest, TaskHandle, TaskStamp, WireVersion,
@@ -71,7 +71,7 @@ use speech_runtime::{
 };
 use view::{AppRender, render_app};
 use watchband::ComposerAction;
-use watchband::{ComposerDrafts, TeamControlAction, TeamControls};
+use watchband::{ComposerDrafts, TeamControlAction, TeamControls, TeamRequest};
 
 /// Source identity injected by installed Spice `dev xtask -- app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
@@ -871,8 +871,7 @@ fn apply_team_configuration(
     session: &Session,
     team_controls: &UseReducerHandle<TeamControls>,
     runtime: &mut AppRuntime,
-    team: CanonicalUuid,
-    life: Option<TeamLife>,
+    request: TeamRequest,
     bytes: &[u8],
 ) -> Result<(bool, bool), String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
@@ -883,28 +882,21 @@ fn apply_team_configuration(
         wire::Outcome::Reply(reply) if applied => {
             team_controls.dispatch(TeamControlAction::SyncLanes {
                 answer: reply.body.clone(),
-                settle: life.map(|life| (team, life.into())),
+                settle: Some(request),
             });
         }
         wire::Outcome::Reply(_) => {
-            if let Some(life) = life {
-                team_controls.dispatch(TeamControlAction::SettleStaleLife {
-                    team,
-                    life: life.into(),
-                });
-            }
+            team_controls.dispatch(TeamControlAction::SettleStale { request });
         }
         wire::Outcome::Refusal(refusal) => {
             team_controls.dispatch(TeamControlAction::SettleIssue {
-                team,
-                life: life.map(Into::into),
+                request,
                 issue: format!("{}: {}", refusal.reason(), refusal.explanation()),
             });
         }
         wire::Outcome::Fault(fault) => {
             team_controls.dispatch(TeamControlAction::SettleIssue {
-                team,
-                life: life.map(Into::into),
+                request,
                 issue: format!("{}: {}", fault.reason, fault.detail),
             });
         }
