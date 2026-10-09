@@ -297,14 +297,12 @@ impl TeamControls {
         }
     }
 
-    /// Each team's in-flight policy send and its last refusal, which the
-    /// next send clears.
-    pub(super) fn requests(
-        &self,
-    ) -> impl Iterator<Item = (CanonicalUuid, Option<TeamLife>, Option<&str>)> {
+    /// Each team's last policy refusal, which the next send clears. A send
+    /// that lands needs no report: the control holds its new stop.
+    pub(super) fn refusals(&self) -> impl Iterator<Item = (CanonicalUuid, &str)> {
         self.teams
             .iter()
-            .map(|(team, control)| (*team, control.pending_life, control.issue.as_deref()))
+            .filter_map(|(team, control)| Some((*team, control.issue.as_deref()?)))
     }
 
     fn request_life(

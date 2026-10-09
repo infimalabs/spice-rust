@@ -1,9 +1,11 @@
 //! Progress and outcomes of lane and team requests, reported through the root
 //! toast.
 //!
-//! Member commands, team policy sends, and consent rulings report here rather
-//! than inside the card or control that issued them, so no lane menu or team
-//! surface resizes while a request is in flight. Each notice names the member or team
+//! Member commands, team policy refusals, and consent rulings report here
+//! rather than inside the card or control that issued them, so no lane menu or
+//! team surface resizes while a request is in flight. A team policy send that
+//! lands reports nothing: its control already holds the new stop. Each notice
+//! names the member or team
 //! it concerns, the toast's live region announces it, and a request's outcome
 //! replaces its progress. A request that disappears while still in flight
 //! reports how it ended, so no progress message outlives its request.
@@ -56,23 +58,16 @@ impl Notices {
         if let Some(runtime) = runtime {
             notices.read_runtime(runtime);
         }
-        for (team, life, issue) in controls.requests() {
-            let notice = match (life, issue) {
-                (Some(life), _) => Notice {
-                    owner: Owner::Team(team),
-                    text: format!("Switching to {}…", life.label()),
-                    generation: 0,
-                    ended: Some(format!("Switched to {}", life.label())),
-                },
-                (None, Some(issue)) => Notice {
+        for (team, issue) in controls.refusals() {
+            notices.notices.insert(
+                Subject::Team(team),
+                Notice {
                     owner: Owner::Team(team),
                     text: issue.to_owned(),
                     generation: 0,
                     ended: None,
                 },
-                (None, None) => continue,
-            };
-            notices.notices.insert(Subject::Team(team), notice);
+            );
         }
         notices
     }
