@@ -206,10 +206,10 @@ fn send_button(
         >
             <span class="team-send-word">{"Send"}</span>
             if recipients != 0 {
-                <span class="team-send-recipient-count" aria-hidden="true">{recipients}</span>
+                <span class="app-count-badge team-send-recipient-count" aria-hidden="true">{recipients}</span>
             }
             if broadcast_recipients != 0 {
-                <span class="team-send-broadcast-count" aria-hidden="true">{broadcast_recipients}</span>
+                <span class="app-count-badge team-send-broadcast-count" aria-hidden="true">{broadcast_recipients}</span>
             }
         </button>
     }

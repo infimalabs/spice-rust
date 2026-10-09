@@ -182,12 +182,14 @@ motion removes travel and text transitions and commits immediately, without
 removing state distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
-for one recipient, equal separated arcs for several. Its small count follows
-sendable typed text, quotes, and images under current command admission. A running
-team without drafted content has no recipient light; an idle team without agents
-or drafts dims and disables SEND. A pending allocation-policy command admits no
-send and lights no recipients. Existing wake/send and attachment behavior stays
-authoritative, not the reference gallery's simulated readiness.
+for one recipient, equal separated arcs for several. Its recipient total wears
+the shared numeric badge rather than becoming tiny button copy, and follows
+sendable typed text, quotes, and images under current command admission. A
+running team without drafted content has no recipient light; an idle team
+without agents or drafts dims and disables SEND. A pending allocation-policy
+command admits no send and lights no recipients. Existing wake/send and
+attachment behavior stays authoritative, not the reference gallery's simulated
+readiness.
 
 Pointer and keyboard contact move SEND down 1.5px, deepen its upper contact
 shadow, and dim the rim; release restores its flat face without grid reflow.
