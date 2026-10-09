@@ -460,25 +460,27 @@ path.image-annotation-hit { fill: none; }
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The header is one fixed grid with no outer chrome. Tasks use its full first
-   row; the ticker and right-aligned pip sequence share the status row. */
+/* The fixed header keeps tasks and team presence in its first row. The ticker
+   owns the complete second row after presence moves into the permanent right
+   tab. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
   grid-template:
-    "tasks tasks" var(--team-task-band)
-    "status pips" var(--team-status-band)
-    / minmax(0, 1fr) auto;
+    "tasks" var(--team-task-band)
+    "status" var(--team-status-band)
+    / minmax(0, 1fr);
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* Pips are the status row's trailing inline content, on the same stream surface
-   and full top rule as the ticker. Their local RTL flow matches the composer
-   grid's canonical right-to-left ordering, keeping member zero control-adjacent.
-   Empty fleets surrender the whole segment. */
+/* The pip stack is the task row's permanent right tab. Its width and local RTL
+   flow match the composer control column, keeping member zero control-adjacent.
+   It stays above the task scroller so faded tabs neither paint nor receive
+   input across it. Empty fleets surrender the tab. */
 .team-toolbar > .team-lights {
-  grid-area: pips;
-  align-self: stretch;
+  grid-area: tasks;
+  z-index: 3;
+  align-self: end;
   justify-self: end;
   align-items: center;
   justify-content: space-evenly;
@@ -491,42 +493,44 @@ path.image-annotation-hit { fill: none; }
   padding: 0;
 }
 .team-toolbar > .team-lights:empty { display: none; }
-/* The team total holds its own leading column while task groups retain their
-   ordinary horizontal scroll. The scroller reaches a short fade back under the
-   total, and its padding puts the first tab one `--mosaic-gap` past the total,
-   the same gap as between any two tabs whatever the total's width. One
-   mirrored alpha fade lets hidden tabs dissolve behind the total on the left
-   and over the wider pip column on the right instead of meeting a hard clip.
-   Matching padding and scroll padding keep the first and last tabs fully
-   legible at either extent. */
+/* The team total and pip tab reserve the task rail's edge columns. The middle
+   scroller reaches one fade width beneath each fixed edge, then uses identical
+   mask, padding, and scroll-padding boundaries. At either scroll extreme the
+   first or last task clears its fixed tab by the ordinary tab gap. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
-  --team-task-screen-start: calc(var(--team-task-fade) + var(--mosaic-gap));
-  --team-task-screen-end: var(--team-control-inline-size);
-  position: relative; display: grid; grid-area: tasks; align-self: end;
-  grid-template-columns: auto minmax(0, 1fr);
-  min-width: 0; margin: 0 8px; overflow: hidden;
+  --team-task-screen: calc(var(--team-task-fade) + var(--mosaic-gap));
+  position: relative;
+  display: grid;
+  grid-area: tasks;
+  align-self: end;
+  grid-template-columns: auto minmax(0, 1fr) var(--team-control-inline-size);
+  min-width: 0;
+  margin: 0 0 0 8px;
+  overflow: hidden;
 }
 .team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { grid-row: 1; align-self: end; }
 .team-task-rail > [data-work-scope="team"] { grid-column: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;
   z-index: 1;
+  width: calc(100% + 2 * var(--team-task-fade));
+  max-width: none;
   margin-inline-start: calc(-1 * var(--team-task-fade));
-  padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
-  scroll-padding-inline: var(--team-task-screen-start) var(--team-task-screen-end);
+  padding-inline: var(--team-task-screen);
+  scroll-padding-inline: var(--team-task-screen);
   -webkit-mask-image: linear-gradient(
     to right,
     transparent,
-    #000 var(--team-task-screen-start),
-    #000 calc(100% - var(--team-task-screen-end)),
+    #000 var(--team-task-screen),
+    #000 calc(100% - var(--team-task-screen)),
     transparent
   );
   mask-image: linear-gradient(
     to right,
     transparent,
-    #000 var(--team-task-screen-start),
-    #000 calc(100% - var(--team-task-screen-end)),
+    #000 var(--team-task-screen),
+    #000 calc(100% - var(--team-task-screen)),
     transparent
   );
 }
@@ -544,9 +548,9 @@ path.image-annotation-hit { fill: none; }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 
-/* The status band's top rule matches the composer's bottom edge. The surface
-   stops at the padding box so the translucent stroke retains the same
-   compositing geometry across the ticker and pip segment. */
+/* The ticker now owns the complete status row. Its top rule matches the
+   composer's bottom edge, and its surface stops at the padding box so the
+   translucent stroke keeps the same compositing geometry across the team. */
 .team-toolbar > .ticker {
   grid-area: status;
   align-self: stretch;
