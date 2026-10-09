@@ -646,6 +646,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "lane.wake_order" {
+        kind: String,
+        builtin: Some(Builtin::String("least-recently-claimed")),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
     fixed "steer.expiry" {
         kind: Duration,
         builtin: Some(Builtin::String("24h")),

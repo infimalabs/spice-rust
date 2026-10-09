@@ -147,7 +147,12 @@ fn a_key_the_final_transcript_does_not_answer_stays_pending_and_still_wakes_a_su
     .expect("vacant lane targets project");
     assert!(targets[0].pending_inbox);
     assert_eq!(
-        resolve(&targets, &Backoff::default(), instant(50)),
+        resolve(
+            &targets,
+            &Backoff::default(),
+            instant(50),
+            lane::WakeOrder::default()
+        ),
         Resolution::Attempt {
             trigger: Trigger::PendingInbox,
             lane: lane(),

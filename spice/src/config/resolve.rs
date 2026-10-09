@@ -500,21 +500,22 @@ fn sanitize(
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
-            let message = if entry.layers().contains(&ConfigSource::Worktree) {
+            let layers = entry.layers();
+            let leaf = entry.template().as_str();
+            let message = if layers.contains(&ConfigSource::Worktree) {
                 format!(
-                    "{} is a worktree launch preference; set it in worktree .spice-rs/config.toml",
-                    entry.template().as_str()
+                    "{leaf} is a worktree launch preference; set it in worktree .spice-rs/config.toml"
                 )
-            } else if entry.layers().contains(&ConfigSource::Tracked) {
+            } else if layers.contains(&ConfigSource::Local)
+                && layers.contains(&ConfigSource::Tracked)
+            {
                 format!(
-                    "{} is tracked policy; set it in tracked spice-rust.toml",
-                    entry.template().as_str()
+                    "{leaf} is machine-local; set it in Git-common .spice-rs/config.toml, or set a repository default in tracked spice-rust.toml"
                 )
+            } else if layers.contains(&ConfigSource::Tracked) {
+                format!("{leaf} is tracked policy; set it in tracked spice-rust.toml")
             } else {
-                format!(
-                    "{} is machine-local; set it in Git-common .spice-rs/config.toml",
-                    entry.template().as_str()
-                )
+                format!("{leaf} is machine-local; set it in Git-common .spice-rs/config.toml")
             };
             issues.push(Issue::at(
                 IssueKind::Policy,

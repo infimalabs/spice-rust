@@ -1,4 +1,4 @@
-//! Pure admission of tracked lane supervision policy.
+//! Pure admission of lane supervision policy.
 
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use wire::{DurationWord, Name};
 
 use crate::life::Life;
 
-/// The defaultable tracked lane policy.
+/// The defaultable lane policy: tracked, except the machine-local wake order.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -20,6 +20,21 @@ pub struct Config {
     hold: DurationWord,
     #[serde(deserialize_with = "nonzero_narration")]
     narration: u32,
+    wake_order: WakeOrder,
+}
+
+/// Which lane wakes first among vacant lanes due for the same trigger, ranked
+/// by the journal position of each lane's newest durable claim.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WakeOrder {
+    /// The lane that has gone longest without claiming wakes first; a lane
+    /// that never claimed counts as oldest. Work rotates through a team.
+    #[default]
+    LeastRecentlyClaimed,
+    /// The lane that claimed most recently wakes first; a lane that never
+    /// claimed comes last. Work concentrates on the most recently active seats.
+    MostRecentlyClaimed,
 }
 
 impl Config {
@@ -71,6 +86,12 @@ impl Config {
     pub const fn narration(&self) -> u32 {
         self.narration
     }
+
+    /// Which due lane wakes first.
+    #[must_use]
+    pub const fn wake_order(&self) -> WakeOrder {
+        self.wake_order
+    }
 }
 
 impl Default for Config {
@@ -88,6 +109,7 @@ impl Default for Config {
                 .expect("the compiled young threshold is valid"),
             hold: "30m".parse().expect("the compiled lane hold is valid"),
             narration: 24,
+            wake_order: WakeOrder::LeastRecentlyClaimed,
         }
     }
 }
