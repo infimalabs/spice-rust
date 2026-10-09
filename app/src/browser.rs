@@ -886,7 +886,14 @@ fn apply_team_configuration(
             });
         }
         wire::Outcome::Reply(_) if runtime.lane_reply_superseded(&admitted) => {
-            team_controls.dispatch(TeamControlAction::SettleSuperseded { request });
+            let fast_mode = runtime.lanes().and_then(|lanes| {
+                lanes
+                    .lanes
+                    .iter()
+                    .find(|row| row.lane == request.team)
+                    .map(|row| row.fast_mode)
+            });
+            team_controls.dispatch(TeamControlAction::SettleSuperseded { request, fast_mode });
         }
         wire::Outcome::Reply(_) => {
             team_controls.dispatch(TeamControlAction::SettleIssue {
