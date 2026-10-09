@@ -201,7 +201,8 @@ const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
 
 /// What the model reads about the service parameter.
 const SHELL_SERVICE_DESCRIPTION: &str = "true runs a long-lived development service with no \
-deadline, kept as a job at once until you stop it; takes no timeout";
+deadline, kept as a job at once while its task claim remains active or until you stop it; \
+takes no timeout";
 
 /// What the model reads about the lane's job tool.
 const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
@@ -956,7 +957,8 @@ impl JobOp {
 pub enum Lifetime {
     /// An ordinary command, ended by the lane at its deadline.
     Deadline(Duration),
-    /// A long-lived development service, running until the job tool stops it.
+    /// A long-lived development service, running while its task claim remains
+    /// active or until the job tool stops it.
     Service,
 }
 
@@ -1008,7 +1010,8 @@ impl ShellCall {
         let (lifetime, notices) = match (service, asked) {
             (true, Some(_)) => {
                 return Err(
-                    "a service runs until the job tool stops it, so it takes no timeout".to_owned(),
+                    "a service runs while its task claim remains active, so it takes no timeout"
+                        .to_owned(),
                 );
             }
             (true, None) => (Lifetime::Service, Vec::new()),

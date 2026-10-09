@@ -475,7 +475,7 @@ impl Report {
 
 /// Follow a finite job without changing it. A running service never ends on
 /// its own, so waiting on one answers at once with what it has said so far;
-/// only `stop` ends it.
+/// its task claim's end, or an earlier `stop`, ends it.
 fn wait(job: &Job, control: &Control, bound: Duration) -> Report {
     if job.timeout().is_none() && job.ended().is_none() {
         return still(job, SERVICE_WAIT);
@@ -490,8 +490,9 @@ fn wait(job: &Job, control: &Control, bound: Duration) -> Report {
 }
 
 /// Why a wait on a running service returned without following it.
-const SERVICE_WAIT: &str = "a service runs until `stop` ends it, so wait does not follow it; \
-read its logs or exercise its served surface for readiness";
+const SERVICE_WAIT: &str = "a service runs while its task claim remains active, so wait does \
+not follow it; read its logs or exercise its served surface for readiness, and stop it sooner \
+once no longer needed";
 
 /// Ask the keeper to end the command and wait briefly for its ending.
 fn stop(job: &Job, control: &Control) -> Option<Ended> {
