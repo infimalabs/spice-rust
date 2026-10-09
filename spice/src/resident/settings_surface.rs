@@ -1,4 +1,7 @@
 //! Durable global app settings and their command surface.
+//!
+//! Operator identity is repository Git configuration, resolved on every read;
+//! settings never carry or change it.
 
 use bus::Bus;
 use gix::bstr::ByteSlice as _;
@@ -10,33 +13,10 @@ use wire::{Command, OperatorIdentity, Outcome, Producer, Reply, ReplyPosition, S
 
 use super::{CommandResult, commit, seq, store_fault, typed_outcome, typed_store_fault, write};
 
-#[derive(Default)]
-struct OperatorValues {
-    name: Option<String>,
-    email: Option<String>,
-}
-
-struct StoredSettings {
-    fast_mode: bool,
-    operator: OperatorValues,
-}
-
-fn stored(envelope: Option<&wire::Envelope<wire::AnyFact>>) -> StoredSettings {
+fn stored_fast_mode(envelope: Option<&wire::Envelope<wire::AnyFact>>) -> bool {
     envelope
         .and_then(|envelope| envelope.fact.read::<wire::body::GlobalSettingsChanged>())
-        .map_or(
-            StoredSettings {
-                fast_mode: false,
-                operator: OperatorValues::default(),
-            },
-            |settings| StoredSettings {
-                fast_mode: settings.fast_mode,
-                operator: OperatorValues {
-                    name: settings.operator_name.clone(),
-                    email: settings.operator_email.clone(),
-                },
-            },
-        )
+        .is_some_and(|settings| settings.fast_mode)
 }
 
 fn normalize(value: Option<&str>) -> Option<String> {
@@ -63,9 +43,7 @@ fn initials(name: Option<&str>) -> Option<String> {
     (!badge.is_empty()).then_some(badge)
 }
 
-fn identity(explicit: &OperatorValues, inherited: &OperatorValues) -> OperatorIdentity {
-    let name = explicit.name.clone().or_else(|| inherited.name.clone());
-    let email = explicit.email.clone().or_else(|| inherited.email.clone());
+fn identity(name: Option<String>, email: Option<String>) -> OperatorIdentity {
     let gravatar = email.as_ref().map(|email| {
         format!("{:x}", Sha256::digest(email.to_lowercase().as_bytes()))
             .parse()
@@ -79,7 +57,7 @@ fn identity(explicit: &OperatorValues, inherited: &OperatorValues) -> OperatorId
     }
 }
 
-fn inherited_operator(repository: &Repository) -> CommandResult<OperatorValues> {
+fn git_operator(repository: &Repository) -> CommandResult<OperatorIdentity> {
     let git = gix::open(repository.worktree_root()).map_err(|error| {
         super::environment_fault("serve::operator-identity-unavailable", &error.to_string())
     })?;
@@ -90,22 +68,13 @@ fn inherited_operator(repository: &Repository) -> CommandResult<OperatorValues> 
             .and_then(|value| value.to_str().ok().and_then(|value| normalize(Some(value))))
             .filter(|value| !malformed(Some(value)))
     };
-    Ok(OperatorValues {
-        name: read("user.name"),
-        email: read("user.email"),
-    })
+    Ok(identity(read("user.name"), read("user.email")))
 }
 
-fn answer(
-    repository: &Repository,
-    settings: StoredSettings,
-) -> CommandResult<GlobalSettingsAnswer> {
-    let operator = identity(&settings.operator, &inherited_operator(repository)?);
+fn answer(repository: &Repository, fast_mode: bool) -> CommandResult<GlobalSettingsAnswer> {
     Ok(GlobalSettingsAnswer {
-        fast_mode: settings.fast_mode,
-        operator_name: settings.operator.name,
-        operator_email: settings.operator.email,
-        operator,
+        fast_mode,
+        operator: git_operator(repository)?,
     })
 }
 
@@ -114,13 +83,13 @@ pub(super) fn current(bus: &Bus, repository: &Repository) -> CommandResult<Globa
     let fact = bus
         .read(|read| read.latest_fact(wire::FactKind::GlobalSettingsChanged))
         .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))?;
-    answer(repository, stored(fact.as_ref()))
+    answer(repository, stored_fast_mode(fact.as_ref()))
 }
 
 /// Resolve the current fast-mode value for one later occupant launch.
 pub(super) fn fast_mode(bus: &Bus) -> CommandResult<bool> {
     bus.read(|read| read.latest_fact(wire::FactKind::GlobalSettingsChanged))
-        .map(|fact| stored(fact.as_ref()).fast_mode)
+        .map(|fact| stored_fast_mode(fact.as_ref()))
         .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))
 }
 
@@ -153,7 +122,7 @@ pub(super) fn read(bus: &Bus, repository: &Repository) -> Outcome<CommandAnswer>
             "a running resident has no startup authority fact",
         );
     };
-    let answer = match answer(repository, stored(fact.as_ref())) {
+    let answer = match answer(repository, stored_fast_mode(fact.as_ref())) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -171,20 +140,7 @@ pub(super) fn set(
     command: &wire::AdmittedCommand,
     request: &GlobalSettingsSet,
 ) -> Outcome<CommandAnswer> {
-    if malformed(request.operator_name.as_deref()) || malformed(request.operator_email.as_deref()) {
-        return settings_refusal(
-            "settings::operator-identity-invalid",
-            "name and email must each be one trimmed line",
-        );
-    }
-    let stored = StoredSettings {
-        fast_mode: request.fast_mode,
-        operator: OperatorValues {
-            name: normalize(request.operator_name.as_deref()),
-            email: normalize(request.operator_email.as_deref()),
-        },
-    };
-    let answer = match answer(repository, stored) {
+    let answer = match answer(repository, request.fast_mode) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -193,12 +149,7 @@ pub(super) fn set(
         Err(outcome) => return typed_outcome(outcome),
     };
     if let Err(error) = proposal.fact(
-        wire::body::GlobalSettingsChanged {
-            fast_mode: answer.fast_mode,
-            operator_name: answer.operator_name.clone(),
-            operator_email: answer.operator_email.clone(),
-            operator: Some(answer.operator.clone()),
-        },
+        wire::body::GlobalSettingsChanged::new(answer.fast_mode),
         FactCause::Root,
     ) {
         return typed_store_fault("settings::fact-invalid", &error.to_string());
@@ -229,40 +180,22 @@ pub(super) fn set(
     }
 }
 
-fn settings_refusal(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(wire::Refusal::bare(
-        wire::RefusalDiagnostic::new(
-            reason.to_owned(),
-            Some("global-settings".to_owned()),
-            Some("single-line operator identity values".to_owned()),
-            None,
-        )
-        .with_detail(detail),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn operator_identity_precedence_and_initials_are_field_local() {
-        let inherited = OperatorValues {
-            name: Some("c".to_owned()),
-            email: Some("git@example.invalid".to_owned()),
-        };
-        let one_word = identity(&OperatorValues::default(), &inherited);
-        assert_eq!(one_word.name.as_deref(), Some("c"));
+    fn initials_take_the_first_two_words_of_the_git_name() {
+        let one_word = identity(Some("c".to_owned()), None);
         assert_eq!(one_word.initials.as_deref(), Some("C"));
+        assert_eq!(one_word.gravatar, None);
 
-        let explicit = OperatorValues {
-            name: Some("céline adams third".to_owned()),
-            email: None,
-        };
-        let two_words = identity(&explicit, &inherited);
-        assert_eq!(two_words.name.as_deref(), Some("céline adams third"));
-        assert_eq!(two_words.email.as_deref(), Some("git@example.invalid"));
-        assert_eq!(two_words.initials.as_deref(), Some("CA"));
+        let three_words = identity(
+            Some("céline adams third".to_owned()),
+            Some("git@example.invalid".to_owned()),
+        );
+        assert_eq!(three_words.initials.as_deref(), Some("CA"));
+        assert!(three_words.gravatar.is_some());
     }
 
     #[test]

@@ -47,47 +47,30 @@
   gap: 8px;
   padding-block: 12px;
 }
-/* The avatar heads a narrow column with the form's Save action below it; the
-   two field rows take the rest. */
+/* The avatar stands beside the Git name and email rows it is drawn from. */
 .app-spice-operator-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  justify-items: center;
-  align-items: start;
-  gap: 5px 12px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
-.app-spice-operator-identity > .app-operator-form { grid-column: 2; grid-row: 1 / span 2; justify-self: stretch; }
 .app-spice-operator .operator-avatar {
   flex-basis: 40px;
   width: 40px;
   height: 40px;
   font-size: var(--app-type-label);
 }
-.app-operator-form {
+.app-spice-operator-facts {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 5px 10px;
+  align-items: baseline;
+  gap: 6px 10px;
   min-width: 0;
+  margin: 0;
 }
-.app-operator-form label {
-  color: var(--muted);
-  font-size: var(--app-type-caption);
-}
-.app-operator-form input {
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: var(--app-control-edge);
-  border-radius: var(--app-radius-inset);
-  background: var(--panel);
-  color: var(--ink);
-  font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.app-operator-form input:focus { border-color: var(--focus); outline: 0; }
-.app-operator-save { grid-column: 1; grid-row: 2; }
+.app-spice-operator-facts > div { display: contents; }
+.app-spice-operator-facts > :is([data-state="loading"], [data-state="unset"]) > dd { color: var(--muted); }
 /* The fixed-width weekly percentage stands centered above the Spice button,
    outside the anchor's box, so the button never moves as quota state loads or
    becomes unavailable. */
@@ -114,13 +97,13 @@
   gap: 7px;
   min-width: 0;
 }
-.app-spice-resident-facts dt {
+:is(.app-spice-resident-facts, .app-spice-operator-facts) dt {
   color: var(--muted);
   font: 700 var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-.app-spice-resident-facts dd {
+:is(.app-spice-resident-facts, .app-spice-operator-facts) dd {
   min-width: 0;
   margin: 0;
   overflow: hidden;

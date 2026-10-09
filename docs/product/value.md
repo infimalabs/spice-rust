@@ -380,8 +380,11 @@ accent, keyboard order, or attribution.
 The first section pairs a compact operator identity row — the avatar carries the
 badge, which a Gravatar shows in a band across its lower third at the same size —
 with three fixed resident fields: connection, appliance version, and epoch,
-whose loading values keep settled geometry. Weekly quota account cards carry
-the same capacity-order accent as their layers in the stable Spice-button fill.
+whose loading values keep settled geometry. Operator identity is repository Git
+configuration: the row presents Git `user.name` and `user.email` read-only, names
+each one Git leaves unset, and no app setting overrides either. Weekly quota
+account cards carry the same capacity-order accent as their layers in the stable
+Spice-button fill.
 Every account card keeps each reset credit on its compact line, with provider
 detail followed by a live relative grant age, a live expiration countdown, and
 exact timestamps on hover. Long provider prose truncates. "No account usage

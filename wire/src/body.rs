@@ -38,32 +38,47 @@ pub struct DocApplied {
 }
 
 /// The global app settings changed.
+///
+/// Operator identity is repository Git configuration, never a setting. Facts
+/// recorded while settings still carried identity keep those fields so their
+/// bodies round-trip exactly, but the fields are private: [`Self::new`] is the
+/// only way to mint a body, and no reader can treat them as current.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsChanged {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
-    /// Explicit operator display name; absent in predecessor facts and when Git supplies it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub operator_name: Option<String>,
-    /// Explicit operator email; absent in predecessor facts and when Git supplies it.
+    operator_name: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub operator_email: Option<String>,
-    /// Effective identity at the time of this mutation; absent in predecessor facts.
+    operator_email: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub operator: Option<crate::OperatorIdentity>,
+    operator: Option<crate::OperatorIdentity>,
+}
+
+impl GlobalSettingsChanged {
+    /// A settings change that records global fast mode and nothing else.
+    #[must_use]
+    pub const fn new(fast_mode: bool) -> Self {
+        Self {
+            fast_mode,
+            operator_name: None,
+            operator_email: None,
+            operator: None,
+        }
+    }
 }
 
 /// A directive was created.

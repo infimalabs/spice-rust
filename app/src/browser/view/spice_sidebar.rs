@@ -83,8 +83,6 @@ pub(super) fn render_arrangement(
 pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
-    let operator_name = settings.and_then(|settings| settings.operator_name.clone());
-    let operator_email = settings.and_then(|settings| settings.operator_email.clone());
     let enabled = settings.is_some()
         && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
     let sender = sender.clone();
@@ -94,8 +92,6 @@ pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &Send
                 &sender,
                 ClientAction::GlobalSettings(GlobalSettingsSet {
                     fast_mode: !fast_mode,
-                    operator_name: operator_name.clone(),
-                    operator_email: operator_email.clone(),
                 }),
             )
         {
@@ -170,112 +166,38 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     }
 }
 
-/// The identity form, which the Save button outside it names as its owner.
-const OPERATOR_FORM: &str = "operator-identity";
-
-/// The operator's avatar and override form, with the form's Save action below
-/// the avatar. Until settings arrive the same form stands disabled and says it
-/// is loading, so later admission moves no section below it.
-pub(super) fn render_operator_settings(
-    runtime: Option<&AppRuntime>,
-    sender: &SenderHandle,
-) -> Html {
-    const LOADING: &str = "loading";
+/// The operator's avatar beside the Git `user.name` and `user.email` it is
+/// drawn from, as read-only reference rows. Until settings arrive both rows
+/// say they are loading, so later admission moves no section below them.
+pub(super) fn render_operator(runtime: Option<&AppRuntime>) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let unresolved = wire::OperatorIdentity::default();
     let operator = settings.map_or(&unresolved, |settings| &settings.operator);
-    let enabled = settings.is_some()
-        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
-    let name = settings
-        .and_then(|settings| settings.operator_name.clone())
-        .unwrap_or_default();
-    let email = settings
-        .and_then(|settings| settings.operator_email.clone())
-        .unwrap_or_default();
-    let (name_placeholder, email_placeholder) = match settings {
-        Some(_) => (
-            operator
-                .name
-                .clone()
-                .unwrap_or_else(|| "Git user.name is not set".to_owned()),
-            operator
-                .email
-                .clone()
-                .unwrap_or_else(|| "Git user.email is not set".to_owned()),
-        ),
-        None => (LOADING.to_owned(), LOADING.to_owned()),
-    };
-    let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
-    let sender = sender.clone();
-    let onsubmit = Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        event.stop_propagation();
-        if !enabled {
-            return;
-        }
-        let setting = |id| {
-            input_value(id).and_then(|value| {
-                let value = value.trim();
-                (!value.is_empty()).then(|| value.to_owned())
-            })
+    let fact = |label: &'static str, key: &'static str, value: Option<&String>| {
+        let (state, text) = match (settings, value) {
+            (None, _) => ("loading", "loading".to_owned()),
+            (Some(_), None) => ("unset", format!("Git {key} is not set")),
+            (Some(_), Some(value)) => ("ready", value.clone()),
         };
-        let _ = admit_action(
-            &sender,
-            ClientAction::GlobalSettings(GlobalSettingsSet {
-                fast_mode,
-                operator_name: setting("operator-name"),
-                operator_email: setting("operator-email"),
-            }),
-        );
-    });
+        html! {
+            <div data-state={state}>
+                <dt>{label}</dt>
+                <dd title={text.clone()}>{text}</dd>
+            </div>
+        }
+    };
     html! {
         <section class="app-sheet-section app-spice-operator" data-operator-member="">
             <h2>{"You"}</h2>
             <div class="app-spice-operator-identity">
                 {super::render_operator_avatar(operator)}
-                <form id={OPERATOR_FORM} class="app-operator-form" {onsubmit}>
-                <label for="operator-name">{"Name"}</label>
-                <input
-                    id="operator-name"
-                    type="text"
-                    value={name}
-                    placeholder={name_placeholder}
-                    autocomplete="name"
-                    disabled={!enabled}
-                />
-                <label for="operator-email">{"Email"}</label>
-                <input
-                    id="operator-email"
-                    type="email"
-                    value={email}
-                    placeholder={email_placeholder}
-                    autocomplete="email"
-                    disabled={!enabled}
-                />
-                </form>
-                // Associated by `form`, so it stays the form's default button
-                // and Enter in either field still submits.
-                <button
-                    type="submit"
-                    form={OPERATOR_FORM}
-                    class="app-compact-control app-operator-save"
-                    aria-label="Save identity"
-                    disabled={!enabled}
-                >
-                    {"Save"}
-                </button>
+                <dl class="app-spice-operator-facts">
+                    {fact("Name", "user.name", operator.name.as_ref())}
+                    {fact("Email", "user.email", operator.email.as_ref())}
+                </dl>
             </div>
         </section>
     }
-}
-
-fn input_value(id: &str) -> Option<String> {
-    web_sys::window()?
-        .document()?
-        .get_element_by_id(id)?
-        .dyn_into::<web_sys::HtmlInputElement>()
-        .ok()
-        .map(|input| input.value())
 }
 
 pub(super) fn render_resident(

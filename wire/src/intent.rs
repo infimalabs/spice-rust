@@ -152,25 +152,13 @@ pub struct ConsentPolicy {}
 pub struct GlobalSettingsRead {}
 
 /// Replace the durable global app settings.
+///
+/// Operator identity is repository Git configuration, never a setting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsSet {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
-    /// Explicit operator display name; absence selects repository Git configuration.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub operator_name: Option<String>,
-    /// Explicit operator email; absence selects repository Git configuration.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub operator_email: Option<String>,
 }
 
 /// Authoritative global app settings at one journal revision.
@@ -179,21 +167,8 @@ pub struct GlobalSettingsSet {
 pub struct GlobalSettingsAnswer {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
-    /// Explicit operator display name, absent when repository Git configuration supplies it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub operator_name: Option<String>,
-    /// Explicit operator email, absent when repository Git configuration supplies it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub operator_email: Option<String>,
-    /// Effective operator identity after applying explicit settings over Git configuration.
+    /// Operator identity resolved from repository Git configuration when this
+    /// answer was produced.
     pub operator: crate::OperatorIdentity,
 }
 

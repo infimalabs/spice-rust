@@ -474,9 +474,11 @@ pub struct AppRuntime {
     /// Operator consent requests, read whenever a `consent::` fact streams.
     consent: ScopedValue<ConsentQueueAnswer>,
     consent_rulings: consent::ConsentRulings,
+    /// The latest settings read; its operator identity is Git reference data.
     settings: ScopedValue<GlobalSettingsAnswer>,
     vendors: ScopedValue<VendorCatalogAnswer>,
-    settings_position: Option<Seq>,
+    /// Newest journal position that set global fast mode, and its value.
+    fast_mode_at: Option<(Seq, bool)>,
     message_cards: message_cards::MessageCards,
     /// Exact lane-local frontier each independently paged member can extend.
     message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
@@ -528,7 +530,7 @@ impl AppRuntime {
             consent_rulings: consent::ConsentRulings::new(),
             settings: ScopedValue::new(accepted),
             vendors: ScopedValue::new(accepted),
-            settings_position: None,
+            fast_mode_at: None,
             message_cards: message_cards::MessageCards::default(),
             message_history: BTreeMap::new(),
             message_history_completions: BTreeMap::new(),
@@ -1054,7 +1056,9 @@ impl AppRuntime {
         });
     }
 
-    /// Apply a global settings read or mutation without allowing older authority backwards.
+    /// Apply a global settings read or mutation. Its operator identity always
+    /// replaces the last read's, while fast mode never moves behind a newer
+    /// journal position already observed.
     pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) -> bool {
         let position = match &admitted.get().outcome {
             Outcome::Reply(reply) => match reply.position {
@@ -1067,14 +1071,15 @@ impl AppRuntime {
         };
         let mut applied = false;
         self.apply_response(admitted, |runtime, answer| {
-            if position.is_some_and(|next| {
-                runtime
-                    .settings_position
-                    .is_none_or(|current| next >= current)
-            }) {
-                runtime.settings_position = position;
-                applied = runtime.settings.replace(admitted.scope(), answer.clone());
+            let Some(position) = position else {
+                return;
+            };
+            let mut answer = answer.clone();
+            match runtime.fast_mode_at {
+                Some((newer, fast_mode)) if newer > position => answer.fast_mode = fast_mode,
+                _ => runtime.fast_mode_at = Some((position, answer.fast_mode)),
             }
+            applied = runtime.settings.replace(admitted.scope(), answer);
         });
         applied
     }

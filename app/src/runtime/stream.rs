@@ -188,6 +188,8 @@ impl AppRuntime {
         StreamApplication::new(continuation(ViewSubject::Facts, epoch, packed), true)
     }
 
+    /// Advance global fast mode from `settings::changed` rows. Identity is not
+    /// journal state, so a row never touches it.
     fn observe_settings_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
         let mut changed = false;
         for row in rows {
@@ -195,24 +197,18 @@ impl AppRuntime {
                 continue;
             };
             if self
-                .settings_position
-                .is_some_and(|current| current >= row.seq())
+                .fast_mode_at
+                .is_some_and(|(current, _)| current >= row.seq())
             {
                 continue;
             }
-            let Some(operator) = body.operator.clone() else {
-                continue;
-            };
-            self.settings_position = Some(row.seq());
-            changed |= self.settings.replace(
-                self.accepted.scope(),
-                GlobalSettingsAnswer {
-                    fast_mode: body.fast_mode,
-                    operator_name: body.operator_name.clone(),
-                    operator_email: body.operator_email.clone(),
-                    operator,
-                },
-            );
+            self.fast_mode_at = Some((row.seq(), body.fast_mode));
+            if let Some(settings) = self.settings.value.as_mut()
+                && settings.fast_mode != body.fast_mode
+            {
+                settings.fast_mode = body.fast_mode;
+                changed = true;
+            }
         }
         changed
     }

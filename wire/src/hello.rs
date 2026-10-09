@@ -93,22 +93,23 @@ pub struct AppBootstrap {
     pub epoch: CanonicalUuid,
     /// Product and build identity served at this bootstrap boundary.
     pub version: crate::reply::Version,
-    /// Operator identity resolved from durable overrides and repository Git configuration.
+    /// Operator identity resolved from repository Git configuration.
     pub operator: OperatorIdentity,
 }
 
-/// Effective single-operator identity presented by the app.
+/// Effective single-operator identity presented by the app, read from
+/// repository Git `user.name` and `user.email`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorIdentity {
-    /// Resolved display name, absent when neither settings nor Git configure one.
+    /// Git `user.name`, absent when Git configures none.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub name: Option<String>,
-    /// Resolved email, absent when neither settings nor Git configure one.
+    /// Git `user.email`, absent when Git configures none.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -41,7 +41,7 @@ fn handle_stream_frame(
             .into(),
         ..diagnostics::Metadata::default()
     });
-    let (directives, changed, operator) = {
+    let (directives, changed) = {
         let mut data = data.write();
         let runtime = data
             .as_mut()
@@ -55,15 +55,8 @@ fn handle_stream_frame(
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);
-        let operator = changed
-            .then(|| runtime.settings())
-            .flatten()
-            .map(|settings| settings.operator.clone());
-        (application.into_directives(), changed, operator)
+        (application.into_directives(), changed)
     };
-    if let Some(operator) = operator {
-        super::publish_operator_identity(&operator);
-    }
     drop(apply);
     if changed && publish {
         let _publication = diagnostics::span("state.publish", || diagnostics::Metadata {

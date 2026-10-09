@@ -210,7 +210,7 @@ fn render_spice_sidebar(
     let body = html! {
         <div class="app-spice-sidebar-content">
             {spice_sidebar::render_global_settings(runtime, render.sender)}
-            {spice_sidebar::render_operator_settings(runtime, render.sender)}
+            {spice_sidebar::render_operator(runtime)}
             {spice_sidebar::render_resident(
                 render.connection,
                 runtime,
