@@ -183,10 +183,10 @@ uses mirrored fade, padding, and scroll-padding boundaries beneath them. The
 rows keep their existing shapes, scrolling, counts, and navigation.
 
 The task overview's Dependency graph points from each prerequisite to every
-dependent it blocks and labels that edge **unblocks**, so the card, arrow, and
-target read as one activity transition. Prerequisite and dependent controls
-still filter by their named task relationship before the graph presents that
-relationship in blocking order.
+dependent it blocks and labels that edge **then**, so the source card, arrow,
+and target card read as one activity transition. Prerequisite and dependent
+controls still filter by their named task relationship before the graph presents
+that relationship in blocking order.
 
 ## Team composer controls
 
