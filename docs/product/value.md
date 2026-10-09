@@ -376,11 +376,12 @@ badge, which a Gravatar shows in a band across its lower third at the same size 
 with three fixed resident fields: connection, appliance version, and epoch,
 whose loading values keep settled geometry. Weekly quota account cards carry
 the same capacity-order accent as their layers in the stable Spice-button fill.
-Every account card keeps each reset credit on its compact line, with a live
-countdown to any expiration, the exact timestamp on hover, and long prose
-truncated. "No account usage reports" holds one single-limit card, and each
-"None." holds one list row; list rows stay one line, the full row in their
-title, so a first account moves nothing below.
+Every account card keeps each reset credit on its compact line, with provider
+detail followed by a live relative grant age, a live expiration countdown, and
+exact timestamps on hover. Long provider prose truncates. "No account usage
+reports" holds one single-limit card, and each "None." holds one list row; list
+rows stay one line, the full row in their title, so a first account moves nothing
+below.
 
 ### The task overview
 

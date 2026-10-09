@@ -343,13 +343,11 @@ fn task_relative_label(clock: RelativeClock, relative: i64) -> Option<String> {
 enum LocalStyle {
     Compact,
     Full,
-    Date,
 }
 
 thread_local! {
     static COMPACT_TIME_FORMATTER: DateTimeFormat = local_formatter("short", Some("short"));
     static FULL_TIME_FORMATTER: DateTimeFormat = local_formatter("medium", Some("long"));
-    static DATE_FORMATTER: DateTimeFormat = local_formatter("long", None);
 }
 
 fn local_formatter(date_style: &str, time_style: Option<&str>) -> DateTimeFormat {
@@ -388,25 +386,11 @@ fn local_timestamp(instant: i64, canonical: &str, style: LocalStyle) -> AttrValu
                 .ok()
                 .and_then(|value| value.as_string())
         }),
-        LocalStyle::Date => DATE_FORMATTER.with(|formatter| {
-            formatter
-                .format()
-                .call1(&JsValue::UNDEFINED, date.as_ref())
-                .ok()
-                .and_then(|value| value.as_string())
-        }),
     };
     rendered
         .filter(|value| !value.is_empty() && value != "Invalid Date")
         .unwrap_or_else(|| canonical.to_owned())
         .into()
-}
-
-pub(super) fn local_date_millis(instant: i64, canonical: &str) -> String {
-    let fallback = canonical
-        .split_once('T')
-        .map_or(canonical, |(date, _)| date);
-    local_timestamp(instant, fallback, LocalStyle::Date).to_string()
 }
 
 /// The browser's current instant in epoch milliseconds.

@@ -112,10 +112,10 @@ neutral.
 
 The reset-credit summary always states both available and redeemable counts;
 when the provider omits the latter, the available count supplies it. Each
-redeemable credit with provider detail owns a full-width line. Its
-provider-authored title or program leads; otherwise `Reset credit granted`
-and the local grant date identify it, with `Reset credit` reserved for an
-absent or invalid grant time. A valid expiry stays right-aligned as an `expires`
+redeemable credit owns a full-width line. Its provider-authored title, program,
+and remaining count lead when present; `Granted` and a live relative age follow,
+with the exact grant timestamp on hover. An absent or invalid grant time reads
+`Granted at unknown time`. A valid expiry stays right-aligned as an `expires`
 relative countdown with exact-time hover detail.
 
 A provider-reported raw balance appears on its account card as whole credits,
