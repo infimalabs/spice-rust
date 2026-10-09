@@ -927,11 +927,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact])::after { opacity: .4; }
 .team-composer .team-send .team-send-word { position: relative; z-index: 1; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); }
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact]) .team-send-word { transform: translateY(.5px); }
-.team-composer :is(.team-send-recipient-count, .team-send-broadcast-count) {
-  position: absolute; inset-inline-start: 50%; bottom: 5px; z-index: 1;
-  transform: translateX(-50%); line-height: 12px; letter-spacing: 0; text-transform: none;
-}
-.team-composer .team-send-broadcast-count { display: none; }
 .team-composer .team-turbo:disabled,
 .team-composer .team-menu:disabled,
 .app-spice-settings .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
@@ -1031,8 +1026,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    and near black on light glass, rather than any one accent. */
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send::after { background: var(--team-send-broadcast-rim, transparent); }
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send-recipient-count { display: none; }
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send-broadcast-count { display: block; }
 html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
 html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-note-composer:has(textarea:focus) .team-send[value="close"]:not(:disabled) { box-shadow: inset 0 0 0 3px var(--focus); }

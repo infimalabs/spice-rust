@@ -198,14 +198,14 @@ Touch-only contact is projected from native pointer events and clears on release
 cancellation, or lost capture without intercepting activation. Reduced motion
 removes transitions, not contact feedback. Held ordinary-submit modifiers add a
 focused-agent command ring; a held broadcast uses its occupied recipients' rim
-and count while retaining the neutral face, and its command ring is their light
-combined into the theme's ink signal, near white on dark and near black on
-light, rather than any one accent.
+while retaining the neutral face, and its command ring is their light combined
+into the theme's ink signal, near white on dark and near black on light, rather
+than any one accent. SEND carries no numeric badge.
 
 Vacant members do not create broadcast recipients, and an empty vacant composer
 contributes no ordinary SEND rim arc: when no member has sendable content, the
-button removes its recipient-rim paint and count while retaining the neutral
-face. Ordinary arcs and the accessible count come only from reachable members
+button removes its recipient-rim paint while retaining the neutral face.
+Ordinary arcs and the accessible count come only from reachable members
 holding sendable content; a vacant member joins them only when it holds a draft
 that a press would wake it to receive. The rim is paint on the one SEND button,
 never a set of per-recipient hover targets, so an empty vacant member adds no
