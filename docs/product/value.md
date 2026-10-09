@@ -694,7 +694,8 @@ edge; the range flyers keep neutral edges at every stop. Pressing the composer's
 `TURBO` flips that team flag, which the resident keeps across restarts. The
 button shows the requested state at once and holds it until the resident answers
 that request. A reply older than lane authority the app already holds settles to
-that authority without an issue; a refusal, a fault, or a reply that carries no
+that authority: silently when it shows the requested state, and with the team
+issue when it replaces that state. A refusal, a fault, or a reply that carries no
 lane authority for this session restores the resident's flag and reports the
 team issue.
 

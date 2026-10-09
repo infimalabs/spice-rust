@@ -176,9 +176,12 @@ pub(crate) enum TeamControlAction {
         issue: String,
     },
     /// The resident answered this request, but newer lane authority already
-    /// arrived: settle the request to that authority without an issue.
+    /// arrived: settle the request to that authority, reporting the team issue
+    /// only when that authority rolls the control back from what was asked.
     SettleSuperseded {
         request: TeamRequest,
+        /// The team's held TURBO flag, absent when the team is no longer held.
+        fast_mode: Option<bool>,
     },
 }
 
@@ -221,7 +224,9 @@ impl Reducible for TeamControls {
             TeamControlAction::SettleIssue { request, issue } => {
                 next.settle_issue(request, issue);
             }
-            TeamControlAction::SettleSuperseded { request } => next.settle_stale(request),
+            TeamControlAction::SettleSuperseded { request, fast_mode } => {
+                next.settle_superseded(request, fast_mode);
+            }
         }
         Rc::new(next)
     }
@@ -426,6 +431,26 @@ impl TeamControls {
         self.teams.entry(request.team).or_default().issue = Some(issue);
     }
 
+    /// Settle a request a newer read already answered. Convergence on what it
+    /// asked for is silent; a still-shown selection that the held authority
+    /// replaces is a visible rollback and reports the team issue.
+    fn settle_superseded(&mut self, request: TeamRequest, fast_mode: Option<bool>) {
+        let Some(state) = self.teams.get(&request.team) else {
+            return;
+        };
+        let life_rolled_back = request.life.is_some()
+            && state.pending_life == request.life
+            && request.life != Some(state.authoritative_life);
+        let fast_rolled_back = request.fast_mode.is_some()
+            && state.pending_fast == request.fast_mode
+            && fast_mode.is_some_and(|held| request.fast_mode != Some(held));
+        if life_rolled_back || fast_rolled_back {
+            self.settle_issue(request, ROLLED_BACK.to_owned());
+        } else {
+            self.settle_stale(request);
+        }
+    }
+
     /// Restore authority for the selections this request carried, unless a
     /// later request has already replaced them.
     fn settle_stale(&mut self, request: TeamRequest) {
@@ -442,6 +467,9 @@ impl TeamControls {
         }
     }
 }
+
+/// The team issue when newer resident state replaces a requested selection.
+const ROLLED_BACK: &str = "Newer team state replaced this request; showing the resident's setting.";
 
 fn preview_life_callback(
     team: CanonicalUuid,
