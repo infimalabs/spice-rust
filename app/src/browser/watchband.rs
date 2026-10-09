@@ -34,9 +34,10 @@ pub(super) use composer::{
     PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id,
     primary_textarea_id, use_primary_composer_drag_state,
 };
+use controls::ArrangementOpener;
 use controls::{SendSlot, TeamLife, render_team_controls};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest, TeamSpeech};
-pub(in crate::browser) use fleet::use_team_arrangement_escape;
+pub(in crate::browser) use fleet::use_team_arrangement_focus;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 pub(crate) use mosaic_view::use_markdown_image_resolution_events;
