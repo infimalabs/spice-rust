@@ -509,9 +509,12 @@ Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
 header's first row fixes the team total at the left when work exists and the
-ordered lane-light stack in an 80-pixel rising tab at the right, aligned with
-the composer controls. Task tabs scroll between those edges and fade beneath
-both fixed tabs. The complete live status ticker owns the second header row,
+ordered lane-light stack in a rising tab at the right. Both edge tabs keep the
+same minimum size and outer inset. Counts can grow the total rightward; the
+lane-light tab keeps its right edge fixed and grows left at natural pip spacing
+through six members before any compression. Task tabs scroll between the live
+edge widths and fade beneath both fixed tabs. The complete live status ticker
+owns the second header row,
 using all of its inline width for relative age, lane standing,
 agent/tool/command prefix and accent, truncated detail, accessible label, and
 live-region behavior. A `job` call's detail reads as its typed intent, the

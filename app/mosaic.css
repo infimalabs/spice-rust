@@ -425,7 +425,11 @@ path.image-annotation-hit { fill: none; }
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
-  --team-pip-gap: 0;
+  --team-pip-gap: calc(var(--app-presence-pip-size) / 2);
+  --team-edge-tab-min-inline-size: calc(var(--app-presence-pip-size) + 2 * var(--app-horn-tab-inset) + 2 * var(--message-rail));
+  --team-pip-tab-max-inline-size: calc(
+    6 * var(--app-presence-pip-size) + 5 * var(--team-pip-gap) + 2 * var(--app-horn-tab-inset) + 2 * var(--message-rail)
+  );
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
   /* The composer controls keep a fixed right-edge column below the full-width
@@ -460,9 +464,7 @@ path.image-annotation-hit { fill: none; }
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The fixed header keeps tasks and team presence in its first row. The ticker
-   owns the complete second row after presence moves into the permanent right
-   tab. */
+/* The fixed header gives presence and tasks the first row and the ticker the second. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
@@ -473,30 +475,24 @@ path.image-annotation-hit { fill: none; }
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* The pip stack is the task row's permanent right tab. Its width and local RTL
-   flow match the composer control column, keeping member zero control-adjacent.
-   It stays above the task scroller so faded tabs neither paint nor receive
-   input across it. Empty fleets surrender the tab. */
-.team-toolbar > .team-lights {
-  grid-area: tasks;
+/* The right edge stays fixed; one through six natural pips grow left, then compress. */
+.team-task-rail > .team-lights {
+  grid-column: 3;
+  grid-row: 1;
   z-index: 3;
   align-self: end;
   justify-self: end;
   align-items: center;
-  justify-content: space-evenly;
+  justify-content: center;
   direction: rtl;
   gap: var(--team-pip-gap);
-  width: var(--team-control-inline-size);
-  min-width: var(--team-control-inline-size);
-  max-width: var(--team-control-inline-size);
+  width: max-content;
+  min-width: var(--team-edge-tab-min-inline-size);
+  max-width: var(--team-pip-tab-max-inline-size);
   margin: 0;
-  padding: 0;
+  padding: 0 var(--app-horn-tab-inset);
 }
-.team-toolbar > .team-lights:empty { display: none; }
-/* The team total and pip tab reserve the task rail's edge columns. The middle
-   scroller reaches one fade width beneath each fixed edge, then uses identical
-   mask, padding, and scroll-padding boundaries. At either scroll extreme the
-   first or last task clears its fixed tab by the ordinary tab gap. */
+/* Live edge columns reserve width; the scroller underlaps both by one symmetric fade. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
   --team-task-screen: calc(var(--team-task-fade) + var(--mosaic-gap));
@@ -504,15 +500,17 @@ path.image-annotation-hit { fill: none; }
   display: grid;
   grid-area: tasks;
   align-self: end;
-  grid-template-columns: auto minmax(0, 1fr) var(--team-control-inline-size);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-width: 0;
-  margin: 0 0 0 8px;
+  margin: 0 8px;
   overflow: hidden;
 }
-.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { grid-row: 1; align-self: end; }
-.team-task-rail > [data-work-scope="team"] { grid-column: 1; z-index: 2; }
+.team-task-rail > :is(.team-tasks, [data-work-scope="team"], .team-lights) { align-self: end; }
+.team-task-rail > :is([data-work-scope="team"], .team-lights) { min-inline-size: var(--team-edge-tab-min-inline-size); }
+.team-task-rail > [data-work-scope="team"] { grid-column: 1; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;
+  grid-row: 1;
   z-index: 1;
   width: calc(100% + 2 * var(--team-task-fade));
   max-width: none;
