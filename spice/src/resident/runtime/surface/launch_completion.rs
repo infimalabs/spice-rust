@@ -2,6 +2,17 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
+/// What one settled launch still owes the live loop.
+enum Settled {
+    /// An operator launch answered its waker; a released lifecycle owes this
+    /// reconciliation witness.
+    Command(Option<lifecycle::ReconciliationWitness>),
+    Automatic,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one launch completion rejoins every resident authority it can settle"
@@ -18,6 +29,67 @@ pub(super) async fn accept(
     diagnostic: &mut dyn io::Write,
     completed: super::super::launch_runtime::Completion,
 ) -> CommandResult<()> {
+    match settle(command_surface, seats, lifecycle, diagnostic, completed).await? {
+        Settled::Command(witness) => {
+            if let Some(witness) = witness {
+                reconciliation.request(witness);
+            }
+            reconcile_for_control(
+                reconciliation,
+                bus,
+                command_surface,
+                seats,
+                diagnostic,
+                timers,
+                lifecycle,
+                launches,
+                door,
+            )
+        }
+        Settled::Automatic => reconcile_wakes(
+            bus,
+            command_surface,
+            seats,
+            diagnostic,
+            timers,
+            lifecycle,
+            launches,
+            door,
+        ),
+    }
+}
+
+/// Settle every launch still proving its session before the resident goes
+/// dark.
+///
+/// A successor generation adopts only occupants committed to the residency
+/// head, so a completion the dark resident never receives would leave its
+/// spawned supervisor running unowned beside the claim or steering that woke
+/// it. Each pending proof instead finishes through the ordinary success commit
+/// or failure compensation, and its waker gets its ordinary answer. Dispatch
+/// holds the loop meanwhile, so no further launch begins; each proof is
+/// bounded by the supervisor start horizon.
+pub(super) async fn settle_before_dark(
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
+    launches: &mut super::super::launch_runtime::Runtime,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    while launches.in_flight() {
+        let completed = launches.recv().await;
+        settle(command_surface, seats, lifecycle, diagnostic, completed).await?;
+    }
+    Ok(())
+}
+
+async fn settle(
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
+    diagnostic: &mut dyn io::Write,
+    completed: super::super::launch_runtime::Completion,
+) -> CommandResult<Settled> {
     match completed.authority {
         super::super::launch_runtime::Authority::Command {
             request,
@@ -34,27 +106,15 @@ pub(super) async fn accept(
                 completion,
                 completed.result,
             );
-            if lifecycle_released {
+            let witness = lifecycle_released.then(|| {
                 let position = match &outcome {
                     Outcome::Reply(reply) => Some(reply.position),
                     Outcome::Refusal(_) | Outcome::Fault(_) => None,
                 };
-                reconciliation.request(lifecycle::ReconciliationWitness::new(
-                    command, epoch, position,
-                ));
-            }
+                lifecycle::ReconciliationWitness::new(command, epoch, position)
+            });
             control_dispatch::complete_response(request, outcome).await;
-            reconcile_for_control(
-                reconciliation,
-                bus,
-                command_surface,
-                seats,
-                diagnostic,
-                timers,
-                lifecycle,
-                launches,
-                door,
-            )
+            Ok(Settled::Command(witness))
         }
         super::super::launch_runtime::Authority::Automatic(pending) => {
             command_surface.complete_automatic_launch(
@@ -64,16 +124,7 @@ pub(super) async fn accept(
                 pending,
                 completed.result,
             )?;
-            reconcile_wakes(
-                bus,
-                command_surface,
-                seats,
-                diagnostic,
-                timers,
-                lifecycle,
-                launches,
-                door,
-            )
+            Ok(Settled::Automatic)
         }
     }
 }

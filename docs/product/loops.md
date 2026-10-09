@@ -367,7 +367,11 @@ flowchart TD
   supervisor's state watcher, and one completion event returns the retained
   authority to the resident for revalidation, start commit or failure
   compensation, and only then the wake answer. No resident timer observes
-  progress, so unrelated controls continue while proof is pending.
+  progress, so unrelated controls continue while proof is pending. Going dark
+  first settles every pending proof the same way, because a successor
+  generation adopts only committed occupants: a proven occupant commits and is
+  adopted, a failed one is compensated, and its waker is answered before the
+  dark reply.
 - Two ready tasks are the normal trigger — one for the new occupant to claim,
    one left on the board. READY is a derived eligibility projection and
    excludes active claims, so occupied lanes do not inflate the backlog count.
