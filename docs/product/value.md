@@ -648,10 +648,12 @@ ranges use the same continuous backplane light map: the left stop remains
 neutral, the middle stop glows green, and the right stop glows amber. Each
 active groove is uniformly lit through its center with no visible point
 emitter. `Send`, team `TURBO`/`BASIC`, the menu button, and both flyers share
-one Flush etched-glass material. Colored light originates in the groove and
-bends visibly through opposing highlights and shadows in the transparent
-flyer; the flyer itself retains one fine optical edge and never becomes an
-opaque state fill, raised dome, or nested ridge.
+one Flush etched-glass material. Colored light originates in the groove. The
+flyer's nearly clear center transmits it while opposing inset bevels, curved
+edge caustics, and slight backdrop diffusion gather it into a thick lens
+perimeter. No broad state-color stripe is painted across the flyer; it retains
+one fine optical edge and never becomes an opaque state fill, raised dome, or
+nested ridge.
 
 `Send` lights only when a press would submit something. One two-pixel perimeter
 rim divides into an equal arc per agent that would receive the message, in that
