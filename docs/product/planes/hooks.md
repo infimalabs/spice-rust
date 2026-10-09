@@ -236,8 +236,9 @@ wake; a successor receives the completion during startup catch-up.
 **Invariant —** This is lifecycle behavior, not an instruction to keep a turn
 open. An agent uses `job wait` when a finite job's result blocks current work;
 ending the turn neither cancels the job nor loses its completion. A service is
-different: it never ends on its own, so `job wait` answers at once with its
-output so far and leaves it running; only `job stop` ends it. Read its logs or
+different: it never ends on its own but runs while its task claim remains
+active, so `job wait` answers at once with its output so far and leaves it
+running; the claim's end, or an earlier `job stop`, ends it. Read its logs or
 exercise its served surface to establish readiness. Every seat start, fresh or
 resumed, names the lane's kept commands that still run, marking services, so a
 forgotten service is surfaced to the next seat rather than left unseen.

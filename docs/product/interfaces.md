@@ -396,9 +396,10 @@ the omission line, whose continuation is the job call
 `job op=history id=ID limit=N`, resuming at the first withheld job.
 
 `wait` on a finite job is a passive, bounded observation that leaves a
-still-running job alone. A running service never ends on its own, so `wait` on
-one answers at once with its output so far and the reason, and leaves it
-running; only `stop` ends a service. Service readiness is established by
+still-running job alone. A running service never ends on its own: it runs while
+its task claim remains active, ending when that claim ends or when `stop` ends
+it sooner, so `wait` on one answers at once with its output so far and the
+reason, and leaves it running. Service readiness is established by
 reading its logs or exercising its served surface, never by waiting on its
 process. Every seat start, fresh or resumed, carries a `Kept jobs still running`
 notice listing each running kept command with its id, marking services, and is
