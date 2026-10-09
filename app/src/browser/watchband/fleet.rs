@@ -33,6 +33,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef) -> Html {
             <section class="team-surface" data-team-weight="1">
                 <header class="team-toolbar">
                     {view::chrome::render_empty_team_ticker()}
+
                 </header>
                 <div class="team-pane">
                     {empty("No teams are assigned.")}
@@ -218,7 +219,7 @@ fn render_team_toolbar(
     let lost_capture = dragging.cancel.clone();
     let lights = html! {
         <span
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group team-lights"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group team-lights"
             role={if can_arrange { "button" } else { "group" }}
             aria-label={lights_label}
             aria-haspopup={can_arrange.then_some("menu")}
@@ -249,6 +250,7 @@ fn render_team_toolbar(
         <header class="team-toolbar">
             {render_team_rail(team.lane, render, lights)}
             {view::chrome::render_team_ticker(render.runtime, team, standings)}
+
         </header>
         {arrangement::render(team.lane, &control, &arrangement_context)}
         </>
@@ -300,7 +302,7 @@ fn render_team_total(
     html! {
         <span
             key="team-total"
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
         >
             <button

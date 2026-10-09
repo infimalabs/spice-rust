@@ -489,11 +489,13 @@ graph-first and whole-set reading order without introducing another task
 browser.
 
 The global task strip and each team's task band retain their horned-tab
-presentation and visible Work terminology. The global total and stems hang
-from the command bar; a team's total, stems, and handles stand above its status
-band. Their count badges remain lifecycle-neutral, ownership accents remain on
-task handles, and overflow scrolls within the strip. These controls now open
-the local overview and never create a Work URL.
+presentation and visible Work terminology. Global and team totals use thick
+outer rails, as does each team's permanent pip tab; global stems and team stem
+containers use the thinner ordinary rails. The global total and stems hang from
+the command bar; a team's total, stems, and handles stand above its status band.
+Their count badges remain lifecycle-neutral, ownership accents remain on task
+handles, and overflow scrolls within the strip. These controls open the local
+overview and never create a Work URL.
 
 Operator Directions no longer have a global archive page or route. Lane-menu
 direction attention opens the complete current task set for that lane's team;
