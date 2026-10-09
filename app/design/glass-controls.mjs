@@ -75,7 +75,6 @@ function setPreviewState(panel, key) {
     : key === 'idle' ? 'Send unavailable: no text'
       : `Preview send to ${key === 'one' ? '1 agent' : '4 agents'}`);
   send.title = send.getAttribute('aria-label');
-  panel.querySelector('.recipient-count').textContent = ready ? (key === 'one' ? '1' : '4') : '';
 }
 
 document.querySelector('#panel-readiness').addEventListener('change', event => {
