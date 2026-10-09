@@ -395,13 +395,14 @@ refused; commands are clipped to 200 bytes. A withheld page ends with
 the omission line, whose continuation is the job call
 `job op=history id=ID limit=N`, resuming at the first withheld job.
 
-`wait` has two lifecycle meanings distinguished by the job's launch contract.
-For a finite job it is a passive, bounded observation and leaves a still-running
-job alone. For a service it requests the same stop transition as `stop`, then
-joins that transition only through the requested wait timeout; a teardown that
-outlives the timeout remains in progress. Service readiness is established by
+`wait` on a finite job is a passive, bounded observation that leaves a
+still-running job alone. A running service never ends on its own, so `wait` on
+one answers at once with its output so far and the reason, and leaves it
+running; only `stop` ends a service. Service readiness is established by
 reading its logs or exercising its served surface, never by waiting on its
-process. There is no separate process-exit operation.
+process. Every seat start, fresh or resumed, carries a `Kept jobs still running`
+notice listing each running kept command with its id, marking services, and is
+silent when nothing runs.
 
 ---
 

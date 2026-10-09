@@ -24,6 +24,7 @@ fn fresh_launch_without_a_claim_has_no_assignment_banner() {
             fast_mode: false,
             model: None,
             effort: None,
+            running: None,
         },
     )
     .expect("fresh launch plan composes");
@@ -52,6 +53,7 @@ fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
                 fast_mode: false,
                 model: None,
                 effort: None,
+                running: None,
             },
         )
         .expect("launch plan composes");

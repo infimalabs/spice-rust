@@ -45,6 +45,8 @@ struct Selection<'a> {
     fast_mode: bool,
     model: Option<&'a str>,
     effort: Option<vendor::Effort>,
+    /// The notice naming kept commands this lane still runs, if any.
+    running: Option<String>,
 }
 
 pub(in crate::resident) fn occupant_launch(
@@ -97,6 +99,7 @@ pub(in crate::resident) fn occupant_launch(
         fast_mode,
         model,
         effort,
+        running: terminal::running_notice(&terminal::Jobs::for_lane(paths, lane)),
     };
     let (plan, rtk) = launch_plan(&repository, &resolved, selection)?;
     let model = plan.launch().model.clone();
@@ -192,6 +195,7 @@ fn launch_plan(
         fast_mode,
         model,
         effort,
+        running,
     } = selection;
     let skill = required_skill(repository)?;
     let wrapper = resolved
@@ -230,6 +234,10 @@ fn launch_plan(
     } else {
         crate::session_command::lane_resume_notice(&session, lane, None)
     });
+    if let Some(running) = running {
+        prompt.push_str("\n\n");
+        prompt.push_str(&running);
+    }
     let plan = spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
