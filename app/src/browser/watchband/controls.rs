@@ -537,7 +537,7 @@ pub(super) fn render_team_controls(
     team_controls: &UseReducerHandle<TeamControls>,
     set_automatic_speech: &Callback<(String, bool)>,
     sender: &SenderHandle,
-    can_arrange: bool,
+    arrange_refusal: Option<&'static str>,
     can_configure: bool,
     ready: bool,
     dormant: bool,
@@ -570,13 +570,20 @@ pub(super) fn render_team_controls(
             <button
                 class="team-menu"
                 type="button"
-                disabled={!can_arrange}
+                disabled={arrange_refusal.is_some()}
                 aria-label="Team menu"
                 aria-haspopup="menu"
                 aria-expanded={control.arrangement_open.to_string()}
-                title={can_arrange.then_some("Arrange this team")}
+                title={arrange_refusal.unwrap_or("Arrange this team")}
                 onclick={Callback::from(move |event: MouseEvent| {
                     event.stop_propagation();
+                    // Safari does not focus a clicked button; Escape returns here.
+                    if let Some(button) = event
+                        .current_target()
+                        .and_then(|target| target.dyn_into::<web_sys::HtmlElement>().ok())
+                    {
+                        let _ = button.focus();
+                    }
                     controls.dispatch(TeamControlAction::ToggleArrangement { team });
                 })}
             >

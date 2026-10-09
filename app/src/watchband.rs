@@ -379,6 +379,12 @@ pub fn teams(
         .map(|(team, _)| *team)
 }
 
+/// Whether the topology holds a second team for an arrangement to target.
+#[must_use]
+pub fn rearrangeable(topology: &[(CanonicalUuid, Vec<CanonicalUuid>)]) -> bool {
+    teams(topology).nth(1).is_some()
+}
+
 /// State the whole team arrangement one drop produces.
 ///
 /// The resident admits an arrangement only as a complete restatement of the

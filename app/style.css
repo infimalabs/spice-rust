@@ -1028,11 +1028,12 @@ tbody tr:last-child td { border-bottom: 0; }
   box-shadow: inset 3px 0 0 var(--warning);
 }
 /* A team's arrangement begins exactly below its toolbar and ends at its last
-   row, so no empty band covers the pane below it. */
+   row, so no empty band covers the pane below it. It stops at the control
+   column, leaving the team menu that toggles it in reach. */
 .team-action-menu {
   position: absolute;
   z-index: 6;
-  inset: var(--team-header-size) 0 auto;
+  inset: var(--team-header-size) var(--team-control-inline-size) auto 0;
   max-block-size: calc(100% - var(--team-header-size));
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
