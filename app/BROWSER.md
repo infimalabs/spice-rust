@@ -200,7 +200,7 @@ removes transitions, not contact feedback. Held ordinary-submit modifiers add a
 focused-agent command ring; a held broadcast uses its occupied recipients' rim
 while retaining the neutral face, and its command ring is their light combined
 into the theme's ink signal, near white on dark and near black on light, rather
-than any one accent. SEND carries no numeric badge.
+than any one accent.
 
 Vacant members do not create broadcast recipients, and an empty vacant composer
 contributes no ordinary SEND rim arc: when no member has sendable content, the

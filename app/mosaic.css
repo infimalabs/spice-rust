@@ -1024,9 +1024,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* A broadcast reaches every occupied recipient at once, so its command ring is
    their accent light combined: the theme's ink signal, near white on dark glass
    and near black on light glass, rather than any one accent. */
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send::after { background: var(--team-send-broadcast-rim, transparent); }
-html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 3px var(--team-send-command-accent); }
+html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
 html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-note-composer:has(textarea:focus) .team-send[value="close"]:not(:disabled) { box-shadow: inset 0 0 0 3px var(--focus); }
 /* A narrow viewport trims button inline padding rather than letting controls
