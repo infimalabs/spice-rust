@@ -83,6 +83,77 @@ button:focus-visible { outline: 2px solid var(--accent, #9de8cf); outline-offset
 .flush button.glass:not(:disabled):active { transform: translateY(1.5px); box-shadow: inset 0 3px 5px rgb(0 20 15 / .48), inset 0 -1px 1px rgb(255 255 255 / .6); }
 .flush .turbo[aria-pressed="true"] { background-color: transparent; border-color: #d9654c; }
 .flush .groove { background: rgb(15 48 38 / .05); box-shadow: inset 0 1px 2px rgb(0 12 9 / .2), 0 1px 0 rgb(255 255 255 / .12); }
+/* Slider-backplane studies keep the shipped geometry. Left is cool lilac,
+   middle is green, and far right is amber in every experimental treatment. */
+#underglow-studies { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+#underglow-studies .study-head p { min-height: 33px; }
+#underglow-studies .slider { --slider-glow: #b8a2eb; }
+#underglow-studies .slider[data-step="1"] { --slider-glow: #7de0b4; }
+#underglow-studies .slider[data-step="2"] { --slider-glow: #efc36b; }
+#underglow-studies .groove { isolation: isolate; }
+#underglow-studies .groove::before { pointer-events: none; }
+#underglow-studies .flyer { z-index: 1; }
+.underglow-diffuse .groove {
+  box-shadow: inset 0 1px 2px rgb(0 12 9 / .22),
+    inset 0 0 7px rgb(125 224 180 / .12),
+    0 0 5px rgb(125 224 180 / .08);
+}
+.underglow-diffuse .groove::before {
+  content: "";
+  position: absolute;
+  inset: 3px 4px;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle 10px at 27% 50%, rgb(184 162 235 / .75), transparent 78%),
+    radial-gradient(circle 10px at 50% 50%, rgb(125 224 180 / .82), transparent 78%),
+    radial-gradient(circle 10px at 73% 50%, rgb(239 195 107 / .82), transparent 78%);
+  filter: blur(2px);
+  opacity: .72;
+}
+.underglow-tracking .groove::before {
+  content: "";
+  position: absolute;
+  left: calc(1px + (100% - 48px) * var(--position));
+  top: 3px;
+  width: 46px;
+  height: 18px;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at center,
+    color-mix(in srgb, var(--slider-glow) 88%, transparent) 0 12%,
+    color-mix(in srgb, var(--slider-glow) 42%, transparent) 48%,
+    transparent 78%);
+  filter: blur(2.5px);
+  opacity: .78;
+  transition: left 150ms ease-out, background 150ms ease-out;
+}
+.underglow-tracking .flyer {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .2),
+    inset 0 -1px 0 color-mix(in srgb, var(--slider-glow) 32%, transparent),
+    0 0 4px color-mix(in srgb, var(--slider-glow) 17%, transparent);
+}
+.underglow-rails .groove {
+  box-shadow: inset 0 2px 3px color-mix(in srgb, var(--slider-glow) 34%, transparent),
+    inset 0 -2px 3px color-mix(in srgb, var(--slider-glow) 42%, transparent),
+    0 0 4px color-mix(in srgb, var(--slider-glow) 14%, transparent);
+  transition: box-shadow 150ms ease-out;
+}
+.underglow-rails .groove::before {
+  content: "";
+  position: absolute;
+  inset: 2px 3px;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--slider-glow) 65%, transparent),
+      transparent 24% 72%,
+      color-mix(in srgb, var(--slider-glow) 72%, transparent)),
+    radial-gradient(ellipse at center,
+      color-mix(in srgb, var(--slider-glow) 22%, transparent),
+      transparent 72%);
+  filter: blur(1.5px);
+  opacity: .68;
+  transition: background 150ms ease-out;
+}
 /* Readiness lives on the complete panel; only a ready SEND is clickable. */
 button.glass:disabled { cursor: not-allowed; }
 .panel[data-preview-state="off"] { background: rgb(100 120 115 / .045); box-shadow: var(--frame-edge), inset 0 1px 0 rgb(255 255 255 / .1), 0 2px 4px var(--shadow); }
@@ -150,4 +221,8 @@ a { color: #c1e3d0; text-underline-offset: 3px; }
 @supports not (backdrop-filter: blur(2px)) { .glass { background-color: #536e63; } .light .glass { background-color: #d3e3da; } }
 @media (max-width: 1080px) { #studies { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { body { padding: 18px; } .page-head { display: block; } .size-picker { margin-top: 20px; } #studies { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 720px) {
+  #underglow-studies { grid-template-columns: minmax(0, 1fr); }
+  #underglow-studies .pair { grid-template-columns: minmax(0, 1fr); }
+}
 @media (prefers-reduced-motion: reduce) { .glass { transition: none; } }
