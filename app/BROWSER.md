@@ -173,6 +173,11 @@ container's single right rail. The middle scroller uses mirrored fade, padding,
 and scroll-padding boundaries beneath the two fixed edge tabs. The rows keep
 their existing shapes, spacing, scrolling, counts, and navigation.
 
+The task overview's Dependency graph points from each prerequisite to every
+dependent it blocks and labels that edge **blocks**. Prerequisite and dependent
+controls still filter by their named task relationship before the graph presents
+that relationship in blocking order.
+
 ## Team composer controls
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.

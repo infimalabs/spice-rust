@@ -84,7 +84,8 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
     );
     assert_eq!(completed.detail, "review · completed");
     assert_eq!(resolved.edges.len(), 1);
-    assert_eq!((resolved.edges[0].from, resolved.edges[0].to), (0, 1));
+    assert_eq!((resolved.edges[0].from, resolved.edges[0].to), (1, 0));
+    assert!(resolved.source.contains("  n1 -->|blocks| n0\n"));
     assert!(resolved.source.contains("Completed prerequisite"));
     assert!(!resolved.source.contains("Missing from the admitted board"));
 

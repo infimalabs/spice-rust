@@ -61,7 +61,7 @@ impl WorkMapLens {
     const fn context(self) -> &'static str {
         match self {
             Self::Dependency => {
-                "Dependency edges point from each dependent task to the prerequisite it requires."
+                "Dependency edges point from each prerequisite task to the dependent task it blocks."
             }
             Self::Origin => {
                 "Task ancestry includes shared parents; non-task ACK and origin identities remain exact."
@@ -506,14 +506,22 @@ fn render_truncation(
                 <span>{format!("{total} omitted · nothing silently hidden")}</span>
             </div>
             <ul class="work-map-frontier-list">
-                {for truncation.frontier.iter().map(|frontier| html! {
-                    <li>{format!(
-                        "Depth {} · {} · {} → {}",
-                        frontier.depth,
-                        lens::edge_label(frontier.edge.relation),
-                        reference_label(&frontier.edge.from),
-                        reference_label(&frontier.edge.to),
-                    )}</li>
+                {for truncation.frontier.iter().map(|frontier| {
+                    let edge = &frontier.edge;
+                    let (from, to) = if edge.relation == TaskRelationKind::Dependency {
+                        (&edge.to, &edge.from)
+                    } else {
+                        (&edge.from, &edge.to)
+                    };
+                    html! {
+                        <li>{format!(
+                            "Depth {} · {} · {} → {}",
+                            frontier.depth,
+                            lens::edge_label(edge.relation),
+                            reference_label(from),
+                            reference_label(to),
+                        )}</li>
+                    }
                 })}
                 if truncation.omitted > 0 {
                     <li>{format!("{} additional frontier edges exceed the metadata bound", truncation.omitted)}</li>
