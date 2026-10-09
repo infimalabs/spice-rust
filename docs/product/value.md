@@ -415,10 +415,11 @@ first detail read holds a full sheet height, so reads answering, other lanes
 changing the board, and jobs coming and going move nothing below them. Every
 selected task is a root in the immediate graph built from the admitted board
 snapshot; direct dependencies outside the set and missing durable identities
-remain explicit. Typed relationship reads enrich Dependency, Lineage, Review,
-and Lifecycle lenses within their protocol root and node bounds, but those
-bounds never remove a selected root. Lens, direction, depth, and enrichment
-expansion controls qualify only the typed read they change. The graph has no
+remain explicit. Dependency edges point from each prerequisite to the dependent
+it **blocks**. Typed relationship reads enrich Dependency, Lineage, Review, and
+Lifecycle lenses within their protocol root and node bounds, but those bounds
+never remove a selected root. Lens, direction, depth, and enrichment expansion
+controls qualify only the typed read they change. The graph has no
 zoom, pan, or reset rail: wheel, touch, pointer drag, pinch, and keyboard input
 manipulate its viewport directly, with fit as the lower bound. A plain vertical
 wheel event consumes the graph range available in its direction and transfers

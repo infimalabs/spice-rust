@@ -79,7 +79,7 @@ pub(crate) fn project(
     let mut edges = Vec::new();
     if relation == TaskRelationKind::Dependency {
         for edge in local.edges() {
-            let (Some(&from), Some(&to)) = (
+            let (Some(&dependent), Some(&prerequisite)) = (
                 local_to_merged.get(&edge.dependent()),
                 local_to_merged.get(&edge.prerequisite()),
             ) else {
@@ -91,7 +91,13 @@ pub(crate) fn project(
             {
                 continue;
             }
-            push_edge(&mut edges, &mut edge_keys, from, to, "requires");
+            push_edge(
+                &mut edges,
+                &mut edge_keys,
+                prerequisite,
+                dependent,
+                edge_label(relation),
+            );
         }
     }
 
@@ -126,8 +132,11 @@ pub(crate) fn project(
             if !included.contains(&old_from) || !included.contains(&old_to) {
                 continue;
             }
-            let from = *identities.get(&edge.from)?;
-            let to = *identities.get(&edge.to)?;
+            let (from, to) = if relation == TaskRelationKind::Dependency {
+                (*identities.get(&edge.to)?, *identities.get(&edge.from)?)
+            } else {
+                (*identities.get(&edge.from)?, *identities.get(&edge.to)?)
+            };
             push_edge(&mut edges, &mut edge_keys, from, to, edge_label(relation));
         }
     }
@@ -420,7 +429,7 @@ fn compact_identity(identity: impl ToString) -> String {
 pub(crate) const fn edge_label(relation: TaskRelationKind) -> &'static str {
     match relation {
         TaskRelationKind::Origin => "origin",
-        TaskRelationKind::Dependency => "requires",
+        TaskRelationKind::Dependency => "blocks",
         TaskRelationKind::Review => "review",
         TaskRelationKind::Lifecycle => "transition",
         TaskRelationKind::Claim => "held by",

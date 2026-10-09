@@ -168,6 +168,11 @@ four-pixel outer inline rails. Task handles remain borderless segments inside
 their stem container; the final handle meets the container's single right rail.
 The rows keep their existing shapes, spacing, scrolling, counts, and navigation.
 
+The task overview's Dependency graph points from each prerequisite to every
+dependent it blocks and labels that edge **blocks**. Prerequisite and dependent
+controls still filter by their named task relationship before the graph presents
+that relationship in blocking order.
+
 ## Team composer controls
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
