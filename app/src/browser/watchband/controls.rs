@@ -175,6 +175,11 @@ pub(crate) enum TeamControlAction {
         request: TeamRequest,
         issue: String,
     },
+    /// The resident answered this request, but newer lane authority already
+    /// arrived: settle the request to that authority without an issue.
+    SettleSuperseded {
+        request: TeamRequest,
+    },
 }
 
 impl Reducible for TeamControls {
@@ -216,6 +221,7 @@ impl Reducible for TeamControls {
             TeamControlAction::SettleIssue { request, issue } => {
                 next.settle_issue(request, issue);
             }
+            TeamControlAction::SettleSuperseded { request } => next.settle_stale(request),
         }
         Rc::new(next)
     }
@@ -420,8 +426,8 @@ impl TeamControls {
         self.teams.entry(request.team).or_default().issue = Some(issue);
     }
 
-    /// Restore authority for the selections this unapplied command carried,
-    /// unless a later request has already replaced them.
+    /// Restore authority for the selections this request carried, unless a
+    /// later request has already replaced them.
     fn settle_stale(&mut self, request: TeamRequest) {
         let Some(state) = self.teams.get_mut(&request.team) else {
             return;
