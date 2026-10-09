@@ -205,12 +205,6 @@ fn send_button(
             onlostpointercapture={touch_release}
         >
             <span class="team-send-word">{"Send"}</span>
-            if recipients != 0 {
-                <span class="app-count-badge team-send-recipient-count" aria-hidden="true">{recipients}</span>
-            }
-            if broadcast_recipients != 0 {
-                <span class="app-count-badge team-send-broadcast-count" aria-hidden="true">{broadcast_recipients}</span>
-            }
         </button>
     }
 }
