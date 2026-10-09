@@ -267,11 +267,12 @@ inside a 26px-high groove, inset 2px at both ends; label travel follows that
 same rail at every stop. Both rows use one light map: Quiet and Steer keep the
 neutral groove, Speak and Drive illuminate its complete backplane green, and
 Narrate and Drain illuminate it amber. Each colored stop is one uniform
-full-groove wash, without a dark center band or visible point emitter. Its
-translucent flyer visibly bends the transmitted color through opposing lens
-highlights and shadows without becoming an opaque colored face. Allocation
-reads STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and Down/Left
-downward.
+full-groove wash, without a dark center band or visible point emitter. The
+flyer's near-clear center transmits that wash while opposing inset bevels,
+curved edge caustics, and low-radius backdrop diffusion gather the color into
+a thick lens perimeter rather than painting a stripe across its face.
+Allocation reads STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and
+Down/Left downward.
 Narrate voices live card edges; Speak voices resident-classified final answers and
 acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
 history never auto-plays.
