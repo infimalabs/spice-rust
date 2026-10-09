@@ -183,9 +183,9 @@ only its final selection. Reduced motion removes travel and commits
 immediately, without removing state distinctions.
 
 SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
-for one recipient, equal separated arcs for several. Its recipient total wears
-the shared numeric badge rather than becoming tiny button copy, and follows
-sendable typed text, quotes, and images under current command admission. A
+for one recipient, equal separated arcs for several. The button title names the
+recipient total, which follows sendable typed text, quotes, and images under
+current command admission. A
 running team without drafted content has no recipient light; an idle team
 without agents or drafts dims and disables SEND. A pending allocation-policy
 command admits no send and lights no recipients. Existing wake/send and
@@ -205,11 +205,11 @@ than any one accent. SEND carries no numeric badge.
 Vacant members do not create broadcast recipients, and an empty vacant composer
 contributes no ordinary SEND rim arc: when no member has sendable content, the
 button removes its recipient-rim paint while retaining the neutral face.
-Ordinary arcs and the accessible count come only from reachable members
-holding sendable content; a vacant member joins them only when it holds a draft
-that a press would wake it to receive. The rim is paint on the one SEND button,
-never a set of per-recipient hover targets, so an empty vacant member adds no
-arc, seam, label, or hit region.
+Ordinary arcs and the recipient total in the button title come only from
+reachable members holding sendable content; a vacant member joins them only
+when it holds a draft that a press would wake it to receive. The rim is paint
+on the one SEND button, never a set of per-recipient hover targets, so an empty
+vacant member adds no arc, seam, label, or hit region.
 
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared

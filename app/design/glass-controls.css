@@ -90,9 +90,7 @@ button.glass:disabled { cursor: not-allowed; }
 .panel[data-preview-state="idle"] .send { opacity: .68; }
 .panel:not([data-preview-state="off"])::before { content: ""; position: absolute; right: 5px; top: 4px; width: 2px; height: 2px; border-radius: 50%; background: var(--agent-accent, #8ad5b4); box-shadow: 0 0 2px rgb(130 240 185 / .4); }
 .send .recipient-ring { position: absolute; inset: -1px; border-radius: 50%; border: 2px solid var(--agent-accent, #88cbb5); pointer-events: none; }
-.send .recipient-count { position: absolute; bottom: 8px; font: 600 5px ui-monospace, monospace; opacity: .85; }
-.send:disabled .recipient-ring,
-.send:disabled .recipient-count { display: none; }
+.send:disabled .recipient-ring { display: none; }
 /* Production order: the first recipient opens at the right edge, the rest
    follow counterclockwise, and a darker 1.4° seam closes each arc. */
 .panel[data-preview-state="many"] .recipient-ring {
