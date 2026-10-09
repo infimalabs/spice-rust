@@ -377,14 +377,15 @@ zero, the main agent, at the far-left origin, later members rightward. Chat
 projects that order from its right-side controls; neither changes identity,
 accent, keyboard order, or attribution.
 
-The first section pairs a compact operator identity row — the avatar carries the
-badge, which a Gravatar shows in a band across its lower third at the same size —
-with three fixed resident fields: connection, appliance version, and epoch,
-whose loading values keep settled geometry. Operator identity is repository Git
-configuration: the row presents Git `user.name` and `user.email` read-only, names
-each one Git leaves unset, and no app setting overrides either. Weekly quota
-account cards carry the same capacity-order accent as their layers in the stable
-Spice-button fill.
+The Spice sidebar opens with one compact resident/control row: connection state
+and the installed Spice version share the left side, while global `TURBO` keeps
+the right. An available app update turns the version into the same explicit
+reload action; neither the journal cursor nor resident epoch crowds this primary
+row. The following **You** section pairs the operator avatar — including the
+same-size Gravatar band and initials badge — with repository Git `user.name` and
+`user.email` as read-only reference data. Each absent Git value is named, and no
+app setting overrides either. Weekly quota account cards carry the same
+capacity-order accent as their layers in the stable Spice-button fill.
 Every account card keeps each reset credit on its compact line, with provider
 detail followed by a live relative grant age, a live expiration countdown, and
 exact timestamps on hover. Long provider prose truncates. "No account usage
@@ -726,13 +727,13 @@ issue when it replaces that state. A refusal, a fault, or a reply that carries n
 lane authority for this session restores the resident's flag and reports the
 team issue.
 
-Settings is the first section of the Spice side view. Its separately admitted
-global `TURBO` control stands at the right end of the heading row, with the
-same neutral 34px Flush etched-glass face and on/off lettering as team TURBO.
-The control remains disabled until settings have loaded and the resident offers
-that command. In the identity section below it, the Save action sits under the
-operator avatar and stays the form's submit action, so Enter in either field
-saves as well.
+The Spice side view's first body row has no section heading. Its resident
+connection and installed-version summary stands at the left of the separately
+admitted global `TURBO` control. The version remains keyboard-inspectable and
+becomes a reload button when a newer app is available. Global `TURBO` retains
+the same neutral 34px Flush etched-glass face and on/off lettering as team
+TURBO, and remains disabled until settings have loaded and the resident offers
+that command. The read-only Git identity section follows.
 Fast mode is additive: a member launches in fast mode exactly when its own flag,
 its team's flag, or the global setting is on, so turning one level off never
 slows a member another level still enables. Running OMP agents whose effective

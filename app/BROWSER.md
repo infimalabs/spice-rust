@@ -84,6 +84,12 @@ Title and icon are rewritten only when this state changes.
 
 ## Resident topology in the global menu
 
+The Spice view opens with one heading-free control row: current connection state
+and the inspectable product version stack at the left, and global TURBO remains
+at the right. An available app generation turns the version into the explicit
+reload control. Epoch and stream cursor stay out of this primary row. The
+read-only Git identity section follows.
+
 Resident topology is one interactive roster. Each team contains compact agent
 cards with presence, pending steering, liveness, held task, kept jobs, model,
 and provider emblem. A teamed agent's card opens its composer in Chat; the same
