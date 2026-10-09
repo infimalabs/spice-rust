@@ -199,14 +199,13 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   padding: 0 var(--app-horn-tab-inset);
   overflow: clip;
   border: 0;
-  border-inline: var(--quote-rail) solid var(--line);
+  border-inline: var(--message-rail) solid var(--line);
   background: var(--control);
   color: var(--muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
-.app-horn-tab--wide { border-inline-width: var(--message-rail); }
 .app-horn-tab__label { color: var(--muted); opacity: .72; }
 .app-horn-tab--group { gap: 0; padding: 0; }
 .app-horn-tab--group > button {
