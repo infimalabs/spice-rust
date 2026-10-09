@@ -175,9 +175,6 @@ pub(crate) enum TeamControlAction {
         request: TeamRequest,
         issue: String,
     },
-    SettleStale {
-        request: TeamRequest,
-    },
 }
 
 impl Reducible for TeamControls {
@@ -219,7 +216,6 @@ impl Reducible for TeamControls {
             TeamControlAction::SettleIssue { request, issue } => {
                 next.settle_issue(request, issue);
             }
-            TeamControlAction::SettleStale { request } => next.settle_stale(request),
         }
         Rc::new(next)
     }

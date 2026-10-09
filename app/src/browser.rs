@@ -886,7 +886,11 @@ fn apply_team_configuration(
             });
         }
         wire::Outcome::Reply(_) => {
-            team_controls.dispatch(TeamControlAction::SettleStale { request });
+            team_controls.dispatch(TeamControlAction::SettleIssue {
+                request,
+                issue: "Team configuration reply did not apply to current lane authority."
+                    .to_owned(),
+            });
         }
         wire::Outcome::Refusal(refusal) => {
             team_controls.dispatch(TeamControlAction::SettleIssue {
