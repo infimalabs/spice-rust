@@ -537,12 +537,10 @@ impl Runtime {
         config: &SurfaceConfig,
         snapshot: &bus::TaskSnapshot,
     ) -> CommandResult<Attempted> {
-        let cursor = snapshot
-            .cursor()
-            .expect("reconciliation admitted one nonempty task snapshot");
         let occupant = new_uuid();
         match trigger {
             Trigger::PendingInbox => {
+                let woken = super::steering::woken_inbox(bus, lane)?;
                 let wake = lane_surface::begin_automatic_wake(
                     bus,
                     paths,
@@ -554,20 +552,21 @@ impl Runtime {
                     occupant,
                     Some(snapshot),
                     None,
+                    true,
                 );
                 match wake {
                     Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {
-                        Ok(pending_launch(trigger, lane, cursor, None, launch))
+                        Ok(pending_launch(trigger, lane, Some(woken), None, launch))
                     }
                     Ok(lane_surface::BeginAutomaticWake::Unstarted(failure)) => {
                         super::steering::dead_letter_pending(
-                            bus, paths, epoch, lane, cursor, &failure,
+                            bus, paths, epoch, lane, &woken, &failure,
                         )
                         .map(Attempted::DeadLettered)
                     }
                     Err(failure) if pending_start_failure_is_terminal(&failure) => {
                         super::steering::dead_letter_pending(
-                            bus, paths, epoch, lane, cursor, &failure,
+                            bus, paths, epoch, lane, &woken, &failure,
                         )
                         .map(Attempted::DeadLettered)
                     }
@@ -585,9 +584,10 @@ impl Runtime {
                 occupant,
                 Some(snapshot),
                 None,
+                false,
             )? {
                 lane_surface::BeginAutomaticWake::Launch(launch) => {
-                    Ok(pending_launch(trigger, lane, cursor, None, launch))
+                    Ok(pending_launch(trigger, lane, None, None, launch))
                 }
                 lane_surface::BeginAutomaticWake::Unstarted(failure) => Err(failure),
             },
@@ -614,10 +614,11 @@ impl Runtime {
                     occupant,
                     None,
                     Some(&claim),
+                    false,
                 );
                 match launched {
                     Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {
-                        Ok(pending_launch(trigger, lane, cursor, Some(claim), launch))
+                        Ok(pending_launch(trigger, lane, None, Some(claim), launch))
                     }
                     Ok(lane_surface::BeginAutomaticWake::Unstarted(failure)) | Err(failure) => {
                         match crate::board_command::release_automatic(bus, repository, &claim) {
@@ -641,7 +642,7 @@ fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
 
 const RETRYABLE_START_REFUSALS: [&str; 4] = [
     "lifecycle::wake-capacity-moved",
-    "lifecycle::snapshot-moved",
+    "lifecycle::wake-inbox-moved",
     "lifecycle::held-claim-head-moved",
     "lifecycle::held-claim-lease-moved",
 ];
@@ -1173,7 +1174,7 @@ mod tests {
         )));
         for reason in [
             "lifecycle::wake-capacity-moved",
-            "lifecycle::snapshot-moved",
+            "lifecycle::wake-inbox-moved",
             "lifecycle::held-claim-head-moved",
             "lifecycle::held-claim-lease-moved",
         ] {
@@ -1214,7 +1215,7 @@ mod tests {
             .refused(
                 Trigger::HeldClaim,
                 selected,
-                "lifecycle::snapshot-moved",
+                "lifecycle::wake-inbox-moved",
                 instant(10),
                 &mut Vec::new(),
             )

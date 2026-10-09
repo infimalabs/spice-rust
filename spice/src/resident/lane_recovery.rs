@@ -17,7 +17,7 @@ use wire::{
 #[cfg(test)]
 use super::lane_surface::await_session;
 use super::lane_surface::{OccupantLaunchRequest, resume_session, session_fact, session_source};
-use super::shutdown::{current_residency, guard_residency};
+use super::shutdown::{current_residency, guard_residency, rebase_lane};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome, write,
 };
@@ -135,7 +135,7 @@ pub(super) fn finish_import(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command: &wire::AdmittedCommand,
-    pending: PendingImport,
+    mut pending: PendingImport,
     launched: CommandResult<super::supervisor::Launch>,
 ) -> Outcome<CommandAnswer> {
     let launch = match launched {
@@ -161,6 +161,14 @@ pub(super) fn finish_import(
             &error.to_string(),
         ));
     }
+    pending.context.observed =
+        match rebase_lane(bus, epoch, &pending.context.observed, pending.request.lane) {
+            Ok(observed) => observed,
+            Err(outcome) => {
+                stop_lane(seats, pending.request.lane);
+                return typed_outcome(outcome);
+            }
+        };
     let answer = LaneChangeAnswer {
         lane: pending.request.lane,
         topology_revision: pending.context.observed.body().topology_revision,

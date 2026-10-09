@@ -252,34 +252,39 @@ pub(super) struct DeadLetter {
     pub(super) requeue: String,
 }
 
-/// Park every pending directive on a lane after one terminal start failure.
+/// Pending steering one inbox wake was admitted to deliver.
+pub(super) struct WokenInbox(Vec<journal::JournalHead<wire::SteeringHead>>);
+
+/// Read the pending steering an inbox wake on `lane` is admitted to deliver.
+pub(super) fn woken_inbox(bus: &Bus, lane: CanonicalUuid) -> CommandResult<WokenInbox> {
+    bus.read(move |read| crate::steering_read::pending(read, Some(lane)))
+        .map(WokenInbox)
+        .map_err(|error| store_fault("steer::dead-letter-index-unreadable", &error.to_string()))
+}
+
+/// Park the steering one inbox wake was admitted to deliver after its start
+/// failed terminally.
+///
+/// Only directives whose standing is unchanged since admission park. Steering
+/// that arrived or moved while the occupant proved its session stays pending
+/// for the next wake, and unrelated commits never refuse the parking.
 pub(super) fn dead_letter_pending(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
-    cursor: Seq,
+    woken: &WokenInbox,
     failure: &Outcome<()>,
 ) -> CommandResult<Vec<DeadLetter>> {
-    let (observed_cursor, heads) = bus
-        .read(move |read| {
-            Ok((
-                read.cursor()?,
-                crate::steering_read::pending(read, Some(lane))?,
-            ))
-        })
+    let current = bus
+        .read(move |read| crate::steering_read::pending(read, Some(lane)))
         .map_err(|error| store_fault("steer::dead-letter-index-unreadable", &error.to_string()))?;
-    if observed_cursor != Some(cursor) {
-        return Err(Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "steer::dead-letter-snapshot-moved".to_owned(),
-                Some("task-snapshot-cursor".to_owned()),
-                Some(cursor.to_string()),
-                observed_cursor.map(|observed| observed.to_string()),
-            )
-            .with_detail("reconcile pending inbox standing before parking it"),
-        )));
-    }
+    let heads = woken
+        .0
+        .iter()
+        .filter(|head| current.contains(head))
+        .cloned()
+        .collect::<Vec<_>>();
     if heads.is_empty() {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
@@ -299,12 +304,14 @@ pub(super) fn dead_letter_pending(
         Outcome::Reply(_) => unreachable!("clock reads are not command replies"),
     })?;
     let mut proposal = write_at(Actor::Spice, epoch, at, Producer::ResidentRecognition)?;
+    let standing = heads.clone();
     proposal.guard(JournalGuard::new(move |read| {
-        if read.cursor()? == Some(cursor) {
-            Ok(())
-        } else {
-            Err(GuardError::refused("steer::dead-letter-snapshot-moved"))
+        for head in standing {
+            if read.steering_head(head.body().directive)? != Some(head) {
+                return Err(GuardError::refused("steer::dead-letter-standing-moved"));
+            }
         }
+        Ok(())
     }));
     for directive in &heads {
         let requeue = format!("spice steer recover {}", directive.body().directive);

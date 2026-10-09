@@ -61,7 +61,7 @@ pub(super) use session::{
 pub(super) use team::{arrange as arrange_teams, configure};
 
 use super::read_materializations::CurrentReads;
-use super::shutdown::{current_residency, guard_residency};
+use super::shutdown::{current_residency, guard_residency, rebase_lane};
 use super::supervisor::terminal;
 use super::{
     CommandEffects, CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
