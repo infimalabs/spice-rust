@@ -5,10 +5,10 @@
 //! rather than inside the card or control that issued them, so no lane menu or
 //! team surface resizes while a request is in flight. A team policy send that
 //! lands reports nothing: its control already holds the new stop. Each notice
-//! names the member or team
-//! it concerns, the toast's live region announces it, and a request's outcome
-//! replaces its progress. A request that disappears while still in flight
-//! reports how it ended, so no progress message outlives its request.
+//! names the member or team it concerns, the toast's live region announces it,
+//! and a request's outcome replaces its progress. A request that disappears
+//! while still in flight reports how it ended, so no progress message outlives
+//! its request.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
