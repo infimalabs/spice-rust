@@ -209,7 +209,7 @@ fn render_spice_sidebar(
 ) -> sidebar::Content {
     let body = html! {
         <div class="app-spice-sidebar-content">
-            {spice_sidebar::render_appearance()}
+            {spice_sidebar::render_global_settings(runtime, render.sender)}
             {spice_sidebar::render_operator_settings(runtime, render.sender)}
             {spice_sidebar::render_resident(
                 render.connection,
@@ -218,13 +218,13 @@ fn render_spice_sidebar(
                 (**render.identity).as_ref(),
                 (**render.app_update).as_ref(),
             )}
-            {spice_sidebar::render_global_settings(runtime, render.sender)}
             {quota::render_sidebar(runtime)}
             {render_spice_topology(render, runtime)}
         </div>
     };
     let anchor = html! {
         <div class="app-spice-sidebar-anchor">
+            {spice_sidebar::render_theme_selector()}
             {spice_sidebar::render_capacity(runtime)}
             {chrome::render_spice_button(chrome::SpiceButton {
                 connection: render.connection,

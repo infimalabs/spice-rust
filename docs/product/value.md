@@ -313,9 +313,10 @@ no prose beside it and nothing in the bar moves. A quota sample in flight
 changes no word, row, or layer; only a finished attempt changes what quota
 shows.
 
-The open sidebar places the cumulative plan-weighted weekly percentage
-immediately beside the Spice button. After a failed refresh it mutes while
-retaining the last good percentage; before any retained weekly figure exists,
+The open sidebar stacks the cumulative plan-weighted weekly percentage
+directly above the Spice button, with the light/system/dark theme selector
+beside that button in the header. After a failed refresh the percentage mutes
+while retaining the last good value; before any retained weekly figure exists,
 the same fixed-width place shows a loading or unavailable mark.
 
 Provider quota detail rows preserve each provider's authoritative remaining
@@ -672,10 +673,13 @@ colored edge; the range flyers keep neutral edges at every stop. Pressing the
 composer's `TURBO` flips that team flag, which the resident keeps across
 restarts.
 
-The Settings section in the Spice side view gives its separately admitted global
-`TURBO` control the same neutral 34px Flush etched-glass face and on/off
-lettering. The control remains disabled until settings have loaded and the
-resident offers that command.
+Settings is the first section of the Spice side view. Its separately admitted
+global `TURBO` control stands at the right end of the heading row, with the
+same neutral 34px Flush etched-glass face and on/off lettering as team TURBO.
+The control remains disabled until settings have loaded and the resident offers
+that command. In the identity section below it, the Save action sits under the
+operator avatar and stays the form's submit action, so Enter in either field
+saves as well.
 Fast mode is additive: a member launches in fast mode exactly when its own flag,
 its team's flag, or the global setting is on, so turning one level off never
 slows a member another level still enables. Running OMP agents whose effective

@@ -506,6 +506,8 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 @media (prefers-reduced-motion: no-preference) {
   .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface) { opacity: 0; }
 }
+/* The theme selector stands beside the Spice button; the weekly percentage
+   stacks above the button outside this box. */
 .app-spice-sidebar-anchor {
   position: absolute;
   z-index: 3;
@@ -514,10 +516,10 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   display: grid;
   grid-template-columns: auto var(--app-header-control);
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
-  padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 4ch + 28px);
+  padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 3 * 28px + 2px + 30px);
 }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
