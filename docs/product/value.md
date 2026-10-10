@@ -702,12 +702,14 @@ product: reading many live agents is impossible if the board reflows.
 
 ### Status carries both tone and count
 
-Lane indicators use saturation for recency. Global task pills spell ready,
-active, and blocked-or-deferred counts rather than asking colour to carry them;
+Lane indicators use saturation for recency. Global task tabs show one neutral
+open-total badge and spell the ready, active, and blocked-or-deferred breakdown
+in their title and accessible name rather than asking colour to carry it;
 hidden stems sort after public ones with the same breakdown, because a stem the
-allocator skips is the one an operator triages by eye. The unpadded pill may
-resize as digit widths change. A team header's per-task pills carry no counts:
-each is one task, and its tone carries in-flight or dormant state.
+allocator skips is the one an operator triages by eye. A stem badge may resize
+as digit widths change. A team header's roll-up tabs carry the same
+open-total badge, and its per-task handles carry no counts: each is one task,
+and its tone carries in-flight or dormant state.
 
 **Value:** peripheral liveness and exact counts at once.
 
