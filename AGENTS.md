@@ -36,24 +36,25 @@ mutable cache to work around a stale generation.
 
 ## Permanent test value
 
-Permanent tests are maintained product contracts, not proof that one change
-worked. Add one only when a plausible bug could violate current observable
-behavior: a contract, boundary, invariant, state transition, precedence rule,
-or real error. Prefer deterministic, fast, in-process, in-memory tests.
+Permanent tests are maintained product contracts. Every permanent test must be
+fast, deterministic, and in-process. It must not spawn any process, including
+Git, the `spice` binary, keepers, `dsymutil`, or Cargo. Slow tests, regression
+tests that pin one past incident, and point-in-time assertions of incidental or
+retired behavior are not admitted to the permanent suite.
 
-Do not add a test solely because a bug once occurred. Do not retain
-process-orchestration tests when the same contract can be exercised in process,
-or assertions of source text, plumbing and wiring, mock echoes, incidental
-defaults, exact wording, implementation shape, or retired behavior. Bare
-does-not-throw, non-empty-output, and length-grew checks do not earn permanent
-maintenance. Delete an existing test that enforces vestigial behavior instead
-of updating its expected output.
+Add a permanent test only when a plausible bug could violate current observable
+behavior: a contract, boundary, invariant, state transition, precedence rule, or
+real error. Assertions of source text, plumbing and wiring, mock echoes,
+incidental defaults, exact wording, implementation shape, bare does-not-throw,
+non-empty-output, and length-grew checks do not earn permanent maintenance.
+
+Delete an inadmissible existing test outright when the current contract is
+already covered or is not worth permanent coverage. Otherwise exercise the
+contract in process through the narrowest real seam.
 
 Prove a change by reproducing the failure and exercising the actual changed
-path. Use a throwaway script or smoke check when that evidence does not meet the
-bar for a permanent test. Use a broader or slower process test only when it is
-the indispensable boundary of a current external contract and no focused
-substitute can protect that contract.
+path. When that proof requires a process or another slow external surface, use a
+throwaway script or smoke check and do not retain it in the permanent suite.
 
 ## Rust source organization
 
