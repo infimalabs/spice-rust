@@ -29,6 +29,7 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
         None,
         None,
         false,
+        None,
     );
 
     match outcome {
@@ -91,6 +92,7 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         None,
         None,
         false,
+        None,
     );
 
     match outcome {
@@ -117,8 +119,8 @@ fn a_vacated_job_horizon_renews_the_claim_through_successor_carry() {
     let mut claimed = vacant.clone();
     claimed.occupant = Some(predecessor);
     claimed.disposition = OCCUPIED.to_owned();
-    let observed = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
-    let start = shifted(observed, -20);
+    let renewal: wire::Instant = "2031-04-12T18:44:10.271Z".parse().expect("fixture instant");
+    let start = shifted(renewal, -20);
     let initial_expiry = shifted(start, 60);
     let maximum = shifted(start, crate::board_command::AUTOMATIC_MAXIMUM_SECONDS);
     crate::resident::lane_surface::seed_task_claim(
@@ -131,7 +133,6 @@ fn a_vacated_job_horizon_renews_the_claim_through_successor_carry() {
         maximum,
     );
 
-    let renewal = wire::Instant::new(jiff::Timestamp::now()).expect("renewal clock is canonical");
     let delivered = shifted(renewal, 10);
     let bound = shifted(delivered, crate::board_command::AUTOMATIC_ROLLING_SECONDS);
     assert_eq!(
@@ -173,6 +174,7 @@ fn a_vacated_job_horizon_renews_the_claim_through_successor_carry() {
             Some(&decision),
             None,
             false,
+            Some(delivered),
         )
         .expect("successor wake commits"),
         AutomaticWake::Started,

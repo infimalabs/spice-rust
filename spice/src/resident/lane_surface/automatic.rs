@@ -359,6 +359,11 @@ pub(in crate::resident) fn begin_automatic_wake(
     }))
 }
 
+fn claim_promotion_instant() -> CommandResult<wire::Instant> {
+    wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| store_fault("lifecycle::claim-promotion-clock", &error.to_string()))
+}
+
 pub(in crate::resident) fn finish_automatic_wake(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -366,6 +371,26 @@ pub(in crate::resident) fn finish_automatic_wake(
     seats: &mut Seats,
     pending: PendingAutomaticWake,
     launched: CommandResult<super::super::supervisor::Launch>,
+) -> CommandResult<AutomaticWake> {
+    finish_automatic_wake_with_clock(
+        bus,
+        paths,
+        epoch,
+        seats,
+        pending,
+        launched,
+        claim_promotion_instant,
+    )
+}
+
+fn finish_automatic_wake_with_clock(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    pending: PendingAutomaticWake,
+    launched: CommandResult<super::super::supervisor::Launch>,
+    promotion_clock: impl FnOnce() -> CommandResult<wire::Instant>,
 ) -> CommandResult<AutomaticWake> {
     let launch = match launched {
         Ok(launch) => launch,
@@ -400,6 +425,7 @@ pub(in crate::resident) fn finish_automatic_wake(
             claim: pending.admitted.claim.as_ref(),
             renewal: pending.admitted.renewal.as_ref(),
         },
+        promotion_clock,
     ) {
         stop_lane(seats, pending.lane);
         return Err(outcome);
@@ -424,6 +450,7 @@ pub(in crate::resident) fn wake_automatic(
     decision: Option<&bus::TaskSnapshot>,
     reserved: Option<&crate::board_command::AutomaticClaim>,
     inbox: bool,
+    promotion_at: Option<wire::Instant>,
 ) -> CommandResult<AutomaticWake> {
     match begin_automatic_wake(
         bus, paths, epoch, seats, runtime, steering, lane, occupant, decision, reserved, inbox,
@@ -431,7 +458,19 @@ pub(in crate::resident) fn wake_automatic(
         BeginAutomaticWake::Unstarted(outcome) => Ok(AutomaticWake::Unstarted(outcome)),
         BeginAutomaticWake::Launch(launch) => {
             let (launch, pending) = launch.into_parts();
-            finish_automatic_wake(bus, paths, epoch, seats, pending, launch.establish())
+            let launched = launch.establish();
+            match promotion_at {
+                Some(at) => finish_automatic_wake_with_clock(
+                    bus,
+                    paths,
+                    epoch,
+                    seats,
+                    pending,
+                    launched,
+                    || Ok(at),
+                ),
+                None => finish_automatic_wake(bus, paths, epoch, seats, pending, launched),
+            }
         }
     }
 }
@@ -735,14 +774,14 @@ fn commit_automatic_wake(
     row: &wire::LaneResidency,
     proven: &ProvenOccupant,
     authority: WakeCommitAuthority<'_>,
+    promotion_clock: impl FnOnce() -> CommandResult<wire::Instant>,
 ) -> CommandResult<()> {
     let WakeCommitAuthority {
         inbox,
         claim,
         renewal,
     } = authority;
-    let at = wire::Instant::new(jiff::Timestamp::now())
-        .map_err(|error| store_fault("lifecycle::claim-promotion-clock", &error.to_string()))?;
+    let at = promotion_clock()?;
     let observed = rebase_lane(bus, epoch, observed, row.lane)?;
     let (mut next, mut write, started) =
         prepare_wake_commit(epoch, &observed, row, proven, inbox, claim)?;

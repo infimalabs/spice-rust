@@ -713,10 +713,11 @@ pub(in crate::resident) fn renew_vacated_claim_at(
 ) -> CommandResult<Fired> {
     let bound = vacated_reclaim_bound(delivered)?;
     let snapshot = timer_snapshot(bus)?;
-    let authority = desired_renewals(
+    let authority = desired_renewals_with_clock(
         snapshot.authority.tasks(),
         snapshot.authority.residency(),
         |_| Some(bound),
+        || Ok(at),
     )?
     .into_values()
     .find(|authority| &authority.stamp == stamp)
@@ -847,14 +848,25 @@ fn desired_renewals(
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
     vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
+    desired_renewals_with_clock(tasks, residency, vacated_bound, || {
+        Instant::new(jiff::Timestamp::now())
+            .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))
+    })
+}
+
+fn desired_renewals_with_clock(
+    tasks: &[journal::TaskHeads],
+    residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
+    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
+    clock: impl FnOnce() -> CommandResult<Instant>,
+) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
         return Ok(BTreeMap::new());
     };
     if residency.body().state != ResidentState::Seated {
         return Ok(BTreeMap::new());
     }
-    let now = Instant::new(jiff::Timestamp::now())
-        .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+    let now = clock()?;
     let mut desired = BTreeMap::new();
     for heads in tasks {
         let Some(claim) = heads.claim() else { continue };
