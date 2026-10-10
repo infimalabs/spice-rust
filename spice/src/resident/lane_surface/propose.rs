@@ -121,11 +121,12 @@ pub(super) fn propose_drain(
     Ok(write)
 }
 
-/// Propose the occupant and residency one woken lane records.
+/// Propose the occupant, carried claim, and residency one woken lane records.
 ///
-/// A start is also where a pending replacement is taken: the successor record
-/// lands in the same commit that seats the occupant, so no lane is ever
-/// durably renewed without one running.
+/// A start is also where a pending replacement and any predecessor claim are
+/// taken: the successor records land in the same commit that seats the
+/// occupant, so no lane is ever durably renewed without one running and no
+/// seated successor observes predecessor-bound task authority.
 #[allow(
     clippy::too_many_arguments,
     reason = "one wake proposal carries the complete admitted command boundary"
@@ -136,6 +137,7 @@ pub(super) fn propose_wake(
     observed: &journal::JournalHead<wire::ResidencyHead>,
     epoch: CanonicalUuid,
     proven: &ProvenOccupant,
+    claim: Option<&super::automatic::HeldClaimAuthority>,
     renewal: Option<&wire::LaneRenewalRecord>,
     answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
@@ -158,6 +160,9 @@ pub(super) fn propose_wake(
         Producer::ResidentRecognition,
     )?;
     guard_residency(&mut write, observed);
+    if let Some(claim) = claim {
+        super::automatic::guard_held_claim(&mut write, claim);
+    }
     let declared = write
         .fact(
             session_fact(session, proven.source),
@@ -176,6 +181,23 @@ pub(super) fn propose_wake(
             FactCause::Pending(declared),
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
+    let started = match claim {
+        Some(claim) => {
+            let at = wire::Instant::new(jiff::Timestamp::now()).map_err(|error| {
+                store_fault("lifecycle::claim-promotion-clock", &error.to_string())
+            })?;
+            let carried = super::automatic::carry_held_claim(
+                &mut write,
+                claim,
+                request.lane,
+                occupant,
+                epoch,
+                started,
+            )?;
+            super::automatic::promote_woken_lease(&mut write, claim, epoch, at, carried)?
+        }
+        None => started,
+    };
     let started = match renewal {
         Some(renewal) => {
             super::renewal::append_successor(&mut write, &mut next, renewal, session, started)?
