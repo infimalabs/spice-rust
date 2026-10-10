@@ -31,8 +31,8 @@ use wire::{Actor, CanonicalUuid, ClaimDisposition, Seq, TaskStamp};
 use super::super::super::RuntimePaths;
 use super::super::super::daemon::observer;
 use super::super::{
-    REQUEST_BYTES, STATE_BYTES, now_millis, process_exists_raw, publish_json, read_json,
-    signal_group,
+    REQUEST_BYTES, STATE_BYTES, millis_since_epoch, now_millis, process_exists_raw, publish_json,
+    read_json, signal_group,
 };
 
 /// The hidden entry the keeper runs under.
@@ -673,8 +673,13 @@ pub(in crate::resident) struct Job {
 impl Jobs {
     /// This lane's jobs, beneath the lane's own supervisor records.
     pub(in crate::resident) fn for_lane(paths: &RuntimePaths, lane: CanonicalUuid) -> Self {
+        Self::beneath(&paths.supervisors, lane)
+    }
+
+    /// This lane's jobs beneath one root of per-lane supervisor records.
+    pub(in crate::resident) fn beneath(supervisors: &Path, lane: CanonicalUuid) -> Self {
         Self {
-            root: paths.supervisors.join(lane.to_string()).join("jobs"),
+            root: supervisors.join(lane.to_string()).join("jobs"),
             lane: Some(lane),
         }
     }
@@ -874,6 +879,37 @@ impl Jobs {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// The wall instant, in Unix milliseconds, by which every unfinished
+    /// deadline-bounded job of this lane has ended and had its ending
+    /// delivered: the keeper's start plus the job's timeout, the keeper's
+    /// terminate grace, and the delivery grace. A job whose keeper has not
+    /// spoken counts from its recorded request, which precedes the keeper.
+    /// Services and ended jobs bound nothing; `None` when no job remains.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of reading the lane's job records.
+    pub(in crate::resident) fn finite_horizon_millis(&self) -> io::Result<Option<u64>> {
+        let mut horizon = None;
+        for job in self.kept()? {
+            let Some(timeout) = job.timeout else {
+                continue;
+            };
+            let started = match job.state()? {
+                Some(state) if state.ending.is_some() => continue,
+                Some(state) => state.started_millis,
+                None => millis_since_epoch(fs::metadata(job.directory.join(REQUEST))?.modified()?)?,
+            };
+            let bound = Duration::from_millis(started)
+                .saturating_add(timeout)
+                .saturating_add(TERMINATE_GRACE)
+                .saturating_add(DELIVERY_GRACE);
+            let bound = u64::try_from(bound.as_millis()).unwrap_or(u64::MAX);
+            horizon = Some(horizon.map_or(bound, |horizon: u64| horizon.max(bound)));
+        }
+        Ok(horizon)
     }
 }
 

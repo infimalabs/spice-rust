@@ -136,8 +136,12 @@ flowchart TD
 - A live claim's lease rolls with its occupant: while the claim's lane still
    seats the occupant that holds it, the resident extends the lease on its own
    rolling horizon, so a lapse follows the occupant leaving rather than one long
-   foreground command outliving a fixed lease. A lease iced on the canonical
-   indefinite horizon is the one live lease that never rolls.
+   foreground command outliving a fixed lease. An occupant that ends its turn
+   on an unfinished deadline-bounded job leaves the vacant lane's lease rolling
+   until that job's deadline plus the keeper's terminate and delivery grace,
+   never further; a service never extends it, and another occupant taking the
+   seat stops it. A lease iced on the canonical indefinite horizon is the one
+   live lease that never rolls.
 - `task free`, self-deferral, and plan-phase release never strand unfinished
   work on a lane. Release parks unpublished commit identities and an optional
   dangling worktree snapshot under the task, returns the lane to its newest

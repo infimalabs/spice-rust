@@ -51,7 +51,11 @@ struct SurfaceRuntimes {
 impl SurfaceRuntimes {
     fn start(bus: &Bus, config: &SurfaceConfig, paths: &RuntimePaths) -> CommandResult<Self> {
         let timer_commits = bus.reader().subscribe();
-        let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+        let timers = timers::Runtime::start(
+            config.projects.clone(),
+            config.steering.clone(),
+            paths.supervisors.clone(),
+        )?;
         let extension = quota::pin_extension(&paths.runtime).map_err(|error| {
             environment_fault("resident::quota-extension-unavailable", &error.to_string())
         })?;

@@ -1,6 +1,7 @@
 //! Resident-owned fold of durable deadlines into process-local waits.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 
 use board::ProjectPolicy;
@@ -22,6 +23,9 @@ pub(super) struct Runtime {
     forwarder: Option<JoinHandle<()>>,
     projects: ProjectPolicy,
     steering: steer::Config,
+    /// Root of per-lane supervisor records whose kept jobs extend a vacated
+    /// lane's claim.
+    supervisors: PathBuf,
     deferrals: BTreeMap<TaskHandle, ArmedDeferral>,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
     renewals: BTreeMap<TaskHandle, ArmedRenewal>,
@@ -72,6 +76,9 @@ struct RenewalAuthority {
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
     deadline: Instant,
+    /// Furthest expiry this renewal may grant, present only while the claim's
+    /// lane is vacant and an unfinished deadline-bounded job of the lane runs.
+    bound: Option<Instant>,
 }
 
 struct ArmedRenewal {
@@ -109,7 +116,11 @@ pub(super) enum Fired {
 }
 
 impl Runtime {
-    pub(super) fn start(projects: ProjectPolicy, steering: steer::Config) -> CommandResult<Self> {
+    pub(super) fn start(
+        projects: ProjectPolicy,
+        steering: steer::Config,
+        supervisors: PathBuf,
+    ) -> CommandResult<Self> {
         let (worker, events) = TimerWorker::start()
             .map_err(|error| environment_fault("bus::timer-start-failed", &error.to_string()))?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -137,6 +148,7 @@ impl Runtime {
             forwarder: Some(forwarder),
             projects,
             steering,
+            supervisors,
             deferrals: BTreeMap::new(),
             claims: BTreeMap::new(),
             renewals: BTreeMap::new(),
@@ -199,7 +211,9 @@ impl Runtime {
         let residency = snapshot.authority.residency();
         let desired_deferrals = desired_deferrals(tasks, &self.projects)?;
         let desired = desired_claims(tasks, residency)?;
-        let desired_renewals = desired_renewals(tasks, residency)?;
+        let supervisors = &self.supervisors;
+        let desired_renewals =
+            desired_renewals(tasks, residency, |lane| job_horizon(supervisors, lane))?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
@@ -537,7 +551,17 @@ impl Runtime {
             at,
             std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
         )?;
-        let until = std::cmp::max(rolling, armed.authority.lease.body().expiry);
+        let mut until = std::cmp::max(rolling, armed.authority.lease.body().expiry);
+        if armed.authority.bound.is_some() {
+            // A vacated lane's claim rolls only on the job still running now,
+            // never past the moment that job's ending is delivered.
+            match job_horizon(&self.supervisors, armed.authority.lane) {
+                Some(horizon) if horizon > armed.authority.lease.body().expiry => {
+                    until = std::cmp::min(until, horizon);
+                }
+                _ => return Ok(Fired::Stale),
+            }
+        }
         let reclaim_horizon = shifted(
             at,
             std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
@@ -746,15 +770,20 @@ fn desired_claims(
     Ok(desired)
 }
 
-/// Roll every live lease whose claim is held by a lane's current occupant.
+/// Roll every live lease whose claim is held by a lane's current occupant, or
+/// by the last occupant of a lane left vacant while one of its
+/// deadline-bounded jobs still runs.
 ///
 /// Liveness, not the way the claim was minted, decides renewal: a claim won
 /// through allocation rolls exactly like a resident-minted automatic one while
 /// its occupant remains seated, so a lapse follows the occupant leaving rather
-/// than one long foreground command outliving a fixed lease.
+/// than one long foreground command outliving a fixed lease. An occupant that
+/// ends its turn on a kept job leaves the lease rolling until that job's
+/// ending is delivered, as `job_horizon` bounds it; a service never qualifies.
 fn desired_renewals(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
+    job_horizon: impl Fn(CanonicalUuid) -> Option<Instant>,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
         return Ok(BTreeMap::new());
@@ -769,14 +798,23 @@ fn desired_renewals(
         let Some(claim) = heads.claim() else { continue };
         if claim.body().disposition != ClaimDisposition::Active
             || claim.body().epoch != residency.body().epoch
-            || !current_claim_occupant(residency.body(), claim.body())
         {
             continue;
         }
+        let Some(seat) = renewal_seat(residency.body(), claim.body()) else {
+            continue;
+        };
         let lease = coherent_lease(heads, claim.body())?;
         if spice::claim_lease::is_indefinite(lease.body()) || lease.body().expiry <= now {
             continue;
         }
+        let bound = match seat {
+            RenewalSeat::Occupied => None,
+            RenewalSeat::Vacated => match job_horizon(claim.body().lane) {
+                Some(horizon) if horizon > lease.body().expiry => Some(horizon),
+                _ => continue,
+            },
+        };
         let deadline = renewal_deadline(lease.body())?;
         let task = TaskHandle::for_project(
             &heads.statement().body().project,
@@ -793,6 +831,7 @@ fn desired_renewals(
                 occupant: claim.body().occupant,
                 epoch: claim.body().epoch,
                 deadline,
+                bound,
             },
         );
     }
@@ -833,9 +872,14 @@ fn renewal_guard(
     let Some(residency) = read.residency_head()? else {
         return Err(GuardError::refused("claim::renewal-residency-missing"));
     };
+    let expected_seat = if expected.bound.is_some() {
+        RenewalSeat::Vacated
+    } else {
+        RenewalSeat::Occupied
+    };
     if residency.body().state != ResidentState::Seated
         || residency.body().epoch != expected.epoch
-        || !current_claim_occupant(residency.body(), expected.claim.body())
+        || renewal_seat(residency.body(), expected.claim.body()) != Some(expected_seat)
     {
         return Err(GuardError::refused("claim::renewal-residency-moved"));
     }
@@ -874,11 +918,37 @@ fn coherent_lease<'a>(
     Ok(lease)
 }
 
-fn current_claim_occupant(residency: &wire::ResidencyHead, claim: &wire::ClaimHead) -> bool {
-    residency
+/// How a claim's lane relates to the occupant holding it, for renewal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RenewalSeat {
+    /// The lane seats the claim's occupant.
+    Occupied,
+    /// The lane is vacant and its last occupant holds the claim.
+    Vacated,
+}
+
+/// The claim's lane seat, absent when another occupant holds the lane or the
+/// lane is gone.
+fn renewal_seat(residency: &wire::ResidencyHead, claim: &wire::ClaimHead) -> Option<RenewalSeat> {
+    let lane = residency
         .lanes
         .iter()
-        .any(|lane| lane.lane == claim.lane && lane.occupant == Some(claim.occupant))
+        .find(|lane| lane.lane == claim.lane)?;
+    match lane.occupant {
+        Some(occupant) => (occupant == claim.occupant).then_some(RenewalSeat::Occupied),
+        None => (lane.lineage.last() == Some(&claim.occupant)).then_some(RenewalSeat::Vacated),
+    }
+}
+
+/// When the lane's unfinished deadline-bounded jobs have all ended and had
+/// their endings delivered. Unreadable job records extend nothing, so the
+/// claim lapses on the lease it already carries.
+fn job_horizon(supervisors: &std::path::Path, lane: CanonicalUuid) -> Option<Instant> {
+    let millis = super::supervisor::terminal::Jobs::beneath(supervisors, lane)
+        .finite_horizon_millis()
+        .ok()??;
+    let at = jiff::Timestamp::from_millisecond(i64::try_from(millis).ok()?).ok()?;
+    Instant::new(at).ok()
 }
 
 fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
