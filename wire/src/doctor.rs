@@ -17,9 +17,6 @@ pub enum SpiceVariable {
     /// Source identity of the browser app generation the build stamped.
     #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
     AppSourceIdentity,
-    /// Debug marker proving a fast gate path did not launch Cargo metadata.
-    #[serde(rename = "SPICE_GATE_TEST_CARGO_METADATA_MARKER")] // env-policy: allow
-    GateTestCargoMetadataMarker,
     /// Repository path supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_ACQUIRE_REPOSITORY")] // env-policy: allow
     HygieneAcquireRepository,
@@ -87,7 +84,6 @@ impl SpiceVariable {
     pub const ALL: &[Self] = &[
         Self::AgentVendor,
         Self::AppSourceIdentity,
-        Self::GateTestCargoMetadataMarker,
         Self::HygieneAcquireRepository,
         Self::HygieneInterpreterMarker,
         Self::InstallTestExecutable,
@@ -115,11 +111,8 @@ impl SpiceVariable {
         match self {
             Self::AgentVendor => "SPICE_AGENT_VENDOR", // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
-            Self::GateTestCargoMetadataMarker => {
-                "SPICE_GATE_TEST_CARGO_METADATA_MARKER" // env-policy: allow
-            }
             Self::BootstrapCargoHome => "SPICE_RS_BOOTSTRAP_CARGO_HOME", // env-policy: allow
-            Self::Hooks => "SPICE_RS_HOOKS",                             // env-policy: allow
+            Self::Hooks => "SPICE_RS_HOOKS",           // env-policy: allow
             Self::HygieneAcquireRepository => {
                 "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow
             }
