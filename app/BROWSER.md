@@ -97,6 +97,10 @@ emblem names the provider, so the model line omits it. A teamed agent's slot
 opens its composer in Chat; the same slot is draggable when team configuration
 is admitted.
 
+The topology heading shows only total agents and live agents. Team sizes,
+held tasks, and pending steering remain in the roster rather than repeated
+beside the heading.
+
 Drop a slot onto another team to mix members, onto **New Team** to create a
 team, or onto **Unassigned Agents** to separate it from its team. Unassigned
 agents use the same slots without a Chat link, and the **New Team** drop
