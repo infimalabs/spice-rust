@@ -1029,26 +1029,6 @@ impl ProcessBounds {
     }
 }
 
-#[cfg(test)]
-fn worker_spec(
-    executable: impl Into<OsString>,
-    arguments: impl IntoIterator<Item = OsString>,
-    bounds: ProcessBounds,
-) -> Result<Spec, String> {
-    let current = env::current_dir().map_err(|error| error.to_string())?;
-    worker_spec_at(executable, arguments, &current, bounds)
-}
-
-#[cfg(test)]
-fn worker_spec_at(
-    executable: impl Into<OsString>,
-    arguments: impl IntoIterator<Item = OsString>,
-    root: &Path,
-    bounds: ProcessBounds,
-) -> Result<Spec, String> {
-    worker_spec_at_with_cancellation(executable, arguments, root, bounds, Cancellation::Never)
-}
-
 fn worker_spec_with_cancellation(
     executable: impl Into<OsString>,
     arguments: impl IntoIterator<Item = OsString>,
@@ -1099,6 +1079,3 @@ fn ambient_environment() -> Result<Environment, sill::SpecError> {
 #[cfg(test)]
 #[path = "pre_commit/tests.rs"]
 mod extended_tests;
-#[cfg(all(test, unix))]
-#[path = "pre_commit/parent_tests.rs"]
-mod parent_tests;

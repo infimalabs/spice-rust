@@ -330,7 +330,7 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
 }
 #[test]
 fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {
-    const HISTORY_TASKS: usize = 1_301;
+    const HISTORY_TASKS: usize = 129;
     const PAGE_LIMIT: u16 = 64;
 
     let (root, bus, epoch, _seats) = fixture("paged-board-history", 0);

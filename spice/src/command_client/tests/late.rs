@@ -363,6 +363,8 @@ fn discovery_symlinks_and_public_modes_are_refused() {
 #[test]
 fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() {
     use rustix::fs::{OFlags, fcntl_getfl};
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::OpenOptionsExt as _;
 
     let fixture = Fixture::new("fifo-substitution");
@@ -372,11 +374,11 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     let started = Instant::now();
     let outcome = DiscoveryRead::open_with(&fixture.serve, &fixture.root.join("resident"), || {
         fs::remove_file(&fixture.serve).expect("regular discovery removes");
-        let status = ProcessCommand::new("mkfifo")
-            .arg(&fixture.serve)
-            .status()
-            .expect("mkfifo launches");
-        assert!(status.success(), "mkfifo creates the substitution");
+        let path = CString::new(fixture.serve.as_os_str().as_bytes())
+            .expect("fixture path has no interior NUL");
+        // SAFETY: `path` is a live NUL-terminated pathname and the mode is valid.
+        let result = unsafe { libc::mkfifo(path.as_ptr(), libc::S_IRUSR | libc::S_IWUSR) };
+        assert_eq!(result, 0, "create FIFO substitution");
         anchor = Some(
             OpenOptions::new()
                 .read(true)
