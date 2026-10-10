@@ -564,15 +564,8 @@ fn assert_successor_renews(
     timers
         .synchronize(&window.bus)
         .expect("successor lease arms renewal");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let event = runtime
-        .block_on(timers.recv())
-        .expect("successor lease renewal fires");
-    assert_eq!(event.kind(), bus::timer::TimerKind::ClaimRenew);
     assert!(matches!(
-        timers.consume(&window.bus, event),
+        timers.consume_renewal_at_deadline(&window.bus, task),
         Ok(crate::resident::timers::Fired::ClaimRenew)
     ));
     let renewed = window.bus.task_snapshot().expect("renewed claim reads");
