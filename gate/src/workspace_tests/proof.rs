@@ -181,25 +181,38 @@ pub struct CargoGateShardResult {
 pub fn plan_cargo_gate_shards_at(
     planning: CargoGateShardPlanning<'_>,
 ) -> Result<CargoGateShardPlan, WorkspaceTestError> {
+    let environment = planning.environment.clone();
+    let cargo = planning.cargo;
+    plan_cargo_gate_shards(planning, |root| {
+        acquire_resolved_inventory(root, &environment, cargo)
+    })
+}
+
+/// Plan Cargo proof shards from the resolved inventory `acquire` reports for
+/// the selected root and, when removed Rust source requires it, the base root.
+fn plan_cargo_gate_shards(
+    planning: CargoGateShardPlanning<'_>,
+    mut acquire: impl FnMut(&Path) -> Result<Inventory, WorkspaceTestError>,
+) -> Result<CargoGateShardPlan, WorkspaceTestError> {
     let CargoGateShardPlanning {
         root,
         base,
         source,
         changed_sources,
         selected_paths,
-        environment,
-        cargo,
+        environment: _,
+        cargo: _,
         external_source,
         include_tests,
     } = planning;
-    let mut inventory = acquire_resolved_inventory(root, &environment, cargo)?;
+    let mut inventory = acquire(root)?;
     if cargo_workspace_base_inventory_required(root, changed_sources)? {
         let base = base.ok_or_else(|| {
             WorkspaceTestError::new(
                 "removed Rust source requires exact base-tree Cargo ownership inventory",
             )
         })?;
-        let base_inventory = acquire_resolved_inventory(base, &environment, cargo)?;
+        let base_inventory = acquire(base)?;
         inventory.retain_removed_target_ownership(root, &base_inventory, base, changed_sources)?;
     }
 
@@ -739,13 +752,39 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the Cargo planning fixture captures its own test environment"
-    )]
-    fn plan_source_analysis_is_unique_equivalent_and_source_version_bound() {
-        let fixture = crate::test_repository::Fixture::repository("cargo-plan-source-analysis");
+    /// The `cargo metadata` document Cargo reports for the planning fixture.
+    fn fixture_metadata(root: &Path) -> serde_json::Value {
+        let path = |relative: &str| root.join(relative);
+        let id = format!("path+file://{}#plan-source-analysis@0.1.0", root.display());
+        serde_json::json!({
+            "packages": [{
+                "id": id,
+                "name": "plan-source-analysis",
+                "version": "0.1.0",
+                "edition": "2024",
+                "source": null,
+                "dependencies": [],
+                "targets": [
+                    {"kind": ["lib"], "name": "plan_source_analysis", "test": true,
+                     "src_path": path("src/lib.rs")},
+                    {"kind": ["bin"], "name": "plan-source-analysis", "test": true,
+                     "src_path": path("src/main.rs")},
+                    {"kind": ["custom-build"], "name": "build-script-build", "test": false,
+                     "src_path": path("build.rs")},
+                ],
+                "features": {},
+                "manifest_path": path("Cargo.toml"),
+                "metadata": {"spice": {"cargo-proof": {"version": 1, "complete": true}}},
+            }],
+            "workspace_members": [id],
+            "resolve": {"nodes": [{"id": id, "dependencies": []}]},
+            "target_directory": path("target"),
+            "build_directory": path("target"),
+        })
+    }
+
+    /// The manifest and lock file that metadata describes.
+    fn write_manifest(fixture: &crate::test_repository::Fixture) {
         fixture.write(
             "Cargo.toml",
             concat!(
@@ -772,6 +811,12 @@ mod tests {
                 "version = \"0.1.0\"\n",
             ),
         );
+    }
+
+    #[test]
+    fn plan_source_analysis_is_unique_equivalent_and_source_version_bound() {
+        let fixture = crate::test_repository::Fixture::repository("cargo-plan-source-analysis");
+        write_manifest(&fixture);
         fixture.write(
             "build.rs",
             "fn main() { println!(\"cargo::rerun-if-changed=build.rs\"); }\n",
@@ -790,20 +835,29 @@ mod tests {
         ]
         .map(str::to_owned);
         let changed_sources = ["src/lib.rs".to_owned(), "src/main.rs".to_owned()];
-        let environment =
-            Environment::new(std::env::vars_os()).expect("ambient test environment is valid");
+        let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
+        let metadata = fixture_metadata(&root);
+        let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
+            .expect("empty environment is valid");
         let plan = || {
-            plan_cargo_gate_shards_at(CargoGateShardPlanning {
-                root: fixture.path(),
-                base: None,
-                source: wire::Digest::compute(wire::Domain::GateTree, b"source-a"),
-                changed_sources: &changed_sources,
-                selected_paths: &selected_paths,
-                environment: environment.clone(),
-                cargo: OsStr::new("cargo"),
-                external_source: None,
-                include_tests: false,
-            })
+            plan_cargo_gate_shards(
+                CargoGateShardPlanning {
+                    root: &root,
+                    base: None,
+                    source: wire::Digest::compute(wire::Domain::GateTree, b"source-a"),
+                    changed_sources: &changed_sources,
+                    selected_paths: &selected_paths,
+                    environment: environment.clone(),
+                    cargo: OsStr::new("cargo"),
+                    external_source: None,
+                    include_tests: false,
+                },
+                |selected| {
+                    let metadata = serde_json::from_value(metadata.clone())
+                        .expect("fixture metadata has Cargo's shape");
+                    inventory_from_metadata(metadata, selected, true)
+                },
+            )
         };
 
         super::super::compile_time::reset_source_parse_count();
@@ -819,9 +873,6 @@ mod tests {
         assert!(first.tests().is_empty());
         assert_eq!(first_parses, unique_sources);
         assert_eq!(repeated_traversal_parses, 6);
-        eprintln!(
-            "compile-time source parses: repeated traversal {repeated_traversal_parses}, plan-scoped analysis {first_parses}"
-        );
 
         super::super::compile_time::reset_source_parse_count();
         let equivalent = plan().expect("replan equivalent Cargo shards");
