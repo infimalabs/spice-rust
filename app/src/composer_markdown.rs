@@ -506,9 +506,7 @@ fn parse_events<'m>(
                     let context = contexts.remove(&source.start);
                     let accent = context.as_ref().and_then(|context| {
                         quotes::speaker_accent(
-                            &wire::QuoteAuthor::Directive {
-                                actor: context.actor.clone(),
-                            },
+                            &context_author(context),
                             &context.quote_target.to_string(),
                             quote_agents,
                             quote_sources,
@@ -576,6 +574,20 @@ fn accent_directive_contexts(events: &mut [MarkdownEvent<'_>], outer_quotes: &[O
 /// Where a prose card's own attribution mounts (`browser::mermaid`).
 const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-slot=\"\"></span>";
 
+/// The recorded author a directive context names: the exact occupant that
+/// wrote an MSG, otherwise the actor on the directive's creating fact.
+fn context_author(context: &MessageDirective) -> wire::QuoteAuthor {
+    match (&context.actor, context.sender) {
+        (wire::Actor::Lane(lane), Some(occupant)) => wire::QuoteAuthor::Agent {
+            lane: *lane,
+            occupant,
+        },
+        (actor, _) => wire::QuoteAuthor::Directive {
+            actor: actor.clone(),
+        },
+    }
+}
+
 fn directive_attribution(
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
@@ -585,9 +597,7 @@ fn directive_attribution(
     image_flow::Attribution {
         controls_target: target.clone(),
         signoff: quotes::signoff_html(
-            &wire::QuoteAuthor::Directive {
-                actor: context.actor.clone(),
-            },
+            &context_author(context),
             &target,
             quote_agents,
             quote_sources,

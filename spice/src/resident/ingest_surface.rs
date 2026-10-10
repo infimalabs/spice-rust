@@ -28,7 +28,7 @@ fn ingest_vendor_from(
 }
 
 /// Recover transcript accounting, spoken interjection answers, and authored
-/// MSG packets.
+/// MSG packets, then park MSGs whose recipient departed during the outage.
 ///
 /// Retirement and publication are replayed independently: a prior resident
 /// may have committed the accounting checkpoint before it could retire the
@@ -49,7 +49,8 @@ pub(super) fn recover_transcripts(
         diagnostic,
     )?;
     steering::dispose_at_startup(bus, paths, epoch, diagnostic)?;
-    steering::publish_at_startup(bus, paths, epoch, config, diagnostic)
+    steering::publish_at_startup(bus, paths, epoch, config, diagnostic)?;
+    steering::dead_letter_departed(bus, paths, epoch, diagnostic)
 }
 
 /// Account every complete record the named lanes' tapes have gained.

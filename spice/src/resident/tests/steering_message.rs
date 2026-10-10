@@ -299,6 +299,67 @@ impl Lanes {
         .expect("recovery reads");
     }
 
+    /// Land one assistant message on a lane's tape and hear its answers.
+    fn answer(&self, lane: u8, keys: &[&str], prose: &str) {
+        let message = serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": prose}],
+                "stopReason": "stop",
+            },
+        });
+        self.tape(lane)
+            .tee(format!("{message}\n").as_bytes())
+            .expect("the answer is durable");
+        let keys = keys
+            .iter()
+            .map(|key| key.parse().expect("fixture key"))
+            .collect();
+        let vendor: wire::Name = "omp".parse().expect("fixture vendor");
+        steering::dispose_heard(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            test_uuid(lane),
+            &vendor,
+            &keys,
+            &mut Vec::new(),
+        );
+    }
+
+    fn dead_letter_departed(&self) {
+        steering::dead_letter_departed(&self.bus, &self.paths, self.epoch, &mut Vec::new())
+            .expect("departed recipients read");
+    }
+
+    /// Ask, as the operator, to recover one parked directive.
+    fn recover_directive(&self, directive: CanonicalUuid) -> Outcome<CommandAnswer> {
+        let recover = wire::intent::DirectiveRef { directive };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(91),
+            epoch: self.epoch,
+            kind: CommandKind::SteerRecover,
+            expected: vec![Witness::Recoverable { steer: directive }],
+            body: serde_json::to_value(&recover).expect("recovery encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: self.epoch,
+        })
+        .expect("operator recovery admits");
+        steering::recover(
+            &self.bus,
+            self.epoch,
+            &steer::Config::default(),
+            &command,
+            &recover,
+            &mut CommandEffects::default(),
+        )
+    }
+
     /// Judge the lane's newest streamed record live, as its seated author's.
     fn hear_newest(
         &self,
@@ -643,5 +704,184 @@ fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
     assert!(lanes.messages().is_empty());
     assert!(lanes.pending(FIRST).is_empty());
     assert!(lanes.pending(THIRD).is_empty());
+    lanes.finish();
+}
+
+/// The delivery a recipient hears names the exact body, the sending
+/// occupant's address, and its own key, and never wakes the lane.
+fn delivered(lanes: &Lanes, lane: u8) -> wire::intent::PendingDirective {
+    let [message] = lanes
+        .pending(lane)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("one MSG is pending: {pending:?}"));
+    assert!(!message.wakes, "a peer message never wakes its lane");
+    assert_eq!(
+        message.sender,
+        Some(wire::intent::PeerSender {
+            occupant: test_uuid(SENDER + 1),
+            address: Some(lanes.address(SENDER)),
+        })
+    );
+    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
+    let rendered = steer::inbox::render_pending(&seal, &[message.clone()], |_, _| None);
+    for part in [
+        message.key.as_str(),
+        message.text.as_str(),
+        &lanes.address(SENDER).to_string(),
+    ] {
+        assert!(rendered.contains(part), "{part} is delivered: {rendered}");
+    }
+    message
+}
+
+/// Every fanout recipient owns its key: each answer retires only its own
+/// directive and relays its clause once to the sending lane, whose answer to
+/// that reply sends nothing back.
+#[test]
+fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lane() {
+    let lanes = Lanes::new("msg-answer");
+    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
+    lanes.author(SENDER, &format!("MSG {first} {second}: rebase onto main"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let (to_first, to_second) = (delivered(&lanes, FIRST), delivered(&lanes, SECOND));
+    assert_eq!(to_first.text, "rebase onto main");
+    assert_ne!(to_first.key, to_second.key);
+
+    lanes.answer(
+        FIRST,
+        &[&to_first.key],
+        &format!("ACK {}: Rebased.", to_first.key),
+    );
+    assert!(lanes.pending(FIRST).is_empty());
+    assert_eq!(
+        lanes.pending(SECOND),
+        [to_second.clone()],
+        "a sibling recipient's key stays live"
+    );
+    let [ack] = lanes
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("one reply reaches the sender: {pending:?}"));
+    assert_eq!(ack.from, Some(test_uuid(FIRST)));
+    assert_eq!(ack.text, "Rebased.");
+    assert_eq!(
+        ack.control.as_deref(),
+        Some(wire::peer_reply_control(&to_first.key, wire::PeerAnswer::Ack).as_str())
+    );
+    assert!(!ack.wakes, "a peer reply never wakes its lane");
+
+    lanes.answer(
+        SECOND,
+        &[&to_second.key],
+        &format!("NAK {}: Main is red.", to_second.key),
+    );
+    assert!(lanes.pending(SECOND).is_empty());
+    let replies = lanes.pending(SENDER);
+    let nak = replies
+        .iter()
+        .find(|reply| reply.from == Some(test_uuid(SECOND)))
+        .unwrap_or_else(|| panic!("the refusal replies too: {replies:?}"));
+    assert_eq!(nak.text, "Main is red.");
+    assert_eq!(
+        nak.control.as_deref(),
+        Some(wire::peer_reply_control(&to_second.key, wire::PeerAnswer::Nak).as_str())
+    );
+
+    let keys = replies
+        .iter()
+        .map(|reply| reply.key.as_str())
+        .collect::<Vec<_>>();
+    lanes.answer(SENDER, &keys, &format!("ACK {}: Thanks.", keys.join(" ")));
+    assert!(lanes.pending(SENDER).is_empty());
+    assert!(lanes.pending(FIRST).is_empty() && lanes.pending(SECOND).is_empty());
+    let replied = lanes
+        .bus
+        .fact_snapshot()
+        .expect("authority reads")
+        .facts()
+        .iter()
+        .filter_map(|envelope| envelope.fact.read::<wire::body::SteerReplied>())
+        .map(|reply| reply.answered)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replied,
+        [to_first.key, to_second.key],
+        "one reply per answered MSG, none for an answered reply"
+    );
+    lanes.finish();
+}
+
+/// An MSG belongs to the occupant it addressed: once that occupant leaves,
+/// its lane no longer delivers it, it dead-letters, and recovery refuses it,
+/// while the sender's own departure relabels nothing.
+#[test]
+fn an_msg_to_a_departed_occupant_dead_letters_instead_of_reaching_its_lane() {
+    let lanes = Lanes::new("msg-departed");
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}: hold the merge"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    lanes.vacate(SENDER);
+    let message = delivered(&lanes, FIRST);
+    let resolver_source = lanes.bus.reader();
+    let resolver = spice::quote::Resolver::from_tape(&lanes.paths.tape, &resolver_source);
+    let target = wire::QuoteTarget::Steering {
+        key: message.key.clone(),
+        digest: wire::QuoteTarget::text_digest(&message.text),
+    };
+    assert!(
+        matches!(
+            resolver.resolve(&target.to_string(), 0),
+            wire::quote::QuoteResolution::Resolved(wire::quote::ResolvedQuote {
+                author: wire::QuoteAuthor::Agent { lane, occupant },
+                ..
+            }) if lane == test_uuid(SENDER) && occupant == test_uuid(SENDER + 1)
+        ),
+        "a quote names the occupant that wrote the MSG"
+    );
+    drop(resolver);
+    drop(resolver_source);
+
+    lanes.dead_letter_departed();
+    assert_eq!(
+        lanes.pending(FIRST),
+        [message.clone()],
+        "a seated recipient keeps its MSG"
+    );
+    lanes.vacate(FIRST);
+    assert!(
+        lanes.pending(FIRST).is_empty(),
+        "the lane holds nothing addressed to its departed occupant"
+    );
+    let before = lanes.cursor();
+    lanes.dead_letter_departed();
+    let head = lanes
+        .bus
+        .read(move |read| read.steering_head(message.directive))
+        .expect("steering reads")
+        .expect("the MSG stays durable");
+    assert_eq!(head.body().disposition, wire::Disposition::DeadLettered);
+    let reasons = lanes
+        .bus
+        .fact_snapshot()
+        .expect("authority reads")
+        .facts()
+        .iter()
+        .filter_map(|envelope| envelope.fact.read::<wire::steering::SteerDeadLettered>())
+        .map(|parked| (parked.directive, parked.reason))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reasons,
+        [(message.directive, "steer::recipient-departed".to_owned())]
+    );
+    let parked = lanes.cursor();
+    assert!(parked > before);
+    lanes.dead_letter_departed();
+    assert_eq!(lanes.cursor(), parked, "a parked MSG parks once");
+
+    let refused = lanes.recover_directive(message.directive);
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == "steer::recipient-departed"),
+        "{refused:?}"
+    );
     lanes.finish();
 }

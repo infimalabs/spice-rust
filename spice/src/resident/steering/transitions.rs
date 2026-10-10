@@ -510,6 +510,9 @@ pub(in crate::resident) fn recover(
             "recover only a durable directive that lapsed or was deadlettered",
         );
     }
+    if let Some(refused) = departed_recipient(bus, directive.body().created) {
+        return refused;
+    }
     // The caller binds identity; the journal guard below binds the failed disposition.
     let witness = Witness::Recoverable {
         steer: recover.directive,
@@ -580,6 +583,42 @@ pub(in crate::resident) fn recover(
         return typed_store_fault("steer::recovery-receipt-invalid", &error.to_string());
     }
     finish(bus, lane, proposal, answer, effects)
+}
+
+/// Refuse recovering an MSG whose addressed occupant has left its lane: an
+/// MSG reaches only that occupant, so recovery would hand it to nobody, or to
+/// a successor.
+fn departed_recipient(bus: &Bus, created: Seq) -> Option<Outcome<CommandAnswer>> {
+    let view = match bus.task_snapshot() {
+        Ok(view) => view,
+        Err(error) => {
+            return Some(typed_store_fault(
+                "steer::residency-unreadable",
+                &error.to_string(),
+            ));
+        }
+    };
+    let message = view
+        .facts()
+        .at(created)?
+        .fact
+        .read::<wire::body::SteerMessaged>()?;
+    let seated = view.residency().and_then(|residency| {
+        residency
+            .body()
+            .lanes
+            .iter()
+            .find(|row| row.lane == message.lane)
+            .and_then(|row| row.occupant)
+    });
+    (seated != Some(message.occupant)).then(|| {
+        refusal(
+            "steer::recipient-departed",
+            Some(message.occupant.to_string()),
+            seated.map(|occupant| occupant.to_string()),
+            "an MSG reaches only the occupant it addressed; author a new MSG to the lane's current occupant",
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

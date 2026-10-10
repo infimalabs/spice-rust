@@ -666,6 +666,8 @@ struct PresentationDirective {
     quote_target: wire::QuoteTarget,
     /// Actor on the creating fact, which a quote of this directive names.
     actor: wire::Actor,
+    /// Exact occupant that authored the directive as an MSG packet.
+    sender: Option<CanonicalUuid>,
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
     retirement: Option<wire::body::TranscriptLocus>,
@@ -733,6 +735,11 @@ impl PresentationDirectives {
                     retirement,
                     quote_target,
                     actor: row.created().actor.clone(),
+                    sender: row
+                        .created()
+                        .fact
+                        .read::<wire::body::SteerMessaged>()
+                        .map(|message| message.sender),
                     published: row.created().at,
                 },
             );
@@ -884,6 +891,7 @@ fn hydrate_directive_contexts(
                 actor: directive.actor.clone(),
                 authored: directive.published,
                 badge: directive.badge(),
+                sender: directive.sender,
             })
         })
         .collect()

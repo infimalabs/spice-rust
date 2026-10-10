@@ -21,6 +21,7 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
                     key.parse::<steer::Key>().expect("fixture key parses"),
                     PresentationDirective {
                         actor: wire::Actor::Operator,
+                        sender: None,
                         published: published(1),
                         lane: lane(),
                         text: (*text).to_owned(),
@@ -275,6 +276,7 @@ fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            sender: None,
             published: published(1),
             lane: lane(),
             text: directive_text.to_owned(),
@@ -337,6 +339,7 @@ fn review_feedback_context_carries_its_badge_without_a_marker() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            sender: None,
             published: published(1),
             lane: lane(),
             text: concat!(
@@ -611,6 +614,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            sender: None,
             published: published(1),
             lane: lane(),
             text: "Accepted lane renewal context.".to_owned(),
@@ -888,6 +892,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            sender: None,
             published: published(1),
             lane: lane(),
             text: "Keep the original response context.".to_owned(),
@@ -956,6 +961,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             historical,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                sender: None,
                 published: published(1),
                 lane: lane(),
                 text: "Continue".to_owned(),
@@ -971,6 +977,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             current,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                sender: None,
                 published: published(2),
                 lane: lane(),
                 text: "Keep one deterministic path.".to_owned(),
@@ -1044,6 +1051,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             system,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                sender: None,
                 published: published(1),
                 lane: lane(),
                 text: "Accepted lane renewal context.".to_owned(),
@@ -1059,6 +1067,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             retained,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                sender: None,
                 published: published(2),
                 lane: lane(),
                 text: "Keep retained direction readable.".to_owned(),
@@ -1097,6 +1106,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            sender: None,
             published: published(1),
             lane: lane(),
             text: "Keep the original response context.".to_owned(),

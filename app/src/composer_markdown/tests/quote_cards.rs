@@ -404,6 +404,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         actor: wire::Actor::Operator,
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         badge: None,
+        sender: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
     let index = BTreeMap::from([
@@ -542,6 +543,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             actor: wire::Actor::Operator,
             authored: authored.parse().expect("fixture instant"),
             badge: None,
+            sender: None,
         }
     };
     let directives = [
@@ -646,6 +648,7 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             actor: wire::Actor::Spice,
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge,
+            sender: None,
         }
     };
     let directives = [
@@ -686,4 +689,43 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
         "{html}"
     );
     assert!(html.contains("[REVIEW] missing coverage"), "{html}");
+}
+
+/// A quoted MSG names the occupant that wrote it; the sending lane's later
+/// occupant never inherits its authorship.
+#[test]
+fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
+    let id = |suffix: &str| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131164{suffix}")
+            .parse()
+            .expect("fixture identity is canonical")
+    };
+    let (lane, author, successor) = (id("0a"), id("1a"), id("1b"));
+    let quoted = "> hold the merge";
+    let markdown = format!("{quoted}\n\nHeld.");
+    let directives = [MessageDirective {
+        start: 0,
+        end: u32::try_from(quoted.len()).expect("fixture offset fits"),
+        quote_target: steering_target("dTVQdQfLx", quoted),
+        actor: wire::Actor::Lane(lane),
+        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+        badge: None,
+        sender: Some(author),
+    }];
+    let sources = BTreeMap::from([(
+        directives[0].quote_target.to_string(),
+        QuoteSource::directive(&directives[0]),
+    )]);
+    let agent = |label: &str| QuoteAgent {
+        accent: 2,
+        label: label.to_owned(),
+    };
+    let render = |agents: &QuoteAgents| {
+        render_prose_card(&markdown, &[], &directives, &[], agents, &sources).html
+    };
+
+    let reseated = BTreeMap::from([((lane, Some(successor)), agent("successor-agent"))]);
+    assert!(!render(&reseated).contains("successor-agent"));
+    let seated = BTreeMap::from([((lane, Some(author)), agent("author-agent"))]);
+    assert!(render(&seated).contains("author-agent"));
 }

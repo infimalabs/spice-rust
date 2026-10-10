@@ -469,6 +469,7 @@ mod tests {
                 key.parse().expect("fixture steering key"),
                 PresentationDirective {
                     actor: wire::Actor::Operator,
+                    sender: None,
                     published: published(),
                     lane: lane(),
                     text,
