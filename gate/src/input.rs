@@ -482,7 +482,7 @@ impl Contract {
     }
 }
 
-fn current_bounds() -> Result<Bounds, SpecError> {
+pub(crate) fn current_bounds() -> Result<Bounds, SpecError> {
     let deadlines = Deadlines::new(
         RUNTIME_DEADLINE,
         Duration::from_secs(1),

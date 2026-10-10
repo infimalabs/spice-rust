@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use sill::{Argv, Completion, spawn};
 
-use super::{Analysis, complete_output, extension, selected_changes, tool_environment};
+use super::{Analysis, Captured, complete_output, extension, selected_changes, tool_environment};
 use crate::measure::Bounds;
 use crate::toolchain::{ArmFinding, ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
 
@@ -119,7 +119,7 @@ pub(in crate::toolchain) fn python_typecheck(
             .timed(timing(elapsed, bounds));
         }
     };
-    let printed = match complete_output("python-typecheck", &outcome) {
+    let printed = match complete_output("python-typecheck", &Captured::of(&outcome)) {
         Ok(printed) => printed,
         Err(reason) => {
             return Analysis::terminal(ArmOutcome::ParseFailure, reason)

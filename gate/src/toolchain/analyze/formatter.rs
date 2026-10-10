@@ -106,7 +106,17 @@ pub(in crate::toolchain) fn formatters(
             );
         }
     };
-    let status = match outcome.completion() {
+    formatter_reply(declaration, root, sources.len(), &Captured::of(&outcome))
+}
+
+/// What one reaped formatter check says about the selected sources.
+fn formatter_reply(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    sources: usize,
+    captured: &Captured<'_>,
+) -> Analysis {
+    let status = match captured.completion {
         Completion::Exited(status) => status,
         Completion::TimedOut(_) => {
             return Analysis::terminal(
@@ -121,20 +131,20 @@ pub(in crate::toolchain) fn formatters(
             );
         }
     };
-    let Some(stdout) = outcome.stdout() else {
+    let Some(stdout) = captured.stdout else {
         return Analysis::terminal(
             ArmOutcome::ParseFailure,
             format!("{FORMATTER} captured no stdout to read"),
         );
     };
-    if stdout.truncated() || !stdout.complete() {
+    if !stdout.whole() {
         return Analysis::terminal(
             ArmOutcome::ParseFailure,
             format!("{FORMATTER} output was truncated before it could be read"),
         );
     }
 
-    let printed = String::from_utf8_lossy(stdout.bytes()).into_owned();
+    let printed = String::from_utf8_lossy(stdout.bytes);
     let findings = differing_files(root, &printed);
     if findings.is_empty() && !status.success() {
         let Some(code) = status.code() else {
@@ -148,7 +158,7 @@ pub(in crate::toolchain) fn formatters(
             code,
         );
     }
-    Analysis::scanned(declaration.id, sources.len(), findings)
+    Analysis::scanned(declaration.id, sources, findings)
 }
 
 pub(super) fn formatter_inputs(
@@ -274,4 +284,100 @@ pub(in crate::toolchain) fn formatter_edition(root: &Path) -> Result<String, Str
             "the root manifest declares neither workspace.package.edition nor package.edition"
                 .to_owned()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+
+    use super::*;
+    use crate::toolchain::TOOLCHAIN_ARMS;
+    use crate::toolchain::captured::Stream;
+
+    fn reply(completion: &Completion, stdout: Option<Stream<'_>>) -> Analysis {
+        formatter_reply(
+            TOOLCHAIN_ARMS[0],
+            Path::new("/fixture/tree"),
+            2,
+            &Captured {
+                completion,
+                observation_failure: None,
+                stdout,
+                stderr: None,
+            },
+        )
+    }
+
+    fn whole(bytes: &[u8]) -> Option<Stream<'_>> {
+        Some(Stream {
+            bytes,
+            truncated: false,
+            complete: true,
+        })
+    }
+
+    fn exited(code: i32) -> Completion {
+        Completion::Exited(ExitStatus::from_raw(code << 8))
+    }
+
+    /// A differing file is the finding whatever the exit status says, a path
+    /// outside the selected tree is never one, and a refusal naming nothing
+    /// keeps its exit code instead of reading as clean.
+    #[test]
+    fn the_formatter_names_each_differing_selected_file_once() {
+        assert_eq!(TOOLCHAIN_ARMS[0].id, GateId::Formatters);
+        let printed =
+            b"/fixture/tree/src/main.rs\n/elsewhere/src/lib.rs\n/fixture/tree/src/main.rs\n";
+
+        let differing = reply(&exited(1), whole(printed));
+        assert_eq!(differing.outcome, ArmOutcome::Findings);
+        assert_eq!(
+            differing.findings,
+            [ArmFinding {
+                path: Some("src/main.rs".to_owned()),
+                line: None,
+                column: None,
+                detail: FindingDetail::Formatting {
+                    formatter: FORMATTER.to_owned(),
+                },
+            }]
+        );
+
+        let clean = reply(&exited(0), whole(b""));
+        assert_eq!(clean.outcome, ArmOutcome::Passed);
+        assert!(clean.findings.is_empty());
+
+        let refused = reply(&exited(2), whole(b"/elsewhere/src/lib.rs\n"));
+        assert_eq!(refused.outcome, ArmOutcome::NonzeroAnalysis);
+        assert_eq!(refused.exit_code, Some(2));
+    }
+
+    /// Output the formatter did not finish writing cannot prove a tree clean.
+    #[test]
+    fn an_unread_or_interrupted_formatter_never_passes() {
+        let truncated = Stream {
+            bytes: b"",
+            truncated: true,
+            complete: true,
+        };
+        let killed = ExitStatus::from_raw(9);
+        for (completion, stdout, outcome) in [
+            (exited(0), Some(truncated), ArmOutcome::ParseFailure),
+            (exited(0), None, ArmOutcome::ParseFailure),
+            (
+                Completion::Exited(killed),
+                whole(b""),
+                ArmOutcome::ParseFailure,
+            ),
+            (Completion::TimedOut(killed), None, ArmOutcome::Timeout),
+            (
+                Completion::Cancelled(killed),
+                None,
+                ArmOutcome::ParseFailure,
+            ),
+        ] {
+            assert_eq!(reply(&completion, stdout).outcome, outcome);
+        }
+    }
 }

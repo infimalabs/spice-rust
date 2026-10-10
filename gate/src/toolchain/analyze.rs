@@ -29,6 +29,7 @@ use std::path::Path;
 
 use sill::Environment;
 
+use super::captured::Captured;
 use super::{
     ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
     FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
@@ -666,48 +667,48 @@ fn env_language(path: &str) -> bool {
 mod javascript;
 pub(in crate::toolchain) use javascript::*;
 
-fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
-    complete_compiler_output(name, outcome, false).map(|(printed, _)| printed)
+fn complete_output(name: &str, captured: &Captured<'_>) -> Result<String, String> {
+    complete_compiler_output(name, captured, false).map(|(printed, _)| printed)
 }
 
 fn complete_compiler_output(
     name: &str,
-    outcome: &sill::WaitOutcome,
+    captured: &Captured<'_>,
     retain_tail: bool,
 ) -> Result<(String, Vec<u8>), String> {
-    if let Some(failure) = outcome.observation_failure() {
+    if let Some(failure) = captured.observation_failure {
         return Err(format!("{name} output observation failed: {failure}"));
     }
-    let Some(stdout) = outcome.stdout() else {
+    let Some(stdout) = captured.stdout else {
         return Err(format!("{name} captured no stdout to read"));
     };
-    let Some(stderr) = outcome.stderr() else {
+    let Some(stderr) = captured.stderr else {
         return Err(format!("{name} captured no stderr to read"));
     };
-    if (!retain_tail && stdout.truncated())
-        || stderr.truncated()
-        || !stdout.complete()
-        || !stderr.complete()
+    if (!retain_tail && stdout.truncated)
+        || stderr.truncated
+        || !stdout.complete
+        || !stderr.complete
     {
         return Err(format!(
             "{name} output was truncated or incomplete before it could be read"
         ));
     }
 
-    let stdout = if retain_tail && stdout.truncated() {
+    let stdout = if retain_tail && stdout.truncated {
         stdout
-            .bytes()
+            .bytes
             .iter()
             .position(|byte| *byte == b'\n')
-            .map_or(&[][..], |end| &stdout.bytes()[end + 1..])
+            .map_or(&[][..], |end| &stdout.bytes[end + 1..])
     } else {
-        stdout.bytes()
+        stdout.bytes
     };
     let mut printed = rendered_compiler_output(stdout);
     if !printed.is_empty() && !printed.ends_with('\n') {
         printed.push('\n');
     }
-    printed.push_str(&String::from_utf8_lossy(stderr.bytes()));
+    printed.push_str(&String::from_utf8_lossy(stderr.bytes));
     Ok((printed, stdout.to_vec()))
 }
 

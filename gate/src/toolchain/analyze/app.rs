@@ -32,7 +32,23 @@ pub(in crate::toolchain) fn app_web_typecheck(
         deferred_trunk_refusal,
         compiler_environment: resources.environment(),
     };
-    let analysis = app_analysis(declaration, selection, repository, bounds, tools, &removal);
+    let analysis = app_analysis(
+        declaration,
+        selection,
+        repository,
+        tools,
+        &removal,
+        &mut |root, invocation, environment| {
+            run_compile_analysis(
+                declaration.id,
+                root,
+                invocation,
+                bounds,
+                environment,
+                |code, message| FindingDetail::AppWebOutput { code, message },
+            )
+        },
+    );
     match removal.take() {
         Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
         None => analysis,
@@ -46,13 +62,20 @@ struct AppTools<'a> {
     compiler_environment: &'a [(std::ffi::OsString, std::ffi::OsString)],
 }
 
+/// One declared app compiler run against the mirrored source root.
+type AppRunner<'a> = &'a mut dyn FnMut(
+    &Path,
+    CompileInvocation<'_>,
+    &Environment,
+) -> Result<CompileSuccess, CompileFailure>;
+
 fn app_analysis(
     declaration: ToolchainDeclaration,
     selection: CargoSelection<'_>,
     repository: &Path,
-    bounds: &Bounds,
     tools: AppTools<'_>,
     removal: &Cell<Option<String>>,
+    run: AppRunner<'_>,
 ) -> Analysis {
     let CargoSelection {
         root,
@@ -133,14 +156,7 @@ fn app_analysis(
         },
     ];
     for invocation in invocations {
-        if let Err(failure) = run_compile_analysis(
-            declaration.id,
-            source,
-            invocation,
-            bounds,
-            &environment,
-            |code, message| FindingDetail::AppWebOutput { code, message },
-        ) {
+        if let Err(failure) = run(source, invocation, &environment) {
             return *failure.analysis;
         }
     }
@@ -249,7 +265,94 @@ pub(in crate::toolchain) fn app_output_roots(repository: &Path) -> (PathBuf, Pat
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+    use std::time::Duration;
+
+    use sill::Completion;
+
+    use super::super::compile::{CompileReply, compile_reply};
     use super::*;
+    use crate::toolchain::captured::Stream;
+
+    /// The app checks run in declared order and stop at the first refusal, so
+    /// trunk never builds an app whose compiler already rejected it.
+    #[test]
+    fn app_analysis_stops_at_the_first_refusing_compiler() {
+        let scratch = crate::toolchain::exclusive_scratch_root("gate-app-precedence");
+        let tree = scratch.join("tree");
+        let repository = scratch.join("repository");
+        fs::create_dir_all(tree.join("app")).expect("create fixture app");
+        fs::create_dir(&repository).expect("create fixture repository");
+        fs::write(tree.join("Cargo.toml"), "[workspace]\n").expect("write fixture manifest");
+        fs::write(tree.join("app/index.html"), "<main></main>\n").expect("write fixture app");
+        let changes = ["app/index.html".to_owned()];
+        let declaration = crate::toolchain::TOOLCHAIN_ARMS
+            .into_iter()
+            .find(|declaration| declaration.id == GateId::AppWebTypecheck)
+            .expect("the app arm is declared");
+        let analyze = |refusing: Option<&str>| {
+            let removal = Cell::new(None);
+            let mut ran = Vec::new();
+            let analysis = app_analysis(
+                declaration,
+                CargoSelection::new(&tree, None, &changes),
+                &repository,
+                AppTools {
+                    cargo: Some("/fixture/bin/cargo"),
+                    trunk: Some("/fixture/bin/trunk"),
+                    deferred_trunk_refusal: None,
+                    compiler_environment: &[],
+                },
+                &removal,
+                &mut |root, invocation, _| {
+                    ran.push(invocation.name);
+                    let code = if refusing == Some(invocation.name) {
+                        17
+                    } else {
+                        0
+                    };
+                    let whole = |bytes| {
+                        Some(Stream {
+                            bytes,
+                            truncated: false,
+                            complete: true,
+                        })
+                    };
+                    compile_reply(
+                        CompileReply {
+                            id: declaration.id,
+                            root,
+                            cwd: invocation.cwd,
+                            name: invocation.name,
+                            capture: invocation.capture,
+                            detail: |code, message| FindingDetail::AppWebOutput { code, message },
+                        },
+                        &Captured {
+                            completion: &Completion::Exited(ExitStatus::from_raw(code << 8)),
+                            observation_failure: None,
+                            stdout: whole(b"compiling fixture\n"),
+                            stderr: whole(b""),
+                        },
+                        Duration::ZERO,
+                    )
+                },
+            );
+            assert_eq!(removal.take(), None, "the app workspace was not removed");
+            (analysis, ran)
+        };
+
+        let (refused, ran) = analyze(Some("cargo app-wasm-typecheck"));
+        assert_eq!(ran, ["cargo app-wasm-typecheck"]);
+        assert_eq!(refused.outcome, ArmOutcome::NonzeroAnalysis);
+        assert_eq!(refused.exit_code, Some(17));
+
+        let (passed, ran) = analyze(None);
+        assert_eq!(ran, ["cargo app-wasm-typecheck", "trunk app build"]);
+        assert_eq!(passed.outcome, ArmOutcome::Passed);
+
+        fs::remove_dir_all(&scratch).expect("remove app fixture");
+    }
 
     #[test]
     fn app_normalizes_trunks_boolean_no_color_input() {
