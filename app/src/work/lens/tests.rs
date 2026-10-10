@@ -72,6 +72,7 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
         format!("{} · task 1", board.tasks[0].statement.body.handle)
     );
     assert_eq!(resolved.nodes[0].detail, "todo · pending");
+    assert_eq!(resolved.nodes[0].status, None);
     let completed = &resolved.nodes[1];
     assert_eq!(completed.kind, "Selected task");
     assert!(completed.selected);
@@ -83,6 +84,7 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
         )
     );
     assert_eq!(completed.detail, "review · completed");
+    assert_eq!(completed.status.as_deref(), Some("completed"));
     assert_eq!(resolved.edges.len(), 1);
     assert_eq!((resolved.edges[0].from, resolved.edges[0].to), (1, 0));
     assert!(resolved.source.contains("Completed prerequisite"));
