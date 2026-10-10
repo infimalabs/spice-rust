@@ -178,6 +178,7 @@ fn target_oops_dependency_refuses(
             &TaskDepends {
                 task: forged_claimed,
                 after: after.to_vec(),
+                remove: false,
             },
         ),
         &[
@@ -223,6 +224,7 @@ fn prerequisite_oops_dependency_refuses(
             &TaskDepends {
                 task: public.clone(),
                 after: after.to_vec(),
+                remove: false,
             },
         ),
         &[(unclaimed_oops, "claim=none")],
@@ -295,6 +297,7 @@ fn public_dependency_commits(
         &TaskDepends {
             task: public.clone(),
             after: vec![prerequisite.clone()],
+            remove: false,
         },
     ));
     assert_eq!(
@@ -660,6 +663,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         &TaskDepends {
             task: promoted.clone(),
             after: vec![child],
+            remove: false,
         },
     ));
     let connected = board(&bus, epoch, lane.clone());

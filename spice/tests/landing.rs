@@ -128,7 +128,13 @@ const CASES: &[Case] = &[
     case("task oops", &["task", "oops", "readiness discovery"]),
     case(
         "task depends",
-        &["task", "depends", "READY-12345678", "AFTER-12345678"],
+        &[
+            "task",
+            "depends",
+            "READY-12345678",
+            "AFTER-12345678",
+            "--remove",
+        ],
     ),
     case(
         "task delete",

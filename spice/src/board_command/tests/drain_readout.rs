@@ -38,6 +38,7 @@ fn seed_parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) {
         &TaskDepends {
             task: blocked,
             after: vec![prerequisite],
+            remove: false,
         },
     ));
     let waiting = todo_task(bus, epoch, "DRAIN-wait0001", "Deferred row");

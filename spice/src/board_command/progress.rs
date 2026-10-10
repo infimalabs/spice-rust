@@ -341,7 +341,7 @@ fn admit_plan_transition(
     ))
 }
 
-fn accepted_pending_child<'a>(
+pub(super) fn accepted_pending_child<'a>(
     snapshot: &'a ValidatedSnapshot,
     entry: &Entry,
 ) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {

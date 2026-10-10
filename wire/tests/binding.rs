@@ -109,7 +109,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::TaskWake, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (
         CommandKind::TaskDepends,
-        r#"{ "task": "SPICE-1kKRRsDP", "after": ["SPICE-1kKRRsDQ"] }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "after": ["SPICE-1kKRRsDQ"], "remove": true }"#,
     ),
     (
         CommandKind::TaskPhase,

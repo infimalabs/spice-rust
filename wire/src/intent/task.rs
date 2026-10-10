@@ -276,7 +276,7 @@ pub struct TaskRef {
     pub task: TaskHandle,
 }
 
-/// Wire a dependency edge between two existing tasks.
+/// Add or remove dependency edges between existing tasks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDepends {
@@ -284,6 +284,9 @@ pub struct TaskDepends {
     pub task: TaskHandle,
     /// Tasks it must follow.
     pub after: Vec<TaskHandle>,
+    /// Remove the named edges instead of adding them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
 }
 
 /// Advance the claimed phase.

@@ -137,6 +137,7 @@ fn intermediate_dependency_movement_refuses_before_closing_a_cycle() {
     let intent = TaskDepends {
         task: target.clone(),
         after: vec![direct],
+        remove: false,
     };
     let command = fixture_command(
         epoch,
@@ -183,6 +184,7 @@ fn a_lane_without_a_claim_can_edit_dependencies() {
         &TaskDepends {
             task: task.clone(),
             after: vec![after.clone()],
+            remove: false,
         },
     ));
     let edited = board(&bus, epoch, Actor::Operator);

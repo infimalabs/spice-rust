@@ -619,6 +619,7 @@ fn client_depends(
             .map(|value| value.parse::<TaskHandle>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| refusal("task::dependency-invalid", None, &error.to_string()))?;
+        let remove = matches.get_flag("remove");
         let mut expected = vec![
             statement_witness(heads),
             workflow_witness(heads),
@@ -632,7 +633,10 @@ fn client_depends(
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
             let born = &dependency_heads.statement.body.born;
-            if !heads.statement.body.dependencies.contains(born) && !new_edges.contains(born) {
+            if !remove
+                && !heads.statement.body.dependencies.contains(born)
+                && !new_edges.contains(born)
+            {
                 expected.push(Witness::Edge {
                     task: heads.statement.body.born.clone(),
                     after: born.clone(),
@@ -640,11 +644,35 @@ fn client_depends(
                 new_edges.push(born.clone());
             }
         }
+        if remove
+            && heads.workflow.body.phase.as_str() == "plan"
+            && (heads.workflow.body.flow.len() == 1
+                || !substantive_acceptance(&heads.statement.body.acceptance))
+        {
+            for dependency in &heads.statement.body.dependencies {
+                let child = task_heads_by_stamp(board, dependency)?;
+                if after.contains(&child.statement.body.handle) {
+                    continue;
+                }
+                if child.workflow.body.status == "pending"
+                    && substantive_acceptance(&child.statement.body.acceptance)
+                {
+                    expected.push(statement_witness(child));
+                    expected.push(workflow_witness(child));
+                    break;
+                }
+            }
+        }
         append_dependency_reachability_witnesses(board, &new_edges, &mut expected)?;
         Ok((
             CommandKind::TaskDepends,
             expected,
-            serde_json::to_value(TaskDepends { task, after }).expect("typed intent encodes"),
+            serde_json::to_value(TaskDepends {
+                task,
+                after,
+                remove,
+            })
+            .expect("typed intent encodes"),
         ))
     })
 }

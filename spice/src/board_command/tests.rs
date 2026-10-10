@@ -1093,7 +1093,7 @@ use edit::*;
 // Claimed dependency edits carry possession through one atomic statement-head
 // replacement and keep the complete graph acyclic.
 mod dependencies;
-use dependencies::{dependency_witnesses, todo_task};
+use dependencies::{dependency_removal_witnesses, dependency_witnesses, todo_task};
 
 // The empty-drain readout a steered lane receives measures the parked board
 // with the same split task status reports, so both are pinned on one board.
