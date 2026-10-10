@@ -50,7 +50,9 @@ Every finite `spice --json` invocation emits one newline-terminated `Outcome`
 document. A daemonless reply is `{"kind":"reply","body":...}`; a read adds its
 snapshot `cursor` and a mutation its committed `seq` range, and the absence of
 both is the one spelling of a daemonless reply. Refusals and faults use the
-same envelope with their own `kind`.
+same envelope with their own `kind`. Selecting `--json` changes only the
+document shape, never the exit code or stream: replies go to standard output,
+refusals and faults to standard error.
 
 ## Bounded reads
 
