@@ -980,7 +980,11 @@ fn matches_state(state: &State, lane: CanonicalUuid, occupant: CanonicalUuid) ->
 }
 
 fn now_millis() -> io::Result<u64> {
-    let millis = SystemTime::now()
+    millis_since_epoch(SystemTime::now())
+}
+
+fn millis_since_epoch(at: SystemTime) -> io::Result<u64> {
+    let millis = at
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
         .as_millis();

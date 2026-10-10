@@ -4,8 +4,7 @@ use super::*;
 fn iced_automatic_claim_arms_only_its_distant_lapse() {
     let fixture = automatic_fixture();
     ice_claim(&fixture);
-    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
-        .expect("timer runtime starts");
+    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
 
     timers
         .synchronize(&fixture.bus)
