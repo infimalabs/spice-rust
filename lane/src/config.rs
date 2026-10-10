@@ -30,10 +30,10 @@ pub struct Config {
 pub enum WakeOrder {
     /// The lane that has gone longest without claiming wakes first; a lane
     /// that never claimed counts as oldest. Work rotates through a team.
-    #[default]
     LeastRecentlyClaimed,
     /// The lane that claimed most recently wakes first; a lane that never
     /// claimed comes last. Work concentrates on the most recently active seats.
+    #[default]
     MostRecentlyClaimed,
 }
 
@@ -109,7 +109,7 @@ impl Default for Config {
                 .expect("the compiled young threshold is valid"),
             hold: "30m".parse().expect("the compiled lane hold is valid"),
             narration: 24,
-            wake_order: WakeOrder::LeastRecentlyClaimed,
+            wake_order: WakeOrder::MostRecentlyClaimed,
         }
     }
 }

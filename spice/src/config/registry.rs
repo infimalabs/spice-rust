@@ -648,7 +648,7 @@ configuration_registry! {
     }
     fixed "lane.wake_order" {
         kind: String,
-        builtin: Some(Builtin::String("least-recently-claimed")),
+        builtin: Some(Builtin::String("most-recently-claimed")),
         layers: TRACKED_LOCAL,
         class: MachineLocal,
         flag: None,
