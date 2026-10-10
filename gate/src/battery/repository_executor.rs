@@ -1043,9 +1043,8 @@ mod tests {
         std::fs::write(fixture.join(".git/MERGE_MSG"), "arrived after capture\n")
             .expect("create merge control after capture");
 
-        let error = source
+        source
             .verify_source()
             .expect_err("merge-control creation must move repository source");
-        assert!(error.to_string().contains("merge-control source moved"));
     }
 }

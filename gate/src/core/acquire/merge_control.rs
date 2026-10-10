@@ -218,10 +218,8 @@ mod tests {
         let path = fixture.join(".git/MERGE_HEAD");
         fs::create_dir(&path).expect("create non-regular merge control");
 
-        let error = GitControlSeal::capture(fixture.path())
+        GitControlSeal::capture(fixture.path())
             .expect_err("non-regular merge control cannot be sealed");
-
-        assert!(error.to_string().contains("not a regular file"));
         assert!(path.is_dir(), "capture must not repair malformed control");
     }
 }

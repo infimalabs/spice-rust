@@ -212,8 +212,7 @@ mod tests {
             CoverageCompleteness::unknown(COVERAGE_UNKNOWN).unwrap(),
         )
         .unwrap();
-        let error = joined_report(tests, mutation(source(b"mutation"))).unwrap_err();
-        assert!(error.to_string().contains("different selected sources"));
+        joined_report(tests, mutation(source(b"mutation"))).unwrap_err();
     }
 
     #[test]

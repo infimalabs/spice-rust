@@ -162,7 +162,6 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
     assert_eq!(decoded, first.staged.payload);
     assert_eq!(
         decoded
-
             .symbols
             .as_ref()
             .expect("Darwin payload carries symbols")

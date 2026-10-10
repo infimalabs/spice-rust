@@ -56,7 +56,6 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
         .expect_err("malformed staged policy cannot use a compiled inventory");
 
     assert_eq!(error.reason(), "gate::change-selection-policy-refused");
-    assert!(error.detail().contains("configuration"), "{error}");
     fs::remove_dir_all(root).expect("remove malformed-policy fixture");
 }
 

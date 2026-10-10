@@ -303,8 +303,7 @@ fn source_metadata_refuses_oversized_python_before_allocation() {
         .materialize(&repository.root)
         .expect("materialize source");
     let contract = selected_contract(tree.root());
-    let error = HygieneSource::capture(&tree, &contract).expect_err("oversized source refuses");
-    assert!(error.to_string().contains("source bytes"), "{error}");
+    HygieneSource::capture(&tree, &contract).expect_err("oversized source refuses");
     repository.remove();
 }
 

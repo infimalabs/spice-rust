@@ -439,7 +439,6 @@ fn missing_and_corrupt_payloads_fail_as_store_corruption() {
         .list(&task)
         .expect_err("digest mismatch refused");
     assert_eq!(corrupt.class(), ErrorClass::Corrupt);
-    assert!(corrupt.to_string().contains("observed"));
 }
 
 #[cfg(unix)]

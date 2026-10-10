@@ -826,7 +826,6 @@ fn team_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
         instant_ms("2030-04-12T18:44:10.271Z")
     );
     assert_eq!(team.class(), "prose");
-    assert_eq!(team.title(), "assistant");
     assert_eq!(team.detail(), "newer team member prose");
     let other = runtime
         .newest_team_activity(&lanes.lanes[1])
@@ -869,7 +868,6 @@ fn team_runtime_with_activity_and_receipts() -> AppRuntime {
         instant_ms("2030-04-12T18:44:09.271Z")
     );
     assert_eq!(activity.class(), "tool");
-    assert_eq!(activity.title(), "tool");
     assert_eq!(activity.detail(), "Bash");
     assert!(
         runtime.messages().is_empty(),

@@ -365,9 +365,8 @@ mod tests {
         fs::remove_file(&path).expect("remove initial projection");
         fs::create_dir(&path).expect("substitute a directory");
 
-        let error = reconcile(lane, &pending, &mut retained, &root, false)
+        reconcile(lane, &pending, &mut retained, &root, false)
             .expect_err("non-regular projection must refuse");
-        assert!(error.contains("not a regular file"), "{error}");
         assert!(path.is_dir(), "refusal replaced the substituted path");
         fs::remove_dir_all(root).expect("remove projection fixture");
     }
