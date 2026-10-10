@@ -382,7 +382,7 @@ flowchart TD
    excludes active claims, so occupied lanes do not inflate the backlog count.
 - A single ordinary ready task is never stranded. After the starvation age, one
    is enough. This is an *age*, not a retry interval.
-- Newly ready ordinary work [settles before lifecycle chooses
+- Newly ready ordinary work [settles before lifecycle wakes
    it](model/decisions.md#closed-loop-capacity--the-work-availability-wake).
 - Rendering never launches. The snapshot, the live bus, and the UI
    project settled decisions; no read path can start or renew an occupant.
