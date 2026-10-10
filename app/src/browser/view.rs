@@ -272,23 +272,12 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
         .iter()
         .filter(|standing| standing.thread.is_some())
         .count();
-    let holding = standings
-        .iter()
-        .filter(|standing| standing.handle.is_some())
-        .count();
-    let pending = standings
-        .iter()
-        .map(|standing| standing.pending)
-        .sum::<usize>();
-    let teams = lanes.lanes.iter().filter(|team| team.teamed()).count();
-    let totals = [
-        topology_count(standings.len(), "agent", "agents"),
-        topology_count(teams, "team", "teams"),
-        format!("{live} live"),
-        topology_count(holding, "holding a task", "holding tasks"),
-        format!("{pending} pending"),
-    ]
-    .join(" · ");
+    // Teams, held tasks, and pending steering read from the roster itself;
+    // the heading keeps only the roster-wide totals no group or slot shows.
+    let totals = format!(
+        "{} · {live} live",
+        topology_count(standings.len(), "agent", "agents")
+    );
     html! {
         <section
             class="app-sheet-section app-spice-topology"
