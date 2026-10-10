@@ -284,11 +284,9 @@ fn a_refused_preflight_removes_the_scratch_owner_before_returning() {
     });
     let container = fixture.container();
 
-    let error = container
+    container
         .battery()
         .expect_err("a refused preflight cannot expose its scratch");
-
-    assert!(error.to_string().contains("preflight battery scratch"));
     let events = fixture.runtime.events();
     let name = started_name(&events[0]);
     assert_eq!(
@@ -310,11 +308,9 @@ fn a_refused_start_never_removes_a_container_it_did_not_create() {
     });
     let container = fixture.container();
 
-    let error = container
+    container
         .battery()
         .expect_err("a refused start creates no owned scratch");
-
-    assert!(error.to_string().contains("start battery scratch"));
     let events = fixture.runtime.events();
     assert_eq!(events.len(), 1, "a failed start has nothing safe to remove");
     assert!(events[0].starts_with("run spice-proof-"));

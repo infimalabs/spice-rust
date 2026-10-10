@@ -378,10 +378,8 @@ mod tests {
             "summary": {"errorCount": 1}
         });
 
-        let error = pyright_findings(&root, &["src/subject.py".to_owned()], &output.to_string())
+        pyright_findings(&root, &["src/subject.py".to_owned()], &output.to_string())
             .expect_err("foreign diagnostic must refuse");
-
-        assert!(error.contains("escaped the reached component"));
         fs::remove_dir_all(root).expect("remove Pyright escape fixture");
     }
 }

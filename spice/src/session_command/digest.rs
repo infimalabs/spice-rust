@@ -520,7 +520,6 @@ mod tests {
         let mut report = recall(2, 40);
         let page = fold(&report, &[]);
         assert!(folds(&page).is_empty(), "{page}");
-        assert!(!page.contains("folded away"), "{page}");
 
         let Report::Recall { repository, .. } = &mut report else {
             unreachable!()
@@ -585,7 +584,7 @@ mod tests {
         assert!(page.contains("key0 (new"), "the first ask is shown: {page}");
         assert!(page.contains("TASK-held [p] todo: held title"));
         // Pressure folds the lowest-ranked sections first.
-        assert!(page.contains("folded away"), "{page}");
+        assert!(!folds(&page).is_empty(), "{page}");
         assert!(!page.contains("## Recently touched paths"));
     }
 

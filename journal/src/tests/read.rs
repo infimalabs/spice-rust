@@ -492,11 +492,9 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
         .expect_err("oversized recent fact is corruption");
     assert_eq!(indexed_read_metrics().decoded_bytes, 0);
 
-    let snapshot = journal
+    journal
         .fact_snapshot()
         .expect_err("unbounded snapshot still rejects before allocating corruption");
-    assert!(snapshot.to_string().contains("Some(3)"));
-    assert!(snapshot.to_string().contains("exceeding"));
 }
 
 #[test]

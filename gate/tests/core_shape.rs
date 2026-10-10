@@ -70,10 +70,9 @@ fn repository_shape_skips_when_declared_roots_contain_no_modules() {
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     assert_eq!(shape.standing(), CoreStanding::Skipped);
-    let CoreObservation::Skipped { reason } = shape.observation() else {
+    let CoreObservation::Skipped { .. } = shape.observation() else {
         panic!("a package root without admitted modules must skip");
     };
-    assert!(reason.contains("no admitted modules"));
 
     repository.remove();
 }

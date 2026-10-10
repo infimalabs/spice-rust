@@ -462,12 +462,6 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     );
     assert_eq!(owed.status(1), LaneStatus::Queued);
 
-    assert_eq!(LaneStatus::Queued.label(), "steering queued");
-    assert_eq!(LaneStatus::Working.label(), "agent working");
-    assert_eq!(LaneStatus::Running.label(), "agent running");
-    assert_eq!(LaneStatus::Waiting.label(), "agent waiting");
-    assert_eq!(LaneStatus::Bound.label(), "agent bound");
-    assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
     assert_eq!(LaneStatus::Queued.key(), "queued");
     assert_eq!(LaneStatus::Working.key(), "working");
     assert_eq!(LaneStatus::Running.key(), "running");

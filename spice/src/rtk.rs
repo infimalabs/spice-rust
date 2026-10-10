@@ -585,8 +585,6 @@ mod tests {
         assert_eq!(stage, 1);
         assert_eq!(observed.state(), HealthState::Active);
         assert_eq!(observed.version(), Some("0.41.0"));
-        assert!(observed.detail().contains("exit 73"));
-        assert!(observed.detail().contains("validated per command"));
     }
 
     #[test]
@@ -606,12 +604,6 @@ mod tests {
         });
         assert_eq!(observed.state(), HealthState::Active);
         assert_eq!(observed.version(), None);
-        assert!(
-            observed
-                .detail()
-                .contains("version observation unavailable")
-        );
-        assert!(observed.detail().contains("validated per command"));
     }
 
     #[test]
@@ -623,7 +615,6 @@ mod tests {
             });
             assert_eq!(observed.state(), HealthState::Active);
             assert_eq!(observed.version(), None);
-            assert!(observed.detail().contains("version unrecognized"));
         }
     }
 

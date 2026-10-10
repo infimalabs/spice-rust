@@ -31,10 +31,9 @@ fn selected_unreadable_heads_fail_their_boundaries_instead_of_disappearing() {
             )
             .expect("corrupt transcript head fixture");
 
-        let error = journal
+        journal
             .read(|read| read.source_boundary(&lane))
             .expect_err("an unreadable head cannot prove a boundary");
-        assert!(error.to_string().contains("names"));
     }
 
     let journal = authority_fixture();

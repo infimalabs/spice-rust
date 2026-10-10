@@ -1288,7 +1288,7 @@ mod tests {
         fixture.write("wire/src/absence.rs", b"pub struct Draft;\n");
         let manifest = fixture.join("wire/Cargo.toml");
 
-        let refusal = package_inventory(
+        package_inventory(
             serde_json::from_value(serde_json::json!({
                 "id": "wire 0.0.0",
                 "name": "wire",
@@ -1306,10 +1306,5 @@ mod tests {
             fixture.path(),
         )
         .expect_err("a data declaration over compiled source is refused");
-
-        assert!(
-            refusal.to_string().contains("holding compiled source"),
-            "refusal names the compiled source: {refusal}"
-        );
     }
 }

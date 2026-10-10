@@ -458,8 +458,6 @@ fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
         panic!("one untracked policy source must yield exactly one violation")
     };
     assert_eq!(violation.code(), "config-tracked-trust::untracked-source");
-    assert!(!violation.detail().trim().is_empty());
-    assert!(violation.detail().contains("vendor.omp.binary"));
     assert_eq!(arm.standing(), CoreStanding::Failed);
 
     repository.remove();

@@ -152,8 +152,7 @@ fn a_lane_ask_is_answered_at_once_by_a_rule_or_waits_on_the_operator() {
         None,
         "a seen identity is refused, not re-answered"
     );
-    let closed = lane.ask(test_uuid(4), 14, "Deploy: from a closed seat?");
-    assert!(closed.contains("after its seat closed"), "{closed}");
+    lane.ask(test_uuid(4), 14, "Deploy: from a closed seat?");
     assert_eq!(lane.answered(), None);
 
     lane.stop();

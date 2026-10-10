@@ -915,14 +915,18 @@ mod tests {
     }
 
     #[test]
-    fn a_worktree_without_a_lane_stage_refuses_and_names_the_builder() {
+    fn a_worktree_without_a_lane_stage_is_incomplete() {
         let root = worktree();
 
         let error = AppSource::resolve(&root).expect_err("an absent stage refuses");
-
-        let message = error.to_string();
-        assert!(message.contains(APP_STAGE));
-        assert!(message.contains("spice dev xtask -- app"));
+        let AppSourceError::Incomplete {
+            directory, missing, ..
+        } = error
+        else {
+            panic!("an absent stage refused as {error:?}");
+        };
+        assert_eq!(directory, root.join(APP_STAGE));
+        assert_eq!(missing, [APP_STAGE_CURRENT]);
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
