@@ -295,6 +295,8 @@ struct AmbientPlanEdit {
     statement: TaskHead,
 }
 
+/// Only direct `task add` links its child beneath the lane's ambient plan;
+/// oops filing shares creation but records friction, not a planned child.
 fn prepare_ambient_plan_edit(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
@@ -302,7 +304,10 @@ fn prepare_ambient_plan_edit(
     child: &TaskHead,
     projects: &ProjectPolicy,
 ) -> Result<Option<AmbientPlanEdit>, Outcome<CommandAnswer>> {
-    if !add.depends.is_empty() || !matches!(command.actor(), Actor::Lane(_)) {
+    if command.kind() != CommandKind::TaskAdd
+        || !add.depends.is_empty()
+        || !matches!(command.actor(), Actor::Lane(_))
+    {
         return Ok(None);
     }
     let task = match claim_capture_from_board(&snapshot.answer) {
