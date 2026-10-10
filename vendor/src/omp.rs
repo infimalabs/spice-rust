@@ -207,7 +207,9 @@ automatically when it ends. A long-lived development service (a dev server, a wa
 is the one thing that runs without a deadline: set `service` and it is kept as a job at \
 once; inspect it with `logs`, and end it with `stop` once you no longer need it. Set \
 `events` to watch a deadline-bounded command instead of waiting on it: each line it prints \
-on stdout reaches you as a background notice while you keep working.";
+on stdout reaches you as a background notice while you keep working. Holding a claim, you \
+may end your turn while a deadline-bounded job runs: the lane wakes you, still holding the \
+claim, when it ends or emits an event. A service never keeps the lane idle.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
@@ -239,7 +241,9 @@ one. Use `wait` only when blocked on a finite job: it passively follows that job
 ends, the timeout elapses, or a message arrives. A running service never ends on its own, \
 so `wait` on one returns at once and leaves it running; inspect its logs or exercise its \
 served surface for readiness. A job started with `events` delivers its stdout lines as \
-background notices before its ending.";
+background notices before its ending. Holding a claim, you may end your turn instead of \
+waiting while a deadline-bounded job runs: the lane wakes you, still holding the claim, \
+when it ends or emits an event. A service never keeps the lane idle.";
 
 /// What the model reads about the job operation parameter.
 const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop";

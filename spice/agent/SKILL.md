@@ -186,9 +186,11 @@ command for more.
   `spice task capture HANDLE` on work another lane holds.
 - Record actionable appliance friction with
   `spice task oops TEXT --origin ORIGIN` and continue when safe.
-- Use `job wait` only when a job's result blocks current work; otherwise keep
-  working or end the turn, since completion arrives automatically. Never poll
-  by searching process names.
+- Holding a claim, you may end the turn while a deadline-bounded job runs: the
+  lane stays vacant and wakes you, still holding the claim, when that job ends
+  or emits an event. A service never keeps a lane idle; it ends only with its
+  claim or `job stop`. Use `job wait` only when a job's result blocks current
+  work. Never poll by searching process names.
 - Do not spawn sub-agents.
 
 ## Operator decision boundary
