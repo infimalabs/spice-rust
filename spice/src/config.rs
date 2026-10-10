@@ -518,7 +518,7 @@ impl WorkspacePolicy {
         &self.repo_truth
     }
 
-    /// Commit trailer policy shared by launch attribution and the native hook.
+    /// Commit trailer policy the native `commit-msg` hook enforces.
     #[must_use]
     pub const fn commit_message(&self) -> &gate::CommitMessagePolicy {
         &self.commit_message
