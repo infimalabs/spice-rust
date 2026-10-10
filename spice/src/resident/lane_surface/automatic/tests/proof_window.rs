@@ -555,8 +555,12 @@ fn assert_successor_renews(
 ) {
     let projects = board::ProjectPolicy::new(["task".to_owned()], Vec::new(), 2, 4)
         .expect("fixture project policy");
-    let mut timers = crate::resident::timers::Runtime::start(projects, steer::Config::default())
-        .expect("timer runtime starts");
+    let mut timers = crate::resident::timers::Runtime::start(
+        projects,
+        steer::Config::default(),
+        window.fixture.paths.supervisors.clone(),
+    )
+    .expect("timer runtime starts");
     timers
         .synchronize(&window.bus)
         .expect("successor lease arms renewal");
