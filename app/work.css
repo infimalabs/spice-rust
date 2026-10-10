@@ -329,7 +329,7 @@
 }
 .work-map-node-button {
   --work-card-tone: var(--work-terminal);
-  position: absolute; pointer-events: auto; padding: 0;
+  position: absolute; pointer-events: auto; padding: 0; min-height: 0;
   left: calc(var(--work-map-offset-inline, 0px) + var(--map-node-x) * var(--work-map-scale) * 1px);
   top: calc(var(--work-map-offset-block, 0px) + var(--map-node-y) * var(--work-map-scale) * 1px);
   width: calc(var(--map-node-width) * var(--work-map-scale) * 1px);
