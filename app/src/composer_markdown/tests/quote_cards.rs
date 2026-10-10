@@ -842,3 +842,83 @@ fn peer_context_destination_survives_badges_and_reseating() {
         }
     }
 }
+
+/// An outgoing MSG names its exact sender and every addressed occupant in
+/// header order; a departed recipient falls back to its address rather than
+/// the lane's successor, and a vacant lane keeps its own name.
+#[test]
+fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
+    let id = |suffix: &str| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131165{suffix}")
+            .parse()
+            .expect("fixture identity is canonical")
+    };
+    let (sender_lane, sender) = (id("0a"), id("1a"));
+    let (seated_lane, seated) = (id("0b"), id("1b"));
+    let (departed_lane, departed, successor) = (id("0c"), id("1c"), id("2c"));
+    let (vacant_lane, vacated) = (id("0d"), id("1d"));
+    let recipient = |address: &str, lane, occupant| wire::MessageRecipient {
+        address: address.parse().expect("fixture address parses"),
+        lane,
+        occupant,
+    };
+    let body = "> Please check the parser.";
+    let markdown = format!("Asking for review.\n{body}");
+    let start = markdown.find(body).expect("fixture body");
+    let sends = [wire::MessageSend {
+        start: u32::try_from(start).expect("fixture offset fits"),
+        end: u32::try_from(markdown.len()).expect("fixture offset fits"),
+        from: sender_lane,
+        sender,
+        recipients: vec![
+            recipient("6Jv5", seated_lane, seated),
+            recipient("6K26", departed_lane, departed),
+            recipient("6KB3", vacant_lane, vacated),
+        ],
+    }];
+    let agent = |accent: usize, label: &str| QuoteAgent {
+        accent,
+        label: label.to_owned(),
+    };
+    let agents = BTreeMap::from([
+        ((sender_lane, Some(sender)), agent(1, "sender-agent")),
+        ((seated_lane, Some(seated)), agent(2, "seated-agent")),
+        (
+            (departed_lane, Some(successor)),
+            agent(3, "successor-agent"),
+        ),
+        ((vacant_lane, None), agent(4, "vacant-lane")),
+    ]);
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &[],
+        &sends,
+        &[],
+        &referenced_quote_agents(&[], &[], &sends, &agents),
+        &QuoteSources::new(),
+    )
+    .html;
+
+    assert!(!html.contains("MSG 6Jv5"), "{html}");
+    assert!(!html.contains("successor-agent"), "{html}");
+    let (lead, recipients) = html
+        .split_once("data-quote-direction=\"outgoing\"")
+        .and_then(|(_, signoff)| signoff.split_once("message-quote-recipients"))
+        .expect("outgoing signoff names its recipients");
+    assert!(lead.contains(">sender-agent</span>"), "{html}");
+    let words = recipients.find("Please check the parser.").expect("body");
+    let named = recipients[..words]
+        .split("message-quote-recipient-separator")
+        .collect::<Vec<_>>();
+    assert_eq!(named.len(), 3, "{html}");
+    for (name, (occupant, label, state)) in named.iter().zip([
+        (seated, ">seated-agent</span>", "current"),
+        (departed, ">6K26</span>", "unresolved"),
+        (vacated, ">vacant-lane</span>", "historical"),
+    ]) {
+        assert!(name.contains(&format!("data-quote-agent-occupant=\"{occupant}\"")));
+        assert!(name.contains(label), "{name}");
+        assert!(name.contains(&format!("data-quote-author-state=\"{state}\"")));
+    }
+}
