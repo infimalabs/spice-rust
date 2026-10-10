@@ -482,6 +482,7 @@ fn render(
         event => inline_task_chips(event, resolves),
     });
     let mut events = events.collect::<Vec<_>>();
+    bind_adjacent_task_chip_punctuation(&mut events);
     accent_directive_contexts(&mut events, &outer_quotes);
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
@@ -1094,12 +1095,43 @@ fn inline_task_chips<'e>(
         MarkdownEvent::Code(code) => match watchband::canonical_task_handle(&code) {
             Some(task) if resolves(&task) => {
                 vec![MarkdownEvent::InlineHtml(
-                    task_chip_html(&task, None).into(),
+                    task_chip_html(&task, None, "").into(),
                 )]
             }
             _ => vec![MarkdownEvent::Code(code)],
         },
         other => vec![other],
+    }
+}
+
+const TASK_CHIP_HTML_START: &str = "<span class=\"message-task-chip\"";
+const TASK_CHIP_RUN_OPEN: &str = "<span class=\"message-task-chip-run\">";
+const TASK_CHIP_RUN_CLOSE: &str = "</span>";
+
+fn bind_adjacent_task_chip_punctuation(events: &mut [MarkdownEvent<'_>]) {
+    for index in 0..events.len().saturating_sub(1) {
+        let [MarkdownEvent::InlineHtml(chip), MarkdownEvent::Text(text)] =
+            &mut events[index..=index + 1]
+        else {
+            continue;
+        };
+        if !chip.starts_with(TASK_CHIP_HTML_START) {
+            continue;
+        }
+        let punctuation_end = task_chip_punctuation_end(text, 0);
+        if punctuation_end == 0 {
+            continue;
+        }
+        let mut run = String::with_capacity(
+            TASK_CHIP_RUN_OPEN.len() + chip.len() + punctuation_end + TASK_CHIP_RUN_CLOSE.len(),
+        );
+        run.push_str(TASK_CHIP_RUN_OPEN);
+        run.push_str(chip);
+        run.push_str(&text[..punctuation_end]);
+        run.push_str(TASK_CHIP_RUN_CLOSE);
+        let remainder = (punctuation_end < text.len()).then(|| text[punctuation_end..].to_owned());
+        *chip = run.into();
+        *text = remainder.map_or(CowStr::Borrowed(""), CowStr::from);
     }
 }
 
@@ -1122,16 +1154,32 @@ fn inline_task_text<'e>(
                 text[cursor..range.start].to_owned().into(),
             ));
         }
+        let punctuation_end = task_chip_punctuation_end(&text, range.end);
         let context = task_chip_context(&text, &range);
         events.push(MarkdownEvent::InlineHtml(
-            task_chip_html(&task, context.as_deref()).into(),
+            task_chip_html(&task, context.as_deref(), &text[range.end..punctuation_end]).into(),
         ));
-        cursor = range.end;
+        cursor = punctuation_end;
     }
     if cursor < text.len() {
         events.push(MarkdownEvent::Text(text[cursor..].to_owned().into()));
     }
     events
+}
+
+fn task_chip_punctuation_end(text: &str, start: usize) -> usize {
+    text[start..]
+        .char_indices()
+        .take_while(|(_, character)| {
+            matches!(
+                character,
+                '.' | ',' | ';' | ':' | '!' | '?' | '…' | ')' | ']' | '}' | '\'' | '"' | '’' | '”'
+            )
+        })
+        .last()
+        .map_or(start, |(offset, character)| {
+            start + offset + character.len_utf8()
+        })
 }
 
 const TASK_CHIP_CONTEXT_CHARS: usize = 180;
@@ -1181,17 +1229,28 @@ fn task_context_edge(character: char) -> bool {
     )
 }
 
-fn task_chip_html(task: &wire::TaskHandle, context: Option<&str>) -> String {
+fn task_chip_html(
+    task: &wire::TaskHandle,
+    context: Option<&str>,
+    trailing_punctuation: &str,
+) -> String {
     // TaskHandle parsing admits only the canonical ASCII handle grammar, so
-    // these fixed attributes cannot acquire markup from authored prose.
+    // these fixed attributes cannot acquire markup from authored prose. The
+    // trailing text is restricted to punctuation that is safe in HTML text.
     let handle = task.to_string();
     let title = context
         .map(escape_html_attribute)
         .unwrap_or_else(|| format!("Open task {handle}"));
+    let (run_open, run_close) = if trailing_punctuation.is_empty() {
+        ("", "")
+    } else {
+        (TASK_CHIP_RUN_OPEN, TASK_CHIP_RUN_CLOSE)
+    };
     format!(
-        "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" role=\"button\" \
+        "{run_open}{TASK_CHIP_HTML_START} data-task-handle=\"{handle}\" role=\"button\" \
          tabindex=\"0\" aria-label=\"Open task {handle}\" title=\"{title}\">\
-         <span class=\"message-task-chip-label\">{handle}</span></span>"
+         <span class=\"message-task-chip-label\">{handle}</span></span>\
+         {trailing_punctuation}{run_close}"
     )
 }
 

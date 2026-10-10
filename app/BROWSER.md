@@ -321,9 +321,10 @@ header.
 
 Task-handle chips use the surrounding rendered activity prose, without the
 handle itself, as a bounded native hover title. Authored characters are escaped
-before entering the attribute. An isolated handle has the explicit `Open task
-HANDLE` fallback; activation, keyboard semantics, and the visible chip remain
-unchanged.
+before entering the attribute. An isolated handle uses `Open task HANDLE`;
+directly trailing sentence punctuation stays on the chip's line without
+preventing a break before it. Activation, keyboard semantics, and the visible
+chip remain unchanged.
 
 Committed cards occupy a fixed 9px lattice perimeter and shared seams carved
 from the admitted rectangle. Prose cards center their painted height within

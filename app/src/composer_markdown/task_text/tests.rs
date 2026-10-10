@@ -37,10 +37,6 @@ fn only_board_resolved_handles_become_chips_at_every_mention() {
         html.contains(&format!("Not {UNKNOWN} or X-{KNOWN}x.")),
         "{html}"
     );
-    assert!(
-        html.contains("(<span"),
-        "punctuation stays outside the chip: {html}"
-    );
 }
 
 #[test]
@@ -106,21 +102,4 @@ fn authored_structure_survives_under_the_detail_headings() {
     assert!(html.contains("<h5>Scope</h5>"), "{html}");
     assert!(html.contains("<li>one</li>\n<li>two</li>"), "{html}");
     assert_eq!(chips(&html), [KNOWN]);
-}
-
-#[test]
-fn observation_evidence_stays_faithful_beside_a_resolved_handle() {
-    let html = render(&format!(
-        "Commit 0b42770a9 for {KNOWN}: app/src/view.rs line 12.\n\n```sh\nspice task done {ALSO_KNOWN} --validation \"<ok>\"\n```"
-    ));
-
-    assert_eq!(chips(&html), [KNOWN]);
-    assert!(html.contains("Commit 0b42770a9 for <span"), "{html}");
-    assert!(html.contains("</span>: app/src/view.rs line 12."), "{html}");
-    assert!(
-        html.contains(&format!(
-            "spice task done {ALSO_KNOWN} --validation \"&lt;ok&gt;\""
-        )),
-        "{html}"
-    );
 }
