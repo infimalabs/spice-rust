@@ -41,8 +41,8 @@ and editing them changes no production style. Browser screenshots of the
 gallery can be retained as task artifacts without adding generated images to
 the application sources.
 
-Flush etched glass is the shipped primary panel described under
-[Team composer controls](#team-composer-controls); the gallery reproduces its
+Flush etched glass is the shipped primary panel described under [Team composer
+controls](CONSOLE.md#team-composer-controls); the gallery reproduces its
 geometry, 3px recipient rim, and contact depression. Smoked pearl and Frosted
 instrument are reference-only finishes on the same geometry, not the current
 selection. Every finish keeps sharp panel corners, circular BASIC/TURBO, menu,
@@ -194,143 +194,6 @@ dependent it blocks and labels that edge **then**, so the source card, arrow,
 and target card read as one activity transition. Prerequisite and dependent
 controls still filter by their named task relationship before the graph presents
 that relationship in blocking order.
-
-## Team composer controls
-
-The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
-Round 34px TURBO and team-menu buttons share the first row; two pill-shaped
-slider flyers follow, and round 62px SEND anchors the panel below them. Faces
-transmit the neutral background, with fine etched edges and no opaque
-recipient-color fill, domes, or nested ridges. Team and Settings global TURBO
-retain the same lettering:
-muted when off, brighter ink and a neutral glass wash when on, without colored
-active rims. Each remains its own separately admitted control.
-Task-observation Add/Close retain their independent appearance.
-
-Slider flyers and their one selected label settle together over 180ms. The
-label remains continuously painted inside its flyer during travel; labels do
-not crossfade, overlap, or disappear between stops. The native ranges retain
-their stops and hit targets, including the 2px endpoint inset. Lettering has a
-subtle etched highlight. A speech selection applies to the team's browser-local
-speech policy in the same input that paints it, so no narration speaks under a
-mode the control no longer shows; message cards do not depend on that mode and
-stay unrendered. Reduced motion removes travel without removing state
-distinctions.
-
-SEND lights one 2px perimeter rim in actual recipient accents: a continuous rim
-for one recipient, equal separated arcs for several. The button title names the
-recipient total, which follows sendable typed text, quotes, and images under
-current command admission. A
-running team without drafted content has no recipient light; an idle team
-without agents or drafts dims and disables SEND. A pending allocation-policy
-command admits no send and lights no recipients. Existing wake/send and
-attachment behavior stays authoritative, not the reference gallery's simulated
-readiness.
-
-For teams with multiple members, `FULL SEND` materializes as one compact
-lockup exactly when the active submission reaches every member. Its outer box
-always stays the width and center of ordinary `SEND`: condensed `FULL` occupies
-the original `SE` half, condensed `SEND` occupies the original `ND` half, and
-`FULL` uses the focus color. Ordinary submission derives that state from the
-reachable members whose composers hold text, quotes, or images, including
-wakeable non-running members. While a broadcast preview is active, its actual
-broadcast recipients replace that calculation; broadcast mode alone never
-implies full coverage. Partial sends and single-member teams show only `SEND`.
-The lockup stays inside the existing button geometry and does not change its
-accessible name.
-
-Pointer and keyboard contact move SEND down 1.5px, deepen its upper contact
-shadow, and dim the rim; release restores its flat face without grid reflow.
-Touch-only contact is projected from native pointer events and clears on release,
-cancellation, or lost capture without intercepting activation. Reduced motion
-removes transitions, not contact feedback. Held ordinary-submit modifiers add a
-1px focused-agent command ring outside the 3px recipient rim, so the recipient
-bands stay the heavier line; a held broadcast uses its occupied recipients' rim
-while retaining the neutral face, and its command ring is their light combined
-into the theme's ink signal, near white on dark and near black on light, rather
-than any one accent.
-
-Vacant members do not create broadcast recipients, and an empty vacant composer
-contributes no ordinary SEND rim arc: when no member has sendable content, the
-button removes its recipient-rim paint while retaining the neutral face.
-Ordinary arcs and the recipient total in the button title come only from
-reachable members holding sendable content; a vacant member joins them only
-when it holds a draft that a press would wake it to receive. The rim is paint
-on the one SEND button, never a set of per-recipient hover targets, so an empty
-vacant member adds no arc, seam, label, or hit region.
-
-Member drafts and the control column are one zero-gap field. Drafts gain a 10%
-lane-accent tint when lit. One standard 31% glass thickness is the shared
-primitive; the dark veil uses it while the light theme retains its softer base.
-Composer headings use the derived 62% theme-control paint as two thicknesses
-and retain their full-width accent underlines. Behind the entire form, one
-pointer-inert composited screen continues 10px over the message stream. The
-control frame uses one derived 93% theme-control paint as three thicknesses and
-holds it through the full height of the neighboring text areas. That paint
-fades smoothly across the 10px continuation below instead of exposing the
-stream inside the frame. The continuation itself paints its opaque 1px top
-inset rule above the control paint, using the shared backdrop edge color so the
-boundary remains continuous. Equal soft elevation appears on both inline
-sides; at a team boundary the following composer carries the otherwise-clipped
-right cast, letting either neighbor read beneath the raised controls without
-moving either surface. The faint sibling separator continues that internal
-boundary through the message plane without painting either browser edge.
-The screen owns the form glass, one complex theme-derived background, and one
-10px frost filter. Its header edge eases from an opaque control line through
-stronger control color
-into ordinary glass. The form has no physical lower edge or strengthening band;
-the ordinary veil simply continues 10px beyond it while a mask fades that
-continuation to transparent. No backdrop-filter boundary exists at the form
-edge. The continuation depth is declared once in CSS and counts as composer:
-collapse travels the measured height plus that depth, so the feather tapers out
-of view before the form is fully collapsed and tapers back in first on reveal.
-Only then does the message stream's top rule appear, fading in rather than
-switching on, and without motion under reduced motion. The shared control edge
-remains opaque and theme-derived
-for other control consumers. Member headings retain
-their accent underline, focused or broadcast drafts merge their full-width
-highlight, and vacant members mute content without changing the surface.
-An empty message plane reserves that same continuation depth below the composer
-before the pending-direction notice, so its overflow clip retains the full
-feather even before an agent has emitted prose.
-The composer rides in the Chat plane's own scroll content, so every engine's
-scroll moves it in the same frame as the cards. It sticks to the plane's top
-edge, so scrolling back never opens a gap above it, and measured composer
-height remains the message-plane spacer and scroll padding. Between
-exposure edges, one fixed absolute rest lets native scroll carry the composer.
-At either edge sticky positioning owns continued motion without repeated layout
-writes; the first reversed delta reanchors the rest once, so reveal or collapse
-begins immediately. Programmatic focus moves
-the caret without browser focus scrolling the viewport, team fleet, member
-strip, or message plane. The composer's existing focus transition still reveals
-a collapsed draft fully, and the plane's scroll padding keeps other
-browser-scrolled targets clear of the exposed composer only while focus is
-outside it. The team fleet opens at its canonical right edge and holds that
-edge through resizes only while the operator leaves it there; once they scroll
-to another team, a keyboard opening or closing, a rotation, or a team arriving
-keeps their place.
-
-The range words ride inside their pill flyers. Each 22px-high thumb travels
-inside a 26px-high groove, inset 2px at both ends; label travel follows that
-same rail at every stop. Both rows use one light map: Quiet and Steer keep the
-neutral groove, Speak and Drive illuminate its complete backplane green, and
-Narrate and Drain illuminate it amber. Each colored stop is one uniform
-full-groove wash, without a dark center band or visible point emitter. The
-flyer's near-clear center transmits that wash while opposing inset bevels,
-curved edge caustics, and low-radius backdrop diffusion gather the color into
-a thick lens perimeter rather than painting a stripe across its face.
-Allocation reads STEER / DRIVE / DRAIN. Every engine maps Up/Right upward and
-Down/Left downward.
-Narrate voices live card edges; Speak voices resident-classified final answers and
-acknowledged steering. Neither reads fenced code or Markdown marks, and loaded
-history never auto-plays.
-
-Each member heading resolves from that lane’s newest eligible authored prose.
-If one history page has none, header demand continues to a newly exposed older
-frontier, but never reissues the same frontier without fresh viewport demand.
-An idle team with no draft, quote, or image dims the send frame while leaving
-the sliders usable; draft input rerenders that frame only when its active answer
-changes.
 
 ## Lane menu
 

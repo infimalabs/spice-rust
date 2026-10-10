@@ -4,11 +4,9 @@
 # cleaner must enumerate those files and skip the whole root when any lock is
 # held. An operator can observe the holder with `lsof <lock>`, and a collector
 # can attempt a nonblocking exclusive file lock. `CACHEDIR.TAG` is permanent
-# and means "cache", not "idle". Cargo's own stable automatic collection was
-# forced and observed by
-# `xtask/tests/build_cache.rs`: it manages caches under `CARGO_HOME` and visits
-# neither a held nor an idle build-dir, so it does not supply that
-# external-cleaner check. (`cargo clean gc` is still nightly-only.)
+# and means "cache", not "idle". Cargo's own stable automatic collection
+# manages caches under `CARGO_HOME` and visits no build-dir, so it does not
+# supply that external-cleaner check. (`cargo clean gc` is still nightly-only.)
 [build]
 # Workspace validation runs the compiler directly. A machine-level sccache
 # daemon outlives the process groups that bound each gate; when an outer gate

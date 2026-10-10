@@ -324,28 +324,17 @@ beside that button in the header. After a failed refresh the percentage mutes
 while retaining the last good value; before any retained weekly figure exists,
 the same fixed-width place shows a loading or unavailable mark.
 
-Provider quota detail rows preserve each provider's authoritative remaining
-quantity. Percent limits label that capacity `N% full`; their filled segment
-starts at the left edge, so consumption exposes the track from the right.
-Counted limits retain their explicit remaining and total units. A
-provider-reported raw credit balance appears on its account card in whole,
-locale-grouped credits, beside the reset credits when the account has them and
-on its own **Credits** line otherwise, separate from time-window quota and
-banked reset grants; balances are never inferred, combined across accounts, or
-treated as API-dollar credit. A balance is OMP's normalized `balance`-scoped
-windowless limit whose `credits` amount reports what remains and no total;
-windowed, differently scoped, or capped credit allowances stay meters. OpenAI
-Codex balances reach that shape through Spice's one maintained OMP extension,
-which the appliance carries and the resident pins in its runtime directory and
-names by exact path on every sample: it delegates to OMP's built-in Codex usage
-provider once, keeps a balance the provider already normalizes, leaves a
-missing balance missing, and fails the account's report on a balance that is
-not a finite decimal. Every Codex report it returns carries its stamp, and a
-sample with an unstamped Codex report fails, because OMP serves its built-in
-provider without a word when it cannot load a named extension. Each limit row
-keeps its amount and compact reset cadence beside the meter at ordinary and
-narrow sidebar widths; a long limit name wraps rather than forcing horizontal
-overflow.
+Provider quota detail rows and raw credit balances follow [provider quota
+rows](../../app/BROWSER.md#provider-quota-rows); a balance is never inferred,
+combined across accounts, or treated as API-dollar credit. OpenAI Codex
+balances reach OMP's `balance`-scoped windowless shape through Spice's one
+maintained OMP extension, which the appliance carries and the resident pins in
+its runtime directory and names by exact path on every sample: it delegates to
+OMP's built-in Codex usage provider once, keeps a balance the provider already
+normalizes, leaves a missing balance missing, and fails the account's report on
+a balance that is not a finite decimal. Every Codex report it returns carries
+its stamp, and a sample with an unstamped Codex report fails, because OMP serves
+its built-in provider without a word when it cannot load a named extension.
 
 Inside the Spice sidebar, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,
@@ -438,21 +427,15 @@ a displayed task or can add an edge into that graph; unrelated task activity
 does not refresh it. A response that advances only the journal snapshot does
 not publish another browser render.
 
-**Running jobs** follows the graph and represents every command the admitted
-lane table reports as running or awaiting delivery, independent of the task
-selection. Rows name the agent, live started age, full command on hover, and
-reported standing. Five jobs show in full; more scroll in a
-keyboard-reachable region under pinned headings with the sixth peeking. The
-table holds that height with fewer jobs, so no job moves the detail region.
+**Running jobs** follows the graph and lists every command the admitted lane
+table reports as running or awaiting delivery, independent of the selection:
+agent, live started age, full command on hover, and reported standing.
 
-All selected task details are mounted together below the graph and jobs in the
-same order as the selection. There are no Details/Map tabs, task pagination,
-next/previous controls, or table of singular task pages. A graph or
-relationship control for an already selected task scrolls and focuses its
-article; an external related task extends the set. Each article carries its
-contract, attachments, state, ownership, blockers, relationships, provenance,
-closure evidence, observations, and composer. Loading or unavailable evidence
-occupies that task's own article and does not hide its siblings.
+Every selected task's article mounts below the graph and jobs in selection
+order, carrying its contract, attachments, state, ownership, blockers,
+relationships, provenance, closure evidence, observations, and composer, as
+[the task overview](../../app/OVERVIEW.md#task-overview) lays out; loading or
+unavailable evidence stays inside that task's own article.
 
 Descriptions, acceptance criteria, observations, and closure evidence render in
 the same sanitized Markdown dialect as Chat messages: math, Mermaid diagrams
@@ -486,11 +469,8 @@ Close is unavailable, the chord does not add an observation and the draft
 remains. Closing a task a lane still holds names that holder in the action's
 description.
 
-The overview is one modal sheet. It opens focus on Close, Escape and the
-backdrop dismiss it, reduced motion removes its transitions, and close returns
-focus to the surviving control that launched it. Narrow screens use the same
-graph-first and whole-set reading order without introducing another task
-browser.
+The overview opens focus on Close, and narrow screens keep the same graph-first,
+whole-set reading order without introducing another task browser.
 
 The global task strip and each team's task band retain their horned-tab
 presentation and visible Work terminology. Global and team totals use thick
@@ -662,94 +642,25 @@ this team), Drain (draw all otherwise assignable work): three values, a
 re-derives. Drive uses the creator team captured at task creation; later
 membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
-Beside the draft, one fixed 80 × 160 control panel begins with a three-pixel
-top inset and has four rows separated by three three-pixel gaps: a 34-pixel
-two-slot button row, two equal 26-pixel range rows, then a 62-pixel `Send` row,
-because $(160 - 3 - 34 - 62 - 3 \times 3) / 2 = 26$. `TURBO` occupies the
-upper-left slot at the same diameter as the global `Spice` control, giving it
-equal three-pixel top and left clearance. A same-diameter hamburger in the
-upper-right slot opens the team's swap/join arrangement menu beside the
-control column, so the same button closes it; with no other team it stays
-disabled and names that reason. Both utility
-buttons use the primary panel's Flush etched-glass surface.
-Each range runs left to right, minimum to maximum, as a 46 × 22 labeled thumb in
-a 74 × 26 pill groove: two pixels of clearance above and below, and three
-pixels of panel inset at each end. Every current-value word fills the same
-32 × 9 label box, centered with seven pixels of horizontal and six-and-a-half
-pixels of vertical thumb clearance; the box clips overscan before it reaches
-the rounded edge. One current-value word remains continuously visible and
-travels with its flyer; no label crossfade or replacement gap occurs. Both
-ranges use the same continuous backplane light map: the left stop remains
-neutral, the middle stop glows green, and the right stop glows amber. Each
-active groove is uniformly lit through its center with no visible point
-emitter. `Send`, team `TURBO`/`BASIC`, the menu button, and both flyers share
-one Flush etched-glass material. Colored light originates in the groove. The
-flyer's nearly clear center transmits it while opposing inset bevels, curved
-edge caustics, and slight backdrop diffusion gather it into a thick lens
-perimeter. No broad state-color stripe is painted across the flyer; it retains
-one fine optical edge and never becomes an opaque state fill, raised dome, or
-nested ridge.
-
-`Send` lights only when a press would submit something. One two-pixel perimeter
-rim divides into an equal arc per agent that would receive the message, in that
-agent's accent and in mathematical order: the first agent opens at the right
-edge and the rest follow counterclockwise. A darker seam separates neighboring
-arcs so two agents sharing an accent remain distinct. The button title names
-how many agents a press reaches. The face remains neutral. Pointer, touch, and
-keyboard contact move it down one-and-a-half pixels, deepen its upper contact
-shadow, and quiet the rim; release restores the flat face without moving the
-grid. A running team with no sendable draft has no rim. A
-vacant member with a sendable draft joins the ordinary rim because that press
-wakes and delivers to it; an empty vacant member contributes no arc. With no
-running agent and no draft, the controls dim and `Send` is disabled.
-For a team with more than one member, `FULL SEND` appears as a single compact
-lockup only when the pending submission reaches every member. Its outer box
-keeps ordinary `SEND`'s width and center while condensed `FULL` occupies the
-original `SE` half and condensed `SEND` occupies the original `ND` half; `FULL`
-uses the focus color. Ordinary submission qualifies when every member is
-reachable and holds sendable content, including a wakeable non-running member;
-a partial set never qualifies.
-The command-modifier `Send` ring shares the lane accents' two-pixel width;
-focus rings remain visible around admitted actions.
-
-While the keyboard broadcast preview is held from an eligible primary composer,
-`Send` replaces the ordinary recipient rim with that of every occupied member
-the broadcast would reach, whatever the drafts hold. Its command ring takes no
-single accent: the recipients' light combines into the theme's ink
-signal, near white on dark glass and near black on light. Releasing the
-modifiers restores the ordinary face. During that preview, `FULL` instead
-follows the actual broadcast recipients and appears only when they cover every
-member, so broadcast mode is not itself a full send. Single-member teams always
-retain the plain `SEND` label. Team `TURBO` keeps its lettering in both states,
-muted when off and brighter with a neutral glass wash when on, without a colored
-edge; the range flyers keep neutral edges at every stop. Pressing the composer's
-`TURBO` flips that team flag, which the resident keeps across restarts. The
-button shows the requested state at once and holds it until the resident answers
-that request. A reply older than lane authority the app already holds settles to
-that authority: silently when it shows the requested state, and with the team
-issue when it replaces that state. A refusal, a fault, or a reply that carries no
-lane authority for this session restores the resident's flag and reports the
-team issue.
-
-The Spice side view's first body row has no section heading. Its resident
-connection and installed-version summary stands at the left of the separately
-admitted global `TURBO` control. The version remains keyboard-inspectable and
-becomes a reload button when a newer app is available. Global `TURBO` retains
-the same neutral 34px Flush etched-glass face and on/off lettering as team
-TURBO, and remains disabled until settings have loaded and the resident offers
-that command. The read-only Git identity section follows.
-Fast mode is additive: a member launches in fast mode exactly when its own flag,
-its team's flag, or the global setting is on, so turning one level off never
-slows a member another level still enables. Running OMP agents whose effective
-value changes take it at once. The draft field is one glass
-thickness. One inherited depth parameter drives the shared control-glass paint:
-headers use its default two thicknesses, while the control frame overrides it
-to three. Each surface receives that paint once, so the moving page stays
-visible through it. The controls continuation has neither a top divider nor an
-attached perpendicular rule; soft lateral shadows separate sibling composers,
-the sibling seam starts only below the continuation, and the adjacent
-member-header rules remain visible. The frame uses the
-same restrained corners as the adjacent draft rather than pill geometry.
+Beside the draft, one fixed 80 × 160 control panel holds team `TURBO`, the
+team arrangement menu, both ranges, and `Send`; its geometry, glass, and light
+map follow [team composer controls](../../app/CONSOLE.md#team-composer-controls).
+The arrangement menu stays disabled, naming why, when no other team exists.
+`Send` lights only when a press would submit something: one arc per receiving
+agent in that agent's accent, the first opening at the right edge and the rest
+following counterclockwise, with a darker seam so two agents sharing an accent
+stay distinct. Pressing the composer's `TURBO` flips that team flag, which the
+resident keeps across restarts. The button shows the requested state at once
+and holds it until the resident answers that request. A reply older than lane
+authority the app already holds settles to that authority: silently when it
+shows the requested state, and with the team issue when it replaces that
+state. A refusal, a fault, or a reply that carries no lane authority for this
+session restores the resident's flag and reports the team issue. Global
+`TURBO` stays disabled until settings have loaded and the resident offers that
+command. Fast mode is additive: a member launches in fast mode exactly when its
+own flag, its team's flag, or the global setting is on, so turning one level
+off never slows a member another level still enables. Running OMP agents whose
+effective value changes take it at once.
 
 **Value:** the knob between "I approve each thing" and "go find work", immediate
 to use without pretending to have settled.
