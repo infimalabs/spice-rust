@@ -706,7 +706,7 @@ flowchart LR
   J --> Overlays["overlays never displace"]
   J --> LiveText["live text never resizes"]
   J --> FixedCounts["fixed-slot live counts<br/>never reflow"]
-  J --> TaskPill["content-sized task pill<br/>may resize with digits"]
+  J --> TaskPill["content-sized stem count badge<br/>may resize with digits"]
   J --> Identity["identity never re-measures"]
 ```
 
@@ -722,9 +722,11 @@ flowchart LR
    then at minute, hour, or day boundaries, and never after saturation. Every
    label renders into a padded, fixed-width single-line slot, so an update never
    changes a box.
-- **Task counts spell all three slots.** A public global pill renders one
-   unpadded `ready · active · unavailable` string. Its width is content-driven,
-   so a digit-width change may resize it.
+- **Task counts show one open total.** Every global and team roll-up tab shows
+   one badge counting open tasks; a global tab's title and accessible name carry
+   the ready, active, and blocked-or-deferred breakdown. A stem badge is
+   content-sized, so a digit-width change may resize its tab; the total tabs
+   reserve one minimum badge footprint.
 - **Presentation changes do not directly touch card identity or style.**
    Recolouring and attribution toggles do not force a re-measure. Member count
    remains outside card identity and style, but it changes team weight; when
