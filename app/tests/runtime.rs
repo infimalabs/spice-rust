@@ -289,6 +289,7 @@ fn board_response(
             wire::EnvironmentRequirement::journal_schema(2)
                 .expect("future fixture schema is positive"),
         ),
+        Vec::new(),
     )
 }
 
@@ -296,6 +297,7 @@ fn board_response_with_requirements(
     session: &Session,
     hidden_title: &str,
     requirements: wire::EnvironmentRequirements,
+    trust: Vec<wire::intent::Positioned<wire::TrustHead>>,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
@@ -339,7 +341,7 @@ fn board_response_with_requirements(
             ),
         ],
         history: None,
-        trust: Vec::new(),
+        trust,
         appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {
             position: seq(3),
@@ -1217,7 +1219,7 @@ fn same_scope_reconnect_preserves_cursor_and_changed_scope_clears_it() {
 }
 
 #[test]
-fn trust_grant_action_blocks_duplicates_but_allows_retry_after_failure() {
+fn trust_grant_action_requires_bound_pended_authority_and_allows_failure_retry() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
@@ -1226,15 +1228,52 @@ fn trust_grant_action_blocks_duplicates_but_allows_retry_after_failure() {
         .expect("fixture digest");
     let task = fixture_stamp("PUBLIC-work1");
     let revision = seq(1);
-    let board = board_response_with_requirements(
-        &session,
-        "Hidden fixture",
+    let requirements = || {
         wire::EnvironmentRequirements::one(wire::EnvironmentRequirement::trust_grant(
             digest.clone(),
-        )),
-    );
-    runtime.apply_board(&board);
+        ))
+    };
+    let trust = |state, worktree: Option<&str>| {
+        vec![wire::intent::Positioned {
+            position: seq(3),
+            body: wire::TrustHead {
+                digest: digest.clone(),
+                state,
+                worktree: worktree.map(str::to_owned),
+            },
+        }]
+    };
 
+    runtime.apply_board(&board_response_with_requirements(
+        &session,
+        "Hidden fixture",
+        requirements(),
+        Vec::new(),
+    ));
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
+
+    runtime.apply_board(&board_response_with_requirements(
+        &session,
+        "Hidden fixture",
+        requirements(),
+        trust(wire::TrustState::Pended, None),
+    ));
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
+
+    runtime.apply_board(&board_response_with_requirements(
+        &session,
+        "Hidden fixture",
+        requirements(),
+        trust(wire::TrustState::Revoked, Some("/producer")),
+    ));
+    assert!(!runtime.begin_trust_grant(&task, revision, &digest));
+
+    runtime.apply_board(&board_response_with_requirements(
+        &session,
+        "Hidden fixture",
+        requirements(),
+        trust(wire::TrustState::Pended, Some("/producer")),
+    ));
     assert!(!runtime.begin_trust_grant(&fixture_stamp("different-task"), revision, &digest));
     assert!(!runtime.begin_trust_grant(&task, seq(2), &digest));
     assert!(runtime.begin_trust_grant(&task, revision, &digest));

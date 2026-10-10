@@ -391,16 +391,16 @@ async fn dispatch_trust_grant(
     else {
         unreachable!("trust dispatch receives only a trust-grant action");
     };
-    let current = data
+    let ready = data
         .read()
         .as_ref()
-        .is_some_and(|runtime| runtime.trust_grant_is_current(task, *revision, digest));
-    if !current {
+        .is_some_and(|runtime| runtime.trust_grant_is_ready(task, *revision, digest));
+    if !ready {
         if let Some(runtime) = data.write().as_mut() {
             runtime.settle_trust_grant(
                 digest.clone(),
                 Some(
-                    "This task requirement changed before approval. Review the current blocker."
+                    "This task requirement or trust authority changed before approval. Review the current blocker."
                         .to_owned(),
                 ),
             );
