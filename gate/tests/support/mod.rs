@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 mod repository;
-pub(crate) mod toolchain;
 
 /// Names tried before a scratch root is declared unobtainable.
 const CREATE_ATTEMPTS: usize = 128;
@@ -124,24 +123,6 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
 }
 
 #[allow(dead_code)]
-pub(crate) fn set_environment_names(repository: &Tree, names: &[&str]) {
-    let path = repository.root.join("spice-rust.toml");
-    let mut document: toml::Value =
-        toml::from_str(&fs::read_to_string(&path).expect("read fixture environment policy"))
-            .expect("parse fixture environment policy");
-    document["policy"]["env_names"] = toml::Value::Array(
-        names
-            .iter()
-            .map(|name| toml::Value::String((*name).to_owned()))
-            .collect(),
-    );
-    repository.write(
-        "spice-rust.toml",
-        &toml::to_string(&document).expect("encode fixture environment policy"),
-    );
-}
-
-#[allow(dead_code)]
 pub(crate) fn inapplicable_without_tools(
     declaration: ToolchainDeclaration,
     observation: &ArmObservation,
@@ -155,14 +136,6 @@ pub(crate) fn inapplicable_without_tools(
         declaration.id().as_str()
     );
     true
-}
-
-#[allow(dead_code)]
-pub(crate) fn fixture_column(line: &str, needle: &str) -> u32 {
-    let start = line
-        .find(needle)
-        .expect("the fixture line names the needle");
-    u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
 }
 
 /// The first candidate this call creates, never one it merely finds.
