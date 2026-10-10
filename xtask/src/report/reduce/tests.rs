@@ -95,7 +95,14 @@ fn a_finding_stays_terminal_until_its_parent_statement_is_causally_revised() {
         edited(6, 5, PARENT),
     ]);
     let task = &history.tasks[PARENT];
-    assert_eq!(route(task), "historically terminal finding");
+    assert_eq!(
+        task.closure.as_ref().expect("finding closes").kind,
+        "task::reviewed"
+    );
+    assert_eq!(
+        task.reviews.last().expect("review recorded").verdict,
+        "finding"
+    );
     assert_eq!(task.reviews[0].correction_births, [CORRECTION]);
 
     history.push(edited(7, 4, PARENT)).expect("revision folds");
@@ -118,7 +125,12 @@ fn only_the_flow_ending_phase_closes_and_a_later_claim_reopens() {
     for next in [phased(3, PARENT), done(4, 2, PARENT)] {
         history.push(next).expect("phase folds");
     }
-    assert_eq!(route(&history.tasks[PARENT]), "legacy review-phase done");
+    let closure = history.tasks[PARENT]
+        .closure
+        .as_ref()
+        .expect("flow-ending done closes");
+    assert_eq!(closure.kind, "task::done");
+    assert_eq!(closure.phase, "review");
 
     history
         .push(claim(5, 3, PARENT, 1, 4))

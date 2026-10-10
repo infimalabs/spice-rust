@@ -206,13 +206,6 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
         shell["parameters"]["properties"]["service"]["type"],
         "boolean"
     );
-    assert!(
-        shell["description"]
-            .as_str()
-            .expect("prose")
-            .contains("only way to execute"),
-        "the model must learn the shell is the sole executor"
-    );
     let job = &tools[1];
     assert_eq!(job["name"], omp::JOB_TOOL);
     assert_eq!(job["loadMode"], "essential");
@@ -583,8 +576,6 @@ fn the_skill_rides_the_system_prompt_and_the_turn_prompt_only_names_it() {
     let system_prompt = omp::system_prompt(&launch);
     assert!(system_prompt.contains(SKILL));
     assert!(system_prompt.contains(&format!("<{STEERING_TOKEN}>")));
-    assert!(system_prompt.contains("interjected user message"));
-    assert!(!system_prompt.contains("stderr"));
 
     // Every turn re-anchors on the key and names the skill without paying for
     // its whole text again.

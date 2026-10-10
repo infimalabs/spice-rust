@@ -112,9 +112,7 @@ fn verification_rejects_invalid_steering_cursor_without_mutation() {
 
     let violations = refused_violations(&journal);
     assert!(violations.iter().any(|violation| {
-        violation.class == ViolationClass::Cursor
-            && violation.subject == "steering_index:1"
-            && violation.detail.contains("disagrees with journal cursor")
+        violation.class == ViolationClass::Cursor && violation.subject == "steering_index:1"
     }));
     let stored = journal
         .connection

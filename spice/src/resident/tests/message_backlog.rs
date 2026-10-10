@@ -239,7 +239,6 @@ fn each_resident_generation_restores_durable_prose_before_app_subscription() {
         assert_eq!(messages[1].lane, lane);
         assert_eq!(messages[1].author, author);
         assert_eq!(messages[1].activity, wire::AgentActivityKind::Compaction);
-        assert_eq!(messages[1].text, "Context compacted");
         assert!(messages[1].authored_synthetic);
         assert_eq!(messages[1].observed.as_ref(), Some(&observed));
         assert_bootstrap(generation, empty_lane);

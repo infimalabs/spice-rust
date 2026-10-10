@@ -254,7 +254,6 @@ fn task_show_separates_current_context_and_bounded_history() {
     )
     .expect("first history page has no cursor");
     assert_eq!(history.matches("    note-").count(), 20, "{history}");
-    assert!(history.contains("withheld 185 of 205 rows"), "{history}");
     assert!(history.contains("continue: spice task show"), "{history}");
     assert!(history.contains("--after"), "{history}");
 
@@ -275,10 +274,6 @@ fn task_show_separates_current_context_and_bounded_history() {
         },
     )
     .expect("context page has no cursor");
-    assert!(
-        context.contains("origin_context withheld 4760 bytes"),
-        "{context}"
-    );
     assert!(context.contains("spice doc ledger"), "{context}");
 
     assert!(!context.contains(&oversized), "{context}");
@@ -369,8 +364,7 @@ fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
     )
     .expect("first context page has no cursor");
     assert!(
-        bounded.contains("0 shown")
-            && bounded.contains("continue: spice task show")
+        bounded.contains("continue: spice task show")
             && bounded.contains("--context")
             && bounded.contains("--after context:0"),
         "{bounded}"

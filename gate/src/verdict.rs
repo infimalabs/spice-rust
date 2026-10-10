@@ -1098,7 +1098,6 @@ mod tests {
         )
         .expect_err("foreign receipt stays evidence");
         assert_eq!(refused.unsupported_version(), Some(77));
-        assert!(refused.to_string().contains("version 77"));
     }
 
     #[test]

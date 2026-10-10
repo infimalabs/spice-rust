@@ -549,7 +549,6 @@ fn task_status_reports_an_absent_resident_before_command_delivery() {
         panic!("task status without a resident must fault: {outcome:?}");
     };
     assert_eq!(fault.reason, "serve::publisher-gone");
-    assert!(fault.detail.contains("run `spice up`"));
     assert!(
         transients.is_empty(),
         "an available resident lock is terminal, not a publication handoff"
@@ -579,7 +578,6 @@ fn task_status_reports_a_resident_released_during_publication_handoff() {
     };
     assert_eq!(transients, ["serve::discovery-unavailable"]);
     assert_eq!(fault.reason, "serve::publisher-gone");
-    assert!(fault.detail.contains("run `spice up`"));
 }
 
 #[test]

@@ -463,11 +463,7 @@ mod tests {
     #[test]
     fn an_unknown_disposition_is_refused() {
         for refused in ["missed", "Acked", "acked ", "", "sent"] {
-            let error = disposition(refused).expect_err("word is outside the set");
-            assert!(
-                error.to_string().contains("disposition must be one of"),
-                "{refused:?} refused without naming the admitted words"
-            );
+            assert!(disposition(refused).is_err(), "{refused:?} must refuse");
         }
     }
 

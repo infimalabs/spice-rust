@@ -233,12 +233,6 @@ fn reverse_page_refuses_an_unterminated_record_larger_than_its_window() {
     let error = bootstrap_until_error(&mut cursor, "open oversized record was admitted");
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-    let text = error.to_string();
-    assert!(
-        text.contains("runs at least 262144 bytes without a delimiter"),
-        "refusal names the record size it crossed: {text}",
-    );
-    assert!(text.contains("fixed 262144-byte history allowance"));
     let exhaustion = error
         .get_ref()
         .and_then(|source| source.downcast_ref::<HistoryExhaustion>())

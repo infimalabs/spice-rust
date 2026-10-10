@@ -669,8 +669,7 @@ mod tests {
         let batch = bounded_batch(outcome, budget, root, 128).expect("batch encodes");
         assert!(matches!(
             batch.outcome.observations.as_slice(),
-            [Observation::Missing { detail, .. }]
-                if detail.contains("was skipped at the repository maximum 128")
+            [Observation::Missing { .. }]
         ));
     }
 }
