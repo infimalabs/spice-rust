@@ -37,6 +37,15 @@
 | Item acknowledged | journal history records actor, team-at-send, disposition, and response; no separate inbox cache exists to lose or repair | [The journal inbox is authoritative](../invariants/identity.md#steering-the-journal-inbox-is-authoritative) |
 | Operator pages direction history filtered to one lane | each fanout that addressed that lane arrives whole with every recipient's standing, newest first, with cursors to older and newer groups; peer tells never appear | [Operator direction history pages whole fanouts](../invariants/identity.md#steering-operator-direction-history-pages-whole-fanouts) |
 
+### Occupant addresses
+
+| Situation | Expected | Ref |
+| --- | --- | --- |
+| An address is spelled with a vowel, a leading zero, zero, or a value past `u64::MAX` | the spelling is refused by name before any journal read | [An occupant address is its birth position](../invariants/identity.md#identity-an-occupant-address-is-its-birth-position) |
+| An address names a position holding some other fact, or no fact yet | `address::not-birth` or `address::unrecorded`; no occupant is inferred | [An address proves one exact birth](../invariants/identity.md#identity-an-address-proves-one-exact-birth) |
+| The resident restarts and adopts a still-running occupant | the occupant keeps its birth and therefore its address | [An address executes only for its seated occupant](../invariants/identity.md#identity-an-address-executes-only-for-its-seated-occupant) |
+| A lane is woken, resumed, imported, or renewed onto a new occupant | the successor receives a new address; the predecessor's address reads as history and refuses `address::expired` for execution | [An address executes only for its seated occupant](../invariants/identity.md#identity-an-address-executes-only-for-its-seated-occupant) |
+
 ### Claims and allocation
 
 | Situation | Expected | Ref |

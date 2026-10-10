@@ -37,6 +37,7 @@
 //! branch. Exhaustive matching is the strongest enforcement a closed vocabulary
 //! can have, and these sets are declared closed precisely so they can have it.
 
+pub mod address;
 pub mod body;
 pub mod command;
 pub mod config;
@@ -67,6 +68,7 @@ pub mod steering;
 pub mod stream;
 pub mod witness;
 
+pub use address::{OccupantAddress, OccupantAddressError};
 pub use command::{
     AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
     LawError,

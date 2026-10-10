@@ -44,7 +44,9 @@ use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 pub(in crate::resident) use launch::test_support::{InertProbes, LaunchFixture, stand_in_stream};
 pub(super) use launch::{HostProbes, OccupantLaunch, OccupantLaunchRequest, occupant_launch};
 #[cfg(test)]
-pub(in crate::resident) use propose::tests::seed_task_claim;
+pub(in crate::resident) use propose::tests::{
+    assert_successor_address, seed_birth, seed_task_claim,
+};
 use propose::{commit_adopted, propose_drain, propose_remove, propose_seat, propose_wake};
 pub(super) use renewal::{reconcile as reconcile_renewal, set as renew};
 use reply::{

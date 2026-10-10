@@ -1,0 +1,224 @@
+//! Exact-occupant peer addresses.
+
+use std::fmt;
+use std::str::FromStr;
+
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::envelope::Seq;
+use crate::witness::TASK_STAMP_ALPHABET;
+
+/// Base-52 digits needed to spell `u64::MAX`.
+const MAX_DIGITS: usize = 12;
+
+/// The executable peer address of one exact lane occupant.
+///
+/// An address is the journal position of the `lane::started` fact recording
+/// that occupant's birth, spelled as shortest-form vowel-free base 52. It is
+/// derived from that fact and never stored: each launch that mints an occupant
+/// records its own birth and so receives a new address, while resident restart
+/// adoption keeps the occupant and its address. An address is scoped to the
+/// appliance journal whose position it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OccupantAddress(Seq);
+
+/// Text that does not spell a canonical occupant address.
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum OccupantAddressError {
+    /// No digits were supplied.
+    #[error("occupant address is empty")]
+    Empty,
+    /// A character lies outside the vowel-free base-52 alphabet.
+    #[error("occupant address {0:?} uses a character outside the vowel-free base-52 alphabet")]
+    Alphabet(String),
+    /// The zero digit names no journal position.
+    #[error("occupant address names the zero journal position")]
+    Zero,
+    /// A leading zero digit makes the spelling noncanonical.
+    #[error("occupant address {0:?} carries a noncanonical leading zero")]
+    LeadingZero(String),
+    /// The spelled value exceeds every journal position.
+    #[error("occupant address {0:?} exceeds the journal position space")]
+    Overflow(String),
+}
+
+impl OccupantAddress {
+    /// The address of the occupant born at one journal position.
+    #[must_use]
+    pub const fn new(birth: Seq) -> Self {
+        Self(birth)
+    }
+
+    /// Journal position of the addressed occupant's `lane::started` birth.
+    #[must_use]
+    pub const fn birth(self) -> Seq {
+        self.0
+    }
+
+    fn digits(self) -> ([u8; MAX_DIGITS], usize) {
+        let mut digits = [0; MAX_DIGITS];
+        let mut start = MAX_DIGITS;
+        let mut value = self.0.get();
+        while value > 0 {
+            start -= 1;
+            digits[start] = TASK_STAMP_ALPHABET[(value % 52) as usize];
+            value /= 52;
+        }
+        (digits, start)
+    }
+}
+
+impl From<Seq> for OccupantAddress {
+    fn from(birth: Seq) -> Self {
+        Self(birth)
+    }
+}
+
+impl FromStr for OccupantAddress {
+    type Err = OccupantAddressError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let mut value = 0_u64;
+        let mut overflow = false;
+        for byte in text.bytes() {
+            let Some(digit) = TASK_STAMP_ALPHABET
+                .iter()
+                .position(|candidate| *candidate == byte)
+            else {
+                return Err(OccupantAddressError::Alphabet(text.to_owned()));
+            };
+            match value
+                .checked_mul(52)
+                .and_then(|value| value.checked_add(digit as u64))
+            {
+                Some(next) => value = next,
+                None => overflow = true,
+            }
+        }
+        match text.as_bytes() {
+            [] => Err(OccupantAddressError::Empty),
+            [b'0'] => Err(OccupantAddressError::Zero),
+            [b'0', ..] => Err(OccupantAddressError::LeadingZero(text.to_owned())),
+            _ if overflow => Err(OccupantAddressError::Overflow(text.to_owned())),
+            _ => Ok(Self(Seq::new(value).expect(
+                "a canonical nonempty spelling names a nonzero position",
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for OccupantAddress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (digits, start) = self.digits();
+        formatter.write_str(
+            std::str::from_utf8(&digits[start..]).expect("the base-52 alphabet is ASCII"),
+        )
+    }
+}
+
+impl Serialize for OccupantAddress {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for OccupantAddress {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(D::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OccupantAddress, OccupantAddressError};
+    use crate::envelope::Seq;
+
+    fn address(position: u64) -> OccupantAddress {
+        OccupantAddress::new(Seq::new(position).expect("fixture position is nonzero"))
+    }
+
+    #[test]
+    fn every_position_round_trips_through_its_shortest_spelling() {
+        let mut boundaries = vec![1, 51, 52, 53, 886_309, u64::MAX - 1, u64::MAX];
+        let mut power = 52_u64;
+        while let Some(next) = power.checked_mul(52) {
+            boundaries.extend([power - 1, power, power + 1]);
+            power = next;
+        }
+        boundaries.extend([power - 1, power, power + 1]);
+        for position in boundaries {
+            let spelled = address(position).to_string();
+            assert!(!spelled.starts_with('0'), "{position} spelled {spelled}");
+            let mut width = 1;
+            let mut capacity = 52_u128;
+            while u128::from(position) >= capacity {
+                width += 1;
+                capacity *= 52;
+            }
+            assert_eq!(spelled.len(), width, "{position} spelled {spelled}");
+            assert_eq!(spelled.parse(), Ok(address(position)));
+        }
+        assert_eq!(address(u64::MAX).to_string().len(), 12);
+    }
+
+    #[test]
+    fn noncanonical_spellings_are_refused_by_name() {
+        assert_eq!(
+            "".parse::<OccupantAddress>(),
+            Err(OccupantAddressError::Empty)
+        );
+        assert_eq!(
+            "0".parse::<OccupantAddress>(),
+            Err(OccupantAddressError::Zero)
+        );
+        assert_eq!(
+            "01".parse::<OccupantAddress>(),
+            Err(OccupantAddressError::LeadingZero("01".to_owned()))
+        );
+        for vowel in ["a", "1e", "U9", "-1", "1 "] {
+            assert_eq!(
+                vowel.parse::<OccupantAddress>(),
+                Err(OccupantAddressError::Alphabet(vowel.to_owned()))
+            );
+        }
+        let beyond = format!("{}1", address(u64::MAX / 52 + 1));
+        assert_eq!(
+            beyond.parse::<OccupantAddress>(),
+            Err(OccupantAddressError::Overflow(beyond.clone()))
+        );
+        let past = spelled(u128::from(u64::MAX) + 1);
+        assert_eq!(past.len(), address(u64::MAX).to_string().len());
+        assert_eq!(
+            past.parse::<OccupantAddress>(),
+            Err(OccupantAddressError::Overflow(past.clone()))
+        );
+        let widest = "z".repeat(12);
+        assert_eq!(
+            widest.parse::<OccupantAddress>(),
+            Err(OccupantAddressError::Overflow(widest.clone()))
+        );
+    }
+
+    fn spelled(mut value: u128) -> String {
+        let mut digits = Vec::new();
+        while value > 0 {
+            digits.push(super::TASK_STAMP_ALPHABET[(value % 52) as usize]);
+            value /= 52;
+        }
+        digits.reverse();
+        String::from_utf8(digits).expect("the base-52 alphabet is ASCII")
+    }
+
+    #[test]
+    fn the_wire_spelling_is_the_canonical_text() {
+        let encoded = serde_json::to_string(&address(886_309)).expect("address encodes");
+        assert_eq!(encoded, format!("\"{}\"", address(886_309)));
+        assert_eq!(
+            serde_json::from_str::<OccupantAddress>(&encoded).expect("address decodes"),
+            address(886_309)
+        );
+        assert!(serde_json::from_str::<OccupantAddress>("\"01\"").is_err());
+    }
+}
