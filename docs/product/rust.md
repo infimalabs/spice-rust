@@ -430,13 +430,11 @@ Authorities: [`wire/src/stream.rs`](../../wire/src/stream.rs),
 through disposable actual-surface experiments; the retained app checks exercise
 the pure Rust client contracts.
 
-## Mosaic implementation boundary
+## Mosaic card lineage
 
-Mosaic's Rust-owned lineage reduction, layout, geometry, history, image
-settlement, motion, and performance contracts live in the
-[Mosaic Rust implementation boundary](mosaic-rust.md). The app retains one
-event-driven implementation path; it does not preserve a predecessor
-compatibility mode.
+Which activity becomes a Mosaic card, how fresh sessions divide it, when older
+history pages, and how epoch boundaries hold across paging live in
+[Mosaic card lineage](mosaic-rust.md).
 
 ## Steering and warnings
 
