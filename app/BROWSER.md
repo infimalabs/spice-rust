@@ -195,10 +195,11 @@ that relationship in blocking order.
 ## Team composer controls
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
-Round 34px TURBO and team-menu buttons share the first row; round 56px SEND
-sits in the middle, above two pill-shaped slider flyers. Faces transmit the
-neutral background, with fine etched edges and no opaque recipient-color fill,
-domes, or nested ridges. Team and Settings global TURBO retain the same lettering:
+Round 34px TURBO and team-menu buttons share the first row; two pill-shaped
+slider flyers follow, and round 56px SEND anchors the panel below them. Faces
+transmit the neutral background, with fine etched edges and no opaque
+recipient-color fill, domes, or nested ridges. Team and Settings global TURBO
+retain the same lettering:
 muted when off, brighter ink and a neutral glass wash when on, without colored
 active rims. Each remains its own separately admitted control.
 Task-observation Add/Close retain their independent appearance.

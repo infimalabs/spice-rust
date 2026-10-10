@@ -146,8 +146,8 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         >
             {props.turbo.clone()}
             {props.menu.clone()}
-            {send_button(send, idle || !props.ready, lit.len(), broadcast_count, props.slots.len())}
             {props.children.clone()}
+            {send_button(send, idle || !props.ready, lit.len(), broadcast_count, props.slots.len())}
         </aside>
     }
 }
