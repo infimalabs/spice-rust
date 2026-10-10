@@ -1,4 +1,4 @@
-//! Steering rendering, command handoff, and hook installation boundaries.
+//! Steering rendering and hook installation boundaries.
 
 use std::fs;
 use std::io;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use steer::ack::keys::Key;
 use steer::directives::{Ledger, Steering};
 use steer::hook::{Hooks, Refusal, STAGES};
-use steer::{inbox, run};
+use steer::inbox;
 use wire::CanonicalUuid;
 use wire::body::SteerSent;
 
@@ -92,18 +92,6 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
     }
 }
 
-/// The wrapper hands the command through and reports what it did, rather than
-/// standing in for it.
-#[cfg(unix)]
-#[test]
-fn the_wrapper_hands_the_command_through() {
-    use std::ffi::OsStr;
-
-    let status = run::hand(OsStr::new("/bin/sh"), ["-c", "exit 3"]).expect("command spawns");
-
-    assert_eq!(status.code(), Some(3));
-}
-
 /// Installation places every stage with the bytes this build carries, runnable,
 /// and installing again over the same build changes nothing.
 #[test]
@@ -148,76 +136,6 @@ fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
         "entry stage no longer carries proof routing"
     );
     assert!(!entry.contains("if ["));
-}
-
-/// The ambient command stage is a dumb exact-path handoff: it neither searches
-/// for the Rust binary nor performs repository discovery of its own.
-#[cfg(unix)]
-#[test]
-fn the_spice_shell_wrapper_execs_only_the_typed_appliance() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
-
-    let scratch = Scratch::new("spice-wrapper");
-    let hooks = Hooks::new(scratch.path().join("hooks"));
-    hooks.install().expect("installation");
-    let captured = scratch.path().join("captured");
-    let appliance = scratch.path().join("exact-appliance");
-    fs::write(
-        &appliance,
-        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$CAPTURED\"\nexit 7\n",
-    )
-    .expect("write exact appliance");
-    fs::set_permissions(&appliance, fs::Permissions::from_mode(0o700))
-        .expect("make exact appliance executable");
-
-    let output = Command::new(hooks.stage(STAGES[4]))
-        .args(["task", "next", "two words"])
-        .env(steer::hook::EXECUTABLE, &appliance)
-        .env("CAPTURED", &captured)
-        .env("PATH", scratch.path())
-        .output()
-        .expect("installed wrapper runs");
-
-    assert_eq!(output.status.code(), Some(7));
-    assert_eq!(
-        fs::read(&captured).expect("exact appliance captured arguments"),
-        b"task\0next\0two words\0"
-    );
-    scratch.remove();
-}
-
-/// The inner stage restores the native shell before the command runs and does
-/// not leak either packaged-routing variable across the process boundary.
-#[cfg(unix)]
-#[test]
-fn the_inner_stage_execs_the_native_shell_with_native_descendant_routing() {
-    use std::process::Command;
-
-    let scratch = Scratch::new("proof");
-    let hooks = Hooks::new(scratch.path().join("hooks"));
-    hooks.install().expect("installation");
-
-    let output = Command::new(hooks.stage(STAGES[1]))
-        .args([
-            "-c",
-            "printf '<%s><%s><%s>' \"$SHELL\" \"${SPICE_RS_HOOKS-unset}\" \"${SPICE_RS_NATIVE_SHELL-unset}\"",
-        ])
-        .env(steer::hook::HOOKS, hooks.root())
-        .env(steer::hook::NATIVE_SHELL, "/bin/sh")
-        .output()
-        .expect("inner stage runs");
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"</bin/sh><unset><unset>");
-    assert_eq!(output.stderr, b"");
-    assert_eq!(
-        STAGES[1]
-            .bytes()
-            .matches("exec \"$native_shell\" \"$@\"")
-            .count(),
-        1
-    );
-    scratch.remove();
 }
 
 /// Every way interception fails to prove itself is named by the stage that

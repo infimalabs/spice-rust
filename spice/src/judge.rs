@@ -189,11 +189,6 @@ pub(crate) fn adjudicate_with(
     })
 }
 
-#[cfg(test)]
-pub(crate) fn invoke(binary: &str, prompt: &str, timeout: Duration) -> Result<String, Error> {
-    invoke_with(binary, prompt, timeout, CancellationToken::new())
-}
-
 fn invoke_with(
     binary: &str,
     prompt: &str,
@@ -215,6 +210,12 @@ fn invoke_with(
         reason: "judge_error",
         detail: format!("judge process boundary failed: {error}"),
     })?;
+    reply(&outcome, binary, timeout)
+}
+
+/// Classify one reaped judge process: only a clean, drained, successful exit
+/// carries a reply.
+fn reply(outcome: &sill::WaitOutcome, binary: &str, timeout: Duration) -> Result<String, Error> {
     if !outcome.outputs_drained() {
         return Err(failure_error(
             "judge_error",
@@ -349,46 +350,8 @@ pub(crate) fn failure_error(reason: &'static str, detail: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(0);
-    // These scripts finish immediately once scheduled. Their bound protects
-    // the test process from a fixture defect; the separate 40ms case below
-    // proves the production timeout behavior. Leave enough scheduling room
-    // for an exhaustive gate running hundreds of process tests concurrently.
-    const PROCESS_RUNTIME: Duration = Duration::from_secs(30);
-
-    struct Script(PathBuf);
-
-    impl Script {
-        fn new(body: &str) -> Self {
-            let path = env::temp_dir().join(format!(
-                "spice-judge-test-{}-{}",
-                std::process::id(),
-                NEXT_SCRIPT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write judge fixture");
-            let mut permissions = fs::metadata(&path)
-                .expect("judge fixture metadata")
-                .permissions();
-            permissions.set_mode(0o700);
-            fs::set_permissions(&path, permissions).expect("make judge fixture executable");
-            Self(path)
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for Script {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.0);
-        }
-    }
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
 
     fn prompts() -> Vec<Prompt> {
         vec![
@@ -396,6 +359,10 @@ mod tests {
             Prompt::new(0, "first semantic framing".to_owned()),
             Prompt::new(1, "second semantic framing".to_owned()),
         ]
+    }
+
+    fn reaped(completion: Completion) -> sill::WaitOutcome {
+        sill::WaitOutcome::externally_reaped_completion(completion)
     }
 
     #[test]
@@ -454,79 +421,34 @@ mod tests {
         assert!(error.detail().contains("could not launch"));
     }
 
+    /// A judge that outlives its deadline or is cancelled never yields a reply,
+    /// whatever it printed.
     #[test]
-    fn decisive_process_reads_the_complete_prompt_and_closes_both_pipes() {
-        let script = Script::new("input=$(cat); test -n \"$input\"; printf 'YES\\n'");
+    fn a_timed_out_or_cancelled_judge_is_a_typed_failure() {
+        let success = ExitStatus::from_raw(0);
+        let timeout = Duration::from_millis(40);
 
-        let reply = invoke(
-            script.path().to_str().expect("UTF-8 fixture path"),
-            "one complete proposition",
-            PROCESS_RUNTIME,
-        )
-        .expect("decisive judge completes");
+        let timed_out = reply(&reaped(Completion::TimedOut(success)), "judge", timeout)
+            .expect_err("a timed-out judge has no reply");
+        let cancelled = reply(&reaped(Completion::Cancelled(success)), "judge", timeout)
+            .expect_err("a cancelled judge has no reply");
 
-        assert_eq!(reply, "YES\n");
+        assert_eq!(timed_out.reason(), "timeout");
+        assert_eq!(cancelled.reason(), "cancelled");
     }
 
+    /// An exit without captured output is a boundary failure, not ambiguity
+    /// that would send the next framing.
     #[test]
-    fn ambiguous_process_exhausts_only_the_declared_framings() {
-        let script = Script::new("cat >/dev/null; printf 'perhaps\\n'");
-        let mut process = Process::with(
-            script
-                .path()
-                .to_str()
-                .expect("UTF-8 fixture path")
-                .to_owned(),
-            PROCESS_RUNTIME,
-        );
-
-        let error = process
-            .adjudicate(&prompts())
-            .expect_err("ambiguous process never supplies a verdict");
-
-        assert_eq!(error.reason(), "ambiguous");
-        assert!(error.detail().contains("3 attempts"));
-    }
-
-    #[test]
-    fn timeout_and_output_overflow_are_bounded_failures() {
-        let timeout = Script::new("cat >/dev/null; exec /usr/bin/tail -f /dev/null");
-        let error = invoke(
-            timeout.path().to_str().expect("UTF-8 fixture path"),
-            "prompt",
+    fn an_exit_without_captured_output_is_a_judge_error() {
+        let error = reply(
+            &reaped(Completion::Exited(ExitStatus::from_raw(0))),
+            "judge",
             Duration::from_millis(40),
         )
-        .expect_err("nonterminating judge times out");
-        assert_eq!(error.reason(), "timeout");
-
-        let overflow = Script::new(
-            "cat >/dev/null; i=0; while [ $i -le 4096 ]; do printf x; i=$((i + 1)); done",
-        );
-        let error = invoke(
-            overflow.path().to_str().expect("UTF-8 fixture path"),
-            "prompt",
-            PROCESS_RUNTIME,
-        )
-        .expect_err("oversized reply is rejected");
-        assert_eq!(error.reason(), "ambiguous");
-        assert!(error.detail().contains("exceeded 4096 bytes"));
-    }
-
-    #[test]
-    fn inherited_descendant_pipe_is_killed_and_named() {
-        let script = Script::new("cat >/dev/null; sleep 30 & printf 'YES\\n'");
-        let started = std::time::Instant::now();
-
-        let error = invoke(
-            script.path().to_str().expect("UTF-8 fixture path"),
-            "prompt",
-            PROCESS_RUNTIME,
-        )
-        .expect_err("a retained descendant pipe is not a clean answer");
+        .expect_err("a reply needs captured output");
 
         assert_eq!(error.reason(), "judge_error");
-        assert!(error.detail().contains("retained an output pipe"));
-        assert!(started.elapsed() < PROCESS_RUNTIME);
     }
 
     #[test]

@@ -36,17 +36,21 @@ const GIT_EDITOR: &str = "GIT_EDITOR"; // env-policy: allow
 /// text, the per-worktree shadow cannot be published atomically, or the final
 /// process environment is invalid.
 pub fn environment(repository: &Repository, base: Environment) -> Result<Environment, Error> {
+    compose(base, |arguments, environment| {
+        git_read(repository.worktree_root(), arguments, environment)
+    })
+}
+
+/// Answer for one Git query run with the given child environment.
+type GitAnswer = Result<Option<String>, Error>;
+
+fn compose<G>(base: Environment, mut git: G) -> Result<Environment, Error>
+where
+    G: FnMut(&[&str], &BTreeMap<OsString, OsString>) -> GitAnswer,
+{
     let native = native_environment(&base);
-    let branch = git_read(
-        repository.worktree_root(),
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        &native,
-    )?;
-    let git_dir = git_read(
-        repository.worktree_root(),
-        &["rev-parse", "--absolute-git-dir"],
-        &native,
-    )?;
+    let branch = git(&["symbolic-ref", "--quiet", "--short", "HEAD"], &native)?;
+    let git_dir = git(&["rev-parse", "--absolute-git-dir"], &native)?;
     let Some(branch) = branch else {
         if git_dir.is_some() {
             eprintln!(concat!(
@@ -59,8 +63,8 @@ pub fn environment(repository: &Repository, base: Environment) -> Result<Environ
     let Some(git_dir) = git_dir else {
         return Ok(base);
     };
-    let true_merge = true_branch_merge(repository.worktree_root(), &branch, &native)?;
-    let system_config = match system_config_path(repository.worktree_root(), &native)? {
+    let true_merge = true_branch_merge(&mut git, &branch, &native)?;
+    let system_config = match system_config_path(&mut git, &native)? {
         Some(path) => path,
         None => {
             eprintln!(concat!(
@@ -101,24 +105,21 @@ fn is_shadow_variable(key: &OsStr) -> bool {
     })
 }
 
-fn true_branch_merge(
-    root: &Path,
+fn true_branch_merge<G>(
+    git: &mut G,
     branch: &str,
     environment: &BTreeMap<OsString, OsString>,
-) -> Result<Option<String>, Error> {
-    if let Some(merge) = git_read(
-        root,
+) -> GitAnswer
+where
+    G: FnMut(&[&str], &BTreeMap<OsString, OsString>) -> GitAnswer,
+{
+    if let Some(merge) = git(
         &["config", "--get", &format!("branch.{branch}.merge")],
         environment,
     )? {
         return Ok(Some(merge));
     }
-    let Some(head) = git_read(
-        root,
-        &["symbolic-ref", "refs/remotes/origin/HEAD"],
-        environment,
-    )?
-    else {
+    let Some(head) = git(&["symbolic-ref", "refs/remotes/origin/HEAD"], environment)? else {
         return Ok(None);
     };
     Ok(head
@@ -126,20 +127,20 @@ fn true_branch_merge(
         .map(|branch| format!("refs/heads/{branch}")))
 }
 
-fn system_config_path(
-    root: &Path,
-    environment: &BTreeMap<OsString, OsString>,
-) -> Result<Option<String>, Error> {
+fn system_config_path<G>(git: &mut G, environment: &BTreeMap<OsString, OsString>) -> GitAnswer
+where
+    G: FnMut(&[&str], &BTreeMap<OsString, OsString>) -> GitAnswer,
+{
     let mut query = environment.clone();
     query.insert(OsString::from(GIT_EDITOR), OsString::from("echo"));
-    git_read(root, &["config", "--system", "--edit"], &query)
+    git(&["config", "--system", "--edit"], &query)
 }
 
 fn git_read(
     root: &Path,
     arguments: &[&str],
     environment: &BTreeMap<OsString, OsString>,
-) -> Result<Option<String>, Error> {
+) -> GitAnswer {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -163,10 +164,8 @@ fn git_read(
 /// `agent.gitconfig` authority while retaining the same Git shadow semantics.
 fn publish_shadow(git_dir: &Path, branch: &str, system_config: &str) -> Result<PathBuf, Error> {
     let path = git_dir.join(AGENT_GITCONFIG_NAME);
-    // Git refnames admit a double quote but refuse a backslash. The first
-    // replacement is therefore defensive, retained byte-for-byte with the
-    // predecessor; the reachable quote replacement is pinned by
-    // `tests/git_shadow.rs`.
+    // Git refnames admit a double quote but refuse a backslash, so only the
+    // quote replacement is reachable; the backslash one stays defensive.
     let subsection = branch.replace('\\', "\\\\").replace('"', "\\\"");
     let content = format!(
         concat!(
@@ -244,3 +243,6 @@ impl fmt::Display for Error {
 }
 
 impl StdError for Error {}
+
+#[cfg(test)]
+mod tests;

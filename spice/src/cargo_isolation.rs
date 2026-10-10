@@ -479,7 +479,9 @@ fn resolve_native_toolchain(
             PathBuf::from(declared[1].expect("complete native trio has rustc")),
             PathBuf::from(declared[2].expect("complete native trio has rustdoc")),
         ),
-        0 => resolve_tracked_toolchain(repository, Path::new(bootstrap_home), entries),
+        0 => {
+            resolve_tracked_toolchain(repository, Path::new(bootstrap_home), entries, rustup_which)
+        }
         _ => Err(IsolationError::new(
             "cargo-isolation::native-toolchain-incomplete",
             "SPICE_RS_NATIVE_CARGO, SPICE_RS_NATIVE_RUSTC, and SPICE_RS_NATIVE_RUSTDOC must be supplied together",
@@ -487,11 +489,19 @@ fn resolve_native_toolchain(
     }
 }
 
-fn resolve_tracked_toolchain(
+/// Resolve the tracked channel's trio through the bootstrap home's own rustup.
+///
+/// `which` asks one rustup executable, under one Rustup home, for one tool of
+/// one channel.
+fn resolve_tracked_toolchain<W>(
     repository: &Path,
     bootstrap_home: &Path,
     entries: &std::collections::BTreeMap<OsString, OsString>,
-) -> Result<NativeToolchain, IsolationError> {
+    which: W,
+) -> Result<NativeToolchain, IsolationError>
+where
+    W: Fn(&Path, &Path, &str, &str) -> Result<PathBuf, IsolationError>,
+{
     let declaration = repository.join("rust-toolchain.toml");
     let bytes = fs::read(&declaration).map_err(|error| {
         IsolationError::io(
@@ -535,9 +545,9 @@ fn resolve_tracked_toolchain(
         })?;
     require_absolute(&rustup_home, "Rustup home")?;
     NativeToolchain::admit(
-        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "cargo")?,
-        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustc")?,
-        rustup_which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustdoc")?,
+        which(&rustup, &rustup_home, &tracked.toolchain.channel, "cargo")?,
+        which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustc")?,
+        which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustdoc")?,
     )
 }
 
