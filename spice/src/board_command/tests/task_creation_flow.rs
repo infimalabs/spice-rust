@@ -281,18 +281,15 @@ fn dependency_phase_movement_refuses_creation_with_the_stale_flow() {
     clean(&root, bus);
 }
 
-fn ambient_add_expected(
+fn public_task_add_expected(
     answer: &BoardAnswer,
-    parent: &TaskHandle,
+    add: &TaskAdd,
     child: wire::TaskStamp,
 ) -> Vec<Witness> {
-    let parent = at(answer, parent);
-    vec![
-        Witness::Absence { task: child },
-        statement_witness(parent),
-        workflow_witness(parent),
-        claim_witness(parent),
-    ]
+    let mut expected = vec![Witness::Absence { task: child }];
+    append_ambient_plan_witnesses(answer, add, &mut expected)
+        .expect("public task add maps current board authority");
+    expected
 }
 
 fn accepted_child() -> TaskAdd {
@@ -329,7 +326,7 @@ fn a_plan_claim_adds_its_accepted_child_and_can_complete_without_a_second_comman
         epoch,
         lane.clone(),
         CommandKind::TaskAdd,
-        ambient_add_expected(&held, &plan, child_born.clone()),
+        public_task_add_expected(&held, &add, child_born.clone()),
         &add,
     )
     else {
@@ -383,15 +380,15 @@ fn explicit_dependencies_suppress_the_ambient_link() {
     claim_task(&bus, epoch, &seats[0], &planner, &plan);
     let explicit_born = stamp("PLAN-explicit1");
     let explicit = TaskHandle::for_project("task.workflow", &explicit_born);
+    let held = board(&bus, epoch, planner.clone());
+    let add = dependent_add(vec![prerequisite.clone()], Some("todo"));
     assert_committed(issue(
         &bus,
         epoch,
         planner,
         CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: explicit_born.clone(),
-        }],
-        &dependent_add(vec![prerequisite.clone()], Some("todo")),
+        public_task_add_expected(&held, &add, explicit_born.clone()),
+        &add,
     ));
     let after_explicit = board(&bus, epoch, Actor::Operator);
     assert!(
@@ -421,15 +418,15 @@ fn a_non_plan_claim_does_not_gain_the_created_task_as_a_dependency() {
     claim_task(&bus, epoch, seat, &implementer, &todo);
     let ordinary_born = stamp("PLAN-ordinary1");
     let ordinary = TaskHandle::for_project("task.workflow", &ordinary_born);
+    let held = board(&bus, epoch, implementer.clone());
+    let add = accepted_child();
     assert_committed(issue(
         &bus,
         epoch,
         implementer,
         CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: ordinary_born,
-        }],
-        &accepted_child(),
+        public_task_add_expected(&held, &add, ordinary_born),
+        &add,
     ));
     let current = board(&bus, epoch, Actor::Operator);
     assert!(at(&current, &todo).statement.body.dependencies.is_empty());
@@ -502,7 +499,7 @@ fn ambient_plan_movement_refuses_child_creation() {
         epoch,
         lane,
         CommandKind::TaskAdd,
-        ambient_add_expected(&held, &plan, child_born),
+        public_task_add_expected(&held, &add, child_born),
         &add,
     );
 
