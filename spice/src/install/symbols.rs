@@ -125,7 +125,7 @@ impl Source {
         binary: &Path,
     ) -> Result<Option<Self>, InstallError> {
         let Some((_, target_root)) = super::app::package_layout(binary) else {
-            return Self::resolve_worktree(repository, binary);
+            return Self::resolve_worktree(binary, || worktree_git_state(repository));
         };
         let payload_path = target_root.join("payload.json");
         let payload_bytes = fs::read(&payload_path)
@@ -198,10 +198,11 @@ impl Source {
     /// an absent, partial, stale, or foreign dSYM -- publishes no symbols
     /// rather than refusing the install; only a build that explicitly asked
     /// for symbols ever writes one at that path, and an ordinary worktree
-    /// install never does.
+    /// install never does. `git_state` reads the linked commit and whether
+    /// tracked files differ from it only once the bundle matches.
     fn resolve_worktree(
-        repository: &Repository,
         binary: &Path,
+        git_state: impl FnOnce() -> Option<(String, bool)>,
     ) -> Result<Option<Self>, InstallError> {
         let Some(name) = binary.file_name() else {
             return Ok(None);
@@ -225,7 +226,7 @@ impl Source {
         let Ok(info) = fs::read(&info_path) else {
             return Ok(None);
         };
-        let Some((commit, dirty)) = worktree_git_state(repository) else {
+        let Some((commit, dirty)) = git_state() else {
             return Ok(None);
         };
         Ok(Some(Self {
@@ -498,6 +499,21 @@ fn format_uuid(raw: &[u8]) -> String {
     )
 }
 
+/// Minimal thin 64-bit Mach-O bytes carrying exactly one `LC_UUID`.
+#[cfg(test)]
+pub(super) fn macho_with_uuid(uuid: [u8; 16]) -> Vec<u8> {
+    let mut image = Vec::new();
+    image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
+    image.extend_from_slice(&[0; 12]);
+    image.extend_from_slice(&1_u32.to_le_bytes());
+    image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+    image.extend_from_slice(&[0; 8]);
+    image.extend_from_slice(&LC_UUID.to_le_bytes());
+    image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+    image.extend_from_slice(&uuid);
+    image
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,39 +551,26 @@ mod tests {
         Scratch(root)
     }
 
-    /// Minimal thin 64-bit Mach-O bytes carrying exactly one `LC_UUID`.
-    fn macho_with_uuid(uuid: [u8; 16]) -> Vec<u8> {
-        let mut image = Vec::new();
-        image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
-        image.extend_from_slice(&[0; 12]);
-        image.extend_from_slice(&1_u32.to_le_bytes());
-        image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
-        image.extend_from_slice(&[0; 8]);
-        image.extend_from_slice(&LC_UUID.to_le_bytes());
-        image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
-        image.extend_from_slice(&uuid);
-        image
-    }
-
     #[test]
     fn resolve_worktree_publishes_a_matching_sibling_dsym_and_ignores_a_mismatched_one() {
         let root = scratch("worktree");
-        crate::test_repository::initialize(&root);
-        crate::test_repository::stage(&root, &[]);
-        crate::test_repository::commit(&root, "seed");
-        let repository = Repository::discover(&root).expect("scratch repository discovers");
         let binary = root.join("spice");
         let uuid = [0xAA; 16];
         fs::write(&binary, macho_with_uuid(uuid)).unwrap();
+        let commit = "a".repeat(40);
+        let git_state = |dirty: bool| {
+            let commit = commit.clone();
+            move || Some((commit, dirty))
+        };
 
         // No sibling dSYM yet: an ordinary worktree build publishes nothing.
         assert!(
-            Source::resolve_worktree(&repository, &binary)
+            Source::resolve_worktree(&binary, git_state(false))
                 .unwrap()
                 .is_none()
         );
 
-        // A matching sibling dSYM resolves, carrying the repository's HEAD.
+        // A matching sibling dSYM resolves, carrying the worktree's commit.
         let dwarf_directory = worktree_dsym_path(&binary).join("Contents/Resources/DWARF");
         fs::create_dir_all(&dwarf_directory).unwrap();
         fs::write(dwarf_directory.join("spice"), macho_with_uuid(uuid)).unwrap();
@@ -576,10 +579,11 @@ mod tests {
             b"<plist/>",
         )
         .unwrap();
-        let source = Source::resolve_worktree(&repository, &binary)
+        let source = Source::resolve_worktree(&binary, git_state(true))
             .unwrap()
             .expect("a matching sibling dSYM resolves");
-        assert!(!source.provenance().dirty());
+        assert_eq!(source.provenance().commit(), commit);
+        assert!(source.provenance().dirty());
         assert_eq!(source.provenance().uuid(), format_uuid(&uuid));
         assert_eq!(source.provenance().path(), SYMBOLS_PATH);
         assert_eq!(
@@ -587,20 +591,17 @@ mod tests {
             Some(macho_with_uuid(uuid)).as_deref()
         );
 
-        // Dirtying a tracked file is reflected without refusing the install.
-        fs::write(root.join("tracked"), b"content").unwrap();
-        crate::test_repository::stage(&root, &["tracked"]);
-        crate::test_repository::commit(&root, "tracked");
-        fs::write(root.join("tracked"), b"changed").unwrap();
-        let dirty = Source::resolve_worktree(&repository, &binary)
-            .unwrap()
-            .expect("a matching sibling dSYM still resolves while dirty");
-        assert!(dirty.provenance().dirty());
+        // Unreadable worktree provenance publishes nothing, not a refusal.
+        assert!(
+            Source::resolve_worktree(&binary, || None)
+                .unwrap()
+                .is_none()
+        );
 
         // A dSYM whose DWARF UUID disagrees publishes nothing, not a refusal.
         fs::write(dwarf_directory.join("spice"), macho_with_uuid([0xBB; 16])).unwrap();
         assert!(
-            Source::resolve_worktree(&repository, &binary)
+            Source::resolve_worktree(&binary, git_state(false))
                 .unwrap()
                 .is_none()
         );

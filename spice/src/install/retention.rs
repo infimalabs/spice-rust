@@ -14,9 +14,19 @@ use super::{
 /// receipt's ordered predecessor inventory carries forward until the bound
 /// drops the oldest generation.
 pub(super) fn predecessors(installed: Option<&InstallPlan>, current: &Digest) -> Vec<Digest> {
-    let mut retained = installed
+    bounded(
+        installed
+            .into_iter()
+            .flat_map(|plan| plan.app_predecessors.iter().chain(&plan.app)),
+        current,
+    )
+}
+
+/// Keep the newest generations of `history`, oldest first, other than
+/// `current`, up to the retention bound.
+fn bounded<'a>(history: impl IntoIterator<Item = &'a Digest>, current: &Digest) -> Vec<Digest> {
+    let mut retained = history
         .into_iter()
-        .flat_map(|plan| plan.app_predecessors.iter().chain(&plan.app))
         .filter(|generation| *generation != current)
         .cloned()
         .collect::<Vec<_>>();
@@ -116,4 +126,42 @@ fn generation_binding(
             missing: generation.to_owned(),
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use wire::Domain;
+
+    use super::*;
+
+    fn generation(label: &str) -> Digest {
+        Digest::compute(Domain::InstallArtifact, label.as_bytes())
+    }
+
+    /// Each refresh carries the receipt's predecessors plus its installed
+    /// generation, so history stays bounded, ordered, and free of `current`.
+    #[test]
+    fn refreshes_retain_the_newest_bounded_predecessors_in_install_order() {
+        let [first, second, third, fourth] = ["first", "second", "third", "fourth"].map(generation);
+        let mut predecessors = Vec::new();
+        let mut installed: Option<Digest> = None;
+        for current in [&first, &second, &third, &fourth] {
+            predecessors = bounded(predecessors.iter().chain(&installed), current);
+            installed = Some(current.clone());
+        }
+        assert_eq!(predecessors, [second.clone(), third.clone()]);
+
+        // Reinstalling the current generation keeps history unchanged.
+        assert_eq!(
+            bounded(predecessors.iter().chain(&installed), &fourth),
+            [second.clone(), third.clone()]
+        );
+
+        // Returning to a retained generation drops it from its own history
+        // and keeps the generation it replaced as the newest predecessor.
+        assert_eq!(
+            bounded(predecessors.iter().chain(&installed), &third),
+            [second, fourth]
+        );
+    }
 }

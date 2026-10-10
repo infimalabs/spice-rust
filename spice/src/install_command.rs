@@ -210,14 +210,13 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
             reason: "install::environment-failed".to_owned(),
             detail: error.to_string(),
         }),
-        InstallError::Encode(_)
-        | InstallError::Decode(_)
-        | InstallError::InvalidRecord(_)
-        | InstallError::Interrupted { .. } => Outcome::Fault(Fault {
-            class: FaultClass::Store,
-            reason: "install::state-failed".to_owned(),
-            detail: error.to_string(),
-        }),
+        InstallError::Encode(_) | InstallError::Decode(_) | InstallError::InvalidRecord(_) => {
+            Outcome::Fault(Fault {
+                class: FaultClass::Store,
+                reason: "install::state-failed".to_owned(),
+                detail: error.to_string(),
+            })
+        }
     }
 }
 

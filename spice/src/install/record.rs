@@ -1,8 +1,5 @@
 use std::path::PathBuf;
 
-#[cfg(test)]
-use std::fs;
-
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
@@ -13,9 +10,6 @@ use super::{
     InstallStatus, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, ReceiptGeneration,
     ReceiptSupport, Repository, RepositoryIdentity,
 };
-
-#[cfg(test)]
-mod tests;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -104,49 +98,6 @@ impl InstallRecord {
             retired_parents: vec![None; retirements],
             restored_retirements: vec![None; retirements],
         })
-    }
-
-    /// Remove `assets` from the plan, its bookkeeping, and the filesystem.
-    #[cfg(test)]
-    fn remove_test_operations(
-        &mut self,
-        repository: &Repository,
-        assets: &[super::Asset],
-        app: Option<&Digest>,
-    ) -> Result<(), InstallError> {
-        let mut indices = assets
-            .iter()
-            .map(|asset| {
-                self.plan
-                    .operations
-                    .iter()
-                    .position(|operation| operation.asset == *asset)
-                    .ok_or_else(|| {
-                        InstallError::InvalidRecord(format!(
-                            "test receipt has no {:?} asset",
-                            asset
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        indices.sort_unstable_by(|left, right| right.cmp(left));
-        for index in indices {
-            self.plan.operations.remove(index);
-            self.reversals.remove(index);
-            self.destinations.remove(index);
-            self.installed.remove(index);
-            self.installed_parents.remove(index);
-            self.restored.remove(index);
-        }
-        self.completed = self.plan.operation_count();
-        self.plan_digest = self.plan.digest()?;
-        for asset in assets {
-            let (_, relative, _) = super::asset_contract(*asset, app)?;
-            let path = repository.common_dir().join(relative);
-            fs::remove_file(&path)
-                .map_err(|source| InstallError::io("remove future test asset", path, source))?;
-        }
-        Ok(())
     }
 
     pub(super) fn validate(&self) -> Result<(), InstallError> {

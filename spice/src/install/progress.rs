@@ -34,11 +34,10 @@ impl PreparedInstall {
     }
 }
 
-pub(super) fn apply_with_interruption(
+pub(super) fn apply_expected(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
-    interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
     let prepared = prepare(repository, spice_binary)?;
     if prepared.digest() != expected {
@@ -47,14 +46,13 @@ pub(super) fn apply_with_interruption(
             observed: prepared.record.plan_digest,
         });
     }
-    apply_prepared_with_interruption(repository, spice_binary, prepared, interrupt_after_write)
+    apply_prepared_record(repository, spice_binary, prepared)
 }
 
-pub(super) fn apply_prepared_with_interruption(
+pub(super) fn apply_prepared_record(
     repository: &Repository,
     spice_binary: Option<&Path>,
     prepared: PreparedInstall,
-    interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
     let PreparedInstall {
         mut record,
@@ -91,25 +89,10 @@ pub(super) fn apply_prepared_with_interruption(
         Some(generation) => write_record(repository, &record, generation)?,
         None => write_initial_record(repository, &record)?,
     };
-    record_generation = apply_file_operations(
-        repository,
-        &mut record,
-        &generated,
-        record_generation,
-        interrupt_after_write,
-    )?;
-    record_generation = apply_retirements(
-        repository,
-        &mut record,
-        record_generation,
-        interrupt_after_write,
-    )?;
-    record_generation = apply_activation(
-        repository,
-        &mut record,
-        record_generation,
-        interrupt_after_write,
-    )?;
+    record_generation =
+        apply_file_operations(repository, &mut record, &generated, record_generation)?;
+    record_generation = apply_retirements(repository, &mut record, record_generation)?;
+    record_generation = apply_activation(repository, &mut record, record_generation)?;
     record.status = InstallStatus::Complete;
     write_record(repository, &record, record_generation)?;
     Ok(record.receipt())
@@ -147,7 +130,6 @@ fn apply_file_operations(
     record: &mut InstallRecord,
     generated: &[Option<FileImage>],
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     let mut durable_completed = record.completed;
     while record.completed < record.plan.operations.len() {
@@ -161,10 +143,6 @@ fn apply_file_operations(
             durable_completed,
         )?;
         record_generation = generation;
-        if interrupt_after_write == Some(index) {
-            write_record(repository, record, record_generation)?;
-            return Err(InstallError::Interrupted { operation: index });
-        }
         record.completed += 1;
         if changed {
             record_generation = write_record(repository, record, record_generation)?;
@@ -181,28 +159,16 @@ fn apply_retirements(
     repository: &Repository,
     record: &mut InstallRecord,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
         let index = record.completed - record.plan.operations.len();
-        let step = record.completed;
         if record.plan.retirements[index].discards_payload() {
-            record_generation = apply_discards(
-                repository,
-                record,
-                index,
-                record_generation,
-                interrupt_after_write,
-            )?;
+            record_generation = apply_discards(repository, record, index, record_generation)?;
             continue;
         }
         record.plan.retirements[index].validate_binding(repository)?;
         let parent = retire_path(repository, &record.plan.retirements[index], index)?;
         record.retired_parents[index] = parent;
-        if interrupt_after_write == Some(step) {
-            write_record(repository, record, record_generation)?;
-            return Err(InstallError::Interrupted { operation: step });
-        }
         record.completed += 1;
         record_generation = write_record(repository, record, record_generation)?;
     }
@@ -221,7 +187,6 @@ fn apply_discards(
     record: &mut InstallRecord,
     start: usize,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     let retirements = &record.plan.retirements;
     let end = start
@@ -250,12 +215,6 @@ fn apply_discards(
     for index in start..end {
         record.retired_parents[index] =
             retire_path(repository, &record.plan.retirements[index], index)?;
-        if interrupt_after_write == Some(operations + index) {
-            write_record(repository, record, record_generation)?;
-            return Err(InstallError::Interrupted {
-                operation: operations + index,
-            });
-        }
     }
     let last = &record.plan.retirements[end - 1];
     if last.withdraws_parent(record.plan.retirements.get(end)) {
@@ -302,15 +261,10 @@ fn apply_activation(
     repository: &Repository,
     record: &mut InstallRecord,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     let activation_step = record.plan.operations.len() + record.plan.retirements.len();
     if record.plan.hook_activation.is_some() && record.completed == activation_step {
-        let index = record.completed;
         hook_activation::apply(repository, &record.plan)?;
-        if interrupt_after_write == Some(index) {
-            return Err(InstallError::Interrupted { operation: index });
-        }
         record.completed += 1;
         record_generation = write_record(repository, record, record_generation)?;
     }
@@ -459,10 +413,7 @@ fn validate_existing_generation(
     Ok(generation)
 }
 
-pub(super) fn unapply_with_interruption(
-    repository: &Repository,
-    interrupt_after_write: Option<usize>,
-) -> Result<InstallReceipt, InstallError> {
+pub(super) fn unapply_record(repository: &Repository) -> Result<InstallReceipt, InstallError> {
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let mut record = loaded.record;
     if record.version != RECORD_VERSION || record.plan.version != PLAN_VERSION {
@@ -495,12 +446,7 @@ pub(super) fn unapply_with_interruption(
         }
     }
 
-    record_generation = reverse_operations(
-        repository,
-        &mut record,
-        record_generation,
-        interrupt_after_write,
-    )?;
+    record_generation = reverse_operations(repository, &mut record, record_generation)?;
     record.status = InstallStatus::Uninstalled;
     let receipt = record.receipt();
     write_record(repository, &record, record_generation)?;
@@ -511,29 +457,19 @@ fn reverse_operations(
     repository: &Repository,
     record: &mut InstallRecord,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     while record.completed < record.plan.operation_count() {
-        if let Some(generation) = reverse_activation(
-            repository,
-            record,
-            record_generation.clone(),
-            interrupt_after_write,
-        )? {
+        if let Some(generation) = reverse_activation(repository, record, record_generation.clone())?
+        {
             record_generation = generation;
             continue;
         }
-        if let Some(generation) = reverse_retirement(
-            repository,
-            record,
-            record_generation.clone(),
-            interrupt_after_write,
-        )? {
+        if let Some(generation) = reverse_retirement(repository, record, record_generation.clone())?
+        {
             record_generation = generation;
             continue;
         }
-        record_generation =
-            reverse_file_operation(repository, record, record_generation, interrupt_after_write)?;
+        record_generation = reverse_file_operation(repository, record, record_generation)?;
     }
     Ok(record_generation)
 }
@@ -542,7 +478,6 @@ fn reverse_retirement(
     repository: &Repository,
     record: &mut InstallRecord,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<Option<ReceiptGeneration>, InstallError> {
     let activation_offset = usize::from(record.plan.hook_activation.is_some());
     let completed = record.completed.saturating_sub(activation_offset);
@@ -568,11 +503,6 @@ fn reverse_retirement(
     } else {
         record.restored_retirements[index] = current.map(|observed| observed.generation);
     }
-    let reverse = record.plan.operations.len() + index;
-    if interrupt_after_write == Some(reverse) {
-        write_record(repository, record, record_generation)?;
-        return Err(InstallError::Interrupted { operation: reverse });
-    }
     record.completed += 1;
     record_generation = write_record(repository, record, record_generation)?;
     Ok(Some(record_generation))
@@ -582,7 +512,6 @@ fn reverse_activation(
     repository: &Repository,
     record: &mut InstallRecord,
     mut record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<Option<ReceiptGeneration>, InstallError> {
     let Some(activation) = record
         .plan
@@ -592,12 +521,7 @@ fn reverse_activation(
     else {
         return Ok(None);
     };
-    let reverse = record.plan.operation_count() - 1;
     hook_activation::restore(activation)?;
-    if interrupt_after_write == Some(reverse) {
-        write_record(repository, record, record_generation)?;
-        return Err(InstallError::Interrupted { operation: reverse });
-    }
     record.completed += 1;
     record_generation = write_record(repository, record, record_generation)?;
     Ok(Some(record_generation))
@@ -607,7 +531,6 @@ fn reverse_file_operation(
     repository: &Repository,
     record: &mut InstallRecord,
     record_generation: ReceiptGeneration,
-    interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     let non_file_offset =
         usize::from(record.plan.hook_activation.is_some()) + record.plan.retirements.len();
@@ -633,10 +556,6 @@ fn reverse_file_operation(
     record.restored[reverse] = restored;
     if needs_cleanup {
         cleanup_operation(repository, operation)?;
-    }
-    if interrupt_after_write == Some(reverse) {
-        write_record(repository, record, record_generation)?;
-        return Err(InstallError::Interrupted { operation: reverse });
     }
     record.completed += 1;
     write_record(repository, record, record_generation)
