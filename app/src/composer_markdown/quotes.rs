@@ -178,15 +178,39 @@ fn author_accent(
     source: &super::QuoteSource,
 ) -> Option<usize> {
     match author {
-        QuoteAuthor::Agent { lane, occupant } => agents
-            .get(&(*lane, Some(*occupant)))
-            .or(source.agent.as_ref())
-            .map(|agent| agent.accent),
+        QuoteAuthor::Agent { lane, occupant } => {
+            agent_author(agents, source, *lane, *occupant).map(|(agent, _)| agent.accent)
+        }
         QuoteAuthor::Directive {
             actor: wire::Actor::Lane(lane),
         } => lane_member_agent(agents, *lane).map(|agent| agent.accent),
         QuoteAuthor::Directive { .. } => None,
     }
+}
+
+/// The roster entry that names one occupant's prose, and whether it is that
+/// occupant's current seat or a historical attribution: its own seat first,
+/// then the agent its source card recorded, then its lane while that lane sits
+/// vacant. A vacant lane's entry names the lane, not an occupant; a lane a
+/// later occupant sits in lends nothing, so no successor inherits the prose.
+fn agent_author<'a>(
+    agents: &'a super::QuoteAgents,
+    source: &'a super::QuoteSource,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+) -> Option<(&'a super::QuoteAgent, &'static str)> {
+    agents
+        .get(&(lane, Some(occupant)))
+        .map(|agent| (agent, "current"))
+        .or_else(|| historical_agent(agents, source, lane).map(|agent| (agent, "historical")))
+}
+
+fn historical_agent<'a>(
+    agents: &'a super::QuoteAgents,
+    source: &'a super::QuoteSource,
+    lane: wire::CanonicalUuid,
+) -> Option<&'a super::QuoteAgent> {
+    source.agent.as_ref().or_else(|| agents.get(&(lane, None)))
 }
 
 /// Empty portal target that board provenance fills at the quoted content's
@@ -282,16 +306,8 @@ fn quote_author_name_html(
 ) -> String {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
-            let (agent, state) = agents
-                .get(&(*lane, Some(*occupant)))
-                .map(|agent| (Some(agent), "current"))
-                .or_else(|| {
-                    source
-                        .agent
-                        .as_ref()
-                        .map(|agent| (Some(agent), "historical"))
-                })
-                .unwrap_or((None, "unresolved"));
+            let (agent, state) = agent_author(agents, source, *lane, *occupant)
+                .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
             let label = agent.map_or_else(
                 || {
                     Cow::Owned(format!(
@@ -391,16 +407,17 @@ fn quote_age_slot_html(
             )
         }
     };
-    let accent = source
-        .agent
-        .as_ref()
-        .map(|agent| agent.accent)
-        .or_else(|| match author {
-            QuoteAuthor::Directive {
-                actor: wire::Actor::Lane(lane),
-            } => lane_member_agent(agents, *lane).map(|agent| agent.accent),
-            QuoteAuthor::Agent { .. } | QuoteAuthor::Directive { .. } => None,
-        });
+    let accent = match author {
+        QuoteAuthor::Agent { lane, .. } => historical_agent(agents, source, *lane),
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Lane(lane),
+        } => source
+            .agent
+            .as_ref()
+            .or_else(|| lane_member_agent(agents, *lane)),
+        QuoteAuthor::Directive { .. } => source.agent.as_ref(),
+    }
+    .map(|agent| agent.accent);
     if let Some(accent) = accent {
         write!(data, " data-accent=\"{accent}\"").expect("writing HTML to a String cannot fail");
     }
@@ -416,9 +433,9 @@ fn quote_age_slot_html(
     )
 }
 
-/// The team member for one lane, seated or vacant, which speaks for a peer
-/// message that lane told: a lane's directive names the lane, never an
-/// occupant.
+/// The team member for one lane, seated or vacant, which speaks for a
+/// directive that lane sent with no recorded occupant: such a directive names
+/// the lane, never an occupant.
 fn lane_member_agent(
     agents: &super::QuoteAgents,
     lane: wire::CanonicalUuid,
