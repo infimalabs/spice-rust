@@ -34,8 +34,6 @@ mod retune;
 mod session;
 mod team;
 
-#[cfg(test)]
-pub(super) use automatic::promoted_lease;
 use automatic::wake;
 pub(super) use automatic::{
     AutomaticLaunch, AutomaticWake, BeginAutomaticWake, PendingAutomaticWake, PendingWake,
