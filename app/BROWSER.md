@@ -197,6 +197,10 @@ inside their stem container; the final handle meets the container's single
 right rail. The task scroller reserves the total's fixed width and uses mirrored
 fade, padding, and scroll-padding boundaries at its ends. Counts and navigation
 remain independent of the status matrix.
+Tab rails, faces, labels, counts, and task handles use only the neutral control,
+line, and muted palette in every theme. Claimant accents remain on lane identity
+surfaces and never tint either global or team work tabs; hover strengthens the
+same neutral face, while keyboard focus retains its neutral visible ring.
 
 The task overview's Dependency graph points from each prerequisite to every
 dependent it blocks and labels that edge **then**, so the source card, arrow,
