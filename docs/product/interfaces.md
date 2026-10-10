@@ -341,6 +341,13 @@ through the thread index, so its cost follows the page rather than the journal
 or the whole thread. `spice journal verify` remains the full-authority check;
 it and `spice consent policy` stay concise summaries.
 
+`spice backup OUTPUT`, `spice restore verify BUNDLE`, and `spice restore
+BUNDLE` share one bundle bound: at most 4096 members and 8 GiB in aggregate,
+counting the manifest and every member. Backup capture streams members under
+that bound, restore admission refuses a manifest declaring more before reading
+a member, and restore refuses to capture a current authority larger than 8 GiB
+before it changes anything.
+
 `spice trust` shows the current digest, its standing and provenance, and
 ruling counts first, then a page of recorded rulings: the current digest,
 then pended, granted, and revoked digests, continuing with `--after DIGEST`.

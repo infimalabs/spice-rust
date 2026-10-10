@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use wire::manifest::{JOURNAL_BACKUP_MAX_BYTES, JOURNAL_BACKUP_MAX_MEMBERS};
 use wire::{Digest, Domain, TaskStamp};
 
 use crate::model::{Artifact, Manifest, ObjectMetadata};
@@ -15,10 +16,7 @@ use super::{
     validate_manifest_shape, validate_object,
 };
 
-pub(super) const MAX_BACKUP_MEMBERS: usize = 4096;
-pub(super) const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
-const _: () = assert!(MAX_BACKUP_MEMBERS > 0 && MAX_BACKUP_BYTES > 0);
 
 /// One already-authenticated backup member that can stream its captured bytes.
 pub trait BackupSource {
@@ -145,10 +143,10 @@ impl BackupGeneration {
 
     /// Capture and validate caller-authenticated streaming members.
     pub fn from_sources(sources: &[&dyn BackupSource]) -> Result<Self, Error> {
-        if sources.len() > MAX_BACKUP_MEMBERS {
+        if sources.len() > JOURNAL_BACKUP_MAX_MEMBERS {
             return Err(Error::corrupt(
                 "artifact backup inventory",
-                format!("capture exceeds {MAX_BACKUP_MEMBERS} members"),
+                format!("capture exceeds {JOURNAL_BACKUP_MAX_MEMBERS} members"),
             ));
         }
         let mut aggregate = 0_u64;
@@ -167,11 +165,11 @@ impl BackupGeneration {
             }
             aggregate = aggregate
                 .checked_add(bytes)
-                .filter(|total| *total <= MAX_BACKUP_BYTES)
+                .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
                 .ok_or_else(|| {
                     Error::corrupt(
                         "artifact backup inventory",
-                        format!("capture exceeds {MAX_BACKUP_BYTES} aggregate bytes"),
+                        format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
                     )
                 })?;
             plans.push(SourcePlan {
@@ -235,11 +233,11 @@ fn capture_source(
     };
     *aggregate = aggregate
         .checked_add(copied)
-        .filter(|total| *total <= MAX_BACKUP_BYTES)
+        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
         .ok_or_else(|| {
             Error::corrupt(
                 "artifact backup generation",
-                format!("capture crossed {MAX_BACKUP_BYTES} aggregate bytes"),
+                format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
             )
         })?;
     target
@@ -314,7 +312,7 @@ pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
     let mut plans = Vec::new();
     let mut preflight_bytes = 0_u64;
     if admitted_directory(root, true)? {
-        for task in task_directories_with_limit(root, Some(MAX_BACKUP_MEMBERS))? {
+        for task in task_directories_with_limit(root, Some(JOURNAL_BACKUP_MAX_MEMBERS))? {
             let task_dir = root.join(task.as_str());
             let manifest = read_manifest(&task_dir, &task)?;
             validate_manifest_shape(
@@ -390,10 +388,10 @@ pub(super) fn preflight_capture_member(
     plans: &mut Vec<CapturePlan>,
     aggregate: &mut u64,
 ) -> Result<(), Error> {
-    if plans.len() >= MAX_BACKUP_MEMBERS {
+    if plans.len() >= JOURNAL_BACKUP_MAX_MEMBERS {
         return Err(Error::corrupt(
             "artifact backup inventory",
-            format!("capture exceeds {MAX_BACKUP_MEMBERS} members"),
+            format!("capture exceeds {JOURNAL_BACKUP_MAX_MEMBERS} members"),
         ));
     }
     let relative = path
@@ -422,11 +420,11 @@ pub(super) fn preflight_capture_member(
     let identity = FileIdentity::from_metadata(&metadata);
     *aggregate = aggregate
         .checked_add(identity.len)
-        .filter(|total| *total <= MAX_BACKUP_BYTES)
+        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
         .ok_or_else(|| {
             Error::corrupt(
                 "artifact backup inventory",
-                format!("capture exceeds {MAX_BACKUP_BYTES} aggregate bytes"),
+                format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
             )
         })?;
     plans.push(CapturePlan {
@@ -480,11 +478,11 @@ fn capture_member(
     };
     *aggregate = aggregate
         .checked_add(bytes)
-        .filter(|total| *total <= MAX_BACKUP_BYTES)
+        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
         .ok_or_else(|| {
             Error::corrupt(
                 "artifact backup generation",
-                format!("capture crossed {MAX_BACKUP_BYTES} aggregate bytes"),
+                format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
             )
         })?;
     require_unchanged_capture_source(&plan.source, &source, &plan.identity, bytes)?;

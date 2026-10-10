@@ -593,9 +593,12 @@ fn current_authority(path: &Path) -> Result<Option<(File, AuthorityIdentity)>, F
             path.display().to_string(),
             "remove the non-file obstruction before previewing restore",
         )),
-        Ok(metadata) if metadata.len() > journal::MAX_BACKUP_BYTES => Err(refusal(
+        Ok(metadata) if metadata.len() > wire::manifest::JOURNAL_BACKUP_MAX_BYTES => Err(refusal(
             "restore::authority-refused",
-            format!("at most {} authority bytes", journal::MAX_BACKUP_BYTES),
+            format!(
+                "at most {} authority bytes",
+                wire::manifest::JOURNAL_BACKUP_MAX_BYTES
+            ),
             format!("{} bytes", metadata.len()),
             "quiesce or repair the oversized authority before previewing restore",
         )),

@@ -9,16 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
-use wire::manifest::JournalBackupManifest;
+use wire::manifest::{JOURNAL_BACKUP_MAX_BYTES, JOURNAL_BACKUP_MAX_MEMBERS, JournalBackupManifest};
 use wire::{Digest, Domain, RestoreVerification, TaskStamp, WireVersion};
 
 use crate::{JournalReader, OpenError, VerifyError};
 
 const MANIFEST: &str = "manifest.json";
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_BACKUP_MEMBERS: usize = 4096;
-pub const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_INVENTORY_ENTRIES: usize = MAX_BACKUP_MEMBERS * 2 + 1;
+const MAX_INVENTORY_ENTRIES: usize = JOURNAL_BACKUP_MAX_MEMBERS * 2 + 1;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -440,11 +438,11 @@ fn admit_bundle_bounds(
     manifest: &JournalBackupManifest,
     manifest_bytes: u64,
 ) -> Result<(), BackupVerifyError> {
-    if manifest.members.len() > MAX_BACKUP_MEMBERS {
+    if manifest.members.len() > JOURNAL_BACKUP_MAX_MEMBERS {
         return Err(BackupVerifyError::Invalid {
             subject: PathBuf::from(MANIFEST),
             detail: format!(
-                "backup declares {} members; maximum is {MAX_BACKUP_MEMBERS}",
+                "backup declares {} members; maximum is {JOURNAL_BACKUP_MAX_MEMBERS}",
                 manifest.members.len()
             ),
         });
@@ -460,11 +458,11 @@ fn admit_bundle_bounds(
                     detail: "backup aggregate bytes overflow u64".to_owned(),
                 })
         })?;
-    if total > MAX_BACKUP_BYTES {
+    if total > JOURNAL_BACKUP_MAX_BYTES {
         return Err(BackupVerifyError::Invalid {
             subject: PathBuf::from(MANIFEST),
             detail: format!(
-                "backup declares {total} aggregate bytes; maximum is {MAX_BACKUP_BYTES}"
+                "backup declares {total} aggregate bytes; maximum is {JOURNAL_BACKUP_MAX_BYTES}"
             ),
         });
     }
@@ -646,11 +644,11 @@ fn copy_member(
                     subject: source_path.to_path_buf(),
                     detail: "backup aggregate bytes overflowed u64 while capturing".to_owned(),
                 })?;
-        if *observed_total > MAX_BACKUP_BYTES {
+        if *observed_total > JOURNAL_BACKUP_MAX_BYTES {
             return Err(BackupVerifyError::Invalid {
                 subject: source_path.to_path_buf(),
                 detail: format!(
-                    "backup crossed {MAX_BACKUP_BYTES} aggregate bytes while capturing"
+                    "backup crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes while capturing"
                 ),
             });
         }
@@ -1182,8 +1180,8 @@ mod tests {
     use wire::{Digest, Domain, WireVersion};
 
     use super::{
-        BackupVerifyError, MAX_BACKUP_BYTES, MAX_BACKUP_MEMBERS, admit_bundle_bounds,
-        verify_restore_bundle_after_capture, verify_restore_bundle_after_inventory,
+        BackupVerifyError, admit_bundle_bounds, verify_restore_bundle_after_capture,
+        verify_restore_bundle_after_inventory,
     };
 
     static NEXT_BUNDLE: AtomicU64 = AtomicU64::new(0);
@@ -1277,6 +1275,47 @@ mod tests {
     }
 
     #[test]
+    fn bundle_admission_counts_the_manifest_and_every_member_through_eight_gib() {
+        const EIGHT_GIB: u64 = 8 << 30;
+        const MEMBERS: usize = 4096;
+        let member = |path: &str, bytes: u64| JournalBackupMember {
+            path: path.to_owned(),
+            mode: 0o600,
+            bytes,
+            digest: Digest::compute(Domain::JournalBackupMember, path.as_bytes()),
+        };
+        let mut bounded = JournalBackupManifest {
+            version: JOURNAL_BACKUP_VERSION,
+            wire: WireVersion::CURRENT,
+            journal_schema: crate::SCHEMA_VERSION,
+            authority: "spicejournal.sqlite3".to_owned(),
+            members: vec![member("artifacts/a", 0), member("spicejournal.sqlite3", 0)],
+        };
+        let manifest_bytes = 4096;
+
+        // The inclusive ceiling split across the manifest and two members,
+        // then one byte past it.
+        bounded.members[0].bytes = 1;
+        bounded.members[1].bytes = EIGHT_GIB - manifest_bytes - 1;
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
+        bounded.members[0].bytes = 2;
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
+        bounded.members[0].bytes = 0;
+        bounded.members[1].bytes = EIGHT_GIB;
+        assert!(
+            admit_bundle_bounds(&bounded, manifest_bytes).is_err(),
+            "the manifest counts toward the ceiling"
+        );
+        bounded.members[0].bytes = u64::MAX;
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
+
+        bounded.members = vec![member("spicejournal.sqlite3", 0); MEMBERS];
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
+        bounded.members.push(member("spicejournal.sqlite3", 0));
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
+    }
+
+    #[test]
     fn authority_replay_stays_bound_to_the_generation_captured_before_path_replacement() {
         let bundle = Bundle::new();
         let authority = bundle.path().join("spicejournal.sqlite3");
@@ -1285,21 +1324,6 @@ mod tests {
         let manifest = bundle.manifest(&["spicejournal.sqlite3"]);
         let authority_digest = manifest.members[0].digest.clone();
         bundle.write_manifest(&manifest);
-
-        let mut bounded = manifest.clone();
-        let manifest_bytes = wire::encode(&bounded).expect("manifest encodes").len() as u64;
-        bounded.members[0].bytes = MAX_BACKUP_BYTES - manifest_bytes;
-        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
-        bounded.members[0].bytes += 1;
-        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
-        bounded.members = vec![manifest.members[0].clone(); MAX_BACKUP_MEMBERS];
-        bounded
-            .members
-            .iter_mut()
-            .for_each(|member| member.bytes = 0);
-        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
-        bounded.members.push(manifest.members[0].clone());
-        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
 
         let displaced = bundle.path().join("captured.sqlite3");
         let result = verify_restore_bundle_after_capture(bundle.path(), |path| {

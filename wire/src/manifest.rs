@@ -16,6 +16,11 @@ const OCI_SHA256_HEX_LEN: usize = 64;
 
 /// The sole current journal backup bundle schema.
 pub const JOURNAL_BACKUP_VERSION: u16 = 2;
+/// Most members one journal backup bundle carries besides its manifest.
+pub const JOURNAL_BACKUP_MAX_MEMBERS: usize = 4096;
+/// Most bytes one journal backup bundle carries, its manifest and every
+/// member counted together. Backup capture and restore admission share it.
+pub const JOURNAL_BACKUP_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// One regular file authenticated by a journal backup manifest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

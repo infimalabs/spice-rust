@@ -8,7 +8,7 @@ use std::thread;
 
 use wire::{Instant, TaskHandle, TaskStamp};
 
-use super::capture::{MAX_BACKUP_BYTES, MAX_BACKUP_MEMBERS, preflight_capture_member};
+use super::capture::preflight_capture_member;
 use super::{
     AddBytesRequest, AddRequest, Error, ErrorClass, MediaType, Retention, Store, object_dir,
     payload_path,
@@ -539,22 +539,41 @@ fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
     fs::write(&bounded, b"").expect("write empty bound fixture");
     let mut plans = Vec::new();
     let mut aggregate = 0;
-    for _ in 0..MAX_BACKUP_MEMBERS {
+    for _ in 0..4096 {
         preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
             .expect("admit member through exact count bound");
     }
     preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
         .expect_err("member beyond exact count bound refused");
 
+    const EIGHT_GIB: u64 = 8 << 30;
+    let one_byte = fixture.store.root().join("one-byte-member");
+    fs::write(&one_byte, b"x").expect("write one-byte bound fixture");
+    let mut aggregate = EIGHT_GIB - 1;
+    preflight_capture_member(
+        fixture.store.root(),
+        &one_byte,
+        &mut Vec::new(),
+        &mut aggregate,
+    )
+    .expect("aggregate reaching the inclusive byte bound admitted");
+    preflight_capture_member(
+        fixture.store.root(),
+        &one_byte,
+        &mut Vec::new(),
+        &mut aggregate,
+    )
+    .expect_err("aggregate one byte past the bound refused");
+
     let oversized = fixture.store.root().join("oversized-member");
     let file = fs::File::create(&oversized).expect("create sparse aggregate fixture");
-    file.set_len(MAX_BACKUP_BYTES + 1)
+    file.set_len(EIGHT_GIB + 1)
         .expect("extend sparse aggregate fixture");
     preflight_capture_member(fixture.store.root(), &oversized, &mut Vec::new(), &mut 0)
         .expect_err("aggregate beyond fixed byte bound refused");
 
     let oversized_source = BoundSource {
-        bytes: MAX_BACKUP_BYTES + 1,
+        bytes: EIGHT_GIB + 1,
     };
     let oversized_failure = super::BackupGeneration::from_sources(&[&oversized_source])
         .expect_err("declared aggregate beyond the bound refused before copy");
