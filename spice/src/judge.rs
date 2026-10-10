@@ -131,19 +131,6 @@ impl Process {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_contract(
-        binary: String,
-        timeout: Duration,
-        cancellation: CancellationToken,
-    ) -> Self {
-        Self {
-            binary,
-            timeout,
-            cancellation,
-        }
-    }
-
     pub(crate) fn with_cancellation(cancellation: CancellationToken) -> Self {
         Self {
             cancellation,

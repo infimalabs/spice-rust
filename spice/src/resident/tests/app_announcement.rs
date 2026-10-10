@@ -14,26 +14,6 @@ pub(super) fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     (root, paths)
 }
 
-pub(super) fn process_spec(command: &str, runtime: Duration) -> Spec {
-    Spec {
-        argv: Argv::new("/bin/sh", ["-c", command]).expect("fixture argv"),
-        cwd: PathBuf::from("/"),
-        environment: Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment"),
-        group: ProcessGroup::New,
-        deadlines: Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
-            .expect("fixture deadlines"),
-        wait: WaitPolicy::new(
-            "resident fixture",
-            Cancellation::Never,
-            RestartDisposition::Never,
-        )
-        .expect("fixture wait policy"),
-        output: Output::new(StdinPolicy::Null, StreamPolicy::Null, StreamPolicy::Null),
-        redaction: Redaction::None,
-        grace: Duration::from_millis(100),
-    }
-}
-
 pub(super) fn seed_lane(
     bus: &Bus,
     epoch: CanonicalUuid,

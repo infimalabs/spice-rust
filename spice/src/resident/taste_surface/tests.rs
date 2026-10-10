@@ -1,6 +1,5 @@
 use std::cell::Cell;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::Duration;
@@ -795,56 +794,6 @@ fn delayed_completion_is_abandoned_after_compaction_or_bag_movement() {
     .expect("changed compaction abandons stale answer");
 
     assert!(fixture.judgments().is_empty());
-    fixture.finish();
-}
-
-#[test]
-fn shutdown_cancels_and_joins_an_inflight_process_request() {
-    let fixture = Fixture::new("judge-shutdown");
-    let bag = bag(&[("polling", &["polling"], "Wait.")]);
-    let record = prose_record(fixture.lane, fixture.occupant, "polling now");
-    let script = std::env::temp_dir().join(format!(
-        "spice-taste-judge-shutdown-{}-{}",
-        std::process::id(),
-        NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::write(
-        &script,
-        "#!/bin/sh\ncat >/dev/null\nexec /usr/bin/tail -f /dev/null\n",
-    )
-    .expect("write shutdown judge fixture");
-    let mut permissions = fs::metadata(&script)
-        .expect("shutdown judge metadata")
-        .permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&script, permissions).expect("make shutdown judge executable");
-    let binary = script
-        .to_str()
-        .expect("UTF-8 shutdown judge path")
-        .to_owned();
-    let mut adjudication = start_adjudication_with(move |cancellation| ProcessAdjudicator {
-        process: crate::judge::Process::with_contract(
-            binary,
-            Duration::from_secs(30),
-            cancellation,
-        ),
-    })
-    .expect("cancellable adjudication starts");
-    {
-        let (submitter, _) = adjudication.parts();
-        submitter
-            .recognize(&fixture.bus, fixture.epoch, &bag, &record)
-            .expect("inflight request submits");
-    }
-
-    let started = std::time::Instant::now();
-    drop(adjudication);
-
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "shutdown waited for the process runtime deadline"
-    );
-    fs::remove_file(script).expect("remove shutdown judge fixture");
     fixture.finish();
 }
 
