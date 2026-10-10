@@ -404,6 +404,8 @@ fn task_tone(work: &WorkProjection<'_>, task: &TaskStamp) -> Option<TaskTone> {
     })
 }
 
+/// The lens's evidence list below the graph. The dependency graph already
+/// shows every task it names, so it keeps only the truncation frontier.
 fn render_relationship_list(
     presentation: &lens::Presentation,
     work: &WorkProjection<'_>,
@@ -413,10 +415,7 @@ fn render_relationship_list(
     truncation: Html,
 ) -> Html {
     let (title, note) = match active_lens {
-        WorkMapLens::Dependency => (
-            "Tasks in this dependency graph",
-            "Selected roots first; follow task buttons to continue the lead",
-        ),
+        WorkMapLens::Dependency => return truncation,
         WorkMapLens::Origin => (
             "Lineage evidence",
             "Selected roots first; task, ACK, and origin identities stay explicit",
