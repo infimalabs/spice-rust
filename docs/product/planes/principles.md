@@ -27,8 +27,6 @@
    work always has a way forward.
 - **Refusals lead with the repair.** The reader who has just been stopped has no
    second screen. The message is the whole interface.
-- **Movement means change.** Any motion corresponds to something that actually
-   changed. Re-render is not change.
 - **The agent is a user.** It has a UX — briefing, meter, reminders, refusals —
     and that UX has a required *tone*: capability, not restriction.
 
