@@ -32,8 +32,8 @@ total scroll horizontally under edge fades and never enter the status row.
 Task tabs are neutral. Only a handle a lane is working carries that lane's
 accent, beside the lane's name in its text; hover and keyboard focus stay
 neutral in both strips. Every count badge is one neutral open-task total; see
-[Task-count badges show one open
-total](../docs/product/invariants/lifecycle.md#surface-task-count-triples-have-dynamic-width).
+[Task counts show one open
+total](../docs/product/loops.md#the-jitter-contract).
 
 A global stem tab opens its complete visibility-qualified stem. A team strip
 clusters by Work's rule: in in-flight, ready, blocked, and deferred offer order,
