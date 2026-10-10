@@ -179,11 +179,6 @@ struct MessageObservation {
 struct MessageObservations(Vec<MessageObservation>);
 
 impl MessageObservations {
-    #[cfg(test)]
-    fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
-        Self::from_facts(snapshot.facts())
-    }
-
     fn from_facts<'a>(facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>) -> Self {
         let mut observations = Self::default();
         for envelope in facts {
@@ -622,100 +617,6 @@ impl PresentationDirective {
 }
 
 impl PresentationDirectives {
-    #[cfg(test)]
-    fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
-        let steering = steer::Ledger::from_snapshot(snapshot).map_err(|error| error.to_string())?;
-        let creators = snapshot
-            .facts()
-            .iter()
-            .map(|envelope| (envelope.seq, (envelope.actor.clone(), envelope.at)))
-            .collect::<BTreeMap<_, _>>();
-        let origins = steer::Ledger::authority_index(snapshot)
-            .map_err(|error| error.to_string())?
-            .heads()
-            .iter()
-            .map(|head| {
-                let origin = creators.get(&head.body().created).ok_or_else(|| {
-                    format!("directive {} lost its creating fact", head.body().key)
-                })?;
-                Ok((head.body().directive, origin.clone()))
-            })
-            .collect::<Result<BTreeMap<_, _>, String>>()?;
-        let mut retirements = BTreeMap::new();
-        let mut tastes = BTreeSet::new();
-        for envelope in snapshot.facts() {
-            if let Some(body) = envelope.fact.read::<wire::body::SteerAcked>() {
-                let key = body
-                    .key
-                    .parse::<steer::Key>()
-                    .map_err(|error| error.to_string())?;
-                retirements.insert(key, body.locus);
-            } else if let Some(body) = envelope.fact.read::<wire::body::SteerDeclined>() {
-                let key = body
-                    .key
-                    .parse::<steer::Key>()
-                    .map_err(|error| error.to_string())?;
-                retirements.insert(key, body.locus);
-            } else if let Some(body) = envelope.fact.read::<wire::body::TasteReminded>() {
-                tastes.insert(
-                    body.key
-                        .parse::<steer::Key>()
-                        .map_err(|error| error.to_string())?,
-                );
-            } else if let Some(body) = envelope.fact.read::<wire::body::TasteJudged>()
-                && let wire::body::TasteDecision::Confirmed { key, .. } = body.decision
-            {
-                tastes.insert(
-                    key.parse::<steer::Key>()
-                        .map_err(|error| error.to_string())?,
-                );
-            }
-        }
-        Ok(Self(
-            steering
-                .directives()
-                .into_iter()
-                .filter(|directive| {
-                    !super::steering::is_legacy_task_generation_control(directive.control())
-                })
-                .map(|directive| {
-                    let key = directive.key().clone();
-                    let retirement = retirements.get(&key).copied();
-                    let taste = tastes.contains(&key);
-                    let review = is_review_feedback(directive.control());
-                    let quote_target = wire::QuoteTarget::Steering {
-                        key: key.to_string(),
-                        digest: wire::QuoteTarget::text_digest(directive.text()),
-                    };
-                    let (actor, published) = origins
-                        .get(&directive.directive())
-                        .cloned()
-                        .ok_or_else(|| format!("directive {key} has no creating fact"))?;
-                    Ok((
-                        key,
-                        PresentationDirective {
-                            lane: directive.lane(),
-                            text: wire::media::with_media_payloads(
-                                directive.text(),
-                                directive.attachments(),
-                            )
-                            .map_err(|error| error.to_string())?
-                            .into_owned(),
-                            authored: true,
-                            taste,
-                            review,
-                            disposition: directive.disposition(),
-                            retirement,
-                            quote_target,
-                            actor,
-                            published,
-                        },
-                    ))
-                })
-                .collect::<Result<_, String>>()?,
-        ))
-    }
-
     fn from_presentations(rows: &[bus::SteeringPresentation]) -> Result<Self, String> {
         let mut directives = BTreeMap::new();
         for row in rows {

@@ -472,9 +472,8 @@ fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
     let scratch = Scratch::new("tail-window");
     let tape = Tape::open(scratch.path()).expect("tape opens");
     let prose = line(PROSE);
-    for _ in 0..400 {
-        tape.tee(&prose).expect("season record is durable");
-    }
+    tape.tee(&prose.repeat(400))
+        .expect("season records are durable");
 
     let tail = scan_tail(
         scratch.path(),

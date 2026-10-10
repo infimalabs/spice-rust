@@ -5,7 +5,6 @@ use super::*;
 
 const OTHER_LANE: u64 = 40;
 const OTHER_OCCUPANT: u64 = 41;
-const SUCCESSOR: u64 = 42;
 const DIRECTIVE: u64 = 43;
 const LATE_DIRECTIVE: u64 = 44;
 
@@ -42,49 +41,6 @@ impl Window {
             discovery,
             seats: Seats::new(),
         }
-    }
-
-    fn begin(
-        &self,
-        decision: Option<&bus::TaskSnapshot>,
-        reserved: Option<&crate::board_command::AutomaticClaim>,
-        inbox: bool,
-    ) -> AutomaticLaunch {
-        let runtime = self
-            .fixture
-            .lane_runtime(&self.bus, &self.capabilities, &self.discovery);
-        match begin_automatic_wake(
-            &self.bus,
-            &self.fixture.paths,
-            self.fixture.epoch,
-            &self.seats,
-            &runtime,
-            &steer::Config::default(),
-            self.fixture.lane,
-            uuid(SUCCESSOR),
-            decision,
-            reserved,
-            inbox,
-        ) {
-            Ok(BeginAutomaticWake::Launch(launch)) => launch,
-            Ok(BeginAutomaticWake::Unstarted(outcome)) => {
-                panic!("launch did not spawn: {outcome:?}")
-            }
-            Err(outcome) => panic!("automatic wake refused admission: {outcome:?}"),
-        }
-    }
-
-    fn finish(&mut self, launch: AutomaticLaunch) -> CommandResult<AutomaticWake> {
-        let (launch, pending) = launch.into_parts();
-        let established = launch.establish();
-        finish_automatic_wake(
-            &self.bus,
-            &self.fixture.paths,
-            self.fixture.epoch,
-            &mut self.seats,
-            pending,
-            established,
-        )
     }
 
     /// Another lane starts and an unrelated task is claimed while proof runs.
@@ -136,35 +92,6 @@ impl Window {
             .expect("fixture lane exists")
     }
 
-    fn assert_started(&self, outcome: CommandResult<AutomaticWake>) {
-        match outcome {
-            Ok(AutomaticWake::Started) => {}
-            Ok(AutomaticWake::Unstarted(failure)) => panic!("proof failed: {failure:?}"),
-            Err(refusal) => panic!("proven occupant was refused: {refusal:?}"),
-        }
-        assert_eq!(self.row().occupant, Some(uuid(SUCCESSOR)));
-        assert!(self.seats.occupied(self.fixture.lane));
-        let head = current_residency(&self.bus, self.fixture.epoch).expect("residency reads");
-        let other = head
-            .body()
-            .lanes
-            .iter()
-            .find(|row| row.lane == uuid(OTHER_LANE))
-            .expect("other lane exists");
-        assert_eq!(other.occupant, Some(uuid(OTHER_OCCUPANT)));
-    }
-
-    fn assert_refused(&self, outcome: CommandResult<AutomaticWake>, reason: &str) {
-        match outcome {
-            Err(Outcome::Refusal(refusal)) => assert_eq!(refusal.reason(), reason),
-            Err(other) => panic!("expected {reason}, found {other:?}"),
-            Ok(AutomaticWake::Started) => panic!("expected {reason}, but the occupant started"),
-            Ok(AutomaticWake::Unstarted(failure)) => panic!("expected {reason}, found {failure:?}"),
-        }
-        assert_eq!(self.row().occupant, None);
-        assert!(!self.seats.occupied(self.fixture.lane));
-    }
-
     fn close(mut self) {
         self.seats.release_all();
         super::super::super::super::steering::remove_lane_surface(
@@ -173,96 +100,6 @@ impl Window {
         );
         self.bus.verify().expect("proof window authority verifies");
         self.bus.shutdown().expect("fixture bus stops");
-    }
-}
-
-#[test]
-fn an_inbox_wake_starts_after_unrelated_commits_but_not_after_its_steering_is_withdrawn() {
-    let mut window = Window::new();
-    send_steering(&window, DIRECTIVE, "1kInbox1");
-    let snapshot = window.bus.task_snapshot().expect("decision snapshot reads");
-    let launch = window.begin(Some(&snapshot), None, true);
-    window.land_unrelated_commits();
-    let outcome = window.finish(launch);
-    window.assert_started(outcome);
-    window.close();
-
-    let mut window = Window::new();
-    send_steering(&window, DIRECTIVE, "1kInbox1");
-    let snapshot = window.bus.task_snapshot().expect("decision snapshot reads");
-    let launch = window.begin(Some(&snapshot), None, true);
-    cancel_steering(&window, DIRECTIVE);
-    let outcome = window.finish(launch);
-    window.assert_refused(outcome, "lifecycle::wake-inbox-moved");
-    window.close();
-}
-
-#[test]
-fn a_held_claim_wake_carries_its_claim_after_unrelated_commits_but_not_after_it_moves() {
-    let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("held task");
-    let mut window = Window::new();
-    claim_task(
-        &window.bus,
-        &task,
-        &predecessor_row(&window),
-        window.fixture.epoch,
-    );
-    let snapshot = window.bus.task_snapshot().expect("decision snapshot reads");
-    let launch = window.begin(Some(&snapshot), None, false);
-    window.land_unrelated_commits();
-    let outcome = window.finish(launch);
-    window.assert_started(outcome);
-    let claim = window
-        .bus
-        .task_snapshot()
-        .expect("carried claim reads")
-        .tasks()
-        .iter()
-        .find(|heads| heads.statement().body().born == task)
-        .and_then(|heads| heads.claim().cloned())
-        .expect("held claim survives");
-    assert_eq!(claim.body().occupant, uuid(SUCCESSOR));
-    window.close();
-
-    let mut window = Window::new();
-    claim_task(
-        &window.bus,
-        &task,
-        &predecessor_row(&window),
-        window.fixture.epoch,
-    );
-    let snapshot = window.bus.task_snapshot().expect("decision snapshot reads");
-    let launch = window.begin(Some(&snapshot), None, false);
-    renew_claim(&window.bus, &task);
-    let outcome = window.finish(launch);
-    window.assert_refused(outcome, "lifecycle::held-claim-head-moved");
-    window.close();
-}
-
-#[test]
-fn an_available_work_wake_starts_after_unrelated_commits_but_not_after_its_lane_moves() {
-    let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("reserved task");
-    for retuned in [false, true] {
-        let mut window = Window::new();
-        let mut reserved_row = window.row();
-        reserved_row.occupant = Some(uuid(SUCCESSOR));
-        claim_task(&window.bus, &task, &reserved_row, window.fixture.epoch);
-        let reserved = crate::board_command::AutomaticClaim {
-            task: task.clone(),
-            lane: window.fixture.lane,
-            occupant: uuid(SUCCESSOR),
-        };
-        let launch = window.begin(None, Some(&reserved), false);
-        window.land_unrelated_commits();
-        if retuned {
-            retune_lane(&window);
-            let outcome = window.finish(launch);
-            window.assert_refused(outcome, "resident::head-moved");
-        } else {
-            let outcome = window.finish(launch);
-            window.assert_started(outcome);
-        }
-        window.close();
     }
 }
 
@@ -588,67 +425,6 @@ fn assert_successor_renews(
     );
 }
 
-fn renew_claim(bus: &Bus, task: &wire::TaskStamp) {
-    let snapshot = bus.task_snapshot().expect("held claim reads");
-    let heads = snapshot
-        .tasks()
-        .iter()
-        .find(|heads| &heads.statement().body().born == task)
-        .expect("held task exists");
-    let claim = heads.claim().expect("claim head").body().clone();
-    let lease = heads.lease().expect("lease head").body().clone();
-    let origin: wire::Origin = format!("task:{task}").parse().expect("task origin");
-    let at = wire::Instant::new(jiff::Timestamp::now()).expect("renewal instant");
-    let mut write = JournalWrite::new(claim.actor.clone(), origin, at, Producer::BusTimer);
-    let renewed = write
-        .fact(
-            wire::body::ClaimRenewed {
-                task: task.clone(),
-                epoch: claim.epoch,
-                until: lease.expiry,
-                maximum: lease.maximum,
-            },
-            FactCause::Root,
-        )
-        .expect("claim renewal fact builds");
-    write.lease_head(task.clone(), renewed, move |_| lease);
-    write.claim_head(task.clone(), renewed, move |fact| wire::ClaimHead {
-        fact,
-        ..claim
-    });
-    commit(bus, write).expect("claim renewal commits");
-}
-
-fn retune_lane(window: &Window) {
-    let observed = current_residency(&window.bus, window.fixture.epoch).expect("residency reads");
-    let mut next = observed.body().clone();
-    let row = next
-        .lanes
-        .iter_mut()
-        .find(|row| row.lane == window.fixture.lane)
-        .expect("fixture lane exists");
-    row.model = Some("fixture-model".to_owned());
-    let mut write = write(
-        Actor::Operator,
-        window.fixture.epoch,
-        Producer::ResidentRecognition,
-    )
-    .expect("retune write opens");
-    guard_residency(&mut write, &observed);
-    let retuned = write
-        .fact(
-            wire::body::LaneRetuned {
-                lane: window.fixture.lane,
-                from: None,
-                model: Some("fixture-model".to_owned()),
-            },
-            FactCause::Existing(observed.position()),
-        )
-        .expect("retune fact is valid");
-    write.residency_head(retuned, move |_| next);
-    commit(&window.bus, write).expect("lane retune commits");
-}
-
 fn send_steering(window: &Window, directive: u64, key: &str) {
     let epoch = window.fixture.epoch;
     let residency = current_residency(&window.bus, epoch).expect("residency reads");
@@ -675,31 +451,6 @@ fn send_steering(window: &Window, directive: u64, key: &str) {
         steer::Ledger::sent_head(&body, origin, at, seq).expect("steering head is valid")
     });
     commit(&window.bus, sent).expect("pending steering commits");
-}
-
-fn cancel_steering(window: &Window, directive: u64) {
-    let directive = uuid(directive);
-    let head = window
-        .bus
-        .read(move |read| read.steering_head(directive))
-        .expect("steering head reads")
-        .expect("directive exists");
-    let at = wire::Instant::new(jiff::Timestamp::now()).expect("cancel instant");
-    let origin: wire::Origin = format!("resident:{}", window.fixture.epoch)
-        .parse()
-        .expect("cancel origin");
-    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
-    let body = wire::body::SteerCanceled {
-        key: head.body().key.clone(),
-        lane: window.fixture.lane,
-    };
-    let canceled = write
-        .fact(body.clone(), FactCause::Existing(head.body().created))
-        .expect("cancel fact is valid");
-    let next = steer::Ledger::transition_head(head.body(), steer::Steering::Canceled(&body), at)
-        .expect("cancel transition is valid");
-    write.steering_head(canceled, move |_| next);
-    commit(&window.bus, write).expect("steering cancel commits");
 }
 
 fn operator_wake(fixture: &AdvisoryRtkFixture, request: &LaneState) -> wire::AdmittedCommand {

@@ -435,6 +435,11 @@ pub(super) fn retain(directory: &Path, bytes: &[u8]) -> Result<Export, String> {
 }
 
 pub(crate) fn prune(directory: &Path, keep: &Path) {
+    prune_to(directory, keep, RETAINED_CAPTURES);
+}
+
+fn prune_to(directory: &Path, keep: &Path, capacity: usize) {
+    debug_assert!(capacity > 0);
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -452,11 +457,11 @@ pub(crate) fn prune(directory: &Path, keep: &Path) {
             Some((modified, entry.path()))
         })
         .collect::<Vec<(SystemTime, PathBuf)>>();
-    if captures.len() < RETAINED_CAPTURES {
+    if captures.len() < capacity {
         return;
     }
     captures.sort();
-    let excess = captures.len() + 1 - RETAINED_CAPTURES;
+    let excess = captures.len() + 1 - capacity;
     for (_, path) in captures.into_iter().take(excess) {
         let _ = fs::remove_file(path);
     }
@@ -686,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn retention_names_the_complete_capture_by_digest_and_prunes_the_oldest() {
+    fn retention_names_the_complete_capture_by_digest_and_prunes_to_its_capacity() {
         let directory = fixture_directory();
         let first = retain(&directory, b"first capture\n").expect("first capture retains");
         assert_eq!(
@@ -697,15 +702,21 @@ mod tests {
             first.digest,
             Digest::compute(Domain::CliExport, b"first capture\n")
         );
-        for index in 0..RETAINED_CAPTURES + 5 {
-            std::thread::sleep(Duration::from_millis(2));
-            retain(&directory, format!("capture {index}\n").as_bytes()).expect("capture retains");
+        fs::remove_file(first.path).expect("digest fixture removes");
+
+        for name in ["a.log", "b.log", "c.log", "keep.log"] {
+            fs::write(directory.join(name), name).expect("capture fixture writes");
         }
-        let kept = fs::read_dir(&directory).expect("directory lists").count();
-        assert_eq!(kept, RETAINED_CAPTURES);
-        assert!(
-            !Path::new(&first.path).exists(),
-            "the oldest capture is pruned"
+        let keep = directory.join("keep.log");
+        prune_to(&directory, &keep, 3);
+
+        assert!(!directory.join("a.log").exists(), "oldest capture remains");
+        assert!(directory.join("b.log").exists());
+        assert!(directory.join("c.log").exists());
+        assert!(keep.exists());
+        assert_eq!(
+            fs::read_dir(&directory).expect("directory lists").count(),
+            3
         );
         fs::remove_dir_all(&directory).expect("fixture directory removes");
     }

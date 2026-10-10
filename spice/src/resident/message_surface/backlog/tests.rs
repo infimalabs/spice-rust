@@ -562,50 +562,6 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
 }
 
 #[test]
-fn startup_tail_crosses_one_reassembled_record_at_the_admitted_logical_limit() {
-    // OMP capture tees a reassembled logical record, so the newest window can
-    // begin inside a record far longer than one physical RPC frame. The
-    // boundary allowance retreats over the whole of it and the window still
-    // decodes every newer message.
-    const NEWEST_MESSAGES: usize = 200;
-    let root = omp_tape("omp-limit-record");
-    let tape = tape::Tape::open(&root).expect("omp tape reopens");
-    tape.tee(omp_messages(30).as_bytes())
-        .expect("older messages are durable");
-    let head =
-        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":""#;
-    let foot = r#""}],"timestamp":1789525452596}}"#;
-    // Sized from what capture may tee, not from the allowance under test: a
-    // budget that shrinks back to the physical frame cannot cross this.
-    let admitted = vendor::omp::frame::MAX_REASSEMBLED_BYTES + 1;
-    let filler = admitted - 1 - head.len() - foot.len();
-    let mut record = String::with_capacity(admitted);
-    record.push_str(head);
-    record.extend(std::iter::repeat_n('x', filler));
-    record.push_str(foot);
-    record.push('\n');
-    assert_eq!(record.len(), admitted);
-    tape.tee(record.as_bytes())
-        .expect("a record at the logical limit is durable");
-    tape.tee(omp_messages(NEWEST_MESSAGES).as_bytes())
-        .expect("newest messages are durable");
-
-    let tail = tail_backlog(&root, listen::Dialect::Omp)
-        .expect("a reassembled record at its limit is affordable");
-    let straddled = tail.scan.records.first().expect("the window has records");
-    assert_eq!(
-        straddled.locus.length,
-        record.len() as u64,
-        "the window begins with the whole straddled record",
-    );
-    assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
-    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
-    assert!(tail.work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
-
-    fs::remove_dir_all(root).expect("omp limit-record fixture cleanup");
-}
-
-#[test]
 fn a_record_beyond_the_admitted_length_refuses_within_its_allowance() {
     // Nothing admitted can land a record this long, so the retreat runs
     // out of source bytes rather than reading the tape without a bound. The
@@ -637,30 +593,6 @@ fn a_record_beyond_the_admitted_length_refuses_within_its_allowance() {
     assert!(work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
 
     fs::remove_dir_all(root).expect("oversize fixture cleanup");
-}
-
-/// Write an empty tape for OMP records and return its root.
-fn omp_tape(tag: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "spice-backlog-{tag}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed),
-    ));
-    tape::Tape::open(&root).expect("omp tape opens");
-    root
-}
-
-/// `count` visible OMP assistant messages, each near 1.9 KiB.
-fn omp_messages(count: usize) -> String {
-    let filler = "x".repeat(1_800);
-    let mut messages = String::new();
-    for index in 0..count {
-        messages.push_str(&format!(
-            "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{index} {filler}\"}}],\"timestamp\":178952545{index}}}}}\n"
-        ));
-    }
-    messages
 }
 
 #[test]

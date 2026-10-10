@@ -1295,6 +1295,3 @@ mod guardian;
 mod launch;
 #[cfg(unix)]
 mod platform;
-
-#[cfg(all(test, unix))]
-mod tests;

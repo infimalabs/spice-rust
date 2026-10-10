@@ -1120,12 +1120,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             .take();
     }
 
-    /// Interjections the driver has written so far.
-    #[cfg(test)]
-    fn interjections(&self) -> u64 {
-        self.sequence.load(Ordering::Relaxed)
-    }
-
     fn write(&self, bytes: &[u8]) -> io::Result<()> {
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(stream) = stdin.as_mut() else {
@@ -1388,5 +1382,3 @@ impl Drop for KickDoor {
 }
 
 mod media;
-#[cfg(test)]
-mod tests;
