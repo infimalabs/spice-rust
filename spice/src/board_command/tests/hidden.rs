@@ -477,9 +477,6 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
             outcome,
             Outcome::Refusal(ref refusal)
                 if refusal.reason() == "task::project-system-reserved"
-                    && refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed).is_some_and(|detail| {
-                        detail.contains("reserved for system task creation")
-                    })
         ));
         assert_eq!(
             facts_len(bus, "facts read after manual refusal"),

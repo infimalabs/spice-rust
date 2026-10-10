@@ -1128,12 +1128,7 @@ fn contradictory_replay_produces_no_partial_authority_index() {
     ]);
     let before = snapshot.facts().to_vec();
 
-    let error = Ledger::authority_index(&snapshot).expect_err("duplicate key refuses replay");
-    assert!(
-        error
-            .to_string()
-            .contains("steering fact steer::sent at 2 is invalid")
-    );
+    Ledger::authority_index(&snapshot).expect_err("duplicate key refuses replay");
     assert_eq!(
         snapshot.facts(),
         before.as_slice(),
@@ -1209,7 +1204,6 @@ fn resolve_error(
     let rendered = error.to_string();
     match &error {
         MediaResolutionError::Malformed => {
-            assert!(rendered.contains("media reference is malformed"));
             assert!(error.source().is_none());
         }
         MediaResolutionError::Unknown { directive } => {

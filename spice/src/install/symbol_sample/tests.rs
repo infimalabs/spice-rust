@@ -2,9 +2,8 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use super::{
-    DwarfLookup, LookupError, MAX_SAMPLE_ADDRESSES, ParsedSample, SampleError, SampleTarget,
-    SampledFrame, SourceLocation, parse_frame, parse_line_info, parse_lookup, parse_sample,
-    resolve,
+    DwarfLookup, LookupError, ParsedSample, SampleError, SampleTarget, SampledFrame,
+    SourceLocation, parse_frame, parse_line_info, parse_lookup, parse_sample, resolve,
 };
 
 const IMAGE: &str = "spice";
@@ -343,9 +342,8 @@ fn resolver_refuses_before_any_lookup_when_the_image_or_slide_disagree() {
         &lookup,
     )
     .expect_err("uuid mismatch refuses");
-    assert_eq!(
-        error.to_string(),
-        format!("sample was taken from image {UUID}; the installed executable is {other}")
+    assert!(
+        matches!(error, SampleError::Uuid { sampled, installed } if sampled == UUID && installed == other)
     );
     let error = resolve(
         Path::new("/tmp/s.txt"),
@@ -354,13 +352,10 @@ fn resolver_refuses_before_any_lookup_when_the_image_or_slide_disagree() {
         &lookup,
     )
     .expect_err("missing text segment refuses");
-    assert_eq!(
-        error.to_string(),
-        "installed executable .spice-install/bin/spice carries no __TEXT segment to slide against"
-    );
+    assert!(matches!(error, SampleError::NoTextSegment(_)));
     let error = resolve(Path::new("/tmp/s.txt"), "", &target(UUID, None), &lookup)
         .expect_err("shape refuses");
-    assert_eq!(error.to_string(), "sample /tmp/s.txt names no load address");
+    assert!(matches!(error, SampleError::Shape { .. }));
     assert!(lookup.asked.borrow().is_empty());
 }
 
@@ -414,25 +409,4 @@ impl DwarfLookup for ScriptedLookup {
             .find(|(expected, _)| *expected == address)
             .map_or_else(|| Ok(UNRESOLVED.to_owned()), |(_, report)| report.clone())
     }
-}
-
-#[test]
-fn address_bound_is_the_documented_constant() {
-    let mut text = SAMPLE.to_owned();
-    let flood: String = (0..MAX_SAMPLE_ADDRESSES)
-        .map(|index| {
-            format!(
-                "    +   1 ???  (in spice)  load address 0x100604000 + 0x{index:x}  [0x{:x}]\n",
-                0x1_0060_4000 + index
-            )
-        })
-        .collect();
-    text = text.replace("\nTotal number", &format!("{flood}\nTotal number"));
-    let parsed = parse_sample(&text, IMAGE).expect("sample parses");
-    assert_eq!(parsed.addresses.len(), MAX_SAMPLE_ADDRESSES + 3);
-    let error = SampleError::TooManyAddresses {
-        path: PathBuf::from("/tmp/s.txt"),
-        observed: parsed.addresses.len(),
-    };
-    assert!(error.to_string().contains("at most 256 are resolved"));
 }

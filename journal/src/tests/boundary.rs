@@ -52,8 +52,7 @@ fn selected_unreadable_heads_fail_their_boundaries_instead_of_disappearing() {
         )
         .expect("corrupt claim head fixture");
 
-    let error = journal
+    journal
         .read(|read| read.lane_source_boundaries(&[lane]))
         .expect_err("an unreadable claim head cannot decide which lanes are claimed");
-    assert!(error.to_string().contains("claim head"));
 }

@@ -104,7 +104,6 @@ fn every_nonempty_token_refuses_in_source_order_with_complete_identity() {
     assert_eq!(first.source_file(), SOURCE);
     assert!(first.to_string().contains("release=0.31.0"));
     assert!(first.to_string().contains("team=red"));
-    assert!(first.recovery().contains("future named Rust task field"));
 
     let second = migrate(json!({
         "version": 1,

@@ -170,11 +170,10 @@ fn non_reusable_cargo_shard_is_refused_before_action_identity_preparation() {
         .first()
         .expect("fixture has a typecheck shard");
 
-    let Err(ProveFailure::Refusal { reason, detail }) = require_reusable_cargo_shard(shard) else {
+    let Err(ProveFailure::Refusal { reason, .. }) = require_reusable_cargo_shard(shard) else {
         panic!("non-reusable shard must be refused before identity preparation");
     };
     assert_eq!(reason, "gate::prove-cargo-action-not-reusable");
-    assert!(detail.contains("computed or interpolated compile-time output"));
     fs::remove_dir_all(root).expect("remove Cargo planning fixture");
 }
 

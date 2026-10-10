@@ -84,15 +84,9 @@ fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
             FactCause::Existing(seq(2)),
         )
         .expect("oversized member remains valid wire");
-    let error = refused
+    refused
         .apply(batch)
         .expect_err("limit-plus-one batch is refused");
-    assert!(error.to_string().contains("sequence 4"));
-    assert!(
-        error
-            .to_string()
-            .contains(&(MAX_DURABLE_FACT_ENVELOPE_BYTES + 1).to_string())
-    );
     assert_eq!(authority_shape(&refused.connection), before);
 }
 

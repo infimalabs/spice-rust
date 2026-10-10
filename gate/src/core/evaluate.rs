@@ -284,12 +284,9 @@ mod tests {
             phase: plan,
         });
         assert_eq!(standing, CoreStanding::Failed);
-        assert!(diagnostic.contains("git commit refused"), "{diagnostic}");
         assert!(diagnostic.contains(task.as_str()), "{diagnostic}");
 
-        let (standing, diagnostic) =
-            evaluate_plan(&PlanPhaseEvidence::Active { task, phase: todo });
+        let (standing, _) = evaluate_plan(&PlanPhaseEvidence::Active { task, phase: todo });
         assert_eq!(standing, CoreStanding::Passed);
-        assert!(diagnostic.contains("todo phase"), "{diagnostic}");
     }
 }

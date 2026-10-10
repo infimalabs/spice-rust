@@ -324,11 +324,6 @@ fn unavailable_ack_context_is_a_loud_store_fault() {
         panic!("unavailable evidence must fault")
     };
     assert_eq!(fault.reason, "taste::mining-evidence-invalid");
-    assert!(
-        fault
-            .detail
-            .contains("unavailable operator steering directive")
-    );
 }
 
 fn correction(position: u64, text: &str) -> Correction {

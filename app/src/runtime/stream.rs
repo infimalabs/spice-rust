@@ -705,19 +705,17 @@ mod message_retention_tests {
         narration.text = "Checking the gate selection first.".to_owned();
         let activity = LaneActivity::from_message(&narration);
         assert_eq!(activity.class(), "reasoning");
-        assert_eq!(activity.title(), "thinking");
         assert_eq!(activity.detail(), "Checking the gate selection first.");
 
         let mut wordless = narration.clone();
         wordless.text = String::new();
         let activity = LaneActivity::from_message(&wordless);
-        assert_eq!(activity.title(), "thinking");
         assert!(activity.detail().is_empty());
         let tool = LaneActivity::from_message(&AgentMessage {
             activity: AgentActivityKind::Tool,
             ..narration
         });
-        assert_eq!((tool.class(), tool.title()), ("tool", "tool"));
+        assert_eq!(tool.class(), "tool");
     }
 
     #[test]

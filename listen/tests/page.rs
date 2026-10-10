@@ -228,7 +228,13 @@ fn pages_are_newest_first_clip_text_and_resume_without_duplicates() {
         request(Some(continuation)),
     )
     .expect_err("a cursor from another generation is refused");
-    assert!(stale.to_string().contains("source changed"));
+    assert!(matches!(
+        stale,
+        listen::SurfaceError::Scan {
+            source: listen::ScanError::SourceChanged { .. },
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -536,7 +542,13 @@ fn current_window_refuses_another_tape_generation() {
         },
     )
     .expect_err("current continuation refuses another generation");
-    assert!(stale.to_string().contains("source changed"));
+    assert!(matches!(
+        stale,
+        listen::SurfaceError::Scan {
+            source: listen::ScanError::SourceChanged { .. },
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -557,5 +569,11 @@ fn hard_scan_allowance_refuses_a_single_noisy_record() {
         },
     )
     .expect_err("a record beyond the hard source allowance is refused");
-    assert!(error.to_string().contains("source bytes"));
+    assert!(matches!(
+        error,
+        listen::SurfaceError::Scan {
+            source: listen::ScanError::WorkLimit { .. },
+            ..
+        }
+    ));
 }

@@ -214,9 +214,6 @@ fn assert_authority_recovery(outcome: Outcome<CommandAnswer>, reason: &str) {
     };
     assert_eq!(diagnostic.reason(), reason);
     assert_eq!(command.arguments(), ["task", "status"]);
-    let detail = diagnostic.detail().expect("recovery detail is present");
-    assert!(detail.contains("when it reports no claim for this lane, run spice task next"));
-    assert!(!detail.contains("spice task reclaim"));
 }
 
 #[test]

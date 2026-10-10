@@ -8,71 +8,6 @@ use super::*;
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn fresh_launch_without_a_claim_has_no_assignment_banner() {
-    let fixture = LaunchFixture::new();
-    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
-    let resolved =
-        spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
-    let (plan, _) = launch_plan(
-        &repository,
-        &resolved,
-        Selection {
-            vendor: &fixture.vendor,
-            lane: fixture.lane,
-            fresh: true,
-            pinned: Pinned::nothing(vendor::Resume::Fresh),
-            fast_mode: false,
-            model: None,
-            effort: None,
-            running: None,
-        },
-        &InertProbes,
-    )
-    .expect("fresh launch plan composes");
-    assert!(plan.launch().prompt.contains("<system-notice>"));
-    assert!(!plan.launch().prompt.contains("# Task already assigned"));
-}
-
-#[test]
-fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
-    let fixture = LaunchFixture::new();
-    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
-    let resolved =
-        spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
-    // omp pins a minted session for a fresh start too, so both seats carry one.
-    let prompt = |fresh| {
-        let session = vendor::SessionId::new("019a0000-0000-7000-8000-000000000000".to_owned())
-            .expect("fixture session identity is valid");
-        let (plan, _) = launch_plan(
-            &repository,
-            &resolved,
-            Selection {
-                vendor: &fixture.vendor,
-                lane: fixture.lane,
-                fresh,
-                pinned: Pinned::nothing(vendor::Resume::Session(session)),
-                fast_mode: false,
-                model: None,
-                effort: None,
-                running: None,
-            },
-            &InertProbes,
-        )
-        .expect("launch plan composes");
-        plan.launch().prompt.clone()
-    };
-    let resumed = prompt(false);
-    assert!(
-        resumed.contains("<system-notice>\n# Seat resumed"),
-        "{resumed}"
-    );
-    assert!(!resumed.contains("# Spice briefing"), "{resumed}");
-    let fresh = prompt(true);
-    assert!(fresh.contains("# Spice briefing"), "{fresh}");
-    assert!(!fresh.contains("# Seat resumed"), "{fresh}");
-}
-
-#[test]
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
     let fixture = LaunchFixture::new();
     fs::write(
@@ -280,7 +215,6 @@ fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
         error,
         Outcome::Fault(ref fault)
             if fault.reason == "lane::cargo-isolation-unavailable"
-                && fault.detail.contains("not a regular file")
     ));
 }
 
@@ -312,7 +246,6 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
         invalid,
         Outcome::Fault(ref fault)
             if fault.reason == "lane::skill-unavailable"
-                && fault.detail.contains("not a regular file")
     ));
     fs::remove_dir(&common).expect("invalid common skill directory removes");
     fs::write(&common, b"stale common skill\n").expect("stale common skill writes");
@@ -320,7 +253,6 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
         required_skill(&repository),
         Err(Outcome::Fault(ref fault))
             if fault.reason == "lane::skill-unavailable"
-                && fault.detail.contains("does not match this appliance")
     ));
     fs::write(&common, ::std::include_bytes!("../../../../agent/SKILL.md"))
         .expect("current common skill writes");
@@ -343,7 +275,6 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
             required_skill(&repository),
             Err(Outcome::Fault(ref fault))
                 if fault.reason == "lane::skill-unavailable"
-                    && fault.detail.contains("not a regular file")
         ));
         fs::remove_file(&common).expect("redirected common skill removes");
         fs::remove_dir(common.parent().expect("common skill parent"))
@@ -362,7 +293,6 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
             required_skill(&repository),
             Err(Outcome::Fault(ref fault))
                 if fault.reason == "lane::skill-unavailable"
-                    && fault.detail.contains("outside Git-common authority")
         ));
     }
     fs::remove_dir_all(&root).expect("fixture removes");

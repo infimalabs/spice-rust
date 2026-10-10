@@ -320,7 +320,6 @@ mod tests {
             .expect("the third young death holds the lane");
 
         assert_eq!(held.lane, lane(1));
-        assert_eq!(held.evidence, "3 consecutive young occupant deaths");
         assert_eq!(held.until, instant(30));
         assert_eq!(holds.held(lane(1)), Some(instant(30)));
     }

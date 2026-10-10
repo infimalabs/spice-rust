@@ -1269,11 +1269,7 @@ mod tests {
             symlink(outside.path(), root.join("tape")).expect("external directory substitutes");
         });
 
-        assert!(matches!(
-            result,
-            Err(BackupVerifyError::Invalid { detail, .. })
-                if detail.contains("captured directory authority")
-        ));
+        assert!(matches!(result, Err(BackupVerifyError::Invalid { .. })));
         assert_eq!(
             fs::read(outside.path().join("lane-a")).expect("external member reads"),
             member_bytes

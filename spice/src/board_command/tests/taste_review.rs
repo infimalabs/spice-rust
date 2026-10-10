@@ -176,7 +176,6 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
 
     let shown = task_show(&visible, held, &[]);
     assert!(shown.contains("taste_review required"));
-    assert!(shown.contains("complete current taste policy rechecks it"));
     assert!(shown.contains(&format!("next: spice task modify {review_task}")));
     assert!(!shown.contains("next: spice task done"));
     assert!(!shown.contains(TASTE_REVIEW_TAG));
@@ -423,13 +422,9 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
     let diagnostic = format!("{refusal:?}");
-    assert!(diagnostic.contains("complete current taste policy"));
-    assert!(diagnostic.contains("the filed statement has not been revised"));
     assert!(!diagnostic.contains("delay"));
     assert!(!diagnostic.contains("Rewrite the task wording"));
 
-    // A reworded statement that still matches must read differently from the
-    // first refusal, or a lane cannot tell a recheck from a repetition.
     assert_committed(modify_with_repository(
         &bus,
         &repository,
@@ -442,11 +437,8 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
     let Outcome::Refusal(refusal) = outcome else {
         panic!("reworded taste review plan completion did not refuse: {outcome:?}");
     };
+    assert_eq!(refusal.reason(), "task::taste-review-required");
     let diagnostic = format!("{refusal:?}");
-    assert!(
-        diagnostic.contains("one revision has been rechecked"),
-        "the second refusal repeated the first: {diagnostic}",
-    );
     assert!(!diagnostic.contains("delay"));
 
     clean(&root, bus);

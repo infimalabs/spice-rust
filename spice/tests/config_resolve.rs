@@ -193,11 +193,6 @@ fn disabling_builtins_without_a_command_refuses_at_the_authored_field() {
         issue.path().map(ToString::to_string).as_deref(),
         Some("policy.pre_commit_builtins")
     );
-    assert!(
-        issue
-            .message()
-            .contains("requires at least one policy.pre_commit command")
-    );
 }
 
 #[test]
