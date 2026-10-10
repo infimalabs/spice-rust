@@ -49,6 +49,18 @@ pub fn model_provider(model: &str) -> Option<Provider> {
     }
 }
 
+/// The model a seat recorded as it reads beside its provider's emblem: a
+/// known provider's prefix is dropped because the emblem already names it,
+/// any other model stays as recorded, and an unrecorded model is nothing.
+#[must_use]
+pub fn model_name(model: Option<&str>) -> Option<&str> {
+    let model = model.filter(|model| !model.is_empty())?;
+    Some(match model_provider(model) {
+        Some(_) => model.split_once('/').map_or(model, |(_, id)| id),
+        None => model,
+    })
+}
+
 /// Operator label for a recorded model: `Provider / model` for a known
 /// provider, the model as recorded for any other, and nothing when the seat
 /// recorded no model.
@@ -57,21 +69,21 @@ pub fn model_provider(model: &str) -> Option<Provider> {
 /// `anthropic/claude-opus-5` and `claude-opus-5` read alike.
 #[must_use]
 pub fn model_label(model: Option<&str>) -> Option<String> {
-    let model = model.filter(|model| !model.is_empty())?;
-    Some(model_provider(model).map_or_else(
-        || model.to_owned(),
-        |provider| {
-            let id = model.split_once('/').map_or(model, |(_, id)| id);
-            format!("{} / {id}", provider.name())
-        },
+    let name = model_name(model)?;
+    Some(model.and_then(model_provider).map_or_else(
+        || name.to_owned(),
+        |provider| format!("{} / {name}", provider.name()),
     ))
 }
 
-/// [`model_label`] for display, naming an unrecorded model outright rather
-/// than borrowing the harness or leaving the label empty.
+/// What a display names when the seat recorded no model, rather than
+/// borrowing the harness or leaving the label empty.
+pub const MODEL_UNRECORDED: &str = "model unrecorded";
+
+/// [`model_label`] for display, naming an unrecorded model outright.
 #[must_use]
 pub fn model_display(model: Option<&str>) -> String {
-    model_label(model).unwrap_or_else(|| "model unrecorded".to_owned())
+    model_label(model).unwrap_or_else(|| MODEL_UNRECORDED.to_owned())
 }
 
 /// What a composer paints in its emblem position.
@@ -98,7 +110,7 @@ pub fn emblem(model: Option<&str>) -> Emblem {
 
 #[cfg(test)]
 mod tests {
-    use super::{Emblem, Provider, emblem, model_display, model_label, model_provider};
+    use super::{Emblem, Provider, emblem, model_display, model_label, model_name, model_provider};
 
     #[test]
     fn a_provider_is_named_from_either_model_spelling() {
@@ -149,6 +161,25 @@ mod tests {
         assert_eq!(model_label(Some("")), None);
         assert_eq!(model_label(None), None);
         assert_eq!(model_display(None), "model unrecorded");
+    }
+
+    #[test]
+    fn a_name_drops_only_a_known_providers_prefix() {
+        assert_eq!(
+            model_name(Some("anthropic/claude-opus-5")),
+            Some("claude-opus-5")
+        );
+        assert_eq!(model_name(Some("claude-opus-5")), Some("claude-opus-5"));
+        assert_eq!(
+            model_name(Some("openai-codex/gpt-5.3-codex")),
+            Some("gpt-5.3-codex")
+        );
+        assert_eq!(
+            model_name(Some("google/gemini-3-pro")),
+            Some("google/gemini-3-pro")
+        );
+        assert_eq!(model_name(Some("")), None);
+        assert_eq!(model_name(None), None);
     }
 
     #[test]

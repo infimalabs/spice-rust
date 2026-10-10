@@ -90,17 +90,19 @@ at the right. An available app generation turns the version into the explicit
 reload control. Epoch and stream cursor stay out of this primary row. The
 read-only Git identity section follows.
 
-Resident topology is one interactive roster. Each team contains compact agent
-cards with presence, pending steering, liveness, held task, kept jobs, model,
-and provider emblem. A teamed agent's card opens its composer in Chat; the same
-card is draggable when team configuration is admitted.
+Resident topology is one interactive roster. Each team stacks full-width agent
+slots of two lines: presence, name, worktree, and model over pending steering,
+liveness, held task, and kept jobs, with the provider emblem at the end. The
+emblem names the provider, so the model line omits it. A teamed agent's slot
+opens its composer in Chat; the same slot is draggable when team configuration
+is admitted.
 
-Drop a card onto another team to mix members, onto **New Team** to create a
+Drop a slot onto another team to mix members, onto **New Team** to create a
 team, or onto **Unassigned Agents** to separate it from its team. Unassigned
-agents use the same cards without a Chat link. Every drop uses the topology
-revision currently shown, and unavailable configuration disables dragging
-without disabling existing Chat links. Cards use two columns where the menu
-has room and one column in narrow layouts.
+agents use the same slots without a Chat link, and the **New Team** drop
+target is one slot tall. Every drop uses the topology revision currently
+shown, and unavailable configuration disables dragging without disabling
+existing Chat links.
 
 ## Provider quota rows
 

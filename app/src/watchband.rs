@@ -38,7 +38,10 @@ pub use attention::{
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use pointer_drag::PointerDragSession;
 pub use presence::{MemberPresence, MemberPresenceState, member_presence};
-pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
+pub use provider::{
+    Emblem, MODEL_UNRECORDED, Provider, emblem, model_display, model_label, model_name,
+    model_provider,
+};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
 pub use task_links::{reported_tasks, task_mentions};

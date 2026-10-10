@@ -348,12 +348,13 @@ fn topology_count(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
-/// One lane in the chat's tile language: accent-dealt name, presence, the
-/// "pending, liveness" line, the held task, kept jobs, and the provider emblem.
-/// Every row is always drawn so a tile's geometry never follows its data.
+/// One lane as a full-width topology slot of two fixed lines: presence, the
+/// accent-dealt name, worktree, and model over the "pending, liveness" state,
+/// the held task, and kept jobs, with the provider emblem at the end. The
+/// model drops a known provider's prefix because the emblem names it.
 ///
-/// A teamed lane's tile is a link to its primary composer in Chat. Independent
-/// lanes have no Chat surface, so their tiles stay inert.
+/// A teamed lane's slot is a link to its primary composer in Chat. Independent
+/// lanes have no Chat surface, so their slots stay inert.
 fn render_topology_agent(
     member: &crate::runtime::LaneMember,
     standing: &crate::watchband::Standing,
@@ -388,19 +389,25 @@ fn render_topology_agent(
                 {render_member_presence(status)}
                 <strong>{standing.label.clone()}</strong>
                 if standing.label != branch {
-                    <span title={standing.worktree.clone()}>{branch.to_owned()}</span>
+                    <span class="app-spice-topology-agent-worktree" title={standing.worktree.clone()}>{branch.to_owned()}</span>
                 }
+                <span class="app-spice-topology-agent-model">{
+                    crate::watchband::model_name(standing.model.as_deref())
+                        .unwrap_or(crate::watchband::MODEL_UNRECORDED)
+                        .to_owned()
+                }</span>
             </header>
-            <p>{format!("{} pending, {}", standing.pending, standing.liveness.as_str())}</p>
-            <p class="app-spice-topology-agent-task" title={standing.task_title.as_deref().map(crate::composer_markdown::inline::plain_text)}>{
-                match (&standing.handle, &standing.phase) {
-                    (Some(handle), Some(phase)) => format!("{handle}, {phase}"),
-                    (Some(handle), None) => handle.clone(),
-                    (None, _) => "\u{a0}".to_owned(),
+            <p>
+                <span>{format!("{} pending, {}", standing.pending, standing.liveness.as_str())}</span>
+                if let Some(handle) = &standing.handle {
+                    <span class="app-spice-topology-agent-task" title={standing.task_title.as_deref().map(crate::composer_markdown::inline::plain_text)}>{
+                        standing.phase.as_ref().map_or_else(|| handle.clone(), |phase| format!("{handle}, {phase}"))
+                    }</span>
                 }
-            }</p>
-            <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
-            <p class="app-spice-topology-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
+                if let Some(kept) = crate::watchband::jobs_kept(&standing.jobs) {
+                    <span>{kept}</span>
+                }
+            </p>
             {super::watchband::render_provider_emblem(standing, "sidebar", None)}
         </@>
     }
