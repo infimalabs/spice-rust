@@ -1253,7 +1253,7 @@ mod tests {
                 "test",
                 "unrelated",
                 "planted/tests/unrelated.rs",
-                &[],
+                &["unrelated"],
             ),
             target(
                 "planted",
