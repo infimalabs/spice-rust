@@ -37,8 +37,6 @@ mod single_flight;
 #[path = "prove/tools.rs"]
 mod tools;
 
-#[cfg(test)]
-use cargo::require_reusable_shard as require_reusable_cargo_shard;
 use cargo::{
     authority as cargo_authority, request as cargo_request,
     source_authority as cargo_source_authority,

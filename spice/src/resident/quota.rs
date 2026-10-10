@@ -12,9 +12,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use sill::{
-    Argv, Cancellation, CancellationToken, Completion as ProcessCompletion, Deadlines, Environment,
-    Output, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy,
-    WaitPolicy,
+    Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
+    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -334,11 +333,21 @@ impl SampleFailure {
     }
 }
 
+/// How a started runtime takes each sample: by launching OMP's usage command.
+#[cfg(not(test))]
+const SAMPLE: fn(&Settings, CancellationToken) -> Result<Snapshot, SampleFailure> = sample;
+
+/// A resident under test launches no usage command: every sample finds none,
+/// as on a host without OMP.
+#[cfg(test)]
+const SAMPLE: fn(&Settings, CancellationToken) -> Result<Snapshot, SampleFailure> =
+    |_, _| Err(SampleFailure::new(FailureKind::ExecutableUnavailable));
+
 impl Runtime {
     pub(super) fn start(binary: impl Into<OsString>, extension: PathBuf) -> Self {
         let settings = Settings::production(binary, extension);
         Self::start_with(Arc::new(move |cancellation| {
-            sample(&settings, cancellation)
+            SAMPLE(&settings, cancellation)
         }))
     }
 
@@ -501,6 +510,7 @@ impl Drop for Runtime {
     }
 }
 
+#[cfg(not(test))]
 fn sample(settings: &Settings, cancellation: CancellationToken) -> Result<Snapshot, SampleFailure> {
     let spec = settings.spec(cancellation).map_err(SampleFailure::new)?;
     let running = sill::spawn(spec).map_err(|error| {
@@ -529,10 +539,10 @@ fn sample(settings: &Settings, cancellation: CancellationToken) -> Result<Snapsh
         stderr_truncated: stderr.truncated(),
         complete: outcome.outputs_drained() && stdout.complete() && stderr.complete(),
         ending: match outcome.completion() {
-            ProcessCompletion::TimedOut(_) => Ending::TimedOut,
-            ProcessCompletion::Cancelled(_) => Ending::Cancelled,
-            ProcessCompletion::Exited(status) if !status.success() => Ending::Failed(status.code()),
-            ProcessCompletion::Exited(_) => Ending::Succeeded,
+            sill::Completion::TimedOut(_) => Ending::TimedOut,
+            sill::Completion::Cancelled(_) => Ending::Cancelled,
+            sill::Completion::Exited(status) if !status.success() => Ending::Failed(status.code()),
+            sill::Completion::Exited(_) => Ending::Succeeded,
         },
     })
 }

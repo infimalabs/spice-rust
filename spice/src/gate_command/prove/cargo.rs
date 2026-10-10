@@ -296,7 +296,7 @@ pub(super) fn environment_value<'a>(
         })
 }
 
-pub(super) fn require_reusable_shard(shard: &CargoGateShard) -> Result<(), ProveFailure> {
+fn require_reusable_shard(shard: &CargoGateShard) -> Result<(), ProveFailure> {
     if let Some(reason) = shard.non_cacheable_reason() {
         return Err(ProveFailure::refusal(
             "gate::prove-cargo-action-not-reusable",
