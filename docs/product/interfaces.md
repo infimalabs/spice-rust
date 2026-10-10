@@ -1,660 +1,165 @@
 # Product model — documents, wire, extension, media
 
-Task documents, the wire seam, extension surfaces, diagnostics, and the media
-pipeline.
+Task documents, the output contract, extension surfaces, diagnostics, and
+media.
 
-The invariant register owns every cross-document label; local statements are
-identified by their language and enclosing section.
-
----
-
-## Task documents — prose and board
-
-### The Rust surface
+## Task documents
 
 An authored task document is a digest-bound batch input, not a lossless
-serialization of the board. `spice doc PATH` (or `spice doc -` for standard
-input) classifies ordinary Markdown, emits the one canonical dialect spelling,
-previews the tasks that spelling would touch, and applies only that exact digest
-against the board snapshot captured by the apply invocation.
-`spice doc ledger HANDLE` travels the other direction only as a narrow
-single-task document containing the current title, description, acceptance,
-flow, authored tags, priority, and append-only task notes interleaved with its
-workflow steps when those values are representable in the dialect. The terminal
-receives an 8 KiB preview by default, may request at most 128 KiB with
-`--max-bytes`, and uses
-`--output FILE` for the complete canonical bytes plus an export receipt. It is
-not the inverse of document apply and does not export a family or dependency
-graph.
+serialization of the board. `spice doc PATH` (or `-` for standard input)
+classifies ordinary Markdown, emits the one canonical dialect spelling, previews
+the tasks it would touch, and applies only that exact digest.
 
-```mermaid
-flowchart TD
-  subgraph PLAN["classify and preview"]
-    direction LR
-    MD["authored Markdown"] --> P["parse + normalize"]
-    P --> G["canonical node graph<br/>+ document digest"]
-    G --> M["match project +<br/>document-slug tag"]
-  end
-  subgraph APPLY["one guarded journal transaction"]
-    direction LR
-    PL["exact digest + apply-time<br/>board barrier"] --> B["create or edit<br/>matched rows"]
-    B --> R["DocApplied receipt"]
-  end
-  M --> PL
-  B --> L["doc ledger HANDLE:<br/>current task prose + flow<br/>+ append-only notes + workflow steps"]
-```
+- **Determinism.** The same document produces the same graph on any machine.
+- **Never-raise.** Hostile input produces refusals, not crashes; BOM and CRLF
+  spellings normalize to UTF-8 LF with a warning.
+- **Fixed point.** The emitter has one escape rule its reader reverses exactly;
+  classifying emitted text and emitting it again changes no byte.
+- **Cycles are refused, not resolved.** A dependency cycle refuses with the
+  cycle named.
+- **Author text is never parsed as attributes.** A task titled
+  `priority: high` is a title.
+- **Preview is consequence-free.** Apply reclassifies the document, requires
+  the canonical digest the operator named, and binds the board head it reads;
+  movement after that read refuses before mutation.
+- **Apply is one guarded transaction.** It is all-or-nothing, and retrying a
+  digest that already has a `DocApplied` fact returns that receipt. Any refusal
+  writes no task or document fact.
+- **Matching is project plus slug.** A row matches on its exact project and
+  internal `document-slug:<slug>` tag; the same slug in another project is a
+  different task. Context-free classification places documents in
+  `task.document`.
 
-### Behavioral properties
+Applying an edited document replaces rather than patches: title, description,
+acceptance, tags, priority, and the explicit dependency graph are replaced, and
+an absent value clears the old one. Flow is set only at creation. Annotations
+are the exception: they append as task notes, skipping exact duplicates, and
+omission never erases a note. `due` is normalized but has no board effect. The
+dialect's `Flow:` field has its own closed vocabulary — `design`, `plan`,
+`todo`, `verify`, `review` — distinct from the board's open phase words.
 
-**Invariant —** **Determinism.** The same document produces the same graph,
-every time, on any machine.
+`spice doc ledger HANDLE` renders one task's current title, description,
+acceptance, flow, tags, priority, and notes interleaved with its workflow
+steps. It is a readable recovery view, not the inverse of apply: it exports no
+family or dependency graph, and a task the closed dialect cannot express
+refuses with `doc::ledger-unrepresentable`.
 
-**Invariant —** **Never-raise.** The parser does not crash on hostile input. BOM,
-CRLF, deep nesting, and pathological structures produce *refusals*, not stack
-traces.
-
-**Invariant —** **Canonical emission is a fixed point.** The dialect emitter has
-one escape rule that its reader reverses exactly; classifying emitted text and
-emitting it again changes no byte.
-
-**Invariant —** **Cycles are refused, not resolved.** A graph that cannot be a
-DAG is rejected with the cycle named.
-
-**Invariant —** Preview is consequence-free. Apply reclassifies the supplied
-document and requires the canonical digest the operator named. In that apply
-invocation the client reads the current board and binds its exact head barrier;
-movement after that read refuses before mutation. Movement between an earlier
-preview invocation and apply is admitted through the apply-time read rather than
-mistaken for a race inside one transaction.
-
-**Invariant —** Apply is one guarded journal transaction. An interruption is
-all-or-nothing, and retrying a digest that already has a `DocApplied` fact
-returns that committed receipt without appending a second path.
-
-**Invariant —** Apply is **idempotent against project-plus-slug identity**. A
-changed document digest may edit an existing matching row; origin records why
-the row was created and does not namespace later document matching.
-
-### The board projection is intentionally narrower than the dialect
-
-| Authored value | New matching row | Existing matching row |
-| --- | --- | --- |
-| title | stored | replaced |
-| project | Rust `doc` supplies `task.document` | same matching project |
-| acceptance | stored; absence is empty | replaced; absence clears it |
-| tags and priority | stored with the internal `document-slug:<slug>` tag; priority is a tag | replaced from the document while retaining the internal slug tag; absence removes prior authored values |
-| dependency graph | stored from the complete parsed graph | replaced from the complete parsed graph; an omitted explicit edge is removed |
-| flow | explicit flow, or the ordinary acceptance-sensitive default | unchanged by document edits |
-| description | stored; absence is empty | replaced; absence clears it |
-| annotations | appended as task notes; exact duplicates, and the workflow-step annotations `doc ledger` exports, are not appended | new annotations are appended; omission does not erase prior notes |
-| due | normalized by the Markdown dialect but not projected into board heads | no board effect |
-
-These are replacement semantics, not patch semantics. In particular, an absent
-description, acceptance, tag, priority, or explicit dependency in an edited
-document does not mean “leave the old value alone.” Notes are deliberately the
-exception: they are append-only evidence, and omitted annotations leave them
-intact. The narrow `doc ledger` output is therefore a readable current-task
-recovery view, not a safe lossless export-and-reapply format. A task whose
-current heads cannot be expressed by the closed dialect reports
-`doc::ledger-unrepresentable` rather than fabricating a document.
-
-The dialect's `Flow:` field deliberately has its own closed input vocabulary:
-`design`, `plan`, `todo`, `verify`, and `review`. That parser grammar is not the
-board's phase vocabulary; ordinary board tasks may use any admitted lowercase
-ASCII phase word.
-
-### Identity within a document
-
-```mermaid
-flowchart TD
-  T["title"] --> SL["slug"]
-  SL --> Q["qualified by ancestry<br/>when ambiguous"]
-  Q --> D["distinguisher for collisions"]
-  D --> ID["document-slug tag"]
-  ID --> P["match within exact project"]
-```
-
-**Invariant —** Matching is scoped to a project and the exact
-`document-slug:<slug>` tag. The same slug in the same project converges on one
-task even when another document digest supplied it; the same slug in another
-project is distinct. In the Rust command surface, context-free classification
-places authored documents in `task.document`.
-
-### Refusals and warnings as tables
-
-```mermaid
-flowchart LR
-  R["refusals table"] --> M["one message per row"]
-  M --> Z["proven: fires, AND writes nothing"]
-  W["warnings table"] --> F["one positive test per code"]
-```
-
-**Invariant —** A classification, preview, barrier, admission, or settled-task
-refusal writes no task or document fact. A refusal that half-applies is worse
-than no refusal.
-
-**Invariant —** Author text is never parsed as attributes. The argument boundary
-is explicit, so a task titled `priority: high` is a title.
-
----
-
-## The wire seam
-
-### One schema, every consumer
-
-```mermaid
-flowchart LR
-  W["wire: closed Rust DTO algebra"] --> E["resident emit + decode validation"]
-  W --> F["stream frame validation"]
-  W --> H["host imports the same DTOs"]
-  W --> B["Rust/WASM imports the same DTOs"]
-  E --> T["compiler + serialization tests"]
-  F --> T
-  H --> T
-  B --> T
-```
-
-**Invariant —** The `wire` algebra is the single source. Resident, native host,
-and Rust/WASM browser code compile against the same closed DTOs and validate the
-same canonical serialization; no parallel artifact is another schema authority.
-
-**Invariant —** Payloads are validated at their **emitters**, not only at their
-readers. A producer that breaks the contract is caught where it lies.
-
-### Unions discriminate on outcome
-
-```mermaid
-classDiagram
-  class Answer["answer"] {
-    <<union>>
-  }
-  class Applied["applied arm"] {
-    +revision
-    +snapshot
-  }
-  class Refused["refused arm"] {
-    +reason
-    +revision : absent
-    +snapshot : absent
-  }
-  Answer <|-- Applied
-  Answer <|-- Refused
-  note for Answer "reader must narrow first"
-```
-
-**Invariant —** An answer with two shapes is **two types**, not one type with
-optional fields. Held as one object, a reader can take a revision off a refusal
-that never had one.
-
-**Invariant —** The discriminant is chosen by *meaning*, not convenience: an
-agent-launch answer splits on **whether an agent is now running**, not on `ok` —
-because a skip answers ok and starts nothing.
-
-**Invariant —** A field one arm never carries is **declared as absent**, so the
-reader is allowed to ask about it. A name missing from one arm is an error on the
-union rather than a question.
-
-### Absence has one spelling
-
-**Invariant —** Omission and null are not two ways to say nothing. One spelling
-is chosen and enforced mechanically, not by convention.
-
-### One JSON outcome envelope
+## The JSON outcome
 
 Every finite `spice --json` invocation emits one newline-terminated `Outcome`
-document. A successful daemonless command is
-`{"kind":"reply","body":...}`; a read adds its snapshot `cursor`, and a mutation
-adds its committed `seq` range. The absence of both coordinates is the one
-spelling of a daemonless reply—there is no empty `direct` marker. Refusals and
-faults use the same envelope with their respective `kind`. Transcript reads are
-finite replies: `retro` returns one bounded newest-first report, while `watch`
-returns one bounded report containing its admitted batches, stable resume
-cursor, and terminal reason.
+document. A daemonless reply is `{"kind":"reply","body":...}`; a read adds its
+snapshot `cursor` and a mutation its committed `seq` range, and the absence of
+both is the one spelling of a daemonless reply. Refusals and faults use the
+same envelope with their own `kind`.
 
-### Bounded reads
+## Bounded reads
 
-**Invariant —** A read shows current, relevant state by default; history and
-detail are explicit flags, and no flag makes terminal output unbounded. Every
+A read shows current, relevant state by default; history and detail are
+explicit flags, and no flag makes terminal output unbounded. Every
 output-bearing surface admits through the one contract in `wire::output`:
 
-- **Limits.** A surface declares small interactive defaults and its own
-  maxima for rows (`--limit`), aggregate encoded bytes (`--max-bytes`), and
-  per-field text (`--max-text`). Both sit under the repository `CEILING`
-  (1000 rows, 256 KiB, 16 KiB text); the shared `INTERACTIVE` surface
-  defaults to 20 rows, 8 KiB, and 240-byte text with maxima of 500 rows,
-  128 KiB, and 4 KiB. A request above the surface maximum is refused, not
-  silently clamped. Zero rows is a count-only read.
-- **Relevance-first admission.** Records are offered current/actionable first.
-  Every record is charged its encoded JSON length, the first included, so one
-  oversized record cannot bypass the byte limit. The first record that does
-  not fit closes admission; a smaller later record never leapfrogs it, so a
-  page boundary is a single cursor.
-- **No hidden omission.** A partial answer carries an `omission`: population,
-  shown, withheld, admitted bytes, the limit that closed admission, the size of
-  the next record, and the exact `continuation` command that resumes at it
-  (`--after CURSOR`). When the next record alone needs more bytes, the command
-  raises `--max-bytes` to what it needs; past the surface maximum, it names a
-  file export instead. Text form prints one line stating the same facts and
-  the shell-quoted command. Clipped text keeps a UTF-8 boundary and reports
-  its withheld bytes.
-- **Exact export.** Complete canonical documents and evidence are written to
-  an explicitly named file, atomically, with a receipt naming the resolved
-  path, byte length, and `spice.cli.export.v1` digest. `-` is refused.
+- **Limits.** A surface declares interactive defaults and maxima for rows
+  (`--limit`), aggregate encoded bytes (`--max-bytes`), and per-field text
+  (`--max-text`), all under one repository ceiling. A request above the
+  surface maximum is refused, not clamped. Zero rows is a count-only read.
+- **Relevance-first admission.** Records are offered current and actionable
+  first. Every record is charged its full encoded length, the first included,
+  and the first record that does not fit closes admission, so a page boundary
+  is a single cursor.
+- **No hidden omission.** A partial answer states what it withheld, the limit
+  that closed admission, the next record's size, and the exact continuation
+  command (`--after CURSOR`); a record too large for the surface continues
+  through a file export. Clipped text keeps a UTF-8 boundary and reports its
+  withheld bytes.
+- **Exact export.** Complete documents and evidence are written atomically to
+  an explicitly named file with a receipt naming its path, length, and digest;
+  `-` is refused.
 
-The transcript reader enforces the same law before a CLI chooses how to render
-it. `listen::transcript_page` scans only a caller-bounded newest window of one
-tape. A current page's pending-byte and decoder-canary status enters the same
-row and encoded-byte admission as complete vendor records, then records page
-newest first without splitting a record; an older page carries records only,
-so a continuation that widens `--max-bytes` for one record admits it. Older
-pages use a cursor that carries the tape generation and complete-record
-boundary. Event filters run before record admission. Per-field UTF-8 clipping
-reports withheld text bytes. An oversized record names its exact source spans
-for export and an authenticated cursor immediately before that record, so the
-caller can export it and continue with strictly older records without
-replaying it. History outside the decoded window reports the exact withheld
-source-byte count and its authenticated older cursor. A cursor from a replaced
-tape is refused rather than replayed against the new generation.
+Surfaces that refine the law:
 
-Decoded reasoning remains a visible event on `spice retro` and `spice watch`,
-but every CLI form, including export, represents it only by the count of
-withheld UTF-8 bytes and never emits the provider's reasoning text.
-
-`spice retro [LANE|LOCUS|PATH]` is that reader's CLI. A selector that resolves
-one session tape prints one newest-first page from a 256 KiB scan window under
-the interactive limits; `--kind KIND` (repeatable) selects event kinds. Every
-withheld row, older window, and clipped field prints a line with its counts
-and the exact command that recovers it: `--after SOURCE:MEMBER:OFFSET` for
-older records, `--after SOURCE` to re-read a current page of the same tape
-generation, or `--export FILE` when only the complete document carries the
-withheld bytes. A cursor from a replaced tape is refused as
-`retro::cursor-stale`. A selector naming several sessions lists them in
-tape-path order, paged by `--after TAPE`; a locus, or a selector that resolves
-nothing, shows its observations. `--export FILE` writes the complete selected
-transcript, unpaged and unclipped (still narrowed by `--kind`), atomically to
-that file and prints only the export receipt. Export streams: tapes are read
-forward in 1 MiB chunks and each observation is written and hashed as it
-decodes, so memory holds one chunk, the record being decoded (at most the
-64 MiB vendor record limit), and a 1 MiB write buffer, whatever the
-transcript's size. A scan or write failure partway leaves the destination
-unchanged.
-
-Bare `spice watch [ROOT]` is one bounded current snapshot and exits. Persistent
-observation is explicit: `--follow` requires a positive
-`--deadline-seconds SECONDS` no greater than 300 seconds. The run blocks on the
-platform's native filesystem notifications (FSEvents, inotify, kqueue) rather than
-rescanning the tree, folds every notification that arrives within 100 ms of the
-previous wake into one rescan, so wakes never exceed ten per second, and stops
-after at most 3000 wakes. All snapshots in the run share one aggregate
-row and encoded-byte admission budget; every text field is clipped under the
-same text ceiling. Its opaque `watch.v1` cursor records each tape generation,
-complete-record boundary, and emitted decoder canaries. `--after CURSOR`
-therefore resumes without replaying admitted records. Replacement, disappeared
-sources, history skipped outside the bounded tail, and records skipped above
-the repository byte maximum are explicit `missing` observations rather than
-silent loss. A row carries observations: a record that decodes to nothing
-advances the cursor without one. An `absent` root or tape, or `pending` bytes
-at a tape's end, is reported once per run and again only when it changes
-(different pending spans, a source appears or disappears). The cursor does not
-carry that memory, so a resumed run reports current status once. If output
-admission closes, the cursor remains immediately before the first omitted row
-and the reply carries the exact continuation command.
-
-The task surfaces apply that contract directly. Bare `spice task show HANDLE`
-prints only the current execution contract: identity, the whole authored
-statement in the fields `spice task modify` replaces (title, project, priority,
-description, acceptance), phase, status, active claim, requirements,
-dependencies, artifacts, phase guidance, and next command. Statement fields are
-never cut by `--max-text`, so a field read there is exactly the value a
-replacement overwrites. `--context` adds origin, acknowledgment, hydration,
-Git, parked-commit, and tag metadata; `--history` adds the newest-first
-workflow steps (each completion with the phase it closed and its validation,
-each phase advance, each review verdict with its finding or note and linked
-corrections, under the actor and time that took it) and newest-first notes
-under the interactive row, byte, and text limits. Any principal that may read
-the task reads them there; the raw `spice journal` stays operator-only. `spice
-task list` always
-orders current/actionable rows before waiting and terminal rows, then newest
-first, and applies the 20-row interactive default even with `--all` or
-`--project`. Both surfaces emit an exact `--after` continuation when rows remain.
-When both detail switches are present, context rows, closure, workflow steps,
-and notes share one aggregate detail budget. Their continuation preserves both
-switches and resumes at the first withheld context-row cursor, step, or note
-position.
-
-`spice lane list` uses the same interactive row and byte limits. It orders the
-calling lane first, then occupied or claim-holding lanes, then remaining lanes;
-UUID order makes each group deterministic. A partial page names the first
-withheld lane in its exact `--after` continuation. Each row carries the lane's
-operator-configured display name, when it has one, and the
-[peer address its seat offers](invariants/identity.md#identity-a-discovered-seat-address-resolves-to-the-occupant-shown):
-text prints `name="NAME"` and `address=ADDRESS` or `address=unavailable:REASON`,
-and `--json` keeps the typed `rows` with `name` and each `address` tagged
-`seated`, `vacant`, or `unproved`.
-
-`spice journal` pages facts newest first and `spice thread REF` pages one
-thread in journal order, both under `INTERACTIVE`; each fact is one row whose
-canonical text is cut to `--max-text`, so an oversized fact costs one bounded
-row. A partial page continues with `--after SEQ`, the first withheld position.
-A thread page resolves its root, counts what remains, and decodes its rows
-through the thread index, so its cost follows the page rather than the journal
-or the whole thread. `spice journal verify` remains the full-authority check;
-it and `spice consent policy` stay concise summaries.
-
-`spice backup OUTPUT`, `spice restore verify BUNDLE`, and `spice restore
-BUNDLE` share one bundle bound: at most 4096 members and 8 GiB in aggregate,
-counting the manifest and every member. Backup capture streams members under
-that bound, restore admission refuses a manifest declaring more before reading
-a member, and restore refuses to capture a current authority larger than 8 GiB
-before it changes anything.
-
-`spice trust` shows the current digest, its standing and provenance, and
-ruling counts first, then a page of recorded rulings: the current digest,
-then pended, granted, and revoked digests, continuing with `--after DIGEST`.
-`spice taste` shows the tracked digest, cumulative judgment counts, and at most
-12 recent fires per taste, with unanswered reminders first. `spice taste
---name NAME` reads only that taste's indexed evidence frontier and pages fires
-and judgments newest first. Its opaque `--after HORIZON/POSITION/KIND`
-continuation freezes the first page's horizon, so concurrent journal appends
-cannot shift a resumed page.
-
-`spice inbox` and `spice consent` are authority queues: neither may hide an
-item behind a page boundary. Each answer carries a compact index naming every
-pending key (per lane) or request identity, outside every limit, and a page
-of detail: directives most urgent stage first, then oldest; consent requests
-in queue order. Partial detail continues with `--after ID`. `spice recall`
-keeps its fixed window of the newest relevant events.
+- `spice inbox` and `spice consent` are authority queues: every pending key or
+  request is indexed outside every limit, so no item hides behind a page.
+- `spice task show` never clips the fields `spice task modify` replaces, so a
+  field read there is exactly what a replacement overwrites. `--context` and
+  `--history` add metadata, workflow steps, and notes under the shared limits;
+  any principal that may read the task reads them there, while `spice journal`
+  stays operator-only.
+- `spice board` is a posture — counts, the reader's own claim outside every
+  budget, and the ready, review, and blocked rows on its route — not a dump.
+  The complete board is only `spice board [FAMILY] --output FILE`.
+- `spice retro` and `spice watch` show decoded reasoning only as a count of
+  withheld bytes, in every form including export. A cursor from a replaced
+  tape refuses rather than replaying against the replacement. Bare `watch`
+  is one snapshot; `--follow` requires a bounded deadline and blocks on native
+  filesystem notifications rather than rescanning.
+- `task artifact show` never writes raw payload bytes to the terminal; exact
+  extraction is `--output PATH`, verified against the retained digest, and a
+  payload that fails its digest is neither shown nor extracted.
+- Backup and restore share one bundle bound on members and aggregate bytes;
+  restore refuses an oversized manifest before reading a member, and an
+  oversized current authority before changing anything.
 
 Mutation replies are outside this contract: they stay complete and concise.
 
-`spice board` is a posture, not a dump: counts of the reader's visible and
-route-open rows by standing, the reader's own claim outside every budget, and
-the ready, review, and blocked rows on its allocation route, ordered by
-standing and then allocator offer order. `spice board FAMILY` pages that
-family's rows the same way, claimed and active first, then by standing and
-offer order, closed rows newest first. Both use the `BOARD` surface (10
-rows, 8 KiB, 120-byte titles; maxima 200 rows, 128 KiB, 4 KiB) and continue
-with `--after HANDLE`. The complete board document under the reader's
-visibility, or one family's rows of it, is only
-`spice board [FAMILY] --output FILE`, which takes no limits.
+## Kept jobs
 
-`spice board graph VIEW` pages the diagram's first lines under `INTERACTIVE`;
-a diagram line has no stable cursor, so a partial page continues as
-`spice board graph VIEW --output FILE`, the complete diagram. The multi-view
-`spice board handout FILE` is always a file export. Both refuse `-` with the
-file command.
+The occupant's `job` tool reads the same contract. Its default `list` is every
+job still owed to the lane — running, or ended and not yet heard — the set the
+seat shows as Kept jobs; delivered jobs are read only through `history`, newest
+first, with an exact continuation. `wait` passively observes a finite job and
+leaves it running. An occupant holding a claim may end its turn while a
+deadline-bounded job runs; the lane stays vacant until that job ends or emits
+an event, then wakes a successor that still holds the claim. A service never
+ends on its own and never keeps a lane idle: it runs while its claim is active
+or until `stop`, and its readiness is read from its logs or served surface,
+never by waiting on its process. Every seat start lists the kept commands
+still running, and says nothing when none run.
 
-Task artifacts are retained evidence, possibly large or binary. `task artifact
-list` pages citations newest first under `INTERACTIVE`, continuing with
-`--after ARTIFACT`. A bare `task artifact show` returns metadata and the first
-4096 bytes of a text payload, or only the store path of a non-text payload.
-`--offset`/`--bytes` (at most 16384) reads any window: text on character
-boundaries, other payloads as hex, and a short window names the next. No form
-writes raw payload bytes to the terminal. `--output PATH` is the exact export:
-the whole payload, verified against its retained digest after the write. A
-payload that no longer matches its digest is neither shown nor extracted.
-Validation hashes only the selected payload through fixed memory; previews
-retain only their requested window, and exact extraction streams through the
-atomic export rather than retaining a source or destination copy.
-
-The occupant's `job` tool is the one non-CLI read on this contract. Its
-default `list` is every job still owed to the lane, oldest first: running, or
-ended and not yet heard. That is the set spice shows as Kept jobs, and it
-says `no jobs running or awaiting delivery` when empty. Jobs whose ending was
-delivered are read only through `history`, newest first, under the
-`JOB_HISTORY` surface: `limit` defaults to 20 and runs 1 to 100, anything else
-refused; commands are clipped to 200 bytes. A withheld page ends with
-the omission line, whose continuation is the job call
-`job op=history id=ID limit=N`, resuming at the first withheld job.
-
-`wait` on a finite job is a passive, bounded observation that leaves a
-still-running job alone. It is optional: an occupant holding a claim may end
-its turn while a deadline-bounded job runs, and unless operator steering
-arrives the lane stays vacant until that job ends or emits an event, then
-wakes a successor that still holds the claim. A running service never ends on
-its own and never keeps a lane idle: it runs while its task claim remains
-active, ending when that claim ends or when `stop` ends
-it sooner, so `wait` on one answers at once with its output so far and the
-reason, and leaves it running. Service readiness is established by
-reading its logs or exercising its served surface, never by waiting on its
-process. Every seat start, fresh or resumed, carries a `Kept jobs still running`
-notice listing each running kept command with its id, marking services, and is
-silent when nothing runs.
-
-A shell call with `events` watches a deadline-bounded command instead of
-waiting on it: the call is answered at once with the job's id, and each line
-the command prints on stdout becomes an event delivered to the seated
-occupant as a background notice naming the job, in order and exactly once,
-at the next step boundary rather than inside a running tool call. Lines
-arriving within 200 ms of an event's first line ride in that event; stderr
-goes only to the job's log, which keeps both streams. More than 100 lines
-within 10 seconds ends the job's events with one notice saying so, while the
-command keeps running. The job's ending is delivered after its last event. A
-service refuses `events`, since nothing bounds it. The lane records the last
-event it heard, so an event nobody hears within the delivery grace wakes a
-vacant lane exactly as an unheard ending does, and the next seat hears every
-unheard event before the ending.
-
----
+A shell call with `events` is answered at once with the job's id; each stdout
+line becomes a background notice to the seated occupant, in order and exactly
+once, at the next step boundary, and stderr goes only to the job's log. A
+burst beyond the event bound ends the job's events with one notice while the
+command keeps running, and the ending is delivered after the last event. A
+service refuses `events`. An event nobody hears within the delivery grace
+wakes a vacant lane exactly as an unheard ending does.
 
 ## Extension surfaces
 
-### Mounted commands
+Repository configuration may mount a command under the `spice` namespace;
+[built-in verbs win at every depth](invariants/session.md#extension-built-in-verbs-and-registered-actions-win-at-every-depth),
+so a dotted mount extends a built-in verb only with a novel action name. The
+compiled registry is the only executable extension authority: configuration
+cannot discover or load executable values into the vendor, wrapper, or gate
+namespaces.
 
-```mermaid
-flowchart LR
-  R["repo config"] --> M["mount a repo command<br/>under the spice namespace"]
-  M --> C{"collides with a builtin<br/>at any depth?"}
-  C -- yes --> F["refuse loudly"]
-  C -- no --> OK["available as spice &lt;name&gt; ..."]
-```
+## Diagnostics
 
-**Invariant —** Built-in verbs and registered actions win at **every depth**.
-Shadowing fails loudly rather than silently overriding.
+`spice doctor` rolls up one closed roster of stateful subsystems — board,
+journal, steering, lane, transport, installation, and release. Host-probing
+checks stay out of hook verdicts: diagnosing the environment and refusing a
+commit are different jobs.
 
-**Invariant —** Dotted mounts may extend a built-in verb only with a **novel**
-action name.
+`spice demo` replays a canned transcript through the real renderer in an
+isolated seeded root, with no model call and no mutation of the caller's
+repository. Nothing opens on the operator's display without an explicit
+`--open`.
 
-### Compiled extensions
+## Media
 
-```mermaid
-flowchart TD
-  D["compiled vendor, wrapper,<br/>and gate declarations"] --> V["deterministic sort + validation"]
-  V --> C{"empty, mixed,<br/>mismatched, or colliding?"}
-  C -- yes --> X["one deterministic refusal"]
-  C -- no --> R["typed registry"]
-  R --> U["consumer calls the selected<br/>value's contract"]
-```
+An attachment is part of the operating record, not a transient upload: it
+stays browsable beside the message it arrived with. A steering directive keeps
+image bytes only in its attachment values; its prose places them with bounded,
+digest-bound `attachment:` markers, which display projections expand from the
+same record and which are never fetch authority. A send whose prose duplicates
+an attachment's data URL refuses before journal mutation.
 
-**Invariant —** A new vendor, wrapper, or gate is a **declared typed value**,
-never a patch to a dispatcher.
-
-**Invariant —** The compiled registry is the only executable extension
-authority. Repository configuration can mount a command, but it cannot discover
-or load executable values into the vendor, wrapper, or gate namespaces.
-
-### Shared gate-and-taste scopes
-
-```mermaid
-flowchart LR
-  S["path, extension, vendor,<br/>model, phase"] --> P[gate policies and studies]
-  S --> M[tastes and maxims]
-```
-
-**Invariant —** Applicability is expressed once, in one selector language, and
-reused by gate policies and studies and by tastes and maxims. Path, extension,
-vendor, model, and phase are the exact selector axes. Shell wrappers and
-configured pre-commit commands have separate contracts; the latter's scopes
-are path-only.
-
----
-
-## Diagnostics and discoverability
-
-### Doctor
-
-```mermaid
-flowchart LR
-  D["spice doctor"] --> Board["board"]
-  D --> Journal["journal"]
-  D --> Steering["steering"]
-  D --> Lane["lane"]
-  D --> Transport["transport"]
-  D --> Installation["installation"]
-  D --> Release["release"]
-  Board --> R["one rollup"]
-  Journal --> R
-  Steering --> R
-  Lane --> R
-  Transport --> R
-  Installation --> R
-  Release --> R
-```
-
-**Invariant —** One top-level rollup aggregates the closed subsystem roster:
-board, journal, steering, lane, transport, installation, and release.
-"Check everything" is a command, not a checklist in a document.
-
-**Invariant —** Host-probing checks stay **out of hook verdicts**. Diagnosing the
-environment and refusing a commit are different jobs.
-
-### Demo
-
-```mermaid
-flowchart TD
-  C["canned transcript"] --> S["seeded lane in an isolated root"]
-  S --> R["replays into the real renderer"]
-  R --> N["no model call;<br/>no caller/source-repository mutation"]
-```
-
-**Invariant —** The demo exercises the **real** rendering path with static data.
-A demo that runs a different code path proves nothing.
-
-**Invariant —** Nothing opens on the operator's display without an explicit
-request. A demo or a test run that takes over the display disrupts the one
-surface the operator is using to supervise everything else.
-
----
-
-## Media pipeline
-
-### Attachments
-
-```mermaid
-flowchart TD
-  subgraph DRAFT["validate into the draft"]
-    direction LR
-    P["paste, drop"] --> V{"image?<br/>size and count ok?"}
-    V -- no --> R["refuse with reason"]
-    V -- yes --> D["draft attachment"]
-  end
-  subgraph RECORD["submit into the record"]
-    direction LR
-    S["submit with steering item"] --> DUR["durable inline<br/>attachment value"]
-    DUR --> T["browse in transcript"]
-  end
-  D --> S
-```
-
-**Invariant —** An attachment becomes part of the **operating record**, not a
-transient upload. Screenshots and captures stay browsable beside the message
-they arrived with.
-
-**Invariant —** A steering directive retains image bytes only in its attachment
-values. Its prose uses bounded, digest-bound `attachment:` Markdown markers to
-preserve placement beside quoted replies and body text. Display projections
-expand those markers from the same record's attachments; they are not fetch
-authority. Agent delivery continues to use lane-authenticated
-`AgentMediaReference` values. New sends duplicating attachment data URLs in
-prose are refused before journal mutation; historical inline images remain
-browsable without rewriting the record.
-
-**Invariant —** Paired view-image tool output collapses to one rendered image
-rather than duplicating.
-
-### Speech
-
-```mermaid
-flowchart TD
-  T["topbar manual"] --> TC["trimmed main-content inner text<br/>at most 32 KiB, no lane"]
-  C["card manual"] --> CM["exact message.text<br/>with its rendered lane"]
-  N["automatic narration"] --> NM["newly cursor-admitted<br/>full message text"]
-  TC --> Q["one global sequential queue"]
-  CM --> Q
-  NM --> Q
-  Q --> W["originating worktree's<br/>ordered say.voices"]
-  W --> S["browser system synthesis<br/>callback-settled"]
-  S --> P["single-owner playback"]
-  P --> Q
-```
-
-**Invariant —** Card speech uses that card's exact complete `message.text` and
-retains its rendered lane. The topbar instead speaks the trimmed visible
-`main.content` inner text, refuses more than 32 KiB, and carries no lane.
-Automatic narration admits each newly cursor-admitted message's complete text;
-it does not reinterpret ACKs or paragraph edges.
-
-**Invariant —** Every queued card or narration entry carries the admitted speech
-contract of the agent worktree that produced it. Worktree-scoped `say.voices`
-therefore changes voices between agents without creating another playback
-owner: the one global queue remains sequential and never overlaps utterances.
-
-**Invariant —** Speech is **best-effort ear candy**. A detected failure is
-reported as nonblocking `Speech unavailable` state and never blocks the visible
-stream — the transcript remains the record.
-
-**Invariant —** Speech is the viewing browser's own system synthesis; nothing
-renders audio on the resident. An utterance settles on `onend` or `onerror`; if
-the browser emits neither, the active queue head remains until the operator
-uses the global stop. A failed utterance carries the browser's own error code.
-
-**Invariant —** `say.voices` is an ordered list of voice names. Each device
-speaks an agent's messages with the first name it publishes, and that agent
-keeps the voice for the rest of the page. An empty list, the default, speaks
-with the device's default voice. A browser publishes its voice list
-asynchronously, so an empty published list is a pre-publication state: the
-request waits for `voiceschanged` under its own bound. A published list holding
-none of the names refuses while naming the voices the browser does offer. List
-one name per device family, for example:
-
-```toml
-[say]
-voices = ["Zoe (Premium)", "English (United States)"]
-```
-
----
-
-## The shape in one diagram
-
-```mermaid
-flowchart TD
-  OP(("operator")) --> CON["console<br/>lanes, watchband, mosaic"]
-  CON --> STEER["durable steering"]
-  STEER --> AG["supervised agents"]
-  AG --> TR["transcripts"]
-  TR --> CON
-  AG --> BOARD["task board<br/>claims, phases, graphs"]
-  BOARD --> ALLOC["allocator"]
-  ALLOC --> AG
-  AG --> GIT["three lane-integration<br/>git boundaries"]
-  GIT --> BASE["baseline"]
-  BASE --> GIT
-  AG --> CONS["counsel"]
-  CONS --> STEER
-  GIT --> GATE["checks"]
-  GATE --> AG
-  BOARD --> WAKE["capacity"]
-  WAKE --> AG
-```
-
-Six closed loops appear in one picture: **read** (the transcript feeds the
-console, which informs the operator), **steer** (the operator creates steering,
-which reaches the agent), **work** (the board feeds the allocator, which assigns
-the agent, which updates the board), **land** (the agent writes git, which
-advances the baseline, which refreshes the agent), **counsel** (the agent
-produces authored prose, enabled counsel recognizes it, and admitted reminders
-return as ordinary steering), and
-**staff** (the board exposes capacity, which wakes the agent, which updates the
-board).
-
-Every one of them closes. That is the product.
+Speech is the viewing browser's own system synthesis; nothing renders audio on
+the resident. One global queue speaks sequentially and never overlaps
+utterances. An utterance settles on the browser's end or error, and a failure
+is a nonblocking notice that never blocks the visible stream — the transcript
+remains the record. `say.voices` is an ordered list of voice names, scoped to
+the agent's worktree: each device speaks an agent's messages with the first
+listed name it publishes, and the agent keeps that voice for the page. An
+empty list uses the device default. A browser that has not yet published
+voices is waited for under a bound; a published list holding none of the names
+refuses, naming the voices the browser offers.
