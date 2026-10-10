@@ -211,27 +211,7 @@ fn report_inner(
                     Failure::Refusal(page.cursor_refusal(&format!("SEQ from 1 to {horizon}")))
                 })?,
         };
-        let mut rows = Vec::new();
-        let mut before = start.get().checked_add(1).and_then(Seq::new);
-        while rows.len() < retain {
-            let budget = journal::FactReadBudget::new(
-                (retain - rows.len()).min(journal::MAX_RETAINED_FACT_PAGE_ROWS),
-                journal::MAX_RETAINED_FACT_PAGE_BYTES,
-            )
-            .map_err(|error| Failure::protocol("journal::read-budget", error.to_string()))?;
-            let fetched = read
-                .recent_facts(before, budget)
-                .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?;
-            rows.extend(fetched.rows.iter().map(|fact| {
-                let row = FactRow::of(fact, text);
-                let key = row.seq.to_string();
-                (row, key)
-            }));
-            match fetched.continuation {
-                Some(next) => before = Some(next),
-                None => break,
-            }
-        }
+        let rows = newest_rows(read, start, horizon, retain, text)?;
         Ok((start, rows))
     })?;
     let population = usize::try_from(start.get())
@@ -246,6 +226,44 @@ fn report_inner(
             entries,
         },
     ))
+}
+
+/// Up to `retain` rows newest first, starting inclusively at `start`.
+///
+/// The reader resumes strictly before an exclusive cursor that must lie
+/// inside its snapshot, so a start at the horizon reads from the newest fact
+/// and an older start resumes before its successor.
+fn newest_rows(
+    read: &journal::JournalRead<'_>,
+    start: Seq,
+    horizon: Seq,
+    retain: usize,
+    text: usize,
+) -> Result<Vec<(FactRow, String)>, Failure> {
+    let mut rows = Vec::new();
+    let mut before = (start < horizon)
+        .then(|| Seq::new(start.get() + 1))
+        .flatten();
+    while rows.len() < retain {
+        let budget = journal::FactReadBudget::new(
+            (retain - rows.len()).min(journal::MAX_RETAINED_FACT_PAGE_ROWS),
+            journal::MAX_RETAINED_FACT_PAGE_BYTES,
+        )
+        .map_err(|error| Failure::protocol("journal::read-budget", error.to_string()))?;
+        let fetched = read
+            .recent_facts(before, budget)
+            .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?;
+        rows.extend(fetched.rows.iter().map(|fact| {
+            let row = FactRow::of(fact, text);
+            let key = row.seq.to_string();
+            (row, key)
+        }));
+        match fetched.continuation {
+            Some(next) => before = Some(next),
+            None => break,
+        }
+    }
+    Ok(rows)
 }
 
 fn verify_inner(contract: &Contract) -> Result<(ReplyPosition, JournalVerification), Failure> {
@@ -665,6 +683,9 @@ fn publish_backup(source: &Path, destination: &Path) -> Result<(), Failure> {
         },
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 pub(crate) fn assert_late_backup_destination_is_preserved() {
