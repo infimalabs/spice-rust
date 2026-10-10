@@ -38,12 +38,17 @@ phase author → reviewer → verdict order. Lifecycle facts retain their durabl
 source order. Zoom, pan, reset, and task-node activation remain available
 without changing the selection. At 100% zoom a diagram draws at no more than
 its natural size, shrinking only to fit and sitting centered in the graph
-frame; zoom alone enlarges it. Each node's state badge straddles its top border
-so it never covers the node's label.
+region; zoom alone enlarges it. The graph draws unframed: no border or panel
+encloses its nodes, and a small margin at every zoom keeps the outermost nodes,
+edges, and badges off the region's edge. Each node's state badge straddles its
+top border so it never covers the node's label, and same-rank nodes such as
+unconnected roots keep room between them for those badges. A completed task
+wears a muted **Done** badge, quieter than **Blocked**; a withdrawn one wears
+**Deleted**.
 
 The sheet reserves geometry: a region whose read can change holds one fixed
 footprint from first paint, so loading, enrichment, other lanes' board
-changes, and jobs starting or finishing move nothing below it. The graph frame
+changes, and jobs starting or finishing move nothing below it. The graph region
 is 18–28rem viewport-relative whatever the diagram's shape. The Lineage,
 Reviews, and Lifecycle lenses list their evidence, and any truncation, inside
 one 14–24rem viewport-relative region below the graph. The Dependency lens has
@@ -72,7 +77,7 @@ screen and shows, toasts, and announces nothing. A first detail read holds a
 prose-free placeholder footprint. Unavailable detail or enrichment and a
 capability without enrichment toast once on the root toast when they begin;
 the only in-place trace is **Retry detail** inside the absent detail's
-placeholder or **Retry enrichment** inside the graph frame.
+placeholder or **Retry enrichment** inside the graph region.
 
 ## Task blocker review
 

@@ -27,6 +27,9 @@ pub(crate) struct Node {
     pub(crate) label: String,
     pub(crate) detail: String,
     pub(crate) task: Option<TaskStamp>,
+    /// Workflow status the typed enrichment reports for a task the admitted
+    /// board lacks, such as a completed prerequisite.
+    pub(crate) status: Option<String>,
     diagram: String,
     pub(crate) selected: bool,
 }
@@ -225,6 +228,7 @@ fn present_local_node(
                     compact_title(&row.presentation_title),
                 ),
                 format!("{} · {}", row.workflow.body.phase, row.workflow.body.status),
+                None,
             )
         })
         .or_else(|| match enrichment {
@@ -237,21 +241,26 @@ fn present_local_node(
             }) => Some((
                 format!("{handle} · {}", compact_title(title)),
                 format!("{phase} · {status}"),
+                Some(status.clone()),
             )),
             _ => None,
         });
-    let (kind, label, detail) = match (resolved, node.kind()) {
-        (Some((label, detail)), _) if node.selected() => ("Selected task", label, detail),
-        (Some((label, detail)), _) => ("External dependency", label, detail),
+    let (kind, label, detail, status) = match (resolved, node.kind()) {
+        (Some((label, detail, status)), _) if node.selected() => {
+            ("Selected task", label, detail, status)
+        }
+        (Some((label, detail, status)), _) => ("External dependency", label, detail, status),
         (None, TaskOverviewNodeKind::Missing) => (
             "Missing task",
             node.task().to_string(),
             "Missing from the admitted board snapshot".to_owned(),
+            None,
         ),
         (None, _) => (
             "Unavailable task",
             node.task().to_string(),
             "Unavailable in the admitted board snapshot".to_owned(),
+            None,
         ),
     };
     Node {
@@ -261,6 +270,7 @@ fn present_local_node(
         label,
         detail,
         task: Some(node.task().clone()),
+        status,
         selected: node.selected(),
     }
 }
@@ -287,6 +297,7 @@ fn present_remote_node(
                 detail: format!("Phase {phase} · {status}"),
                 diagram: format!("{handle}\n{title}\nPhase {phase} — {status}"),
                 task: Some(task.clone()),
+                status: Some(status.clone()),
                 selected: selection.tasks().contains(task),
             }
         }
@@ -297,6 +308,7 @@ fn present_remote_node(
             detail: origin.to_string(),
             diagram: format!("Origin\n{origin}"),
             task: None,
+            status: None,
             selected: false,
         },
         TaskRelationNode::Review {
@@ -321,6 +333,7 @@ fn present_remote_node(
                     "{phase} review\n{author_label} → {reviewer_label}\n{verdict}\nfact {position}"
                 ),
                 task: None,
+                status: None,
                 selected: false,
             }
         }
@@ -340,6 +353,7 @@ fn present_remote_node(
                 detail: format!("{at} · {actor} · fact {position}"),
                 diagram: format!("{event}\n{actor_label}\n{at}\nfact {position}"),
                 task: None,
+                status: None,
                 selected: false,
             }
         }
@@ -373,14 +387,20 @@ fn present_remote_node(
                     "Current claim\n{owner}\n{disposition}\noccupant {occupant}\nfact {position}"
                 ),
                 task: None,
+                status: None,
                 selected: false,
             }
         }
     }
 }
 
+/// Same-rank nodes, such as unconnected roots, keep room between them for the
+/// state badge straddling each node's top edge. The renderer's implicit
+/// layout ignores spacing, so the graph names its dagre layout explicitly.
 fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
-    let mut source = String::from("flowchart LR\n");
+    let mut source = String::from(
+        "---\nconfig:\n  layout: dagre\n  flowchart:\n    nodeSpacing: 80\n---\nflowchart LR\n",
+    );
     for node in nodes {
         let label = crate::mermaid_label::multiline(&node.diagram);
         writeln!(source, "  {}[\"{label}\"]", node.id).expect("String writes are infallible");

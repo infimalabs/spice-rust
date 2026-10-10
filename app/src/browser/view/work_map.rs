@@ -359,7 +359,7 @@ fn map_targets(
             .iter()
             .filter_map(|node| {
                 let task = node.task.as_ref()?;
-                let tone = task_tone(work, task);
+                let tone = task_tone(work, task, node.status.as_deref());
                 Some(overlay::MapNodeTarget {
                     id: node.id.clone(),
                     task: task.clone(),
@@ -381,27 +381,54 @@ struct TaskTone {
     label: &'static str,
 }
 
-fn task_tone(work: &WorkProjection<'_>, task: &TaskStamp) -> Option<TaskTone> {
-    let task = work
+/// A board row is authoritative; a task the board lacks takes its settled
+/// status from the typed enrichment.
+fn task_tone(
+    work: &WorkProjection<'_>,
+    task: &TaskStamp,
+    status: Option<&str>,
+) -> Option<TaskTone> {
+    let Some(task) = work
         .tasks()
         .iter()
-        .find(|candidate| candidate.row().statement.body.born == *task)?;
+        .find(|candidate| candidate.row().statement.body.born == *task)
+    else {
+        return match status? {
+            "completed" => Some(settled_tone(false)),
+            "deleted" => Some(settled_tone(true)),
+            _ => None,
+        };
+    };
     let availability = task.availability();
-    let (label, disposition) = match availability {
-        WorkAvailability::InFlight => ("In flight", None),
-        WorkAvailability::Ready => ("Ready", None),
-        WorkAvailability::Blocked => ("Blocked", None),
-        WorkAvailability::Deferred => ("Deferred", None),
-        WorkAvailability::Terminal if task.row().workflow.body.status == "deleted" => {
-            ("Deleted", Some("deleted"))
+    let label = match availability {
+        WorkAvailability::InFlight => "In flight",
+        WorkAvailability::Ready => "Ready",
+        WorkAvailability::Blocked => "Blocked",
+        WorkAvailability::Deferred => "Deferred",
+        WorkAvailability::Terminal => {
+            return Some(settled_tone(task.row().workflow.body.status == "deleted"));
         }
-        WorkAvailability::Terminal => ("Completed", None),
     };
     Some(TaskTone {
         availability: availability.key(),
-        disposition,
+        disposition: None,
         label,
     })
+}
+
+/// Settled tasks read as quiet provenance: done is neutral, deleted keeps its
+/// own tone.
+fn settled_tone(deleted: bool) -> TaskTone {
+    let (label, disposition) = if deleted {
+        ("Deleted", Some("deleted"))
+    } else {
+        ("Done", None)
+    };
+    TaskTone {
+        availability: WorkAvailability::Terminal.key(),
+        disposition,
+        label,
+    }
 }
 
 /// The lens's evidence list below the graph. The dependency graph already
@@ -439,7 +466,7 @@ fn render_relationship_list(
                     let task = task.clone();
                     Callback::from(move |_| activate.emit(task.clone()))
                 };
-                let tone = task_tone(work, task);
+                let tone = task_tone(work, task, node.status.as_deref());
                 html! {
                     <button
                         key={node.id.clone()}

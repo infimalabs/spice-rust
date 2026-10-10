@@ -28,6 +28,9 @@ const DRAG_THRESHOLD: f64 = 4.0;
 const WHEEL_ZOOM_RATE: f64 = 200.0;
 const WHEEL_ZOOM_DELTA_LIMIT: f64 = 50.0;
 const LINE_PIXELS: f64 = 16.0;
+/// Frame pixels kept clear around the drawing at every zoom, so outer nodes
+/// and the state badges straddling their top edges never touch the bounds.
+const MARGIN: f64 = 16.0;
 
 /// The zoom and diagram bounds one frame's gestures and node overlay share.
 pub(super) struct Canvas {
@@ -51,19 +54,22 @@ struct Frame {
     max_zoom: f64,
 }
 
-/// Contain fit capped at natural size, enlarged by `zoom` within its bounds;
-/// the stage covers the frame and the drawing sits centered in it.
+/// Contain fit inside the margin, capped at natural size and enlarged by
+/// `zoom` within its bounds; the stage covers the frame plus the margin and
+/// the drawing sits centered in it.
 fn frame(viewport: (f64, f64), view: Rect, zoom: f64) -> Option<Frame> {
-    if viewport.0 <= 0.0 || viewport.1 <= 0.0 || view.width <= 0.0 || view.height <= 0.0 {
+    let room = (viewport.0 - 2.0 * MARGIN, viewport.1 - 2.0 * MARGIN);
+    if room.0 <= 0.0 || room.1 <= 0.0 || view.width <= 0.0 || view.height <= 0.0 {
         return None;
     }
-    let fit = (viewport.0 / view.width)
-        .min(viewport.1 / view.height)
-        .min(1.0);
+    let fit = (room.0 / view.width).min(room.1 / view.height).min(1.0);
     let max_zoom = (MAX_NATURAL_SCALE / fit).max(1.0);
     let scale = fit * zoom.clamp(1.0, max_zoom);
     let drawn = (view.width * scale, view.height * scale);
-    let stage = (drawn.0.max(viewport.0), drawn.1.max(viewport.1));
+    let stage = (
+        (drawn.0 + 2.0 * MARGIN).max(viewport.0),
+        (drawn.1 + 2.0 * MARGIN).max(viewport.1),
+    );
     Some(Frame {
         scale,
         drawn,
