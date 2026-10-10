@@ -187,7 +187,8 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
 }
 
 /// The response prose the placed header that retires `token` gives it: the
-/// rest of that header's line after its key list and separator, trimmed.
+/// rest of that header's line after its key list and separator, trimmed, and
+/// ending before any placed MSG header on that line, which is its own packet.
 ///
 /// Between placed headers retiring the same token the later one speaks, as
 /// [`decisive`] rules. `None` when no placed header retires the token or the
@@ -207,7 +208,15 @@ pub fn answer<'prose>(
             })
         })?;
     let rest = &prose[header.end..];
-    let clause = rest.lines().next().unwrap_or_default().trim();
+    let line = header.end..header.end + rest.find('\n').unwrap_or(rest.len());
+    let end = scan_messages(prose)
+        .into_iter()
+        .map(|message| message.header.start)
+        .find(|start| line.contains(start))
+        .map_or(line.end, |start| {
+            message::boundary_before(prose, line.start, start)
+        });
+    let clause = prose[line.start..end].trim();
     (!clause.is_empty()).then_some(clause)
 }
 
