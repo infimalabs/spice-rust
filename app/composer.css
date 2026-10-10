@@ -583,6 +583,11 @@
 }
 /* Direct-child scope excludes every hunk nested inside a quote card. */
 .team-surface .mosaic-message-card .markdown-body > .message-hunk { margin-block-start: var(--mosaic-quote-pad-block); }
+/* A top-level return from either quote shell gets one extra block-padding
+   unit; nested quote returns keep their own existing cadence. */
+.team-surface .mosaic-message-card .markdown-body > :is(blockquote, .message-quote-card) + .message-hunk {
+  margin-block-start: calc(2 * var(--mosaic-quote-pad-block));
+}
 /* A zero-width presentational prop holds the hunk's first two lines open
    independent of the action island: the image row clears it, so the heading
    and the start of the prose always keep the upper-left corner. */
