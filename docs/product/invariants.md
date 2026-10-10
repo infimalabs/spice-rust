@@ -1,12 +1,9 @@
 # Invariant register
 
-Every invariant has a semantic, namespaced label. Cite the label in tests and
-design discussions; labels stay stable as the register grows, while the other
-documents provide the surrounding explanation.
-
-The section supplies the namespace; the bold name and explicit anchor form the
-stable label. Preserve that label when refining prose. Change it only when the
-meaning itself changes.
+Every invariant has a semantic, namespaced label: the section supplies the
+namespace, and the bold name and explicit anchor form the label. Cite the label,
+never a document's position. Preserve it when refining prose; change it only
+when the meaning changes.
 
 ---
 

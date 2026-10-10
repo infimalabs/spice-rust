@@ -3,7 +3,7 @@
 - [Domain](model/domain.md) — authority ownership and independent task graphs
 - [States](model/states.md) — state-machine homes and launch identity
 - [Decisions](model/decisions.md) — held-claim recovery and refusal grammar
-- [Boundaries](model/boundaries.md) — Git integration, configuration, capability tiers, and concurrency
+- [Boundaries](model/boundaries.md) — counsel, Git integration and the rewind guard, configuration, capability tiers, and concurrency
 - [Failures and vocabulary](model/failures.md) — degradation rules and product terms
 
 The [register](invariants.md) and [loops](loops.md) own the contracts linked here;
