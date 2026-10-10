@@ -34,6 +34,7 @@ pub(super) fn selected_ready(
                     eligible: 0,
                     handoff: false,
                     handoff_wait: true,
+                    last_resort: false,
                 },
             ),
         );
@@ -51,6 +52,7 @@ pub(super) fn selected_ready(
         eligible,
         handoff,
         handoff_wait: false,
+        last_resort: selected.last_resort(),
     }))
 }
 

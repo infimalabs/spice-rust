@@ -43,6 +43,13 @@ impl<'a> Selection<'a> {
     pub const fn downstream_weight(self) -> usize {
         self.downstream_weight
     }
+
+    /// Whether the selection is in the actor's last-resort class: an
+    /// independent handoff back to its prior owner, or a row the actor freed.
+    #[must_use]
+    pub const fn last_resort(self) -> bool {
+        self.last_resort
+    }
 }
 
 /// Select the highest-ranked subscribed and eligible task for `actor`.
