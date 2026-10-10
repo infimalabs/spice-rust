@@ -2,8 +2,7 @@
 
 Every tracked shell file remains only at a boundary Rust cannot cross without
 adding a prior binary artifact or losing source-in-the-current-shell behavior.
-This is the complete inventory; `xtask/tests/shell_inventory.rs` compares it
-with the Git index.
+This is the complete inventory of tracked shell files.
 
 ## Generated Git-hook launchers
 
