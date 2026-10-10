@@ -1047,6 +1047,10 @@ impl ReceiptRow {
 }
 
 fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
+    if crate::historical_receipts::retired_in_place(&row.kind) {
+        crate::historical_receipts::verify_receipt(row, true, violations);
+        return;
+    }
     let command = match wire::decode::<wire::Command<serde_json::Value>>(&row.request) {
         Ok(command) => command,
         Err(error) => {

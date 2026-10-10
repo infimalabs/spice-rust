@@ -41,7 +41,7 @@ pub(super) use message::{
 pub(super) use message::{Packet, Published, Unpublished, publish_packet};
 use preview::directive_preview;
 use transitions::evidence_refusal;
-pub(super) use transitions::{cancel, recover, resend, send, tell};
+pub(super) use transitions::{cancel, recover, resend, send};
 
 const LEGACY_TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
 
@@ -946,20 +946,6 @@ fn refusal(
             observed,
         )
         .with_detail(detail),
-    ))
-}
-
-fn lane_list_refusal(observed: Option<String>) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal::repairable(
-        wire::SpiceCommand::new("lane", ["list"])
-            .expect("lane list is a structural Spice discovery command"),
-        wire::RefusalDiagnostic::new(
-            "steer::lane-unseated",
-            Some("steering-standing".to_owned()),
-            Some("a seated lane".to_owned()),
-            observed,
-        )
-        .with_detail("tell a lane that is seated now"),
     ))
 }
 

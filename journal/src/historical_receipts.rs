@@ -1,4 +1,8 @@
 //! Retired receipt authority, never an executable command registry.
+//!
+//! A retired kind's receipts stay verifiable evidence after its command is
+//! gone. `gate::findings` receipts stand in their own table; `steer::tell`
+//! receipts stay among the command receipts they were committed with.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -6,12 +10,32 @@ use serde::{Deserialize, Serialize};
 use crate::OpenError;
 use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
 
-const KIND: &str = "gate::findings";
-
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 enum HistoricalKind {
     #[serde(rename = "gate::findings")]
     GateFindings,
+    #[serde(rename = "steer::tell")]
+    SteerTell,
+}
+
+impl HistoricalKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::GateFindings => "gate::findings",
+            Self::SteerTell => "steer::tell",
+        }
+    }
+
+    /// Whether receipts of this kind stand among the command receipts rather
+    /// than in the historical table.
+    const fn in_place(self) -> bool {
+        matches!(self, Self::SteerTell)
+    }
+}
+
+/// Whether a command receipt row carries a retired kind that stays in place.
+pub(crate) fn retired_in_place(kind: &str) -> bool {
+    kind == HistoricalKind::SteerTell.as_str()
 }
 
 #[derive(Deserialize, Serialize)]
@@ -50,7 +74,7 @@ pub(crate) fn verify(
     let mut count = 0;
     for row in rows {
         let row = row.map_err(VerifyError::Sqlite)?;
-        verify_receipt(&row, violations);
+        verify_receipt(&row, false, violations);
         count += 1;
     }
     let mut overlaps = connection.prepare(
@@ -69,7 +93,9 @@ pub(crate) fn verify(
     Ok(count)
 }
 
-fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
+/// Verify one receipt of a retired kind, standing in the command receipts
+/// when `in_place` and in the historical table otherwise.
+pub(crate) fn verify_receipt(row: &ReceiptRow, in_place: bool, violations: &mut Vec<Violation>) {
     let command = match wire::decode::<HistoricalCommand>(&row.request) {
         Ok(command) => command,
         Err(error) => {
@@ -90,7 +116,8 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
         }
         serde_json::to_vec(&value)
     });
-    if row.kind != KIND
+    if command.kind.as_str() != row.kind
+        || command.kind.in_place() != in_place
         || command.id.to_string() != row.id
         || command.epoch.to_string() != row.epoch
         || !command.v.is_current()

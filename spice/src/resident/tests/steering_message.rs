@@ -824,6 +824,41 @@ fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lan
     lanes.finish();
 }
 
+/// A reply follows lane continuity: the lane of a sender that has left hears
+/// the answer at its next seat, and a restart neither drops nor repeats it.
+#[test]
+fn a_reply_to_a_departed_sender_waits_on_its_lane_across_a_restart() {
+    let lanes = Lanes::new("msg-reply-vacant");
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}: is the parser settled?"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    lanes.vacate(SENDER);
+    let message = delivered(&lanes, FIRST);
+
+    lanes.answer(FIRST, &[&message.key], &format!("ACK {}", message.key));
+    assert!(lanes.pending(FIRST).is_empty(), "the MSG retires");
+    let [reply] = lanes
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("the vacant lane holds one reply: {pending:?}"));
+    assert_eq!(
+        reply.control.as_deref(),
+        Some(wire::peer_reply_control(&message.key, wire::PeerAnswer::Ack).as_str())
+    );
+    assert!(!reply.wakes, "a peer reply never wakes its vacant lane");
+    assert_eq!(reply.text, "", "a bare header relays no clause");
+
+    let mut diagnostics = Vec::new();
+    steering::dispose_at_startup(&lanes.bus, &lanes.paths, lanes.epoch, &mut diagnostics)
+        .expect("the restart sweep runs");
+    assert_eq!(
+        lanes.pending(SENDER),
+        [reply],
+        "a restart neither drops nor repeats the waiting reply"
+    );
+    lanes.finish();
+}
+
 /// An MSG belongs to the occupant it addressed: once that occupant leaves,
 /// its lane no longer delivers it, it dead-letters, and recovery refuses it,
 /// while the sender's own departure relabels nothing.

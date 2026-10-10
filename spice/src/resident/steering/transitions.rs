@@ -41,82 +41,10 @@ pub(in crate::resident) fn send(
             lane: send.lane,
             occupant,
             fanout: Some(send.fanout),
-            from: None,
             text: &send.message,
             attachments: &send.attachments,
         },
         typed_command(command, send.clone()),
-        effects,
-    )
-}
-
-/// Tell another seated lane something, as the authenticated sending lane.
-///
-/// A peer message is published exactly as direction is, so it is delivered,
-/// resent, retired, and lapses the same way, but its creating fact names the
-/// sending lane as actor and its body names that lane as `from`. It never
-/// fans out, and it lands only on another lane that is seated now.
-pub(in crate::resident) fn tell(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    config: &steer::Config,
-    command: &wire::AdmittedCommand,
-    tell: &wire::intent::SteerTell,
-    effects: &mut CommandEffects,
-) -> Outcome<CommandAnswer> {
-    let Actor::Lane(sender) = command.actor() else {
-        return refusal(
-            "steer::lane-required",
-            Some("lane".to_owned()),
-            Some(command.actor().to_string()),
-            "tell from a seated lane's shell; the operator's voice is `spice steer`",
-        );
-    };
-    let sender = *sender;
-    if tell.lane == sender {
-        return refusal(
-            "steer::tell-self",
-            Some("another lane".to_owned()),
-            Some(tell.lane.to_string()),
-            "name the lane that should hear this; a lane cannot tell itself",
-        );
-    }
-    if tell.message.trim().is_empty() {
-        return refusal(
-            "steer::message-empty",
-            Some("non-empty message".to_owned()),
-            Some(tell.message.clone()),
-            "supply text the other lane can act on",
-        );
-    }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let Some(occupant) = residency
-        .body()
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == tell.lane)
-        .and_then(|lane| lane.occupant)
-    else {
-        return lane_list_refusal(Some(tell.lane.to_string()));
-    };
-    publish(
-        bus,
-        epoch,
-        config,
-        command,
-        &residency,
-        Publication {
-            lane: tell.lane,
-            occupant: Some(occupant),
-            fanout: None,
-            from: Some(sender),
-            text: &tell.message,
-            attachments: &[],
-        },
-        typed_command(command, tell.clone()),
         effects,
     )
 }
@@ -126,7 +54,6 @@ struct Publication<'a> {
     lane: CanonicalUuid,
     occupant: Option<CanonicalUuid>,
     fanout: Option<CanonicalUuid>,
-    from: Option<CanonicalUuid>,
     text: &'a str,
     attachments: &'a [wire::body::DirectiveAttachment],
 }
@@ -134,7 +61,7 @@ struct Publication<'a> {
 /// Journal one new directive against the residency it witnessed.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one publication door shared by operator direction and peer messages"
+    reason = "the publication door takes each authority it guards separately"
 )]
 fn publish<B: serde::Serialize>(
     bus: &Bus,
@@ -184,7 +111,7 @@ fn publish<B: serde::Serialize>(
         key: key.to_string(),
         lane: publication.lane,
         text: publication.text.to_owned(),
-        from: publication.from,
+        from: None,
         control: None,
         attachments: publication.attachments.to_vec(),
         expires,

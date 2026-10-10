@@ -860,16 +860,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::recover"
     ),
     row!(
-        ["tell"],
-        "tell LANE TEXT",
-        Lane,
-        Command,
-        [SteerSent],
-        [Resident, LaneCapability],
-        Reply,
-        "steer::tell"
-    ),
-    row!(
         ["inbox"],
         "inbox [LANE] [--limit N] [--max-bytes N] [--max-text N] [--after ID]",
         OperatorOrLane,

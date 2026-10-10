@@ -55,7 +55,6 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["taste", "mine"] => CommandKind::TasteProposalAdd,
         ["doc"] => CommandKind::DocApply,
         ["doc", "ledger"] => CommandKind::DocLedger,
-        ["tell"] => CommandKind::SteerTell,
         _ => return None,
     })
 }

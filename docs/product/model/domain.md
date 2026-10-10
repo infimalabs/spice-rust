@@ -202,5 +202,8 @@ backup/restore: their closed historical kind, canonical request, identity,
 epoch, evaluated witnesses, response, and fact positions must agree. Schema 26
 is retired and names release `966d33bef`; the current runtime does not execute
 that crossing or restore the retired command to the executable registry.
+Receipts of the retired `steer::tell` command stay in place among current
+receipts under the same closed historical kind check: they verify, replay and
+back up as evidence, and no command can execute or reproduce them.
 
 ---
