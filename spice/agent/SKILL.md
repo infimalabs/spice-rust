@@ -67,7 +67,8 @@ generation reminder requires `spice task reclaim`, not acknowledgment prose.
 To message other seated occupants, first look up each recipient's address: a
 short code such as `6JRT`, never a lane name or UUID. Your briefing lists
 teammates' addresses under Peers, and `spice lane list` shows every lane's
-`address=`; `unavailable:REASON` means no occupant there can receive one now.
+`name=` and `address=`; `unavailable:REASON` means no occupant there can
+receive one now.
 Then write a line `MSG ADDRESS [ADDRESS ...]: BODY` in visible assistant text;
 a tool call's intent, reasoning, code and quotes never send. The body runs to
 the next placed ACK, NAK or MSG header or the end of that text block. A packet
