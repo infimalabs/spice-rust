@@ -766,7 +766,7 @@ mod tests {
             home: Some(home.to_path_buf()),
             cwd: Some(cwd.to_path_buf()),
             temp: temp.map(Path::to_path_buf),
-            checkout: crate::session_command::glance::repository,
+            checkout: crate::session_command::glance::unread,
         }
     }
 
@@ -783,7 +783,7 @@ mod tests {
             home: None,
             cwd: None,
             temp: None,
-            checkout: crate::session_command::glance::repository,
+            checkout: crate::session_command::glance::unread,
         }
     }
 

@@ -109,7 +109,8 @@ fn invoke_in(
     }
 }
 
-/// The session environment the rim would capture from exactly `variables`.
+/// The session environment the rim would capture from exactly `variables`,
+/// with briefings leaving the checkout's working state unread.
 fn ambient(current_dir: Option<&Path>, variables: &[(&str, String)]) -> super::Environment {
     let variable = |name: &str| {
         variables
@@ -137,6 +138,7 @@ fn ambient(current_dir: Option<&Path>, variables: &[(&str, String)]) -> super::E
         current_dir.map(Path::to_path_buf),
         Some(std::env::temp_dir()),
     )
+    .unglanced()
 }
 
 fn reply_forms(argv: &[String], environment: &[(&str, String)], expected: &str) -> Value {

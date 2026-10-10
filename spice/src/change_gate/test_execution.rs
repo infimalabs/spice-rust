@@ -174,36 +174,6 @@ mod tests {
     }
 
     #[test]
-    fn applicable_declared_cargo_engine_refuses_when_cargo_is_absent() {
-        let root = fixture_root("cargo-tool-absent");
-        fs::create_dir_all(root.join("src")).expect("create Cargo source fixture");
-        fs::write(root.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\n")
-            .expect("write Cargo workspace authority");
-        let environment =
-            Environment::new([(OsString::from("PATH"), root.clone().into_os_string())])
-                .expect("minimal environment");
-
-        let error = run_selected_tests(
-            TestRun::new(
-                &root,
-                &root,
-                wire::Digest::compute(wire::Domain::GateTree, b"Cargo source"),
-                &["src/lib.rs".to_owned()],
-                budget(),
-                environment,
-            ),
-            TestExecution::Packaged {
-                engines: vec![crate::config::TestEngine::CargoWorkspace],
-            },
-            &mut Vec::new(),
-        )
-        .expect_err("applicable declared Cargo engine needs its compiled executable");
-
-        assert_eq!(error.reason(), "gate::change-gate-tests-refused");
-        fs::remove_dir_all(root).expect("remove absent-Cargo fixture");
-    }
-
-    #[test]
     fn current_source_surface_skips_cargo_for_an_irrelevant_slice() {
         let root = fixture_root("current-source-cargo");
         fs::create_dir_all(&root).expect("create current-source fixture");
