@@ -830,9 +830,8 @@ a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) 
 .quota-detail-group { margin-top: 18px; }
 .quota-detail-group > h3 { margin: 0 0 9px; font-size: var(--app-type-subheading); }
 .quota-empty { margin: 0; color: var(--muted); font-size: var(--app-type-detail); }
-/* An empty list line is boxed like one list row, and no reports like one
-   card of one limit, so a refresh that adds the first entry moves nothing
-   below. */
+/* No reports is boxed like one card of one limit, so a refresh that adds the
+   first report moves nothing below. */
 .quota-detail-group { --quota-account-block: 5rem; }
 .quota-detail-group > .quota-empty {
   padding: 10px 12px;
