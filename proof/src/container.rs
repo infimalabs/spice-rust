@@ -151,6 +151,14 @@ pub struct OciRuntime {
     binary: PathBuf,
     launcher: Arc<dyn Launch>,
 }
+// The launcher is an execution seam, not part of the admitted runtime identity.
+impl PartialEq for OciRuntime {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.binary == other.binary
+    }
+}
+
+impl Eq for OciRuntime {}
 
 impl OciRuntime {
     /// Admit one executable whose bounded identity response names Docker or Podman.
