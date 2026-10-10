@@ -1035,9 +1035,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "phase_guidance:".to_owned(),
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
-            format!(
-                "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", then connect it with spice task depends {handle} CHILD."
-            ),
+            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; task add connects it to this ambient plan automatically."
+                .to_owned(),
+            "  --depends names the new task's own prerequisites and suppresses that automatic parent link; use task depends explicitly when both relations are intended."
+                .to_owned(),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
             format!(
@@ -1050,8 +1051,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
         format!(
-            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create accepted children with spice task add \"...\" --project PROJECT --acceptance \"...\" and connect them with spice task depends {handle} CHILD."
+            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which connects it to this ambient plan automatically."
         ),
+        "  --depends names the new task's own prerequisites and suppresses that automatic parent link; use task depends explicitly when both relations are intended."
+            .to_owned(),
         "  Planning changes board state, not repository files; do not edit or commit implementation."
             .to_owned(),
         format!(

@@ -259,6 +259,11 @@ fn create_task<B: serde::Serialize>(
         require_taste_review(&mut tags);
     }
     let post = prepared_entry(&mut prepared, &tags, projects);
+    let ambient_plan =
+        match prepare_ambient_plan_edit(&snapshot, command, add, &prepared.statement, projects) {
+            Ok(edit) => edit,
+            Err(outcome) => return outcome,
+        };
     let added_claim = if add.claim {
         match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
             Ok(claim) => Some(claim),
@@ -280,9 +285,84 @@ fn create_task<B: serde::Serialize>(
         tags,
         taste_review.as_ref().filter(|review| review.required()),
         dependency_witnesses,
+        ambient_plan,
         |_| {},
         added_claim,
     )
+}
+
+struct AmbientPlanEdit {
+    statement: TaskHead,
+}
+
+fn prepare_ambient_plan_edit(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    child: &TaskHead,
+    projects: &ProjectPolicy,
+) -> Result<Option<AmbientPlanEdit>, Outcome<CommandAnswer>> {
+    if !add.depends.is_empty() || !matches!(command.actor(), Actor::Lane(_)) {
+        return Ok(None);
+    }
+    let task = match claim_capture_from_board(&snapshot.answer) {
+        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => task,
+        gate::ClaimCapture::Absent { reason } => {
+            return Err(protocol_fault("claim::active-ambiguous", &reason));
+        }
+        _ => return Ok(None),
+    };
+    let heads = named_task_heads(&snapshot.answer, &task)?;
+    for witness in [
+        statement_witness(heads),
+        workflow_witness(heads),
+        claim_witness(heads),
+    ] {
+        if !command.expected().contains(&witness) {
+            return Err(refusal(
+                "task::plan-link-witness-missing",
+                Some(format!("{witness:?}")),
+                "read the current ambient plan claim before creating its child",
+            ));
+        }
+    }
+    let Some(parent) = task_entry(&snapshot.entries, &task) else {
+        return Err(refusal(
+            "task::unknown",
+            Some(task.to_string()),
+            "read the current ambient plan task before creating its child",
+        ));
+    };
+    if parent.workflow().status != "pending" || parent.workflow().phase.as_str() != "plan" {
+        return Err(refusal(
+            "task::plan-link-parent-moved",
+            Some(parent.handle().to_string()),
+            "create the child while the ambient task remains pending in plan",
+        ));
+    }
+    let mut statement = parent.statement().clone();
+    if statement.dependencies.contains(&child.born) {
+        return Err(refusal(
+            "task::dependency-refused",
+            Some(format!("{} after {}", parent.handle(), child.born)),
+            "create one new child that is not already connected to the ambient plan",
+        ));
+    }
+    statement.dependencies.push(child.born.clone());
+    if let Err(error) = Entry::new(
+        statement.clone(),
+        parent.workflow().clone(),
+        parent.claim().cloned(),
+        parent.lease().cloned(),
+        projects,
+    ) {
+        return Err(refusal(
+            "task::dependency-refused",
+            Some(error.to_string()),
+            "create a child that keeps the ambient plan dependency graph valid",
+        ));
+    }
+    Ok(Some(AmbientPlanEdit { statement }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -298,6 +378,7 @@ fn commit_prepared_task<B, F>(
     tags: Vec<String>,
     taste_review: Option<&TasteReview>,
     dependency_witnesses: Vec<Witness>,
+    ambient_plan: Option<AmbientPlanEdit>,
     extra_guard: F,
     added_claim: Option<PreparedClaim>,
 ) -> Outcome<CommandAnswer>
@@ -372,6 +453,11 @@ where
         ..statement
     });
     write.workflow_head(prepared.born.clone(), added, move |_| prepared.workflow);
+    if let Some(edit) = ambient_plan
+        && let Err(outcome) = append_ambient_plan_edit(&mut write, edit, added)
+    {
+        return outcome;
+    }
     if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.born, added) {
         return outcome;
     }
@@ -397,6 +483,33 @@ where
         return store_fault("task::add-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn append_ambient_plan_edit(
+    write: &mut JournalWrite,
+    edit: AmbientPlanEdit,
+    child: PendingFact,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let revision = u32::try_from(edit.statement.revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let dependencies = edit.statement.dependencies.clone();
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: edit.statement.born.clone(),
+                revision,
+                dependencies: Some(dependencies),
+                notice: None,
+            },
+            FactCause::Pending(child),
+        )
+        .map_err(|error| store_fault("task::add-plan-link-build", &error.to_string()))?;
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..edit.statement
+    });
+    Ok(())
 }
 
 fn prepared_entry(

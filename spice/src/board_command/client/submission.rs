@@ -17,6 +17,18 @@ pub(super) fn client_add(
         .flatten()
         .cloned()
         .collect();
+    let depends = match matches
+        .get_many::<String>("depends")
+        .into_iter()
+        .flatten()
+        .map(|written| written.parse::<TaskHandle>())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(depends) => depends,
+        Err(error) => {
+            return refusal("task::dependency-invalid", None, &error.to_string());
+        }
+    };
     let requirements = match environment_requirements(
         matches
             .get_one::<String>("requires-journal-schema")
@@ -50,7 +62,7 @@ pub(super) fn client_add(
         requirements,
         origin,
         flow: matches.get_one::<String>("flow").cloned(),
-        depends: Vec::new(),
+        depends,
         claim: claim || recover,
     };
     if recover {
@@ -295,6 +307,7 @@ fn submit_task_add_with_rule(
         |board| {
             let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
             let mut expected = vec![Witness::Absence { task: stamp }];
+            append_ambient_plan_witnesses(&board, &body, &mut expected)?;
             if body.claim {
                 let (lane, occupant) = actor_seat(&board)?;
                 expected.push(Witness::Eligibility {
@@ -310,6 +323,29 @@ fn submit_task_add_with_rule(
         },
     );
     attach_steering_origin_artifacts(repository, steering_origin.as_ref(), outcome)
+}
+
+fn append_ambient_plan_witnesses(
+    board: &BoardAnswer,
+    add: &TaskAdd,
+    expected: &mut Vec<Witness>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if !add.depends.is_empty() || !matches!(board.principal, Actor::Lane(_)) {
+        return Ok(());
+    }
+    match claim_capture_from_board(board) {
+        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => {
+            let heads = named_task_heads(board, &task)?;
+            expected.push(statement_witness(heads));
+            expected.push(workflow_witness(heads));
+            expected.push(claim_witness(heads));
+            Ok(())
+        }
+        gate::ClaimCapture::Absent { reason } => {
+            Err(protocol_fault("claim::active-ambiguous", &reason))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn attach_steering_origin_artifacts(

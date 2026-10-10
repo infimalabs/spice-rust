@@ -280,3 +280,223 @@ fn dependency_phase_movement_refuses_creation_with_the_stale_flow() {
     );
     clean(&root, bus);
 }
+
+fn ambient_add_expected(
+    answer: &BoardAnswer,
+    parent: &TaskHandle,
+    child: wire::TaskStamp,
+) -> Vec<Witness> {
+    let parent = at(answer, parent);
+    vec![
+        Witness::Absence { task: child },
+        statement_witness(parent),
+        workflow_witness(parent),
+        claim_witness(parent),
+    ]
+}
+
+fn accepted_child() -> TaskAdd {
+    let mut add = dependent_add(Vec::new(), Some("todo,review"));
+    add.acceptance = vec!["the implementation has a checkable contract".to_owned()];
+    add
+}
+
+#[test]
+fn a_plan_claim_adds_its_accepted_child_and_can_complete_without_a_second_command() {
+    let (root, bus, epoch, seats) = fixture("ambient-plan-child", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let plan = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-ambient01",
+        "Plan-only parent",
+        Some("plan"),
+    );
+    claim_task(&bus, epoch, seat, &lane, &plan);
+    let held = board(&bus, epoch, lane.clone());
+    let child_born = stamp("PLAN-child0001");
+    let child = TaskHandle::for_project("task.workflow", &child_born);
+    let add = accepted_child();
+
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(range),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskAdd,
+        ambient_add_expected(&held, &plan, child_born.clone()),
+        &add,
+    )
+    else {
+        panic!("ambient plan child creation did not commit")
+    };
+    let kinds = bus
+        .fact_snapshot()
+        .expect("fixture facts remain readable")
+        .facts()
+        .iter()
+        .filter(|fact| fact.seq >= range.first && fact.seq <= range.last)
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&wire::FactKind::TaskAdded));
+    assert!(kinds.contains(&wire::FactKind::TaskEdited));
+    let linked = board(&bus, epoch, lane.clone());
+    assert_eq!(at(&linked, &plan).statement.body.dependencies, [child_born]);
+    assert!(at(&linked, &child).statement.body.dependencies.is_empty());
+
+    let expected = progress_witnesses(&linked, at(&linked, &plan), seat.lane, seat.occupant, false)
+        .expect("the linked accepted child admits plan completion");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        expected,
+        &TaskDone {
+            task: plan,
+            validation: "accepted implementation child is connected".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+    clean(&root, bus);
+}
+
+#[test]
+fn explicit_dependencies_suppress_the_ambient_link() {
+    let (root, bus, epoch, seats) = fixture("ambient-plan-override", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let prerequisite = todo_task(&bus, epoch, "PLAN-prereq001", "Explicit prerequisite");
+    let plan = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-override1",
+        "Planning parent",
+        Some("plan"),
+    );
+    let planner = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &planner, &plan);
+    let explicit_born = stamp("PLAN-explicit1");
+    let explicit = TaskHandle::for_project("task.workflow", &explicit_born);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        planner,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: explicit_born.clone(),
+        }],
+        &dependent_add(vec![prerequisite.clone()], Some("todo")),
+    ));
+    let after_explicit = board(&bus, epoch, Actor::Operator);
+    assert!(
+        at(&after_explicit, &plan)
+            .statement
+            .body
+            .dependencies
+            .is_empty()
+    );
+    assert_eq!(
+        at(&after_explicit, &explicit).statement.body.dependencies,
+        [prerequisite
+            .born()
+            .expect("fixture prerequisite has a birth stamp")]
+    );
+
+    clean(&root, bus);
+}
+
+#[test]
+fn a_non_plan_claim_does_not_gain_the_created_task_as_a_dependency() {
+    let (root, bus, epoch, seats) = fixture("ambient-non-plan", 1);
+    let seat = &seats[0];
+    authorize_lane_creation(&bus, epoch, seat);
+    let todo = todo_task(&bus, epoch, "PLAN-todo0002", "Implementation parent");
+    let implementer = Actor::Lane(seat.lane);
+    claim_task(&bus, epoch, seat, &implementer, &todo);
+    let ordinary_born = stamp("PLAN-ordinary1");
+    let ordinary = TaskHandle::for_project("task.workflow", &ordinary_born);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        implementer,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: ordinary_born,
+        }],
+        &accepted_child(),
+    ));
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(at(&current, &todo).statement.body.dependencies.is_empty());
+    assert!(
+        at(&current, &ordinary)
+            .statement
+            .body
+            .dependencies
+            .is_empty()
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn ambient_plan_movement_refuses_child_creation() {
+    let (root, bus, epoch, seats) = fixture("ambient-plan-race", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let plan = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-moving001",
+        "Moving plan",
+        Some("plan"),
+    );
+    let competing = todo_task(&bus, epoch, "PLAN-compete01", "Competing child");
+    claim_task(&bus, epoch, seat, &lane, &plan);
+    let held = board(&bus, epoch, lane.clone());
+    let child_born = stamp("PLAN-stale0001");
+    let child = TaskHandle::for_project("task.workflow", &child_born);
+    let add = accepted_child();
+    let command = fixture_command(
+        epoch,
+        lane,
+        CommandKind::TaskAdd,
+        ambient_add_expected(&held, &plan, child_born),
+        &add,
+    );
+
+    let outcome = task_add_with(
+        &bus,
+        &command,
+        &add,
+        None,
+        &guard_projects(),
+        &board::NextConfig::default(),
+        || add_dependency(&bus, epoch, &plan, &competing),
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "board::witness-moved"),
+        "ambient plan movement must refuse stale child creation: {outcome:?}",
+    );
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(
+        current
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.handle != child)
+    );
+    assert_eq!(
+        at(&current, &plan).statement.body.dependencies,
+        [competing
+            .born()
+            .expect("fixture competitor has a birth stamp")]
+    );
+    clean(&root, bus);
+}

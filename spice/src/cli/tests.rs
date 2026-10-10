@@ -423,6 +423,10 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
             "Status reports counts",
             "--acceptance",
             "Origin survives creation",
+            "--depends",
+            "TASK-1k4Q5gJw",
+            "--depends",
+            "TASK-1k4Q5gJx",
             "--origin",
             "task:CLI-parent",
         ])
@@ -438,6 +442,13 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         ["Status reports counts", "Origin survives creation"]
+    );
+    assert_eq!(
+        leaf.get_many::<String>("depends")
+            .expect("dependency values")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["TASK-1k4Q5gJw", "TASK-1k4Q5gJx"]
     );
     assert_eq!(
         leaf.get_one::<String>("origin").map(String::as_str),
