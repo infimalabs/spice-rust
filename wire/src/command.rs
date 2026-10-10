@@ -66,7 +66,7 @@ pub enum CommandKind {
     TaskDefer,
     /// Clear the current deferral.
     TaskWake,
-    /// Wire a dependency edge between two existing tasks.
+    /// Add or remove dependency edges between existing tasks.
     TaskDepends,
     /// Advance the claimed phase.
     TaskPhase,

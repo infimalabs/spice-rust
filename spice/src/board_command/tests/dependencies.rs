@@ -44,6 +44,59 @@ pub(super) fn dependency_witnesses(
     expected
 }
 
+pub(super) fn dependency_removal_witnesses(
+    answer: &BoardAnswer,
+    task: &TaskHandle,
+    after: &[&TaskHandle],
+    seat: Option<&Seat>,
+    review: bool,
+) -> Vec<Witness> {
+    let heads = at(answer, task);
+    let mut expected = if let Some(seat) = seat {
+        progress_witnesses(answer, heads, seat.lane, seat.occupant, review)
+            .expect("claimed dependency removal has possession witnesses")
+    } else {
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ]
+    };
+    for dependency in after {
+        let prerequisite = at(answer, dependency);
+        expected.extend([
+            statement_witness(prerequisite),
+            workflow_witness(prerequisite),
+        ]);
+    }
+    if heads.workflow.body.phase.as_str() == "plan"
+        && (heads.workflow.body.flow.len() == 1
+            || !substantive_acceptance(&heads.statement.body.acceptance))
+    {
+        for dependency in &heads.statement.body.dependencies {
+            let child = answer
+                .tasks
+                .iter()
+                .find(|heads| heads.statement.body.born == *dependency)
+                .expect("remaining plan dependency resolves");
+            if after
+                .iter()
+                .any(|removed| **removed == child.statement.body.handle)
+            {
+                continue;
+            }
+            if child.workflow.body.status == "pending"
+                && substantive_acceptance(&child.statement.body.acceptance)
+            {
+                expected.push(statement_witness(child));
+                expected.push(workflow_witness(child));
+                break;
+            }
+        }
+    }
+    expected
+}
+
 pub(super) fn todo_task(bus: &Bus, epoch: CanonicalUuid, task: &str, title: &str) -> TaskHandle {
     add(bus, epoch, Actor::Operator, task, title, Some("todo"))
 }
@@ -77,6 +130,7 @@ fn active_todo_claim_appends_atomically_without_moving_possession() {
         &TaskDepends {
             task: todo.clone(),
             after: vec![first.clone(), first.clone(), second.clone()],
+            remove: false,
         },
     )) else {
         panic!("dependency edit returned another answer")
@@ -122,6 +176,7 @@ fn duplicate_claimed_dependencies_advance_the_revision_without_adding_edges() {
         &TaskDepends {
             task: todo.clone(),
             after: vec![dependency.clone()],
+            remove: false,
         },
     ));
     let after = board(&bus, epoch, lane.clone());
@@ -137,6 +192,7 @@ fn duplicate_claimed_dependencies_advance_the_revision_without_adding_edges() {
         &TaskDepends {
             task: todo.clone(),
             after: vec![dependency],
+            remove: false,
         },
     )) else {
         panic!("duplicate dependency edit returned another answer")
@@ -189,6 +245,7 @@ fn active_review_claim_survives_a_dependency_edit_and_restart() {
         &TaskDepends {
             task: review.clone(),
             after: vec![dependency],
+            remove: false,
         },
     ));
     let reviewed = board(&bus, epoch, Actor::Operator);
@@ -234,6 +291,7 @@ fn dependency_cycle_refuses_the_whole_requested_edit() {
         &TaskDepends {
             task: second.clone(),
             after: vec![first],
+            remove: false,
         },
     );
     assert!(
@@ -266,6 +324,7 @@ fn omitted_intermediate_witness_refuses_after_the_graph_moves_toward_a_cycle() {
     let intent = TaskDepends {
         task: target.clone(),
         after: vec![direct],
+        remove: false,
     };
     let command = fixture_command(
         epoch,
@@ -325,6 +384,7 @@ fn foreign_actor_edits_dependencies_without_moving_the_active_claim() {
         &TaskDepends {
             task: task.clone(),
             after: vec![dependency.clone()],
+            remove: false,
         },
     ));
     let edited = board(&bus, epoch, Actor::Operator);
@@ -376,6 +436,7 @@ fn a_freed_claim_does_not_block_a_dependency_edit() {
         &TaskDepends {
             task: task.clone(),
             after: vec![dependency.clone()],
+            remove: false,
         },
     ));
     let edited = board(&bus, epoch, Actor::Operator);
@@ -384,5 +445,178 @@ fn a_freed_claim_does_not_block_a_dependency_edit() {
         [at(&edited, &dependency).statement.body.born.clone()],
     );
     assert_eq!(at(&edited, &task).claim.as_ref(), Some(&freed));
+    clean(&root, bus);
+}
+
+#[test]
+fn lane_removes_one_dependency_and_absent_edge_refuses_without_writing() {
+    let (root, bus, epoch, seats) = fixture("remove-dependency", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = todo_task(&bus, epoch, "REMOVE-task001", "Task edited by a lane");
+    let first = todo_task(&bus, epoch, "REMOVE-first01", "First prerequisite");
+    let second = todo_task(&bus, epoch, "REMOVE-second1", "Second prerequisite");
+    let before = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDepends,
+        dependency_witnesses(&before, &task, &[&first, &second], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![first.clone(), second.clone()],
+            remove: false,
+        },
+    ));
+
+    let connected = board(&bus, epoch, lane.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&connected, &task, &[&first], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![first.clone()],
+            remove: true,
+        },
+    ));
+    let removed = board(&bus, epoch, lane.clone());
+    assert_eq!(
+        at(&removed, &task).statement.body.dependencies,
+        [at(&removed, &second).statement.body.born.clone()],
+    );
+
+    let statement = at(&removed, &task).statement.position;
+    let outcome = issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&removed, &task, &[&first], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![first],
+            remove: true,
+        },
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::dependency-absent"),
+        "an absent dependency removal must refuse: {outcome:?}",
+    );
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &task)
+            .statement
+            .position,
+        statement,
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn plan_cannot_remove_the_only_pending_child_carrying_acceptance() {
+    let (root, bus, epoch, _) = fixture("remove-plan-acceptance", 1);
+    let plan = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-plan001",
+        "Plan-only parent",
+        "board.test",
+        Some("plan"),
+        &[],
+    );
+    let child = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-child01",
+        "Accepted child",
+        "board.test",
+        Some("todo"),
+        &["the implementation behavior is verified"],
+    );
+    connect_child(&bus, epoch, &plan, &child);
+    let before = board(&bus, epoch, Actor::Operator);
+    let outcome = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&before, &plan, &[&child], None, false),
+        &TaskDepends {
+            task: plan.clone(),
+            after: vec![child.clone()],
+            remove: true,
+        },
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::plan-acceptance-orphaned"),
+        "orphaning plan acceptance must refuse: {outcome:?}",
+    );
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&current, &plan).statement.body.dependencies,
+        [at(&current, &child).statement.body.born.clone()],
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn plan_removes_one_child_while_another_pending_child_carries_acceptance() {
+    let (root, bus, epoch, _) = fixture("remove-one-plan-child", 1);
+    let plan = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-plan002",
+        "Plan-only parent",
+        "board.test",
+        Some("plan"),
+        &[],
+    );
+    let first = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-child02",
+        "First accepted child",
+        "board.test",
+        Some("todo"),
+        &["the first implementation behavior is verified"],
+    );
+    let second = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-child03",
+        "Remaining accepted child",
+        "board.test",
+        Some("todo"),
+        &["the remaining implementation behavior is verified"],
+    );
+    connect_child(&bus, epoch, &plan, &first);
+    connect_child(&bus, epoch, &plan, &second);
+    let before = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&before, &plan, &[&first], None, false),
+        &TaskDepends {
+            task: plan.clone(),
+            after: vec![first],
+            remove: true,
+        },
+    ));
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&current, &plan).statement.body.dependencies,
+        [at(&current, &second).statement.body.born.clone()],
+    );
     clean(&root, bus);
 }

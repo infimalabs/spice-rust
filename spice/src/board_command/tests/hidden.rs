@@ -655,6 +655,7 @@ pub(super) fn add_dependency(
         &TaskDepends {
             task: alpha.clone(),
             after: vec![beta.clone()],
+            remove: false,
         },
     ));
 }

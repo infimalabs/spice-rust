@@ -627,7 +627,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "depends"],
-        "task depends HANDLE AFTER...",
+        "task depends HANDLE AFTER... [--remove]",
         OperatorOrLane,
         Command,
         [TaskEdited],

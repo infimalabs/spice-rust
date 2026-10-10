@@ -81,6 +81,7 @@ fn connected_lane_reads_stable_origin_dependency_lifecycle_and_live_claim_nodes(
         &TaskDepends {
             task: task.clone(),
             after: vec![parent.clone()],
+            remove: false,
         },
     ));
 

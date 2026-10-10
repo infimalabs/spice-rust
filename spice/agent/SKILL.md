@@ -128,7 +128,10 @@ command for more.
   ambient plan automatically. `task add --depends` instead names the new
   task's own prerequisites and suppresses that link. If an acceptance-bearing
   child still lacks its parent edge, repair it with
-  `spice task depends PARENT CHILD...`, then `spice task free HANDLE`.
+  `spice task depends PARENT CHILD...`. If the child was instead gated behind
+  the plan, first remove that reverse edge with
+  `spice task depends CHILD PARENT --remove`, then add the parent edge. Free
+  the plan only after its acceptance-bearing children are connected.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

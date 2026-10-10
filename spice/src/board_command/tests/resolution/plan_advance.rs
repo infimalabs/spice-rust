@@ -93,6 +93,7 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
         &TaskDepends {
             task: plan.clone(),
             after: vec![child.clone()],
+            remove: false,
         },
     ));
 
@@ -310,4 +311,83 @@ fn assert_plan_release_and_replay(
     };
     assert_eq!(&replayed, answer);
     released
+}
+
+#[test]
+fn gated_plan_reverses_its_edge_and_then_completes() {
+    let (root, bus, epoch, seats) = fixture("reverse-gated-plan", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let plan = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qn",
+        "Plan-only parent",
+        &[],
+        Some("plan"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &plan);
+    let child = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qp",
+        "Accepted implementation",
+        &["the implementation behavior is verified"],
+        Some("todo"),
+    );
+    connect_child(&bus, epoch, &child, &plan);
+
+    let gated = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&gated, &child, &[&plan], None, false),
+        &TaskDepends {
+            task: child.clone(),
+            after: vec![plan.clone()],
+            remove: true,
+        },
+    ));
+    let ungated = board(&bus, epoch, Actor::Operator);
+    assert!(at(&ungated, &child).statement.body.dependencies.is_empty(),);
+    connect_child(&bus, epoch, &plan, &child);
+    let organized = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&organized, &plan).statement.body.dependencies,
+        [at(&organized, &child).statement.body.born.clone()],
+    );
+
+    let held = board(&bus, epoch, lane.clone());
+    let done = TaskDone {
+        task: plan.clone(),
+        validation: "accepted child now follows the plan".to_owned(),
+        operation: Some(completion_operation()),
+    };
+    let CommandAnswer::Task(answer) = assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &held,
+            at(&held, &plan),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("plan-only completion carries child witnesses"),
+        &done,
+    )) else {
+        panic!("plan-only completion returned another answer")
+    };
+    assert_eq!(answer.status, "completed");
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &plan)
+            .workflow
+            .body
+            .status,
+        "completed",
+    );
+    clean(&root, bus);
 }

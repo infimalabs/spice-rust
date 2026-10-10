@@ -846,8 +846,55 @@ pub(super) fn task_depends_with(
             );
         }
     };
+    if depends.remove
+        && post.workflow().phase.as_str() == "plan"
+        && (post.workflow().flow.len() == 1
+            || !substantive_acceptance(&post.statement().acceptance))
+    {
+        match accepted_pending_child(&snapshot, &post) {
+            Ok(Some(child)) => {
+                if let Err(outcome) = require_dependency_witness(
+                    command,
+                    &statement_witness(child),
+                    "read the current plan and its remaining accepted child before removing a dependency",
+                ) {
+                    return outcome;
+                }
+                if let Err(outcome) = require_dependency_witness(
+                    command,
+                    &workflow_witness(child),
+                    "read the current plan and its remaining accepted child before removing a dependency",
+                ) {
+                    return outcome;
+                }
+            }
+            Ok(None) => {
+                return refusal(
+                    "task::plan-acceptance-orphaned",
+                    Some(entry.handle().to_string()),
+                    "retain a pending dependency carrying acceptance while the plan relies on one",
+                );
+            }
+            Err(outcome) => return outcome,
+        }
+    }
     let next = next_action(&snapshot, &post);
     commit_dependency_edit(bus, command, depends, entry, statement, next, at)
+}
+
+fn require_dependency_witness(
+    command: &wire::AdmittedCommand,
+    witness: &Witness,
+    remedy: &str,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if command.expected().contains(witness) {
+        return Ok(());
+    }
+    Err(refusal(
+        "task::dependency-witness-missing",
+        Some(format!("{witness:?}")),
+        remedy,
+    ))
 }
 
 fn require_dependency_reachability_witnesses(
@@ -868,11 +915,11 @@ fn require_dependency_reachability_witnesses(
         .iter()
         .find(|witness| !command.expected().contains(witness));
     if let Some(missing) = missing {
-        return Err(refusal(
-            "task::dependency-witness-missing",
-            Some(format!("{missing:?}")),
+        return require_dependency_witness(
+            command,
+            missing,
             "read the complete current prerequisite graph before editing dependencies",
-        ));
+        );
     }
     Ok(())
 }
@@ -981,6 +1028,25 @@ fn dependency_statement(
         resolved.push(prerequisite);
     }
     let mut statement = entry.statement().clone();
+    if depends.remove {
+        for prerequisite in resolved {
+            if !entry.statement().dependencies.contains(prerequisite.born()) {
+                return Err(refusal(
+                    "task::dependency-absent",
+                    Some(format!(
+                        "{} after {}",
+                        entry.handle(),
+                        prerequisite.handle()
+                    )),
+                    "name a dependency edge currently present on the task",
+                ));
+            }
+            statement
+                .dependencies
+                .retain(|dependency| dependency != prerequisite.born());
+        }
+        return Ok(statement);
+    }
     let mut added = Vec::new();
     for prerequisite in resolved {
         if prerequisite.born() == entry.born() {

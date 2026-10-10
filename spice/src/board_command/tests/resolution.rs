@@ -1078,6 +1078,7 @@ pub(super) fn connect_child(
         &TaskDepends {
             task: parent.clone(),
             after: vec![child.clone()],
+            remove: false,
         },
     ));
 }
