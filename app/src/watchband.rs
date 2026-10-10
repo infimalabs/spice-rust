@@ -115,6 +115,8 @@ pub struct Standing {
     pub pending: usize,
     /// Waiting directives that can wake the lane; only these mark it queued.
     pub waking: usize,
+    /// This browser's own wake for the lane still awaits residency or refusal.
+    pub wake_pending: bool,
     /// Producer-supplied preview of the newest waiting directive.
     pub headline: Option<String>,
     /// Handle of the task the lane currently holds.
@@ -515,6 +517,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                         .filter(|directive| directive.wakes)
                         .count()
                 }),
+                wake_pending: false,
                 headline: waiting
                     .and_then(|row| row.pending.last())
                     .and_then(|directive| directive.preview.clone()),

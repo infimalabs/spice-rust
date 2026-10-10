@@ -24,6 +24,9 @@ pub(in crate::browser::watchband) struct SendSlot {
     pub attached: bool,
     /// A keyboard broadcast from this team fans out to this member.
     pub broadcast: bool,
+    /// The member is still vacant while a wake this browser sent for one of
+    /// its submissions awaits residency or refusal.
+    pub waking: bool,
 }
 
 #[derive(Properties, PartialEq)]
@@ -99,7 +102,16 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             },
         );
     }
-    let idle = props.dormant && !drafting.typed;
+    // Drafting or a wake in flight keeps the controls lit; only the absence of
+    // both lets a dormant team step back. Enabling SEND stays with drafting.
+    let waking = props
+        .slots
+        .iter()
+        .filter(|slot| slot.waking)
+        .map(|slot| slot.accent)
+        .collect::<Vec<_>>();
+    let stepped_back = props.dormant && !drafting.typed;
+    let idle = stepped_back && waking.is_empty();
     // A send that is refused outright reaches no one, so it lights nothing.
     let lit = if props.ready {
         drafting.lit.clone()
@@ -119,21 +131,25 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
         // rather than style attributes; broadcast previews select their
         // own rim without changing drafting state on modifier presses.
         let send = send.clone();
-        use_effect_with((lit.clone(), broadcast), move |(lit, broadcast)| {
-            if let Some(button) = send.cast::<web_sys::HtmlElement>() {
-                let style = button.style();
-                for (property, accents) in [
-                    ("--team-send-recipient-rim", lit),
-                    ("--team-send-broadcast-rim", broadcast),
-                ] {
-                    let _ = if accents.is_empty() {
-                        style.remove_property(property).map(drop)
-                    } else {
-                        style.set_property(property, &recipient_rim(accents))
-                    };
+        use_effect_with(
+            (lit.clone(), broadcast, waking.clone()),
+            move |(lit, broadcast, waking)| {
+                if let Some(button) = send.cast::<web_sys::HtmlElement>() {
+                    let style = button.style();
+                    for (property, accents) in [
+                        ("--team-send-recipient-rim", lit),
+                        ("--team-send-broadcast-rim", broadcast),
+                        ("--team-send-waking-rim", waking),
+                    ] {
+                        let _ = if accents.is_empty() {
+                            style.remove_property(property).map(drop)
+                        } else {
+                            style.set_property(property, &recipient_rim(accents))
+                        };
+                    }
                 }
-            }
-        });
+            },
+        );
     }
     html! {
         <aside
@@ -147,7 +163,7 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             {props.turbo.clone()}
             {props.menu.clone()}
             {props.children.clone()}
-            {send_button(send, idle || !props.ready, lit.len(), broadcast_count, props.slots.len())}
+            {send_button(send, stepped_back || !props.ready, lit.len(), broadcast_count, props.slots.len(), waking.len())}
         </aside>
     }
 }
@@ -158,11 +174,14 @@ fn send_button(
     recipients: usize,
     broadcast_recipients: usize,
     members: usize,
+    waking: usize,
 ) -> Html {
-    let title = match recipients {
-        0 => "Send".to_owned(),
-        1 => "Send to 1 agent".to_owned(),
-        count => format!("Send to {count} agents"),
+    let title = match (recipients, waking) {
+        (0, 0) => "Send".to_owned(),
+        (0, 1) => "Waking 1 agent".to_owned(),
+        (0, count) => format!("Waking {count} agents"),
+        (1, _) => "Send to 1 agent".to_owned(),
+        (count, _) => format!("Send to {count} agents"),
     };
     let full_send = members > 1 && recipients == members;
     let full_broadcast = members > 1 && broadcast_recipients == members;
@@ -202,6 +221,7 @@ fn send_button(
             data-broadcast-recipient-count={broadcast_recipients.to_string()}
             data-full-send={full_send.to_string()}
             data-full-broadcast={full_broadcast.to_string()}
+            data-waking={(waking != 0).to_string()}
             {disabled}
             {title}
             onpointerdown={touch_down}
