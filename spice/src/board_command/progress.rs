@@ -347,13 +347,18 @@ pub(super) fn accepted_pending_child<'a>(
 ) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
     for dependency in &entry.statement().dependencies {
         let child = visible_task(snapshot, dependency)?;
-        if child.workflow.body.status == "pending"
-            && substantive_acceptance(&child.statement.body.acceptance)
-        {
+        if pending_accepted(child) {
             return Ok(Some(child));
         }
     }
-    Ok(None)
+    Ok(snapshot.answer.tasks.iter().find(|child| {
+        child.statement.body.dependencies.contains(entry.born()) && pending_accepted(child)
+    }))
+}
+
+pub(super) fn pending_accepted(task: &BoardTask) -> bool {
+    task.workflow.body.status == "pending"
+        && substantive_acceptance(&task.statement.body.acceptance)
 }
 
 fn visible_task<'a>(

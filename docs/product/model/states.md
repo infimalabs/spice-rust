@@ -119,12 +119,14 @@ rather than refusing creation, because refusing at creation time discards the
 request along with the ambiguity.
 
 **Invariant —** The plan phase closes only when acceptance exists — on the task
-itself, or on at least one connected pending child. A plan that produced no
-statable outcome has not planned anything.
+itself, or on at least one pending child carrying acceptance. The child may be
+the plan's dependency or may depend on the plan; either edge connects the work,
+and completion witnesses the same child state. A plan that produced no statable
+outcome has not planned anything.
 
-**Invariant —** A plan-only flow must connect a child with acceptance. Its
-entire product is the board it leaves behind, so there is nothing else it could
-be permitted to exit on.
+**Invariant —** A plan-only flow must connect a pending child with acceptance
+in either dependency direction. Its entire product is the board it leaves
+behind, so there is nothing else it could be permitted to exit on.
 
 **Invariant —** Implementation is refused while a plan-phase claim is held, and
 a plan phase carrying local commits cannot advance. The refusal is what makes
