@@ -194,6 +194,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   scrollbar-width: none;
 }
 .app-horn-tab {
+  --app-horn-tab-tint: var(--muted);
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -242,15 +243,22 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   text-align: center;
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
-  background: color-mix(in srgb, var(--muted) 5%, var(--control));
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--control));
   color: var(--muted);
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button):hover {
   border-color: var(--line);
-  background: color-mix(in srgb, var(--muted) 10%, var(--control));
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--control));
+}
+.app-horn-tab__handle[data-accent]:hover {
+  border-color: var(--accent);
 }
 .app-horn-tab__handle.dormant {
   color: color-mix(in srgb, var(--muted) 62%, transparent);
+}
+.app-horn-tab__handle[data-accent] {
+  --app-horn-tab-tint: var(--accent-slot);
+  color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
 }
 .app-horn-tabs :focus-visible {
   outline: var(--app-focus-ring-width) solid var(--muted);
