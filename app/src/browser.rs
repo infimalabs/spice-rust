@@ -198,6 +198,21 @@ struct SurfaceHandles {
     notes: NoteComposers,
     /// Refusals the resident reports for actions no control is waiting on.
     refusals: toast::Toaster,
+    /// Whether leaving the document now would discard operator work.
+    unload: UnloadGuard,
+}
+
+/// Live view of the work a document unload would discard.
+///
+/// The connection loop outlives every render, so it reads the current
+/// unsafe intent through this shared cell rather than a captured snapshot.
+#[derive(Clone, Default)]
+struct UnloadGuard(Rc<Cell<bool>>);
+
+impl UnloadGuard {
+    fn loses_work(&self) -> bool {
+        self.0.get() || native_draft_present()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -620,6 +635,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.connection.branding_state(),
         remaining,
     ));
+    let unload = use_unload_guard(state.unsafe_intent);
     use_surface_connection(
         state.sender.clone(),
         SurfaceHandles {
@@ -632,6 +648,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
             submissions: state.submissions.clone(),
             notes: state.task_detail.notes.clone(),
             refusals: state.sender.refusals.clone(),
+            unload,
         },
     );
     task_feedback::use_feedback(state);
@@ -749,32 +766,39 @@ fn use_unsafe_intent(
 }
 
 #[hook]
+fn use_unload_guard(unsafe_intent: bool) -> UnloadGuard {
+    let guard = (*use_memo((), |()| UnloadGuard::default())).clone();
+    guard.0.set(unsafe_intent);
+    guard
+}
+
+/// Whether an uncontrolled composer textarea still holds text.
+fn native_draft_present() -> bool {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector_all(".team-composer textarea, .work-note-composer textarea")
+                .ok()
+        })
+        .is_some_and(|textareas| {
+            (0..textareas.length()).any(|index| {
+                textareas
+                    .get(index)
+                    .and_then(|node| node.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+                    .is_some_and(|textarea| !textarea.value().is_empty())
+            })
+        })
+}
+
+#[hook]
 fn use_unsafe_intent_guard(unsafe_intent: bool) {
     use_effect_with(unsafe_intent, move |unsafe_intent| {
         let unsafe_intent = *unsafe_intent;
         let registration = web_sys::window().and_then(|window| {
             let callback =
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                    let has_native_draft = web_sys::window()
-                        .and_then(|window| window.document())
-                        .and_then(|document| {
-                            document
-                                .query_selector_all(
-                                    ".team-composer textarea, .work-note-composer textarea",
-                                )
-                                .ok()
-                        })
-                        .is_some_and(|textareas| {
-                            (0..textareas.length()).any(|index| {
-                                textareas
-                                    .get(index)
-                                    .and_then(|node| {
-                                        node.dyn_into::<web_sys::HtmlTextAreaElement>().ok()
-                                    })
-                                    .is_some_and(|textarea| !textarea.value().is_empty())
-                            })
-                        });
-                    if unsafe_intent || has_native_draft {
+                    if unsafe_intent || native_draft_present() {
                         event.prevent_default();
                         let _ = js_sys::Reflect::set(
                             event.as_ref(),
