@@ -37,14 +37,14 @@ pub(super) fn build(
             )
         })?;
 
-    let current = std::env::current_dir().map_err(|error| {
+    let current = environment.cwd.as_deref().ok_or_else(|| {
         refusal(
             "session::context-repository-unavailable",
-            Some(error.to_string()),
+            None,
             "run the retained command from the task repository",
         )
     })?;
-    let repository = Repository::discover(&current).map_err(|error| {
+    let repository = Repository::discover(current).map_err(|error| {
         refusal(
             spice::repository::ResolveError::REASON,
             Some(error.to_string()),

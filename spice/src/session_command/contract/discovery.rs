@@ -135,7 +135,7 @@ fn public_thread_refusal_preserves_an_incomplete_omp_search() {
 
     assert_eq!(
         spoken.code,
-        Some(REFUSAL_EXIT),
+        REFUSAL_EXIT,
         "refusal stdout: {} stderr: {}",
         utf8(&spoken.out),
         utf8(&spoken.err)

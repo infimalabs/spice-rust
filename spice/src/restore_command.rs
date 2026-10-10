@@ -25,7 +25,11 @@ pub(crate) fn verify(matches: &clap::ArgMatches) -> Outcome<RestoreVerification>
     let bundle = matches
         .get_one::<String>("BUNDLE")
         .expect("restore verify requires its generated BUNDLE operand");
-    match journal::verify_restore_bundle(Path::new(bundle)) {
+    verify_bundle(Path::new(bundle))
+}
+
+fn verify_bundle(bundle: &Path) -> Outcome<RestoreVerification> {
+    match journal::verify_restore_bundle(bundle) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body,
@@ -920,72 +924,4 @@ impl Failure {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Scratch(PathBuf);
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn interrupted_staging_preserves_the_predecessor_authority() {
-        let scratch = Scratch(std::env::temp_dir().join(format!(
-            "spice-restore-publication-{}",
-            uuid::Uuid::new_v4()
-        )));
-        let root = &scratch.0;
-        fs::create_dir(root).expect("exclusive scratch root is created");
-        let destination = root.join("spicejournal.sqlite3");
-        let predecessor = b"predecessor authority";
-        fs::write(&destination, predecessor).expect("write predecessor authority");
-        let mut captured = capture_current_authority(&destination)
-            .expect("predecessor capture succeeds")
-            .expect("predecessor exists");
-        assert_eq!(captured.bytes, predecessor.len() as u64);
-        assert_eq!(
-            captured.digest,
-            Digest::compute(Domain::JournalBackupMember, predecessor)
-        );
-
-        let error = publish_authority_with(&destination, |staged| {
-            staged.write_all(b"partial replacement")?;
-            Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "injected staging interruption",
-            ))
-        })
-        .expect_err("an interrupted staged write must refuse publication");
-
-        let Failure::Fault(fault) = error else {
-            panic!("an interrupted staged write was not an environment fault");
-        };
-        assert_eq!(fault.class, FaultClass::Environment);
-        assert_eq!(fault.reason, "restore::stage-failed");
-        assert_eq!(
-            fs::read(&destination).expect("read predecessor after interruption"),
-            predecessor,
-            "interrupted staging replaced the predecessor authority",
-        );
-        let entries = fs::read_dir(root)
-            .expect("read restore publication fixture")
-            .map(|entry| entry.expect("restore publication entry").path())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            entries.as_slice(),
-            std::slice::from_ref(&destination),
-            "interrupted staging left a temporary publication behind",
-        );
-
-        fs::write(&destination, b"later authority").expect("replace authority after capture");
-        publish_authority_with(&destination, |staged| captured.copy_to(staged).map(|_| ()))
-            .expect("captured predecessor republishes");
-        assert_eq!(
-            fs::read(&destination).expect("read republished predecessor"),
-            predecessor,
-        );
-    }
-}
+mod tests;

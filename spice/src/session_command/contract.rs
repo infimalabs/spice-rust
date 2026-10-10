@@ -1,23 +1,21 @@
+//! Session command contracts, driven through the parser, `run`, and the rim
+//! renderer exactly as the binary dispatches them, with an explicit ambient
+//! environment instead of the test process's own.
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
-#[path = "session_cli/authority.rs"]
+use crate::render::{self, Form, Stream};
+
 mod authority;
-#[path = "session_cli/compaction_authority.rs"]
 mod compaction_authority;
-#[path = "session_cli/discovery.rs"]
 mod discovery;
-#[path = "session_cli/fixtures.rs"]
 mod fixtures;
-#[path = "session_cli/message_shape.rs"]
 mod message_shape;
-#[path = "session_cli/recovery.rs"]
 mod recovery;
-#[path = "session_cli/window_planner.rs"]
 mod window_planner;
 
 use fixtures::{assert_commit_rows, assert_filtered_timeline};
@@ -55,8 +53,9 @@ impl Drop for Scratch {
     }
 }
 
+/// One rendered outcome: its exit code and the single stream it spoke on.
 struct Spoken {
-    code: Option<i32>,
+    code: i32,
     out: Vec<u8>,
     err: Vec<u8>,
 }
@@ -65,30 +64,79 @@ fn invoke(argv: &[String], environment: &[(&str, String)]) -> Spoken {
     invoke_in(None, argv, environment)
 }
 
+/// Parse `argv` as the binary does, run the selected session leaf against an
+/// environment holding only `environment`, and render its outcome.
+///
+/// Without `current_dir` the reader has no working directory, so no case
+/// reaches the repository the test process happens to run in.
 fn invoke_in(
     current_dir: Option<&Path>,
     argv: &[String],
     environment: &[(&str, String)],
 ) -> Spoken {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-    command
-        .args(argv)
-        .env_remove("PI_CODING_AGENT_DIR")
-        .env_remove(vendor::omp::SESSION_ENVIRONMENT)
-        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
-        .env_remove(spice::agent_launch::SPICE_RS_LANE);
-    if let Some(current_dir) = current_dir {
-        command.current_dir(current_dir);
-    }
-    for (name, value) in environment {
-        command.env(name, value);
-    }
-    let output = command.output().expect("spice session process launches");
+    let matches = crate::cli::command()
+        .try_get_matches_from(std::iter::once("spice").chain(argv.iter().map(String::as_str)))
+        .expect("session argv parses");
+    let contract =
+        crate::cli::selected_contract(&matches).expect("the parser selects a registered leaf");
+    assert_eq!(
+        contract.path[0], "session",
+        "the harness runs session leaves"
+    );
+    let form = if crate::cli::json_selected(&matches) {
+        Form::Json
+    } else {
+        Form::Text
+    };
+    let ambient = ambient(current_dir, environment);
+    let outcome = super::run(
+        crate::cli::selected_matches(&matches),
+        contract.path,
+        &ambient,
+        None,
+    );
+    let rendering = render::render_with_reply_text(&outcome, form, super::Report::text)
+        .expect("the session outcome renders");
+    let document = rendering.document().to_vec();
+    let (out, err) = match rendering.stream() {
+        Stream::Out => (document, Vec::new()),
+        Stream::Err => (Vec::new(), document),
+    };
     Spoken {
-        code: output.status.code(),
-        out: output.stdout,
-        err: output.stderr,
+        code: crate::main_tail::exit_status(&outcome),
+        out,
+        err,
     }
+}
+
+/// The session environment the rim would capture from exactly `variables`.
+fn ambient(current_dir: Option<&Path>, variables: &[(&str, String)]) -> super::Environment {
+    let variable = |name: &str| {
+        variables
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| std::ffi::OsString::from(value))
+    };
+    let vendors = spice::extension::registry()
+        .expect("compiled extension declarations are coherent")
+        .session_vendors()
+        .into_iter()
+        .map(|vendor| {
+            super::VendorEnvironment::new(
+                vendor,
+                variable(vendor.thread_id_environment()),
+                variable(vendor.transcript_layout().home_environment),
+            )
+        })
+        .collect();
+    super::Environment::new(
+        vendors,
+        variable("SPICE_AGENT_VENDOR"), // env-policy: allow
+        variable("HOME"),
+        current_dir.map(Path::to_path_buf),
+        Some(std::env::temp_dir()),
+    )
 }
 
 fn reply_forms(argv: &[String], environment: &[(&str, String)], expected: &str) -> Value {
@@ -102,7 +150,7 @@ fn reply_forms_in(
     expected: &str,
 ) -> Value {
     let text = invoke_in(current_dir, argv, environment);
-    assert_eq!(text.code, Some(0), "text stderr: {}", utf8(&text.err));
+    assert_eq!(text.code, 0, "text stderr: {}", utf8(&text.err));
     assert!(text.err.is_empty(), "successful text reply has no stderr");
 
     let mut structured_argv = vec!["--json".to_owned()];
@@ -110,7 +158,7 @@ fn reply_forms_in(
     let structured = invoke_in(current_dir, &structured_argv, environment);
     assert_eq!(
         structured.code,
-        Some(0),
+        0,
         "structured stderr: {}",
         utf8(&structured.err)
     );
@@ -152,7 +200,7 @@ fn refusal(argv: &[String], environment: &[(&str, String)], expected_reason: &st
     let spoken = invoke(&structured_argv, environment);
     assert_eq!(
         spoken.code,
-        Some(REFUSAL_EXIT),
+        REFUSAL_EXIT,
         "refusal stdout: {} stderr: {}",
         utf8(&spoken.out),
         utf8(&spoken.err)
@@ -192,14 +240,16 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
 }
 
 fn append_jsonl(path: &Path, rows: &[Value]) {
+    let mut bytes = Vec::new();
+    for row in rows {
+        serde_json::to_writer(&mut bytes, row).expect("fixture row serializes");
+        bytes.push(b'\n');
+    }
     let mut file = fs::OpenOptions::new()
         .append(true)
         .open(path)
         .expect("fixture transcript reopens for append");
-    for row in rows {
-        serde_json::to_writer(&mut file, row).expect("fixture row appends");
-        std::io::Write::write_all(&mut file, b"\n").expect("fixture newline appends");
-    }
+    std::io::Write::write_all(&mut file, &bytes).expect("fixture rows append");
 }
 
 /// The omp thread the shared transcript fixture declares.
@@ -623,19 +673,56 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
     assert_eq!(all_commands["rows"][1]["status"], "completed");
 }
 
-#[test]
-fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
-    let scratch = Scratch::new("query-family");
+/// The shared omp transcript every query family reads, with its file operand.
+fn query_transcript(label: &str) -> (Scratch, PathBuf, String) {
+    let scratch = Scratch::new(label);
     let transcript = scratch.path().join("omp-session.jsonl");
     write_jsonl(&transcript, &omp_rows(THREAD));
     let file = transcript.to_string_lossy().into_owned();
-    let start = "2026-01-01T00:00:00Z";
-    let end = "2026-01-01T00:00:18Z";
+    (scratch, transcript, file)
+}
+
+const QUERY_START: &str = "2026-01-01T00:00:00Z";
+const QUERY_END: &str = "2026-01-01T00:00:18Z";
+
+#[test]
+fn recall_and_command_queries_cross_both_forms() {
+    let (scratch, _, file) = query_transcript("query-recall");
     assert_recall_and_commands(&file);
-    assert_compactions_and_messages(&file, start, end);
-    assert_phases_slices_and_summary(&file, start, end);
-    assert_sweep_and_timeline(&file, start, end);
-    assert_tokens_turns_and_pipelines(&file, start, end);
+    scratch.remove();
+}
+
+#[test]
+fn compaction_and_message_queries_accept_current_filters() {
+    let (scratch, _, file) = query_transcript("query-compactions");
+    assert_compactions_and_messages(&file, QUERY_START, QUERY_END);
+    scratch.remove();
+}
+
+#[test]
+fn phase_slice_and_summary_queries_accept_current_filters() {
+    let (scratch, _, file) = query_transcript("query-phases");
+    assert_phases_slices_and_summary(&file, QUERY_START, QUERY_END);
+    scratch.remove();
+}
+
+#[test]
+fn sweep_and_timeline_queries_accept_current_filters() {
+    let (scratch, _, file) = query_transcript("query-sweep");
+    assert_sweep_and_timeline(&file, QUERY_START, QUERY_END);
+    scratch.remove();
+}
+
+#[test]
+fn token_turn_and_pipeline_queries_accept_current_filters() {
+    let (scratch, _, file) = query_transcript("query-tokens");
+    assert_tokens_turns_and_pipelines(&file, QUERY_START, QUERY_END);
+    scratch.remove();
+}
+
+#[test]
+fn slice_queries_select_the_latest_slice_and_a_named_slice_past_a_long_tail() {
+    let (scratch, transcript, file) = query_transcript("query-slices");
     append_jsonl(
         &transcript,
         &[
@@ -665,6 +752,7 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
         })
         .collect::<Vec<_>>();
     append_jsonl(&transcript, &tail);
+    // A later window past its turn limit must not hide an earlier named slice.
     let early = reply_forms(
         &strings(&["session", "slices", &file, "--slice-id", "compaction-1"]),
         &[],

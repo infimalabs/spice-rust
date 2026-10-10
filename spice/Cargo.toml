@@ -60,12 +60,7 @@ rustix = { version = "1.1.4", features = ["fs", "process"] }
 socket2 = "0.6.5"
 
 [dev-dependencies]
-flate2 = "1.1.8"
 gix = { version = "0.86.0", default-features = false, features = ["tree-editor"] }
-
-[[test]]
-name = "hook_appliance"
-path = "tests/hook_appliance/mod.rs"
 
 [lints]
 workspace = true

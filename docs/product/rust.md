@@ -46,9 +46,8 @@ Authorities: [`gate/src/change_selection.rs`](../../gate/src/change_selection.rs
 [`gate/src/state.rs`](../../gate/src/state.rs),
 [`spice/src/change_gate.rs`](../../spice/src/change_gate.rs), and
 [`xtask/src/lib.rs`](../../xtask/src/lib.rs). Executable coverage lives in
-[`gate/tests/policy.rs`](../../gate/tests/policy.rs),
-[`gate/tests/report_authority.rs`](../../gate/tests/report_authority.rs), and
-[`spice/tests/gate_selection_cli.rs`](../../spice/tests/gate_selection_cli.rs).
+[`gate/tests/policy.rs`](../../gate/tests/policy.rs) and
+[`gate/tests/report_authority.rs`](../../gate/tests/report_authority.rs).
 
 ## Task identity codec
 
