@@ -571,67 +571,8 @@ impl Runtime {
     }
 
     fn renew(&self, bus: &Bus, authority: RenewalAuthority, at: Instant) -> CommandResult<Fired> {
-        if at < authority.deadline || at >= authority.lease.body().expiry {
-            return Ok(Fired::Stale);
-        }
-        let rolling = shifted(
-            at,
-            std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
-        )?;
-        let mut until = std::cmp::max(rolling, authority.lease.body().expiry);
-        if authority.bound.is_some() {
-            // A vacated lane's claim rolls only on the job still running now,
-            // never past one rolling window beyond that job's delivered ending.
-            match vacated_bound(&self.supervisors, authority.lane) {
-                Some(bound) if bound > authority.lease.body().expiry => {
-                    until = std::cmp::min(until, bound);
-                }
-                _ => return Ok(Fired::Stale),
-            }
-        }
-        let reclaim_horizon = shifted(
-            at,
-            std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
-        )?;
-        let maximum = std::cmp::max(reclaim_horizon, authority.lease.body().maximum);
-        let origin = resident_origin(authority.epoch)?;
-        let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
-        let guarded = authority.clone();
-        proposal.guard(JournalGuard::new(move |read| {
-            renewal_guard(read, &guarded, at)
-        }));
-        let renewed = proposal
-            .fact(
-                wire::body::ClaimRenewed {
-                    task: authority.stamp.clone(),
-                    epoch: authority.epoch,
-                    until,
-                    maximum,
-                },
-                FactCause::Root,
-            )
-            .map_err(|error| store_fault("claim::renewal-invalid", &error.to_string()))?;
-        let mut lease = authority.lease.body().clone();
-        lease.renewal = at;
-        lease.expiry = until;
-        lease.maximum = maximum;
-        proposal.lease_head(authority.stamp, renewed, move |_| lease);
-        match bus
-            .commit(proposal)
-            .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
-        {
-            CommitOutcome::Committed(_) => Ok(Fired::ClaimRenew),
-            CommitOutcome::Refused(refusal) if refusal.reason().starts_with("claim::renewal-") => {
-                Ok(Fired::Stale)
-            }
-            CommitOutcome::Refused(refusal) => Err(store_fault(
-                "claim::renewal-commit-refused",
-                refusal.reason(),
-            )),
-            CommitOutcome::Fault(fault) => {
-                Err(store_fault("journal::commit-failed", fault.detail()))
-            }
-        }
+        let supervisors = &self.supervisors;
+        renew_claim(bus, authority, at, |lane| vacated_bound(supervisors, lane))
     }
 
     fn consume_steering(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<()> {
@@ -674,6 +615,73 @@ impl Runtime {
     }
 }
 
+fn renew_claim(
+    bus: &Bus,
+    authority: RenewalAuthority,
+    at: Instant,
+    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
+) -> CommandResult<Fired> {
+    if at < authority.deadline || at >= authority.lease.body().expiry {
+        return Ok(Fired::Stale);
+    }
+    let rolling = shifted(
+        at,
+        std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
+    )?;
+    let mut until = std::cmp::max(rolling, authority.lease.body().expiry);
+    if authority.bound.is_some() {
+        // A vacated lane's claim rolls only on the job still running now,
+        // never past one rolling window beyond that job's delivered ending.
+        match vacated_bound(authority.lane) {
+            Some(bound) if bound > authority.lease.body().expiry => {
+                until = std::cmp::min(until, bound);
+            }
+            _ => return Ok(Fired::Stale),
+        }
+    }
+    let reclaim_horizon = shifted(
+        at,
+        std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
+    )?;
+    let maximum = std::cmp::max(reclaim_horizon, authority.lease.body().maximum);
+    let origin = resident_origin(authority.epoch)?;
+    let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
+    let guarded = authority.clone();
+    proposal.guard(JournalGuard::new(move |read| {
+        renewal_guard(read, &guarded, at)
+    }));
+    let renewed = proposal
+        .fact(
+            wire::body::ClaimRenewed {
+                task: authority.stamp.clone(),
+                epoch: authority.epoch,
+                until,
+                maximum,
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("claim::renewal-invalid", &error.to_string()))?;
+    let mut lease = authority.lease.body().clone();
+    lease.renewal = at;
+    lease.expiry = until;
+    lease.maximum = maximum;
+    proposal.lease_head(authority.stamp, renewed, move |_| lease);
+    match bus
+        .commit(proposal)
+        .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
+    {
+        CommitOutcome::Committed(_) => Ok(Fired::ClaimRenew),
+        CommitOutcome::Refused(refusal) if refusal.reason().starts_with("claim::renewal-") => {
+            Ok(Fired::Stale)
+        }
+        CommitOutcome::Refused(refusal) => Err(store_fault(
+            "claim::renewal-commit-refused",
+            refusal.reason(),
+        )),
+        CommitOutcome::Fault(fault) => Err(store_fault("journal::commit-failed", fault.detail())),
+    }
+}
+
 fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
     loop {
         let authority = bus
@@ -691,6 +699,34 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
             horizon,
         });
     }
+}
+
+/// Renew one vacated claim against the delivered job horizon supplied by an
+/// in-process test, exercising the production bound, authority, guard, and
+/// durable transition.
+#[cfg(test)]
+pub(in crate::resident) fn renew_vacated_claim_at(
+    bus: &Bus,
+    stamp: &wire::TaskStamp,
+    at: Instant,
+    delivered: Instant,
+) -> CommandResult<Fired> {
+    let bound = vacated_reclaim_bound(delivered)?;
+    let snapshot = timer_snapshot(bus)?;
+    let authority = desired_renewals(
+        snapshot.authority.tasks(),
+        snapshot.authority.residency(),
+        |_| Some(bound),
+    )?
+    .into_values()
+    .find(|authority| &authority.stamp == stamp)
+    .ok_or_else(|| {
+        store_fault(
+            "claim::renewal-test-unavailable",
+            "the fixture claim did not produce vacated renewal authority",
+        )
+    })?;
+    renew_claim(bus, authority, at, |_| Some(bound))
 }
 
 impl Drop for Runtime {
@@ -974,11 +1010,14 @@ fn renewal_seat(residency: &wire::ResidencyHead, claim: &wire::ClaimHead) -> Opt
 fn vacated_bound(supervisors: &std::path::Path, lane: CanonicalUuid) -> Option<Instant> {
     let delivered =
         super::supervisor::terminal::Jobs::beneath(supervisors, lane).finite_horizon()?;
+    vacated_reclaim_bound(delivered).ok()
+}
+
+fn vacated_reclaim_bound(delivered: Instant) -> CommandResult<Instant> {
     shifted(
         delivered,
         std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
     )
-    .ok()
 }
 
 fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {
