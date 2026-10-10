@@ -236,7 +236,7 @@ fn render_lane_briefing(
     let configuration = configuration.cloned();
     let started = std::time::Instant::now();
     let built = run_deadline(&context, started, move |sender| {
-        let report = lane_recall(&environment, lane, configuration.as_ref());
+        let report = lane_recall(&environment, lane, configuration.as_ref(), moment);
         let _ = sender.send(DeadlineEvent::Complete(report, std::time::Instant::now()));
     });
     let page = match built {
@@ -288,8 +288,14 @@ fn lane_recall(
     environment: &Environment,
     lane: wire::CanonicalUuid,
     configuration: Option<&spice::config::RepositoryCapture>,
+    moment: BriefingMoment,
 ) -> Result<Report, Refusal> {
     let mut authorities = authority::observe_lane(environment, lane, configuration);
+    // A fresh launch reads its lane before its own birth is recorded, so the
+    // seat it sees is vacant or still its predecessor's; neither is its own.
+    if matches!(moment, BriefingMoment::Startup) {
+        authorities.held_work.address = Some(model::OwnAddress::Launching);
+    }
     let seat = authorities.held_work.thread.clone().zip(
         authorities
             .posture

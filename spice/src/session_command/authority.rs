@@ -8,8 +8,8 @@ use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
 use super::model::{
-    AuthorityUnknown, BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, PeerView,
-    PostureView, RepositoryGlanceView, RetiredDirectionView,
+    AuthorityUnknown, BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, OwnAddress,
+    PeerView, PostureView, RepositoryGlanceView, RetiredDirectionView,
 };
 use super::{Environment, glance, source};
 
@@ -455,7 +455,7 @@ fn apply_team(
     own: wire::CanonicalUuid,
     (team, mut addresses): TeamAddresses,
 ) {
-    recall.held_work.address = addresses.remove(&own);
+    recall.held_work.address = addresses.remove(&own).map(OwnAddress::Seat);
     recall.peers = team
         .into_iter()
         .filter_map(|row| {
