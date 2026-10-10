@@ -13,8 +13,14 @@
 //! recipient, so rereading the same block — live, at exit, or at startup —
 //! finds the published directive instead of sending again, while the same
 //! body authored at another locus is another message.
+//!
+//! A packet the residency refuses journals one `steer::withheld` fact before
+//! its author hears the refusal. That fact is the packet's settled judgment:
+//! a later reread finds it and leaves the packet unpublished even when the
+//! refusal's cause has since changed. A packet the grammar refuses needs no
+//! record, since its text refuses identically on every read.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::ops::ControlFlow;
 use std::time::{Duration, Instant as Clock};
@@ -84,6 +90,8 @@ pub(in crate::resident) enum Published {
 pub(in crate::resident) enum Unpublished {
     /// The packet itself, or the residency it named, refuses publication.
     Refused { reason: String, detail: String },
+    /// An earlier judgment refused this packet; it stays unpublished.
+    Withheld,
     /// The resident could not decide; the packet may publish on a later read.
     Failed(Outcome<CommandAnswer>),
 }
@@ -102,33 +110,67 @@ pub(in crate::resident) fn publish_authored(
     refusals: Refusals,
     diagnostic: &mut dyn io::Write,
 ) -> Vec<Result<Published, Unpublished>> {
+    publish_record(
+        bus,
+        paths,
+        epoch,
+        config,
+        record,
+        &BTreeSet::new(),
+        refusals,
+        diagnostic,
+    )
+}
+
+/// Publish one record's packets, leaving those `withheld` names unpublished.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one record's publication carries its judged packets beside the shared resident inputs"
+)]
+fn publish_record(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    record: &AuthoredRecord<'_>,
+    withheld: &BTreeSet<TranscriptLocus>,
+    refusals: Refusals,
+    diagnostic: &mut dyn io::Write,
+) -> Vec<Result<Published, Unpublished>> {
     let mut outcomes = Vec::new();
     for (event, text) in authored_blocks(record.events) {
         for message in steer::ack::scan::scan_messages(text) {
             let place = steer::Locus::at(text, message.header.start);
             let outcome = match packet_locus(record, event, place) {
                 Err(outcome) => Err(Unpublished::Failed(outcome)),
+                Ok(locus) if withheld.contains(&locus) => Err(Unpublished::Withheld),
                 Ok(locus) => {
                     let outcome = match &message.publication {
                         Err(refusal) => Err(Unpublished::Refused {
                             reason: refusal.reason().to_owned(),
                             detail: refusal_detail(text, refusal),
                         }),
-                        Ok(publication) => publish_resolved(
+                        Ok(publication) => settle(
                             bus,
                             epoch,
-                            config,
-                            &Packet {
-                                lane: record.lane,
-                                author: record.author,
-                                locus: locus.clone(),
-                                recipients: publication
-                                    .recipients
-                                    .iter()
-                                    .map(|recipient| recipient.address)
-                                    .collect(),
-                                body: &text[publication.body.clone()],
-                            },
+                            record,
+                            &locus,
+                            publish_resolved(
+                                bus,
+                                epoch,
+                                config,
+                                &Packet {
+                                    lane: record.lane,
+                                    author: record.author,
+                                    locus: locus.clone(),
+                                    recipients: publication
+                                        .recipients
+                                        .iter()
+                                        .map(|recipient| recipient.address)
+                                        .collect(),
+                                    body: &text[publication.body.clone()],
+                                },
+                            ),
                         ),
                     };
                     report(
@@ -165,8 +207,13 @@ pub(in crate::resident) fn publish_authored(
 /// resident that stopped between the two leaves a packet on the tape with no
 /// message. Every record after a lane's current session declaration was
 /// written by the occupant that declared it; rereading them publishes what is
-/// missing and finds the rest already published. Refusals are diagnostics
-/// only: the author heard them live, or is gone.
+/// missing, finds the rest already published, and leaves every packet an
+/// earlier judgment withheld unpublished. Refusals are diagnostics only: the
+/// author heard them live, or is gone.
+///
+/// Recovery runs before this resident seats any new occupant, so a packet a
+/// crash left unjudged resolves against no occupant born after the previous
+/// resident stopped.
 pub(in crate::resident) fn publish_at_startup(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -175,6 +222,9 @@ pub(in crate::resident) fn publish_at_startup(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
+    let view = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
     let deadline = Clock::now() + RECOVERY_DURATION;
     for row in &residency.body().lanes {
         let Some(session) = row
@@ -185,7 +235,7 @@ pub(in crate::resident) fn publish_at_startup(
             continue;
         };
         if let Err(detail) = recover_lane(
-            bus, paths, epoch, config, row, session, deadline, diagnostic,
+            bus, paths, epoch, config, &view, row, session, deadline, diagnostic,
         ) {
             let _ = writeln!(
                 diagnostic,
@@ -206,11 +256,17 @@ fn recover_lane(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     config: &steer::Config,
+    view: &bus::TaskSnapshot,
     row: &wire::LaneResidency,
     session: &wire::LaneSession,
     deadline: Clock,
     diagnostic: &mut dyn io::Write,
 ) -> Result<(), String> {
+    // An occupant with no birth on its lane authors nothing publishable.
+    let Ok(birth) = view.facts().occupant_address(row.lane, session.occupant) else {
+        return Ok(());
+    };
+    let withheld = withheld_packets(bus, row.lane, session.occupant, birth)?;
     let path = paths
         .tape
         .join(row.lane.to_string())
@@ -261,7 +317,7 @@ fn recover_lane(
         .parse::<CanonicalUuid>()
         .map_err(|error| error.to_string())?;
     for (locus, events) in newest_first.iter().rev() {
-        publish_authored(
+        publish_record(
             bus,
             paths,
             epoch,
@@ -273,11 +329,81 @@ fn recover_lane(
                 locus: *locus,
                 events,
             },
+            &withheld,
             Refusals::Record,
             diagnostic,
         );
     }
     Ok(())
+}
+
+/// Every packet locus an earlier judgment withheld from one occupant.
+///
+/// An occupant's packets are judged only after its birth, so the kind index
+/// is read from there.
+fn withheld_packets(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+    birth: OccupantAddress,
+) -> Result<BTreeSet<TranscriptLocus>, String> {
+    bus.read(move |read| {
+        let mut withheld = BTreeSet::new();
+        let mut after = Some(birth.birth());
+        loop {
+            let page = read.selected_fact_page(
+                &[wire::FactKind::SteerWithheld],
+                after,
+                None,
+                journal::FactReadBudget::RETAINED,
+            )?;
+            withheld.extend(page.rows.iter().filter_map(|envelope| {
+                let body = envelope.fact.read::<wire::body::SteerWithheld>()?;
+                (body.from == lane && body.sender == author).then_some(body.locus)
+            }));
+            match page.continuation {
+                Some(continuation) => after = Some(continuation),
+                None => return Ok(withheld),
+            }
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Record a packet the residency refused as withheld before anyone hears it.
+///
+/// A refusal that cannot be recorded is undecided: the author is not told,
+/// and a later read may judge the packet again.
+fn settle(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    record: &AuthoredRecord<'_>,
+    locus: &TranscriptLocus,
+    outcome: Result<Published, Unpublished>,
+) -> Result<Published, Unpublished> {
+    let Err(Unpublished::Refused { reason, detail }) = outcome else {
+        return outcome;
+    };
+    let at = current_instant().map_err(Unpublished::Failed)?;
+    let origin =
+        resident_origin(epoch).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
+    let mut write = JournalWrite::new(Actor::Lane(record.lane), origin, at, Producer::AckScanner);
+    write
+        .fact(
+            wire::body::SteerWithheld {
+                from: record.lane,
+                sender: record.author,
+                locus: *locus,
+                reason: reason.clone(),
+                detail: detail.clone(),
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| {
+            Unpublished::Failed(typed_store_fault("steer::fact-invalid", &error.to_string()))
+        })?;
+    commit(bus, write).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
+    Err(Unpublished::Refused { reason, detail })
 }
 
 /// Publish one packet, resolving again when the residency moves under it.
@@ -562,7 +688,7 @@ fn report(
                 notify_inbox(paths, *lane);
             }
         }
-        Ok(Published::Already) | Err(Unpublished::Failed(_)) => {}
+        Ok(Published::Already) | Err(Unpublished::Withheld | Unpublished::Failed(_)) => {}
         Err(Unpublished::Refused { reason, detail }) => {
             let _ = writeln!(
                 diagnostic,
