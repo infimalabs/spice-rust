@@ -342,7 +342,7 @@ flowchart TD
   H -- yes --> W["select ONE vacant lane immediately:<br/>ordinary work before a lane's own last resort,<br/>then configured claim order (lane.wake_order)"]
   H -- no --> R{"derived eligible count<br/>is at least 2?"}
   R -- yes --> S{"selected row's READY origin<br/>aged at least 3s?"}
-  R -- no --> L{"lone row aged<br/>at least 3 min?"}
+  R -- no --> L{"lone row aged at least 3 min<br/>(3s for a Drain team's first occupant)?"}
   S -- yes --> W
   S -- no --> B
   L -- yes --> W
@@ -382,8 +382,12 @@ flowchart TD
    excludes active claims, so occupied lanes do not inflate the backlog count.
 - A single ordinary ready task is never stranded. After the starvation age, one
    is enough. This is an *age*, not a retry interval.
-- Newly ready ordinary work [settles before lifecycle wakes
-   it](model/decisions.md#closed-loop-capacity--the-work-availability-wake).
+- Settle and starvation ages run from the READY origin of the row allocation
+   would select for that lane; the eligible count only chooses which age
+   applies. A Drain team with no occupied member settles its first wake even
+   for a lone row.
+- A phase handoff that reserves the lane's only candidate for another actor
+   re-arms the wake at the handoff's deadline.
 - Rendering never launches. The snapshot, the live bus, and the UI
    project settled decisions; no read path can start or renew an occupant.
 - Decisions for one worktree are serialized; sibling lanes proceed
