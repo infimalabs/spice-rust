@@ -544,19 +544,46 @@ impl Runtime {
         }
         let at = Instant::new(jiff::Timestamp::now())
             .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
-        if at < armed.authority.deadline || at >= armed.authority.lease.body().expiry {
+        self.renew(bus, armed.authority, at)
+    }
+
+    /// Consume the captured renewal at its own deadline without waiting on wall time.
+    #[cfg(test)]
+    pub(super) fn consume_renewal_at_deadline(
+        &mut self,
+        bus: &Bus,
+        stamp: &wire::TaskStamp,
+    ) -> CommandResult<Fired> {
+        let Some(task) = self
+            .renewals
+            .keys()
+            .find(|task| task.born().as_ref().is_ok_and(|born| born == stamp))
+            .cloned()
+        else {
+            return Ok(Fired::Stale);
+        };
+        let armed = self
+            .renewals
+            .remove(&task)
+            .expect("selected renewal remains armed");
+        let at = armed.authority.deadline;
+        self.renew(bus, armed.authority, at)
+    }
+
+    fn renew(&self, bus: &Bus, authority: RenewalAuthority, at: Instant) -> CommandResult<Fired> {
+        if at < authority.deadline || at >= authority.lease.body().expiry {
             return Ok(Fired::Stale);
         }
         let rolling = shifted(
             at,
             std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
         )?;
-        let mut until = std::cmp::max(rolling, armed.authority.lease.body().expiry);
-        if armed.authority.bound.is_some() {
+        let mut until = std::cmp::max(rolling, authority.lease.body().expiry);
+        if authority.bound.is_some() {
             // A vacated lane's claim rolls only on the job still running now,
             // never past the moment that job's ending is delivered.
-            match job_horizon(&self.supervisors, armed.authority.lane) {
-                Some(horizon) if horizon > armed.authority.lease.body().expiry => {
+            match job_horizon(&self.supervisors, authority.lane) {
+                Some(horizon) if horizon > authority.lease.body().expiry => {
                     until = std::cmp::min(until, horizon);
                 }
                 _ => return Ok(Fired::Stale),
@@ -566,8 +593,7 @@ impl Runtime {
             at,
             std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
         )?;
-        let maximum = std::cmp::max(reclaim_horizon, armed.authority.lease.body().maximum);
-        let authority = armed.authority;
+        let maximum = std::cmp::max(reclaim_horizon, authority.lease.body().maximum);
         let origin = resident_origin(authority.epoch)?;
         let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
         let guarded = authority.clone();
