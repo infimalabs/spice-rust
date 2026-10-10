@@ -15,11 +15,33 @@ use std::time::Duration;
 
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
-    RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitError, WaitPolicy, spawn,
+    RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitError, WaitPolicy,
 };
 use wire::{Digest, Domain};
 
 use crate::jurisdiction::{Ignore, IgnoreError, Jurisdiction, Rule, Shape};
+
+/// Launch a bounded source consumer while preserving its selected-tree lease.
+pub(crate) fn spawn(spec: Spec) -> std::io::Result<sill::Running> {
+    spawn_observed(spec, None)
+}
+
+pub(crate) fn spawn_observed(
+    spec: Spec,
+    observation: Option<sill::Observation>,
+) -> std::io::Result<sill::Running> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::tree::spawn_consumer(spec, observation)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        match observation {
+            Some(observation) => sill::spawn_observed(spec, observation),
+            None => sill::spawn(spec),
+        }
+    }
+}
 
 /// Whether the current process is an already-contained gate worker.
 ///

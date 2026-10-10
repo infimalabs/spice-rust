@@ -258,6 +258,16 @@ compiles what changed rather than the whole local graph. Both phases must
 succeed before a receipt is published. The test action declaration binds this
 two-phase contract; source admission, output bounds, and cleanup remain required.
 
+Selected-tree possession extends through every source-consuming gate subprocess
+and its compiler descendants, not merely the gate parent's lifetime. Children
+inherit only the already-held selected-tree lock descriptor. Cancellation,
+deadline termination, or abrupt parent death cannot admit a refill while a
+consumer still holds that open description. Ephemeral source roots are reclaimed
+only after all consumer descriptions close; retained slots keep unchanged bytes
+and timestamps for reuse. A retained slot's lock inode is never unlinked, even
+when its source directory is reclaimed, so an opener cannot acquire a detached
+lock inode alongside a second owner of the same slot.
+
 Removing Rust fixture data that no current or base-tree target compiled selects
 the containing package's checks and tests, not reverse-dependent suites. This
 fallback applies only after ordinary target ownership finds no claim and the

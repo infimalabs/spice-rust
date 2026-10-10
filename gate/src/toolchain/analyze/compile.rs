@@ -4,9 +4,9 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::measure::spawn;
 use sill::{
     Argv, Completion, Environment, Output, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
-    spawn,
 };
 
 use super::{Analysis, Captured, compile_findings, complete_compiler_output, plural};

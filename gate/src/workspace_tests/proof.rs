@@ -702,7 +702,7 @@ pub fn run_cargo_gate_shard_at(
         Cancellation::Never,
         shard.action_id(),
     )?;
-    let outcome = sill::spawn(spec)
+    let outcome = crate::measure::spawn(spec)
         .map_err(|error| {
             WorkspaceTestError::new(format!("{} launch failed: {error}", shard.action_id))
         })?

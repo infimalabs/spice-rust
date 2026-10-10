@@ -638,7 +638,7 @@ impl ShardLauncher for SystemShards {
             observer as Arc<dyn RecordObserver>,
         )
         .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
-        let running = sill::spawn_observed(spec, observation)
+        let running = crate::measure::spawn_observed(spec, Some(observation))
             .map_err(|error| WorkspaceTestError::new(format!("shard launch failed: {error}")))?;
         wait_for_shard_process(running, cancellation, policy)
     }

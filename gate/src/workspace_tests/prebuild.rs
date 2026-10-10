@@ -682,7 +682,7 @@ fn prebuilt_test_cases_with_deadline(
         Cancellation::Token(cancellation),
         &owner,
     )?;
-    let running = sill::spawn(spec)
+    let running = crate::measure::spawn(spec)
         .map_err(|error| WorkspaceTestError::new(format!("{owner} launch failed: {error}")))?;
     let process_id = running.id();
     let outcome = running
@@ -903,7 +903,7 @@ where
         Cancellation::Never,
         owner,
     )?;
-    let outcome = sill::spawn(spec)
+    let outcome = crate::measure::spawn(spec)
         .map_err(|error| WorkspaceTestError::new(format!("prebuild launch failed: {error}")))?
         .wait()
         .map_err(|error| WorkspaceTestError::new(format!("prebuild wait failed: {error}")))?;

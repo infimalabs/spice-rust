@@ -18,8 +18,9 @@
 //! mutated or swapped after capture has nothing left to reach: there is no
 //! later state that can cross into a report under the captured digest.
 
+use crate::measure::spawn;
 use serde::{Deserialize, Serialize};
-use sill::{Argv, Completion, Environment, spawn};
+use sill::{Argv, Completion, Environment};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use sill::{Argv, Completion, Deadlines, Environment, SpecError, WaitError, spawn};
+use sill::{Argv, Completion, Deadlines, Environment, SpecError, WaitError};
 use wire::{Digest, Domain};
 
 use crate::camp::{Camp, CampError, SharedBound};
@@ -25,7 +25,7 @@ use crate::kill::{
     Kill, KillBounds, KillError, KillRun, MutationBattery, MutationTool, PINNED_CARGO_MUTANTS,
     RateError, SurvivorRate,
 };
-use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
+use crate::measure::{Bounds, Metric, MetricError, Parser, Policy, spawn};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::policy::{PACKAGED_GENERIC_POLICY, PackagePolicy};
 use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
