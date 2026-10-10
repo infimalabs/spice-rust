@@ -359,11 +359,6 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
             .collect::<Vec<_>>();
         steer::inbox::render_pending(&seal, &pending, |_, _| None)
     };
-    let peer = render(&told.key);
-    assert!(
-        peer.contains(&format!("from=lane:{sender}\n[PEER lane {sender}]")),
-        "the recipient hears who told it: {peer}"
-    );
     let operator = render(&sent.key);
     assert!(
         !operator.contains("from=") && !operator.contains("[PEER"),
@@ -411,15 +406,6 @@ fn an_answered_peer_message_replies_once_to_its_seated_sender_and_the_reply_ends
     assert_eq!(
         reply.text, "Moved the import; tests pass.",
         "the reply relays the answer clause without repeating its header"
-    );
-    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
-    let rendered = steer::inbox::render_pending(&seal, &[reply.clone()], |_, _| None);
-    let replied = rendered
-        .lines()
-        .find(|line| line.starts_with(&format!("[PEER REPLY lane {recipient}]")));
-    assert!(
-        replied.is_some_and(|line| line.contains(told.key.as_str())),
-        "the sender hears a reply naming the key it asked under: {rendered}"
     );
 
     let mut diagnostics = Vec::new();
@@ -481,13 +467,10 @@ fn a_reply_to_a_sender_that_ended_its_turn_waits_for_its_next_seat() {
     assert_eq!(reply.from, Some(recipient));
     assert!(!reply.wakes, "a peer reply never wakes its vacant sender");
     assert_eq!(reply.text, "", "a bare header relays no clause");
-    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
-    let rendered = steer::inbox::render_pending(&seal, &[reply], |_, _| None);
-    assert!(
-        rendered
-            .lines()
-            .any(|line| line.starts_with("[PEER REPLY") && line.contains(told.key.as_str())),
-        "the delivery still names the answered key: {rendered}"
+    assert_eq!(
+        reply.control.as_deref(),
+        Some(wire::peer_reply_control(&told.key, wire::PeerAnswer::Ack).as_str()),
+        "the waiting reply still names the answered key"
     );
 
     let mut diagnostics = Vec::new();

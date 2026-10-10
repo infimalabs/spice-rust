@@ -595,14 +595,17 @@ pub(super) fn inbox(
         };
         let mut pending = pending_presentations(&snapshot.ledger, &snapshot.waking, lane.lane);
         pending.retain_mut(|directive| {
-            let Some(message) = snapshot.messaged.get(&directive.directive) else {
+            let Some(origin) = snapshot.peers.get(&directive.directive) else {
                 return true;
             };
             // An MSG addresses one exact occupant; no successor hears it.
-            if lane.occupant != Some(message.occupant) {
+            if origin
+                .recipient
+                .is_some_and(|recipient| lane.occupant != Some(recipient))
+            {
                 return false;
             }
-            directive.sender = Some(peer_sender(&snapshot.authority, message));
+            directive.sender = Some(origin.sender);
             true
         });
         for directive in &mut pending {
@@ -643,25 +646,59 @@ struct SteeringSnapshot {
     ledger: steer::Ledger,
     /// Pending directives an operator send opened, which alone wake a lane.
     waking: BTreeSet<CanonicalUuid>,
-    /// Pending directives an authored MSG packet opened, by directive.
-    messaged: BTreeMap<CanonicalUuid, wire::body::SteerMessaged>,
+    /// Pending peer directives whose sending occupant the journal records.
+    peers: BTreeMap<CanonicalUuid, PeerOrigin>,
     retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
 }
 
-/// The exact occupant that wrote one MSG, with the address its birth proves.
+/// Who sent one pending peer directive, and who alone may hear it.
+struct PeerOrigin {
+    /// The exact occupant an MSG addresses; a reply follows its lane.
+    recipient: Option<CanonicalUuid>,
+    sender: wire::intent::PeerSender,
+}
+
+impl PeerOrigin {
+    /// The origin of the peer directive `head`'s creating fact opened.
+    ///
+    /// An MSG names its sending occupant. A reply to an MSG is spoken by the
+    /// occupant that MSG addressed, read back through the reply's cause, the
+    /// retirement, to the MSG it retired. Other peer direction records no
+    /// sending occupant.
+    fn of(authority: &bus::TaskSnapshot, head: &wire::SteeringHead) -> Option<Self> {
+        let facts = authority.facts();
+        let created = facts.at(head.created)?;
+        if let Some(message) = created.fact.read::<wire::body::SteerMessaged>() {
+            return (message.directive == head.directive).then(|| Self {
+                recipient: Some(message.occupant),
+                sender: peer_sender(authority, message.from, message.sender),
+            });
+        }
+        created.fact.read::<wire::body::SteerReplied>()?;
+        let retirement = facts.at(created.cause?)?;
+        let answered = facts
+            .at(retirement.cause?)?
+            .fact
+            .read::<wire::body::SteerMessaged>()?;
+        Some(Self {
+            recipient: None,
+            sender: peer_sender(authority, answered.lane, answered.occupant),
+        })
+    }
+}
+
+/// One exact sending occupant, with the address its birth on `lane` proves.
 fn peer_sender(
     authority: &bus::TaskSnapshot,
-    message: &wire::body::SteerMessaged,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
 ) -> wire::intent::PeerSender {
     wire::intent::PeerSender {
-        occupant: message.sender,
-        address: authority
-            .facts()
-            .occupant_address(message.from, message.sender)
-            .ok(),
+        occupant,
+        address: authority.facts().occupant_address(lane, occupant).ok(),
     }
 }
 
@@ -731,22 +768,15 @@ fn pending_snapshot(
             })
             .map(|head| head.directive)
             .collect();
-        let messaged = heads
+        let peers = heads
             .iter()
             .map(journal::JournalHead::body)
-            .filter_map(|head| {
-                let message = authority
-                    .facts()
-                    .at(head.created)?
-                    .fact
-                    .read::<wire::body::SteerMessaged>()?;
-                (message.directive == head.directive).then_some((head.directive, message))
-            })
+            .filter_map(|head| Some((head.directive, PeerOrigin::of(&authority, head)?)))
             .collect();
         return Ok(SteeringSnapshot {
             ledger,
             waking,
-            messaged,
+            peers,
             retired: first.into_retired(),
             position,
             authority,

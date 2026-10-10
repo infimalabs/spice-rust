@@ -512,8 +512,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         let message = format!(
             "<system-notice>\nYour MSG packet `{}` at line {}, column {} of its assistant \
              text block published nothing: {}: {}. No recipient received it. Name only \
-             exact addresses of other seated occupants, each once, close the list with a \
-             colon, and author a corrected packet in new visible text. This is a private \
+             exact addresses of other seated occupants (`spice lane list` shows each lane's), \
+             each once, close the list with a colon, and author a corrected packet in new \
+             visible text. This is a private \
              refusal notice; no acknowledgment key or visible ACK/NAK is required.\n\
              </system-notice>",
             notice.header, notice.line, notice.column, notice.reason, notice.detail,

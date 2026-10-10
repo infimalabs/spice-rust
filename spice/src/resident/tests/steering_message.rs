@@ -769,6 +769,14 @@ fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lan
         Some(wire::peer_reply_control(&to_first.key, wire::PeerAnswer::Ack).as_str())
     );
     assert!(!ack.wakes, "a peer reply never wakes its lane");
+    assert_eq!(
+        ack.sender,
+        Some(wire::intent::PeerSender {
+            occupant: test_uuid(FIRST + 1),
+            address: Some(first),
+        }),
+        "a reply names the exact occupant that answered"
+    );
 
     lanes.answer(
         SECOND,
@@ -782,6 +790,11 @@ fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lan
         .find(|reply| reply.from == Some(test_uuid(SECOND)))
         .unwrap_or_else(|| panic!("the refusal replies too: {replies:?}"));
     assert_eq!(nak.text, "Main is red.");
+    assert_eq!(
+        nak.sender.map(|sender| sender.address),
+        Some(Some(second)),
+        "each reply names its own answerer"
+    );
     assert_eq!(
         nak.control.as_deref(),
         Some(wire::peer_reply_control(&to_second.key, wire::PeerAnswer::Nak).as_str())
