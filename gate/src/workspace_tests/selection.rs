@@ -1223,6 +1223,145 @@ mod tests {
         (inventory, package)
     }
 
+    /// A package whose test targets, feature-gated test, and check-only bin
+    /// each compile as their own unit, beside a dependent package.
+    fn narrowing_fixture(fixture: &crate::test_repository::Fixture) -> Inventory {
+        let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
+        let target = |package: &str, kind: &str, name: &str, source: &str, features: &[&str]| {
+            fixture.write(source, b"fn fixture() {}\n");
+            TargetIdentity {
+                package: package.to_owned(),
+                kind: kind.to_owned(),
+                name: name.to_owned(),
+                required_features: features.iter().map(|&feature| feature.to_owned()).collect(),
+                source: root.join(source),
+                declared_path_sources: Vec::new(),
+                source_bytes: 1,
+            }
+        };
+        let tested = vec![
+            target("planted", "lib", "planted", "planted/src/lib.rs", &[]),
+            target(
+                "planted",
+                "test",
+                "selected",
+                "planted/tests/selected.rs",
+                &[],
+            ),
+            target(
+                "planted",
+                "test",
+                "unrelated",
+                "planted/tests/unrelated.rs",
+                &[],
+            ),
+            target(
+                "planted",
+                "test",
+                "guarded",
+                "planted/tests/guarded.rs",
+                &["guarded"],
+            ),
+        ];
+        let mut declared = tested.clone();
+        declared.push(target(
+            "planted",
+            "bin",
+            "tool",
+            "planted/src/bin/tool.rs",
+            &[],
+        ));
+        let planted = PackageInventory {
+            id: "planted 0.0.0".to_owned(),
+            name: "planted".to_owned(),
+            root: root.join("planted"),
+            dependencies: Vec::new(),
+            namespace_context: FileMacroCrateContext::from_metadata("planted", "2024", &[])
+                .expect("fixture namespace"),
+            compile_time_authority: None,
+            declared_targets: declared,
+            removed_targets: Vec::new(),
+            targets: tested,
+            data_roots: Vec::new(),
+        };
+        let consumer_targets = vec![target(
+            "consumer",
+            "lib",
+            "consumer",
+            "consumer/src/lib.rs",
+            &[],
+        )];
+        let consumer = PackageInventory {
+            id: "consumer 0.0.0".to_owned(),
+            name: "consumer".to_owned(),
+            root: root.join("consumer"),
+            dependencies: vec![planted.root.clone()],
+            namespace_context: FileMacroCrateContext::from_metadata("consumer", "2024", &[])
+                .expect("dependent namespace"),
+            declared_targets: consumer_targets.clone(),
+            targets: consumer_targets,
+            ..planted.clone()
+        };
+        Inventory {
+            packages: vec![planted, consumer],
+            moved_package_roots: BTreeMap::new(),
+            resolution: CargoResolution::default(),
+            binary_outputs: Vec::new(),
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+        }
+    }
+
+    /// The Cargo units one changed source compiles, as argument lines.
+    fn units(
+        inventory: &Inventory,
+        fixture: &crate::test_repository::Fixture,
+        changed: &str,
+    ) -> Vec<String> {
+        let checks = cargo_check_selections(inventory, fixture.path(), &[changed.to_owned()])
+            .expect("a present owned source selects its checks");
+        let reach = WorkspacePackageReach {
+            roots: checks.iter().map(|check| check.root.clone()).collect(),
+            checks,
+        };
+        reach
+            .cargo_check_units()
+            .iter()
+            .map(|unit| unit.arguments().join(" "))
+            .collect()
+    }
+
+    /// A change compiles only the target it reaches: no sibling target, no
+    /// dependent package, the exact package-qualified features a gated target
+    /// requires so Cargo does not skip it, and `--no-run` only for a target
+    /// whose tests run.
+    #[test]
+    fn a_changed_target_source_compiles_only_its_own_target() {
+        let fixture = crate::test_repository::Fixture::repository("reach-narrowing");
+        let inventory = narrowing_fixture(&fixture);
+        let render = "--message-format=json-render-diagnostics";
+
+        assert_eq!(
+            units(&inventory, &fixture, "planted/tests/selected.rs"),
+            [format!(
+                "test --locked --package planted --test selected --no-run {render}"
+            )],
+        );
+        assert_eq!(
+            units(&inventory, &fixture, "planted/tests/guarded.rs"),
+            [format!(
+                "test --locked --package planted --test guarded --features planted/guarded \
+                 --no-run {render}"
+            )],
+        );
+        assert_eq!(
+            units(&inventory, &fixture, "planted/src/bin/tool.rs"),
+            [format!(
+                "check --locked --package planted --bin tool {render}"
+            )],
+        );
+    }
+
     /// Fixture data a test reads at run time is owned by no Cargo target, so
     /// deleting it must select the coverage that can actually observe the
     /// deletion rather than demand an owner that never existed.
