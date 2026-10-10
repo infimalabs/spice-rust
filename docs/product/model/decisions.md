@@ -109,7 +109,7 @@ flowchart TD
   S["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
   H -- yes --> W["wake ONE lane immediately"]
   H -- no --> N{"ready count is at least 2?"}
-  N -- yes --> ST{"newest eligible READY origin<br/>aged past the settle interval?"}
+  N -- yes --> ST{"selected row's READY origin<br/>aged past the settle interval?"}
   N -- no --> LO{"lone row aged<br/>at least the starvation age?"}
   ST -- yes --> W
   ST -- no --> S
@@ -129,12 +129,14 @@ occupied lanes do not inflate the count.
 **Invariant —** Starvation is an **age**, not a retry interval. After it, one is
 enough.
 
-**Invariant —** Newly ready work settles before lifecycle chooses it. With at
-least two ordinary eligible rows, the clock is the newest READY origin in the
-whole eligible set; a newly eligible row extends that horizon. A durable phase
-handoff is the exception: its ownership window already resolves the race, so an
-eligible handoff owner wakes immediately instead of waiting through ordinary
-settle or starvation age.
+**Invariant —** Newly ready work settles before lifecycle chooses it. The clock
+is the READY transition of the row allocation would select for that lane, not
+the newest row on the board: with at least two eligible rows that row ages
+through the settle interval, and a lone row through the starvation age. A Drain
+team with no occupied member settles its first wake even for a lone row. A
+durable phase handoff is the exception: its ownership window already resolves
+the race, so an eligible handoff owner wakes immediately, and a lane the window
+temporarily excludes is reconsidered when that window ends.
 
 **Policy —** threshold 2, settle 3s, starvation 3min, ensure retry 5s.
 
