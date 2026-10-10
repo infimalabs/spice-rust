@@ -165,6 +165,17 @@ pub const SHELL_TIMEOUT_MIN: u64 = 1;
 /// without one; a long-lived development service is asked for as a service.
 pub const SHELL_TIMEOUT_MAX: u64 = 3600;
 
+/// How long a job with events gathers stdout lines into one notice, counted
+/// from the first line the notice will carry.
+pub const SHELL_EVENT_WINDOW_MILLIS: u64 = 200;
+
+/// Most stdout lines a job with events may print within
+/// [`SHELL_EVENT_FLOOD_SECONDS`]; one line more stops its events.
+pub const SHELL_EVENT_FLOOD_LINES: usize = 100;
+
+/// The span over which [`SHELL_EVENT_FLOOD_LINES`] is counted.
+pub const SHELL_EVENT_FLOOD_SECONDS: u64 = 10;
+
 /// The bounded read one job `history` answer admits through: 20 delivered
 /// jobs by default and 100 at most, each command clipped to 200 bytes. The
 /// tool names no byte limit, so its default is its maximum: 100 clipped rows
@@ -194,7 +205,9 @@ when a message arrives for you, is kept as a \
 job: you get its output so far at once, it keeps running, and its result is delivered \
 automatically when it ends. A long-lived development service (a dev server, a watcher) \
 is the one thing that runs without a deadline: set `service` and it is kept as a job at \
-once; inspect it with `logs`, and end it with `stop` once you no longer need it.";
+once; inspect it with `logs`, and end it with `stop` once you no longer need it. Set \
+`events` to watch a deadline-bounded command instead of waiting on it: each line it prints \
+on stdout reaches you as a background notice while you keep working.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
@@ -204,6 +217,19 @@ const SHELL_SERVICE_DESCRIPTION: &str = "true runs a long-lived development serv
 deadline, kept as a job at once while its task claim remains active or until you stop it; \
 takes no timeout";
 
+/// What the model reads about the events parameter.
+fn shell_events_description() -> String {
+    format!(
+        "true keeps the command as a job at once and makes each line it prints on stdout an \
+         event: lines arriving within {SHELL_EVENT_WINDOW_MILLIS} ms reach you together as one \
+         background notice naming the job, in order, without interrupting your work; stderr \
+         goes only to its log. More than {SHELL_EVENT_FLOOD_LINES} lines within \
+         {SHELL_EVENT_FLOOD_SECONDS} seconds stops its events with a notice while the command \
+         keeps running. Its ending is delivered after its last event. Needs a deadline, so a \
+         service refuses it"
+    )
+}
+
 /// What the model reads about the lane's job tool.
 const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
 is delivered automatically when it ends, so you never need to poll: use `list` to see every \
@@ -212,7 +238,8 @@ already delivered, newest first, `logs` to read what one has said so far, and `s
 one. Use `wait` only when blocked on a finite job: it passively follows that job until it \
 ends, the timeout elapses, or a message arrives. A running service never ends on its own, \
 so `wait` on one returns at once and leaves it running; inspect its logs or exercise its \
-served surface for readiness.";
+served surface for readiness. A job started with `events` delivers its stdout lines as \
+background notices before its ending.";
 
 /// What the model reads about the job operation parameter.
 const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop";
@@ -821,6 +848,7 @@ pub fn host_tools_request() -> Vec<u8> {
                     "command": {"type": "string", "description": SHELL_COMMAND_DESCRIPTION},
                     "timeout": deadline,
                     "service": {"type": "boolean", "description": SHELL_SERVICE_DESCRIPTION},
+                    "events": {"type": "boolean", "description": shell_events_description()},
                 },
                 "required": ["command"],
                 "additionalProperties": false,
@@ -983,6 +1011,9 @@ pub struct ShellCall {
     /// What omp notes about the call ahead of what the command says: today,
     /// a deadline granted other than the one asked.
     pub notices: Vec<String>,
+    /// Whether each line the command prints on stdout is delivered as an
+    /// event while it runs; only a deadline-bounded command carries events.
+    pub events: bool,
 }
 
 impl ShellCall {
@@ -996,7 +1027,7 @@ impl ShellCall {
     /// # Errors
     ///
     /// Returns the refusal text when the arguments name no command, ask for
-    /// a zero deadline, or give a service a timeout.
+    /// a zero deadline, give a service a timeout, or ask a service for events.
     pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
         let command = arguments
             .get("command")
@@ -1007,6 +1038,17 @@ impl ShellCall {
             .and_then(serde_json::Value::as_bool)
             .is_some_and(|service| service);
         let asked = arguments.get("timeout").and_then(serde_json::Value::as_u64);
+        let events = arguments
+            .get("events")
+            .and_then(serde_json::Value::as_bool)
+            .is_some_and(|events| events);
+        if service && events {
+            return Err(
+                "events need a deadline-bounded command, and a service runs without one; \
+                 drop service, or follow the service with job op=logs"
+                    .to_owned(),
+            );
+        }
         let (lifetime, notices) = match (service, asked) {
             (true, Some(_)) => {
                 return Err(
@@ -1044,6 +1086,7 @@ impl ShellCall {
             command: command.to_owned(),
             lifetime,
             notices,
+            events,
         })
     }
 }
@@ -1055,6 +1098,26 @@ pub fn job_delivery(job: &str, result: &str) -> String {
     format!(
         "<system-notice>\nBackground job {job} has completed. Resume your work using the \
          result below.\n{result}\n</system-notice>"
+    )
+}
+
+/// The background notice carrying stdout lines a job with events printed.
+#[must_use]
+pub fn job_event(job: &str, lines: &[String]) -> String {
+    format!(
+        "<system-notice>\nBackground job {job} printed:\n{}\n</system-notice>",
+        lines.join("\n")
+    )
+}
+
+/// The background notice that ends a flooding job's events.
+#[must_use]
+pub fn job_flooded(job: &str) -> String {
+    format!(
+        "<system-notice>\nBackground job {job} printed more than {SHELL_EVENT_FLOOD_LINES} \
+         lines within {SHELL_EVENT_FLOOD_SECONDS} seconds, so its events stopped. It keeps \
+         running: read its output with job op=logs, and its ending will still be \
+         delivered.\n</system-notice>"
     )
 }
 

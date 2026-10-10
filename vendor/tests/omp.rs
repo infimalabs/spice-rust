@@ -329,6 +329,7 @@ fn a_shell_call_always_has_a_bounded_deadline_unless_it_is_asked_for_as_a_servic
             command: "cargo test".to_owned(),
             lifetime,
             notices: notices.into_iter().map(str::to_owned).collect(),
+            events: false,
         })
     };
     assert_eq!(omp::SHELL_TIMEOUT_DEFAULT, 15 * 60);
@@ -366,6 +367,21 @@ fn a_shell_call_always_has_a_bounded_deadline_unless_it_is_asked_for_as_a_servic
         parse(serde_json::json!({"command": "cargo test", "service": true, "timeout": 60}))
             .is_err(),
         "a service has no deadline to name"
+    );
+    assert_eq!(
+        parse(serde_json::json!({"command": "tail -f log", "timeout": 60, "events": true})),
+        Ok(omp::ShellCall {
+            command: "tail -f log".to_owned(),
+            lifetime: deadline(60),
+            notices: Vec::new(),
+            events: true,
+        }),
+        "events ride a deadline-bounded command"
+    );
+    assert!(
+        parse(serde_json::json!({"command": "cargo test", "service": true, "events": true}))
+            .is_err(),
+        "a service has no deadline to bound its events"
     );
     assert_eq!(
         omp::job_delivery("0badcafe", "done\n\nWall time: 0.10 seconds"),

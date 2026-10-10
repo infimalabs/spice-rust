@@ -30,7 +30,7 @@ use vendor::omp::{JobCall, ShellCall};
 use wire::{CanonicalUuid, Disposition};
 
 use super::super::RuntimePaths;
-use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
+use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 const KICK_BYTES: usize = 1024;
@@ -1013,7 +1013,49 @@ impl<W: Write + Send + 'static> Driver<W> {
             report.failed,
         ));
         if let Some(job) = kept {
-            self.deliver(&job, terminal.follow(&job, control).as_ref());
+            self.hear(terminal, &job, control);
+        }
+    }
+
+    /// Follow a kept command to its ending, delivering each of its events as
+    /// it comes and its ending after the last of them.
+    fn hear(&self, terminal: &Terminal, job: &Job, control: &Control) {
+        let report = terminal.follow(job, control, &mut || self.deliver_events(job));
+        self.deliver(job, report.as_ref());
+    }
+
+    /// Deliver every event of a job with events that the lane has not heard,
+    /// in order, each as its own background notice: a notice's purpose names
+    /// its event, so the extension, which keeps only the latest notice per
+    /// purpose, drops none. The lane's record of the last event heard moves
+    /// past each event only once its notice is written, under the input's
+    /// lock, so a closed seat hears nothing and the next seat's catch-up owes
+    /// exactly what this one did not say.
+    fn deliver_events(&self, job: &Job) {
+        if !job.events() {
+            return;
+        }
+        let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(stream) = stdin.as_mut() else {
+            return;
+        };
+        let Ok(events) = job.unheard_events() else {
+            return;
+        };
+        for (number, event) in events {
+            let message = match &event {
+                JobEvent::Lines { lines } => vendor::omp::job_event(job.id(), lines),
+                JobEvent::Flooded => vendor::omp::job_flooded(job.id()),
+            };
+            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+            let notice = vendor::omp::aside_request(
+                sequence,
+                &format!("job:{}:event:{number}", job.id()),
+                &message,
+            );
+            if written(stream, &notice).is_err() || job.hear_events(number).is_err() {
+                return;
+            }
         }
     }
 
@@ -1050,8 +1092,8 @@ impl<W: Write + Send + 'static> Driver<W> {
     }
 
     /// Say what the lane is owed at its start: the standing inbox, and the
-    /// ending of every job the lane has not heard, each followed to its end
-    /// on a thread of its own.
+    /// events and ending of every job the lane has not heard, each followed
+    /// to its end on a thread of its own.
     pub(in crate::resident) fn catch_up(self: &Arc<Self>) {
         self.deliver_inbox();
         let Some(terminal) = self.terminal.clone() else {
@@ -1062,10 +1104,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             let terminal = terminal.clone();
             let _followed = std::thread::Builder::new()
                 .name("spice-catch-up".to_owned())
-                .spawn(move || {
-                    let report = terminal.follow(&job, &Control::new());
-                    driver.deliver(&job, report.as_ref());
-                });
+                .spawn(move || driver.hear(&terminal, &job, &Control::new()));
         }
     }
 
@@ -1381,4 +1420,6 @@ impl Drop for KickDoor {
     }
 }
 
+#[cfg(test)]
+mod event_tests;
 mod media;
