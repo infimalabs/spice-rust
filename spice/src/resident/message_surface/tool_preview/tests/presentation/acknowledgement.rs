@@ -14,7 +14,7 @@ fn published(millis: u16) -> wire::Instant {
 }
 
 fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
-    PresentationDirectives(
+    PresentationDirectives::new(
         rows.iter()
             .map(|(key, text)| {
                 (
@@ -41,7 +41,10 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
 /// Retire one fixture directive at the header locus `event()` reads.
 fn retire(directives: &mut PresentationDirectives, key: &str) {
     let key = key.parse::<steer::Key>().expect("fixture key parses");
-    let directive = directives.0.get_mut(&key).expect("fixture directive");
+    let directive = directives
+        .directives
+        .get_mut(&key)
+        .expect("fixture directive");
     directive.disposition = wire::Disposition::Acked;
     directive.retirement = Some(wire::body::TranscriptLocus {
         source: None,
@@ -272,7 +275,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
 fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
     let key = "dRyzkQp1P".parse::<steer::Key>().expect("taste key parses");
     let directive_text = "Keep one tested path.";
-    let directives = PresentationDirectives(BTreeMap::from([(
+    let directives = PresentationDirectives::new(BTreeMap::from([(
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
@@ -314,7 +317,7 @@ fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
     );
 
     let mut literal = directives;
-    for directive in literal.0.values_mut() {
+    for directive in literal.directives.values_mut() {
         directive.taste = false;
         directive.text = "[TASTE] Keep one tested path.".to_owned();
     }
@@ -335,7 +338,7 @@ fn review_feedback_context_carries_its_badge_without_a_marker() {
     let key = "1kQnrzNZ"
         .parse::<steer::Key>()
         .expect("fixture key parses");
-    let directives = PresentationDirectives(BTreeMap::from([(
+    let directives = PresentationDirectives::new(BTreeMap::from([(
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
@@ -610,7 +613,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
     let key = "dRyzkGX8b"
         .parse::<steer::Key>()
         .expect("current system key parses");
-    let directives = PresentationDirectives(BTreeMap::from([(
+    let directives = PresentationDirectives::new(BTreeMap::from([(
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
@@ -820,7 +823,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
         ("1kQwPZtN", lane(), wire::Disposition::Declined, false),
     ] {
         let directive = directives
-            .0
+            .directives
             .get_mut(&key.parse().expect("fixture key"))
             .expect("fixture directive");
         directive.lane = lane;
@@ -888,7 +891,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
         line: 1,
         column: 5,
     };
-    let directives = PresentationDirectives(BTreeMap::from([(
+    let directives = PresentationDirectives::new(BTreeMap::from([(
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
@@ -956,7 +959,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
         line: 1,
         column,
     };
-    let directives = PresentationDirectives(BTreeMap::from([
+    let directives = PresentationDirectives::new(BTreeMap::from([
         (
             historical,
             PresentationDirective {
@@ -1046,7 +1049,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
         line: 1,
         column,
     };
-    let directives = PresentationDirectives(BTreeMap::from([
+    let directives = PresentationDirectives::new(BTreeMap::from([
         (
             system,
             PresentationDirective {
@@ -1102,7 +1105,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
     let key = "1kQwPZtK"
         .parse::<steer::Key>()
         .expect("fixture key parses");
-    let directives = PresentationDirectives(BTreeMap::from([(
+    let directives = PresentationDirectives::new(BTreeMap::from([(
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,

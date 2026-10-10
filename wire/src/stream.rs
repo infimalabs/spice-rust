@@ -14,7 +14,8 @@ pub use prose::{MessageProseOrigin, superseded_prose};
 mod annotation;
 pub use annotation::{
     DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDirective,
-    valid_message_classifications, valid_message_directives,
+    MessageRecipient, MessageSend, valid_message_classifications, valid_message_directives,
+    valid_message_sends,
 };
 
 /// Canonical semantic prefix carried by every broadcast steering directive.
@@ -567,6 +568,10 @@ pub struct AgentMessage {
     /// Resident-authenticated directive contexts embedded in this card.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directive_contexts: Vec<MessageDirective>,
+    /// Authored MSG packets presented as outgoing quote blocks in
+    /// [`Self::text`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<MessageSend>,
     /// Recursively resolved fixed-label quote links found in [`Self::text`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quotes: Vec<QuotePresentation>,
@@ -697,6 +702,7 @@ mod message_retention_tests {
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
+            sends: Vec::new(),
             quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),

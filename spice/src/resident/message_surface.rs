@@ -565,14 +565,39 @@ pub(super) fn steering_ledger(
             .iter()
             .filter_map(listen::Event::assistant_text)
     };
-    if !authored().any(steer::has_acknowledgement) {
+    let acknowledges = authored().any(steer::has_acknowledgement);
+    let addresses = message_addresses(authored());
+    if !acknowledges && addresses.is_empty() {
         return Ok(None);
     }
-    let keys = steering_keys(authored());
-    let presentations = load_steering_presentations(&bus.reader(), &keys)?;
-    PresentationDirectives::from_presentations(&presentations)
-        .map(Some)
-        .map_err(|error| store_fault("serve::message-steering-invalid", &error.to_string()))
+    let reader = bus.reader();
+    let mut ledger = if acknowledges {
+        let presentations = load_steering_presentations(&reader, &steering_keys(authored()))?;
+        PresentationDirectives::from_presentations(&presentations)
+            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?
+    } else {
+        PresentationDirectives::default()
+    };
+    ledger.prove_recipients(&reader, addresses)?;
+    Ok(Some(ledger))
+}
+
+/// Every address a placed, well-formed MSG packet in `texts` names.
+fn message_addresses<'a>(
+    texts: impl IntoIterator<Item = &'a str>,
+) -> BTreeSet<wire::OccupantAddress> {
+    texts
+        .into_iter()
+        .filter(|text| text.contains(steer::ack::scan::message::MARKER))
+        .flat_map(steer::ack::scan::scan_messages)
+        .filter_map(|message| message.publication.ok())
+        .flat_map(|publication| {
+            publication
+                .recipients
+                .into_iter()
+                .map(|recipient| recipient.address)
+        })
+        .collect()
 }
 
 pub(super) fn load_steering_presentations(
@@ -604,15 +629,18 @@ fn present_steering_acknowledgements(
     let presented = present_steering_acknowledgements_with_directives(text, steering, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let broadcasts = answered_broadcasts(text, steering, event);
-    let classifications = hydrate_message_classifications(&presented.text, broadcasts)
+    let classifications = hydrate_message_classifications(&presented, broadcasts)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let directive_contexts = hydrate_directive_contexts(&presented, steering)
+        .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
+    let sends = hydrate_sends(&presented, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     Ok(serve::stream::MessagePresentation {
         text: presented.text,
         acknowledgement: presented.acknowledgement,
         classifications,
         directive_contexts,
+        sends,
     })
 }
 
@@ -638,6 +666,7 @@ pub(crate) fn quote_agent_prose(
         Some(&directives),
         PresentationEvent {
             lane,
+            author: None,
             source: Some(source),
             locus: prose.locus,
             ordinal,
@@ -652,8 +681,16 @@ pub(crate) fn quote_agent_prose(
     Ok(text)
 }
 
+/// The journal context one card's presentation reads: the steering directives
+/// its acknowledgement headers name and the occupant births its MSG
+/// addresses name.
 #[derive(Clone, Debug, Default)]
-pub(super) struct PresentationDirectives(BTreeMap<steer::Key, PresentationDirective>);
+pub(super) struct PresentationDirectives {
+    directives: BTreeMap<steer::Key, PresentationDirective>,
+    /// An address names one birth forever, so a proved recipient never
+    /// changes and departure never redirects it to the lane's next occupant.
+    recipients: BTreeMap<wire::OccupantAddress, wire::MessageRecipient>,
+}
 
 #[derive(Clone, Debug)]
 struct PresentationDirective {
@@ -687,6 +724,13 @@ impl PresentationDirective {
 }
 
 impl PresentationDirectives {
+    fn new(directives: BTreeMap<steer::Key, PresentationDirective>) -> Self {
+        Self {
+            directives,
+            recipients: BTreeMap::new(),
+        }
+    }
+
     fn from_presentations(rows: &[bus::SteeringPresentation]) -> Result<Self, String> {
         let mut directives = BTreeMap::new();
         for row in rows {
@@ -744,11 +788,40 @@ impl PresentationDirectives {
                 },
             );
         }
-        Ok(Self(directives))
+        Ok(Self::new(directives))
     }
 
     fn extend_presentations(&mut self, rows: &[bus::SteeringPresentation]) -> Result<(), String> {
-        self.0.extend(Self::from_presentations(rows)?.0);
+        self.directives
+            .extend(Self::from_presentations(rows)?.directives);
+        Ok(())
+    }
+
+    /// Prove the occupant birth each not-yet-proved address names. An address
+    /// no birth proves leaves its packet presented as written.
+    fn prove_recipients(
+        &mut self,
+        reader: &bus::BusReader,
+        addresses: BTreeSet<wire::OccupantAddress>,
+    ) -> CommandResult<()> {
+        for address in addresses {
+            if self.recipients.contains_key(&address) {
+                continue;
+            }
+            let proof = reader.occupant_birth(address).map_err(|error| {
+                store_fault("serve::message-recipient-unreadable", &error.to_string())
+            })?;
+            if let Ok(birth) = proof {
+                self.recipients.insert(
+                    address,
+                    wire::MessageRecipient {
+                        address,
+                        lane: birth.lane,
+                        occupant: birth.occupant,
+                    },
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -790,7 +863,7 @@ fn answered_broadcasts(
         .map(|(key, _)| key)
         .collect::<BTreeSet<_>>()
         .iter()
-        .filter_map(|key| directives.0.get(key))
+        .filter_map(|key| directives.directives.get(key))
         .filter(|directive| !directive.taste && has_broadcast_marker(&directive.text))
         .count()
 }
@@ -799,12 +872,14 @@ fn answered_broadcasts(
 ///
 /// A broadcast marker opens first-level quoted directive text and is bounded
 /// by the broadcasts this answer's recognized keys earned. Identical words
-/// anywhere the agent wrote them stay literal. Acknowledgment disposition and
-/// badges are independent of source ranges and never enter this collection.
+/// anywhere the agent wrote them stay literal, including inside a presented
+/// MSG body. Acknowledgment disposition and badges are independent of source
+/// ranges and never enter this collection.
 fn hydrate_message_classifications(
-    text: &str,
+    presented: &Presentation,
     mut broadcasts: usize,
 ) -> Result<Vec<wire::MessageClassification>, String> {
+    let text = presented.text.as_str();
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -838,7 +913,14 @@ fn hydrate_message_classifications(
         let MarkdownEvent::Text(_) = event else {
             continue;
         };
-        if code_block || image_depth != 0 || quote_depth != 1 {
+        if code_block
+            || image_depth != 0
+            || quote_depth != 1
+            || presented
+                .sends
+                .iter()
+                .any(|send| send.range.contains(&source.start))
+        {
             continue;
         }
         let source_tail = text
@@ -876,7 +958,7 @@ fn hydrate_directive_contexts(
         .contexts
         .iter()
         .map(|context| {
-            let directive = directives.0.get(&context.key).ok_or_else(|| {
+            let directive = directives.directives.get(&context.key).ok_or_else(|| {
                 format!(
                     "canonical acknowledgment presentation lost directive {}",
                     context.key
@@ -892,6 +974,33 @@ fn hydrate_directive_contexts(
                 authored: directive.published,
                 badge: directive.badge(),
                 sender: directive.sender,
+            })
+        })
+        .collect()
+}
+
+fn hydrate_sends(
+    presented: &Presentation,
+    event: PresentationEvent,
+) -> Result<Vec<wire::MessageSend>, String> {
+    if presented.sends.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sender = event
+        .author
+        .ok_or_else(|| "presented MSG packet names no authoring occupant".to_owned())?;
+    presented
+        .sends
+        .iter()
+        .map(|send| {
+            Ok(wire::MessageSend {
+                start: u32::try_from(send.range.start)
+                    .map_err(|_| "MSG quote start exceeds the wire range".to_owned())?,
+                end: u32::try_from(send.range.end)
+                    .map_err(|_| "MSG quote end exceeds the wire range".to_owned())?,
+                from: event.lane,
+                sender,
+                recipients: send.recipients.clone(),
             })
         })
         .collect()
@@ -925,6 +1034,9 @@ fn has_broadcast_marker(text: &str) -> bool {
 #[derive(Clone, Copy, Debug)]
 struct PresentationEvent {
     lane: CanonicalUuid,
+    /// Occupant whose transcript wrote the event, when the presenter knows it;
+    /// only an event with an author presents its MSG packets as sends.
+    author: Option<CanonicalUuid>,
     source: Option<CanonicalUuid>,
     locus: listen::Locus,
     ordinal: u32,
@@ -942,7 +1054,7 @@ impl EventDirectives<'_> {
         disposition: wire::Disposition,
         locus: steer::ack::scan::Locus,
     ) -> bool {
-        let Some(directive) = self.directives.0.get(key) else {
+        let Some(directive) = self.directives.directives.get(key) else {
             return false;
         };
         directive.lane == self.event.lane
@@ -964,7 +1076,7 @@ impl EventDirectives<'_> {
     /// presentation.
     fn answered_for_lane(&self, key: &steer::Key) -> Option<wire::Disposition> {
         self.directives
-            .0
+            .directives
             .get(key)
             .filter(|directive| {
                 directive.lane == self.event.lane
@@ -1008,7 +1120,7 @@ impl EventDirectives<'_> {
 
     fn authored(&self, key: &steer::Key) -> bool {
         self.directives
-            .0
+            .directives
             .get(key)
             .is_some_and(|directive| directive.authored)
     }
@@ -1017,7 +1129,7 @@ impl EventDirectives<'_> {
     /// spoken here awaits the steer::acked fact before it reads as credit.
     fn pending(&self, key: &steer::Key) -> bool {
         self.directives
-            .0
+            .directives
             .get(key)
             .is_some_and(|directive| directive.disposition == wire::Disposition::Live)
     }
@@ -1034,7 +1146,7 @@ impl EventDirectives<'_> {
 
 impl steer::Standing for EventDirectives<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        let directive = self.directives.0.get(key)?;
+        let directive = self.directives.directives.get(key)?;
         if directive.disposition == wire::Disposition::Live
             || (directive.lane == self.event.lane
                 && directive

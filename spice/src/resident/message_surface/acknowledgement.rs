@@ -1,4 +1,5 @@
-//! Acknowledgement headers rewritten into quoted directive context.
+//! Acknowledgement headers rewritten into quoted directive context, and MSG
+//! packets rewritten into outgoing quotes.
 //!
 //! An assistant header such as `ACK KEY: applied` presents the directive it
 //! names, quoted verbatim above the response prose, whenever the journal
@@ -12,8 +13,17 @@
 //! earning a disposition. Only a token no directive owns stays literal.
 //! Presentation never grants repeated response retirement, a disposition, or
 //! automatic-speech authority.
+//!
+//! A placed, well-formed `MSG ADDRESS ...: BODY` packet whose every address
+//! names a proved occupant birth presents its body verbatim as one quote block
+//! in place of the header, and the block's range carries those recipients.
+//! The quote states what the author addressed, not delivery: whether the
+//! resident published or withheld the packet is the journal's record. Any
+//! other packet stays the agent's literal prose.
 
+use std::iter::Peekable;
 use std::ops::Range;
+use std::vec::IntoIter;
 
 use super::*;
 
@@ -24,6 +34,22 @@ pub(super) struct PresentedDirectiveContext {
     pub(super) range: Range<usize>,
 }
 
+/// One MSG packet the resident presented as an outgoing quote block.
+#[derive(Debug)]
+pub(super) struct PresentedSend {
+    pub(super) range: Range<usize>,
+    pub(super) recipients: Vec<wire::MessageRecipient>,
+}
+
+/// One placed packet in the source text, ready to present.
+struct PlacedSend {
+    /// Source offset where the packet's framing and header begin.
+    start: usize,
+    /// The packet's trimmed body in the source text.
+    body: Range<usize>,
+    recipients: Vec<wire::MessageRecipient>,
+}
+
 /// One presented message and the quote blocks the resident itself wrote into it.
 #[derive(Debug)]
 pub(super) struct Presentation {
@@ -31,6 +57,8 @@ pub(super) struct Presentation {
     /// Exact directive contexts in source order. Quotation nested inside them
     /// is operator-authored journal text; anything outside them is agent prose.
     pub(super) contexts: Vec<PresentedDirectiveContext>,
+    /// Exact outgoing MSG quotes in source order, disjoint from `contexts`.
+    pub(super) sends: Vec<PresentedSend>,
     /// Authenticated disposition of the whole answer. Mixed headers use
     /// declined, then pending, then acknowledged precedence.
     pub(super) acknowledgement: Option<wire::MessageAcknowledgement>,
@@ -44,9 +72,11 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     let standing = EventDirectives { directives, event };
     let mut rendered = String::new();
     let mut contexts = Vec::new();
+    let mut sends = Vec::new();
+    let mut placed = placed_sends(text, directives, event).into_iter().peekable();
     let mut answer_disposition: Option<wire::MessageAcknowledgement> = None;
     let mut cursor = 0;
-    let mut changed = false;
+    let mut changed = placed.peek().is_some();
     let mut capitalize_body = false;
     for acknowledgement in scan_presentations(text, &standing) {
         let separator = acknowledgement.separator;
@@ -59,28 +89,22 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         let start = presentation_framing_start(text, cursor, acknowledgement.start);
         let end = presentation_framing_end(text, acknowledgement.end);
         let framing_removed = start != acknowledgement.start || end != acknowledgement.end;
-        let source = text
-            .get(cursor..start)
-            .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
-        append_presented_source(&mut rendered, source, capitalize_body);
+        let source = cursor..start;
+        if text.get(source.clone()).is_none() {
+            return Err("acknowledgment header crossed a non-character boundary".to_owned());
+        }
+        append_authored(
+            &mut rendered,
+            text,
+            source,
+            capitalize_body,
+            &mut placed,
+            &mut sends,
+        );
         capitalize_body = false;
         if !packet.contexts.is_empty() {
-            start_quote_block(&mut rendered);
-            for (index, (key, _)) in packet.contexts.iter().enumerate() {
-                let directive = directives.0.get(key).ok_or_else(|| {
-                    format!("canonical acknowledgment recognition lost directive {key}")
-                })?;
-                if index > 0 {
-                    rendered.push_str("\n\n");
-                }
-                let start = rendered.len();
-                append_acknowledgement_quote(&mut rendered, &directive.text);
-                contexts.push(PresentedDirectiveContext {
-                    key: key.clone(),
-                    range: start..rendered.len(),
-                });
-            }
-            rendered.push_str("\n\n");
+            let keys = packet.contexts.iter().map(|(key, _)| key);
+            append_directive_contexts(&mut rendered, directives, keys, &mut contexts)?;
         }
         let disposition = packet_acknowledgement(&packet);
         if let Some(disposition) = disposition
@@ -134,18 +158,142 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         return Ok(Presentation {
             text: text.to_owned(),
             contexts,
+            sends,
             acknowledgement: answer_disposition,
         });
     }
-    let source = text
-        .get(cursor..)
-        .ok_or_else(|| "acknowledgment body crossed a non-character boundary".to_owned())?;
-    append_presented_source(&mut rendered, source, capitalize_body);
+    if text.get(cursor..).is_none() {
+        return Err("acknowledgment body crossed a non-character boundary".to_owned());
+    }
+    append_authored(
+        &mut rendered,
+        text,
+        cursor..text.len(),
+        capitalize_body,
+        &mut placed,
+        &mut sends,
+    );
     Ok(Presentation {
         text: rendered,
         contexts,
+        sends,
         acknowledgement: answer_disposition,
     })
+}
+
+/// Quote every directive one header answers as one block, recording each
+/// context's exact range.
+fn append_directive_contexts<'k>(
+    rendered: &mut String,
+    directives: &PresentationDirectives,
+    keys: impl Iterator<Item = &'k steer::Key>,
+    contexts: &mut Vec<PresentedDirectiveContext>,
+) -> Result<(), String> {
+    start_quote_block(rendered);
+    for (index, key) in keys.enumerate() {
+        let directive = directives
+            .directives
+            .get(key)
+            .ok_or_else(|| format!("canonical acknowledgment recognition lost directive {key}"))?;
+        if index > 0 {
+            rendered.push_str("\n\n");
+        }
+        let start = rendered.len();
+        append_acknowledgement_quote(rendered, &directive.text);
+        contexts.push(PresentedDirectiveContext {
+            key: key.clone(),
+            range: start..rendered.len(),
+        });
+    }
+    rendered.push_str("\n\n");
+    Ok(())
+}
+
+/// Every presentable MSG packet in `text`, in source order. Only an event
+/// whose authoring occupant is known presents sends.
+fn placed_sends(
+    text: &str,
+    directives: &PresentationDirectives,
+    event: PresentationEvent,
+) -> Vec<PlacedSend> {
+    if event.author.is_none()
+        || directives.recipients.is_empty()
+        || !text.contains(steer::ack::scan::message::MARKER)
+    {
+        return Vec::new();
+    }
+    steer::ack::scan::scan_messages(text)
+        .into_iter()
+        .filter_map(|message| {
+            let publication = message.publication.ok()?;
+            let recipients = publication
+                .recipients
+                .iter()
+                .map(|recipient| directives.recipients.get(&recipient.address).copied())
+                .collect::<Option<Vec<_>>>()?;
+            Some(PlacedSend {
+                start: send_framing_start(text, message.header.start),
+                body: publication.body,
+                recipients,
+            })
+        })
+        .collect()
+}
+
+/// List or bracket framing that opens a packet's line belongs to the header,
+/// so the quote that replaces the header never leaves an empty list item.
+fn send_framing_start(text: &str, start: usize) -> usize {
+    let line_start = text[..start].rfind('\n').map_or(0, |newline| newline + 1);
+    let framing = text[line_start..start].trim();
+    let ordinal = framing.strip_suffix(['.', ')']).is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    if framing.is_empty() || ordinal || matches!(framing, "-" | "*" | "+" | "[") {
+        line_start
+    } else {
+        start
+    }
+}
+
+/// Copy one source segment the acknowledgement pass keeps, presenting every
+/// MSG packet wholly inside it as an outgoing quote block.
+fn append_authored(
+    rendered: &mut String,
+    text: &str,
+    segment: Range<usize>,
+    capitalize: bool,
+    placed: &mut Peekable<IntoIter<PlacedSend>>,
+    sends: &mut Vec<PresentedSend>,
+) {
+    // A packet whose header an acknowledgement header consumed presents
+    // nothing here.
+    while placed
+        .next_if(|send| send.body.start < segment.start)
+        .is_some()
+    {}
+    let mut cursor = segment.start;
+    let mut capitalize = capitalize;
+    while let Some(send) = placed.next_if(|send| send.body.end <= segment.end) {
+        let prose = &text[cursor..send.start.max(cursor)];
+        if !prose.is_empty() {
+            append_presented_source(rendered, prose, capitalize);
+            capitalize = false;
+        }
+        start_quote_block(rendered);
+        let start = rendered.len();
+        append_acknowledgement_quote(rendered, &text[send.body.clone()]);
+        sends.push(PresentedSend {
+            range: start..rendered.len(),
+            recipients: send.recipients,
+        });
+        cursor =
+            skip_line_breaks(text, skip_horizontal_space(text, send.body.end)).min(segment.end);
+        // A following block must not continue this quote lazily.
+        if !text[cursor..].trim().is_empty() {
+            rendered.push_str("\n\n");
+        }
+    }
+    append_presented_source(rendered, &text[cursor..segment.end], capitalize);
 }
 
 /// Reuse the protocol scanner with display standing, not retirement authority.
@@ -163,7 +311,7 @@ struct DisplayStanding<'a>(&'a EventDirectives<'a>);
 
 impl steer::Standing for DisplayStanding<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        (self.0.directives.0.contains_key(key) || self.0.is_lane_seal(key))
+        (self.0.directives.directives.contains_key(key) || self.0.is_lane_seal(key))
             .then_some(wire::Disposition::Live)
     }
 }

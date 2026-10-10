@@ -88,6 +88,81 @@ pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> 
             .all(|pair| pair[0].end <= pair[1].start)
 }
 
+/// One authored MSG packet the resident presents in its author's card as an
+/// outgoing quote of the packet's body.
+///
+/// The range covers the rendered quote block exactly. The packet's header
+/// does not survive presentation; this annotation carries what it said:
+/// the exact occupant that wrote it and every occupant its addresses name,
+/// in header order. An address names one occupant birth forever, so these
+/// identities attribute the packet even after either side leaves its lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageSend {
+    /// Inclusive UTF-8 byte offset where the rendered quote block begins.
+    pub start: u32,
+    /// Exclusive UTF-8 byte offset immediately after the rendered quote block.
+    pub end: u32,
+    /// Lane whose occupant authored the packet.
+    pub from: crate::CanonicalUuid,
+    /// Exact occupant that authored the packet.
+    pub sender: crate::CanonicalUuid,
+    /// Every addressed occupant, in header order.
+    pub recipients: Vec<MessageRecipient>,
+}
+
+/// One occupant an MSG header addressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageRecipient {
+    /// Address the header spelled.
+    pub address: crate::OccupantAddress,
+    /// Lane the addressed occupant was born on.
+    pub lane: crate::CanonicalUuid,
+    /// Occupant the address names.
+    pub occupant: crate::CanonicalUuid,
+}
+
+impl MessageSend {
+    /// Whether this send names a non-empty UTF-8 range and at least one
+    /// distinct recipient.
+    #[must_use]
+    pub fn is_valid_for(&self, text: &str) -> bool {
+        let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
+            return false;
+        };
+        start < end
+            && text.get(start..end).is_some()
+            && !self.recipients.is_empty()
+            && self
+                .recipients
+                .iter()
+                .enumerate()
+                .all(|(index, recipient)| {
+                    self.recipients[..index]
+                        .iter()
+                        .all(|earlier| earlier.address != recipient.address)
+                })
+    }
+}
+
+/// Whether sends are exact, ordered, non-overlapping, and disjoint from every
+/// directive context.
+#[must_use]
+pub fn valid_message_sends(
+    text: &str,
+    sends: &[MessageSend],
+    directives: &[MessageDirective],
+) -> bool {
+    sends.iter().all(|send| send.is_valid_for(text))
+        && sends.windows(2).all(|pair| pair[0].end <= pair[1].start)
+        && sends.iter().all(|send| {
+            directives
+                .iter()
+                .all(|directive| directive.end <= send.start || send.end <= directive.start)
+        })
+}
+
 /// Semantic source-marker presentation authenticated by the resident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

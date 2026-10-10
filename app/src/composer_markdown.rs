@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
-use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirective};
+use wire::{
+    Media, MessageClassification, MessageClassificationKind, MessageDirective, MessageSend,
+};
 
 use crate::watchband;
 
@@ -94,6 +96,7 @@ pub(crate) struct ExpandedMedia<'a> {
     pub(crate) markdown: Cow<'a, str>,
     pub(crate) classifications: Cow<'a, [MessageClassification]>,
     pub(crate) directives: Cow<'a, [MessageDirective]>,
+    pub(crate) sends: Cow<'a, [MessageSend]>,
 }
 
 /// Expand authenticated display-only media while preserving authored labels,
@@ -104,11 +107,13 @@ pub(crate) fn expand_media_payloads<'a>(
     bindings: &[wire::MarkdownImageBinding],
     classifications: &'a [MessageClassification],
     directives: &'a [MessageDirective],
+    sends: &'a [MessageSend],
 ) -> Result<ExpandedMedia<'a>, wire::MediaError> {
     let mut expanded = ExpandedMedia {
         markdown: Cow::Borrowed(markdown),
         classifications: Cow::Borrowed(classifications),
         directives: Cow::Borrowed(directives),
+        sends: Cow::Borrowed(sends),
     };
     if markdown.contains("](attachment:") {
         for item in media {
@@ -201,6 +206,19 @@ fn replace_ranges(expanded: &mut ExpandedMedia<'_>, ranges: &[Range<usize>], rep
                 .collect(),
         );
     }
+    if !expanded.sends.is_empty() {
+        expanded.sends = Cow::Owned(
+            expanded
+                .sends
+                .iter()
+                .map(|send| MessageSend {
+                    start: shift(send.start),
+                    end: shift(send.end),
+                    ..send.clone()
+                })
+                .collect(),
+        );
+    }
     expanded.markdown = Cow::Owned(projected);
 }
 
@@ -286,6 +304,7 @@ pub(crate) fn render_received_with_quotes(
         markdown,
         classifications,
         directives,
+        &[],
         quotes,
         quote_agents,
         quote_sources,
@@ -295,12 +314,14 @@ pub(crate) fn render_received_with_quotes(
 
 /// Render one assistant prose card: received text as
 /// [`render_received_with_quotes`] renders it, except that terminal prose gains
-/// a period when unpunctuated and presents a terminal colon as a period, and
-/// the card's attribution slots lead it and each answer after a quote chain.
+/// a period when unpunctuated and presents a terminal colon as a period, the
+/// card's attribution slots lead it and each answer after a quote chain, and
+/// each MSG the card sent reads as an outgoing quote to its recipients.
 pub(crate) fn render_prose_card(
     markdown: &str,
     classifications: &[MessageClassification],
     directives: &[MessageDirective],
+    sends: &[MessageSend],
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
@@ -309,6 +330,7 @@ pub(crate) fn render_prose_card(
         markdown,
         classifications,
         directives,
+        sends,
         quotes,
         quote_agents,
         quote_sources,
@@ -327,6 +349,7 @@ fn render_quote_card_body(
 ) -> RenderedMarkdown {
     render(
         markdown,
+        &[],
         &[],
         &[],
         quotes,
@@ -361,22 +384,28 @@ enum Finish<'r> {
 /// Headings in task text nest under the detail's own section headings.
 const TASK_TEXT_HEADING: HeadingLevel = HeadingLevel::H5;
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one rendering carries every resident annotation family beside its quote context"
+)]
 fn render(
     markdown: &str,
     classifications: &[MessageClassification],
     directives: &[MessageDirective],
+    sends: &[MessageSend],
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     finish: Finish<'_>,
 ) -> RenderedMarkdown {
-    let math = math::normalize(markdown, classifications, directives, OPTIONS);
+    let math = math::normalize(markdown, classifications, directives, sends, OPTIONS);
     let markdown = math.markdown;
     let (events, outer_quotes) = parse_events(
         &markdown,
         OPTIONS,
         math.classifications,
         math.directives,
+        math.sends,
         quote_agents,
         quote_sources,
     );
@@ -466,19 +495,22 @@ fn render(
 
 /// One outermost raw block quote, in document order.
 struct OuterQuote {
-    /// Attribution repeated around each direct run that this directive owns.
+    /// Attribution repeated around each direct run that this directive or
+    /// sent MSG owns.
     attribution: Option<image_flow::Attribution>,
-    /// The accent slot of the speaker a directive context attributes.
+    /// The accent slot of the speaker a directive context or sent MSG
+    /// attributes.
     accent: Option<usize>,
 }
 
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
-/// record every outermost directive context's hunk attribution.
+/// record every outermost directive context's and sent MSG's hunk attribution.
 fn parse_events<'m>(
     markdown: &'m str,
     options: Options,
     classifications: Vec<MessageClassification>,
     directives: Vec<MessageDirective>,
+    sends: Vec<MessageSend>,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
 ) -> (Vec<MarkdownEvent<'m>>, Vec<OuterQuote>) {
@@ -486,11 +518,15 @@ fn parse_events<'m>(
         .into_iter()
         .map(|classification| (classification.start, classification))
         .collect::<BTreeMap<_, _>>();
-    // The resident writes every directive context as one outermost block
-    // quote beginning exactly at the context's start.
+    // The resident writes every directive context and every sent MSG body as
+    // one outermost block quote beginning exactly at its start.
     let mut contexts = directives
         .into_iter()
         .map(|directive| (directive.start as usize, directive))
+        .collect::<BTreeMap<_, _>>();
+    let mut sends = sends
+        .into_iter()
+        .map(|send| (send.start as usize, send))
         .collect::<BTreeMap<_, _>>();
     let mut outer_quotes = Vec::new();
     let mut quote_depth = 0usize;
@@ -503,22 +539,32 @@ fn parse_events<'m>(
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
             MarkdownEvent::Start(Tag::BlockQuote(_)) => {
                 if quote_depth == 0 {
-                    let context = contexts.remove(&source.start);
-                    let accent = context.as_ref().and_then(|context| {
-                        quotes::speaker_accent(
-                            &context_author(context),
-                            &context.quote_target.to_string(),
-                            quote_agents,
-                            quote_sources,
-                        )
-                    });
-                    let attribution = context
-                        .as_ref()
-                        .map(|context| directive_attribution(context, quote_agents, quote_sources));
-                    outer_quotes.push(OuterQuote {
-                        attribution,
-                        accent,
-                    });
+                    let quote = if let Some(context) = contexts.remove(&source.start) {
+                        OuterQuote {
+                            accent: quotes::speaker_accent(
+                                &context_author(&context),
+                                &context.quote_target.to_string(),
+                                quote_agents,
+                                quote_sources,
+                            ),
+                            attribution: Some(directive_attribution(
+                                &context,
+                                quote_agents,
+                                quote_sources,
+                            )),
+                        }
+                    } else if let Some(send) = sends.remove(&source.start) {
+                        OuterQuote {
+                            accent: quotes::send_accent(&send, quote_agents),
+                            attribution: Some(send_attribution(&send, quote_agents)),
+                        }
+                    } else {
+                        OuterQuote {
+                            attribution: None,
+                            accent: None,
+                        }
+                    };
+                    outer_quotes.push(quote);
                 }
                 quote_depth += 1;
             }
@@ -585,6 +631,19 @@ fn context_author(context: &MessageDirective) -> wire::QuoteAuthor {
         (actor, _) => wire::QuoteAuthor::Directive {
             actor: actor.clone(),
         },
+    }
+}
+
+/// A sent MSG's body reads as the card author's own words, so its hunks keep
+/// the containing message's controls under an outgoing sender-to-recipient
+/// lead.
+fn send_attribution(send: &MessageSend, quote_agents: &QuoteAgents) -> image_flow::Attribution {
+    image_flow::Attribution {
+        controls_target: String::new(),
+        signoff: quotes::send_signoff_html(send, quote_agents),
+        disposition: String::new(),
+        badge: String::new(),
+        task_tail: String::new(),
     }
 }
 

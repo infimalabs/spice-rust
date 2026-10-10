@@ -478,14 +478,17 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         .html
     };
 
-    let projection = referenced_quote_agents(&quotes, &[], &roster);
+    let projection = referenced_quote_agents(&quotes, &[], &[], &roster);
     assert_eq!(render(&projection), render(&roster));
 
     let mut reseated = roster.clone();
     reseated.remove(&(unrelated, Some(id("2c"))));
     reseated.insert((unrelated, Some(id("3c"))), agent("unrelated"));
     reseated.insert((arriving, Some(id("3d"))), agent("arriving"));
-    assert_eq!(referenced_quote_agents(&quotes, &[], &reseated), projection);
+    assert_eq!(
+        referenced_quote_agents(&quotes, &[], &[], &reseated),
+        projection
+    );
 }
 
 #[test]
@@ -567,6 +570,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
         &markdown,
         &[],
         &directives,
+        &[],
         &[],
         &QuoteAgents::new(),
         &sources,
@@ -669,6 +673,7 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
         &[],
         &directives,
         &[],
+        &[],
         &QuoteAgents::new(),
         &sources,
     )
@@ -723,7 +728,7 @@ fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
         label: label.to_owned(),
     };
     let render = |agents: &QuoteAgents| {
-        render_prose_card(&markdown, &[], &directives, &[], agents, &sources).html
+        render_prose_card(&markdown, &[], &directives, &[], &[], agents, &sources).html
     };
 
     let reseated = BTreeMap::from([((lane, Some(successor)), agent("successor-agent"))]);
@@ -759,4 +764,88 @@ fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
         )),
         "{absent}"
     );
+}
+
+#[test]
+fn a_sent_msg_reads_as_an_outgoing_quote_naming_exact_sender_and_recipients() {
+    let id = |suffix: &str| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131165{suffix}")
+            .parse()
+            .expect("fixture identity is canonical")
+    };
+    let (sender_lane, sender) = (id("0a"), id("1a"));
+    let (seated_lane, seated) = (id("0b"), id("1b"));
+    let (departed_lane, departed, successor) = (id("0c"), id("1c"), id("2c"));
+    let (vacant_lane, vacated) = (id("0d"), id("1d"));
+    let recipient = |address: &str, lane, occupant| wire::MessageRecipient {
+        address: address.parse().expect("fixture address parses"),
+        lane,
+        occupant,
+    };
+    let body = "> Please check the parser.";
+    let markdown = format!("Asking for review.\n{body}");
+    let start = markdown.find(body).expect("fixture body");
+    let sends = [wire::MessageSend {
+        start: u32::try_from(start).expect("fixture offset fits"),
+        end: u32::try_from(markdown.len()).expect("fixture offset fits"),
+        from: sender_lane,
+        sender,
+        recipients: vec![
+            recipient("6Jv5", seated_lane, seated),
+            recipient("6K26", departed_lane, departed),
+            recipient("6KB3", vacant_lane, vacated),
+        ],
+    }];
+    let agent = |accent: usize, label: &str| QuoteAgent {
+        accent,
+        label: label.to_owned(),
+    };
+    let agents = BTreeMap::from([
+        ((sender_lane, Some(sender)), agent(1, "sender-agent")),
+        ((seated_lane, Some(seated)), agent(2, "seated-agent")),
+        (
+            (departed_lane, Some(successor)),
+            agent(3, "successor-agent"),
+        ),
+        ((vacant_lane, None), agent(4, "vacant-lane")),
+    ]);
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &[],
+        &sends,
+        &[],
+        &referenced_quote_agents(&[], &[], &sends, &agents),
+        &QuoteSources::new(),
+    )
+    .html;
+
+    // The body is one quote wearing its sender's accent, led by its outgoing
+    // attribution rather than a quoted source's age.
+    let quote = html
+        .find("<blockquote data-accent=\"1\">")
+        .expect("sent body quotes in the sender's accent");
+    let signoff = html[quote..]
+        .find("data-quote-direction=\"outgoing\"")
+        .map(|offset| quote + offset)
+        .expect("outgoing signoff leads the quote");
+    let words = html.find("Please check the parser.").expect("body words");
+    assert!(signoff < words, "{html}");
+    assert!(!html.contains("MSG 6Jv5"), "{html}");
+    assert!(!html.contains("message-quote-age-slot"), "{html}");
+    let names = [
+        "data-quote-author-state=\"current\" data-accent=\"1\">sender-agent</span>",
+        "aria-label=\"sent to\">→</span>",
+        "data-quote-author-state=\"current\" title=\"6Jv5\" data-accent=\"2\">seated-agent</span>",
+        "data-quote-author-state=\"unresolved\" title=\"6K26\">6K26</span>",
+        "data-quote-author-state=\"historical\" title=\"6KB3\" data-accent=\"4\">vacant-lane</span>",
+    ]
+    .map(|name| html.find(name).unwrap_or_else(|| panic!("{name} in {html}")));
+    assert!(
+        names.is_sorted(),
+        "sender, arrow, then header order: {html}"
+    );
+    // A departed recipient keeps its own address; its lane's successor never
+    // inherits the attribution.
+    assert!(!html.contains("successor-agent"), "{html}");
 }

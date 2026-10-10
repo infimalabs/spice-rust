@@ -537,6 +537,8 @@ pub struct MessagePresentation {
     pub classifications: Vec<wire::MessageClassification>,
     /// Exact directive context ranges in [`Self::text`].
     pub directive_contexts: Vec<wire::MessageDirective>,
+    /// Exact outgoing MSG quote ranges in [`Self::text`].
+    pub sends: Vec<wire::MessageSend>,
 }
 
 impl MessagePresentation {
@@ -552,6 +554,7 @@ impl MessagePresentation {
     fn is_valid(&self) -> bool {
         wire::valid_message_classifications(&self.text, &self.classifications)
             && wire::valid_message_directives(&self.text, &self.directive_contexts)
+            && wire::valid_message_sends(&self.text, &self.sends, &self.directive_contexts)
     }
 }
 
@@ -1001,6 +1004,7 @@ fn revise_presented_message(
         && existing.acknowledgement == presentation.acknowledgement
         && existing.classifications == presentation.classifications
         && existing.directive_contexts == presentation.directive_contexts
+        && existing.sends == presentation.sends
     {
         return Ok(None);
     }
@@ -1012,6 +1016,7 @@ fn revise_presented_message(
     existing
         .directive_contexts
         .clone_from(&presentation.directive_contexts);
+    existing.sends.clone_from(&presentation.sends);
     Ok(Some(existing.clone()))
 }
 
@@ -1019,6 +1024,7 @@ fn validate_message_presentation(message: &AgentMessage) -> Result<(), MessagePu
     wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
     if !wire::valid_message_classifications(&message.text, &message.classifications)
         || !wire::valid_message_directives(&message.text, &message.directive_contexts)
+        || !wire::valid_message_sends(&message.text, &message.sends, &message.directive_contexts)
     {
         return Err(MessagePublishError::InvalidClassifications);
     }

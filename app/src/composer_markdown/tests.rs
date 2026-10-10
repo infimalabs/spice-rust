@@ -240,6 +240,7 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
         &[],
         &classifications,
         &[],
+        &[],
     )
     .expect("media expands");
     assert!(wire::valid_message_classifications(&expanded, &remapped));
@@ -283,6 +284,7 @@ fn authenticated_path_binding_preserves_alt_title_and_annotation_ranges() {
         &[],
         std::slice::from_ref(&binding),
         &classifications,
+        &[],
         &[],
     )
     .expect("bound image expands");

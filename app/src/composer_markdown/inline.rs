@@ -25,7 +25,7 @@ pub(crate) enum LineControls<'r> {
 
 /// Render one authored line as sanitized inline HTML.
 pub(crate) fn render_line(markdown: &str, controls: &LineControls<'_>) -> String {
-    let math = math::normalize(markdown, &[], &[], OPTIONS);
+    let math = math::normalize(markdown, &[], &[], &[], OPTIONS);
     let events = line_events(&math.markdown)
         .into_iter()
         .map(sanitize_markdown_event)
@@ -63,7 +63,7 @@ pub(crate) fn render_line(markdown: &str, controls: &LineControls<'_>) -> String
 /// The canonical plain-text projection of authored Markdown: one line with
 /// inline markers removed and code and math source kept.
 pub(crate) fn plain_text(markdown: &str) -> String {
-    let math = math::normalize(markdown, &[], &[], OPTIONS);
+    let math = math::normalize(markdown, &[], &[], &[], OPTIONS);
     let mut text = String::new();
     let mut pending_space = false;
     for event in line_events(&math.markdown) {
