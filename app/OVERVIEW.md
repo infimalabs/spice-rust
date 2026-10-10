@@ -92,10 +92,14 @@ overview**, Escape closes the blocker review before it closes the task
 overview, and closing the review returns focus to its launcher.
 
 Trust approval names one exact digest. A grant action exists only when the
-current board snapshot carries that digest as pended with nonempty
-producer-worktree evidence. Missing, revoked, and legacy-unbound heads remain
-visible blockers with capture guidance rather than offering a transition the
-resident must refuse. For an approvable digest, the browser reserves the
+current board snapshot carries that digest as pended with nonempty worktree
+provenance. Missing and legacy-unbound heads direct the operator to run
+`spice trust pend` from any worktree carrying the exact configuration; they do
+not bind recovery to the lane or path where the requirement first appeared.
+The pended path proves where those bytes were captured, not durable task
+ownership, so moving the same task state preserves digest authority. Revoked
+heads remain visible blockers rather than offering a transition the resident
+must refuse. For an approvable digest, the browser reserves the
 action, revalidates the originating task stamp, statement revision, pended
 standing, and producer evidence immediately before dispatch, then sends the
 resident's existing pended-to-granted trust transition witness. The action
