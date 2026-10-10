@@ -186,16 +186,6 @@ fn render_team_toolbar(
 ) -> Html {
     let can_arrange = render.can_arrange_teams && watchband::rearrangeable(&render.topology);
     let id = team.lane;
-    let arrangement_help_id = format!("team-arrangement-help-{id}");
-    let lights_label = if can_arrange {
-        format!(
-            "{} admitted agents; arrange team {}",
-            standings.len(),
-            watchband::team_label(team)
-        )
-    } else {
-        format!("{} admitted agents", standings.len())
-    };
     let control = render.team_controls.current(team.lane, team.subscription);
     let arrangement_context = arrangement::Context {
         controls: render.team_controls,
@@ -205,36 +195,49 @@ fn render_team_toolbar(
         lanes: render.runtime.lanes().map_or(&[][..], |view| &view.lanes),
         can_arrange: render.can_arrange_teams,
     };
-    let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
-    let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
-    let render_pip = |index: usize| {
-        let standing = &standings[index];
-        let member = team.member(standing.lane)?;
-        let status = member.status(standing.waking);
-        let label = format!("{}: {}", standing.label, status.label());
-        Some(html! {
-            <span
-                class={classes!("app-presence-pip", "app-presence-pip--status", status.key())}
-                role="img"
-                data-lane-light-target-id={member.lane.to_string()}
-                data-lane-status={status.key()}
-                aria-label={label.clone()}
-                title={label}
-            ></span>
-        })
-    };
-    let dragging = team_dragging(
-        id,
-        can_arrange,
-        render.topology_revision,
-        &render.topology,
-        render.sender,
-        render.team_drag,
-    );
-    let lost_capture = dragging.cancel.clone();
-    let lights = html! {
+    let lights = if standings.is_empty() {
+        Html::default()
+    } else {
+        let arrangement_help_id = format!("team-arrangement-help-{id}");
+        let lights_label = if can_arrange {
+            format!(
+                "{} admitted agents; arrange team {}",
+                standings.len(),
+                watchband::team_label(team)
+            )
+        } else {
+            format!("{} admitted agents", standings.len())
+        };
+        let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
+        let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
+        let render_pip = |index: usize| {
+            let standing = &standings[index];
+            let member = team.member(standing.lane)?;
+            let status = member.status(standing.waking);
+            let label = format!("{}: {}", standing.label, status.label());
+            Some(html! {
+                <span
+                    class={classes!("app-presence-pip", "app-presence-pip--status", status.key())}
+                    role="img"
+                    data-lane-light-target-id={member.lane.to_string()}
+                    data-lane-status={status.key()}
+                    aria-label={label.clone()}
+                    title={label}
+                ></span>
+            })
+        };
+        let dragging = team_dragging(
+            id,
+            can_arrange,
+            render.topology_revision,
+            &render.topology,
+            render.sender,
+            render.team_drag,
+        );
+        let lost_capture = dragging.cancel.clone();
+        html! {
         <span
-            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group team-lights"
+            class="team-lights"
             role={if can_arrange { "button" } else { "group" }}
             aria-label={lights_label}
             aria-haspopup={can_arrange.then_some("menu")}
@@ -259,23 +262,24 @@ fn render_team_toolbar(
             }
             {for standings.iter().enumerate().filter_map(|(index, _)| render_pip(index))}
         </span>
+        }
     };
     html! {
         <>
         <header class="team-toolbar">
-            {render_team_rail(team.lane, render, lights)}
-            {view::chrome::render_team_ticker(render.runtime, team, standings)}
-
+            {render_team_rail(team.lane, render)}
+            <div class="app-status-band team-status-row">
+                {lights}
+                {view::chrome::render_team_ticker(render.runtime, team, standings)}
+            </div>
         </header>
         {arrangement::render(team.lane, &control, &arrangement_context)}
         </>
     }
 }
 
-/// The fixed edge tabs and the task scroller between them. Presence is
-/// independent of Work, so this rail remains mounted when task data or groups
-/// are absent.
-fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>, lights: Html) -> Html {
+/// The fixed team total and task scroller remain independent of the status row.
+fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let groups = render
         .work
         .map(|work| work.team_task_groups(team))
@@ -288,7 +292,6 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>, lights: H
                     {for groups.iter().map(|group| render_team_task_group(team, group, render))}
                 </nav>
             }
-            {lights}
         </div>
     }
 }

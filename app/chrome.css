@@ -28,7 +28,7 @@
   --app-commandbar-block-pad: calc(var(--app-spice-tab-clearance) + var(--app-horn-tab-block-size) - var(--app-status-line-band) / 2);
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-commandbar-gap: 7px;
-  /* The trigger centers over the pip/control column and halfway between the
+  /* The trigger centers over the composer-control column and halfway between the
      upper global tabs and lower team tabs. Their equal tab heights cancel. */
   --app-spice-anchor-inset-block: calc((var(--app-commandbar-block-size) + var(--app-status-line-band) - var(--app-header-control)) / 2);
   --app-spice-anchor-inset-inline: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2 + env(safe-area-inset-right, 0px));

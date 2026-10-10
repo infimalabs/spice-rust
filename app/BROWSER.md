@@ -137,7 +137,7 @@ fill it.
 
 ## Arrange whole teams
 
-Pick up a team from the status-pip stack in the permanent right header tab.
+Pick up a team from the pip matrix at the physical left of its status bar.
 After the same six-pixel lift threshold used by composer movement, the source
 surface stays reserved and a bounded ghost follows the pointer. The middle
 three fifths of another team exchanges exactly those two team positions. Either
@@ -171,20 +171,23 @@ the lift without sending.
 The activity age keeps its fixed three-character measure and meets the main
 status with only the status line's ordinary inline spacing. It adds no trailing
 margin of its own. The status line owns the complete second header row.
+The status bar starts with a two-row, three-column matrix of 8px presence pips.
+Canonical members fill bottom-to-top, then right-to-left: #1 lower-right,
+#2 upper-right, #3 lower-middle, #4 upper-middle, #5 lower-left, #6 upper-left.
+Partial populations retain those positions. The ticker uses the remaining
+width; an empty team has no pip segment. The full row shares one surface and
+top rule, while only status text dims for bound/unbound state.
 
 ## Work tabs
 
-Global and team totals use four-pixel outer inline rails. Each populated team
-keeps its ordered presence pips in a permanent right rising tab with the same
-four-pixel rails; global stems and team stem containers use the thinner ordinary
-tab rails. The two edge tabs share one minimum inline size and the same outer
-inset. The total grows right with its count, while the pip tab keeps its right
-edge fixed and grows left at the pips' natural size and gap through six members;
-only content beyond that maximum compresses. Task handles remain borderless
-segments inside their stem container; the final handle meets the container's
-single right rail. The middle scroller reserves both live edge-tab widths and
-uses mirrored fade, padding, and scroll-padding boundaries beneath them. The
-rows keep their existing shapes, scrolling, counts, and navigation.
+Global and team totals use four-pixel outer inline rails; global stems and
+team stem containers use the thinner ordinary tab rails. The team total keeps
+its leading edge column and grows right with its count. Presence pips live in
+the status row, not a trailing task tab. Task handles remain borderless segments
+inside their stem container; the final handle meets the container's single
+right rail. The task scroller reserves the total's width and uses mirrored
+fade, padding, and scroll-padding boundaries at its ends. Counts and navigation
+remain independent of the status matrix.
 
 The task overview's Dependency graph points from each prerequisite to every
 dependent it blocks and labels that edge **then**, so the source card, arrow,
