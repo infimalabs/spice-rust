@@ -6,7 +6,7 @@
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Message, MessageRefusal, Outcome, Standing, scan, scan_acknowledgements, scan_messages,
+    Message, MessageRefusal, Outcome, Standing, answer, scan, scan_acknowledgements, scan_messages,
 };
 use wire::{Disposition, OccupantAddress, OccupantAddressError};
 
@@ -187,4 +187,36 @@ fn a_key_shaped_address_is_a_recipient_not_a_retirement() {
     assert_eq!(messages.len(), 1);
     assert_eq!(sent(prose, &messages[0]), (vec!["dVhKT0dWx"], "hello"));
     assert_eq!(scan(prose, &Live), []);
+}
+
+/// A retirement's reply ends before a placed MSG on its line, which keeps its
+/// own body; an unplaced MSG marker on that line stays reply prose.
+#[test]
+fn a_reply_clause_never_carries_a_placed_message() {
+    let prose = "ACK 1kJK6N3R: done here MSG 6HmS: private note";
+    assert_eq!(answer(prose, "1kJK6N3R", &Live), Some("done here"));
+    let messages = scan_messages(prose);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(sent(prose, &messages[0]), (vec!["6HmS"], "private note"));
+
+    assert_eq!(
+        answer("NAK 1kJK6N3R: **MSG 6HmS:** only this", "1kJK6N3R", &Live),
+        None
+    );
+    let refused = "ACK 1kJK6N3R: done; MSG 6HmS please";
+    assert_eq!(answer(refused, "1kJK6N3R", &Live), Some("done;"));
+    for prose in [
+        "ACK 1kJK6N3R: done here",
+        "ACK 1kJK6N3R: done here\nMSG 6HmS: next line",
+        "ACK 1kJK6N3R: done here `MSG 6HmS: inline`",
+        "ACK 1kJK6N3R: done here; the example MSG 6HmS: narrated",
+        "ACK 1kJK6N3R: done here, MSG count: 3",
+    ] {
+        let line = prose.lines().next().expect("one line");
+        assert_eq!(
+            answer(prose, "1kJK6N3R", &Live),
+            Some(&line["ACK 1kJK6N3R: ".len()..]),
+            "reply for {prose:?}"
+        );
+    }
 }
