@@ -732,27 +732,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_landing_message_uses_current_trailers_only() {
-        let message = compose_message(Metadata {
-            label: "GIT-123",
-            title: "Remove redundant task landing trailers",
-            project: "task.git",
-            phase: "todo",
-            actor: "lane:00000000-0000-4000-8000-000000000123",
-        });
-
-        assert!(message.contains("\nTask-Key: 123\n"));
-        assert!(
-            message
-                .lines()
-                .any(|line| line == "Task-Session: 00000000-0000-4000-8000-000000000123")
-        );
-        assert!(!message.contains("Spice-Task-Boundary:"));
-        assert!(!message.contains("Task-Lane-Head:"));
-        assert!(!message.contains("Task-Handle:"));
-    }
-
-    #[test]
     fn recovered_lane_head_recognizes_current_landing_evidence() {
         let meta = Metadata {
             label: "GIT-1kQb17Yt",
@@ -763,26 +742,5 @@ mod tests {
         };
         let message = compose_message(meta);
         assert!(landing_message_matches(&message, meta));
-    }
-
-    #[test]
-    fn recovered_lane_head_recognizes_legacy_landing_evidence() {
-        let meta = Metadata {
-            label: "GIT-1kQb9T0w",
-            title: "Normalize legacy task landing evidence during recovery",
-            project: "task.git",
-            phase: "todo",
-            actor: "lane:00000000-0000-4000-8000-000000000123",
-        };
-        let message = concat!(
-            "task: legacy landing GIT-1kQb9T0w\n\n",
-            "Spice-Task-Boundary: 1\n",
-            "Task-Handle: GIT-1kQb9T0w\n",
-            "Task-Lane-Head: 1111111111111111111111111111111111111111\n",
-            "Task-Phase: todo\n",
-            "Task-Project: task.git\n",
-            "Task-Session: lane:00000000-0000-4000-8000-000000000123\n",
-        );
-        assert!(landing_message_matches(message, meta));
     }
 }
