@@ -71,6 +71,10 @@
   --app-status-line-band: 30px;
   --app-horn-tab-block-size: 21px;
   --app-horn-tab-inset: 10px;
+  /* Global and team totals keep one badge and tab footprint for every count:
+     a wider count takes room from the badge's inline padding. */
+  --app-total-badge-inline-size: 16px;
+  --app-total-tab-inline-size: calc(2 * var(--message-rail) + 2 * var(--app-horn-tab-inset) + var(--app-total-badge-inline-size));
   --app-presence-pip-size: 8px;
   --app-presence-member-border-width: 5px;
   --app-provider-emblem-size: 22px;
@@ -224,6 +228,20 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 }
 .app-horn-tab--group > button:first-child { padding-inline-start: var(--app-horn-tab-inset); }
 .app-horn-tab--group > button:last-child { padding-inline-end: var(--app-horn-tab-inset); }
+.app-horn-tab:is([data-work-scope="all"], [data-work-scope="team"]) {
+  box-sizing: border-box;
+  min-inline-size: var(--app-total-tab-inline-size);
+  justify-content: center;
+  padding-inline: 0;
+}
+.app-horn-tab[data-work-scope="team"] > button { flex: 1 1 auto; justify-content: center; padding-inline: 0; }
+:is([data-work-scope="all"], [data-work-scope="team"]) .app-count-badge {
+  display: inline-block;
+  box-sizing: border-box;
+  min-inline-size: var(--app-total-badge-inline-size);
+  padding-inline: 0;
+  text-align: center;
+}
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
   background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--control));
   color: var(--muted);
