@@ -111,15 +111,19 @@ impl LaneListOptions {
 #[derive(Clone, Copy)]
 struct LaneListCandidate<'a> {
     lane: CanonicalUuid,
+    name: Option<&'a str>,
     seated: bool,
     claim: Option<&'a str>,
     address: &'a SeatAddress,
 }
 
-/// One lane, its claim, and the peer address its seat offers now.
+/// One lane, its display name, its claim, and the peer address its seat
+/// offers now.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct LaneListRow {
     lane: CanonicalUuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     seated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     claim: Option<String>,
@@ -128,10 +132,13 @@ pub(crate) struct LaneListRow {
 
 impl fmt::Display for LaneListRow {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "lane {}", self.lane)?;
+        if let Some(name) = &self.name {
+            write!(formatter, " name={name:?}")?;
+        }
         write!(
             formatter,
-            "lane {} seated={} claim={} address={}",
-            self.lane,
+            " seated={} claim={} address={}",
             self.seated,
             self.claim.as_deref().unwrap_or("-"),
             self.address
@@ -186,6 +193,7 @@ fn lane_list_candidates(
             })?;
             Ok(LaneListCandidate {
                 lane: row.lane,
+                name: row.name.as_deref(),
                 seated: row.disposition == "occupied" && row.occupant.is_some(),
                 claim: claims.get(&row.lane).copied(),
                 address,
@@ -224,6 +232,7 @@ fn lane_list_page(
         admission
             .offer(LaneListRow {
                 lane: candidate.lane,
+                name: candidate.name.map(str::to_owned),
                 seated: candidate.seated,
                 claim: candidate.claim.map(str::to_owned),
                 address: candidate.address.clone(),
@@ -334,6 +343,7 @@ mod tests {
         (1..=206)
             .map(|value| LaneListCandidate {
                 lane: uuid(value),
+                name: None,
                 seated: value % 2 == 0,
                 claim: (value % 5 == 0).then_some("TASK-claim"),
                 address: &VACANT,
