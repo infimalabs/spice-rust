@@ -1035,10 +1035,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "phase_guidance:".to_owned(),
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
-            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; task add connects it to this ambient plan automatically."
+            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; the child automatically depends on this plan and cannot start until the plan completes."
                 .to_owned(),
             format!(
-                "  To gate the child behind this plan instead, create it with --depends {handle}; that child-to-plan link also satisfies planning. Do not add the reverse edge too."
+                "  Explicit --depends replaces the child's prerequisite list; include {handle} to retain the plan gate. Do not add a reciprocal plan-to-child edge."
             ),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
@@ -1052,10 +1052,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
         format!(
-            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which connects it to this ambient plan automatically."
+            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which automatically depends on this plan and waits for its completion."
         ),
         format!(
-            "  --depends names the new task's own prerequisites and suppresses the automatic parent-to-child link; --depends {handle} gates the child behind this plan and still satisfies planning. Do not add the reverse edge too."
+            "  Explicit --depends names the child's complete prerequisite list and suppresses the implicit gate; include {handle} to retain that gate. Do not add a reciprocal plan-to-child edge."
         ),
         "  Planning changes board state, not repository files; do not edit or commit implementation."
             .to_owned(),
