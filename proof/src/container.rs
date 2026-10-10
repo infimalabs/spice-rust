@@ -2,17 +2,18 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use sill::{
-    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
+    Argv, Cancellation, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitError, WaitPolicy,
 };
 use wire::manifest::ProofImage;
 
 use crate::challenge::Challenge;
+use crate::launch::{Launch, LaunchError, System};
 
 mod error;
 
@@ -54,9 +55,6 @@ exec "$@"
 /// every stub while it stays down, and `IFF_LOOPBACK` is set by the kernel for
 /// the loopback device alone, which is what a name comparison could not check:
 /// a real adapter renamed `lo` used to pass on its name and no longer does.
-///
-/// Kept as its own text so the rule the tests exercise is the rule the sealed
-/// container runs, rather than a second copy that could drift from it.
 macro_rules! network_rule {
     () => {
         r#"
@@ -77,10 +75,7 @@ network_isolated() {
 /// grants, as one shell function over a `mountinfo` file.
 ///
 /// It names the first bound not met rather than returning a bare failure, so
-/// the refusal a member sees still says which mount was wrong. Kept as its own
-/// text for the same reason as [`network_rule`]: the mount flags on the other
-/// side of this contract change, and an assertion nothing exercises is an
-/// assertion that could stop biting without anyone noticing.
+/// the refusal a member sees still says which mount was wrong.
 macro_rules! mount_rule {
     () => {
         r#"
@@ -150,10 +145,11 @@ network_isolated /sys/class/net || refuse network-reaches-past-loopback
 const MEMBER_SCRIPT: &str = attest_and_exec!();
 
 /// One observed OCI runtime interface.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct OciRuntime {
     kind: RuntimeKind,
     binary: PathBuf,
+    launcher: Arc<dyn Launch>,
 }
 
 impl OciRuntime {
@@ -164,7 +160,14 @@ impl OciRuntime {
     /// Refuses non-absolute, missing, non-regular, or non-executable paths and
     /// any failed, incomplete, ambiguous, or unrecognized identity exchange.
     pub fn attest(binary: impl AsRef<Path>, limits: Limits) -> Result<Self, ContainerError> {
-        let binary = binary.as_ref();
+        Self::attest_with(Arc::new(System), binary.as_ref(), limits)
+    }
+
+    pub(crate) fn attest_with(
+        launcher: Arc<dyn Launch>,
+        binary: &Path,
+        limits: Limits,
+    ) -> Result<Self, ContainerError> {
         if !binary.is_absolute() {
             return Err(ContainerError::RuntimeNotAbsolute(binary.to_path_buf()));
         }
@@ -182,8 +185,12 @@ impl OciRuntime {
         if !is_executable(&metadata) {
             return Err(ContainerError::RuntimeNotExecutable(binary));
         }
-        let kind = observe_runtime_kind(&binary, limits)?;
-        Ok(Self { kind, binary })
+        let kind = observe_runtime_kind(launcher.as_ref(), &binary, limits)?;
+        Ok(Self {
+            kind,
+            binary,
+            launcher,
+        })
     }
 
     /// Exact runtime executable admitted above.
@@ -300,7 +307,7 @@ impl Limits {
 /// the single observation string its caller reports.
 enum ProbeRefusal {
     Spec(SpecError),
-    Spawn(io::Error),
+    Spawn(std::io::Error),
     Wait(WaitError),
     Observed(String),
 }
@@ -334,6 +341,7 @@ impl ProbeRefusal {
 /// were captured whole, and stderr stayed silent. Anything else is the
 /// observation, and the caller decides which refusal it names.
 fn probe(
+    launcher: &dyn Launch,
     binary: &Path,
     arguments: &[&str],
     label: &'static str,
@@ -366,39 +374,43 @@ fn probe(
         redaction: Redaction::None,
         grace: limits.grace,
     };
-    let running = {
-        #[cfg(test)]
-        let _spawn_guard = crate::test_support::process_spawn_guard();
-        sill::spawn(spec)
-    }
-    .map_err(ProbeRefusal::Spawn)?;
-    let outcome = running.wait().map_err(ProbeRefusal::Wait)?;
-    let completion = format!("{:?}", outcome.completion());
-    let stdout = outcome.stdout().map(Captured::from).ok_or_else(|| {
-        ProbeRefusal::Observed(format!("completion={completion}, stdout capture missing"))
+    let execution = launcher.run(spec).map_err(|error| match error {
+        LaunchError::Spawn(source) => ProbeRefusal::Spawn(source),
+        LaunchError::Wait(source) => ProbeRefusal::Wait(source),
+        LaunchError::MissingCapture(stream) => {
+            ProbeRefusal::Observed(format!("{stream} capture missing"))
+        }
     })?;
-    let stderr = outcome.stderr().map(Captured::from).ok_or_else(|| {
-        ProbeRefusal::Observed(format!("completion={completion}, stderr capture missing"))
-    })?;
-    let observed = format!(
-        "completion={completion}, stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&stdout.bytes),
-        String::from_utf8_lossy(&stderr.bytes)
-    );
-    if !matches!(outcome.completion(), Completion::Exited(status) if status.success())
-        || stdout.truncated
+    let Execution {
+        completion,
+        stdout,
+        stderr,
+    } = execution;
+    if !matches!(
+        completion,
+        ExecutionCompletion::Exited { success: true, .. }
+    ) || stdout.truncated
         || stderr.truncated
         || !stdout.complete
         || !stderr.complete
         || !stderr.bytes.is_empty()
     {
-        return Err(ProbeRefusal::Observed(observed));
+        return Err(ProbeRefusal::Observed(format!(
+            "completion={completion:?}, stdout={:?}, stderr={:?}",
+            String::from_utf8_lossy(&stdout.bytes),
+            String::from_utf8_lossy(&stderr.bytes)
+        )));
     }
     Ok(stdout.bytes)
 }
 
-fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, ContainerError> {
+fn observe_runtime_kind(
+    launcher: &dyn Launch,
+    binary: &Path,
+    limits: Limits,
+) -> Result<RuntimeKind, ContainerError> {
     let stdout = probe(
+        launcher,
         binary,
         &["--version"],
         "sealed OCI runtime identity probe",
@@ -439,6 +451,7 @@ fn resolve_image(
     limits: Limits,
 ) -> Result<(), ContainerError> {
     let stdout = probe(
+        runtime.launcher.as_ref(),
         &runtime.binary,
         &[
             "image",
@@ -679,38 +692,14 @@ impl Container {
     }
 
     fn run(&self, spec: Spec) -> Result<Execution, ContainerError> {
-        let running = {
-            #[cfg(test)]
-            let _spawn_guard = crate::test_support::process_spawn_guard();
-            sill::spawn(spec)
-        }
-        .map_err(ContainerError::SpawnRuntime)?;
-        let outcome = running.wait().map_err(ContainerError::Wait)?;
-        let completion = match outcome.completion() {
-            Completion::Exited(status) => ExecutionCompletion::Exited {
-                success: status.success(),
-                code: status.code(),
-            },
-            Completion::TimedOut(status) => ExecutionCompletion::TimedOut {
-                code: status.code(),
-            },
-            Completion::Cancelled(status) => ExecutionCompletion::Cancelled {
-                code: status.code(),
-            },
-        };
-        let stdout = outcome
-            .stdout()
-            .map(Captured::from)
-            .ok_or(ContainerError::MissingCapture("stdout"))?;
-        let stderr = outcome
-            .stderr()
-            .map(Captured::from)
-            .ok_or(ContainerError::MissingCapture("stderr"))?;
-        Ok(Execution {
-            completion,
-            stdout,
-            stderr,
-        })
+        self.runtime
+            .launcher
+            .run(spec)
+            .map_err(|error| match error {
+                LaunchError::Spawn(source) => ContainerError::SpawnRuntime(source),
+                LaunchError::Wait(source) => ContainerError::Wait(source),
+                LaunchError::MissingCapture(stream) => ContainerError::MissingCapture(stream),
+            })
     }
 
     fn run_attested(
