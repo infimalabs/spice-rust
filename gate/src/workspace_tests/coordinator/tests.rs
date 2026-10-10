@@ -133,6 +133,8 @@ impl ShardLauncher for Shards {
                 return Err(WorkspaceTestError::new("fixture launch refused"));
             }
             Behavior::UntilCancelled => {
+                let parked = thread::current();
+                let _registration = cancellation.register_waker(Arc::new(move || parked.unpark()));
                 while !cancellation.is_cancelled() {
                     thread::park();
                 }
