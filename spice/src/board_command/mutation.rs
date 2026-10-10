@@ -248,15 +248,12 @@ fn create_task<B: serde::Serialize>(
             "correct the capture title and retry; no task or claim was created and the local commits remain on this lane",
         );
     }
+    let mut tags = Vec::new();
     if taste_review_required {
-        prepend_plan(&mut prepared.flow);
+        hold_for_taste(&mut prepared.flow, &mut tags);
         prepared.phase = prepared.flow[0].clone();
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
-    }
-    let mut tags = Vec::new();
-    if taste_review_required {
-        require_taste_review(&mut tags);
     }
     if let Err(outcome) = gate_ambient_plan_child(&snapshot, command, add, &mut prepared.statement)
     {

@@ -391,14 +391,11 @@ fn prepare_followup_policy(
         &add.acceptance,
     )?;
     let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
-    if taste_review_required {
-        prepend_plan(&mut flow);
-    }
-    let phase = flow[0].clone();
     let mut tags = Vec::new();
     if taste_review_required {
-        require_taste_review(&mut tags);
+        hold_for_taste(&mut flow, &mut tags);
     }
+    let phase = flow[0].clone();
     Ok((flow, phase, tags, taste_review))
 }
 

@@ -3,9 +3,9 @@ use super::*;
 /// Project the current phase's ownership policy from durable transition evidence.
 ///
 /// Published repository work asks for independent ownership. A transition with
-/// another declared phase still ahead stays with its prior claimant. Task birth
-/// and an unrecorded transition into the final declared phase carry no inferred
-/// handoff preference.
+/// another declared phase still ahead stays with its prior claimant. Task birth,
+/// an unrecorded transition into the final declared phase, and an edit that
+/// withdrew a taste hold's plan phase carry no inferred handoff preference.
 pub(crate) fn phase_handoff(
     facts: &bus::TaskFacts,
     heads: &journal::TaskHeads,
@@ -16,9 +16,11 @@ pub(crate) fn phase_handoff(
     let Some(workflow) = workflow else {
         return Ok(None);
     };
-    let completed = workflow
-        .cause
-        .and_then(|cause| facts.at(cause))
+    let cause = workflow.cause.and_then(|cause| facts.at(cause));
+    if cause.is_some_and(|envelope| envelope.fact.kind() == wire::FactKind::TaskEdited) {
+        return Ok(None);
+    }
+    let completed = cause
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskDone)
         .ok_or_else(|| {
             protocol_fault(

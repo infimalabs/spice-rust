@@ -948,6 +948,7 @@ struct DocTaskSpec {
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
     taste_review: Option<TasteReview>,
+    released: Option<ReleasedPlan>,
 }
 
 pub(super) fn doc_apply(
@@ -1189,13 +1190,7 @@ fn doc_task_spec(
         .clone()
         .unwrap_or_else(|| "task.document".to_owned());
     validate_acceptance(&node.acceptance)?;
-    if node.tags.iter().any(|tag| tag == TASTE_REVIEW_TAG) {
-        return Err(refusal(
-            "doc::tag-reserved",
-            Some(TASTE_REVIEW_TAG.to_owned()),
-            "remove the system-owned taste-review marker from the authored document",
-        ));
-    }
+    refuse_system_tags(&node.tags)?;
     let mut flow = if node.flow.is_empty() {
         task_flow(None, &node.acceptance)?
     } else {
@@ -1229,9 +1224,6 @@ fn doc_task_spec(
             "an existing taste review cannot clear without repository policy authority",
         ));
     }
-    if taste_review_required && existing.is_none() {
-        prepend_plan(&mut flow);
-    }
     if taste_review_required
         && existing.is_some_and(|entry| {
             !has_taste_review(&entry.statement().tags) && entry.workflow().phase.as_str() != "plan"
@@ -1243,15 +1235,19 @@ fn doc_task_spec(
             "revise the authored task statement so it passes taste review before applying it",
         ));
     }
-    let initial = flow[0].clone();
     let mut tags = node.tags.clone();
     tags.push(document_slug_tag(&node.slug));
     if let Some(priority) = node.priority {
         tags.push(format!("priority:{priority}"));
     }
-    if taste_review_required {
-        require_taste_review(&mut tags);
-    }
+    let released = resync_taste_hold(
+        &plan.snapshot,
+        existing,
+        taste_review_required,
+        &mut flow,
+        &mut tags,
+    )?;
+    let initial = flow[0].clone();
     Ok(DocTaskSpec {
         born: task
             .born()
@@ -1268,6 +1264,7 @@ fn doc_task_spec(
         initial,
         taste_review: (was_required || taste_review_required)
             .then(|| taste_review.expect("repository-backed review has a verdict")),
+        released,
     })
 }
 
@@ -1372,15 +1369,15 @@ fn edit_doc_task(
         revision: position,
         ..statement
     });
+    let mut last = edited;
     if let Some(review) = taste_review.as_ref() {
-        return append_taste_review_audit(
-            write,
-            existing.born(),
-            review,
-            FactCause::Pending(edited),
-        );
+        last =
+            append_taste_review_audit(write, existing.born(), review, FactCause::Pending(edited))?;
     }
-    Ok(edited)
+    if let Some(released) = spec.released {
+        last = released.write(write, existing.born(), edited)?;
+    }
+    Ok(last)
 }
 
 fn add_doc_task(
