@@ -1,12 +1,12 @@
 use super::*;
-use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
+use crate::resident::lane_surface::{LaunchFixture, seed_task_claim};
 use bus::CommitOutcome;
 use journal::{Journal, JournalWrite};
 use wire::{LaneResidency, Origin, Producer, ResidentState};
 
 #[test]
 fn trailing_generations_project_private_claimant_notices_without_steering() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Lane(fixture.lane));
     note(&bus, &task, Actor::Operator);
@@ -81,7 +81,7 @@ fn trailing_generations_project_private_claimant_notices_without_steering() {
 
 #[test]
 fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Operator);
     note(&bus, &task, Actor::Operator);
@@ -124,7 +124,7 @@ fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
 
 #[test]
 fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let (bus, task) = automatic_claimed_fixture(&fixture);
     let snapshot = bus.task_snapshot().expect("automatic claim snapshot reads");
     let claim = snapshot.tasks()[0].claim().expect("claim head").body();
@@ -159,7 +159,7 @@ fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
 
 #[test]
 fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let (bus, _) = claimed_fixture(&fixture);
     let control = "task-generation:1kKRRsDQ:33:4".to_owned();
     let (mut proposal, published) =
@@ -201,7 +201,7 @@ fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
     finish(bus);
 }
 
-fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
+fn claimed_fixture(fixture: &LaunchFixture) -> (Bus, TaskStamp) {
     let at = now();
     claimed_fixture_with_deadlines(
         fixture,
@@ -211,13 +211,13 @@ fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
     )
 }
 
-fn automatic_claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
+fn automatic_claimed_fixture(fixture: &LaunchFixture) -> (Bus, TaskStamp) {
     let at = now();
     claimed_fixture_with_deadlines(fixture, at, shifted(at, 60), shifted(at, 3_600))
 }
 
 fn claimed_fixture_with_deadlines(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     start: Instant,
     expiry: Instant,
     maximum: Instant,

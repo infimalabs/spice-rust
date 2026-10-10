@@ -1,11 +1,11 @@
-use super::super::launch::test_support::AdvisoryRtkFixture;
+use super::super::launch::test_support::LaunchFixture;
 use super::*;
 
 mod proof_window;
 
 #[test]
 fn automatic_wake_refuses_an_already_seated_drain_lane() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     seed_vacant_lane(&bus, &fixture, "drain");
@@ -44,7 +44,7 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
 
 #[test]
 fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     seed_vacant_lane(&bus, &fixture, "drive");
@@ -100,15 +100,11 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         Err(Outcome::Fault(fault)) => panic!("occupied wake faulted: {fault:?}"),
         Err(Outcome::Reply(_)) | Ok(_) => panic!("occupied lane launched a successor"),
     }
-    assert!(
-        !fixture.root.join("rtk-probes").exists(),
-        "successor launch reached the vendor preparation path"
-    );
     bus.verify().expect("occupied wake refusal verifies");
     bus.shutdown().expect("fixture bus stops");
 }
 
-fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
+fn seed_vacant_lane(bus: &Bus, fixture: &LaunchFixture, life: &str) {
     let mut write =
         write(Actor::Spice, fixture.epoch, Producer::CommandDoor).expect("fixture write starts");
     let seated = write

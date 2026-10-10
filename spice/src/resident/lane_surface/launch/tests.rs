@@ -2,14 +2,14 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::test_support::AdvisoryRtkFixture;
+use super::test_support::{InertProbes, LaunchFixture};
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn fresh_launch_without_a_claim_has_no_assignment_banner() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
     let resolved =
         spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
@@ -26,6 +26,7 @@ fn fresh_launch_without_a_claim_has_no_assignment_banner() {
             effort: None,
             running: None,
         },
+        &InertProbes,
     )
     .expect("fresh launch plan composes");
     assert!(plan.launch().prompt.contains("<system-notice>"));
@@ -34,7 +35,7 @@ fn fresh_launch_without_a_claim_has_no_assignment_banner() {
 
 #[test]
 fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
     let resolved =
         spice::config::load_repository(&repository, &[]).expect("fixture configuration loads");
@@ -55,6 +56,7 @@ fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
                 effort: None,
                 running: None,
             },
+            &InertProbes,
         )
         .expect("launch plan composes");
         plan.launch().prompt.clone()
@@ -72,19 +74,10 @@ fn freshness_not_the_pinned_session_decides_briefing_or_resume_notice() {
 
 #[test]
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
-    let fixture = AdvisoryRtkFixture::new();
-    let vendor = fixture.root.join("fake-omp");
+    let fixture = LaunchFixture::new();
     fs::write(
         fixture.root.join("spice-rust.toml"),
-        format!(
-            concat!(
-                "[lane]\nlease = \"1s\"\nruntime = \"5s\"\n\n",
-                "[vendor.omp]\nbinary = {:?}\n\n",
-                "[rtk]\nexecutable = {:?}\n",
-            ),
-            vendor.display().to_string(),
-            fixture.root.join("advisory-rtk").display().to_string(),
-        ),
+        "[lane]\nlease = \"1s\"\nruntime = \"5s\"\n",
     )
     .expect("independent lease and runtime policy writes");
 
@@ -92,6 +85,7 @@ fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
         &fixture.paths,
         fixture.request(vendor::Resume::Fresh),
         fixture.reporter(),
+        &InertProbes,
     )
     .expect("occupant launch composes");
     assert_eq!(launch.spec.deadlines.runtime(), Duration::from_secs(5));
@@ -99,20 +93,17 @@ fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
 
 #[test]
 fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     fs::remove_file(fixture.root.join("Cargo.lock")).expect("remove fixture Cargo lock");
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
 
     let (environment, _) = launch_environment(
         &repository,
-        &fixture.root.join("fake-omp"),
+        &fixture.root.join("omp"),
         None,
-        fixture
-            .root
-            .join("advisory-rtk")
-            .to_str()
-            .expect("fixture RTK path is UTF-8"),
+        "rtk",
         fixture.lane,
+        &InertProbes,
     )
     .expect("non-Rust launch environment composes");
     for name in [
@@ -182,7 +173,7 @@ fn occupant_inherits_only_admitted_ambient_including_the_ssh_agent_socket() {
 
 #[test]
 fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_vendors() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     for path in ["Cargo.lock", "Cargo.toml", "spice-rust.toml"] {
         fs::remove_file(fixture.root.join(path)).expect("remove Rust fixture input");
     }
@@ -201,12 +192,20 @@ fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_
         effort: None,
     };
 
-    occupant_launch(&fixture.paths, request(&omp), fixture.reporter())
-        .expect("zero-config non-Rust repository composes default omp");
+    occupant_launch(
+        &fixture.paths,
+        request(&omp),
+        fixture.reporter(),
+        &InertProbes,
+    )
+    .expect("zero-config non-Rust repository composes default omp");
 
-    let Err(Outcome::Refusal(refusal)) =
-        occupant_launch(&fixture.paths, request(&other), fixture.reporter())
-    else {
+    let Err(Outcome::Refusal(refusal)) = occupant_launch(
+        &fixture.paths,
+        request(&other),
+        fixture.reporter(),
+        &InertProbes,
+    ) else {
         panic!("a lane recorded under an unsupported vendor must refuse to wake");
     };
     let diagnostic = refusal.diagnostic().expect("the refusal is diagnosed");
@@ -217,13 +216,14 @@ fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_
 
 #[test]
 fn a_worktree_in_another_repository_refuses_the_lane_instead_of_faulting_the_resident() {
-    let resident = AdvisoryRtkFixture::new();
-    let foreign = AdvisoryRtkFixture::new();
+    let resident = LaunchFixture::new();
+    let foreign = LaunchFixture::new();
 
     let Err(Outcome::Refusal(refusal)) = occupant_launch(
         &resident.paths,
         foreign.request(vendor::Resume::Fresh),
         resident.reporter(),
+        &InertProbes,
     ) else {
         panic!("a copied journal naming another repository's worktree must park only that lane");
     };
@@ -243,7 +243,7 @@ fn a_worktree_in_another_repository_refuses_the_lane_instead_of_faulting_the_res
 
 #[test]
 fn regular_cargo_lock_retains_the_complete_isolated_rust_environment() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
     let environment = cargo_environment(&repository, fixture.lane)
         .expect("regular Cargo lock prepares isolation");
@@ -268,7 +268,7 @@ fn regular_cargo_lock_retains_the_complete_isolated_rust_environment() {
 
 #[test]
 fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let lock = fixture.root.join("Cargo.lock");
     fs::remove_file(&lock).expect("remove fixture Cargo lock");
     fs::create_dir(&lock).expect("replace Cargo lock with directory");

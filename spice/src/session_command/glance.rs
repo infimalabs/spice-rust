@@ -110,6 +110,17 @@ pub(super) fn repository(root: &Path) -> RepositoryGlanceView {
     })
 }
 
+/// The working-state glance of a checkout no briefing reads.
+#[cfg(test)]
+pub(super) fn unread(_root: &Path) -> RepositoryGlanceView {
+    RepositoryGlanceView {
+        dirty: Vec::new(),
+        dirty_total: 0,
+        commits: Vec::new(),
+        unreadable: Some("working state is not read in process".to_owned()),
+    }
+}
+
 fn git(root: &Path, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")

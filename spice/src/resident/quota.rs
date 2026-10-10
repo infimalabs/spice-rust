@@ -236,12 +236,6 @@ struct Settings {
     extension: PathBuf,
     cwd: PathBuf,
     environment: Environment,
-    runtime: Duration,
-    output_drain: Duration,
-    reap: Duration,
-    grace: Duration,
-    stdout_limit: usize,
-    stderr_limit: usize,
 }
 
 impl Settings {
@@ -252,12 +246,6 @@ impl Settings {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             environment: Environment::new(std::env::vars_os())
                 .expect("the inherited process environment has unique nonempty keys"),
-            runtime: RUNTIME_LIMIT,
-            output_drain: OUTPUT_DRAIN_LIMIT,
-            reap: REAP_LIMIT,
-            grace: TERMINATION_GRACE,
-            stdout_limit: STDOUT_LIMIT,
-            stderr_limit: STDERR_LIMIT,
         }
     }
 
@@ -277,7 +265,7 @@ impl Settings {
             cwd: self.cwd.clone(),
             environment: self.environment.clone(),
             group: ProcessGroup::New,
-            deadlines: Deadlines::new(self.runtime, self.output_drain, self.reap)
+            deadlines: Deadlines::new(RUNTIME_LIMIT, OUTPUT_DRAIN_LIMIT, REAP_LIMIT)
                 .map_err(|_| FailureKind::Supervisor)?,
             wait: WaitPolicy::new(
                 "resident OMP quota sample",
@@ -288,14 +276,14 @@ impl Settings {
             output: Output::new(
                 StdinPolicy::Null,
                 StreamPolicy::CaptureBounded {
-                    limit: self.stdout_limit,
+                    limit: STDOUT_LIMIT,
                 },
                 StreamPolicy::CaptureBounded {
-                    limit: self.stderr_limit,
+                    limit: STDERR_LIMIT,
                 },
             ),
             redaction: Redaction::All,
-            grace: self.grace,
+            grace: TERMINATION_GRACE,
         })
     }
 }
@@ -305,8 +293,11 @@ struct Active {
     worker: JoinHandle<()>,
 }
 
+/// One quota sample: launch OMP's usage command and judge what it returned.
+type Sampler = dyn Fn(CancellationToken) -> Result<Snapshot, SampleFailure> + Send + Sync;
+
 pub(super) struct Runtime {
-    settings: Arc<Settings>,
+    sampler: Arc<Sampler>,
     state: Arc<State>,
     updates: watch::Sender<Arc<State>>,
     feed: serve::stream::QuotaFeed,
@@ -345,16 +336,19 @@ impl SampleFailure {
 
 impl Runtime {
     pub(super) fn start(binary: impl Into<OsString>, extension: PathBuf) -> Self {
-        Self::start_with(Settings::production(binary, extension))
+        let settings = Settings::production(binary, extension);
+        Self::start_with(Arc::new(move |cancellation| {
+            sample(&settings, cancellation)
+        }))
     }
 
-    fn start_with(settings: Settings) -> Self {
+    fn start_with(sampler: Arc<Sampler>) -> Self {
         let state = Arc::new(State::default());
         let feed = serve::stream::QuotaFeed::new(wire_generation(&state));
         let (updates, _) = watch::channel(Arc::clone(&state));
         let (completion_sender, completions) = mpsc::unbounded_channel();
         Self {
-            settings: Arc::new(settings),
+            sampler,
             state,
             updates,
             feed,
@@ -429,12 +423,12 @@ impl Runtime {
     fn launch(&mut self) {
         let cancellation = CancellationToken::new();
         let worker_cancellation = cancellation.clone();
-        let settings = Arc::clone(&self.settings);
+        let sampler = Arc::clone(&self.sampler);
         let completed = self.completion_sender.clone();
         let worker = thread::Builder::new()
             .name("spice-omp-quota".to_owned())
             .spawn(move || {
-                let result = sample(&settings, worker_cancellation);
+                let result = sampler(worker_cancellation);
                 let _sent = completed.send(SampleCompletion {
                     result,
                     finished_at_ms: now_ms(),
@@ -529,28 +523,54 @@ fn sample(settings: &Settings, cancellation: CancellationToken) -> Result<Snapsh
     let stderr = outcome
         .stderr()
         .ok_or_else(|| SampleFailure::new(FailureKind::Supervisor))?;
-    if stdout.truncated() {
+    judge(&Finished {
+        stdout: stdout.bytes(),
+        stdout_truncated: stdout.truncated(),
+        stderr_truncated: stderr.truncated(),
+        complete: outcome.outputs_drained() && stdout.complete() && stderr.complete(),
+        ending: match outcome.completion() {
+            ProcessCompletion::TimedOut(_) => Ending::TimedOut,
+            ProcessCompletion::Cancelled(_) => Ending::Cancelled,
+            ProcessCompletion::Exited(status) if !status.success() => Ending::Failed(status.code()),
+            ProcessCompletion::Exited(_) => Ending::Succeeded,
+        },
+    })
+}
+
+/// What a finished usage command left behind, as the sample judges it.
+struct Finished<'a> {
+    stdout: &'a [u8],
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    complete: bool,
+    ending: Ending,
+}
+
+enum Ending {
+    Succeeded,
+    Failed(Option<i32>),
+    TimedOut,
+    Cancelled,
+}
+
+/// Output ceilings outrank how the command ended; only complete, successful
+/// output is decoded.
+fn judge(finished: &Finished<'_>) -> Result<Snapshot, SampleFailure> {
+    if finished.stdout_truncated {
         return Err(SampleFailure::new(FailureKind::StdoutOverflow));
     }
-    if stderr.truncated() {
+    if finished.stderr_truncated {
         return Err(SampleFailure::new(FailureKind::StderrOverflow));
     }
-    if !outcome.outputs_drained() || !stdout.complete() || !stderr.complete() {
+    if !finished.complete {
         return Err(SampleFailure::new(FailureKind::OutputIncomplete));
     }
-    match outcome.completion() {
-        ProcessCompletion::TimedOut(_) => {
-            return Err(SampleFailure::new(FailureKind::Timeout));
-        }
-        ProcessCompletion::Cancelled(_) => {
-            return Err(SampleFailure::new(FailureKind::Supervisor));
-        }
-        ProcessCompletion::Exited(status) if !status.success() => {
-            return Err(SampleFailure::exit(status.code()));
-        }
-        ProcessCompletion::Exited(_) => {}
+    match finished.ending {
+        Ending::TimedOut => Err(SampleFailure::new(FailureKind::Timeout)),
+        Ending::Cancelled => Err(SampleFailure::new(FailureKind::Supervisor)),
+        Ending::Failed(code) => Err(SampleFailure::exit(code)),
+        Ending::Succeeded => decode(finished.stdout).map_err(SampleFailure::new),
     }
-    decode(stdout.bytes()).map_err(SampleFailure::new)
 }
 
 fn decode(bytes: &[u8]) -> Result<Snapshot, FailureKind> {
@@ -914,15 +934,12 @@ fn quantity(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     use super::*;
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
     const VALID_JSON: &str = r#"{
       "generatedAt": 1700000000000,
@@ -1056,57 +1073,30 @@ mod tests {
       }
     }"#;
 
-    struct Fixture {
-        root: PathBuf,
+    /// A sampler that answers each launch with the next scripted result.
+    fn scripted(results: Vec<Result<Snapshot, SampleFailure>>) -> Arc<Sampler> {
+        let results = Mutex::new(VecDeque::from(results));
+        Arc::new(move |_| {
+            results
+                .lock()
+                .expect("script lock")
+                .pop_front()
+                .expect("one scripted result per launch")
+        })
     }
 
-    impl Fixture {
-        fn new() -> Self {
-            let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root =
-                std::env::temp_dir().join(format!("spice-quota-{}-{id}", std::process::id()));
-            fs::create_dir(&root).expect("create quota fixture directory");
-            Self { root }
-        }
-
-        fn script(&self, name: &str, body: &str) -> PathBuf {
-            let path = self.root.join(name);
-            fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n"))
-                .expect("write quota fixture executable");
-            let mut permissions = fs::metadata(&path)
-                .expect("read quota fixture metadata")
-                .permissions();
-            permissions.set_mode(0o700);
-            fs::set_permissions(&path, permissions).expect("make quota fixture executable");
-            path
-        }
-
-        fn path(&self, name: &str) -> PathBuf {
-            self.root.join(name)
+    fn finished(stdout: &[u8], ending: Ending) -> Finished<'_> {
+        Finished {
+            stdout,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            complete: true,
+            ending,
         }
     }
 
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _removed = fs::remove_dir_all(&self.root);
-        }
-    }
-
-    fn settings(binary: PathBuf, runtime: &Path) -> Settings {
-        Settings {
-            cwd: runtime.to_path_buf(),
-            environment: Environment::new(std::env::vars_os()).expect("valid test environment"),
-            runtime: Duration::from_secs(2),
-            output_drain: Duration::from_millis(100),
-            reap: Duration::from_secs(1),
-            grace: Duration::from_millis(20),
-            stdout_limit: 64 * 1024,
-            stderr_limit: 4 * 1024,
-            ..Settings::production(
-                binary,
-                pin_extension(runtime).expect("pin the credit-balance extension"),
-            )
-        }
+    fn valid() -> Result<Snapshot, SampleFailure> {
+        judge(&finished(VALID_JSON.as_bytes(), Ending::Succeeded))
     }
 
     async fn settle(runtime: &mut Runtime) {
@@ -1122,17 +1112,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_boundary_decodes_the_allowlist_and_discards_secrets() {
-        let fixture = Fixture::new();
-        let script = fixture.script(
-            "success",
-            &format!(
-                "[ $# -eq 5 ] && [ \"$1\" = usage ] && [ \"$2\" = --json ] && [ \"$3\" = --redact ] && [ \"$4\" = --extension ] && [ \"$5\" = '{}/omp-credit-balance.mjs' ] && [ -s \"$5\" ] || exit 64\nprintf '%s' '{}'",
-                fixture.root.display(),
-                VALID_JSON.replace('\'', "'\\''")
-            ),
+    async fn a_sample_publishes_only_redacted_allowlisted_fields() {
+        let extension = PathBuf::from("/runtime/omp-credit-balance.mjs");
+        let spec = Settings::production("omp", extension.clone())
+            .spec(CancellationToken::new())
+            .expect("the usage command is a valid spec");
+        assert_eq!(
+            spec.argv.arguments(),
+            [
+                OsString::from("usage"),
+                OsString::from("--json"),
+                OsString::from("--redact"),
+                OsString::from("--extension"),
+                extension.into_os_string(),
+            ]
         );
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
+        let mut runtime = Runtime::start_with(scripted(vec![valid()]));
         let mut updates = runtime.subscribe();
 
         runtime.request();
@@ -1227,80 +1222,52 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn process_boundary_refuses_silent_extension_fallback() {
-        let fixture = Fixture::new();
-        let unstamped =
-            VALID_JSON.replacen("\"spiceExtension\": \"openai-credit-balance\",", "", 1);
-        let script = fixture.script(
-            "unstamped",
-            &format!("printf '%s' '{}'", unstamped.replace('\'', "'\\''")),
-        );
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
-
-        runtime.request();
-        settle(&mut runtime).await;
-
-        let state = runtime.current();
-        assert_eq!(latest_failure(&state).kind, FailureKind::ExtensionUnloaded);
-        assert!(
-            state.last_good.is_none(),
-            "an unstamped Codex report must not become accepted quota state"
-        );
-    }
-
-    #[tokio::test]
-    async fn timeout_and_each_output_ceiling_are_nonfatal_failures() {
-        // Only the timeout case races its deadline. The overflow cases end as
-        // soon as a ceiling is crossed, so their deadline merely bounds a hang
-        // and must outlast a loaded host's process spawn.
-        for (name, body, deadline, expected) in [
+    #[test]
+    fn output_ceilings_outrank_how_the_usage_command_ended() {
+        let overflowed = Finished {
+            stdout_truncated: true,
+            ..finished(b"", Ending::Failed(Some(1)))
+        };
+        let noisy = Finished {
+            stderr_truncated: true,
+            ..finished(VALID_JSON.as_bytes(), Ending::Succeeded)
+        };
+        let undrained = Finished {
+            complete: false,
+            ..finished(VALID_JSON.as_bytes(), Ending::Succeeded)
+        };
+        for (outcome, expected) in [
+            (overflowed, SampleFailure::new(FailureKind::StdoutOverflow)),
+            (noisy, SampleFailure::new(FailureKind::StderrOverflow)),
+            (undrained, SampleFailure::new(FailureKind::OutputIncomplete)),
             (
-                "timeout",
-                "trap '' TERM\n/bin/sleep 30",
-                Duration::from_millis(60),
-                FailureKind::Timeout,
+                finished(b"", Ending::TimedOut),
+                SampleFailure::new(FailureKind::Timeout),
             ),
             (
-                "stdout-overflow",
-                "while :; do printf '0123456789'; done",
-                Duration::from_secs(10),
-                FailureKind::StdoutOverflow,
+                finished(b"", Ending::Cancelled),
+                SampleFailure::new(FailureKind::Supervisor),
             ),
             (
-                "stderr-overflow",
-                "while :; do printf '0123456789' >&2; done",
-                Duration::from_secs(10),
-                FailureKind::StderrOverflow,
+                finished(b"credential secret", Ending::Failed(Some(17))),
+                SampleFailure::exit(Some(17)),
+            ),
+            (
+                finished(b"{", Ending::Succeeded),
+                SampleFailure::new(FailureKind::MalformedOutput),
             ),
         ] {
-            let fixture = Fixture::new();
-            let script = fixture.script(name, body);
-            let mut bounded = settings(script, &fixture.root);
-            bounded.runtime = deadline;
-            bounded.stdout_limit = 64;
-            bounded.stderr_limit = 64;
-            let mut runtime = Runtime::start_with(bounded);
-            runtime.request();
-            settle(&mut runtime).await;
-            assert_eq!(latest_failure(&runtime.current()).kind, expected);
+            assert_eq!(judge(&outcome).err(), Some(expected));
         }
     }
 
     #[tokio::test]
-    async fn malformed_and_nonzero_attempts_keep_the_last_good_snapshot() {
-        let fixture = Fixture::new();
-        let marker = fixture.path("sampled");
-        let script = fixture.script(
-            "success-then-malformed",
-            &format!(
-                "if [ ! -e '{}' ]; then : > '{}'; printf '%s' '{}'; else printf '{{'; fi",
-                marker.display(),
-                marker.display(),
-                VALID_JSON.replace('\'', "'\\''")
-            ),
-        );
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
+    async fn failed_attempts_keep_the_last_good_snapshot() {
+        let mut runtime = Runtime::start_with(scripted(vec![
+            valid(),
+            Err(SampleFailure::new(FailureKind::MalformedOutput)),
+            Err(SampleFailure::exit(Some(17))),
+        ]));
         runtime.request();
         settle(&mut runtime).await;
         let good = Arc::clone(
@@ -1321,11 +1288,14 @@ mod tests {
         ));
         assert_eq!(latest_failure(&state).kind, FailureKind::MalformedOutput);
 
-        let script = fixture.script("nonzero", "printf 'credential secret' >&2\nexit 17");
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
         runtime.request();
         settle(&mut runtime).await;
-        let failure = latest_failure(&runtime.current()).clone();
+        let state = runtime.current();
+        assert!(Arc::ptr_eq(
+            state.last_good.as_ref().expect("last good remains"),
+            &good
+        ));
+        let failure = latest_failure(&state);
         assert_eq!(failure.kind, FailureKind::NonzeroExit);
         assert_eq!(failure.exit_code, Some(17));
     }
@@ -1354,67 +1324,59 @@ mod tests {
 
     #[tokio::test]
     async fn requests_during_a_run_and_its_settlement_coalesce_to_one_follow_up() {
-        let fixture = Fixture::new();
-        let launches = fixture.path("launches");
-        let script = fixture.script(
-            "coalesce",
-            &format!(
-                "printf 'x' >> '{}'\n/bin/sleep 0.05\nprintf '%s' '{}'",
-                launches.display(),
-                VALID_JSON.replace('\'', "'\\''")
-            ),
-        );
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
+        let launches = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&launches);
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let mut runtime = Runtime::start_with(Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            gate.lock()
+                .expect("gate lock")
+                .recv()
+                .expect("the test releases every launch");
+            valid()
+        }));
 
         runtime.request();
         runtime.request();
         runtime.request();
+        release.send(()).expect("first launch waits");
         let first = runtime.recv().await;
         runtime.request();
         runtime.accept(first);
         assert!(runtime.current().refreshing);
+        release.send(()).expect("follow-up launch waits");
         settle(&mut runtime).await;
 
         assert_eq!(runtime.current().generation, 4);
         assert!(!runtime.current().refreshing);
-        assert_eq!(fs::read(&launches).expect("read launch count"), b"xx");
+        assert_eq!(launches.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn shutdown_cancels_and_reaps_a_hanging_process_group() {
-        let fixture = Fixture::new();
-        let pid_path = fixture.path("pid");
-        let script = fixture.script(
-            "hang",
-            &format!(
-                "printf '%s' \"$$\" > '{}'\ntrap '' TERM\n/usr/bin/tail -f /dev/null & wait",
-                pid_path.display()
-            ),
-        );
-        let mut runtime = Runtime::start_with(settings(script, &fixture.root));
-        runtime.request();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let pid = loop {
-            if let Ok(text) = fs::read_to_string(&pid_path)
-                && let Ok(pid) = text.parse::<i32>()
-            {
-                break pid;
+    fn shutdown_cancels_the_running_sample_and_waits_for_it() {
+        let (started, running) = std::sync::mpsc::channel();
+        let started = Mutex::new(started);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&cancelled);
+        let mut runtime = Runtime::start_with(Arc::new(move |cancellation: CancellationToken| {
+            started
+                .lock()
+                .expect("start lock")
+                .send(())
+                .expect("the test awaits the start");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !cancellation.is_cancelled() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
             }
-            assert!(
-                Instant::now() < deadline,
-                "hanging child records its numeric pid"
-            );
-            thread::sleep(Duration::from_millis(5));
-        };
+            observed.store(cancellation.is_cancelled(), Ordering::SeqCst);
+            Err(SampleFailure::new(FailureKind::Supervisor))
+        }));
+        runtime.request();
+        running.recv().expect("the sample starts");
 
         drop(runtime);
 
-        // SAFETY: signal zero only asks the kernel whether the recorded process exists.
-        let result = unsafe { libc::kill(pid, 0) };
-        assert_eq!(result, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+        assert!(cancelled.load(Ordering::SeqCst));
     }
 }

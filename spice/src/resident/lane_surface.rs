@@ -41,8 +41,8 @@ pub(super) use automatic::{
 };
 use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 #[cfg(test)]
-pub(in crate::resident) use launch::test_support::AdvisoryRtkFixture;
-pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
+pub(in crate::resident) use launch::test_support::{InertProbes, LaunchFixture, stand_in_stream};
+pub(super) use launch::{HostProbes, OccupantLaunch, OccupantLaunchRequest, occupant_launch};
 #[cfg(test)]
 pub(in crate::resident) use propose::tests::seed_task_claim;
 use propose::{commit_adopted, propose_drain, propose_remove, propose_seat, propose_wake};

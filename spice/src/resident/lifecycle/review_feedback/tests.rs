@@ -1,13 +1,13 @@
 use super::*;
 
-use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
+use crate::resident::lane_surface::{LaunchFixture, seed_task_claim};
 use bus::CommitOutcome;
 use journal::{Journal, JournalWrite};
 use wire::{ClaimDisposition, LaneResidency, Origin, Producer, ResidentState, TaskHandle};
 
 #[test]
 fn finding_feedback_reaches_the_live_author_once_across_restart() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let authority = fixture.root.join("authority.sqlite3");
     let (bus, task) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Finding);
     let snapshot = bus.task_snapshot().expect("reviewed snapshot reads");
@@ -65,7 +65,7 @@ fn finding_feedback_reaches_the_live_author_once_across_restart() {
 
 #[test]
 fn a_stopped_author_receives_no_review_feedback() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let authority = fixture.root.join("inactive-authority.sqlite3");
     let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
     let snapshot = bus.task_snapshot().expect("inactive snapshot reads");
@@ -91,7 +91,7 @@ fn a_stopped_author_receives_no_review_feedback() {
 
 #[test]
 fn a_clean_review_creates_no_feedback() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let authority = fixture.root.join("clean-authority.sqlite3");
     let (bus, _) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Clean);
     let snapshot = bus.task_snapshot().expect("clean snapshot reads");
@@ -117,7 +117,7 @@ fn a_clean_review_creates_no_feedback() {
 
 #[test]
 fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let authority = fixture.root.join("twice-authority.sqlite3");
     let (bus, task) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Finding);
     // The author takes the task back, completes it again, and is reviewed again.
@@ -170,7 +170,7 @@ fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
 }
 
 fn reviewed_fixture(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     authority: &std::path::Path,
     author_live: bool,
     verdict: wire::body::Verdict,
@@ -200,7 +200,7 @@ fn reviewed_fixture(
 
 fn seat_reviewers(
     bus: &Bus,
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     reviewer_lane: CanonicalUuid,
     reviewer: CanonicalUuid,
     author_live: bool,
@@ -248,7 +248,7 @@ fn seat_reviewers(
     committed(bus.commit(write).expect("resident seating commits"));
 }
 
-fn author_row(fixture: &AdvisoryRtkFixture, live: bool) -> LaneResidency {
+fn author_row(fixture: &LaunchFixture, live: bool) -> LaneResidency {
     LaneResidency {
         lane: fixture.lane,
         team: fixture.lane,
@@ -268,7 +268,7 @@ fn author_row(fixture: &AdvisoryRtkFixture, live: bool) -> LaneResidency {
 }
 
 fn session(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> wire::LaneSession {

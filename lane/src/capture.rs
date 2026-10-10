@@ -106,30 +106,23 @@ impl fmt::Display for CaptureReportError {
 
 impl Error for CaptureReportError {}
 
-/// Build the sole SILL observation contract for one vendor record stream.
+/// One occupant's selected-record capture.
 ///
-/// # Errors
-///
-/// Returns an observation-spec error when either bound is zero.
-pub fn observation(
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    record: Record,
-    tape: Tape,
-    frame_limit: usize,
-    queue_capacity: usize,
-    reporter: Arc<dyn CaptureReporter>,
-) -> Result<Observation, ObservationSpecError> {
-    let stream = match record.stream() {
-        RecordStream::Stdout => OutputStream::Stdout,
-        RecordStream::Stderr => OutputStream::Stderr,
-    };
-    Observation::new(
-        stream,
-        frame_limit,
-        queue_capacity,
-        SINK_DELIVERY,
-        Arc::new(LaneObserver {
+/// Every record is teed to the lane tape, decoded under its exact locus and
+/// reported, whether a supervised process emits it or the stream is replayed.
+pub struct Capture(LaneObserver);
+
+impl Capture {
+    /// Capture `record`'s selected stream for one lane occupant.
+    #[must_use]
+    pub fn new(
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        record: Record,
+        tape: Tape,
+        reporter: Arc<dyn CaptureReporter>,
+    ) -> Self {
+        Self(LaneObserver {
             lane,
             occupant,
             record,
@@ -137,8 +130,50 @@ pub fn observation(
             reporter,
             stage: AtomicU8::new(DeliveryStage::Decode as u8),
             transport: Mutex::new(vendor::omp::frame::FrameDecoder::default()),
-        }),
-    )
+        })
+    }
+
+    /// Build the sole SILL observation contract for this record stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an observation-spec error when either bound is zero.
+    pub fn observation(
+        self,
+        frame_limit: usize,
+        queue_capacity: usize,
+    ) -> Result<Observation, ObservationSpecError> {
+        let stream = match self.0.record.stream() {
+            RecordStream::Stdout => OutputStream::Stdout,
+            RecordStream::Stderr => OutputStream::Stderr,
+        };
+        Observation::new(
+            stream,
+            frame_limit,
+            queue_capacity,
+            SINK_DELIVERY,
+            Arc::new(self.0),
+        )
+    }
+
+    /// Capture an already-emitted selected stream through the same tee,
+    /// decode and report path, framing records at newlines. A final record
+    /// without a newline ends the stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first refusal from the tape, the decoder or the reporter.
+    pub fn replay(self, stream: &[u8]) -> Result<(), ObserveError> {
+        for record in stream.split_inclusive(|byte| *byte == b'\n') {
+            let boundary = if record.ends_with(b"\n") {
+                RecordBoundary::Complete
+            } else {
+                RecordBoundary::Terminal
+            };
+            self.0.receive(record, boundary)?;
+        }
+        self.0.finish()
+    }
 }
 
 #[repr(u8)]

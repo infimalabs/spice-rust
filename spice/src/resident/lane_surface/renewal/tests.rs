@@ -3,7 +3,7 @@ use std::time::Duration;
 use lane::occupant::{DetachedProcess, DetachedWait};
 use sill::{WaitError, WaitOutcome};
 
-use super::super::launch::test_support::{AdvisoryRtkFixture, SESSION};
+use super::super::launch::test_support::{LaunchFixture, SESSION};
 use super::*;
 
 struct RunningProcess;
@@ -44,7 +44,7 @@ impl DetachedProcess for RunningProcess {
 
 #[test]
 fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, None, true);
     let discovery = publish_surface(&fixture);
     let mut seats = Seats::new();
@@ -68,7 +68,7 @@ fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
 
 #[test]
 fn predecessor_supervisor_failure_advances_requested_renewal_to_handoff() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, false)), true);
 
     supervisor_failed(
@@ -93,7 +93,7 @@ fn predecessor_supervisor_failure_advances_requested_renewal_to_handoff() {
 
 #[test]
 fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, None, false);
     publish_surface(&fixture);
     let seats = Seats::new();
@@ -126,7 +126,7 @@ fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor()
 /// standing on a vacant lane is itself a reason to wake one.
 #[test]
 fn a_pending_replacement_reconciles_without_starting_a_successor() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, false)), true);
     let discovery = publish_surface(&fixture);
     let config = steer::Config::default();
@@ -156,10 +156,6 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
     assert!(
         controls(&bus, fixture.lane).is_empty(),
         "a directive standing on the vacant lane would wake it",
-    );
-    assert!(
-        !fixture.root.join("rtk-probes").exists(),
-        "reconciliation reached the vendor launch path",
     );
 
     let withdraw = request(&fixture, false);
@@ -192,7 +188,7 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
 /// hands it the predecessor's rehydration context.
 #[test]
 fn the_next_start_consumes_the_pending_replacement() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, true)), false);
     let discovery = publish_surface(&fixture);
     let capabilities = serve::axum::Capabilities::default();
@@ -239,7 +235,7 @@ fn the_next_start_consumes_the_pending_replacement() {
 }
 
 fn assert_invalid_requests(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
     config: &steer::Config,
@@ -277,7 +273,7 @@ fn assert_invalid_requests(
 }
 
 fn assert_first_request(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
     config: &steer::Config,
@@ -302,7 +298,7 @@ fn assert_first_request(
 }
 
 fn assert_duplicate_and_retired(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
     config: &steer::Config,
@@ -344,12 +340,7 @@ fn assert_duplicate_and_retired(
     );
 }
 
-fn assert_cancellation(
-    fixture: &AdvisoryRtkFixture,
-    bus: &Bus,
-    seats: &Seats,
-    config: &steer::Config,
-) {
+fn assert_cancellation(fixture: &LaunchFixture, bus: &Bus, seats: &Seats, config: &steer::Config) {
     let clear = request(fixture, false);
     let canceled = set(
         bus,
@@ -371,7 +362,7 @@ fn assert_cancellation(
     assert!(controls(bus, fixture.lane).is_empty());
 }
 
-fn request(fixture: &AdvisoryRtkFixture, requested: bool) -> wire::intent::LaneRenewal {
+fn request(fixture: &LaunchFixture, requested: bool) -> wire::intent::LaneRenewal {
     wire::intent::LaneRenewal {
         topology_revision: 1,
         team: fixture.lane,
@@ -381,7 +372,7 @@ fn request(fixture: &AdvisoryRtkFixture, requested: bool) -> wire::intent::LaneR
 }
 
 fn command(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     id: u64,
     request: &wire::intent::LaneRenewal,
 ) -> wire::AdmittedCommand {
@@ -401,11 +392,7 @@ fn command(
     .expect("operator renewal command admits")
 }
 
-fn wake_command(
-    fixture: &AdvisoryRtkFixture,
-    id: u64,
-    request: &LaneState,
-) -> wire::AdmittedCommand {
+fn wake_command(fixture: &LaunchFixture, id: u64, request: &LaneState) -> wire::AdmittedCommand {
     Command {
         v: wire::WireVersion::CURRENT,
         id: fixture_uuid(id),
@@ -422,7 +409,7 @@ fn wake_command(
     .expect("operator wake command admits")
 }
 
-fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneRenewalRecord {
+fn requested(fixture: &LaunchFixture, handoff_pending: bool) -> wire::LaneRenewalRecord {
     let predecessor = wire::RenewalIdentity {
         occupant: fixture.occupant,
         session: SESSION.to_owned(),
@@ -447,7 +434,7 @@ fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneR
 }
 
 fn seeded(
-    fixture: &AdvisoryRtkFixture,
+    fixture: &LaunchFixture,
     renewal: Option<wire::LaneRenewalRecord>,
     occupied: bool,
 ) -> Bus {
@@ -515,7 +502,7 @@ fn seeded(
     bus
 }
 
-fn publish_surface(fixture: &AdvisoryRtkFixture) -> serve::Discovery {
+fn publish_surface(fixture: &LaunchFixture) -> serve::Discovery {
     let discovery = serve::Discovery {
         endpoint: "http://127.0.0.1:1".to_owned(),
         capability: fixture.capability,

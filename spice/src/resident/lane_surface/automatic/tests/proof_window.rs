@@ -9,7 +9,7 @@ const DIRECTIVE: u64 = 43;
 const LATE_DIRECTIVE: u64 = 44;
 
 struct Window {
-    fixture: AdvisoryRtkFixture,
+    fixture: LaunchFixture,
     bus: Bus,
     capabilities: serve::axum::Capabilities,
     discovery: serve::Discovery,
@@ -18,7 +18,7 @@ struct Window {
 
 impl Window {
     fn new() -> Self {
-        let fixture = AdvisoryRtkFixture::new();
+        let fixture = LaunchFixture::new();
         let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
         seed_two_lanes(&bus, &fixture);
@@ -290,7 +290,7 @@ fn a_failed_inbox_start_parks_only_the_steering_it_was_woken_for() {
     window.close();
 }
 
-fn seed_two_lanes(bus: &Bus, fixture: &AdvisoryRtkFixture) {
+fn seed_two_lanes(bus: &Bus, fixture: &LaunchFixture) {
     let mut write =
         write(Actor::Spice, fixture.epoch, Producer::CommandDoor).expect("fixture write starts");
     let seated = write
@@ -453,7 +453,7 @@ fn send_steering(window: &Window, directive: u64, key: &str) {
     commit(&window.bus, sent).expect("pending steering commits");
 }
 
-fn operator_wake(fixture: &AdvisoryRtkFixture, request: &LaneState) -> wire::AdmittedCommand {
+fn operator_wake(fixture: &LaunchFixture, request: &LaneState) -> wire::AdmittedCommand {
     wire::Command {
         v: wire::WireVersion::CURRENT,
         id: uuid(45),

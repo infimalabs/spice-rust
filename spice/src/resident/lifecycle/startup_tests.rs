@@ -1,9 +1,9 @@
-use super::super::lane_surface::AdvisoryRtkFixture;
+use super::super::lane_surface::LaunchFixture;
 use super::*;
 
 #[test]
 fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     seed_vacant_org(&bus, &fixture, wire::intent::TeamLife::Drain);
@@ -52,7 +52,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     bus.shutdown().expect("fixture bus stops");
 }
 
-fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::TeamLife) {
+fn seed_vacant_org(bus: &Bus, fixture: &LaunchFixture, policy: wire::intent::TeamLife) {
     let mut proposal =
         write(Actor::Spice, fixture.epoch, Producer::CommandDoor).expect("fixture write starts");
     let seated = proposal
