@@ -71,14 +71,11 @@ evidence. A disagreement is a defect, never an alternate product model.
 
 - **What can change freely?** See [What is fixed and what is
   free](planes/principles.md#what-is-fixed-and-what-is-free).
-- **What is *allowed* to fail silently?** See [Authoritative degradation is
-  loud](invariants/distribution.md#conduct-authoritative-degradation-is-loud)
+- **What is *allowed* to fail silently?** See [Failure and degradation](model/failures.md#failure-and-degradation)
   and the [failure-behavior table](model/failures.md#the-failure-behavior-table).
   Silence is confined to non-authoritative decoration and conservative
   pre-publication filtering; neither may alter a fact or widen into fallback
   behavior.
-- **Which properties fail most quietly when violated?** See [The properties most
-  worth guarding](invariants/distribution.md#the-properties-most-worth-guarding).
 - **How is this tested?** Executable suites are the evidence; the [Rust
   implementation profile](rust.md) names the code and coverage that own each
   concrete selection.

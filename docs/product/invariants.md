@@ -16,4 +16,4 @@ meaning itself changes.
 - [Integration, lifecycle, topology, and surface](invariants/lifecycle.md) — Integration; Lifecycle; Topology; Surface
 - [Checks](invariants/checks.md) — Checks
 - [Session, metrics, and extension](invariants/session.md) — Session; Metrics; Extension, wire, and configuration
-- [Distribution and conduct](invariants/distribution.md) — Distribution; Conduct; The properties most worth guarding
+- [Distribution and conduct](invariants/distribution.md) — Distribution; Conduct

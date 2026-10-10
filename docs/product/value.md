@@ -56,7 +56,7 @@ Together they let capacity follow work, make agents replaceable while lanes and
 worktrees retain continuity, prefer independent review without deadlocking a
 solo fleet, and keep optional capabilities from stranding primary work. The
 canonical degradation rule is [Prefer the good property, never block on
-it](invariants/distribution.md#conduct-prefer-the-good-property-never-block-on-it).
+it](planes/principles.md#cross-cutting-principles).
 
 That combination is the product: strict durable authority where loss,
 duplication, or ambiguity would corrupt work; graceful degradation where an
