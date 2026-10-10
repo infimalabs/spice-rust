@@ -269,7 +269,7 @@ fn render_team_toolbar(
         <>
         <header class="team-toolbar">
             {render_team_rail(team.lane, render)}
-            <div class="app-status-band team-status-row">
+            <div class="app-glass-control-surface app-status-band team-status-row">
                 {lights}
                 {view::chrome::render_team_ticker(render.runtime, team, standings)}
             </div>

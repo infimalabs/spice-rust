@@ -700,7 +700,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* Member lanes and the control frame are one uninterrupted field: shards paint
    no inline edge between siblings or beside the controls. */
-.team-agent .composer-shard { border-inline: 0; }
+.team-agent .composer-shard { border-inline: 0; border-block-start: 0; }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
 .composer-shard--primary {
@@ -863,7 +863,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    and SEND below a three-pixel top inset. Each slider row is exactly its
    groove, and the remaining height divides into three equal gaps. */
 .team-composer .team-composer-controls {
-  --app-control-glass-depth: calc(var(--app-glass-thickness) + var(--app-glass-thickness) + var(--app-glass-thickness));
   --team-control-inset: 3px;
   --team-control-send-size: 62px;
   --team-control-button-size: var(--app-round-control-size);

@@ -22,12 +22,12 @@ edge is framed, so a lone team has no vertical border.
 
 
 The toolbar is a fixed-height grid whether or not the team owns work. It has no
-outer frame or shadow: the full-width task rail sits above the stream-surfaced
-status band, while the team surface frames nothing around them. The 56px
-circular send button remains centered in its independent 80px physical-right
-composer-control column. That column's opaque field is the stream surface, so
-it reads apart from the composers' lighter glass and as one band with the
-status row. That full-width row owns one continuous top rule; its pip matrix
+outer frame or shadow: the full-width task rail sits above the triple-pane
+glass status band, while the team surface frames nothing around them. Round
+62px SEND remains centered in its independent 80px physical-right
+composer-control column. That column and the status backing share the same
+derived three-thickness control paint, apart from the composers' lighter glass.
+The full-width status row owns one continuous top rule; its pip matrix
 reserves only the leading segment, not a column above the composer controls.
 When a composer is fully collapsed, its bottom edge matches that status rule,
 visually bracketing the status row. Pips retain the unified presence palette:
@@ -177,23 +177,21 @@ vacant member adds no arc, seam, label, or hit region.
 Member drafts and the control column are one zero-gap field. Drafts gain a 10%
 lane-accent tint when lit. One standard 31% glass thickness is the shared
 primitive; the dark veil uses it while the light theme retains its softer base.
-Composer headings use the derived 62% theme-control paint as two thicknesses
-and retain their full-width accent underlines. Behind the entire form, one
-pointer-inert composited screen continues 10px over the message stream. The
-control frame uses one derived 93% theme-control paint as three thicknesses and
-holds it through the full height of the neighboring text areas. That paint
-fades smoothly across the 10px continuation below instead of exposing the
-stream inside the frame. The continuation itself paints its opaque 1px top
-inset rule above the control paint, using the shared backdrop edge color so the
-boundary remains continuous. Equal soft elevation appears on both inline
+Composer headings use the derived 62% theme-control paint as two thicknesses,
+with no top border, and retain their full-width accent underlines. Behind the
+entire form, one pointer-inert composited screen continues 10px over the message
+stream. The control frame and status backing share the derived 93% theme-control
+paint as three thicknesses; the frame holds it through the neighboring text
+areas and fades smoothly across the 10px continuation below instead of exposing the
+stream inside the frame. The composer screen begins with a smooth control tint,
+not a top line above the headings. Equal soft elevation appears on both inline
 sides; at a team boundary the following composer carries the otherwise-clipped
 right cast, letting either neighbor read beneath the raised controls without
 moving either surface. The faint sibling separator continues that internal
 boundary through the message plane without painting either browser edge.
 The screen owns the form glass, one complex theme-derived background, and one
-10px frost filter. Its header edge eases from an opaque control line through
-stronger control color
-into ordinary glass. The form has no physical lower edge or strengthening band;
+10px frost filter. Its header tint eases from stronger control color into
+ordinary glass. The form has no physical lower edge or strengthening band;
 the ordinary veil simply continues 10px beyond it while a mask fades that
 continuation to transparent. No backdrop-filter boundary exists at the form
 edge. The continuation depth is declared once in CSS and counts as composer:
