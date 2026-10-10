@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gate::{
-    BASELINE_PATH, BoundName, Contract, ContractError, POLICY_PATH, PolicyError, RuleSettings,
+    BASELINE_PATH, BoundName, ContractError, POLICY_PATH, ParsedContract, PolicyError, RuleSettings,
 };
 use serde::Deserialize;
 
@@ -236,21 +236,8 @@ fn loadable(body: &str) -> String {
     format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
 }
 
-fn fixture_contract(policy: &str, baseline: &str) -> Result<Contract, ContractError> {
-    Contract::from_tracked(
-        &workspace_root(),
-        &policy_path(),
-        policy,
-        &baseline_path(),
-        baseline,
-    )
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("gate is a direct workspace member")
-        .to_path_buf()
+fn fixture_contract(policy: &str, baseline: &str) -> Result<ParsedContract, ContractError> {
+    ParsedContract::from_tracked(&policy_path(), policy, &baseline_path(), baseline)
 }
 
 fn policy_path() -> PathBuf {

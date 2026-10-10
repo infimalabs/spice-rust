@@ -19,7 +19,7 @@ use toml::Value;
 use super::acquire::CoreSource;
 use super::admission::validate_repo_path;
 use super::{CoreEvidence, CoreFinding, CoreInputError, CoreObservation, RepoShapeEvidence};
-use crate::input::{Contract, ShapePolicy};
+use crate::input::{ParsedContract, ShapePolicy};
 use crate::jurisdiction::{Entry, Shape};
 use crate::policy::{PathPattern, compile_stem_expression};
 use packaging::derived_package_roots;
@@ -38,7 +38,7 @@ const PYPROJECT: &str = "pyproject.toml";
 
 pub(super) fn repo_shape(
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
 ) -> Result<CoreObservation, CoreInputError> {
     let policy = contract.shape();
     if policy.name_cluster_threshold() < MIN_NAME_CLUSTER_THRESHOLD {

@@ -16,7 +16,7 @@ use super::{
     analyze_hygiene, analyze_hygiene_arm,
 };
 use crate::GateId;
-use crate::input::Contract;
+use crate::input::ParsedContract;
 use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape, WalkBudget};
 use crate::tree::SelectedTree;
 
@@ -90,7 +90,7 @@ impl<'a> HygieneSource<'a> {
     /// whose admitted bytes cannot produce one complete identity.
     pub fn capture(
         tree: &'a SelectedTree,
-        contract: &Contract,
+        contract: &ParsedContract,
     ) -> Result<Self, HygieneAnalysisError> {
         Self::capture_inner(tree, contract, None)
     }
@@ -98,7 +98,7 @@ impl<'a> HygieneSource<'a> {
     /// Capture one dependency-expanded focused hygiene component.
     pub(crate) fn capture_focused(
         tree: &'a SelectedTree,
-        contract: &Contract,
+        contract: &ParsedContract,
         reached_paths: &[String],
     ) -> Result<Self, HygieneAnalysisError> {
         Self::capture_inner(tree, contract, Some(reached_paths))
@@ -106,7 +106,7 @@ impl<'a> HygieneSource<'a> {
 
     fn capture_inner(
         tree: &'a SelectedTree,
-        contract: &Contract,
+        contract: &ParsedContract,
         reached: Option<&[String]>,
     ) -> Result<Self, HygieneAnalysisError> {
         let (ignore, provenance) = hygiene_ignore(contract)?;
@@ -519,7 +519,7 @@ fn suppressed_candidates(
 /// the compiled walk defaults, the tracked `gate.walk.skip` entries, and the
 /// compiled per-arm excludes appended here.
 fn hygiene_ignore(
-    contract: &Contract,
+    contract: &ParsedContract,
 ) -> Result<(Ignore, Vec<HygieneProvenance>), HygieneAnalysisError> {
     let mut rules = contract.policy().ignore().rules().to_vec();
     let mut provenance = walk_provenance(rules.len(), contract.compiled_walk_rules());
