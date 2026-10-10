@@ -43,10 +43,9 @@ Marker names carry only bounded structural metadata:
 | `composer.textarea.mount`, `composer.textarea.unmount` | Native textarea instance lifetime, focus, and selection. A changed instance during one interaction is a remount. |
 | `composer.input`, `composer.keydown` | Native event kind, composition state, focus, and selection without draft text. |
 
-The browser retains at most 256 app diagnostic records; completed spans use
-one measure and two marks, and the oldest record is removed as the bound rolls.
-`window.__spiceAppTrace.clear()` removes only entries owned by the current
-app trace. Run
+The browser retains a bounded window of app diagnostic records, dropping the
+oldest first. `window.__spiceAppTrace.clear()` removes only entries owned by
+the current app trace. Run
 `sessionStorage.removeItem("spice:app-trace"); location.reload()` to disable
 collection.
 
