@@ -233,4 +233,68 @@ mod tests {
             [("a.rs", 1), ("z.rs", 2)]
         );
     }
+
+    #[test]
+    fn equal_repository_totals_cannot_cancel_debt_between_files() {
+        let removed = long("removed");
+        let introduced = long("introduced");
+        let findings = scan(vec![
+            LongLineInput {
+                path: "src/remove.rs".to_owned(),
+                source: "short\n".to_owned(),
+                baseline: Some(format!("{removed}\n")),
+            },
+            LongLineInput {
+                path: "src/add.rs".to_owned(),
+                source: format!("short\n{introduced}\n"),
+                baseline: Some("short\n".to_owned()),
+            },
+        ]);
+
+        let [finding] = findings.as_slice() else {
+            panic!("one introduced line must remain attributable")
+        };
+        assert_eq!((finding.path(), finding.line()), ("src/add.rs", 2));
+        assert_eq!((finding.baseline_debt(), finding.current_debt()), (0, 1));
+    }
+
+    #[test]
+    fn new_files_start_without_inherited_debt() {
+        let findings = scan(vec![LongLineInput {
+            path: "src/new.rs".to_owned(),
+            source: format!("{}\n", long("new")),
+            baseline: None,
+        }]);
+
+        let [finding] = findings.as_slice() else {
+            panic!("the new over-limit line must be attributed")
+        };
+        assert_eq!((finding.baseline_debt(), finding.current_debt()), (0, 1));
+    }
+
+    #[test]
+    fn inherited_debt_is_a_per_file_multiset_of_exact_lines() {
+        let inherited = long("inherited");
+        let introduced = long("introduced");
+        let findings = scan(vec![LongLineInput {
+            path: "src/lib.rs".to_owned(),
+            source: format!("{inherited}\n{introduced}\n"),
+            baseline: Some(format!("{inherited}\n")),
+        }]);
+        let [finding] = findings.as_slice() else {
+            panic!("one additional long line must remain")
+        };
+        assert_eq!((finding.path(), finding.line()), ("src/lib.rs", 2));
+        assert_eq!((finding.baseline_debt(), finding.current_debt()), (1, 2));
+
+        let replacement = scan(vec![LongLineInput {
+            path: "src/lib.rs".to_owned(),
+            source: format!("{introduced}\n"),
+            baseline: Some(format!("{inherited}\n")),
+        }]);
+        let [finding] = replacement.as_slice() else {
+            panic!("different long text is new debt even when totals hold")
+        };
+        assert_eq!((finding.baseline_debt(), finding.current_debt()), (1, 1));
+    }
 }

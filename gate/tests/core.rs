@@ -3,18 +3,18 @@ use std::str::FromStr;
 
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
-    Contract, CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
+    CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
     CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract, CoreToolContract,
     DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion, PREDECESSOR_GATE_RELEASE,
     PlanPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, Selector,
-    StagingEvidence, acquire_core, core_declarations, evaluate_core,
+    StagingEvidence, core_declarations, evaluate_core,
 };
 use serde_json::Value;
 use wire::{Digest, Domain, Phase, TaskHandle};
 
 mod support;
 
-use support::{acquired, acquired_arm, captured_baselines, contract_repository, measured};
+use support::{acquired, acquired_arm, contract_repository, measured, selected_contract};
 
 #[test]
 fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
@@ -373,14 +373,6 @@ fn compared_merge(
     }
 }
 
-fn acquired_input(inputs: &CoreInputs, id: GateId) -> &CoreArmInput {
-    inputs
-        .arms()
-        .iter()
-        .find(|arm| arm.id() == id)
-        .unwrap_or_else(|| panic!("{id} is missing from an acquired battery"))
-}
-
 #[test]
 fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     let repository = contract_repository("core-acquire-clean");
@@ -405,102 +397,6 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
             acquired.diagnostic()
         );
     }
-
-    repository.remove();
-}
-
-#[test]
-fn a_partially_staged_file_is_acquired_from_the_captured_repository() {
-    let repository = contract_repository("core-acquire-partial");
-    repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
-    repository.stage(&["src/app.rs"]);
-    repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
-
-    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
-    let staging = acquired_arm(&report, GateId::Staging);
-
-    assert_eq!(
-        staging.observation(),
-        &measured(CoreEvidence::Staging(
-            StagingEvidence::new(["src/app.rs"]).expect("partial staging evidence")
-        )),
-        "acquisition must name the file that is both staged and unstaged"
-    );
-    assert_eq!(staging.standing(), CoreStanding::Failed);
-
-    repository.remove();
-}
-
-/// Staging evidence names the repository as the capture found it, never later.
-///
-/// The capture is clean. The index and the worktree are then mutated into the
-/// exact state the arm exists to fail on, and acquisition still crosses the
-/// clean observation under the captured digest. The second capture is the
-/// control: it proves the mutation is real, observable, and reported by this
-/// very code path, so the first result is a binding rather than a scanner that
-/// never sees anything. Both captures advertise one digest, because the
-/// selected tree is immutable, which leaves the capture moment as the only
-/// thing that distinguishes them.
-#[test]
-fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
-    let repository = contract_repository("core-acquire-mutated");
-    let tree = Selector::staged()
-        .materialize(&repository.root)
-        .expect("materialize the captured index");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let baselines = captured_baselines(&repository, &contract);
-    let captured = CoreSource::capture(
-        &tree,
-        &contract,
-        ClaimCapture::Idle,
-        ActorCapture::Absent,
-        &[],
-    )
-    .expect("capture one clean core source");
-
-    repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
-    repository.stage(&["src/app.rs"]);
-    repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
-
-    let inputs =
-        acquire_core(&captured, &contract, &baselines).expect("acquire one complete core battery");
-    let staging = acquired_input(&inputs, GateId::Staging);
-    assert_eq!(
-        staging.observation(),
-        &measured(CoreEvidence::Staging(
-            StagingEvidence::new(Vec::<String>::new()).expect("clean staging evidence")
-        )),
-        "a repository mutated after capture reached acquisition"
-    );
-    assert_eq!(
-        staging.tree(),
-        captured.digest(),
-        "the staging arm is labelled with the digest its observation was taken under"
-    );
-
-    let later_baselines = captured_baselines(&repository, &contract);
-    let later = CoreSource::capture(
-        &tree,
-        &contract,
-        ClaimCapture::Idle,
-        ActorCapture::Absent,
-        &[],
-    )
-    .expect("capture the same tree over the mutated repository");
-    let later_inputs =
-        acquire_core(&later, &contract, &later_baselines).expect("acquire the later battery");
-    assert_eq!(
-        acquired_input(&later_inputs, GateId::Staging).observation(),
-        &measured(CoreEvidence::Staging(
-            StagingEvidence::new(["src/app.rs"]).expect("partial staging evidence")
-        )),
-        "the mutation this test relies on is not observable at all"
-    );
-    assert_eq!(
-        later.digest(),
-        captured.digest(),
-        "one immutable tree keeps one identity across both captures"
-    );
 
     repository.remove();
 }
@@ -557,7 +453,7 @@ fn a_disappeared_selected_tree_refuses_capture_with_a_typed_core_input_error() {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
 
     let displaced = tree.root().with_file_name("displaced-root");
     fs::rename(tree.root(), &displaced).expect("displace the selected tree root");

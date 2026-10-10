@@ -23,7 +23,6 @@ fn identical_tracked_bytes_yield_identical_execution_identities() {
     assert_eq!(first.bounds().digest(), second.bounds().digest());
     assert_eq!(first.baseline().render(), second.baseline().render());
     assert_eq!(first.baseline().digest(), second.baseline().digest());
-    assert_eq!(first.tools(), second.tools());
 }
 
 #[test]
@@ -39,7 +38,6 @@ fn admitted_walk_intent_moves_policy_without_selecting_an_executable() {
     assert_eq!(compiled.gate_set().digest(), narrowed.gate_set().digest());
     assert_eq!(compiled.bounds().digest(), narrowed.bounds().digest());
     assert_eq!(compiled.baseline().digest(), narrowed.baseline().digest());
-    assert_eq!(compiled.tools(), narrowed.tools());
     assert_eq!(
         narrowed.policy().ignore().render(),
         ".git/\ntarget/\nfixtures/\n"

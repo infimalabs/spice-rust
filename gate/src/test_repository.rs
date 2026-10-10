@@ -156,37 +156,6 @@ pub(crate) fn commit(root: &Path, message: &str) -> String {
     commit.to_string()
 }
 
-pub(crate) fn commit_to(root: &Path, reference: &str, parent: &str, message: &str) -> String {
-    let repository = open(root);
-    let index = repository.index().expect("open fixture index");
-    let mut editor = repository.empty_tree().edit().expect("edit fixture tree");
-    for entry in index.entries() {
-        let kind = match entry.mode {
-            Mode::FILE => EntryKind::Blob,
-            Mode::FILE_EXECUTABLE => EntryKind::BlobExecutable,
-            Mode::SYMLINK => EntryKind::Link,
-            unsupported => panic!("unsupported fixture index mode {unsupported:?}"),
-        };
-        editor
-            .upsert(entry.path(&index), kind, entry.id)
-            .expect("insert fixture tree entry");
-    }
-    let tree = editor.write().expect("write fixture tree").detach();
-    let parent = parent
-        .parse::<gix::ObjectId>()
-        .expect("parse fixture parent");
-    let signature = gix::actor::SignatureRef {
-        name: "Gate Fixture".into(),
-        email: "gate@example.invalid".into(),
-        time: FIXTURE_STAMP,
-    };
-    repository
-        .commit_as(signature, signature, reference, message, tree, Some(parent))
-        .expect("commit fixture branch")
-        .detach()
-        .to_string()
-}
-
 pub(crate) fn create_linked_worktree(root: &Path, linked: &Path, branch: &str) {
     let id = linked
         .file_name()

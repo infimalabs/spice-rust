@@ -123,6 +123,17 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
     repository
 }
 
+/// Parse a fixture's already selected contract bytes without executing its tools.
+#[allow(dead_code)]
+pub(crate) fn selected_contract(root: &Path) -> Contract {
+    let policy_path = root.join(gate::POLICY_PATH);
+    let baseline_path = root.join(gate::BASELINE_PATH);
+    let policy = fs::read_to_string(&policy_path).expect("read selected policy");
+    let baseline = fs::read_to_string(&baseline_path).expect("read selected baseline");
+    Contract::from_tracked(root, &policy_path, &policy, &baseline_path, &baseline)
+        .expect("parse the selected contract")
+}
+
 #[allow(dead_code)]
 pub(crate) fn set_environment_names(repository: &Tree, names: &[&str]) {
     let path = repository.root.join("spice-rust.toml");
@@ -203,7 +214,7 @@ pub(crate) fn acquired_inputs(
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
     let baselines = captured_baselines(repository, &contract);
     let source = CoreSource::capture(&tree, &contract, claim, actor, latches)
         .expect("capture one immutable core source");

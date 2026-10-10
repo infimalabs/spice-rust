@@ -2,14 +2,14 @@ use std::fs;
 use std::path::Path;
 
 use gate::{
-    AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HYGIENE_SOURCE_FILE_BYTE_LIMIT,
-    HygieneConfiguration, HygieneExclusion, HygieneMeasurement, HygieneOutcome, HygieneProvenance,
-    HygieneReport, HygieneSource, Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
+    AnalysisEvidence, GateId, HYGIENE_ARMS, HYGIENE_SOURCE_FILE_BYTE_LIMIT, HygieneConfiguration,
+    HygieneExclusion, HygieneMeasurement, HygieneOutcome, HygieneProvenance, HygieneReport,
+    HygieneSource, Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
 };
 
 mod support;
 
-use support::{Tree, git_commit, git_repository};
+use support::{Tree, git_commit, git_repository, selected_contract};
 
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
@@ -33,7 +33,7 @@ fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured hygiene source");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
 
     let prior_jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
         .expect("walk the existing hygiene fixture jurisdiction");
@@ -82,7 +82,7 @@ fn compiled_and_tracked_exclusions_are_visible_in_the_acquired_evidence() {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured hygiene source");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
     let source = HygieneSource::capture(&tree, &contract).expect("capture one hygiene source");
 
     let ignored = source
@@ -302,7 +302,7 @@ fn source_metadata_refuses_oversized_python_before_allocation() {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize source");
-    let contract = Contract::load(tree.root()).expect("load contract");
+    let contract = selected_contract(tree.root());
     let error = HygieneSource::capture(&tree, &contract).expect_err("oversized source refuses");
     assert!(error.to_string().contains("source bytes"), "{error}");
     repository.remove();
@@ -313,7 +313,7 @@ fn acquired_report(repository: &Tree) -> HygieneReport {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured hygiene source");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
     let source = HygieneSource::capture(&tree, &contract).expect("capture one hygiene source");
     acquire_hygiene(&source, &configuration()).expect("acquire the complete hygiene family")
 }

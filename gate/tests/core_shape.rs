@@ -1,5 +1,5 @@
 use gate::{
-    ActorCapture, ClaimCapture, Contract, CoreEvidence, CoreFinding, CoreObservation, CoreSource,
+    ActorCapture, ClaimCapture, CoreEvidence, CoreFinding, CoreObservation, CoreSource,
     CoreStanding, GateId, RepoShapeEvidence, Selector, acquire_core,
 };
 
@@ -7,7 +7,7 @@ mod support;
 
 use support::{
     Tree, acquired, acquired_arm, captured_baselines, contract_repository, git_commit,
-    git_repository, measured, policy_document, workspace_document,
+    git_repository, measured, policy_document, selected_contract, workspace_document,
 };
 
 fn shape_contract_repository(label: &str) -> Tree {
@@ -28,7 +28,7 @@ fn shape_refusal(repository: &Tree) -> String {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let contract = selected_contract(tree.root());
     let baselines = captured_baselines(repository, &contract);
     let source = CoreSource::capture(
         &tree,

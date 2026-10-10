@@ -1,14 +1,14 @@
 use gate::{
-    ActorCapture, BatteryCapture, BatteryState, ClaimCapture, ConfigInventoryEvidence,
-    ConfigKeyEvidence, CoreArmReport, CoreEvidence, CoreFinding, CoreObservation, CoreStanding,
-    GateId, HygieneConfiguration, RimCapture, Selector,
+    ActorCapture, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, CoreArmReport,
+    CoreEvidence, CoreFinding, CoreObservation, CoreSource, CoreStanding, GateId, Selector,
+    acquire_core,
 };
 
 mod support;
 
 use support::{
-    Tree, acquired, acquired_arm, contract_repository, git_commit, git_repository, measured,
-    policy_document, workspace_document,
+    Tree, acquired, acquired_arm, captured_baselines, contract_repository, git_commit,
+    git_repository, measured, policy_document, selected_contract, workspace_document,
 };
 
 #[test]
@@ -466,31 +466,22 @@ fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
 }
 
 #[test]
-fn focused_inventories_refuse_a_missing_authoritative_registry_despite_a_decoy() {
+fn inventories_refuse_a_missing_authoritative_registry_despite_a_decoy() {
     let repository = contract_repository("core-configuration-registry-missing");
     write_registry_decoy(&repository);
     git_commit(&repository, "missing authoritative configuration registry");
 
-    for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
-        let result = focused_inventory_result(&repository, gate_id);
-        assert!(
-            !result.state().admits(),
-            "{gate_id} admitted the absent authoritative registry"
-        );
-        assert!(
-            result
-                .reason()
-                .contains("authoritative root spice/src/config.rs is absent"),
-            "{gate_id} did not name the absent registry: {}",
-            result.reason()
-        );
-    }
+    let refusal = inventory_refusal(&repository);
+    assert!(
+        refusal.contains("authoritative root spice/src/config.rs is absent"),
+        "{refusal}"
+    );
 
     repository.remove();
 }
 
 #[test]
-fn focused_inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
+fn inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
     let repository = contract_repository("core-configuration-registry-split");
     repository.write("spice/src/config.rs", "mod registry;\npub struct Root;\n");
     repository.write(
@@ -510,12 +501,12 @@ fn focused_inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
     git_commit(&repository, "split authoritative registry with decoy");
 
     for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
-        let result = focused_inventory_result(&repository, gate_id);
+        let result = inventory_result(&repository, gate_id);
         assert_eq!(
-            result.state(),
-            BatteryState::Passed,
+            result.standing(),
+            CoreStanding::Passed,
             "{gate_id} did not use only the declared split registry: {}",
-            result.reason()
+            result.diagnostic()
         );
     }
 
@@ -523,44 +514,42 @@ fn focused_inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
 }
 
 #[test]
-fn focused_inventories_refuse_a_declared_but_missing_split_registry_module() {
+fn inventories_refuse_a_declared_but_missing_split_registry_module() {
     let repository = contract_repository("core-configuration-registry-split-missing");
     repository.write("spice/src/config.rs", "mod registry;\npub struct Root;\n");
     git_commit(&repository, "missing declared split registry module");
 
-    for gate_id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
-        let result = focused_inventory_result(&repository, gate_id);
-        assert!(!result.state().admits());
-        assert!(
-            result
-                .reason()
-                .contains("authoritative split module spice/src/config/registry.rs is absent"),
-            "{gate_id} did not name the missing split registry: {}",
-            result.reason()
-        );
-    }
+    let refusal = inventory_refusal(&repository);
+    assert!(
+        refusal.contains("authoritative split module spice/src/config/registry.rs is absent"),
+        "{refusal}"
+    );
 
     repository.remove();
 }
 
-fn focused_inventory_result(repository: &Tree, gate_id: GateId) -> gate::BatteryArmResult {
-    let mut capture = BatteryCapture::capture_arm(
-        &repository.root,
-        &Selector::staged(),
+fn inventory_result(repository: &Tree, gate_id: GateId) -> CoreArmReport {
+    let report = acquired(repository, ClaimCapture::Idle, ActorCapture::Absent);
+    acquired_arm(&report, gate_id).clone()
+}
+
+fn inventory_refusal(repository: &Tree) -> String {
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = selected_contract(tree.root());
+    let baselines = captured_baselines(repository, &contract);
+    let source = CoreSource::capture(
+        &tree,
+        &contract,
         ClaimCapture::Idle,
-        ActorCapture::Acting {
-            actor: "configuration-inventory-fixture".to_owned(),
-            bound_claims: Vec::new(),
-        },
-        RimCapture::new(&repository.root, None, Vec::new())
-            .expect("fixture repository root is absolute"),
-        HygieneConfiguration::current(),
-        gate_id,
+        ActorCapture::Absent,
+        &[],
     )
-    .unwrap_or_else(|error| panic!("capture focused {gate_id}: {error}"));
-    capture
-        .execute_arm(gate_id)
-        .unwrap_or_else(|error| panic!("execute focused {gate_id}: {error}"))
+    .expect("capture one immutable core source");
+    acquire_core(&source, &contract, &baselines)
+        .expect_err("an unusable configuration inventory must refuse")
+        .to_string()
 }
 
 fn write_registry_decoy(repository: &Tree) {
