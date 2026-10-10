@@ -224,6 +224,8 @@ impl ToolchainDeclaration {
 mod acquire;
 #[cfg(not(target_arch = "wasm32"))]
 mod analyze;
+#[cfg(not(target_arch = "wasm32"))]
+mod captured;
 mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;

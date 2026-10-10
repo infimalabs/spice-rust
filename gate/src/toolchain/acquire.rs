@@ -43,6 +43,7 @@ use sill::{Argv, Completion, spawn};
 use wire::{Digest, Domain};
 
 use super::analyze::{self, Analysis};
+use super::captured::{Captured, Stream};
 use super::{
     ArmObservation, ArmOutcome, ProbeFailure, TOOLCHAIN_ARMS, ToolEvidence, ToolRequirement,
     ToolchainDeclaration, ToolchainError, TreeInput, contracted_version,
@@ -54,6 +55,7 @@ use crate::metrics::BaselineCapture;
 use crate::tree::SelectedTree;
 
 type ProgramReader = fn(&Path) -> std::io::Result<Vec<u8>>;
+type VersionProbe<'a> = &'a dyn Fn(&Path, &[&str]) -> Result<String, ProbeFailure>;
 
 fn read_program(path: &Path) -> std::io::Result<Vec<u8>> {
     fs::read(path)
@@ -931,19 +933,21 @@ fn probe(
     source: &ToolchainSource<'_>,
     bounds: &Bounds,
 ) -> ToolEvidence {
-    probe_with(requirement, source, bounds, read_program)
+    probe_with(requirement, source, read_program, &|program, arguments| {
+        version_output(program, arguments, source.root, bounds)
+    })
 }
 
-/// Probe one executable through the supplied byte reader.
+/// Probe one executable through the supplied byte reader and version probe.
 ///
-/// The reader boundary keeps the acquisition contract testable under privileged
-/// users without changing the production path, where [`fs::read`] remains the
-/// sole source of executable bytes.
+/// Both boundaries keep the identity contract testable in process without
+/// changing the production path, where [`fs::read`] remains the sole source of
+/// executable bytes and [`version_output`] the sole launcher.
 fn probe_with(
     requirement: &ToolRequirement,
     source: &ToolchainSource<'_>,
-    bounds: &Bounds,
     read_program: ProgramReader,
+    version: VersionProbe<'_>,
 ) -> ToolEvidence {
     let rim = source.rim();
     let Some(resolved) = resolve(requirement.program, rim.directory(), rim.search_path()) else {
@@ -966,7 +970,7 @@ fn probe_with(
     if !launchable {
         return unprobed(ProbeFailure::NotStarted);
     }
-    match version_output(&resolved, requirement.version_argv, source.root, bounds) {
+    match version(&resolved, requirement.version_argv) {
         Ok(version) => ToolEvidence::Identified {
             name: requirement.name.to_owned(),
             requested_program: requirement.program.to_owned(),
@@ -1013,7 +1017,16 @@ fn version_output(
         .map_err(|_| ProbeFailure::NotStarted)?
         .wait()
         .map_err(|_| ProbeFailure::NotStarted)?;
-    match outcome.completion() {
+    let captured = Captured::of(&outcome);
+    printed_version(captured.completion, captured.stdout)
+}
+
+/// What one reaped version probe identifies, from its ending and stdout.
+fn printed_version(
+    completion: &Completion,
+    stdout: Option<Stream<'_>>,
+) -> Result<String, ProbeFailure> {
+    match completion {
         Completion::Exited(status) if status.success() => {}
         Completion::Exited(status) => {
             return Err(status.code().map_or(ProbeFailure::Signaled, |code| {
@@ -1023,12 +1036,12 @@ fn version_output(
         Completion::TimedOut(_) => return Err(ProbeFailure::TimedOut),
         Completion::Cancelled(_) => return Err(ProbeFailure::Signaled),
     }
-    let stdout = outcome.stdout().ok_or(ProbeFailure::Incomplete)?;
-    if stdout.truncated() || !stdout.complete() {
+    let stdout = stdout.ok_or(ProbeFailure::Incomplete)?;
+    if !stdout.whole() {
         return Err(ProbeFailure::Incomplete);
     }
     let printed =
-        String::from_utf8(stdout.bytes().to_vec()).map_err(|_| ProbeFailure::Undecodable)?;
+        String::from_utf8(stdout.bytes.to_vec()).map_err(|_| ProbeFailure::Undecodable)?;
     if contracted_version(&printed).is_empty() {
         return Err(ProbeFailure::Incomplete);
     }
@@ -1036,52 +1049,4 @@ fn version_output(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new() -> Self {
-            let root = crate::toolchain::exclusive_scratch_root("gate-tool-byte-authority");
-            fs::create_dir_all(root.join("rim/bin")).expect("create authority rim");
-            fs::create_dir(root.join("tree")).expect("create authority tree");
-            Self(root)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).expect("remove authority fixture");
-        }
-    }
-
-    #[test]
-    fn executable_authority_moves_with_exact_bytes_without_launching() {
-        let fixture = Scratch::new();
-        let executable = fixture.0.join("rim/bin/rustfmt");
-        let tree = fixture.0.join("tree");
-        fs::write(&executable, b"first executable authority").unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-        let source = ToolchainSource {
-            tree: None,
-            root: &tree,
-            repository: &fixture.0,
-            paths: &[],
-            rim: RimCapture::new(
-                fixture.0.join("rim"),
-                Some(OsString::from("bin")),
-                Vec::new(),
-            )
-            .unwrap(),
-            reached_paths: None,
-            baselines: None,
-            compiler_environment: &[],
-        };
-        let before = toolchain_executable_authority(&source).unwrap();
-        fs::write(&executable, b"second and longer executable authority").unwrap();
-        let after = toolchain_executable_authority(&source).unwrap();
-
-        assert_ne!(before, after);
-    }
-}
+mod tests;
