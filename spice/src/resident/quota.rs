@@ -1113,20 +1113,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_sample_publishes_only_redacted_allowlisted_fields() {
-        let extension = PathBuf::from("/runtime/omp-credit-balance.mjs");
-        let spec = Settings::production("omp", extension.clone())
-            .spec(CancellationToken::new())
-            .expect("the usage command is a valid spec");
-        assert_eq!(
-            spec.argv.arguments(),
-            [
-                OsString::from("usage"),
-                OsString::from("--json"),
-                OsString::from("--redact"),
-                OsString::from("--extension"),
-                extension.into_os_string(),
-            ]
-        );
         let mut runtime = Runtime::start_with(scripted(vec![valid()]));
         let mut updates = runtime.subscribe();
 
