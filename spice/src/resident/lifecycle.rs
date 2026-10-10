@@ -35,7 +35,9 @@ mod review_feedback;
 mod targets;
 pub(in crate::resident) use launch::PendingLaunch;
 use launch::{Launching, pending_launch};
-use targets::project_targets;
+use targets::{await_regular_jobs, project_targets};
+#[cfg(test)]
+mod job_hold_tests;
 #[cfg(test)]
 mod startup_tests;
 
@@ -381,6 +383,9 @@ impl Runtime {
             &self.holds,
             &config.allocation,
         )?;
+        await_regular_jobs(&mut targets, now, |lane| {
+            super::supervisor::terminal::Jobs::for_lane(paths, lane).finite_horizon()
+        });
         targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
         let task = match resolve(&targets, &self.backoff, now, config.lane.wake_order()) {
@@ -856,13 +861,13 @@ fn after(at: Instant, seconds: i64) -> CommandResult<Instant> {
 mod tests {
     use super::*;
 
-    fn lane(last: u8) -> CanonicalUuid {
+    pub(super) fn lane(last: u8) -> CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
             .parse()
             .expect("fixture lane")
     }
 
-    fn instant(second: u8) -> Instant {
+    pub(super) fn instant(second: u8) -> Instant {
         format!("2026-08-01T07:00:{second:02}.000Z")
             .parse()
             .expect("fixture instant")

@@ -213,7 +213,7 @@ impl Runtime {
         let desired = desired_claims(tasks, residency)?;
         let supervisors = &self.supervisors;
         let desired_renewals =
-            desired_renewals(tasks, residency, |lane| job_horizon(supervisors, lane))?;
+            desired_renewals(tasks, residency, |lane| vacated_bound(supervisors, lane))?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
@@ -581,10 +581,10 @@ impl Runtime {
         let mut until = std::cmp::max(rolling, authority.lease.body().expiry);
         if authority.bound.is_some() {
             // A vacated lane's claim rolls only on the job still running now,
-            // never past the moment that job's ending is delivered.
-            match job_horizon(&self.supervisors, authority.lane) {
-                Some(horizon) if horizon > authority.lease.body().expiry => {
-                    until = std::cmp::min(until, horizon);
+            // never past one rolling window beyond that job's delivered ending.
+            match vacated_bound(&self.supervisors, authority.lane) {
+                Some(bound) if bound > authority.lease.body().expiry => {
+                    until = std::cmp::min(until, bound);
                 }
                 _ => return Ok(Fired::Stale),
             }
@@ -804,12 +804,12 @@ fn desired_claims(
 /// through allocation rolls exactly like a resident-minted automatic one while
 /// its occupant remains seated, so a lapse follows the occupant leaving rather
 /// than one long foreground command outliving a fixed lease. An occupant that
-/// ends its turn on a kept job leaves the lease rolling until that job's
-/// ending is delivered, as `job_horizon` bounds it; a service never qualifies.
+/// ends its turn on a kept job leaves the lease rolling as `vacated_bound`
+/// bounds it; a service never qualifies.
 fn desired_renewals(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
-    job_horizon: impl Fn(CanonicalUuid) -> Option<Instant>,
+    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
         return Ok(BTreeMap::new());
@@ -836,8 +836,8 @@ fn desired_renewals(
         }
         let bound = match seat {
             RenewalSeat::Occupied => None,
-            RenewalSeat::Vacated => match job_horizon(claim.body().lane) {
-                Some(horizon) if horizon > lease.body().expiry => Some(horizon),
+            RenewalSeat::Vacated => match vacated_bound(claim.body().lane) {
+                Some(bound) if bound > lease.body().expiry => Some(bound),
                 _ => continue,
             },
         };
@@ -966,15 +966,19 @@ fn renewal_seat(residency: &wire::ResidencyHead, claim: &wire::ClaimHead) -> Opt
     }
 }
 
-/// When the lane's unfinished deadline-bounded jobs have all ended and had
-/// their endings delivered. Unreadable job records extend nothing, so the
-/// claim lapses on the lease it already carries.
-fn job_horizon(supervisors: &std::path::Path, lane: CanonicalUuid) -> Option<Instant> {
-    let millis = super::supervisor::terminal::Jobs::beneath(supervisors, lane)
-        .finite_horizon_millis()
-        .ok()??;
-    let at = jiff::Timestamp::from_millisecond(i64::try_from(millis).ok()?).ok()?;
-    Instant::new(at).ok()
+/// The furthest a vacated lane's lease may roll: one rolling window past the
+/// instant its unfinished deadline-bounded jobs have all ended and the keeper
+/// wakes the lane to deliver them, so the successor that wake seats still
+/// finds the claim live and promotes it. Unreadable job records extend
+/// nothing, so the claim lapses on the lease it already carries.
+fn vacated_bound(supervisors: &std::path::Path, lane: CanonicalUuid) -> Option<Instant> {
+    let delivered =
+        super::supervisor::terminal::Jobs::beneath(supervisors, lane).finite_horizon()?;
+    shifted(
+        delivered,
+        std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
+    )
+    .ok()
 }
 
 fn resident_origin(epoch: CanonicalUuid) -> CommandResult<wire::Origin> {

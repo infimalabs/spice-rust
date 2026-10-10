@@ -170,6 +170,15 @@ An already-aged task recovers without a fresh interval; resident restart
 reconstructs the same deadline. Explicit operator direction remains a separate
 message-driven wake.
 
+**Invariant —** A lane its occupant left on an unfinished deadline-bounded job
+is the job keeper's to re-seat. Until that job's admitted expiry (keeper start
+plus timeout, terminate grace, and delivery grace), the held-claim arm waits
+on that expiry and neither drain nor available work may seat the lane; the
+keeper's wake on completion seats the successor and carries the claim, and the
+expiry re-arms the held claim when no keeper speaks. Pending operator steering
+still wakes the lane at once. Services, ended jobs, and a lane with no job
+leave the held claim to recover immediately.
+
 **Invariant —** Because the arm takes no new work, it applies to **every driven
 lane**, not only those permitted to expand onto the board.
 

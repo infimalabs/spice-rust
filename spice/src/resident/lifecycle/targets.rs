@@ -112,6 +112,34 @@ fn held_claim(
     Ok((available, trust_blocked))
 }
 
+/// Leave a vacant lane whose live held claim waits on its own unfinished
+/// deadline-bounded jobs to the job keeper: the keeper's wake on completion,
+/// or the jobs' admitted expiry (`delivered`) when no keeper speaks, causes
+/// the next seat. Until then the held-claim trigger waits on that expiry,
+/// which also keeps drain-queue and available-work from seating the lane;
+/// pending operator steering still outranks it in `resolve`. Services and
+/// ended jobs bound nothing, so `delivered` is absent for them.
+pub(super) fn await_regular_jobs(
+    targets: &mut [Target],
+    now: Instant,
+    delivered: impl Fn(CanonicalUuid) -> Option<Instant>,
+) {
+    for target in targets {
+        if target.held_claim == Available::None {
+            continue;
+        }
+        let Some(delivered) = delivered(target.lane).filter(|delivered| *delivered > now) else {
+            continue;
+        };
+        target.held_claim = match target.held_claim {
+            Available::At(settled) if settled > delivered => Available::At(settled),
+            _ => Available::At(delivered),
+        };
+        target.drain_queue = Available::None;
+        target.available = Available::None;
+    }
+}
+
 /// The effective task-allocation lifetime of one vacant lane's team.
 ///
 /// An agent seated alone under its own identity is not on a team, so it

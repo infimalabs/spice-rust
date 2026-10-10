@@ -673,7 +673,7 @@ pub(super) fn promote_woken_lease(
     Ok(cause)
 }
 
-fn promoted_lease(
+pub(in crate::resident) fn promoted_lease(
     observed: &wire::LeaseHead,
     epoch: CanonicalUuid,
     at: wire::Instant,

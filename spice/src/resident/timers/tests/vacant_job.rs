@@ -202,7 +202,7 @@ fn a_vacant_lane_with_only_a_service_and_ended_jobs_stops_rolling() {
 }
 
 #[test]
-fn a_vacant_lane_never_rolls_its_claim_past_the_job_deadline_and_delivery() {
+fn a_timed_out_job_hands_its_lane_back_with_the_claim_still_live() {
     let fixture = automatic_fixture();
     let supervisors = Supervisors::new("deadline");
     let timeout = Duration::from_secs(60);
@@ -212,37 +212,63 @@ fn a_vacant_lane_never_rolls_its_claim_past_the_job_deadline_and_delivery() {
         .expect("job state reads")
         .expect("keeper published")
         .started_millis;
-    vacate(&fixture);
-    let mut timers = supervisors.timers(&fixture);
-    timers
-        .synchronize(&fixture.bus)
-        .expect("vacant claim with a running job arms");
-
-    assert_eq!(renew_once(&mut timers, &fixture), Fired::ClaimRenew);
-    // Keeper start, timeout, one second to terminate, two to deliver.
-    let delivered = started + 60_000 + 1_000 + 2_000;
-    let bound = Instant::new(
-        jiff::Timestamp::from_millisecond(i64::try_from(delivered).expect("fixture millis"))
-            .expect("fixture bound"),
+    // Keeper start, timeout, one second to terminate, two to deliver: the
+    // instant the keeper wakes the lane for a job that ran into its timeout.
+    let woken = Instant::new(
+        jiff::Timestamp::from_millisecond(
+            i64::try_from(started + 60_000 + 1_000 + 2_000).expect("fixture millis"),
+        )
+        .expect("fixture wake"),
     )
-    .expect("fixture bound is canonical");
-    let renewed = lease(&fixture);
-    assert!(
-        shifted(
-            renewed.renewal,
-            crate::board_command::AUTOMATIC_ROLLING_SECONDS
-        ) > bound
+    .expect("fixture wake is canonical");
+    let rolling = crate::board_command::AUTOMATIC_ROLLING_SECONDS;
+    vacate(&fixture);
+    renew_claim(&fixture, shifted(woken, 60));
+    let mut timers = supervisors.timers(&fixture);
+
+    // The last heartbeat lands as the job runs into its timeout.
+    let heartbeat = shifted(woken, -10);
+    assert_eq!(
+        renew_at(&mut timers, &fixture, heartbeat),
+        Fired::ClaimRenew
     );
-    assert_eq!(renewed.expiry, bound);
-    timers
-        .synchronize(&fixture.bus)
-        .expect("bounded claim folds");
-    assert!(
-        timers.renewals.is_empty(),
-        "a lease already reaching the job's delivery is not renewed again",
+    let carried = lease(&fixture);
+    assert_eq!(carried.expiry, shifted(heartbeat, rolling));
+    let promoted = crate::resident::lane_surface::promoted_lease(
+        &carried,
+        fixture.authority.epoch,
+        woken,
+        false,
+    )
+    .expect("the keeper's wake finds the claim live");
+    assert_eq!(
+        promoted.expiry,
+        shifted(woken, rolling),
+        "the woken successor gets a full rolling window to reclaim",
     );
+
+    // A keeper that never reports still bounds the vacated lease.
+    let silent = shifted(woken, 20);
+    assert_eq!(renew_at(&mut timers, &fixture, silent), Fired::ClaimRenew);
+    assert_eq!(lease(&fixture).expiry, shifted(woken, rolling));
 
     job.stop().expect("the job stops");
     drop(timers);
     fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+/// Run the armed renewal at `at` rather than at wall time.
+fn renew_at(timers: &mut Runtime, fixture: &Fixture, at: Instant) -> Fired {
+    timers
+        .synchronize(&fixture.bus)
+        .expect("vacant claim with a running job arms");
+    let authority = timers
+        .renewals
+        .get(&fixture.authority.task)
+        .expect("vacated renewal is armed")
+        .authority
+        .clone();
+    timers
+        .renew(&fixture.bus, authority, at)
+        .expect("renewal consumes")
 }

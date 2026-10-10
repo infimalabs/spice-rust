@@ -881,17 +881,19 @@ impl Jobs {
         }
     }
 
-    /// The wall instant, in Unix milliseconds, by which every unfinished
-    /// deadline-bounded job of this lane has ended and had its ending
-    /// delivered: the keeper's start plus the job's timeout, the keeper's
-    /// terminate grace, and the delivery grace. A job whose keeper has not
-    /// spoken counts from its recorded request, which precedes the keeper.
-    /// Services and ended jobs bound nothing; `None` when no job remains.
-    ///
-    /// # Errors
-    ///
-    /// Returns the failure of reading the lane's job records.
-    pub(in crate::resident) fn finite_horizon_millis(&self) -> io::Result<Option<u64>> {
+    /// The wall instant by which every unfinished deadline-bounded job of this
+    /// lane has ended and had its ending delivered: the keeper's start plus the
+    /// job's timeout, the keeper's terminate grace, and the delivery grace. A
+    /// job whose keeper has not spoken counts from its recorded request, which
+    /// precedes the keeper. Services and ended jobs bound nothing; `None` when
+    /// no job remains or the lane's job records are unreadable.
+    pub(in crate::resident) fn finite_horizon(&self) -> Option<wire::Instant> {
+        let millis = self.finite_horizon_millis().ok()??;
+        let at = jiff::Timestamp::from_millisecond(i64::try_from(millis).ok()?).ok()?;
+        wire::Instant::new(at).ok()
+    }
+
+    fn finite_horizon_millis(&self) -> io::Result<Option<u64>> {
         let mut horizon = None;
         for job in self.kept()? {
             let Some(timeout) = job.timeout else {
