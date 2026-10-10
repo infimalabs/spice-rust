@@ -245,7 +245,8 @@
 }
 .app-drop-target {
   display: grid;
-  min-height: 48px;
+  box-sizing: border-box;
+  min-height: var(--app-topology-slot-block);
   place-items: center;
   border: var(--app-control-edge-width) dashed var(--control-line-soft);
   border-radius: var(--app-radius-inset);
@@ -260,4 +261,3 @@
   color: var(--muted);
 }
 .app-empty-state { margin: 0; padding: 3px 1px; color: var(--muted); font-size: var(--app-type-sm); line-height: 1.4; }
-.app-team-members > .app-empty-state { grid-column: 1 / -1; }

@@ -11,7 +11,7 @@ pub(super) struct Context<'a> {
     pub(super) sender: &'a SenderHandle,
 }
 
-/// One interactive topology: compact status tiles double as draggable members.
+/// One interactive topology: full-width status slots double as draggable members.
 pub(super) fn render_arrangement(
     runtime: Option<&AppRuntime>,
     context: &Context<'_>,

@@ -793,23 +793,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .section-heading h2 { margin: 0; font-size: var(--app-type-copy); }
 .section-count { color: var(--muted); font-size: var(--app-type-body); }
 
-/* Team drop targets and independent agents share the same compact tile grid. */
-.app-spice-topology { container-type: inline-size; }
-.app-spice-topology .app-team-members {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-@container (max-width: 400px) {
-  .app-spice-topology .app-team-members { grid-template-columns: minmax(0, 1fr); }
-}
+/* Agent slots and the New Team drop target share one full-width slot height,
+   so a roster reads as a stack of equal rows. */
+.app-spice-topology { --app-topology-slot-block: 50px; }
 .app-topology-member { min-width: 0; }
 .app-topology-member[draggable="true"] { cursor: grab; }
 .app-topology-member[draggable="true"]:active { cursor: grabbing; }
-.app-topology-member > .app-spice-topology-agent { height: 100%; box-sizing: border-box; }
 .app-spice-topology-agent {
   position: relative;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  box-sizing: border-box;
   min-width: 0;
-  padding: 8px 34px 9px 10px;
+  min-block-size: var(--app-topology-slot-block);
+  padding: 6px 36px 6px 10px;
   direction: ltr;
   border: var(--app-control-edge);
   border-left: var(--app-focus-ring-strong-width) solid var(--accent-slot, var(--accent));
@@ -818,23 +816,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   box-shadow: var(--shadow);
   color: var(--muted);
   font-size: var(--app-type-label);
-  line-height: 1.4;
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
 }
-a.app-spice-topology-agent { display: block; text-decoration: none; cursor: pointer; }
+a.app-spice-topology-agent { text-decoration: none; cursor: pointer; }
 a.app-spice-topology-agent:hover { border-color: var(--accent-slot, var(--accent)); }
 a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 2px; }
 .app-spice-topology .section-count { font-variant-numeric: tabular-nums; }
-.app-spice-topology-agent > header { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 2px; }
+.app-spice-topology-agent > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .app-spice-topology-agent > header .app-presence-pip--member { flex: none; width: 6px; height: 6px; border-width: var(--app-focus-ring-strong-width); }
-.app-spice-topology-agent > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: var(--app-type-summary); }
+.app-spice-topology-agent > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: var(--app-type-summary); line-height: 1.2; }
 .app-spice-topology-agent > header span,
-.app-spice-topology-agent > p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-spice-topology-agent > p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-spice-topology-agent > header span { font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The worktree yields width before the model does. */
+.app-spice-topology-agent-worktree { flex: 0 100 auto; }
+.app-spice-topology-agent-model { flex: 0 1 auto; margin-inline-start: auto; opacity: .8; }
 .app-spice-topology-agent > p { margin: 0; }
+.app-spice-topology-agent > p > span + span::before { content: "·"; margin-inline: .45em; color: var(--muted); }
 .app-spice-topology-agent-task { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.app-spice-topology-agent-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .8; }
-.app-spice-topology-agent .app-provider-emblem { position: absolute; right: 8px; bottom: 8px; width: 18px; height: 18px; }
+.app-spice-topology-agent .app-provider-emblem { position: absolute; top: 50%; right: 10px; width: 18px; height: 18px; transform: translateY(-50%); }
 .app-spice-quota .section-heading { align-items: baseline; }
 .app-spice-quota > .quota-detail-group:first-of-type { margin-top: 0; }
 .quota-status {
