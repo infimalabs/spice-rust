@@ -1,4 +1,4 @@
-//! Recognizing explicit acknowledgment outcomes in assistant prose.
+//! Recognizing explicit protocol packets in assistant prose.
 //!
 //! Acknowledgment is a narrow protocol at the assistant-output boundary, not an
 //! interpretation of what a turn seems to have meant. A clause retires a
@@ -7,6 +7,11 @@
 //! unknown, malformed, quoted, or historical — alters nothing and is reported
 //! by name, because a silent non-recognition and a refusal look identical to an
 //! operator waiting on an answer.
+//!
+//! The same authored-context grammar reads [`message`] packets: `MSG` headers
+//! that name peer recipients and own a body hunk but never retire anything.
+//! Both packet kinds are found by one visitor, so a placed header of either
+//! kind bounds the body of the MSG before it.
 //!
 //! The scanner performs no I/O. Standing arrives from the caller's reduced
 //! facts, so the same prose read against the same standing always recognizes
@@ -18,6 +23,10 @@ use std::ops::ControlFlow;
 use wire::Disposition;
 
 use crate::ack::keys::{Key, MARKERS, Marker};
+
+pub mod message;
+
+pub use message::{Message, MessageRefusal, Publication, Recipient};
 
 /// Where in the scanned prose a recognition sits.
 ///
@@ -209,18 +218,59 @@ pub fn answer<'prose>(
 /// hypothetical phrasing, and narration about protocol markers stay silent.
 pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Acknowledgement> {
     let mut acknowledgements = Vec::new();
-    let _ = visit_acknowledgement_clauses(prose, |lines, clause| {
-        let mut recognitions = Vec::new();
-        clause.judge(prose, lines, standing, &mut recognitions);
-        acknowledgements.push(Acknowledgement {
-            start: clause.start,
-            end: clause.end,
-            separator: clause.separator,
-            recognitions,
-        });
+    let _ = visit_packets(prose, |lines, packet| {
+        if let Packet::Retirement(clause) = packet {
+            let mut recognitions = Vec::new();
+            clause.judge(prose, lines, standing, &mut recognitions);
+            acknowledgements.push(Acknowledgement {
+                start: clause.start,
+                end: clause.end,
+                separator: clause.separator,
+                recognitions,
+            });
+        }
         ControlFlow::Continue(())
     });
     acknowledgements
+}
+
+/// Reads every placed MSG packet, each bounded by the next placed packet.
+///
+/// Quoted, code, rendered-source, negated, hypothetical, and narrated markers
+/// publish nothing and bound nothing. The scan needs no standing: a MSG
+/// retires no key, and whether an ACK or NAK header is placed does not depend
+/// on which keys are live.
+#[must_use]
+pub fn scan_messages(prose: &str) -> Vec<Message> {
+    let mut placed = Vec::new();
+    let _ = visit_packets(prose, |_, packet| {
+        match packet {
+            Packet::Retirement(clause) if clause.position == Position::Placed => {
+                placed.push((clause.start, None));
+            }
+            Packet::Message {
+                position: Position::Placed,
+                start,
+                header,
+            } => placed.push((start, Some(header))),
+            Packet::Retirement(_) | Packet::Message { .. } => {}
+        }
+        ControlFlow::Continue(())
+    });
+    let starts: Vec<usize> = placed.iter().map(|(start, _)| *start).collect();
+    placed
+        .into_iter()
+        .filter_map(|(start, header)| {
+            let header = header?;
+            let boundary = starts
+                .iter()
+                .find(|next| **next >= header.end)
+                .map_or(prose.len(), |next| {
+                    message::boundary_before(prose, header.end, *next)
+                });
+            Some(message::judge(prose, start, header, boundary))
+        })
+        .collect()
 }
 
 /// Whether prose contains an authored acknowledgement attempt.
@@ -230,23 +280,32 @@ pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Ackno
 /// including multiline headers and every quoted-context exclusion.
 #[must_use]
 pub fn has_acknowledgement(prose: &str) -> bool {
-    visit_acknowledgement_clauses(prose, |_, clause| {
-        if clause.position == Position::Placed {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
+    visit_packets(prose, |_, packet| match packet {
+        Packet::Retirement(clause) if clause.position == Position::Placed => ControlFlow::Break(()),
+        Packet::Retirement(_) | Packet::Message { .. } => ControlFlow::Continue(()),
     })
     .is_break()
 }
 
-fn visit_acknowledgement_clauses(
+/// One protocol header the authored-context grammar recognized.
+enum Packet {
+    /// An ACK or NAK clause.
+    Retirement(Clause),
+    /// A MSG header whose body is bounded once every packet is known.
+    Message {
+        position: Position,
+        start: usize,
+        header: message::Header,
+    },
+}
+
+fn visit_packets(
     prose: &str,
-    mut visit: impl FnMut(&SourceLines, Clause) -> ControlFlow<()>,
+    mut visit: impl FnMut(&SourceLines, Packet) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     let lines = SourceLines::read(prose);
     for (start, _) in prose.char_indices() {
-        let Some(marker) = marker_at(prose, start) else {
+        let Some(lead) = lead_at(prose, start) else {
             continue;
         };
         let decorated_start = emphasis_start(prose, start);
@@ -254,39 +313,54 @@ fn visit_acknowledgement_clauses(
         if !quoted && guarded_context(prose, start) {
             continue;
         }
-        let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
-            continue;
-        };
-        if !header
-            .tokens
-            .iter()
-            .any(|&(token_start, token_end)| intended_token(&prose[token_start..token_end]))
-        {
-            continue;
-        }
-        let position = if quoted
-            || header
-                .tokens
-                .iter()
-                .any(|&(token_start, _)| lines.suppressed(token_start))
-        {
-            Position::Quoted
-        } else {
-            Position::Placed
-        };
-        visit(
-            &lines,
-            Clause {
-                marker,
-                position,
-                start: decorated_start,
-                end: header.end,
-                separator: header.separator,
-                tokens: header.tokens,
-            },
-        )?;
+        let packet =
+            match lead {
+                Lead::Retirement(marker) => {
+                    let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
+                        continue;
+                    };
+                    if !header.tokens.iter().any(|&(token_start, token_end)| {
+                        intended_token(&prose[token_start..token_end])
+                    }) {
+                        continue;
+                    }
+                    Packet::Retirement(Clause {
+                        marker,
+                        position: position(quoted, &header.tokens, &lines),
+                        start: decorated_start,
+                        end: header.end,
+                        separator: header.separator,
+                        tokens: header.tokens,
+                    })
+                }
+                Lead::Message => {
+                    let Some(header) = message::header_after(prose, start + message::MARKER.len())
+                    else {
+                        continue;
+                    };
+                    Packet::Message {
+                        position: position(quoted, &header.tokens, &lines),
+                        start: decorated_start,
+                        header,
+                    }
+                }
+            };
+        visit(&lines, packet)?;
     }
     ControlFlow::Continue(())
+}
+
+/// A header speaks only when its marker and every token sit in authored prose.
+fn position(quoted: bool, tokens: &[(usize, usize)], lines: &SourceLines) -> Position {
+    if quoted
+        || tokens
+            .iter()
+            .any(|&(token_start, _)| lines.suppressed(token_start))
+    {
+        Position::Quoted
+    } else {
+        Position::Placed
+    }
 }
 
 /// One Markdown fenced block, closed only by its own character and width.
@@ -472,8 +546,15 @@ impl Clause {
     }
 }
 
-/// The marker beginning at this offset, if a whole word begins there.
-fn marker_at(prose: &str, start: usize) -> Option<Marker> {
+/// The protocol word a header leads with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lead {
+    Retirement(Marker),
+    Message,
+}
+
+/// The protocol word beginning at this offset, if a whole word begins there.
+fn lead_at(prose: &str, start: usize) -> Option<Lead> {
     let leading = prose.get(..start)?;
     if leading
         .bytes()
@@ -483,9 +564,13 @@ fn marker_at(prose: &str, start: usize) -> Option<Marker> {
         return None;
     }
     let rest = prose.get(start..)?;
+    if rest.starts_with(message::MARKER) {
+        return Some(Lead::Message);
+    }
     MARKERS
         .into_iter()
         .find(|marker| rest.starts_with(marker.as_str()))
+        .map(Lead::Retirement)
 }
 
 struct Header {
