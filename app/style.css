@@ -799,6 +799,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .app-topology-member { min-width: 0; }
 .app-topology-member[draggable="true"] { cursor: grab; }
 .app-topology-member[draggable="true"]:active { cursor: grabbing; }
+/* A finger or pen drags a configurable slot by its name; the rest of the slot
+   still scrolls the sheet and opens Chat. */
+.app-topology-member[draggable="true"] .app-spice-topology-agent > header > strong {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  padding-block: 8px;
+  margin-block: -8px;
+}
+.app-topology-member[data-topology-drag-source] { opacity: .38; }
+.app-topology-drag-ghost {
+  position: fixed;
+  z-index: 60;
+  top: -10000px;
+  left: -10000px;
+  pointer-events: none;
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--app-shadow-source) 32%, transparent);
+  transform: rotate(.35deg) scale(1.015);
+  transform-origin: top left;
+}
+[data-topology-drop-target] {
+  outline: var(--app-focus-ring-width) dashed color-mix(in srgb, var(--accent) 64%, var(--line));
+  outline-offset: -2px;
+}
 .app-spice-topology-agent {
   position: relative;
   display: grid;
