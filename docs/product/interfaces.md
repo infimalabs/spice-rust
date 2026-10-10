@@ -396,8 +396,12 @@ the omission line, whose continuation is the job call
 `job op=history id=ID limit=N`, resuming at the first withheld job.
 
 `wait` on a finite job is a passive, bounded observation that leaves a
-still-running job alone. A running service never ends on its own: it runs while
-its task claim remains active, ending when that claim ends or when `stop` ends
+still-running job alone. It is optional: an occupant holding a claim may end
+its turn while a deadline-bounded job runs, and unless operator steering
+arrives the lane stays vacant until that job ends or emits an event, then
+wakes a successor that still holds the claim. A running service never ends on
+its own and never keeps a lane idle: it runs while its task claim remains
+active, ending when that claim ends or when `stop` ends
 it sooner, so `wait` on one answers at once with its output so far and the
 reason, and leaves it running. Service readiness is established by
 reading its logs or exercising its served surface, never by waiting on its

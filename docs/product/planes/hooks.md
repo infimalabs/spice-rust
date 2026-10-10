@@ -230,18 +230,27 @@ and compaction epoch.
 
 **Invariant —** Every turn exit vacates the lane, including exit code zero. A
 backgrounded command survives under its detached keeper. If a non-stopped
-ending remains unheard through the delivery grace, the keeper requests a lane
-wake; a successor receives the completion during startup catch-up.
+ending, or an event of a command started with `events`, remains unheard
+through the delivery grace, the keeper requests a lane wake; a successor
+receives the unheard events and then the completion during startup catch-up.
+A lane whose active claim outlives the turn keeps that claim across the
+vacancy: while its deadline-bounded job runs, the held claim waits for that job
+rather than reseating the lane at once, though pending operator steering still
+seats it, and the keeper's wake, or the job's admitted expiry when no wake
+comes, seats a successor holding the same claim.
 
 **Invariant —** This is lifecycle behavior, not an instruction to keep a turn
-open. An agent uses `job wait` when a finite job's result blocks current work;
-ending the turn neither cancels the job nor loses its completion. A service is
+open. An agent holding a claim may end its turn while a deadline-bounded job
+runs and is woken, with its claim, when that job ends or emits an event. It
+uses `job wait` when a finite job's result blocks current work; ending the
+turn neither cancels the job nor loses its completion. A service is
 different: it never ends on its own but runs while its task claim remains
-active, so `job wait` answers at once with its output so far and leaves it
-running; the claim's end, or an earlier `job stop`, ends it. Read its logs or
-exercise its served surface to establish readiness. Every seat start, fresh or
-resumed, names the lane's kept commands that still run, marking services, so a
-forgotten service is surfaced to the next seat rather than left unseen.
+active, so it never keeps a lane idle, and `job wait` answers at once with its
+output so far and leaves it running; the claim's end, or an earlier
+`job stop`, ends it. Read its logs or exercise its served surface to establish
+readiness. Every seat start, fresh or resumed, names the lane's kept commands
+that still run, marking services, so a forgotten service is surfaced to the
+next seat rather than left unseen.
 
 **Invariant —** A job's ending is told once. An answer that reports how a
 job ended (the foreground result, or `job wait`, `job logs` or `job stop`
