@@ -90,6 +90,12 @@ at the right. An available app generation turns the version into the explicit
 reload control. Epoch and stream cursor stay out of this primary row. The
 read-only Git identity section follows.
 
+A superseded app generation keeps running until its session fails against the
+resident serving the replacement, whose frames its strict DTOs need not decode.
+That failure reloads the tab into the served generation once per generation,
+unless a composer draft or unsettled submission would be lost; those keep the
+tab in place, reconnecting with growing backoff, behind the reload control.
+
 Resident topology is one interactive roster. Each team stacks full-width agent
 slots of two lines: presence, name, worktree, and model over pending steering,
 liveness, held task, and kept jobs, with the provider emblem at the end. The

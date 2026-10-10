@@ -1,6 +1,9 @@
 use super::*;
 
 const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:app-auth-token:v1";
+/// The served app generation this tab last reloaded toward, so a document that
+/// still cannot load it never reloads again.
+const APP_RELOAD_GENERATION_STORAGE: &str = "spice:app-reload-generation:v1";
 
 /// Capture the bearer token carried by a remote app opening before the
 /// fragment becomes ordinary route state.
@@ -58,7 +61,12 @@ pub(super) async fn run_surface(
         handles.submissions.queue.borrow_mut().reconnect();
         handles.submissions.publish();
         actions.reconnect();
-        let delay = backoff.settle(ended.admitted);
+        if let Some(served) = &ended.served_app {
+            reload_into_served_app(served, &handles.unload);
+        }
+        // A stale document's session dies on the newer resident's DTOs, so its
+        // admission proves nothing about the next attempt.
+        let delay = backoff.settle(ended.admitted && ended.served_app.is_none());
         handles.connection.set(Connection::Offline(ended.reason));
         TimeoutFuture::new(delay).await;
     }
@@ -73,6 +81,41 @@ pub(super) async fn run_surface(
 struct Ended {
     reason: String,
     admitted: bool,
+    /// The app generation this attempt's reachable resident serves in place of
+    /// the loaded document's.
+    served_app: Option<wire::Digest>,
+}
+
+/// Leave a superseded app generation once it has failed a session against the
+/// resident serving its replacement.
+///
+/// The loaded generation's strict DTOs need not decode the newer resident's
+/// frames, so retrying in place can only cycle. Unsaved operator work keeps the
+/// tab where it is behind the explicit reload control, and one reload per
+/// served generation keeps a document that still loads stale from cycling.
+fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) {
+    if unload.loses_work() {
+        return;
+    }
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(storage) = window.session_storage().ok().flatten() else {
+        return;
+    };
+    let served = served.to_string();
+    if storage
+        .get_item(APP_RELOAD_GENERATION_STORAGE)
+        .ok()
+        .flatten()
+        .is_some_and(|attempted| attempted == served)
+        || storage
+            .set_item(APP_RELOAD_GENERATION_STORAGE, &served)
+            .is_err()
+    {
+        return;
+    }
+    let _ = window.location().reload();
 }
 
 async fn run_connection(
@@ -85,14 +128,17 @@ async fn run_connection(
     let abort = web_sys::AbortController::new().map_err(|_| Ended {
         reason: "browser could not create a connection abort controller".to_owned(),
         admitted: false,
+        served_app: None,
     })?;
     let signal = abort.signal();
+    let mut served_app = None;
     let established = {
         let handshake = establish_connection(
             &handles.connection,
             &handles.surface,
             &handles.identity,
             &handles.app_update,
+            &mut served_app,
             data,
             &signal,
         )
@@ -113,6 +159,7 @@ async fn run_connection(
     .map_err(|reason| Ended {
         reason,
         admitted: false,
+        served_app: served_app.take(),
     })?;
     // Reaching here *is* the admission: `establish_connection` only returns once
     // the acceptance frame has been admitted and the runtime published. Deriving
@@ -123,6 +170,7 @@ async fn run_connection(
         .map_err(|reason| Ended {
             reason,
             admitted: true,
+            served_app,
         })
 }
 
@@ -618,10 +666,12 @@ async fn establish_connection(
     surface: &UseStateHandle<SurfaceData>,
     identity: &UseStateHandle<Option<AppIdentity>>,
     app_update: &UseStateHandle<Option<AppUpdate>>,
+    served_app: &mut Option<wire::Digest>,
     data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) = open_socket(identity, app_update, signal).await?;
+    let (session, writer, mut reader) =
+        open_socket(identity, app_update, served_app, signal).await?;
     let (principal, hydrating) =
         admit_runtime(&session, &mut reader, connection, surface, data).await?;
     Ok(EstablishedConnection {
@@ -634,9 +684,13 @@ async fn establish_connection(
 }
 
 /// Discover the resident endpoint and open the socket its bootstrap names.
+///
+/// `served_app` names the generation this resident serves whenever it is not
+/// the loaded document's, even when the attempt then fails.
 async fn open_socket(
     identity: &UseStateHandle<Option<AppIdentity>>,
     app_update: &UseStateHandle<Option<AppUpdate>>,
+    served_app: &mut Option<wire::Digest>,
     signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
     let response = Request::get(&authenticated_path(
@@ -663,13 +717,15 @@ async fn open_socket(
         .parse::<wire::Digest>()
         .map_err(|error| format!("bootstrap app generation was invalid: {error}"))?;
     let loaded_generation = loaded_app_generation()?;
-    app_update.set(app_protocol.and_then(|version| {
+    let update = app_protocol.and_then(|version| {
         (!version.is_current() || generation != loaded_generation).then(|| AppUpdate {
             version,
             generation: generation.clone(),
             loaded_generation: loaded_generation.clone(),
         })
-    }));
+    });
+    *served_app = update.as_ref().map(|update| update.generation.clone());
+    app_update.set(update);
     if let Err(fault) = Session::admit_app_protocol(app_protocol) {
         return Err(format!(
             "{}: {}; explicit app update required",
