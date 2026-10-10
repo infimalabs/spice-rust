@@ -109,6 +109,14 @@ command for more.
   or with `spice task modify`, rather than deciding it silently. Code, docs,
   comments, and tests state the current contract; a change's story belongs to
   its commit and task record.
+- Permanent tests are only fast, deterministic, in-process checks of the
+  current contract. Never admit a slow test, a test that spawns any process
+  (including Git, the `spice` binary, keepers, `dsymutil`, or Cargo), a
+  regression test that pins one past incident, or a point-in-time test of
+  incidental or retired behavior. Delete an inadmissible test when the current
+  contract is already covered or not worth permanent coverage; otherwise
+  exercise the contract in process through the narrowest real seam. Process or
+  slow actual-surface proof belongs in a disposable smoke check, not the suite.
 - Drain allocator work with `spice task next` until no work or a real blocker.
   `allocator-empty` ends only that pass; it does not discharge uncaptured
   operator direction or other turn obligations. Work only the assigned phase;
