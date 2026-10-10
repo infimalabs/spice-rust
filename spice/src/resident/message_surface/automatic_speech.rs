@@ -471,6 +471,7 @@ mod tests {
                 PresentationDirective {
                     actor: wire::Actor::Operator,
                     sender: None,
+                    recipient: None,
                     published: published(),
                     lane: lane(),
                     text,

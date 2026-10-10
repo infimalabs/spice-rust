@@ -13,9 +13,9 @@ mod prose;
 pub use prose::{MessageProseOrigin, superseded_prose};
 mod annotation;
 pub use annotation::{
-    DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDirective,
-    MessageRecipient, MessageSend, valid_message_classifications, valid_message_directives,
-    valid_message_sends,
+    DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDestination,
+    MessageDirective, MessageRecipient, MessageSend, valid_message_classifications,
+    valid_message_directives, valid_message_sends,
 };
 
 /// Canonical semantic prefix carried by every broadcast steering directive.
