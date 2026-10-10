@@ -73,25 +73,12 @@ pub(super) fn dependency_removal_witnesses(
         && (heads.workflow.body.flow.len() == 1
             || !substantive_acceptance(&heads.statement.body.acceptance))
     {
-        for dependency in &heads.statement.body.dependencies {
-            let child = answer
-                .tasks
-                .iter()
-                .find(|heads| heads.statement.body.born == *dependency)
-                .expect("remaining plan dependency resolves");
-            if after
-                .iter()
-                .any(|removed| **removed == child.statement.body.handle)
-            {
-                continue;
-            }
-            if child.workflow.body.status == "pending"
-                && substantive_acceptance(&child.statement.body.acceptance)
-            {
-                expected.push(statement_witness(child));
-                expected.push(workflow_witness(child));
-                break;
-            }
+        let removed = after.iter().map(|task| (*task).clone()).collect::<Vec<_>>();
+        if let Some(child) = dependency_removal_plan_child(answer, heads, &removed)
+            .expect("remaining plan child resolves")
+        {
+            expected.push(statement_witness(child));
+            expected.push(workflow_witness(child));
         }
     }
     expected
@@ -617,6 +604,111 @@ fn plan_removes_one_child_while_another_pending_child_carries_acceptance() {
     assert_eq!(
         at(&current, &plan).statement.body.dependencies,
         [at(&current, &second).statement.body.born.clone()],
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
+    let (root, bus, epoch, _) = fixture("remove-plan-child-with-reverse-child", 1);
+    let plan = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-plan003",
+        "Plan-only parent",
+        "board.test",
+        Some("plan"),
+        &[],
+    );
+    let forward = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-child04",
+        "Forward accepted child",
+        "board.test",
+        Some("todo"),
+        &["the forward implementation behavior is verified"],
+    );
+    let reverse = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REMOVE-child05",
+        "Reverse accepted child",
+        "board.test",
+        Some("todo"),
+        &["the reverse implementation behavior is verified"],
+    );
+    connect_child(&bus, epoch, &plan, &forward);
+    connect_child(&bus, epoch, &reverse, &plan);
+
+    let stale = board(&bus, epoch, Actor::Operator);
+    let stale_expected = dependency_removal_witnesses(&stale, &plan, &[&forward], None, false);
+    let reverse_heads = at(&stale, &reverse);
+    assert!(stale_expected.contains(&statement_witness(reverse_heads)));
+    assert!(stale_expected.contains(&workflow_witness(reverse_heads)));
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(reverse_heads)],
+        &TaskEdit {
+            task: reverse.clone(),
+            title: None,
+            description: None,
+            acceptance: vec!["the revised reverse behavior is verified".to_owned()],
+            requirements: None,
+            priority: None,
+            project: None,
+        },
+    ));
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        stale_expected,
+        &TaskDepends {
+            task: plan.clone(),
+            after: vec![forward.clone()],
+            remove: true,
+        },
+    );
+    assert!(
+        matches!(refused, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::dependency-witness-missing"),
+        "stale reverse-child witnesses must refuse: {refused:?}",
+    );
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &plan)
+            .statement
+            .body
+            .dependencies,
+        [at(&stale, &forward).statement.body.born.clone()],
+    );
+
+    let refreshed = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&refreshed, &plan, &[&forward], None, false),
+        &TaskDepends {
+            task: plan.clone(),
+            after: vec![forward],
+            remove: true,
+        },
+    ));
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(at(&current, &plan).statement.body.dependencies.is_empty());
+    assert_eq!(
+        at(&current, &reverse).statement.body.dependencies,
+        [at(&current, &plan).statement.body.born.clone()],
     );
     clean(&root, bus);
 }
