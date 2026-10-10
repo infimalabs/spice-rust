@@ -56,5 +56,5 @@ per taste and vendor, confirmed and cleared provenance, how live reminders were
 answered, and recurrence across compaction epochs. It shows fires and their
 ages rather than an all-time count, and a resent lineage counts once.
 Recurrence with acknowledgment supports keeping a taste; repeated declines mean
-the bag is too broad or the preference no longer earns its interruption, and
+the bag is too broad or the preference does not earn its interruption, and
 the attached loci tell which.

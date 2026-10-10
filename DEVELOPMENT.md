@@ -71,7 +71,7 @@ spice dev xtask -- build-cache --dry-run --max-bytes BYTES --retain-live-worktre
 It collects only real Cargo-tagged target directories below their owning
 worktrees, and never the current roots, the hottest linked worktrees, or roots
 whose Cargo locks are held; `--free-space-floor BYTES` targets free space
-instead. Remove retired worktrees without `--force` after preserving wanted
+instead. Remove unneeded worktrees without `--force` after preserving wanted
 changes. Never use `git clean -fdX`: appliance state, bootstrap skill,
 artifacts, generations, dependencies, and compiler output have distinct
 lifecycles.
