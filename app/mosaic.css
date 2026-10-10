@@ -855,7 +855,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-control-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 24%, transparent);
   --team-control-rest: inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
   --team-control-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
-  --team-control-rim-width: 2px;
+  --team-send-rim-width: 3px; --team-send-command-ring-width: 1px;
 }
 /* The sharp 80 × 160 panel holds two round utility buttons, two pill flyers,
    and SEND. Range rows receive the remaining height. */
@@ -924,7 +924,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact])::before { opacity: 1; }
 .team-composer .team-send::after {
   position: absolute; inset: 0; border-radius: inherit; content: ""; pointer-events: none; background: var(--team-send-recipient-rim, transparent);
-  mask: radial-gradient(closest-side, transparent calc(100% - var(--team-control-rim-width)), var(--app-mask-opaque) calc(100% - var(--team-control-rim-width) + .5px));
+  mask: radial-gradient(closest-side, transparent calc(100% - var(--team-send-rim-width)), var(--app-mask-opaque) calc(100% - var(--team-send-rim-width) + .5px));
 }
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact])::after { opacity: .4; }
 .team-composer .team-send-label { --team-send-full-opacity: 0; --team-send-full-scale: 0; --team-send-word-offset: 0ch; --team-send-word-scale: 1; position: relative; z-index: 1; display: block; inline-size: 4ch; block-size: 1em; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); transform: none; }
@@ -1020,8 +1020,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-composer-controls[data-idle="true"] .team-send:disabled {
   opacity: var(--inactive-lane-opacity); box-shadow: var(--team-send-command-ring), var(--team-control-rest); cursor: default;
 }
-/* Command previews ring outside SEND; broadcast selects its recipient rim
-   without replacing the neutral transmitted-glass face. */
+/* Command previews ring outside SEND, thinner than the recipient bands they frame;
+   broadcast selects its recipient rim without replacing the neutral transmitted-glass face. */
 .team-composer:has(.team-agent[data-accent="0"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-0); }
 .team-composer:has(.team-agent[data-accent="1"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-1); }
 .team-composer:has(.team-agent[data-accent="2"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-2); }
@@ -1031,9 +1031,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* A broadcast reaches every occupied recipient at once, so its command ring is
    their accent light combined: the theme's ink signal, near white on dark glass
    and near black on light glass, rather than any one accent. */
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send { --team-send-command-accent: var(--ink); --team-send-command-ring: 0 0 0 var(--team-send-command-ring-width) var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send::after { background: var(--team-send-broadcast-rim, transparent); }
-html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 var(--team-control-rim-width) var(--team-send-command-accent); }
+html[data-command-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-command-submit-eligible="true"] textarea:focus) .team-send:not(:disabled) { --team-send-command-ring: 0 0 0 var(--team-send-command-ring-width) var(--team-send-command-accent); }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send-label { --team-send-full-opacity: 0; --team-send-full-scale: 0; --team-send-word-offset: 0ch; --team-send-word-scale: 1; }
 html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .team-composer:has(.composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus) .team-send[data-full-broadcast="true"] .team-send-label { --team-send-full-opacity: 1; --team-send-full-scale: .5; --team-send-word-offset: 2ch; --team-send-word-scale: .5; }
 html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"]) .work-note-composer:has(textarea:focus) .team-send:not([value="close"]):not(:disabled),
