@@ -256,7 +256,7 @@ impl Contract {
     }
 
     /// Build from already selected tracked bytes while retaining their paths in
-    /// every refusal.
+    /// every refusal. Tool execution is outside this in-process parsing boundary.
     pub fn from_tracked(
         root: &Path,
         policy_path: &Path,
@@ -276,7 +276,7 @@ impl Contract {
                 path: baseline_path,
                 text: Some(baseline_text),
             },
-            true,
+            false,
         )
     }
 

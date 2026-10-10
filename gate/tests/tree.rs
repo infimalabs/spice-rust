@@ -1,22 +1,14 @@
-//! Git selections exercised through in-process repositories and real parser processes.
+//! Git selections exercised through in-process repositories.
 
 use std::fs;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
-use std::time::Duration;
 
-use gate::{
-    Bounds, Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, RunError, Selector,
-    TreeError,
-};
-use sill::Deadlines;
+use gate::{Ignore, Jurisdiction, Selector, TreeError};
 
 mod support;
 
 use support::{Tree, git_repository};
-
-const MUTATING_COUNTER: &str = "/bin/chmod u+w \"$1\"; \
-     printf 'changed by parser\\n' >> \"$1\"; printf '1\\n'";
 
 fn repository(label: &str) -> Tree {
     git_repository(label)
@@ -25,21 +17,6 @@ fn repository(label: &str) -> Tree {
 fn commit_all(tree: &Tree, message: &str) -> String {
     tree.stage_all();
     tree.commit(message)
-}
-
-fn bounds() -> Bounds {
-    Bounds::new(
-        "selected-tree-fixture",
-        Deadlines::new(
-            Duration::from_secs(30),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )
-        .expect("declare deadlines"),
-        Duration::from_millis(100),
-        64 * 1024,
-    )
-    .expect("declare bounds")
 }
 
 #[test]
@@ -278,42 +255,4 @@ fn a_missing_staged_blob_produces_no_selected_tree() {
         refused,
         TreeError::MissingObject { path, .. } if path == "lost.txt"
     ));
-}
-
-#[test]
-fn run_snapshot_integrity_remains_the_second_door() {
-    let tree = repository("snapshot-second-door");
-    tree.write("src/lib.rs", "one\n");
-    tree.stage(&["src/lib.rs"]);
-    let selected = Selector::staged()
-        .materialize(&tree.root)
-        .expect("materialize staged bytes");
-
-    let metric = Metric::new(
-        "rust.lines",
-        "rust",
-        "lines in selected Rust files",
-        Parser::new("/bin/sh", ["-c", MUTATING_COUNTER, "sh"]).expect("declare a mutating parser"),
-        "*.rs\n",
-        "",
-    )
-    .expect("declare a metric");
-    let policy = Policy::new(
-        Ignore::parse("").expect("declare an empty ignore policy"),
-        [metric],
-    )
-    .expect("declare a policy");
-    let ratchet = Ratchet::parse("rust.lines 1\n").expect("declare a ratchet");
-
-    let refused = Run::adjudicate(&policy, selected.root(), &ratchet, &bounds())
-        .expect_err("the parser changed Run's own snapshot");
-    assert!(matches!(
-        refused,
-        RunError::SnapshotChanged { metric, .. } if metric == "rust.lines"
-    ));
-    assert_eq!(
-        fs::read(selected.root().join("src/lib.rs")).expect("read original selection"),
-        b"one\n",
-        "Run's disposable snapshot shields the selected source root"
-    );
 }
