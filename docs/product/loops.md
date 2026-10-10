@@ -341,7 +341,7 @@ flowchart TD
   B["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
   H -- yes --> W["select ONE vacant lane immediately:<br/>ordinary work before a lane's own last resort,<br/>then configured claim order (lane.wake_order)"]
   H -- no --> R{"derived eligible count<br/>is at least 2?"}
-  R -- yes --> S{"newest eligible origin<br/>aged at least 3s?"}
+  R -- yes --> S{"selected row's READY origin<br/>aged at least 3s?"}
   R -- no --> L{"lone row aged<br/>at least 3 min?"}
   S -- yes --> W
   S -- no --> B
@@ -382,12 +382,8 @@ flowchart TD
    excludes active claims, so occupied lanes do not inflate the backlog count.
 - A single ordinary ready task is never stranded. After the starvation age, one
    is enough. This is an *age*, not a retry interval.
-- Newly ready ordinary work settles before lifecycle chooses it. With at least
-   two eligible rows, the newest READY origin in the complete eligible set must
-   age through the settle interval; any newly eligible row extends that horizon.
-   A durable phase handoff bypasses both ordinary ages: continuity wakes the
-   prior claimant, while published repository work wakes an eligible peer during
-   its bounded independent-ownership window.
+- Newly ready ordinary work [settles before lifecycle chooses
+   it](model/decisions.md#closed-loop-capacity--the-work-availability-wake).
 - Rendering never launches. The snapshot, the live bus, and the UI
    project settled decisions; no read path can start or renew an occupant.
 - Decisions for one worktree are serialized; sibling lanes proceed
