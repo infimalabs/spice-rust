@@ -873,6 +873,7 @@ mod tests {
             own_claim: None,
             peer_claims: None,
             renewed_from: Some("handed-off".to_owned()),
+            address: None,
         };
         let notice = renewal_notice(BriefingMoment::Startup, &held).expect("successor startup");
         assert!(

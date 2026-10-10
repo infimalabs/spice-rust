@@ -71,9 +71,9 @@ pub mod crossing {
         CommandKind, Digest, Envelope, Environment, EnvironmentRequirement,
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
         LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
-        ResidencyHead, ResidentState, Seq, SteeringHead, TapeLocus, TaskHandle, TaskHead,
-        TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WireVersion,
-        Witness, WitnessHead, WorkflowHead,
+        ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskHandle,
+        TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
+        WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }
 

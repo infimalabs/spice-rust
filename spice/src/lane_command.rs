@@ -17,6 +17,20 @@ use crate::command_client::{self, SelectedCommand};
 mod list;
 pub(crate) mod purge;
 
+/// Execute `lane list`, whose text and JSON forms carry the same rows.
+pub(crate) fn list(matches: &ArgMatches, contract: &Contract) -> Outcome<list::LanePage> {
+    let current = match std::env::current_dir() {
+        Ok(current) => current,
+        Err(error) => return environment_fault("lane::cwd-unavailable", &error.to_string()),
+    };
+    match Repository::discover(&current) {
+        Ok(repository) => list::run(&repository, matches, contract),
+        Err(error) => {
+            environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
+        }
+    }
+}
+
 /// Execute one landed lane-family leaf.
 pub(crate) fn run(
     matches: &ArgMatches,
@@ -41,7 +55,6 @@ pub(crate) fn run(
 
     match contract.path {
         ["lane"] => command_client::execute(serve, contract, SelectedCommand::LaneRead),
-        ["lane", "list"] => list::run(&repository, matches, contract),
         ["lane", "add"] => add(
             &repository,
             serve,

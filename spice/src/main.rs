@@ -469,8 +469,8 @@ impl NativeInvocation<'_> {
                 form,
                 session_command::Report::text,
             ),
+            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
             ["lane"]
-            | ["lane", "list"]
             | ["lane", "add"]
             | ["lane", "drain"]
             | ["lane", "wake"]

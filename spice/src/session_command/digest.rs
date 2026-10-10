@@ -12,8 +12,8 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::model::{
-    BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, PostureView,
-    Report, RepositoryGlanceView, RetiredDirectionView,
+    BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, PeerView,
+    PostureView, Report, RepositoryGlanceView, RetiredDirectionView,
 };
 
 /// Ceiling on one folded briefing, in bytes.
@@ -27,6 +27,7 @@ const REFRESH: &str = "spice session briefing";
 const TYPED: &str = "spice session briefing --json";
 const STATUS: &str = "spice task status";
 const INBOX: &str = "spice inbox";
+const LANES: &str = "spice lane list";
 
 /// Fold one briefing report into its page; any other report folds to nothing.
 pub(super) fn fold(report: &Report, files: &[String]) -> String {
@@ -34,6 +35,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
         asks,
         held_work,
         posture,
+        peers,
         directions,
         board,
         repository,
@@ -104,6 +106,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
             STATUS,
         );
     }
+    page.whole("Peers", peers.iter().map(peer).collect(), LANES);
     page.whole("Posture", posture_rows(posture.as_ref()), TYPED);
     if let Some(repository) = repository {
         let (dirty, total) = uncommitted(repository);
@@ -215,6 +218,9 @@ fn header(held_work: &HeldWorkView, live: &LiveView, files: &[String], residues:
     if let Some(lane) = &held_work.lane {
         facts.push(format!("lane {lane}"));
     }
+    if let Some(address) = &held_work.address {
+        facts.push(format!("address {address}"));
+    }
     if let Some(thread) = &held_work.thread {
         facts.push(format!("thread {thread}"));
     }
@@ -233,6 +239,14 @@ fn header(held_work: &HeldWorkView, live: &LiveView, files: &[String], residues:
         let _ = writeln!(header, "{}", clip_row(facts.join(" · ")));
     }
     header
+}
+
+fn peer(row: &PeerView) -> String {
+    let mut words = vec![row.address.to_string(), format!("lane {}", row.lane)];
+    words.extend(row.name.iter().map(|name| format!("\"{name}\"")));
+    words.push(row.vendor.clone());
+    words.extend(row.model.clone());
+    clip_row(words.join(" "))
 }
 
 fn ask(row: &OutstandingAskView) -> String {
@@ -463,8 +477,10 @@ mod tests {
                 }),
                 peer_claims: Some(rows),
                 renewed_from: None,
+                address: None,
             },
             posture: None,
+            peers: Vec::new(),
             directions: (0..rows)
                 .map(|index| RetiredDirectionView {
                     key: format!("old{index}"),

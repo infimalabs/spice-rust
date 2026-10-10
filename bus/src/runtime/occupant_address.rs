@@ -5,9 +5,12 @@
 //! birth index at one barrier; execution additionally requires the current
 //! residency to seat the same occupant on its birth lane.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc;
 
-use journal::crossing::{CanonicalUuid, FactKind, OccupantAddress, ResidencyHead, Seq};
+use journal::crossing::{
+    CanonicalUuid, FactKind, LaneResidency, OccupantAddress, ResidencyHead, SeatAddress, Seq,
+};
 use journal::{FactPageStart, FactReadBudget, GuardError, Journal, JournalRead};
 
 use super::task_snapshot::TaskSnapshotState;
@@ -92,6 +95,90 @@ impl BirthRecord {
             Some(_) => Self::Repeated,
         }
     }
+
+    /// The address one occupant holds on `lane`, given every birth it has.
+    pub(super) fn address(
+        record: Option<Self>,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Result<OccupantAddress, AddressRefusal> {
+        match record {
+            Some(Self::Unique {
+                lane: born,
+                position,
+            }) if born == lane => Ok(OccupantAddress::new(position)),
+            Some(Self::Repeated) => Err(AddressRefusal::RepeatedBirth { occupant }),
+            _ => Err(AddressRefusal::MissingBirth { lane, occupant }),
+        }
+    }
+}
+
+/// The address each of `lanes` offers, keyed by lane.
+pub(super) fn seat_addresses(
+    lanes: &[LaneResidency],
+    birth: impl Fn(CanonicalUuid) -> Option<BirthRecord>,
+) -> BTreeMap<CanonicalUuid, SeatAddress> {
+    lanes
+        .iter()
+        .map(|row| {
+            let seat = match row.occupant {
+                None => SeatAddress::Vacant,
+                Some(occupant) => match BirthRecord::address(birth(occupant), row.lane, occupant) {
+                    Ok(address) => SeatAddress::Seated { occupant, address },
+                    Err(refusal) => SeatAddress::Unproved {
+                        occupant,
+                        reason: refusal.reason().to_owned(),
+                    },
+                },
+            };
+            (row.lane, seat)
+        })
+        .collect()
+}
+
+/// The address each of `lanes` offers, proved from the journal alone: every
+/// `lane::started` fact through this read's cursor.
+///
+/// This is the daemonless twin of
+/// [`TaskFacts::seat_addresses`](super::TaskFacts::seat_addresses).
+pub fn journal_seat_addresses(
+    read: &JournalRead<'_>,
+    lanes: &[LaneResidency],
+) -> Result<BTreeMap<CanonicalUuid, SeatAddress>, GuardError> {
+    let mut births = HashMap::new();
+    let seated = lanes
+        .iter()
+        .filter_map(|row| row.occupant)
+        .collect::<HashSet<_>>();
+    let budget = FactReadBudget::new(
+        journal::MAX_RETAINED_FACT_PAGE_ROWS,
+        journal::MAX_RETAINED_FACT_PAGE_BYTES,
+    )
+    .expect("the retained fact page ceiling is a repository budget");
+    let mut after = None;
+    loop {
+        let page = read.selected_fact_page(&[FactKind::LaneStarted], after, None, budget)?;
+        for row in &page.rows {
+            let Some(started) = row.fact.read::<journal::crossing::body::LaneStarted>() else {
+                continue;
+            };
+            if seated.contains(&started.occupant) {
+                let record = BirthRecord::recorded(
+                    births.get(&started.occupant).copied(),
+                    started.lane,
+                    row.seq,
+                );
+                births.insert(started.occupant, record);
+            }
+        }
+        match page.continuation {
+            Some(next) => after = Some(next),
+            None => break,
+        }
+    }
+    Ok(seat_addresses(lanes, |occupant| {
+        births.get(&occupant).copied()
+    }))
 }
 
 /// One occupant birth proved by the `lane::started` fact its address names.

@@ -56,9 +56,9 @@ occupant-local deduplication, nudge, interruption, and compaction behavior. A
 automatic wake that returns `Unstarted` or a terminal-class start failure
 deadletters every pending directive on that lane from its retained live stage,
 delivered or not; no other failure does. "Delivered" and "taken" stay separate,
-visible facts. Operators and seated agents read lane IDs, seating, and active
-claims with `spice lane list`; a peer-message refusal for an unseated target
-points back to it.
+visible facts. Operators and seated agents read lane IDs, seating, active
+claims, and each seat's peer address with `spice lane list`; a peer-message
+refusal for an unseated target points back to it.
 
 **Value:** you can walk away mid-instruction. **Without it:** steering becomes
 fire-and-hope, and the operator becomes the durable store.

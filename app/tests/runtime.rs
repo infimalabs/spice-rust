@@ -341,6 +341,7 @@ fn board_response_with_requirements(
             ),
         ],
         history: None,
+        addresses: Default::default(),
         trust,
         appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {

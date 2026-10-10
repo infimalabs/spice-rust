@@ -325,7 +325,11 @@ position.
 `spice lane list` uses the same interactive row and byte limits. It orders the
 calling lane first, then occupied or claim-holding lanes, then remaining lanes;
 UUID order makes each group deterministic. A partial page names the first
-withheld lane in its exact `--after` continuation.
+withheld lane in its exact `--after` continuation. Each row carries the
+[peer address its seat offers](invariants/identity.md#identity-a-discovered-seat-address-resolves-to-the-occupant-shown):
+text prints `address=ADDRESS` or `address=unavailable:REASON`, and `--json`
+keeps the typed `rows` with each `address` tagged `seated`, `vacant`, or
+`unproved`.
 
 `spice journal` pages facts newest first and `spice thread REF` pages one
 thread in journal order, both under `INTERACTIVE`; each fact is one row whose
