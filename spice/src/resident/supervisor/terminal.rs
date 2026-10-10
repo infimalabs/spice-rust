@@ -26,7 +26,7 @@ use wire::output::{Admission, Budget, ClippedText, Resume};
 pub(super) mod job;
 
 pub(in crate::resident) use job::{
-    Control, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
+    Control, Event, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
 };
 use job::{Ended, Ending, Observed, Tail};
 
@@ -113,10 +113,12 @@ impl Terminal {
 
     /// The foreground window for one command: the threshold, or the deadline
     /// less omp's buffer when that is shorter, exactly as omp bounds its own
-    /// wait before backgrounding. A service never ends on its own, so it
-    /// opens no window and is kept at once.
-    fn window(&self, lifetime: Lifetime) -> Duration {
-        match lifetime {
+    /// wait before backgrounding. A service never ends on its own, and a
+    /// command with events is watched rather than waited on, so neither
+    /// opens a window: each is kept at once.
+    fn window(&self, call: &ShellCall) -> Duration {
+        match call.lifetime {
+            _ if call.events => Duration::ZERO,
             Lifetime::Deadline(deadline) => self
                 .foreground
                 .min(deadline.saturating_sub(FOREGROUND_BUFFER)),
@@ -193,6 +195,7 @@ impl Terminal {
             call.lifetime.deadline(),
             service,
             &call.notices,
+            call.events,
         );
         let job = match started {
             Ok(job) => job,
@@ -200,7 +203,7 @@ impl Terminal {
                 return Run::Ended(Report::refused(&format!("shell launch failed: {error}")));
             }
         };
-        let ended = match job.observe(control, self.window(call.lifetime)) {
+        let ended = match job.observe(control, self.window(call)) {
             Ok(Observed::Ended(ended)) => ended,
             Ok(Observed::Cancelled) => stop(&job, control).unwrap_or(Ended {
                 ending: Ending::Stopped,
@@ -229,12 +232,18 @@ impl Terminal {
         undelivered(&self.jobs)
     }
 
-    /// Follow a kept command to its ending: what the delivery says, or
+    /// Follow a kept command to its ending, calling `progress` whenever the
+    /// job changes and once more at its ending: what the delivery says, or
     /// nothing for a stopped job, since whoever stopped it was answered and
     /// omp delivers no cancelled job.
-    pub(in crate::resident) fn follow(&self, job: &Job, control: &Control) -> Option<Report> {
+    pub(in crate::resident) fn follow(
+        &self,
+        job: &Job,
+        control: &Control,
+        progress: &mut dyn FnMut(),
+    ) -> Option<Report> {
         loop {
-            match job.observe(control, FOLLOW_CADENCE) {
+            match job.observe_with(control, FOLLOW_CADENCE, progress) {
                 Ok(Observed::Ended(Ended {
                     ending: Ending::Stopped,
                     ..
@@ -551,10 +560,16 @@ fn finished(job: &Job, ended: &Ended) -> Report {
 }
 
 /// A command answered while it keeps running, as omp answers its own
-/// backgrounded `bash`: the preview, the notices, and the job it became.
+/// backgrounded `bash`: the preview, the notices, and the job it became. A
+/// command with events shows no preview, since every line it prints is
+/// delivered as an event.
 fn kept(job: &Job, notice: Option<&str>) -> Report {
     let mut lines = Vec::new();
-    let preview = transcript(job);
+    let preview = if job.events() {
+        String::new()
+    } else {
+        transcript(job)
+    };
     let preview = preview.trim_end();
     if !preview.is_empty() {
         lines.push(preview.to_owned());
@@ -570,10 +585,18 @@ fn kept(job: &Job, notice: Option<&str>) -> Report {
         lines.extend(notices.iter().map(|notice| (*notice).to_owned()));
         lines.push(String::new());
     }
-    lines.push(format!(
-        "Backgrounded as job {}; result will be delivered automatically.",
-        job.id()
-    ));
+    lines.push(if job.events() {
+        format!(
+            "Watching job {}: each line it prints on stdout will be delivered as a background \
+             notice, and its result when it ends.",
+            job.id()
+        )
+    } else {
+        format!(
+            "Backgrounded as job {}; result will be delivered automatically.",
+            job.id()
+        )
+    });
     Report {
         output: lines.join("\n"),
         exit_code: None,

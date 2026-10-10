@@ -4,14 +4,17 @@
 //! `spice __lane-job`, that owns nothing but the command: it runs the argv
 //! in the command's directory under its environment with both streams
 //! appended to one log, ends the command's process group at its deadline or
-//! when asked to stop, and publishes how the command ended. The keeper is its
-//! own process group under nobody's supervision, so the command survives the
-//! turn, the occupant, and the supervisor that started it; its result waits
-//! in the job's state for whoever asks. The lane observes a job through its
-//! durable state: a direct kernel watch on the job's directory wakes every
-//! read, and the keeper's exit names a keeper that died without an ending.
-//! The keeper reads its stop request the same way, and an ending nobody
-//! hears within the grace wakes the lane, so its next occupant hears it.
+//! when asked to stop, and publishes how the command ended. A command
+//! started with events has its stdout read by the keeper instead, which
+//! still copies it to the log and publishes its lines as events before the
+//! ending. The keeper is its own process group under nobody's supervision,
+//! so the command survives the turn, the occupant, and the supervisor that
+//! started it; its result waits in the job's state for whoever asks. The
+//! lane observes a job through its durable state: a direct kernel watch on
+//! the job's directory wakes every read, and the keeper's exit names a
+//! keeper that died without an ending. The keeper reads its stop request
+//! the same way, and an ending or event nobody hears within the grace wakes
+//! the lane, so its next occupant hears it.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -35,6 +38,10 @@ use super::super::{
     read_json, signal_group,
 };
 
+mod events;
+
+pub(in crate::resident) use events::Event;
+
 /// The hidden entry the keeper runs under.
 pub(in crate::resident::supervisor) const ENTRY: &str = "__lane-job";
 
@@ -53,8 +60,8 @@ pub(super) const LOG_TAIL: usize = 16 * 1024;
 /// How long a command has to leave on its own once the keeper ends it.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
 
-/// How long an occupant has to hear an ending before the keeper wakes the
-/// lane to deliver it.
+/// How long an occupant has to hear an ending or an event before the keeper
+/// wakes the lane to deliver it.
 const DELIVERY_GRACE: Duration = Duration::from_secs(2);
 
 /// The exact task possession that owns one unbounded command.
@@ -216,6 +223,9 @@ struct Request {
     /// The lane to wake when nobody hears the ending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lane: Option<CanonicalUuid>,
+    /// Whether the command's stdout lines are published as events.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    events: bool,
 }
 
 /// What the keeper publishes: who keeps the command, and how it ended.
@@ -318,14 +328,18 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
     publish_json(&state_path, &state)?;
     let (sender, receiver) = mpsc::channel();
     state.ending = Some(match spawn(directory, &request, sender.clone()) {
-        Ok(child) => {
+        Ok((child, pump)) => {
             let stop = directory.join(STOP);
-            tend(
+            let ending = tend(
                 child,
                 &receiver,
                 request.timeout_millis.map(Duration::from_millis),
                 || watch(directory, &sender, Keep::woke).map(|()| stop.exists()),
-            )
+            );
+            if let Some(pump) = pump {
+                pump.settle(TERMINATE_GRACE);
+            }
+            ending
         }
         Err(reason) => Ending::Failed { reason },
     });
@@ -333,29 +347,58 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
     publish_json(&state_path, &state)?;
     if let Some(lane) = request.lane
         && state.ending != Some(Ending::Stopped)
-        && unheard(directory, DELIVERY_GRACE)
+        && unheard(directory, DELIVERY_GRACE, |directory| {
+            directory.join(DELIVERED).exists()
+        })
     {
         wake(lane, directory);
     }
     Ok(())
 }
 
-/// Whether nobody has heard the ending by the end of the grace: the record
-/// an occupant leaves on delivery is awaited on the directory's watch, so an
-/// occupant that is there answers at once and a vacant lane costs the grace.
-fn unheard(directory: &Path, grace: Duration) -> bool {
-    let delivered = directory.join(DELIVERED);
+/// Whether nobody has heard by the end of the grace: the record an occupant
+/// leaves on hearing is awaited on the directory's watch, so an occupant that
+/// is there answers at once and a vacant lane costs the grace.
+fn unheard(directory: &Path, grace: Duration, heard: impl Fn(&Path) -> bool) -> bool {
     let deadline = Monotonic::now() + grace;
     let (sender, receiver) = mpsc::channel();
     loop {
-        if watch(directory, &sender, Keep::woke).is_err() || delivered.exists() {
-            return !delivered.exists();
+        if watch(directory, &sender, Keep::woke).is_err() || heard(directory) {
+            return !heard(directory);
         }
         let remaining = deadline.saturating_duration_since(Monotonic::now());
         if !matches!(receiver.recv_timeout(remaining), Ok(Keep::Changed)) {
-            return !delivered.exists();
+            return !heard(directory);
         }
     }
+}
+
+/// What the keeper does with each event it publishes: with a lane to wake,
+/// the latest event nobody hears within the grace wakes it, as an unheard
+/// ending does, so its next occupant hears the events it missed.
+fn waker(lane: Option<CanonicalUuid>, directory: &Path) -> io::Result<Box<dyn Fn(u64) + Send>> {
+    let Some(lane) = lane else {
+        return Ok(Box::new(|_| {}));
+    };
+    let directory = directory.to_path_buf();
+    let (published, receiver) = mpsc::channel::<u64>();
+    thread::Builder::new()
+        .name("spice-job-waker".to_owned())
+        .spawn(move || {
+            while let Ok(mut sequence) = receiver.recv() {
+                while let Ok(later) = receiver.try_recv() {
+                    sequence = later;
+                }
+                if unheard(&directory, DELIVERY_GRACE, |directory| {
+                    events::heard_through(directory, sequence)
+                }) {
+                    wake(lane, &directory);
+                }
+            }
+        })?;
+    Ok(Box::new(move |sequence| {
+        let _ = published.send(sequence);
+    }))
 }
 
 /// Wake the lane so its next occupant hears the ending. The keeper runs in
@@ -380,9 +423,14 @@ fn wake(lane: CanonicalUuid, directory: &Path) {
         });
 }
 
-/// Start the command in its own group with both streams appended to the log
-/// and a waiter reporting its exit.
-fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Result<u32, String> {
+/// Start the command in its own group with its streams appended to the log
+/// and a waiter reporting its exit. With events, stdout reaches the log
+/// through the pump that publishes its lines.
+fn spawn(
+    directory: &Path,
+    request: &Request,
+    sender: mpsc::Sender<Keep>,
+) -> Result<(u32, Option<events::Pump>), String> {
     let (program, arguments) = request
         .argv
         .split_first()
@@ -395,6 +443,14 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
     let stderr = log
         .try_clone()
         .map_err(|error| format!("log unavailable: {error}"))?;
+    let published = if request.events {
+        Some(
+            waker(request.lane, directory)
+                .map_err(|error| format!("waker unavailable: {error}"))?,
+        )
+    } else {
+        None
+    };
     let mut command = ProcessCommand::new(program);
     command
         .args(arguments)
@@ -402,11 +458,30 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
         .env_clear()
         .envs(request.environment.entries().iter().cloned())
         .stdin(Stdio::null())
-        .stdout(log)
         .stderr(stderr);
+    if published.is_some() {
+        command.stdout(Stdio::piped());
+    } else {
+        command.stdout(
+            log.try_clone()
+                .map_err(|error| format!("log unavailable: {error}"))?,
+        );
+    }
     detach(&mut command);
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let pid = child.id();
+    let pump = match (child.stdout.take(), published) {
+        (Some(stdout), Some(published)) => {
+            match events::pump(stdout, log, directory.to_path_buf(), published) {
+                Ok(pump) => Some(pump),
+                Err(error) => {
+                    let _ = signal_group(pid, libc::SIGKILL);
+                    return Err(format!("event pump unavailable: {error}"));
+                }
+            }
+        }
+        _ => None,
+    };
     thread::Builder::new()
         .name("spice-job-waiter".to_owned())
         .spawn(move || {
@@ -416,7 +491,7 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
             });
         })
         .map_err(|error| format!("waiter unavailable: {error}"))?;
-    Ok(pid)
+    Ok((pid, pump))
 }
 
 /// Wait for the command to end, ending it at its deadline or on request:
@@ -628,6 +703,7 @@ pub(in crate::resident) struct Job {
     timeout: Option<Duration>,
     service_claim: Option<ServiceClaim>,
     notices: Vec<String>,
+    events: bool,
     keeper: Option<u32>,
 }
 
@@ -660,6 +736,7 @@ impl Jobs {
         timeout: Option<Duration>,
         service: Option<ServiceAdmission<'_>>,
         notices: &[String],
+        events: bool,
     ) -> io::Result<Job> {
         let service_claim = service.as_ref().map(|service| service.claim.clone());
         fs::create_dir_all(&self.root)?;
@@ -681,6 +758,7 @@ impl Jobs {
                 notices: notices.to_vec(),
                 service_claim: service_claim.clone(),
                 lane: self.lane,
+                events,
             },
         )?;
         if let Some(service) = service {
@@ -707,6 +785,7 @@ impl Jobs {
             timeout,
             service_claim,
             notices: notices.to_vec(),
+            events,
             keeper,
         })
     }
@@ -760,6 +839,7 @@ impl Jobs {
             timeout: request.timeout_millis.map(Duration::from_millis),
             service_claim: request.service_claim,
             notices: request.notices,
+            events: request.events,
             keeper,
         })
     }
@@ -1017,6 +1097,29 @@ impl Job {
         &self.notices
     }
 
+    /// Whether the command's stdout lines are published as events.
+    pub(in crate::resident) fn events(&self) -> bool {
+        self.events
+    }
+
+    /// The events published after the last the lane heard, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of reading the heard record or an event.
+    pub(in crate::resident) fn unheard_events(&self) -> io::Result<Vec<(u64, Event)>> {
+        events::after(&self.directory, events::heard(&self.directory)?)
+    }
+
+    /// Record that the lane heard every event through `sequence`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of publishing the heard record.
+    pub(in crate::resident) fn hear_events(&self, sequence: u64) -> io::Result<()> {
+        events::hear(&self.directory, sequence)
+    }
+
     /// How the job ended, if it has.
     pub(in crate::resident) fn ended(&self) -> Option<Ended> {
         self.state().ok().flatten().and_then(|state| state.ended())
@@ -1129,6 +1232,23 @@ impl Job {
         control: &Control,
         bound: Duration,
     ) -> io::Result<Observed> {
+        self.observe_with(control, bound, &mut || {})
+    }
+
+    /// Observe the job as [`Job::observe`] does, calling `progress` once
+    /// the watch is armed on every look at a running job and once more on
+    /// seeing its ending: the keeper publishes every event before the
+    /// ending, so the last call sees them all.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of watching the job's state or of reading it.
+    pub(in crate::resident) fn observe_with(
+        &self,
+        control: &Control,
+        bound: Duration,
+        progress: &mut dyn FnMut(),
+    ) -> io::Result<Observed> {
         let mut keeper = self.keeper;
         let deadline = Monotonic::now() + bound;
         let mut observed_exit = false;
@@ -1136,10 +1256,12 @@ impl Job {
             watch(&self.directory, &control.sender, Signal::woke)?;
             if let Some(state) = self.state()? {
                 if let Some(ended) = state.ended() {
+                    progress();
                     return Ok(Observed::Ended(ended));
                 }
                 keeper = keeper.or(Some(state.keeper));
             }
+            progress();
             if let (Some(pid), false) = (keeper, observed_exit) {
                 observed_exit = true;
                 if pid != std::process::id() {
@@ -1150,6 +1272,7 @@ impl Job {
             match control.receiver.recv_timeout(remaining) {
                 Ok(Signal::Changed) => {}
                 Ok(Signal::KeeperExited) => {
+                    progress();
                     if let Some(ended) = self.state()?.and_then(|state| state.ended()) {
                         return Ok(Observed::Ended(ended));
                     }
@@ -1170,5 +1293,64 @@ impl Job {
                 }
             }
         }
+    }
+}
+
+/// Job records a test writes without a keeper: this process stands as the
+/// keeper, so a test says what the command printed and how it ended.
+#[cfg(test)]
+impl Jobs {
+    pub(in crate::resident) fn record_for_tests(&self, command: &str, events: bool) -> Job {
+        fs::create_dir_all(&self.root).expect("job root");
+        let (id, directory) = self.claim().expect("job directory");
+        let timeout_millis = Some(60_000);
+        publish_json(
+            &directory.join(REQUEST),
+            &Request {
+                version: VERSION,
+                id: id.clone(),
+                command: command.to_owned(),
+                argv: Vec::new(),
+                cwd: directory.clone(),
+                environment: Environment::empty(),
+                timeout_millis,
+                notices: Vec::new(),
+                service_claim: None,
+                lane: self.lane,
+                events,
+            },
+        )
+        .expect("job request");
+        publish_json(
+            &directory.join(STATE),
+            &State {
+                version: VERSION,
+                id: id.clone(),
+                command: command.to_owned(),
+                keeper: std::process::id(),
+                started_millis: now_millis().expect("clock"),
+                timeout_millis,
+                ending: None,
+                ended_millis: None,
+            },
+        )
+        .expect("job state");
+        self.open(&id).expect("recorded job opens")
+    }
+}
+
+#[cfg(test)]
+impl Job {
+    /// Publish event `sequence` as the keeper's pump would.
+    pub(in crate::resident) fn print_for_tests(&self, sequence: u64, event: &Event) {
+        publish_json(&events::record(&self.directory, sequence), event).expect("event");
+    }
+
+    /// Publish the job's ending as the keeper would.
+    pub(in crate::resident) fn end_for_tests(&self, ending: Ending) {
+        let mut state = self.state().expect("state reads").expect("state");
+        state.ending = Some(ending);
+        state.ended_millis = Some(now_millis().expect("clock"));
+        publish_json(&self.directory.join(STATE), &state).expect("ending");
     }
 }

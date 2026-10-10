@@ -405,6 +405,20 @@ process. Every seat start, fresh or resumed, carries a `Kept jobs still running`
 notice listing each running kept command with its id, marking services, and is
 silent when nothing runs.
 
+A shell call with `events` watches a deadline-bounded command instead of
+waiting on it: the call is answered at once with the job's id, and each line
+the command prints on stdout becomes an event delivered to the seated
+occupant as a background notice naming the job, in order and exactly once,
+at the next step boundary rather than inside a running tool call. Lines
+arriving within 200 ms of an event's first line ride in that event; stderr
+goes only to the job's log, which keeps both streams. More than 100 lines
+within 10 seconds ends the job's events with one notice saying so, while the
+command keeps running. The job's ending is delivered after its last event. A
+service refuses `events`, since nothing bounds it. The lane records the last
+event it heard, so an event nobody hears within the delivery grace wakes a
+vacant lane exactly as an unheard ending does, and the next seat hears every
+unheard event before the ending.
+
 ---
 
 ## Extension surfaces
