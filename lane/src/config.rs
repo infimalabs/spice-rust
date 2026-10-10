@@ -23,7 +23,8 @@ pub struct Config {
     wake_order: WakeOrder,
 }
 
-/// Which lane wakes first among vacant lanes due for the same trigger, ranked
+/// Which lane wakes first among vacant lanes due for the same trigger whose
+/// work is in the same class (ordinary, or the lane's own last resort), ranked
 /// by the journal position of each lane's newest durable claim.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

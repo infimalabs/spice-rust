@@ -14,6 +14,7 @@ fn vacant_holder() -> Target {
         held_claim: Available::At(instant(3)),
         drain_queue: Available::Ready,
         available: Available::Ready,
+        last_resort: false,
     }
 }
 

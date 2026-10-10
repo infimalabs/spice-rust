@@ -79,6 +79,8 @@ struct SelectedReady {
     eligible: usize,
     handoff: bool,
     handoff_wait: bool,
+    /// The selection is in the allocator's last-resort class for this actor.
+    last_resort: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,6 +92,10 @@ struct Target {
     held_claim: Available,
     drain_queue: Available,
     available: Available,
+    /// The work the drain-queue or available-work trigger would claim is in
+    /// this lane's last-resort class: its own independent handoff or review,
+    /// or a row it freed.
+    last_resort: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -688,48 +694,6 @@ fn fact_body<T: serde::de::DeserializeOwned>(
         .map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))?;
     wire::decode(&bytes).map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))
 }
-fn available_deadline(
-    snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
-    ready_at: &BTreeMap<TaskStamp, Instant>,
-    actor: &Actor,
-    subscription: &wire::TeamSubscription,
-    allocation: &board::NextConfig,
-    now: Instant,
-) -> CommandResult<Available> {
-    available_from_selected(selected_ready(
-        snapshot,
-        entries,
-        ready_at,
-        actor,
-        subscription,
-        allocation,
-        now,
-    )?)
-}
-fn drain_available(
-    snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
-    ready_at: &BTreeMap<TaskStamp, Instant>,
-    actor: &Actor,
-    subscription: &wire::TeamSubscription,
-    allocation: &board::NextConfig,
-    first_member: bool,
-    now: Instant,
-) -> CommandResult<Available> {
-    drain_from_selected(
-        selected_ready(
-            snapshot,
-            entries,
-            ready_at,
-            actor,
-            subscription,
-            allocation,
-            now,
-        )?,
-        first_member,
-    )
-}
 
 fn drain_from_selected(
     selected: Option<SelectedReady>,
@@ -759,10 +723,9 @@ fn available_from_selected(selected: Option<SelectedReady>) -> CommandResult<Ava
 }
 
 /// Wake the highest-precedence due trigger. Among lanes due for the same
-/// trigger, `order` ranks lanes by their newest durable claim: by default the
-/// lane that has gone longest without claiming wakes first (a lane that never
-/// claimed counts as oldest), so work rotates through a team and every
-/// member's worktree keeps returning to the integrated tree. Lane id breaks
+/// trigger, a lane whose work is ordinary wakes before one whose work is its
+/// own last resort, so an idle peer takes a review before its author does;
+/// `order` then ranks lanes by their newest durable claim, and lane id breaks
 /// exact ties. The same rank settles which lane a wait names.
 fn resolve(
     targets: &[Target],
@@ -800,7 +763,9 @@ fn resolve(
         if let Some((_, target, _)) = candidates
             .iter()
             .filter(|(candidate, _, due)| *candidate == trigger && *due <= now)
-            .min_by(|(_, left, _), (_, right, _)| wake_rank(order, left, right))
+            .min_by(|(_, left, _), (_, right, _)| {
+                wake_rank(order, (trigger, left), (trigger, right))
+            })
         {
             return Resolution::Attempt {
                 trigger,
@@ -814,7 +779,7 @@ fn resolve(
             |(left_trigger, left, left_due), (right_trigger, right, right_due)| {
                 left_due
                     .cmp(right_due)
-                    .then_with(|| wake_rank(order, left, right))
+                    .then_with(|| wake_rank(order, (*left_trigger, left), (*right_trigger, right)))
                     .then_with(|| (*left_trigger as u8).cmp(&(*right_trigger as u8)))
             },
         )
@@ -827,15 +792,26 @@ fn resolve(
         })
 }
 
-/// Which of two due lanes wakes first under `order`; lane id breaks exact ties.
-fn wake_rank(order: lane::WakeOrder, left: &Target, right: &Target) -> std::cmp::Ordering {
+/// Which of two due lanes wakes first: ordinary work before a lane's own last
+/// resort, then `order`, then lane id.
+fn wake_rank(
+    order: lane::WakeOrder,
+    (left_trigger, left): (Trigger, &Target),
+    (right_trigger, right): (Trigger, &Target),
+) -> std::cmp::Ordering {
+    let last_resort = |trigger, target: &Target| {
+        matches!(trigger, Trigger::DrainQueue | Trigger::AvailableWork) && target.last_resort
+    };
     let claims = match order {
         // `None` sorts first: a lane that never claimed is the oldest.
         lane::WakeOrder::LeastRecentlyClaimed => left.last_claim.cmp(&right.last_claim),
         // Reversed, `None` sorts last: a lane that never claimed is the coldest.
         lane::WakeOrder::MostRecentlyClaimed => right.last_claim.cmp(&left.last_claim),
     };
-    claims.then_with(|| left.lane.cmp(&right.lane))
+    last_resort(left_trigger, left)
+        .cmp(&last_resort(right_trigger, right))
+        .then(claims)
+        .then_with(|| left.lane.cmp(&right.lane))
 }
 
 fn current_instant() -> CommandResult<Instant> {
@@ -880,6 +856,7 @@ mod tests {
             held_claim: Available::None,
             drain_queue: Available::None,
             available: Available::None,
+            last_resort: false,
         }
     }
 
@@ -1003,6 +980,94 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_work_wakes_before_a_lanes_own_last_resort() {
+        let chosen = |order, targets: &[Target]| match resolve(
+            targets,
+            &Backoff::default(),
+            instant(10),
+            order,
+        ) {
+            Resolution::Attempt { trigger, lane } | Resolution::Wait { trigger, lane, .. } => {
+                (trigger, lane)
+            }
+            Resolution::Idle => panic!("a due lane resolves"),
+        };
+        let due = |lane: u8, claim: u64, last_resort, available| Target {
+            last_claim: Some(Seq::new(claim).expect("claim position")),
+            available,
+            last_resort,
+            ..target(lane)
+        };
+        // The author's claim is the newest and the peer's is old, so neither
+        // claim order alone keeps the author last; the class decides first.
+        let author = due(1, 90, true, Available::Ready);
+        let peer = due(2, 10, false, Available::Ready);
+        let fresh = Target {
+            last_claim: None,
+            ..peer
+        };
+        for order in [ROTATE, lane::WakeOrder::MostRecentlyClaimed] {
+            let pick = |targets: &[Target]| chosen(order, targets);
+            assert_eq!(pick(&[author, peer]), (Trigger::AvailableWork, lane(2)));
+            assert_eq!(pick(&[author, fresh]), (Trigger::AvailableWork, lane(2)));
+            // The class ranks drain-queue lanes the same way.
+            let drain = |target: Target| Target {
+                drain_queue: target.available,
+                available: Available::None,
+                ..target
+            };
+            assert_eq!(
+                pick(&[drain(author), drain(peer)]),
+                (Trigger::DrainQueue, lane(2))
+            );
+            // A peerless author still wakes for its last resort.
+            assert_eq!(pick(&[author]), (Trigger::AvailableWork, lane(1)));
+            // Within one class the configured order still decides.
+            let other_author = due(3, 50, true, Available::Ready);
+            let warm_author = if order == ROTATE { 3 } else { 1 };
+            assert_eq!(
+                pick(&[author, other_author]),
+                (Trigger::AvailableWork, lane(warm_author))
+            );
+            // The class never overrides trigger precedence, and only work
+            // triggers carry it.
+            let holding = Target {
+                held_claim: Available::Ready,
+                ..author
+            };
+            assert_eq!(pick(&[peer, holding]), (Trigger::HeldClaim, lane(1)));
+            let holding_peer = Target {
+                lane: lane(4),
+                last_claim: Some(Seq::new(10).expect("claim position")),
+                last_resort: false,
+                ..holding
+            };
+            assert_eq!(
+                pick(&[holding, holding_peer]),
+                (
+                    Trigger::HeldClaim,
+                    if order == ROTATE { lane(4) } else { lane(1) }
+                )
+            );
+            // A due last resort still wakes before a peer whose work is not yet due.
+            let pending_peer = due(2, 10, false, Available::At(instant(20)));
+            assert_eq!(
+                pick(&[author, pending_peer]),
+                (Trigger::AvailableWork, lane(1))
+            );
+            // Equal wait deadlines name the ordinary lane.
+            let later = |target: Target| Target {
+                available: Available::At(instant(20)),
+                ..target
+            };
+            assert_eq!(
+                pick(&[later(author), later(peer)]),
+                (Trigger::AvailableWork, lane(2))
+            );
+        }
+    }
+
+    #[test]
     fn durable_age_and_settle_deadlines_wait_for_their_real_event() {
         let mut row = target(1);
         row.available = Available::At(instant(12));
@@ -1055,6 +1120,7 @@ mod tests {
                 eligible: 1,
                 handoff: false,
                 handoff_wait: false,
+                last_resort: false,
             }))
             .expect("lone fold resolves"),
             Available::At(instant_after_minutes(3))
@@ -1065,6 +1131,7 @@ mod tests {
                 eligible: 2,
                 handoff: false,
                 handoff_wait: false,
+                last_resort: false,
             }))
             .expect("burst fold resolves"),
             Available::At(instant(3))
@@ -1075,6 +1142,7 @@ mod tests {
                 eligible: 1,
                 handoff: true,
                 handoff_wait: false,
+                last_resort: false,
             }))
             .expect("phase handoff resolves"),
             Available::Ready
@@ -1085,6 +1153,7 @@ mod tests {
                 eligible: 0,
                 handoff: false,
                 handoff_wait: true,
+                last_resort: false,
             }))
             .expect("blocked handoff deadline resolves"),
             Available::At(instant(3))
@@ -1104,6 +1173,7 @@ mod tests {
                     eligible: 1,
                     handoff: false,
                     handoff_wait: false,
+                    last_resort: false,
                 }),
                 true,
             )
@@ -1117,6 +1187,7 @@ mod tests {
                     eligible: 1,
                     handoff: false,
                     handoff_wait: false,
+                    last_resort: false,
                 }),
                 false,
             )
@@ -1130,6 +1201,7 @@ mod tests {
                     eligible: 2,
                     handoff: false,
                     handoff_wait: false,
+                    last_resort: false,
                 }),
                 false,
             )
@@ -1143,6 +1215,7 @@ mod tests {
                     eligible: 1,
                     handoff: true,
                     handoff_wait: false,
+                    last_resort: false,
                 }),
                 false,
             )
@@ -1156,6 +1229,7 @@ mod tests {
                     eligible: 0,
                     handoff: false,
                     handoff_wait: true,
+                    last_resort: false,
                 }),
                 false,
             )

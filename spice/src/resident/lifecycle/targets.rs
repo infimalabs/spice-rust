@@ -40,8 +40,8 @@ pub(super) fn project_targets(
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
         });
-        let (drain_queue, available) = if trust_blocked {
-            (Available::None, Available::None)
+        let (drain_queue, available, last_resort) = if trust_blocked {
+            (Available::None, Available::None, false)
         } else {
             work_availability(
                 snapshot,
@@ -64,6 +64,7 @@ pub(super) fn project_targets(
             held_claim,
             drain_queue,
             available,
+            last_resort,
         });
     }
     Ok(targets)
@@ -172,34 +173,36 @@ fn work_availability(
     allocation: &board::NextConfig,
     first_drain_member: bool,
     now: Instant,
-) -> CommandResult<(Available, Available)> {
-    let actor = Actor::Lane(row.lane);
-    match subscription {
-        Some(subscription) if subscription.policy == wire::intent::TeamLife::Drain => Ok((
-            drain_available(
-                snapshot,
-                entries,
-                ready_at,
-                &actor,
-                subscription,
-                allocation,
-                first_drain_member,
-                now,
-            )?,
+) -> CommandResult<(Available, Available, bool)> {
+    let Some(subscription) = subscription.filter(|subscription| {
+        matches!(
+            subscription.policy,
+            wire::intent::TeamLife::Drain | wire::intent::TeamLife::Drive
+        )
+    }) else {
+        return Ok((Available::None, Available::None, false));
+    };
+    let selected = selected_ready(
+        snapshot,
+        entries,
+        ready_at,
+        &Actor::Lane(row.lane),
+        subscription,
+        allocation,
+        now,
+    )?;
+    let last_resort = selected.is_some_and(|selected| selected.last_resort);
+    if subscription.policy == wire::intent::TeamLife::Drain {
+        Ok((
+            drain_from_selected(selected, first_drain_member)?,
             Available::None,
-        )),
-        Some(subscription) if subscription.policy == wire::intent::TeamLife::Drive => Ok((
+            last_resort,
+        ))
+    } else {
+        Ok((
             Available::None,
-            available_deadline(
-                snapshot,
-                entries,
-                ready_at,
-                &actor,
-                subscription,
-                allocation,
-                now,
-            )?,
-        )),
-        Some(_) | None => Ok((Available::None, Available::None)),
+            available_from_selected(selected)?,
+            last_resort,
+        ))
     }
 }
