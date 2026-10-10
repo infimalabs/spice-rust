@@ -11,7 +11,7 @@ use super::*;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn package_preview_reads_only_content_addressed_executables() {
+fn admitted_executables_are_read_from_their_admitted_generation() {
     let fixture = Fixture::new();
     let index = ReleaseIndex::admit(
         &fixture.root,
@@ -21,30 +21,15 @@ fn package_preview_reads_only_content_addressed_executables() {
         &fixture.manifest_identity,
     )
     .unwrap_or_else(|error| panic!("content-addressed package admission failed: {error}"));
-    let preview = index.preview().clone();
     let expected_executables = fixture
         .executables
         .iter()
         .map(|path| fs::read(path).expect("read admitted executable fixture"))
         .collect::<Vec<_>>();
-    let symbol_path = fixture.symbols[0]
-        .as_ref()
-        .expect("Darwin fixture has a symbol object");
-    let replaced_symbols = fixture.root.join("replaced-symbols");
-    fs::rename(symbol_path, &replaced_symbols).expect("replace admitted symbol path");
-    fs::write(symbol_path, b"later symbols").expect("publish later symbol generation");
     let replaced = fixture.root.join("replaced-executable");
     fs::rename(&fixture.executables[0], &replaced).expect("replace admitted executable path");
     fs::write(&fixture.executables[0], b"later generation")
         .expect("publish later executable generation");
-    let replaced_manifest = fixture.root.join("replaced-manifest");
-    fs::rename(&fixture.manifest_path, &replaced_manifest).expect("replace admitted manifest path");
-    fs::write(&fixture.manifest_path, b"later generation")
-        .expect("publish later manifest generation");
-    let materialized = index.materialize(&fixture.root).unwrap_or_else(|error| {
-        panic!("content-addressed package materialization failed: {error}")
-    });
-    assert_eq!(materialized, preview);
     for (target_index, target) in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,

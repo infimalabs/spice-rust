@@ -390,6 +390,7 @@ fn gate_environment(name: &str) -> (Scratch, Environment) {
 /// test-only interruption ends each resident after the launch gate, independent
 /// of whether the launcher runs; swapping those arguments therefore makes the
 /// `--open` assertion fail promptly instead of leaving the plain case resident.
+/// The two cases own separate roots and residents, so they run side by side.
 #[test]
 fn parsed_demo_open_flag_reaches_the_app_gate() {
     let control = RunControl {
@@ -397,43 +398,55 @@ fn parsed_demo_open_flag_reaches_the_app_gate() {
         interrupt_after_launch: true,
     };
 
-    let (_plain_scratch, plain_environment) = gate_environment("plain-no-open");
-    let plain_root = plain_environment.root.to_str().unwrap();
-    let plain = crate::cli::command()
-        .try_get_matches_from(["spice", "demo", "--reuse", plain_root])
-        .expect("the plain demo invocation parses");
-    let outcome = run_with(crate::cli::selected_matches(&plain), control, |endpoint| {
-        panic!("a plain demo run must not open a browser: {endpoint}")
-    });
-    let Outcome::Reply(answer) = outcome else {
-        panic!("a plain demo run replies: {outcome:?}");
-    };
-    assert_eq!(answer.body.mode, "app");
-    assert!(
-        answer
-            .body
-            .endpoint
-            .as_deref()
-            .is_some_and(|value| value.starts_with("http://127.0.0.1:")),
-        "the endpoint is reported even though nothing was opened: {:?}",
-        answer.body.endpoint
-    );
+    std::thread::scope(|scope| {
+        let plain = scope.spawn(|| {
+            let (_scratch, environment) = gate_environment("plain-no-open");
+            let root = environment.root.to_str().unwrap();
+            let plain = crate::cli::command()
+                .try_get_matches_from(["spice", "demo", "--reuse", root])
+                .expect("the plain demo invocation parses");
+            let outcome = run_with(crate::cli::selected_matches(&plain), control, |endpoint| {
+                panic!("a plain demo run must not open a browser: {endpoint}")
+            });
+            let Outcome::Reply(answer) = outcome else {
+                panic!("a plain demo run replies: {outcome:?}");
+            };
+            assert_eq!(answer.body.mode, "app");
+            assert!(
+                answer
+                    .body
+                    .endpoint
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("http://127.0.0.1:")),
+                "the endpoint is reported even though nothing was opened: {:?}",
+                answer.body.endpoint
+            );
+        });
 
-    let (_open_scratch, open_environment) = gate_environment("explicit-open");
-    let open_root = open_environment.root.to_str().unwrap();
-    let open = crate::cli::command()
-        .try_get_matches_from(["spice", "demo", "--reuse", open_root, "--open"])
-        .expect("the opening demo invocation parses");
-    let mut dialled = None;
-    let outcome = run_with(crate::cli::selected_matches(&open), control, |endpoint| {
-        dialled = Some(endpoint.to_owned());
-        Ok(())
+        let open = scope.spawn(|| {
+            let (_scratch, environment) = gate_environment("explicit-open");
+            let root = environment.root.to_str().unwrap();
+            let open = crate::cli::command()
+                .try_get_matches_from(["spice", "demo", "--reuse", root, "--open"])
+                .expect("the opening demo invocation parses");
+            let mut dialled = None;
+            let outcome = run_with(crate::cli::selected_matches(&open), control, |endpoint| {
+                dialled = Some(endpoint.to_owned());
+                Ok(())
+            });
+            let Outcome::Reply(answer) = outcome else {
+                panic!("an opening demo run replies: {outcome:?}");
+            };
+            assert!(dialled.is_some(), "--open reaches the launcher");
+            assert_eq!(dialled.as_deref(), answer.body.endpoint.as_deref());
+        });
+
+        for case in [plain, open] {
+            if let Err(panic) = case.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
     });
-    let Outcome::Reply(answer) = outcome else {
-        panic!("an opening demo run replies: {outcome:?}");
-    };
-    assert!(dialled.is_some(), "--open reaches the launcher");
-    assert_eq!(dialled.as_deref(), answer.body.endpoint.as_deref());
 }
 
 /// The gate above is only reachable if the flag exists and defaults off. This
