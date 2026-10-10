@@ -762,6 +762,19 @@
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
 }
+/* A sent MSG leads with sender, an outgoing arrow, then its recipients. */
+.markdown-body .message-quote-direction {
+  color: var(--muted);
+  font-weight: 600;
+}
+.markdown-body .message-quote-recipients {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.markdown-body .message-quote-recipient-separator { white-space: pre; }
 .markdown-body .message-quote-task-tail {
   display: inline-flex;
   max-width: 100%;

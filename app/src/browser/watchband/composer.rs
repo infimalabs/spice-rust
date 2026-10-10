@@ -687,35 +687,9 @@ fn agent_message_presentation<'a>(
     let is_tool = message.activity == wire::AgentActivityKind::Tool;
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
-    let shown_text = if is_tool { "" } else { message.text.as_str() };
-    let crate::composer_markdown::ExpandedMedia {
-        markdown: shown_text,
-        classifications: shown_classifications,
-        directives: shown_directives,
-    } = crate::composer_markdown::expand_media_payloads(
-        shown_text,
-        &message.media,
-        &message.markdown_images,
-        &message.classifications,
-        &message.directive_contexts,
-    )
-    .expect("message media passed admission before browser rendering");
-    // Prose cards split into attributed hunks around every quote. Tool,
-    // reasoning, and boundary cards render verbatim.
     let is_prose = message.activity == wire::AgentActivityKind::Prose;
-    let render = if is_prose {
-        crate::composer_markdown::render_prose_card
-    } else {
-        crate::composer_markdown::render_received_with_quotes
-    };
-    let rendered_markdown = render(
-        &shown_text,
-        &shown_classifications,
-        &shown_directives,
-        &message.quotes,
-        quote_agents,
-        quote_sources,
-    );
+    let (shown_text, rendered_markdown) =
+        render_agent_markdown(message, is_tool, is_prose, quote_agents, quote_sources);
     let card_label = agent_message_card_label(
         message,
         media_description.as_deref(),
@@ -775,6 +749,53 @@ fn agent_message_presentation<'a>(
         classifications,
         single_image_cover,
     }
+}
+
+/// Expand a card's media and render its Markdown: the shown text, then its
+/// rendering. Prose cards split into attributed hunks around every quote and
+/// sent MSG; tool, reasoning, and boundary cards render verbatim, and a tool
+/// card shows no words.
+fn render_agent_markdown<'m>(
+    message: &'m wire::AgentMessage,
+    is_tool: bool,
+    is_prose: bool,
+    quote_agents: &crate::composer_markdown::QuoteAgents,
+    quote_sources: &crate::composer_markdown::QuoteSources,
+) -> (
+    std::borrow::Cow<'m, str>,
+    crate::composer_markdown::RenderedMarkdown,
+) {
+    let shown_text = if is_tool { "" } else { message.text.as_str() };
+    let shown = crate::composer_markdown::expand_media_payloads(
+        shown_text,
+        &message.media,
+        &message.markdown_images,
+        &message.classifications,
+        &message.directive_contexts,
+        &message.sends,
+    )
+    .expect("message media passed admission before browser rendering");
+    let rendered = if is_prose {
+        crate::composer_markdown::render_prose_card(
+            &shown.markdown,
+            &shown.classifications,
+            &shown.directives,
+            &shown.sends,
+            &message.quotes,
+            quote_agents,
+            quote_sources,
+        )
+    } else {
+        crate::composer_markdown::render_received_with_quotes(
+            &shown.markdown,
+            &shown.classifications,
+            &shown.directives,
+            &message.quotes,
+            quote_agents,
+            quote_sources,
+        )
+    };
+    (shown.markdown, rendered)
 }
 
 fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {

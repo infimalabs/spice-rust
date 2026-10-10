@@ -871,6 +871,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 badge: Some(DirectiveBadge::Taste),
                 sender: None,
             }],
+            sends: vec![send_sample(first_id, second_id)],
             quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
@@ -899,6 +900,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
+            sends: Vec::new(),
             quotes: vec![wire::QuotePresentation::Unavailable {
                 target: "spice://quote/v1/unknown".to_owned(),
                 reason: wire::QuoteUnavailable::Malformed,
@@ -930,6 +932,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
+            sends: Vec::new(),
             quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
@@ -938,6 +941,21 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             markdown_images: Vec::new(),
         },
     ]
+}
+
+/// An outgoing MSG quote whose sending and recipient identities cross.
+fn send_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> wire::MessageSend {
+    wire::MessageSend {
+        start: 12,
+        end: 19,
+        from: first_id,
+        sender: second_id,
+        recipients: vec![wire::MessageRecipient {
+            address: "6K26".parse().expect("fixture address parses"),
+            lane: second_id,
+            occupant: first_id,
+        }],
+    }
 }
 
 fn stream_request_samples(
@@ -1021,6 +1039,7 @@ fn stream_data_samples(
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),
+        sends: Vec::new(),
         quotes: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),

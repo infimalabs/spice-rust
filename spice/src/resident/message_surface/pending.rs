@@ -76,6 +76,12 @@ impl PendingPresentations {
     fn keys(&self) -> BTreeSet<steer::Key> {
         steering_keys(self.0.iter().map(|card| card.text.as_str()))
     }
+
+    /// Every address the retained prose's MSG packets name, so a card
+    /// presents its sends again exactly as its live publication did.
+    fn addresses(&self) -> BTreeSet<wire::OccupantAddress> {
+        message_addresses(self.0.iter().map(|card| card.text.as_str()))
+    }
 }
 
 pub(in crate::resident) trait PresentationPublisher {
@@ -123,9 +129,12 @@ pub(in crate::resident) fn settle_pending_presentations(
     if pending.is_empty() {
         return Ok(());
     }
-    let directives = load_steering_presentations(&bus.reader(), &pending.keys()).and_then(|rows| {
-        PresentationDirectives::from_presentations(&rows)
-            .map_err(|error| store_fault("serve::message-steering-invalid", &error))
+    let reader = bus.reader();
+    let directives = load_steering_presentations(&reader, &pending.keys()).and_then(|rows| {
+        let mut directives = PresentationDirectives::from_presentations(&rows)
+            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
+        directives.prove_recipients(&reader, pending.addresses())?;
+        Ok(directives)
     });
     let mut state = lock_state(state)?;
     let incoming = std::mem::replace(&mut state.pending, pending);
@@ -142,7 +151,7 @@ fn settle_with_directives(
 ) -> CommandResult<()> {
     let still_pending = |key: &steer::Key| {
         directives
-            .0
+            .directives
             .get(key)
             .is_some_and(|directive| directive.disposition == wire::Disposition::Live)
     };
@@ -199,4 +208,5 @@ fn apply_presentation(
     message
         .directive_contexts
         .clone_from(&presented.directive_contexts);
+    message.sends.clone_from(&presented.sends);
 }

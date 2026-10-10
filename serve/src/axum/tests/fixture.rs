@@ -20,6 +20,7 @@ pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentM
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),
+        sends: Vec::new(),
         quotes: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),

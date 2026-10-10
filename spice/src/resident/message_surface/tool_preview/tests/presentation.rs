@@ -45,6 +45,7 @@ fn lane() -> CanonicalUuid {
 fn event() -> PresentationEvent {
     PresentationEvent {
         lane: lane(),
+        author: None,
         source: None,
         locus: listen::Locus::new(1, 0, 1),
         ordinal: 0,
@@ -130,6 +131,7 @@ fn acknowledgement_tool_intent_publishes_a_durable_quote_target() {
 
 mod acknowledgement;
 mod reasoning;
+mod sends;
 
 #[test]
 fn a_settled_turn_promotes_only_its_latest_assistant_message() {

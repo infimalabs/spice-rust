@@ -4,12 +4,13 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag};
-use wire::{MessageClassification, MessageDirective};
+use wire::{MessageClassification, MessageDirective, MessageSend};
 
 pub(super) struct Normalized<'a> {
     pub(super) markdown: Cow<'a, str>,
     pub(super) classifications: Vec<MessageClassification>,
     pub(super) directives: Vec<MessageDirective>,
+    pub(super) sends: Vec<MessageSend>,
 }
 
 struct Replacement {
@@ -26,10 +27,11 @@ pub(super) fn normalize<'a>(
     markdown: &'a str,
     classifications: &[MessageClassification],
     directives: &[MessageDirective],
+    sends: &[MessageSend],
     options: Options,
 ) -> Normalized<'a> {
     if !markdown.contains("\\(") && !markdown.contains("\\[") {
-        return unchanged(markdown, classifications, directives);
+        return unchanged(markdown, classifications, directives, sends);
     }
 
     let mut prose = Vec::new();
@@ -69,7 +71,7 @@ pub(super) fn normalize<'a>(
     );
     replacements.sort_by_key(|replacement| replacement.source.start);
     if replacements.is_empty() {
-        return unchanged(markdown, classifications, directives);
+        return unchanged(markdown, classifications, directives, sends);
     }
 
     let removed = replacements
@@ -101,10 +103,19 @@ pub(super) fn normalize<'a>(
             ..directive.clone()
         })
         .collect();
+    let sends = sends
+        .iter()
+        .map(|send| MessageSend {
+            start: remap_offset(send.start, &replacements),
+            end: remap_offset(send.end, &replacements),
+            ..send.clone()
+        })
+        .collect();
     Normalized {
         markdown: Cow::Owned(normalized),
         classifications,
         directives,
+        sends,
     }
 }
 
@@ -112,11 +123,13 @@ fn unchanged<'a>(
     markdown: &'a str,
     classifications: &[MessageClassification],
     directives: &[MessageDirective],
+    sends: &[MessageSend],
 ) -> Normalized<'a> {
     Normalized {
         markdown: Cow::Borrowed(markdown),
         classifications: classifications.to_vec(),
         directives: directives.to_vec(),
+        sends: sends.to_vec(),
     }
 }
 

@@ -47,7 +47,8 @@ pub(super) fn expand<'a>(
     expanded
 }
 
-/// The part of `agents` a card's quotes and directive contexts can render.
+/// The part of `agents` a card's quotes, directive contexts, and sent MSG
+/// packets can render.
 ///
 /// Authors resolve labels only among entries of the lane they name, so a card
 /// rendered from this projection is identical to one rendered from the whole
@@ -55,6 +56,7 @@ pub(super) fn expand<'a>(
 pub(crate) fn referenced_quote_agents(
     presentations: &[QuotePresentation],
     directives: &[wire::MessageDirective],
+    sends: &[wire::MessageSend],
     agents: &super::QuoteAgents,
 ) -> super::QuoteAgents {
     let mut lanes = directives
@@ -63,6 +65,9 @@ pub(crate) fn referenced_quote_agents(
             wire::Actor::Lane(lane) => Some(lane),
             wire::Actor::Operator | wire::Actor::Spice => None,
         })
+        .chain(sends.iter().flat_map(|send| {
+            std::iter::once(send.from).chain(send.recipients.iter().map(|recipient| recipient.lane))
+        }))
         .collect::<std::collections::BTreeSet<_>>();
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
@@ -211,6 +216,79 @@ fn historical_agent<'a>(
     lane: wire::CanonicalUuid,
 ) -> Option<&'a super::QuoteAgent> {
     source.agent.as_ref().or_else(|| agents.get(&(lane, None)))
+}
+
+/// The lead of an MSG the card's author sent: its exact authoring occupant,
+/// an outgoing arrow, then every addressed occupant in header order. The
+/// arrow and the recipients are what set it apart from a quote of words the
+/// card answers, which leads with the quoted source's age and author.
+pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
+    let (sender, state) = occupant_agent(agents, send.from, send.sender)
+        .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
+    let label = sender.map_or_else(
+        || {
+            Cow::Owned(format!(
+                "{}/{}",
+                crate::watchband::short(send.from),
+                crate::watchband::short(send.sender),
+            ))
+        },
+        |agent| Cow::Borrowed(agent.label.as_str()),
+    );
+    let mut html = format!(
+        "<span class=\"message-quote-signoff\" data-quote-direction=\"outgoing\">{}\
+         <span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
+         <span class=\"message-quote-recipients\">",
+        quote_name_html(
+            &label,
+            &format!(
+                " data-quote-author=\"agent\" data-quote-agent-lane=\"{}\" \
+                 data-quote-agent-occupant=\"{}\" data-quote-author-state=\"{state}\"",
+                send.from, send.sender
+            ),
+            sender.map(|agent| agent.accent),
+        ),
+    );
+    for (index, recipient) in send.recipients.iter().enumerate() {
+        if index > 0 {
+            html.push_str("<span class=\"message-quote-recipient-separator\">, </span>");
+        }
+        let (agent, state) = occupant_agent(agents, recipient.lane, recipient.occupant)
+            .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
+        let address = recipient.address.to_string();
+        html.push_str(&quote_name_html(
+            agent.map_or(address.as_str(), |agent| agent.label.as_str()),
+            &format!(
+                " data-quote-recipient-address=\"{address}\" \
+                 data-quote-agent-lane=\"{}\" data-quote-agent-occupant=\"{}\" \
+                 data-quote-author-state=\"{state}\" title=\"{address}\"",
+                recipient.lane, recipient.occupant
+            ),
+            agent.map(|agent| agent.accent),
+        ));
+    }
+    html.push_str("</span></span>");
+    html
+}
+
+/// The accent slot of the occupant that sent one MSG, which its quote's rail
+/// wears as any quote wears its speaker's.
+pub(super) fn send_accent(send: &wire::MessageSend, agents: &super::QuoteAgents) -> Option<usize> {
+    occupant_agent(agents, send.from, send.sender).map(|(agent, _)| agent.accent)
+}
+
+/// The roster entry naming one exact occupant with no source card to consult:
+/// its own seat, else its lane while that lane sits vacant. A lane a later
+/// occupant sits in lends nothing, so no successor inherits the name.
+fn occupant_agent(
+    agents: &super::QuoteAgents,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+) -> Option<(&super::QuoteAgent, &'static str)> {
+    agents
+        .get(&(lane, Some(occupant)))
+        .map(|agent| (agent, "current"))
+        .or_else(|| agents.get(&(lane, None)).map(|agent| (agent, "historical")))
 }
 
 /// Empty portal target that board provenance fills at the quoted content's

@@ -924,16 +924,16 @@ fn walk_observations(
     })
 }
 
-fn scan_steering_keys(scan: &listen::Scan) -> BTreeSet<steer::Key> {
-    steering_keys(scan.records.iter().flat_map(|record| {
-        match &record.payload {
+fn scan_assistant_texts(scan: &listen::Scan) -> impl Iterator<Item = &str> {
+    scan.records
+        .iter()
+        .flat_map(|record| match &record.payload {
             listen::RecordPayload::Events(events) => events
                 .iter()
                 .filter_map(|event| event.event.assistant_text())
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
-        }
-    }))
+        })
 }
 
 fn hydrate_steering_presentations(
@@ -941,14 +941,15 @@ fn hydrate_steering_presentations(
     scan: &listen::Scan,
     steering: &mut PresentationDirectives,
 ) -> CommandResult<()> {
-    let keys = scan_steering_keys(scan)
+    let keys = steering_keys(scan_assistant_texts(scan))
         .into_iter()
-        .filter(|key| !steering.0.contains_key(key))
+        .filter(|key| !steering.directives.contains_key(key))
         .collect::<BTreeSet<_>>();
     let rows = load_steering_presentations(bus, &keys)?;
     steering
         .extend_presentations(&rows)
-        .map_err(|error| store_fault("serve::message-steering-invalid", &error))
+        .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
+    steering.prove_recipients(bus, message_addresses(scan_assistant_texts(scan)))
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {

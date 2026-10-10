@@ -243,6 +243,7 @@ fn publish_turn_boundary(
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
+            sends: Vec::new(),
             quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
@@ -326,6 +327,7 @@ fn project_agent_event(
                 acknowledgement,
                 classifications,
                 directive_contexts,
+                sends,
             },
         provider_error,
         automatic_speech,
@@ -333,6 +335,7 @@ fn project_agent_event(
     } = projected;
     let presentation_event = |locus| PresentationEvent {
         lane,
+        author: presents_sends(decoded).then_some(author),
         source: source.or_else(|| observations.source(lane, locus)),
         locus,
         ordinal,
@@ -368,6 +371,7 @@ fn project_agent_event(
         classifications,
         quote_target,
         directive_contexts,
+        sends,
         quotes: Vec::new(),
         automatic_speech,
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
@@ -385,6 +389,12 @@ fn project_agent_event(
     }))
 }
 
+/// A tool call's intent is a caption and never sends, so only authored prose
+/// presents its MSG packets as outgoing quotes.
+fn presents_sends(decoded: &listen::Event) -> bool {
+    !matches!(decoded, listen::Event::Tool(_))
+}
+
 fn project_event_body(
     event: &AgentEvent<'_>,
     previews: &mut CallPreviews,
@@ -399,6 +409,7 @@ fn project_event_body(
         }
         let presentation_event = PresentationEvent {
             lane: event.lane,
+            author: presents_sends(event.decoded).then_some(event.author),
             source: event
                 .source
                 .or_else(|| event.observations.source(event.lane, prose.locus)),

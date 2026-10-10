@@ -437,6 +437,7 @@ mod tests {
     fn event() -> PresentationEvent {
         PresentationEvent {
             lane: lane(),
+            author: None,
             source: None,
             locus: listen::Locus {
                 member: 1,
@@ -459,7 +460,7 @@ mod tests {
     }
 
     fn directives(keys: &[&str]) -> PresentationDirectives {
-        PresentationDirectives(BTreeMap::from_iter(keys.iter().map(|key| {
+        PresentationDirectives::new(BTreeMap::from_iter(keys.iter().map(|key| {
             let text = format!("direction for {key}");
             let quote_target = wire::QuoteTarget::Steering {
                 key: (*key).to_owned(),
@@ -489,7 +490,7 @@ mod tests {
         let key = "dRyzkGX8b";
         let mut directives = directives(&[key]);
         directives
-            .0
+            .directives
             .get_mut(&key.parse().expect("current system key parses"))
             .expect("fixture directive exists")
             .authored = false;
