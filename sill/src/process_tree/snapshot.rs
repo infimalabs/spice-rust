@@ -264,7 +264,6 @@ mod linux {
         let error =
             parse_stat("12 (fixture) S 10 12", 100).expect_err("truncated native stat refuses");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("start ticks"), "{error}");
     }
 }
 

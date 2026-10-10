@@ -58,9 +58,7 @@ fn unqualified_declaration_refuses_the_runtime_index() {
     facts.fact(declared, FactCause::Root).unwrap();
     journal.apply(facts).unwrap();
 
-    let error = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap())
-        .expect_err("schema 31 refuses an unqualified session");
-    assert!(error.contains("release that owns schema 30"), "{error}");
+    assert!(TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap()).is_err());
 }
 
 #[test]

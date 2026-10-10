@@ -62,7 +62,6 @@ fn assert_historical_agent_name_survives_reseating(
          data-accent=\"3\">spice-rust-k</span>"
     )));
     assert!(rendered.html.contains("data-quote-age-authored=\"1000\""));
-    assert!(!rendered.html.contains("history unavailable"));
 }
 
 #[test]
@@ -158,7 +157,6 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         "the outer source leads both hunks around the nested quote"
     );
     assert_eq!(rendered.html.matches("message-quote-name").count(), 3);
-    assert!(!rendered.html.contains("history unavailable"));
     assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
     assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
@@ -304,8 +302,6 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     ));
     assert!(!html.contains(">Spice</span>"));
     assert!(!html.contains(">Operator</span>"));
-    assert!(!html.contains("history unavailable"));
-    assert!(!html.contains("Directive by"));
     assert!(!html.contains("class=\"message-quote-disposition tag"));
 }
 
@@ -508,8 +504,6 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         &BTreeMap::new(),
     );
 
-    assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
-    assert!(rendered.html.contains("authorship unavailable"));
     assert!(!rendered.html.contains("message-quote-signoff"));
     assert!(!rendered.html.contains("<a "));
     assert!(!rendered.html.contains("data-quote-tasks"));

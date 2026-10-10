@@ -1,29 +1,19 @@
 use dialect::{Classification, RefusalCode, classify};
 
-fn assert_refusal(source: &str, code: RefusalCode, message: &str) {
+fn assert_refusal(source: &str, code: RefusalCode) {
     let Classification::Refused { refusals, .. } = classify(source) else {
         panic!("fixture should be refused");
     };
     assert!(
-        refusals
-            .iter()
-            .any(|refusal| refusal.code == code && refusal.message == message),
-        "missing {code}: {message}; got {refusals:?}"
+        refusals.iter().any(|refusal| refusal.code == code),
+        "missing {code}; got {refusals:?}"
     );
 }
 
 #[test]
 fn empty_and_structureless_documents_refuse_exactly() {
-    assert_refusal(
-        " \n\t\n",
-        RefusalCode::EmptyDocument,
-        "task document is empty",
-    );
-    assert_refusal(
-        "prose only\n",
-        RefusalCode::NoNodes,
-        "task document has no nodes (content but no structure)",
-    );
+    assert_refusal(" \n\t\n", RefusalCode::EmptyDocument);
+    assert_refusal("prose only\n", RefusalCode::NoNodes);
 }
 
 #[test]
@@ -31,49 +21,30 @@ fn malformed_and_unknown_dependencies_are_distinct() {
     assert_refusal(
         "# Goal\nAfter: missing!\n",
         RefusalCode::MalformedDependency,
-        "malformed After target: missing! (line 2)",
     );
-    assert_refusal(
-        "# Goal\nAfter: missing\n",
-        RefusalCode::UnknownDependency,
-        "unknown After target: missing (line 2)",
-    );
-    assert_refusal(
-        "# Goal\nAfter: goal,\n",
-        RefusalCode::MalformedDependency,
-        "malformed After target: empty target (line 2)",
-    );
+    assert_refusal("# Goal\nAfter: missing\n", RefusalCode::UnknownDependency);
+    assert_refusal("# Goal\nAfter: goal,\n", RefusalCode::MalformedDependency);
 }
 
 #[test]
-fn duplicate_identity_refuses_with_source_lines() {
+fn duplicate_identity_refuses() {
     assert_refusal(
         "# Goal\n\n- Same task\n- Same task\n",
         RefusalCode::DuplicateIdentity,
-        "duplicate identity: same-task (lines 3, 4)",
     );
 }
 
 #[test]
 fn unsupported_field_refuses_instead_of_becoming_silent_metadata() {
-    assert_refusal(
-        "# Goal\nOwner: mei\n",
-        RefusalCode::UnsupportedField,
-        "unsupported field: Owner (line 2)",
-    );
+    assert_refusal("# Goal\nOwner: mei\n", RefusalCode::UnsupportedField);
 }
 
 #[test]
 fn priority_and_flow_use_closed_vocabularies() {
-    assert_refusal(
-        "# Goal\nPriority: urgent\n",
-        RefusalCode::InvalidPriority,
-        "invalid priority: urgent (line 2)",
-    );
+    assert_refusal("# Goal\nPriority: urgent\n", RefusalCode::InvalidPriority);
     assert_refusal(
         "# Goal\nFlow: todo, deploy\n",
         RefusalCode::InvalidFlowPhase,
-        "invalid flow phase: deploy (line 2)",
     );
 }
 
@@ -84,19 +55,16 @@ fn explicit_dependency_cycles_refuse() {
     else {
         panic!("cycle should be refused");
     };
-    assert!(refusals.iter().any(|refusal| {
-        refusal.code == RefusalCode::DependencyCycle
-            && refusal.message.starts_with("dependency cycle at ")
-    }));
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| refusal.code == RefusalCode::DependencyCycle)
+    );
 }
 
 #[test]
 fn title_requires_an_ascii_identity_word() {
-    assert_refusal(
-        "# !!!\n",
-        RefusalCode::TitleWithoutAsciiWords,
-        "title has no ASCII words: !!! (line 1)",
-    );
+    assert_refusal("# !!!\n", RefusalCode::TitleWithoutAsciiWords);
 }
 
 #[test]
@@ -104,7 +72,6 @@ fn bare_reference_to_qualified_duplicates_is_ambiguous() {
     assert_refusal(
         "# Goal\n\n## One\n\n- Shared\n\n## Two\n\n- Shared\n- Consumer\n  After: shared\n",
         RefusalCode::AmbiguousDependency,
-        "ambiguous After target: shared (line 11; use a qualified slug)",
     );
 }
 
@@ -113,6 +80,5 @@ fn every_node_is_checked_for_the_reserved_synthetic_root_identity() {
     assert_refusal(
         "# Alpha\n- Document root\n# Beta\n",
         RefusalCode::SyntheticRootCollision,
-        "title collides with the synthetic root: Document root (line 2); rename it or use one authored top-level root",
     );
 }

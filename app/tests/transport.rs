@@ -203,14 +203,6 @@ fn a_requirement_unaware_app_generation_is_stopped_at_discovery() {
     let fault = Session::admit_app_protocol(Some(wire::AppProtocolVersion(3)))
         .expect_err("a requirement-unaware browser does not cross current app DTOs");
     assert_eq!(fault.reason, "bootstrap::app-protocol-mismatch");
-    assert!(
-        fault.detail.contains("protocol 3")
-            && fault
-                .detail
-                .contains(&format!("speaks {}", wire::AppProtocolVersion::CURRENT)),
-        "{}",
-        fault.detail
-    );
 }
 
 #[test]

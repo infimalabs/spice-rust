@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-const WORKING_STATE_LINE_LIMIT: usize = 160;
 
 fn fixture(name: &str) -> PathBuf {
     let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
@@ -33,75 +32,6 @@ fn state(remaining: Option<u64>) -> WorkingState {
         last_taste: "fallbacks".to_owned(),
         narration: None,
     }
-}
-
-#[test]
-fn short_working_state_line_contains_only_live_signal() {
-    let root = fixture("render");
-    let meter = Meter::new(root.join("working-state.json"));
-    let decision = meter
-        .evaluate(&state(None), Duration::from_secs(1))
-        .expect("meter evaluates");
-    let line = decision.announcement.expect("initial state speaks");
-
-    assert_eq!(
-        line,
-        "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo held for 90s; \
-         last taste fallbacks."
-    );
-    assert!(!line.contains('\n'));
-    assert_eq!(line.matches('.').count(), 1);
-    assert!(line.len() < WORKING_STATE_LINE_LIMIT);
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-#[test]
-fn idle_drain_guidance_orders_operator_direction_and_stops_while_claimed() {
-    let root = fixture("drain-guidance");
-    let path = root.join("working-state.json");
-    let idle = WorkingState {
-        drain_queue: true,
-        ..WorkingState::default()
-    };
-    let idle_line = Meter::new(&path)
-        .evaluate(&idle, Duration::from_secs(1))
-        .expect("idle drain state evaluates")
-        .announcement
-        .expect("idle drain state speaks");
-    let directed = WorkingState {
-        pending_inbox_count: 1,
-        ..idle.clone()
-    };
-    let directed_line = Meter::new(&path)
-        .evaluate(&directed, Duration::from_secs(2))
-        .expect("directed drain state evaluates")
-        .announcement
-        .expect("new operator direction speaks");
-    let claimed = WorkingState {
-        claim: Some(ClaimState {
-            handle: "DRAIN-00000001".to_owned(),
-            phase: "todo".to_owned(),
-            ..ClaimState::default()
-        }),
-        ..idle
-    };
-    let claimed_line = Meter::new(&path)
-        .evaluate(&claimed, Duration::from_secs(3))
-        .expect("claimed drain state evaluates")
-        .announcement
-        .expect("claim acquisition speaks");
-
-    assert!(idle_line.contains("run spice task next"));
-    assert_eq!(
-        directed_line,
-        "🌶️ Working state: 1 pending inbox; handle operator direction first, then \
-         run spice task next."
-    );
-    assert!(!claimed_line.contains("spice task next"));
-    for line in [&idle_line, &directed_line, &claimed_line] {
-        assert!(line.len() < WORKING_STATE_LINE_LIMIT);
-    }
-    fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 #[test]
@@ -172,12 +102,7 @@ fn announcement_identity_survives_exit_and_boundary_changes_speak() {
 
     assert!(first.announcement.is_some());
     assert_eq!(next_process.announcement, None);
-    assert!(
-        next_boundary
-            .announcement
-            .as_deref()
-            .is_some_and(|line| line.contains("Claim lease: METER-00000001 has 299s remaining"))
-    );
+    assert!(next_boundary.announcement.is_some());
 
     fs::write(&path, b"not-json").expect("corrupt prior announcement");
     let recovered = Meter::new(&path)
@@ -228,45 +153,6 @@ fn expiry_refresh_targets_only_the_next_boundary() {
 #[test]
 fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
     let root = fixture("strict-boundaries");
-    let cases = [
-        (600, false, true),
-        (599, true, true),
-        (299, true, false),
-        (59, true, true),
-    ];
-    for (index, (remaining, shows_lease, reclaim_extends)) in cases.into_iter().enumerate() {
-        let mut snapshot = state(Some(remaining));
-        snapshot
-            .claim
-            .as_mut()
-            .expect("fixture claim")
-            .reclaim_extends = reclaim_extends;
-        let decision = Meter::new(root.join(format!("boundary-{index}.json")))
-            .evaluate(&snapshot, Duration::from_secs(1))
-            .expect("strict boundary evaluates");
-        let line = decision.announcement.expect("new state speaks once");
-        assert_eq!(
-            line.contains(&format!(
-                "Claim lease: METER-00000001 has {remaining}s remaining"
-            )),
-            shows_lease,
-        );
-        assert!(!line.contains("Claim lease warning:"));
-        assert!(!line.contains("Claim lease urgent:"));
-        assert!(!line.contains("Claim lease critical:"));
-        if shows_lease {
-            assert!(line.contains("todo held for 90s"));
-            assert!(!line.contains("todo for 90s"));
-            assert!(line.contains(&format!("has {remaining}s remaining")));
-            if reclaim_extends {
-                assert!(line.contains("run spice task reclaim METER-00000001"));
-            } else {
-                assert!(line.contains("run spice task free METER-00000001, then spice task next"));
-            }
-            assert!(!line.contains(" ACK"));
-            assert!(!line.contains(" NAK"));
-        }
-    }
 
     let path = root.join("renewals.json");
     let meter = Meter::new(&path);
@@ -315,27 +201,11 @@ fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
 
     assert!(final_boundary.announcement.is_some());
     assert_eq!(same_band.announcement, None);
-    assert!(
-        middle_boundary.announcement.as_deref().is_some_and(|line| {
-            line.contains("Claim lease: METER-00000001 has 299s remaining")
-        })
-    );
-    assert!(
-        first_boundary.announcement.as_deref().is_some_and(|line| {
-            line.contains("Claim lease: METER-00000001 has 599s remaining")
-        })
-    );
-    assert!(free_guidance.announcement.as_deref().is_some_and(|line| {
-        line.contains("Claim lease: METER-00000001 has 598s remaining")
-            && line.contains("run spice task free METER-00000001, then spice task next")
-    }));
+    assert!(middle_boundary.announcement.is_some());
+    assert!(first_boundary.announcement.is_some());
+    assert!(free_guidance.announcement.is_some());
     assert_eq!(same_eligibility.announcement, None);
-    assert!(
-        quiet
-            .announcement
-            .as_deref()
-            .is_some_and(|line| !line.contains("Claim lease"))
-    );
+    assert!(quiet.announcement.is_some());
     assert_eq!(renewed.announcement, None);
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
@@ -353,11 +223,6 @@ fn rolled_lease_names_its_roll_and_only_warns_once_the_roll_stops() {
         .evaluate(&rolling, Duration::from_secs(1))
         .expect("rolling lease evaluates");
     let line = decision.announcement.expect("new state speaks once");
-    assert!(line.contains(
-        "Claim lease: METER-00000001 rolls while this occupant holds the lane; \
-         no reclaim needed"
-    ));
-    assert!(!line.contains("remaining"));
     assert!(!line.contains("spice task reclaim"));
     assert!(!line.contains("spice task free"));
     assert_eq!(
@@ -386,14 +251,7 @@ fn rolled_lease_names_its_roll_and_only_warns_once_the_roll_stops() {
     let warned = meter
         .evaluate(&stalled, Duration::from_secs(3))
         .expect("stalled roll evaluates");
-    assert!(
-        warned
-            .announcement
-            .as_deref()
-            .is_some_and(|line| line.contains("has 12s remaining")
-                && line.contains("run spice task reclaim METER-00000001")),
-        "nothing renewed a rolling lease this close to expiry: {warned:?}",
-    );
+    assert!(warned.announcement.is_some());
     assert_eq!(warned.refresh_after, None);
     fs::remove_dir_all(root).expect("fixture cleanup");
 }

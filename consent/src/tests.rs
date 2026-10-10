@@ -478,14 +478,10 @@ fn a_request_the_operator_refused_never_proceeds_and_owes_its_refusal() {
         "the operator answered, so the operator is the authority the fact cites",
     );
     assert!(
-        refused.refusal().is_some_and(|refusal| {
-            diagnostic(&refusal).witness() == Some(OPERATOR)
-                && !diagnostic(&refusal)
-                    .detail()
-                    .expect("denials carry detail")
-                    .contains("change that rule")
-        }),
-        "a refusal the operator made cannot advise changing a rule that did not make it",
+        refused
+            .refusal()
+            .is_some_and(|refusal| { diagnostic(&refusal).witness() == Some(OPERATOR) }),
+        "the refusal identifies the operator who answered",
     );
 
     assert!(

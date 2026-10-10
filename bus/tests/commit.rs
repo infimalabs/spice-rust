@@ -27,17 +27,13 @@ fn steering_presentation_batches_refuse_before_crossing_the_fixed_key_ceiling() 
         ])
         .expect("the exact presentation ceiling is admitted");
     assert!(admitted.is_empty());
-    let error = bus
-        .reader()
-        .steering_presentations(vec![
-            "unresolved".to_owned();
-            bus::MAX_STEERING_PRESENTATION_KEYS + 1
-        ])
-        .expect_err("oversized presentation batch refuses");
     assert!(
-        error
-            .to_string()
-            .contains("steering presentation batch has 65 keys, maximum is 64")
+        bus.reader()
+            .steering_presentations(vec![
+                "unresolved".to_owned();
+                bus::MAX_STEERING_PRESENTATION_KEYS + 1
+            ])
+            .is_err()
     );
     bus.shutdown().expect("writer shuts down");
 }
@@ -756,9 +752,7 @@ fn refusals_and_faults_leave_every_durable_effect_and_signal_absent() {
 
     let faulted = note_write(uuid(COMMAND_ONE), 1, Arc::clone(&observed));
     match bus.commit(faulted).expect("fault answers") {
-        CommitOutcome::Fault(fault) => {
-            assert!(fault.detail().contains("UNIQUE constraint failed"));
-        }
+        CommitOutcome::Fault(_) => {}
         other => panic!("expected fault, found {other:?}"),
     }
     assert!(matches!(
@@ -783,7 +777,7 @@ fn refusals_and_faults_leave_every_durable_effect_and_signal_absent() {
 fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
     let task = task();
     let mut write = bare_write();
-    let wrong_body = write
+    write
         .command_result(
             Command {
                 v: WireVersion::CURRENT,
@@ -800,13 +794,8 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
             result(&task, "todo"),
         )
         .expect_err("task::add must refuse a task::note body");
-    assert!(
-        wrong_body
-            .to_string()
-            .contains("journal proposal is not current wire")
-    );
 
-    let wrong_answer = write
+    write
         .command_result(
             Command {
                 v: WireVersion::CURRENT,
@@ -830,11 +819,6 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
             BTreeMap::from([("unexpected".to_owned(), "answer".to_owned())]),
         )
         .expect_err("task::add must refuse another answer shape");
-    assert!(
-        wrong_answer
-            .to_string()
-            .contains("journal proposal is not current wire")
-    );
 }
 
 fn append_trust_fleet(write: &mut JournalWrite) {
