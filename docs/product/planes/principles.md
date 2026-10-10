@@ -3,8 +3,6 @@
 [Product model — supporting planes](../planes.md) · [Spice product model](../README.md)
 ## Cross-cutting principles
 
-The rules that generate everything else. If you keep one page, keep this.
-
 - **One authority per fact.** Every fact has exactly one owner. The authenticated
    stream binds snapshots and resume positions to the resident epoch and ordered
    sequence identity; projections rebuild from that same authority.
@@ -38,25 +36,14 @@ The rules that generate everything else. If you keep one page, keep this.
 
 ## What is fixed and what is free
 
-| Layer | Verdict |
-| --- | --- |
-| Language, framework, storage engines | **free** |
-| Visual styling, colour, concrete sizing, iconography | **free** |
-| Transport framing, serialization | **free** |
-| Track counts, span ladders, tween timings | **free** where no fixed ordering, overflow, placement, replay, or scroll-ownership rule constrains them |
-| Phase *names*, handle alphabet, key derivation | **free** |
-| One authority per fact; epoch/sequence-bound snapshot and resume freshness | **fixed** |
-| Durable-before-delivered; semantic retirement | **fixed** |
-| Claim exclusivity, accepted lapse, and exact explicit steal with ownership refusal | **fixed** |
-| The three agent-lane integration git boundaries; agents never push or pull | **fixed** |
-| Landing atomicity and footprint containment | **fixed** |
-| Cross-review preferred, never required | **fixed** |
-| Lane is not agent | **fixed** |
-| Rendering never launches | **fixed** |
-| Movement means change | **fixed** |
-| Refusals lead with the repair | **fixed** |
-| Authoritative degradation is loud | **fixed** |
-| Observation initializes nothing | **fixed** |
+Free: language, framework, and storage engines; visual styling, colour,
+concrete sizing, and iconography; transport framing and serialization; track
+counts, span ladders, and tween timings wherever no ordering, overflow,
+placement, replay, or scroll-ownership rule constrains them; the handle
+alphabet and key derivation.
+
+Fixed: the principles above and every entry in the
+[invariant register](../invariants.md).
 
 **The test for "fixed":** if changing it would make an operator distrust the
 system, or leave an agent unable to recover on its own, it is fixed. Everything

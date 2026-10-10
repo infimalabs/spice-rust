@@ -5,576 +5,206 @@
 
 Distribution crosses authorities the appliance does not own outright: one
 tracked Git release authority and an operator's repository. Immutable release
-refs cannot be repaired by pretending an earlier effect did not happen, and
-repository installation must preserve state the operator already owns. Exact
-plans, durable receipts, convergence, and identity-aware reversal answer those
-boundaries.
+refs cannot be repaired by pretending an effect did not happen, and installation
+must preserve state the operator already owns. Exact plans, durable receipts,
+convergence, and identity-aware reversal answer those boundaries.
 
 ### External publication is a plan, not a verb
 
-```mermaid
-flowchart TD
-  subgraph PREVIEW["resolve and preview without effects"]
-    direction LR
-    I["release verb"] --> R["resolve ordered plan<br/>by observation only"]
-    R --> P["render every operation<br/>in order"]
-    P --> STOP(["nothing mutated"])
-  end
-  subgraph EXECUTION["authorize the exact plan"]
-    direction LR
-    A{"execution requested?"}
-    A -- "exact digest supplied" --> C{"plan and observations<br/>still match?"}
-    C -- no --> X["refuse, naming current<br/>and supplied plan identities"]
-    C -- yes --> E[execute]
-  end
-  P --> A
-  A -- no --> STOP
-```
+Every release verb with external effects renders its complete ordered plan and
+performs none of them until `--apply=<digest>` names that plan. An absent or
+moved digest refuses before effects; exact-plan execution is the only
+publication path. Inspection (checking the gates, drafting notes, previewing the
+range) never bumps, commits, tags, pushes, or publishes.
 
-**Invariant —** Every release verb with externally visible publication effects
-renders its **complete ordered plan** and performs none of those effects until
-execution is explicitly requested. An irreversible step described only after it
-runs gives the operator no chance to stop it. Local mutations remain governed by
-their own transactional contracts.
+Plan identity covers the repository, action, version, source and release
+commits, target matrix, ordered operations, notes, artifacts, proof receipts,
+sealed manifest, and captured preconditions. Order is part of the plan because
+the order is the safety property. The correctness operation always means the
+complete canonical strict battery, never a subset chosen outside the plan.
+Preconditions that can be checked without effect are checked while the plan is
+built, so nothing knowable up front fails after a push.
 
-**Invariant —** Execution requires the digest of the complete plan that was
-read. An absent or moved digest refuses before effects. Exact-plan execution is
-the only publication path.
+Release documents are complete only as files. `release notes` prints bounded
+metadata and an entry page whose omission names `release notes --output FILE`.
+A publish preview first retains the complete plan under the Git common
+directory, then prints every authorizing field, names that file, and ends with
+the exact `--apply` command.
 
-**Invariant —** Plan identity covers the repository, action, version, source and
-resolved release commits, exact target matrix, ordered operations, notes
-content, artifacts, proof receipts, sealed manifest, and captured preconditions.
-The correctness operation has one intrinsic meaning — the complete canonical
-strict battery — rather than a mutable subset outside the plan. A digest over
-step names alone would let a publication input change after approval and still
-satisfy the check.
-
-**Invariant —** Step order is part of what the plan commits to, because the
-ordering is the safety property, not an implementation detail.
-
-**Invariant —** Preconditions that can be evaluated without effect are evaluated
-while the plan is built. A cheap check deferred past the gates strands the
-operator after the push with a failure that was knowable up front.
-
-**Invariant —** Inspection is free of consequence. Checking the gates, drafting
-the notes, and previewing the range never bump, commit, tag, push, or publish —
-so "what would the next release contain?" is a safe question.
-
-**Invariant —** Release documents are complete only as files. Bare
-`spice release notes` prints bounded metadata (version, commit, identity,
-entry count, document bytes) and an entry page ordered by landings, most
-first, then first landing; long subjects are clipped with their withheld byte
-counts, and an omission names `release notes --output FILE`, which atomically
-writes the complete Markdown and reports its identity, path, and bytes. A
-publish preview first retains the complete plan as
-`.spice-rs/release-plans/release-plan-KEY.json` under the Git common directory,
-then prints every authorizing field (identities, targets, each ordered
-operation, every observation), bounds only the curated note lines, names that
-file, and ends with the exact `--apply=KEY` command; that key remains the only
-accepted authority. `--json` carries the same plan fields, with a bounded
-`notes_preview` (bytes, lines, clipped shown lines, withheld lines) in place of
-`notes_document`, plus the retained plan file.
-
-**Invariant —** One executor owns the ordered operation vocabulary. It records an
-operation's exact prior state before crossing the effect boundary and a typed
-receipt after convergence. Resumption admits only that same plan and receipt
-prefix.
+One executor owns the operation vocabulary for preview, execution, and
+recovery. It records an operation's exact prior state before crossing its effect
+boundary and a typed receipt after convergence; resumption admits only the same
+plan and receipt prefix. A parallel verification or publication body would be a
+second release authority.
 
 ### A versioned commit is sealed before publication
 
-Version activation is an ordinary task landing. Release starts only after that
-clean integrated commit has been built, proved, and sealed. Tag-and-announce
-recovery takes a separate four-operation path.
+Version activation is an ordinary task landing. Release requires clean `HEAD` to
+be that integrated commit with requested, compiled, and tracked product versions
+already in agreement; every other shape refuses. Release never edits
+`dist/VERSION`, synthesizes a commit, or infers task ownership from the board.
 
-```mermaid
-flowchart TD
-  A{"release action"}
-  A -- "fresh publish" --> SEAL["admit the post-proof<br/>two-target manifest"]
-  SEAL --> COR["correctness gate"]
-  COR --> PROBE["read the sealed compiled-host executable,<br/>copy and chmod it in a probe root,<br/>and require command success"]
-  PROBE --> PKG["materialize and rehearse<br/>the exact sealed package"]
-  A -- "tag-and-announce recovery" --> PRE["resolve preconditions<br/>and credentials"]
-  PRE --> VIS["await registry visibility"]
-  VIS --> TAG["create immutable tag"]
-  TAG --> ANN["announce"]
-```
+A fresh publish runs the correctness battery over the exact source commit the
+plan names, then materializes the package from the sealed content-addressed
+objects, which must equal the previewed package and tree identities. Nothing is
+rebuilt after authorization. An independent probe recomputes the compiled-host
+executable's digest against the plan, copies it to a plan-keyed root, makes it
+executable, and requires `--json version` to succeed there.
 
-**Invariant —** Requested, compiled, and tracked product versions already agree
-before preview. Release never edits `dist/VERSION` or synthesizes another
-commit. A red candidate publishes nothing; its task-owned version landing
-remains ordinary repository history.
-
-**Invariant —** For fresh publish, the correctness gate selects the exact source
-commit named by the accepted plan and executes the complete canonical strict
-battery over that immutable tree. Every arm must admit before publication. This
-host-side battery is distinct from the sealed target proof replay completed
-before the manifest and publication plan are accepted. Tag-and-announce
-recovery instead resolves preconditions and credentials, awaits registry
-visibility, creates the immutable tag, and announces; it does not rerun the
-correctness battery.
-
-**Invariant —** The artifact gate proves both composition and use without
-rebuilding after authorization. The package is materialized from the sealed
-content-addressed objects and must equal the previewed package and Git-tree
-identities. The compiled-host sealed executable is matched to the plan's
-artifact digest, copied to a plan-keyed probe root, made executable there, and
-required to return success from `--json version`.
-
-**Invariant —** Preview, execution, and recovery use one plan and receipt grammar.
-A parallel verification or publication body would be a second release authority.
-
-**Invariant —** Local release progress has one admitted shape: clean HEAD is the
-integrated source and release commit, and its requested, compiled, and tracked
-product versions agree. Publish and tag-and-announce both require that shape.
-Every other tracked change, commit, version, or HEAD shape refuses. Release
-preparation does not infer task ownership from the board.
+`release publish --action tag-and-announce` finishes a release whose package is
+already visible: it resolves preconditions and credentials, awaits package
+visibility, then tags and announces, without rerunning the battery or rebuilding
+the package.
 
 ### Proof is sealed per target and composed last
 
-A release has exactly two target payloads, in canonical order: the native
-`aarch64-apple-darwin` Apple Silicon appliance and the static
-`x86_64-unknown-linux-musl` appliance. Each receipt-free payload binds its schema,
-target, source identity, complete app generation, native executable, complete
-build pins, and ordered artifact inventory. The detached receipt separately binds
-the environment that actually ran proof: the Linux receipt's OCI identity must
-match the payload's proof-container pin, while the Darwin receipt binds the
-attested native runner digest.
+A release has exactly two target payloads, in canonical order:
+`aarch64-apple-darwin` and `x86_64-unknown-linux-musl`. Each payload binds its
+target, source identity, app generation, native executable, build pins, and
+artifact inventory, and carries the source digest of the versioned release
+commit. A detached receipt binds the environment that ran proof: the Linux
+receipt's OCI identity matches the payload's proof-container pin, and the Darwin
+receipt binds the attested native runner.
 
-The two payloads must bind the source digest carried by their manifest. Preview
-requires that digest to name the already-versioned release commit. The
-publication plan binds that manifest, package, target, notes, and
-installed-artifact identities with the identical source and release commit.
+Proof replays the complete current battery against the current candidate
+checkout. Replay is bound to payload, environment, and battery, but does not by
+itself prove the workspace commit equals the payload's source digest; the plan's
+source binding does. Only a clean replay publishes a receipt, and admission
+requires target, payload, environment, battery, replay, and clean standing to
+form one identity chain.
 
-```mermaid
-flowchart TD
-  D["aarch64-apple-darwin payload"] --> DN["attested native proof runner"]
-  L["x86_64-unknown-linux-musl payload"] --> LO["pinned OCI proof environment"]
-  DN --> DR["complete battery replay"]
-  LO --> LR["complete battery replay"]
-  DR --> DE["detached receipt binds target,<br/>payload, environment, battery,<br/>replay, and clean standing"]
-  LR --> LE["detached receipt binds target,<br/>payload, environment, battery,<br/>replay, and clean standing"]
-  DE --> M["publish manifest after both proofs"]
-  LE --> M
-  M --> P["release plan binds manifest,<br/>payloads, receipts, and package"]
-```
-
-**Invariant —** Proof executes the complete current battery against the current
-candidate checkout: Linux mounts that checkout read-only in the admitted OCI
-environment, while Darwin passes it to the attested native runner. Replay is
-bound to the admitted payload, environment, and battery, but it does not prove
-that the workspace commit equals the payload's source digest. Unsupported hosts,
-target drift, environment drift, infrastructure failure, or a non-clean replay
-publish no receipt.
-
-**Invariant —** A proof receipt is detached from the payload and canonical. Only
-a clean replay publishes a receipt, and admission requires target, payload
-digest, environment, battery digest, replay digest, and clean standing to form
-one identity chain. A refused replay remains a typed refusal, not a refused
-receipt.
-
-**Invariant —** The release manifest is post-proof. Both canonical targets and
-their exact receipts must be present, clean, and mutually consistent before the
-manifest pointer is published; partial or mixed-target evidence never becomes a
-release.
-
-**Invariant —** Content-addressed payload, receipt, and manifest objects are
-published before the sole manifest pointer. A reader therefore sees either the
-prior complete seal or the new complete seal, never a pointer to missing proof.
-
-**Invariant —** The independent executable probe reads the compiled-host object
-named by the sealed payload inventory, recomputes its artifact digest, and
-refuses disagreement with the plan. It atomically copies those bytes to a
-plan-keyed regular file, applies executable permissions, and requires the copy
-to exit successfully for `--json version`.
+The manifest is post-proof. Both targets with clean, mutually consistent
+receipts must exist before the sole manifest pointer is published, and every
+object is published before that pointer, so a reader sees the prior complete
+seal or the new one, never partial or mixed-target proof.
 
 ### Notes are read out of the ledger
 
-```mermaid
-flowchart TD
-  subgraph WINDOW["select the release window"]
-    direction LR
-    T["highest-versioned prior tag<br/>reachable from release"] --> W["window"]
-    RC["release commit"] --> W
-    W --> FP["first-parent<br/>landings only"]
-  end
+Notes derive from the ledger; no changelog is maintained. The window runs from
+the highest-versioned prior tag reachable from the release commit, addressed by
+its fully qualified ref so a same-named branch cannot redefine the range, to the
+release commit. With no reachable tag, a bounded window of recent landings names
+that basis.
 
-  subgraph INVENTORY["build the inventory"]
-    direction LR
-    SUP["suppress add-and-revert<br/>pairs on both sides"] --> COL["collapse shared-task<br/>landings"]
-    COL --> GRP["group from each commit's declaration;<br/>empty and agent.* map to general"]
-  end
+- Only first-parent landings count, so one merged unit of work is one entry.
+- Work added and reverted inside the window is suppressed on both sides. A
+  revert pairs with the landing whose history contains the reverted commit,
+  which usually arrived on a side branch.
+- Landings sharing a task collapse into one entry at the task's first landing;
+  the latest landing supplies its subject and project.
+- Entries group by that declared project, never by touched paths. An empty
+  project and every `agent.*` project map to `general`. Buckets appear in
+  first-seen order and keep entry order; equal descriptions merge only within a
+  bucket, keeping every reference. Every entry references history.
+- A trailing handle is stripped only when it matches the commit's own recorded
+  identifier.
 
-  subgraph PUBLISH["curate and publish"]
-    direction LR
-    D["draft with curation<br/>placeholder"]
-    D --> CUR["operator curates above<br/>the inventory"]
-    CUR --> PUBN["publish: keep curation;<br/>regenerate inventory"]
-  end
-
-  FP --> SUP
-  GRP --> D
-```
-
-**Invariant —** Notes derive from the ledger. There is no maintained changelog to
-drift.
-
-**Invariant —** Only **first-parent** landings are counted, so one merged unit of
-work contributes one entry rather than one per internal commit.
-
-**Invariant —** Work added and reverted inside one window is suppressed on both
-sides. Otherwise the release advertises a feature that is not in the artifact.
-
-**Invariant —** A revert pairs with the landing whose history *contains* the
-reverted commit, not with one whose identifier equals it. The reverted commit
-almost always arrived on a side branch and never appears in the first-parent
-list at all.
-
-**Invariant —** Landings sharing a task identity collapse into one entry at the
-position where that task first landed. The most recent landing supplies both the
-entry's subject and its declared project. A task that lands once per phase would
-otherwise appear once per phase, described and grouped by stale declarations.
-
-**Invariant —** Every entry carries at least one reference back into history.
-Rendering groups the collapsed entries by the project supplied by each task's
-latest landing, emits project buckets in the order those projects first appear
-in that collapsed entry sequence, and preserves entry order within a bucket.
-Equal edited descriptions merge only within the same project bucket, retaining
-every contributing reference; project grouping does not preserve one global
-landing order or raw-history project order.
-
-**Invariant —** Each collapsed entry groups from the project its latest landing
-declares — the author's own statement of what the change belongs to — never by
-inference from touched paths. An empty declaration and every declared `agent.*`
-project map to `general`; every other declared project retains its own first-seen
-bucket in the collapsed entry sequence.
-
-**Invariant —** A trailing handle is stripped from a description only when it
-matches that commit's own recorded identifier. Guessing from shape truncates
-descriptions that merely end in a hyphenated token.
-
-**Invariant —** The prior tag must be **reachable** from the release commit, and
-tags are addressed through their fully qualified ref namespace. A branch sharing
-a tag's name would otherwise silently redefine the range, and the result would
-look entirely plausible.
-
-**Invariant —** With no reachable prior tag, the canonical range is a bounded
-window of recent landings and names that basis explicitly.
-
-**Invariant —** Curation owns the region above the generated inventory;
-everything from the inventory down is regenerated at publication against the real
-release commit. Curation necessarily happens before the release commit exists, so
-a frozen copy would name the wrong commit and the wrong range.
-
-**Invariant —** Notes are refused when untouched, when they still carry the
-placeholder, or when the curated region holds nothing but banner and headings.
-Any of those publishes a page that opens straight into a machine-generated
-inventory.
+Curation owns the region above the generated inventory. Everything from the
+inventory down is regenerated at publication against the real release commit,
+because curation happens before that commit exists. Notes that are untouched,
+still carry the placeholder, or hold only banner and headings refuse.
 
 ### The publication sequence
 
-One tracked Git authority owns four release refs on one remote. The source branch
-is published first; the package, tag, and announcement refs converge only to
-their exact planned objects. The order is the design.
+The tracked release authority names one remote and its refs: remote `origin`,
+source `refs/heads/main`, package `refs/spice/packages/vVERSION`, tag
+`refs/tags/vVERSION`, and announcement `refs/spice/releases/vVERSION`. Runtime
+configuration cannot redirect a step to another provider.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant RUN as Release run
-    participant GIT as Tracked Git remote
+The release commit is already integrated on the source branch; publication
+neither reads nor moves it. Publication converges the package ref after a
+no-effect rehearsal, then waits until bounded observation sees that exact
+package object before converging the tag and announcement to the release
+commit. Exhausting the observation refuses loudly rather than advertising
+content nobody can fetch.
 
-    RUN->>GIT: observe the three exact versioned refs
-    GIT-->>RUN: authority and credentials admitted
-    RUN->>GIT: materialize and rehearse guarded package-ref publication, no effect
-    GIT-->>RUN: exact package update would be accepted
-    RUN->>GIT: converge package tree at refs/spice/packages/vVERSION
-    RUN->>GIT: bounded observation of the exact package ref
-    GIT-->>RUN: expected package tree visible — or terminal refusal
-    RUN->>GIT: converge refs/tags/vVERSION to the release commit
-    RUN->>GIT: converge refs/spice/releases/vVERSION to the release commit
-```
-
-**Invariant —** The only external release provider is the tracked Git authority:
-remote `origin`, source `refs/heads/main`, versioned package
-`refs/spice/packages/vVERSION`, tag `refs/tags/vVERSION`, and announcement
-`refs/spice/releases/vVERSION`. Runtime configuration cannot redirect one release
-step to another provider.
-
-**Invariant —** The release commit is already integrated before sealing.
-Publication neither reads nor mutates the moving source branch. Guarded
-package-ref publication alone has an explicit no-effect rehearsal; tag and
-announcement publication run their convergent Git mutations directly.
-
-**Invariant —** Tag and announcement wait until bounded observation sees the
-exact package object at the package ref. Exhausting that observation is a loud
-terminal refusal, not permission to advertise unobservable content.
-
-**Invariant —** Every step **converges** rather than duplicating, so a release
-interrupted partway through is completed by re-running it rather than unwound.
-The accepted-operation journal and typed receipts make each restart resume the
-same plan at the first incomplete boundary.
-
-**Invariant —** `spice release publish --action tag-and-announce` previews a
-plan that resolves recovery preconditions and credentials, observes registry
-visibility, then performs only the tag and announcement publication effects;
-repeating that same action command with `--apply=<digest>` finishes a release
-whose package ref is already visible without rebuilding or republishing the
-package tree.
-
-**Invariant —** A version names exactly one package object and one release commit.
-An existing package, tag, or announcement ref pointing elsewhere refuses rather
-than moving. A matching ref is already converged and is left untouched.
-
-**Invariant —** The already-versioned release commit must be clean HEAD during
-preview and execution. Otherwise the package ref could name bytes from one tree
-while the tag and notes describe another.
-
-**Invariant —** An operator interruption terminates with a status distinct from a
-gate failure. Collapsing the two sends the reader hunting for a defect that does
-not exist.
+A version names exactly one package object and one release commit. A ref already
+pointing elsewhere refuses; a matching ref is already converged and left alone.
+Every step converges, so an interrupted release is finished by rerunning the same
+plan from its first incomplete boundary, not unwound. An operator interruption
+ends with a status distinct from a gate failure.
 
 ### Installing into a repository the product does not own
 
-The same discipline, pointed inward. Installing hooks means writing into someone
-else’s repository, so one canonical status-bearing receipt owns the exact plan,
-first-captured prior-image evidence, durable progress, and reversal outcomes.
+Installing hooks writes into someone else's repository, so one canonical
+status-bearing receipt owns the exact plan, the first-captured prior images,
+durable progress, and reversal outcome.
 
-```mermaid
-flowchart TD
-  OBS["privately resolve exact plan by observation<br/>including prior scoped and effective values"] --> PRE["side-effect-free byte-free stage summary<br/>and canonical plan digest"]
-  PRE --> APP["authorize exact digest"]
-  APP --> AGAIN["re-resolve plan and executable<br/>repository configuration"]
-  AGAIN --> SAME{"digest and bound<br/>observations still exact?"}
-  SAME -- no --> REF["refuse before effect"]
-  SAME -- yes --> MAINT["bounded recognized stale-install<br/>maintenance"]
-  MAINT --> ACCEPT["atomically accept canonical<br/>applying receipt generation"]
-```
+`install` previews a plan produced purely by observation; `install --apply` with
+that plan's digest re-resolves and refuses before effect if the digest or any
+bound observation moved. A process that derives and applies a plan itself, such
+as the development refresh, may carry the prepared plan into apply, but still
+proves before any mutation that the receipt generation, source bytes, app
+generation, and destination bindings are exactly those the plan was derived
+from.
 
-The accepted receipt is the transaction authority. It exists durably before the
-first receipt-owned installation effect and governs one serial compare-and-swap
-loop.
+Before the first receipt-owned effect, apply atomically accepts an `applying`
+receipt holding the plan, repository identity, zero progress, and the prior
+images. Each operation is described by the accepted receipt before it runs, and
+its completion is published by compare-and-swap from the exact prior generation
+before the next begins; a stale or concurrent writer refuses. Terminal
+`complete` is published only after every stage completes, and an interrupted
+apply resumes only the same plan.
 
-```mermaid
-flowchart TD
-  subgraph OPERATION["advance one receipt-owned stage"]
-    direction LR
-    LOOP["next stage<br/>in exact order"] --> OWN["current accepted receipt names<br/>stage and prior image"]
-    OWN --> MUT["perform exact effect"]
-    MUT --> CAS["atomically publish next complete<br/>receipt generation by CAS"]
-  end
-  subgraph FINISH["finish apply"]
-    direction LR
-    DONE["all stages complete"] --> TERMINAL["CAS-publish terminal<br/>complete status"]
-  end
-  ACCEPT["accepted applying receipt"] --> LOOP
-  CAS --> MORE{"stages remain?"}
-  MORE -- yes --> LOOP
-  MORE -- no --> DONE
-```
+The receipt records the exact prior image: regular-file bytes, ordinary
+permission bits, or absence; prior configuration values or absence; and whether
+installation created a parent directory. Prior state is captured once, at first
+application, and never re-derived from state the installation produced, or a
+later reversal would restore the installer's own output as the operator's.
 
-**Invariant —** What the operator reviews is produced purely by observation.
-Application requires that plan's exact digest and executes the same resolved
-receipt-owned operations; a moved digest refuses before mutation.
+Generated artifacts live in a directory the product owns and are activated by
+redirecting the host tool there, never by writing into a location the repository
+already uses. Each carries an ownership digest, distinguishing an untouched
+installation from a locally modified one and from a newer generated shape.
+Installed app history keeps a bounded set of predecessor generations; refresh
+retires the rest in the same transaction, discarding a file only while it still
+holds the installed image.
 
-**Invariant —** A process that derives a plan and applies it itself, such as the
-development refresh, may carry that prepared plan into apply instead of deriving
-it again. Before any mutation it still proves the receipt is the exact native
-generation and image the plan was derived from, every published source byte and
-the source app generation, and every destination binding and installed
-image. Any change refuses before effect. Digest-only apply always derives again.
-
-**Invariant —** Installed app history is bounded. A plan publishes its current
-generation and an ordered inventory of at most two predecessors, oldest first.
-A refresh retains the installed current generation and the newest installed
-predecessors within that bound. Every other installed generation retires in
-the same transaction: each file is discarded only while it still holds the
-installed image, and each emptied generation directory is withdrawn.
-
-**Invariant —** Preview never invokes maintenance. After apply admits the exact
-digest and bound observations, it may run one bounded pass that reclaims only
-recognized stale install-record publications. Explicit reversal admits the same
-pass through its `--unapply` direction. This Spice-owned pre-plan-effect
-maintenance is not a receipt-owned plan operation and never imports, repairs,
-or deletes foreign state.
-
-**Invariant —** Before the first receipt-owned repository effect, apply
-atomically accepts one canonical `applying` receipt containing the exact plan,
-repository identity, zero progress, and directly recorded install-owned
-reversible prior images. Every later progress or terminal receipt is a complete
-canonical generation compare-and-swap published from the exact prior
-generation. A stale or concurrent writer refuses and leaves the current receipt
-unchanged.
-
-**Invariant —** No receipt-owned plan change is made until the accepted receipt
-already describes its exact operation and prior image, and the operation's
-completion is durably published before the next mutation begins. Unchanged
-files are verified without republishing the receipt for each one; their
-observed progress is flushed before the next mutation and before leaving the
-file stage. A changed file's identity and completion counter share one
-checkpoint. Thus a crash can leave only the recorded frontier's mutation
-ahead of its receipt, and resume still verifies the exact planned images.
-Transaction admission and terminal publication validate the complete
-inventory; each intervening operation validates its own path binding.
-
-**Invariant —** The receipt directly records the exact install-owned reversible
-prior image: regular-file bytes, ordinary `0o777` mode bits, and absence; exact
-prior configuration values or absence; and whether the installation introduced
-a parent directory. Ownership, ACLs, extended attributes, and special mode bits
-are outside this contract. Recording only the new state makes absence
-unrecoverable, so an uninstall leaves an empty file where the operator
-originally had nothing.
-
-**Invariant —** Prior state is captured once, at first application. A repeat run
-must never re-derive it from state the installation itself produced, or a later
-reversal restores the installer's own output as though it were the operator's.
-
-**Invariant —** Terminal `complete` status is compare-and-swap published only
-after every authorized stage completes. An interruption leaves a nonterminal
-`applying` receipt with exact durable progress; only that same plan may resume.
-
-**Invariant —** Generated artifacts live in a directory the product owns, and are
-activated by **redirecting** the host tool there — never by writing into the
-location the repository already uses for the same purpose. Installing into the
-conventional location silently overwrites what the repository itself ships.
-
-**Invariant —** Every generated artifact carries an ownership digest, so an
-untouched installation is distinguishable both from a locally modified one and
-from a newer generated shape.
+Apply and `--unapply` may each run one bounded pass, after admission, that
+reclaims only recognized stale install publications. Preview never runs it, and
+it never imports, repairs, or deletes foreign state.
 
 ### Reversal is a claim about identity
 
-An uninstall that reverts by *name* destroys operator edits. Reversal restores
-only what it can still recognize as its own.
+An uninstall that reverts by name destroys operator edits. `install --unapply`
+advances the exact `complete` receipt to `unapplying` by compare-and-swap and
+runs the recorded operations in exact inverse order, restoring each prior image
+only while the target is still exactly what was applied. Application order is
+canonical — a capability is enabled before use and files are written before
+configuration points at them — so inversion never leaves configuration pointing
+at removed files.
 
-```mermaid
-flowchart TD
-  subgraph IDENTITY["identify what may be reversed"]
-    direction LR
-    START["next operation<br/>in exact inverse order"] --> ID{"still exactly<br/>what was applied?"}
-    ID -- no --> DR["REFUSE AS DRIFT<br/>overwrite nothing"]
-    ID -- yes --> RV["restore admitted reversible<br/>prior image"]
-  end
-  DR --> HOLD["changed target and current receipt<br/>remain recovery evidence"]
-```
+Identity drift refuses with nothing overwritten, preserves the changed target
+and the current receipt, and publishes no terminal status; reconciliation is a
+separate operation, and a retry resumes the same receipt. An installation-created
+container is removed only when it is empty. Terminal `uninstalled` is published
+once every operation has a recorded outcome.
 
-Identity disagreement is a refusal, not a successful partial outcome. Once
-identity permits restoration, cleanup of installation-created containers is a
-separate decision.
-
-```mermaid
-flowchart LR
-  RV["prior state restored"] --> CN{"container created by this<br/>installation and still empty?"}
-  CN -- yes --> RM[remove]
-  CN -- no --> KP["leave in place"]
-  RM --> FIN["CAS-publish terminal<br/>uninstalled receipt"]
-  KP --> FIN
-  FIN --> KEEP["retain the canonical receipt"]
-```
-
-**Invariant —** The receipt stores operations in canonical application order.
-Reversal derives and runs their exact inverse. A noncanonical application
-inventory refuses at admission. Application enables a capability before using it
-and writes files before pointing configuration at them; any other order leaves
-the repository pointing at things that no longer exist.
-
-**Invariant —** After the admitted bounded maintenance pass and before the first
-receipt-owned reversal effect, the exact `complete` receipt is compare-and-swap
-advanced to `unapplying`. Each later progress generation is published from the
-exact generation it replaces, and terminal `uninstalled` status is published
-only after every operation has a recorded outcome.
-
-**Invariant —** Identity drift returns a typed refusal, preserves the changed
-target and current receipt, and publishes no terminal `uninstalled` status.
-Repair or deliberate reconciliation is a separate operation; retry resumes the
-same receipt instead of inventing a successful partial reversal.
-
-**Invariant —** An interrupted reversal blocks a new installation until it is
-resumed. Re-installing over a half-reversed repository would let two plans
-contend for one receipt and make the first-captured prior state ambiguous.
-
-**Invariant —** Both receipt-owned directions are resumable and idempotent: a
-re-run performs only plan operations not yet recorded complete, and a plan
-already satisfied against unchanged state performs no receipt-owned effect and
-leaves its receipt intact. The independently bounded maintenance pass may still
-reclaim newly eligible stale installation publications.
-
-**Invariant —** `--unapply` is the explicit reversal direction; it has no
-separate preview digest. It reads and validates the canonical receipt, then
-conditions the first `unapplying` publication and every later progress
-replacement on that receipt's exact native generation. A moved generation
-refuses and preserves the current receipt.
+An interrupted reversal blocks a new installation until it is resumed, so two
+plans never contend for one receipt or blur the first-captured prior state. Both
+directions are resumable and idempotent: a rerun performs only operations not
+yet recorded complete, and a plan already satisfied performs no receipt-owned
+effect.
 
 ### The canonical receipt
 
-The canonical receipt is the sole installation-status, transaction, and
-reversal authority, so its integrity is load-bearing.
+The receipt is the sole installation-status, transaction, and reversal
+authority. Every generation is canonical and published atomically through a real
+non-symbolic file, only while the exact prior generation still matches.
 
-```mermaid
-flowchart TD
-  subgraph READ["admit the current receipt"]
-    direction LR
-    H["one canonical<br/>status-bearing document"] --> RD{"regular, non-linked,<br/>repository-bound, consistent?"}
-    RD -- no --> REF["REFUSE<br/>never repair, truncate,<br/>or synthesize absence"]
-    RD -- yes --> USE["drive resume,<br/>refresh, or reversal"]
-  end
-  subgraph WRITE["publish the next generation"]
-    direction LR
-    USE --> NEXT["form one complete<br/>canonical next document"]
-    NEXT --> CAS{"exact prior generation<br/>still current?"}
-    CAS -- no --> STALE["refuse; current receipt<br/>remains intact"]
-    CAS -- yes --> PUB["atomic replace through<br/>a real owner-readable file"]
-    PUB --> H
-  end
-```
+An unreadable, truncated, noncanonical, linked, or internally inconsistent
+receipt refuses. Reading damaged provenance as "not installed" would strand
+active modifications with no owner and no path to removal. A receipt is bound to
+its repository: a nonterminal receipt naming another Git-common owner refuses,
+and a terminal one may rebase only once its old owner no longer exists, moving
+repository, plan, and activation bindings together.
 
-**Invariant —** Every receipt generation is canonical. It is published
-atomically through a real non-symbolic file and only when the exact prior native
-generation and complete receipt image still match.
+The receipt remains after clean terminal directions: `complete` keeps the plan
+and the original prior images, and `uninstalled` keeps its status and progress.
+Absence is never synthesized by deleting provenance.
 
-**Invariant —** An unreadable, truncated, noncanonical, linked, or internally
-inconsistent receipt **refuses**. Reading damaged provenance as "not installed"
-strands real, still-active modifications with no owner and no path to removal.
-
-**Invariant —** Every receipt is bound to the repository it describes. A
-nonterminal receipt refuses when it names another Git-common owner, as does a
-terminal copy while its original owner still exists. A `complete` or
-`uninstalled` receipt may rebase only after the old owner no longer exists;
-repository, plan, and activation bindings all move together.
-
-**Invariant —** The canonical receipt remains after ordinary clean terminal
-directions. A `complete` receipt retains the plan and directly records the
-original install-owned reversible prior images needed for reversal; an
-`uninstalled` receipt retains its terminal status and complete progress. Absence
-is never synthesized by deleting provenance.
-
-**Invariant —** Install support is bounded by receipt schema, not product
-semantic version. The current `dist/VERSION` value `0.0.0` emits schema 17 as
-the sole executable shape. Historical schemas 1–16 refuse before receipt-owned
-mutation and name the release change whose executable can unapply them:
-
-| Receipt schema | Current disposition | Retired owner |
-| --- | --- | --- |
-| 1 | Refuse | `SURFACE-1kJQkpFs` |
-| 2 | Refuse | `SURFACE-1kJRGpf2` |
-| 3 | Refuse | `HOOKS-1kJQnmG8` |
-| 4 | Refuse | `INSTALL-1kKQTfBp` |
-| 5 | Refuse | `INSTALL-1kLW2GVN` |
-| 6 | Refuse | `HOOKS-1kMFzkkc` |
-| 7 | Refuse | `HOOKS-1kMG1N6W` |
-| 8 | Refuse | `INSTALL-1kMrw2r2` |
-| 9 | Refuse | `INSTALL-1kNBKpGm` |
-| 10, 11 | Refuse | `WRAPPER-1kNYClbf` |
-| 12 | Refuse | `RETIREM-1kSR91Zl` |
-| 13 | Refuse | `INSTALL-1kSWFBN0` |
-| 14 | Refuse | `SYMBOLS-dSPkcQ47R` |
-| 15 | Refuse | `BROWSER-dV0xw93ND` |
-| 16 | Refuse | `INSTALL-dV1QSGJ71` |
-| 17 | Current | — |
-
-Retiring a schema requires adding its immutable owner in the same release
-landing. Release notes derive from that landing history, so support cannot
-disappear as an undocumented execution-arm deletion. Malformed, internally
-inconsistent, and future receipts remain store failures rather than being
-mistaken for retired state. An in-place refresh retains the original
-pre-first-install images directly in the current receipt.
-
----
+Install support is bounded by receipt schema, not product version. Only the
+current schema executes. A retired schema refuses before receipt-owned mutation
+and names the release change whose executable can unapply it, and retiring a
+schema adds that owner in the same landing. Malformed and future receipts are
+store failures, never mistaken for retired state.
