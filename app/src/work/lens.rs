@@ -394,13 +394,11 @@ fn present_remote_node(
     }
 }
 
-/// Same-rank nodes, such as unconnected roots, keep room between them for the
-/// state badge straddling each node's top edge. The renderer's implicit
-/// layout ignores spacing, so the graph names its dagre layout explicitly.
+/// ELK's layered layout routes every edge orthogonally from its own attachment
+/// point and spaces parallel runs apart, so each edge stays traceable from
+/// source to target.
 fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
-    let mut source = String::from(
-        "---\nconfig:\n  layout: dagre\n  flowchart:\n    nodeSpacing: 80\n---\nflowchart LR\n",
-    );
+    let mut source = String::from("---\nconfig:\n  layout: elk\n---\nflowchart LR\n");
     for node in nodes {
         let label = crate::mermaid_label::multiline(&node.diagram);
         writeln!(source, "  {}[\"{label}\"]", node.id).expect("String writes are infallible");
