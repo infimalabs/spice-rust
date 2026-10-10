@@ -227,6 +227,21 @@ fn startup_ready_promotes_expiry_and_preserves_a_one_hour_reclaim_horizon() {
         .expect("maximum deadline")
     );
     assert!(promoted.expiry < promoted.maximum);
+
+    let preserved = promoted_lease(
+        &wire::LeaseHead {
+            start,
+            renewal: start,
+            maximum: initial_maximum,
+            expiry: initial_maximum,
+            epoch: prior_epoch,
+        },
+        epoch,
+        ready,
+        false,
+    )
+    .expect("a longer existing lease remains valid");
+    assert_eq!(preserved.expiry, initial_maximum);
 }
 
 #[test]

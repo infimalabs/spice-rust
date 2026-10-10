@@ -305,6 +305,102 @@ fn an_operator_wake_commits_after_unrelated_commits() {
 }
 
 #[test]
+fn an_operator_wake_carries_the_claim_and_its_successor_lease_keeps_renewing() {
+    let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("held task");
+    let mut window = Window::new();
+    let minted_expiry = claim_task_due(
+        &window.bus,
+        &task,
+        &predecessor_row(&window),
+        window.fixture.epoch,
+    );
+    let before = window.bus.task_snapshot().expect("predecessor claim reads");
+    let before = before
+        .tasks()
+        .iter()
+        .find(|heads| heads.statement().body().born == task)
+        .expect("predecessor task exists");
+    let predecessor = before.claim().expect("predecessor claim exists").clone();
+    let predecessor_phase = before.workflow().body().phase.clone();
+    let request = LaneState {
+        lane: window.fixture.lane,
+        action: wire::intent::LaneAction::Wake,
+        worktree: None,
+    };
+    let runtime = window
+        .fixture
+        .lane_runtime(&window.bus, &window.capabilities, &window.discovery);
+    let launch = begin_wake(
+        &window.bus,
+        &window.fixture.paths,
+        window.fixture.epoch,
+        &window.seats,
+        &runtime,
+        &steer::Config::default(),
+        &request,
+    )
+    .unwrap_or_else(|outcome| panic!("operator wake refused admission: {outcome:?}"));
+    let successor = launch.pending.occupant;
+    let (launch, pending) = launch.into_parts();
+    let wake_started =
+        wire::Instant::new(jiff::Timestamp::now()).expect("wake instant is canonical");
+    let outcome = finish_wake(
+        &window.bus,
+        &window.fixture.paths,
+        window.fixture.epoch,
+        &mut window.seats,
+        &operator_wake(&window.fixture, &request),
+        pending,
+        launch.establish(),
+    );
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+
+    let carried_snapshot = window.bus.task_snapshot().expect("carried claim reads");
+    let residency = carried_snapshot
+        .residency()
+        .expect("carried residency exists");
+    let carried = carried_snapshot
+        .tasks()
+        .iter()
+        .find(|heads| heads.statement().body().born == task)
+        .expect("carried task exists");
+    let claim = carried.claim().expect("carried claim exists");
+    let lease = carried.lease().expect("carried lease exists");
+    assert_eq!(claim.body().occupant, successor);
+    assert_eq!(claim.body().epoch, window.fixture.epoch);
+    assert_eq!(lease.body().epoch, window.fixture.epoch);
+    assert!(lease.body().renewal >= wake_started);
+    let rolling_floor = wire::Instant::new(
+        wake_started
+            .get()
+            .checked_add(jiff::SignedDuration::from_secs(
+                crate::board_command::AUTOMATIC_ROLLING_SECONDS,
+            ))
+            .expect("rolling deadline shifts"),
+    )
+    .expect("rolling deadline is canonical");
+    assert!(lease.body().expiry >= rolling_floor);
+    assert!(lease.body().expiry > minted_expiry);
+    let carried_expiry = lease.body().expiry;
+    assert_eq!(claim.body().claimed, predecessor.body().claimed);
+    assert_eq!(claim.body().cell, predecessor.body().cell);
+    assert_eq!(claim.body().acknowledged, predecessor.body().acknowledged);
+    assert_eq!(carried.workflow().body().phase, predecessor_phase);
+    assert_eq!(claim.position(), lease.position());
+    assert_eq!(claim.position(), residency.position());
+    let facts = window.bus.fact_snapshot().expect("carried facts read");
+    let carried_fact = facts
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == claim.position())
+        .expect("claim head names its carried fact");
+    assert_eq!(carried_fact.fact.kind(), wire::FactKind::ClaimCarried);
+
+    assert_successor_renews(&window, &task, successor, carried_expiry);
+    window.close();
+}
+
+#[test]
 fn a_failed_inbox_start_parks_only_the_steering_it_was_woken_for() {
     let window = Window::new();
     send_steering(&window, DIRECTIVE, "1kInbox1");
@@ -428,6 +524,70 @@ fn claim_task(bus: &Bus, task: &wire::TaskStamp, row: &wire::LaneResidency, epoc
         shifted(-60),
         shifted(3600),
         shifted(7200),
+    );
+}
+
+fn claim_task_due(
+    bus: &Bus,
+    task: &wire::TaskStamp,
+    row: &wire::LaneResidency,
+    epoch: CanonicalUuid,
+) -> wire::Instant {
+    let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let shifted = |seconds| {
+        wire::Instant::new(
+            now.get()
+                .checked_add(jiff::SignedDuration::from_secs(seconds))
+                .expect("fixture instant shifts"),
+        )
+        .expect("fixture instant")
+    };
+    let expiry = shifted(60);
+    seed_task_claim(bus, task, row, epoch, shifted(-60), expiry, shifted(3600));
+    expiry
+}
+
+fn assert_successor_renews(
+    window: &Window,
+    task: &wire::TaskStamp,
+    successor: CanonicalUuid,
+    carried_expiry: wire::Instant,
+) {
+    let projects = board::ProjectPolicy::new(["task".to_owned()], Vec::new(), 2, 4)
+        .expect("fixture project policy");
+    let mut timers = crate::resident::timers::Runtime::start(projects, steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&window.bus)
+        .expect("successor lease arms renewal");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("successor lease renewal fires");
+    assert_eq!(event.kind(), bus::timer::TimerKind::ClaimRenew);
+    assert!(matches!(
+        timers.consume(&window.bus, event),
+        Ok(crate::resident::timers::Fired::ClaimRenew)
+    ));
+    let renewed = window.bus.task_snapshot().expect("renewed claim reads");
+    let renewed = renewed
+        .tasks()
+        .iter()
+        .find(|heads| heads.statement().body().born == *task)
+        .expect("renewed task exists");
+    assert_eq!(
+        renewed
+            .claim()
+            .expect("renewed claim exists")
+            .body()
+            .occupant,
+        successor
+    );
+    assert!(
+        renewed.lease().expect("renewed lease exists").body().expiry > carried_expiry,
+        "the successor extends the promoted lease"
     );
 }
 

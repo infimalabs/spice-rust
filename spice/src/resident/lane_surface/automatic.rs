@@ -22,6 +22,7 @@ impl WakeLaunch {
 pub(in crate::resident) struct PendingWake {
     observed: journal::JournalHead<wire::ResidencyHead>,
     row: wire::LaneResidency,
+    claim: Option<HeldClaimAuthority>,
     renewal: Option<wire::LaneRenewalRecord>,
     request: LaneState,
     occupant: CanonicalUuid,
@@ -58,6 +59,7 @@ pub(in crate::resident) fn begin_wake(
         ));
     }
     super::super::steering::lane_capability(&row).map_err(typed_outcome)?;
+    let claim = held_claim_authority(bus, None, request.lane).map_err(typed_outcome)?;
     let renewal =
         super::renewal::pending_for(observed.body(), request.lane).map_err(typed_outcome)?;
     let resume = wake_resume(bus, paths, epoch, steering, runtime, &row, renewal.as_ref())?;
@@ -86,6 +88,7 @@ pub(in crate::resident) fn begin_wake(
         pending: PendingWake {
             observed,
             row,
+            claim,
             renewal,
             request: request.clone(),
             occupant,
@@ -148,6 +151,7 @@ pub(in crate::resident) fn finish_wake(
         &observed,
         epoch,
         &proven,
+        pending.claim.as_ref(),
         pending.renewal.as_ref(),
         answer.clone(),
     );
@@ -255,7 +259,7 @@ struct WakeAdmission {
     inbox: bool,
     observed: journal::JournalHead<wire::ResidencyHead>,
     row: wire::LaneResidency,
-    claim: Option<AutomaticClaimAuthority>,
+    claim: Option<HeldClaimAuthority>,
     resume: vendor::Resume,
     fast_mode: bool,
     /// The durable replacement this start consumes, when the lane carries one.
@@ -471,7 +475,7 @@ fn admit_automatic_wake(
         ));
     }
     super::super::steering::lane_capability(&row)?;
-    let claim = automatic_claim_authority(bus, request.decision, request.lane)?;
+    let claim = held_claim_authority(bus, request.decision, request.lane)?;
     if let Some(reserved) = request.reserved
         && !claim.as_ref().is_some_and(|claim| {
             claim.task == reserved.task
@@ -503,7 +507,7 @@ fn admit_automatic_wake(
 }
 
 #[derive(Clone)]
-struct AutomaticClaimAuthority {
+pub(super) struct HeldClaimAuthority {
     task: wire::TaskStamp,
     statement: journal::JournalHead<wire::TaskHead>,
     claim: journal::JournalHead<wire::ClaimHead>,
@@ -514,11 +518,11 @@ struct AutomaticClaimAuthority {
     trust_blocked: Option<(wire::EnvironmentRequirements, bool)>,
 }
 
-fn automatic_claim_authority(
+pub(super) fn held_claim_authority(
     bus: &Bus,
     decision: Option<&bus::TaskSnapshot>,
     lane: CanonicalUuid,
-) -> CommandResult<Option<AutomaticClaimAuthority>> {
+) -> CommandResult<Option<HeldClaimAuthority>> {
     let current = if decision.is_none() {
         Some(bus.task_snapshot().map_err(|error| {
             store_fault("lifecycle::claim-heads-unreadable", &error.to_string())
@@ -560,7 +564,7 @@ fn automatic_claim_authority(
         let indefinite = spice::claim_lease::is_indefinite(lease.body());
         let requirements = heads.statement().body().requirements.clone();
         let trust_blocked = requirements.has_unsatisfied_trust_grant(&environment);
-        authority = Some(AutomaticClaimAuthority {
+        authority = Some(HeldClaimAuthority {
             task: heads.statement().body().born.clone(),
             statement: heads.statement().clone(),
             claim: claim.clone(),
@@ -576,7 +580,7 @@ fn automatic_claim_authority(
     Ok(authority)
 }
 
-fn guard_automatic_claim(write: &mut JournalWrite, authority: &AutomaticClaimAuthority) {
+pub(super) fn guard_held_claim(write: &mut JournalWrite, authority: &HeldClaimAuthority) {
     let task = authority.task.clone();
     let statement = authority.statement.clone();
     let claim = authority.claim.clone();
@@ -610,9 +614,9 @@ fn guard_automatic_claim(write: &mut JournalWrite, authority: &AutomaticClaimAut
     }));
 }
 
-fn carry_automatic_claim(
+pub(super) fn carry_held_claim(
     write: &mut JournalWrite,
-    authority: &AutomaticClaimAuthority,
+    authority: &HeldClaimAuthority,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
@@ -643,15 +647,27 @@ fn carry_automatic_claim(
     Ok(carried)
 }
 
-fn update_automatic_lease(
+pub(super) fn rebind_held_lease(
     write: &mut JournalWrite,
-    authority: &AutomaticClaimAuthority,
+    authority: &HeldClaimAuthority,
+    epoch: CanonicalUuid,
+    cause: PendingFact,
+) -> PendingFact {
+    let mut lease = authority.lease.body().clone();
+    lease.epoch = epoch;
+    let task = authority.task.clone();
+    write.lease_head(task, cause, move |_| lease);
+    cause
+}
+
+pub(super) fn promote_woken_lease(
+    write: &mut JournalWrite,
+    authority: &HeldClaimAuthority,
     epoch: CanonicalUuid,
     at: wire::Instant,
     cause: PendingFact,
-    reset_maximum: bool,
 ) -> CommandResult<PendingFact> {
-    let lease = promoted_lease(authority.lease.body(), epoch, at, reset_maximum)?;
+    let lease = promoted_lease(authority.lease.body(), epoch, at, authority.thaw)?;
     let task = authority.task.clone();
     write.lease_head(task, cause, move |_| lease);
     Ok(cause)
@@ -666,7 +682,7 @@ fn promoted_lease(
     if at >= observed.expiry {
         return Err(store_fault(
             "lifecycle::claim-promotion-expired",
-            "the automatic claim expired before startup became ready",
+            "the held claim expired before startup became ready",
         ));
     }
     let deadline = at
@@ -688,7 +704,11 @@ fn promoted_lease(
     let mut lease = observed.clone();
     lease.epoch = epoch;
     lease.renewal = at;
-    lease.expiry = until;
+    lease.expiry = if reset_maximum {
+        until
+    } else {
+        std::cmp::max(until, observed.expiry)
+    };
     lease.maximum = if reset_maximum {
         maximum
     } else {
@@ -697,14 +717,14 @@ fn promoted_lease(
     Ok(lease)
 }
 
-fn should_promote_lease(authority: &AutomaticClaimAuthority) -> bool {
+fn should_promote_lease(authority: &HeldClaimAuthority) -> bool {
     authority.thaw
         || (authority.automatic && !spice::claim_lease::is_indefinite(authority.lease.body()))
 }
 
 struct WakeCommitAuthority<'a> {
     inbox: bool,
-    claim: Option<&'a AutomaticClaimAuthority>,
+    claim: Option<&'a HeldClaimAuthority>,
     renewal: Option<&'a wire::LaneRenewalRecord>,
 }
 
@@ -728,18 +748,15 @@ fn commit_automatic_wake(
         prepare_wake_commit(epoch, &observed, row, proven, inbox, claim)?;
     let mut head = match claim {
         Some(claim) if claim.claim.body().occupant != proven.occupant => {
-            carry_automatic_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
+            carry_held_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
         }
         _ => started,
     };
     if let Some(claim) = claim {
         if should_promote_lease(claim) && (claim.thaw || renewal.is_none()) {
-            head = update_automatic_lease(&mut write, claim, epoch, at, head, claim.thaw)?;
+            head = promote_woken_lease(&mut write, claim, epoch, at, head)?;
         } else if claim.claim.body().occupant != proven.occupant {
-            let mut lease = claim.lease.body().clone();
-            lease.epoch = epoch;
-            let task = claim.task.clone();
-            write.lease_head(task, head, move |_| lease);
+            head = rebind_held_lease(&mut write, claim, epoch, head);
         }
     }
     if let Some(renewal) = renewal {
@@ -761,7 +778,7 @@ fn prepare_wake_commit(
     row: &wire::LaneResidency,
     proven: &ProvenOccupant,
     inbox: bool,
-    claim: Option<&AutomaticClaimAuthority>,
+    claim: Option<&HeldClaimAuthority>,
 ) -> CommandResult<(wire::ResidencyHead, JournalWrite, PendingFact)> {
     let mut next = observed.body().clone();
     let next_row = next
@@ -786,7 +803,7 @@ fn prepare_wake_commit(
         }));
     }
     if let Some(claim) = claim {
-        guard_automatic_claim(&mut write, claim);
+        guard_held_claim(&mut write, claim);
     }
     let declared = write
         .fact(
