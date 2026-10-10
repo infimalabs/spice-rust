@@ -35,7 +35,8 @@ pub(super) mod test_support;
 #[cfg(all(unix, not(test)))]
 use super::lane_surface::admit_worktree;
 use super::lane_surface::{
-    OccupantLaunchRequest, SessionProofError, await_session, occupant_launch,
+    HostProbes, OccupantLaunch, OccupantLaunchRequest, SessionProofError, await_session,
+    occupant_launch,
 };
 use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
 #[cfg(unix)]
@@ -266,6 +267,9 @@ pub(super) fn begin_launch(
     begin_launch_unix(paths, request)
 }
 
+/// Launch an occupant without a process: the launch composes exactly as a
+/// supervised one, and the omp stand-in's stream is replayed through the same
+/// capture that proves the session.
 #[cfg(test)]
 pub(super) fn begin_launch_test(
     paths: &RuntimePaths,
@@ -273,21 +277,24 @@ pub(super) fn begin_launch_test(
     reporter: Arc<dyn CaptureReporter>,
 ) -> CommandResult<PendingLaunch> {
     let occupant = request.occupant;
-    let launch = occupant_launch(paths, request, reporter)?;
+    let launch = occupant_launch(paths, request, reporter, &super::lane_surface::InertProbes)?;
+    let stream = super::lane_surface::stand_in_stream(&launch.spec);
+    let process = StandInOccupant::new(&launch.spec);
     let git = launch.git;
     let proof = launch.session;
-    let running = sill::spawn_observed(launch.spec, launch.observation)
-        .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
-    let group = running.id();
+    let capture = launch.capture;
     Ok(PendingLaunch::new(move || {
+        capture.replay(&stream).map_err(|error| {
+            environment_fault("lane::supervisor-launch-failed", &error.to_string())
+        })?;
         let session =
             await_session(proof).map_err(|error| wire::Outcome::Refusal(error.refusal()))?;
         Ok(Launch {
             occupant,
-            group,
+            group: StandInOccupant::GROUP,
             session,
             git,
-            process: Box::new(DirectHandle(running)),
+            process: Box::new(process),
         })
     }))
 }
@@ -588,6 +595,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             effort: request.effort.as_deref(),
         },
         capture_reporter,
+        &HostProbes,
     )
     .map_err(outcome_error)?;
     let git = launch.git;
@@ -597,7 +605,8 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let service_authority =
         terminal::ServiceAuthority::new(paths.journal.clone(), request.lane, request.occupant);
     let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, service_authority);
-    let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
+    let observation = OccupantLaunch::observation(launch.capture).map_err(outcome_error)?;
+    let mut running = sill::spawn_observed(launch.spec, observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();
     let grace = running.spec().grace;
@@ -847,44 +856,81 @@ impl DetachedProcess for Handle {
     }
 }
 
+/// An occupant that lives in process: it runs until the resident ends it, and
+/// its ending is the signal that did.
 #[cfg(test)]
-struct DirectHandle(sill::Running);
+struct StandInOccupant {
+    runtime: Duration,
+    grace: Duration,
+    reap: Duration,
+    ending: std::sync::OnceLock<i32>,
+}
 
 #[cfg(test)]
-impl DetachedProcess for DirectHandle {
-    fn group(&self) -> u32 {
-        self.0.id()
-    }
+impl StandInOccupant {
+    /// Beyond every process identifier a host hands out, so no group signal
+    /// can reach a real process.
+    const GROUP: u32 = i32::MAX.unsigned_abs();
 
-    fn runtime_remaining(&self) -> Duration {
-        self.0.runtime_remaining()
-    }
-
-    fn termination_grace(&self) -> Duration {
-        self.0.spec().grace
-    }
-
-    fn reap_bound(&self) -> Duration {
-        self.0.spec().deadlines.reap()
-    }
-
-    fn wait_for(self: Box<Self>, duration: Duration) -> Result<DetachedWait, WaitError> {
-        match self.0.wait_for(duration)? {
-            sill::WaitStep::Exited(outcome) => Ok(DetachedWait::Exited(outcome)),
-            sill::WaitStep::Running(running) => Ok(DetachedWait::Running(Box::new(Self(*running)))),
+    fn new(spec: &sill::Spec) -> Self {
+        Self {
+            runtime: spec.deadlines.runtime(),
+            grace: spec.grace,
+            reap: spec.deadlines.reap(),
+            ending: std::sync::OnceLock::new(),
         }
     }
 
+    fn outcome(&self) -> Result<WaitOutcome, WaitError> {
+        let raw = self.ending.get().copied().unwrap_or(0);
+        let status = status_from_raw(raw).map_err(|source| WaitError::Io {
+            owner: "in-process occupant".to_owned(),
+            operation: "reading its ending",
+            source,
+        })?;
+        Ok(WaitOutcome::externally_reaped(status))
+    }
+}
+
+#[cfg(test)]
+impl DetachedProcess for StandInOccupant {
+    fn group(&self) -> u32 {
+        Self::GROUP
+    }
+
+    fn runtime_remaining(&self) -> Duration {
+        self.runtime
+    }
+
+    fn termination_grace(&self) -> Duration {
+        self.grace
+    }
+
+    fn reap_bound(&self) -> Duration {
+        self.reap
+    }
+
+    fn wait_for(self: Box<Self>, _duration: Duration) -> Result<DetachedWait, WaitError> {
+        if self.ending.get().is_none() {
+            return Ok(DetachedWait::Running(self));
+        }
+        self.outcome().map(DetachedWait::Exited)
+    }
+
     fn terminate(&self) -> Result<(), WaitError> {
-        self.0.signal_terminate()
+        let _first = self.ending.set(libc::SIGTERM);
+        Ok(())
     }
 
     fn kill(&self) -> Result<(), WaitError> {
-        self.0.signal_kill()
+        let _first = self.ending.set(libc::SIGKILL);
+        Ok(())
     }
 
+    /// Having written its whole stream, an unended stand-in exits cleanly once
+    /// awaited.
     fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
-        self.0.wait()
+        self.outcome()
     }
 }
 

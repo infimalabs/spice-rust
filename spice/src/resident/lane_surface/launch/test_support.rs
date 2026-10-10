@@ -4,9 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
-
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter};
 
 use super::super::super::read_materializations::CurrentReads;
@@ -15,7 +12,7 @@ use super::*;
 pub(in crate::resident) const SESSION: &str = "018f7777-7777-7444-8888-999999999999";
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-pub(in crate::resident) struct AdvisoryRtkFixture {
+pub(in crate::resident) struct LaunchFixture {
     pub(in crate::resident) root: PathBuf,
     pub(in crate::resident) paths: RuntimePaths,
     pub(in crate::resident) epoch: CanonicalUuid,
@@ -26,10 +23,10 @@ pub(in crate::resident) struct AdvisoryRtkFixture {
     reads: OnceCell<CurrentReads>,
 }
 
-impl AdvisoryRtkFixture {
+impl LaunchFixture {
     pub(in crate::resident) fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "spice-resident-advisory-rtk-{}-{}",
+            "spice-resident-launch-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
@@ -37,48 +34,18 @@ impl AdvisoryRtkFixture {
         let root = fs::canonicalize(root).expect("fixture root canonicalizes");
         fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"resident-advisory-rtk\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+            "[package]\nname = \"resident-launch\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )
         .expect("fixture manifest writes");
         fs::write(
             root.join("Cargo.lock"),
-            "version = 4\n\n[[package]]\nname = \"resident-advisory-rtk\"\nversion = \"0.0.0\"\n",
+            "version = 4\n\n[[package]]\nname = \"resident-launch\"\nversion = \"0.0.0\"\n",
         )
         .expect("fixture lockfile writes");
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
         fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
-
-        let rtk = root.join("advisory-rtk");
-        fs::write(
-            &rtk,
-            concat!(
-                "#!/bin/sh\n",
-                "set -eu\n",
-                "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then\n",
-                "  printf '\\377'\n",
-                "  exit 0\n",
-                "fi\n",
-                "exit 91\n",
-            ),
-        )
-        .expect("fixture RTK writes");
-        executable(&rtk);
-
-        let vendor = root.join("fake-omp");
-        write_vendor(&vendor);
-        fs::write(
-            root.join("spice-rust.toml"),
-            format!(
-                concat!(
-                    "[lane]\nlease = \"20s\"\n\n",
-                    "[vendor.omp]\nbinary = {:?}\n\n",
-                    "[rtk]\nexecutable = {:?}\n",
-                ),
-                vendor.display().to_string(),
-                rtk.display().to_string(),
-            ),
-        )
-        .expect("fixture launch configuration writes");
+        fs::write(root.join("spice-rust.toml"), "[lane]\nlease = \"20s\"\n")
+            .expect("fixture launch configuration writes");
         let repository = Repository::discover(&root).expect("fixture repository discovers");
         let skill = spice::install::installed_skill(&repository);
         fs::create_dir_all(skill.parent().expect("installed skill parent"))
@@ -132,41 +99,64 @@ impl AdvisoryRtkFixture {
     }
 }
 
-impl Drop for AdvisoryRtkFixture {
+impl Drop for LaunchFixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).expect("advisory RTK fixture removes");
+        fs::remove_dir_all(&self.root).expect("launch fixture removes");
     }
 }
 
-fn executable(path: &Path) {
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .expect("fixture executable mode installs");
-    #[cfg(not(unix))]
-    let _ = path;
+/// Launch probes that answer without Git or RTK: the worktree is already on
+/// its baseline, the Git shadow adds nothing, RTK launched, and the briefing
+/// leaves the working state unread.
+pub(in crate::resident) struct InertProbes;
+
+impl LaunchProbes for InertProbes {
+    fn advance(&self, _repository: &Repository) -> String {
+        "current".to_owned()
+    }
+
+    fn shadow(&self, _repository: &Repository, base: Environment) -> CommandResult<Environment> {
+        Ok(base)
+    }
+
+    fn rtk(
+        &self,
+        _executable: &std::ffi::OsStr,
+        _working: &Path,
+        _environment: &Environment,
+    ) -> wire::body::RtkHealth {
+        wire::body::RtkHealth::new(
+            wire::body::RtkHealthState::Active,
+            None,
+            "in-process launch probe",
+        )
+    }
+
+    fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
+        crate::session_environment().rooted(worktree).unglanced()
+    }
 }
 
-fn write_vendor(path: &Path) {
-    fs::write(
-        path,
-        format!(
-            concat!(
-                "#!/bin/sh\n",
-                "set -eu\n",
-                "session={}\n",
-                "while [ \"$#\" -gt 1 ]; do\n",
-                "  if [ \"$1\" = --resume ]; then session=$2; fi\n",
-                "  shift\n",
-                "done\n",
-                "printf '%s\\n' '{{\"type\":\"ready\",\"protocolVersion\":1}}'\n",
-                "printf '{{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",",
-                "\"success\":true,\"data\":{{\"sessionId\":\"%s\"}}}}\\n' \"$session\"\n",
-            ),
-            SESSION,
+/// The stdout an omp occupant launched under `spec` emits: readiness, then
+/// the session its argv resumes, or [`SESSION`] when it resumes none.
+pub(in crate::resident) fn stand_in_stream(spec: &Spec) -> Vec<u8> {
+    let session = spec
+        .argv
+        .arguments()
+        .windows(2)
+        .filter(|pair| pair[0] == "--resume")
+        .filter_map(|pair| pair[1].to_str())
+        .last()
+        .unwrap_or(SESSION);
+    format!(
+        concat!(
+            "{{\"type\":\"ready\",\"protocolVersion\":1}}\n",
+            "{{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",",
+            "\"success\":true,\"data\":{{\"sessionId\":\"{}\"}}}}\n",
         ),
+        session,
     )
-    .expect("fixture vendor writes");
-    executable(path);
+    .into_bytes()
 }
 
 fn uuid(value: u64) -> CanonicalUuid {

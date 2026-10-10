@@ -72,6 +72,8 @@ pub(crate) struct Environment {
     /// for the same reason: oh-my-pi names a working directory beneath it
     /// relative to it.
     temp: Option<PathBuf>,
+    /// How a briefing glances at a checkout's uncommitted paths and commits.
+    checkout: fn(&std::path::Path) -> model::RepositoryGlanceView,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +117,7 @@ impl Environment {
             home: home.map(PathBuf::from),
             cwd,
             temp,
+            checkout: glance::repository,
         }
     }
 
@@ -122,6 +125,14 @@ impl Environment {
     /// a supervisor reads its lane's transcript as that lane's worktree files it.
     pub(crate) fn rooted(mut self, cwd: PathBuf) -> Self {
         self.cwd = Some(cwd);
+        self
+    }
+
+    /// The same session state, with briefings reporting the checkout's working
+    /// state as unread rather than asking Git.
+    #[cfg(test)]
+    pub(crate) fn unglanced(mut self) -> Self {
+        self.checkout = glance::unread;
         self
     }
 }

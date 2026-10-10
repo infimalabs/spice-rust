@@ -7,17 +7,77 @@ use std::path::{Path, PathBuf};
 use sill::{
     Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
 };
+use spice::repository::Repository;
 
 use super::*;
 
 pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) spec: Spec,
-    pub(in crate::resident) observation: Observation,
+    pub(in crate::resident) capture: lane::capture::Capture,
     pub(in crate::resident) session: SessionProof,
     pub(in crate::resident) git: String,
     /// Request bytes a command-driven vendor reads first, or nothing for a
     /// vendor driven entirely by its arguments.
     pub(in crate::resident) opening: Option<Vec<u8>>,
+}
+
+impl OccupantLaunch {
+    /// The supervised observation of this launch's record stream.
+    pub(in crate::resident) fn observation(
+        capture: lane::capture::Capture,
+    ) -> CommandResult<Observation> {
+        capture
+            .observation(CAPTURE_LIMIT, RECORD_QUEUE)
+            .map_err(|error| store_fault("lane::capture-invalid", &error.to_string()))
+    }
+}
+
+/// What a launch observes beyond its own configuration: the Git working tree
+/// it advances, shadows and briefs from, and the RTK executable it probes.
+pub(in crate::resident) trait LaunchProbes {
+    /// Advance the worktree to its baseline, naming what happened.
+    fn advance(&self, repository: &Repository) -> String;
+
+    /// Extend `base` with the Git shadow environment for `repository`.
+    fn shadow(&self, repository: &Repository, base: Environment) -> CommandResult<Environment>;
+
+    /// Observe RTK launchability under the occupant's exact environment.
+    fn rtk(
+        &self,
+        executable: &std::ffi::OsStr,
+        working: &Path,
+        environment: &Environment,
+    ) -> wire::body::RtkHealth;
+
+    /// The session state a launch briefing reads, rooted at `worktree`.
+    fn session(&self, worktree: PathBuf) -> crate::session_command::Environment;
+}
+
+/// The probes a supervised launch runs against the host.
+pub(in crate::resident) struct HostProbes;
+
+impl LaunchProbes for HostProbes {
+    fn advance(&self, repository: &Repository) -> String {
+        spice::task_git::advance_at_launch(repository).to_string()
+    }
+
+    fn shadow(&self, repository: &Repository, base: Environment) -> CommandResult<Environment> {
+        spice::git_shadow::environment(repository, base)
+            .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))
+    }
+
+    fn rtk(
+        &self,
+        executable: &std::ffi::OsStr,
+        working: &Path,
+        environment: &Environment,
+    ) -> wire::body::RtkHealth {
+        spice::rtk::probe_health_in_environment(executable, working, environment)
+    }
+
+    fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
+        crate::session_environment().rooted(worktree)
+    }
 }
 
 pub(in crate::resident) struct OccupantLaunchRequest<'a> {
@@ -53,6 +113,7 @@ pub(in crate::resident) fn occupant_launch(
     paths: &RuntimePaths,
     request: OccupantLaunchRequest<'_>,
     reporter: Arc<dyn CaptureReporter>,
+    probes: &dyn LaunchProbes,
 ) -> CommandResult<OccupantLaunch> {
     let OccupantLaunchRequest {
         worktree,
@@ -73,7 +134,7 @@ pub(in crate::resident) fn occupant_launch(
         })?;
     let repository = admit_worktree(paths, worktree)?;
     // Run ahead of configuration load so the launch reads the advanced tree.
-    let git = spice::task_git::advance_at_launch(&repository).to_string();
+    let git = probes.advance(&repository);
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     let fresh = resume.session_id().is_none();
@@ -101,7 +162,7 @@ pub(in crate::resident) fn occupant_launch(
         effort,
         running: terminal::running_notice(&terminal::Jobs::for_lane(paths, lane)),
     };
-    let (plan, rtk) = launch_plan(&repository, &resolved, selection)?;
+    let (plan, rtk) = launch_plan(&repository, &resolved, selection, probes)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let fast_mode = plan.launch().fast_mode.unwrap_or(false);
@@ -145,19 +206,10 @@ pub(in crate::resident) fn occupant_launch(
         expected,
         state: Arc::clone(&state),
     });
-    let observation = lane::capture::observation(
-        lane,
-        occupant,
-        record,
-        tape,
-        CAPTURE_LIMIT,
-        RECORD_QUEUE,
-        declaration_reporter,
-    )
-    .map_err(|error| store_fault("lane::capture-invalid", &error.to_string()))?;
+    let capture = lane::capture::Capture::new(lane, occupant, record, tape, declaration_reporter);
     Ok(OccupantLaunch {
         spec,
-        observation,
+        capture,
         session: SessionProof {
             session,
             state,
@@ -186,6 +238,7 @@ fn launch_plan(
     repository: &Repository,
     resolved: &spice::config::Resolved,
     selection: Selection<'_>,
+    probes: &dyn LaunchProbes,
 ) -> CommandResult<(spice::agent_launch::Plan, wire::body::RtkHealth)> {
     let Selection {
         vendor: name,
@@ -219,6 +272,7 @@ fn launch_plan(
         wrapper_command,
         resolved.root().rtk().executable(),
         lane,
+        probes,
     )?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
         return Err(vendor_unsupported(name.as_str().to_owned()));
@@ -227,7 +281,7 @@ fn launch_plan(
     // A fresh session starts with nothing but this turn, so the resident
     // hands it the briefing itself; a resumed one already holds its context
     // and learns only that it resumed, what it holds, and what is pending.
-    let session = crate::session_environment().rooted(repository.worktree_root().to_path_buf());
+    let session = probes.session(repository.worktree_root().to_path_buf());
     prompt.push_str("\n\n");
     prompt.push_str(&if fresh {
         crate::session_command::lane_launch_briefing(&session, lane, None)
@@ -379,6 +433,7 @@ fn launch_environment(
     wrapper_command: Option<&Path>,
     rtk_executable: &str,
     lane: CanonicalUuid,
+    probes: &dyn LaunchProbes,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
         store_fault(
@@ -434,10 +489,9 @@ fn launch_environment(
     }
     let environment = Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
-    let environment = spice::git_shadow::environment(repository, environment)
-        .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))?;
+    let environment = probes.shadow(repository, environment)?;
     let probe_environment = rtk_probe_environment(&environment);
-    let health = spice::rtk::probe_health_in_environment(
+    let health = probes.rtk(
         std::ffi::OsStr::new(rtk_executable),
         repository.worktree_root(),
         &probe_environment,

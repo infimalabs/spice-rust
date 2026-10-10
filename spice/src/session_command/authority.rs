@@ -155,7 +155,7 @@ fn observe_current_authorities(
             }),
         lane: None,
     });
-    recall.repository = Some(glance::repository(repository.worktree_root()));
+    recall.repository = Some((environment.checkout)(repository.worktree_root()));
     let state = match repository.admit_state() {
         Ok(state) => state,
         Err(error) => {

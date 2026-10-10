@@ -1,4 +1,4 @@
-use crate::resident::lane_surface::AdvisoryRtkFixture;
+use crate::resident::lane_surface::LaunchFixture;
 use journal::{FactCause, JournalWrite};
 use wire::{Actor, Producer};
 
@@ -6,7 +6,7 @@ use super::*;
 
 #[test]
 fn going_dark_commits_a_launch_still_proving_its_session() {
-    let fixture = AdvisoryRtkFixture::new();
+    let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     seed_vacant_lane(&bus, &fixture);
@@ -89,7 +89,7 @@ fn going_dark_commits_a_launch_still_proving_its_session() {
     bus.shutdown().expect("fixture bus stops");
 }
 
-fn lane_row(bus: &Bus, fixture: &AdvisoryRtkFixture) -> wire::LaneResidency {
+fn lane_row(bus: &Bus, fixture: &LaunchFixture) -> wire::LaneResidency {
     current_residency(bus, fixture.epoch)
         .expect("residency reads")
         .body()
@@ -100,7 +100,7 @@ fn lane_row(bus: &Bus, fixture: &AdvisoryRtkFixture) -> wire::LaneResidency {
         .expect("fixture lane exists")
 }
 
-fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture) {
+fn seed_vacant_lane(bus: &Bus, fixture: &LaunchFixture) {
     let mut proposal =
         write(Actor::Spice, fixture.epoch, Producer::CommandDoor).expect("fixture write starts");
     let seated = proposal
@@ -144,7 +144,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture) {
     commit(bus, proposal).expect("fixture residency commits");
 }
 
-fn send_steering(bus: &Bus, fixture: &AdvisoryRtkFixture) {
+fn send_steering(bus: &Bus, fixture: &LaunchFixture) {
     let epoch = fixture.epoch;
     let residency = current_residency(bus, epoch).expect("residency reads");
     let at = wire::Instant::new(jiff::Timestamp::now()).expect("steering instant");
