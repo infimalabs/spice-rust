@@ -120,10 +120,8 @@ flowchart LR
   that changes no tree. A landing commit carries the task's key, project, phase,
   and session trailers; first-parent history records mutating landings, not
   every transition.
-- With no named flow, a task runs `todo` then `review`, with `plan` first when
-  it lacks acceptance. `task oops` parks a row in plan on a hidden `.oops`
-  channel; only an explicit `task wake` promotes it, and every destination
-  passes manual admission.
+- `task oops` parks a row in plan on a hidden `.oops` channel; only an explicit
+  `task wake` promotes it, and every destination passes manual admission.
 
 ---
 
