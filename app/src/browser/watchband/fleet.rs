@@ -247,6 +247,7 @@ fn render_team_toolbar(
             title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
             data-lane-drag-handle={can_arrange.then_some("")}
             data-team-drag-id={can_arrange.then(|| team.lane.to_string())}
+            data-team-size={standings.len().to_string()}
             onpointerdown={dragging.start}
             onpointermove={dragging.movement}
             onpointerup={dragging.finish}

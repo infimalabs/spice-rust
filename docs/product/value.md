@@ -304,11 +304,10 @@ veil simply fade in on open and fade out on close, with no movement or
 scaling, and appear and leave at once when reduced motion is requested.
 Pressing the Spice button opens that view
 around the button: the fixed 34-pixel square trigger stays circular with its
-inline center over the shared 80-pixel pip and composer-control column, and its
-block center halfway between the global and team task-tab rows. One pip
-therefore sits exactly beneath it while larger pip sets spread around the same
-axis. The trigger remains unmoved and unfaded above the sheet, beneath the quota
-percentage, while the view fades in behind it. Pressing the button again, Escape,
+inline center over the fixed 80-pixel composer-control column and its block
+center halfway between the global and team task-tab rows. The trigger remains
+unmoved and unfaded above the sheet, beneath the quota percentage, while the
+view fades in behind it. Pressing the button again, Escape,
 or the backdrop closes it and restores focus to the button.
 
 Routine background work is silent and still. Connection lives in the button:
@@ -474,12 +473,12 @@ whole-set reading order without introducing another task browser.
 
 The global task strip and each team's task band retain their horned-tab
 presentation and visible Work terminology. Global and team totals use thick
-outer rails, as does each team's permanent pip tab; global stems and team stem
-containers use the thinner ordinary rails. The global total and stems hang from
-the command bar; a team's total, stems, and handles stand above its status band.
-Their count badges remain lifecycle-neutral, ownership accents remain on task
-handles, and overflow scrolls within the strip. These controls open the local
-overview and never create a Work URL.
+outer rails; global stems and team stem containers use the thinner ordinary
+rails. The global total and stems hang from the command bar; a team's total,
+stems, and handles stand above its status band. Their count badges remain
+lifecycle-neutral, ownership accents remain on task handles, and overflow
+scrolls within the strip. These controls open the local overview and never
+create a Work URL.
 
 Operator Directions no longer have a global archive page or route. Lane-menu
 direction attention opens the complete current task set for that lane's team;
@@ -494,17 +493,16 @@ kept behind the overview.
 Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
-header's first row fixes the team total at the left when work exists and the
-ordered lane-light stack in a rising tab at the right. Both edge tabs keep the
-same minimum size and outer inset. Counts can grow the total rightward; the
-lane-light tab keeps its right edge fixed and grows left at natural pip spacing
-through six members before any compression. Task tabs scroll between the live
-edge widths and fade beneath both fixed tabs. The complete live status ticker
-owns the second header row,
-using all of its inline width for relative age, lane standing,
-agent/tool/command prefix and accent, truncated detail, accessible label, and
-live-region behavior. A `job` call's detail reads as its typed intent, the
-purpose the agent declared for it, followed by the operation and job id it
+header's first row fixes the team total at the left when work exists and scrolls
+task tabs after it. The total reserves one two-digit width through 99 tasks and
+centers either digit count without resizing. The second row centers the ordered
+lane-light matrix directly beneath that total: one dot, a vertical pair, a
+triangle, a square, a centered two-over-three group, or a three-by-two matrix
+for one through six members. The status ticker uses the remaining row width for
+relative age, lane standing, agent/tool/command prefix and accent, truncated
+detail, accessible label, and live-region behavior. A `job` call's detail reads
+as its typed intent, the purpose the agent declared for it, followed by the
+operation and job id it
 names for correlation, as in
 `job: Waiting for the gate (wait dVW6Zkf0h)`; updates and the result keep that
 line and append their state, and a call that declares no intent shows the

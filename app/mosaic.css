@@ -426,7 +426,9 @@ path.image-annotation-hit { fill: none; }
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
   --team-pip-gap: calc(var(--app-presence-pip-size) / 2);
-  --team-edge-tab-min-inline-size: calc(var(--app-presence-pip-size) + 2 * var(--app-horn-tab-inset) + 2 * var(--message-rail));
+  /* One stable two-digit task tab also owns the centered status-light column. */
+  --team-edge-tab-inline-size: 3.25rem;
+  --team-toolbar-inline-inset: 8px;
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
   /* The composer controls keep a fixed right-edge column below the full-width
@@ -472,15 +474,26 @@ path.image-annotation-hit { fill: none; }
   block-size: var(--team-header-size);
   padding: 0;
 }
-.team-toolbar > .team-status-row { grid-area: status; display: grid; grid-template-columns: auto minmax(0, 1fr); min-width: 0; }
-.team-status-row > .team-lights {
-  display: grid; grid-template-columns: repeat(3, var(--app-presence-pip-size)); grid-template-rows: repeat(2, var(--app-presence-pip-size));
-  grid-auto-flow: column dense; direction: rtl; gap: var(--team-pip-gap); align-content: center;
-  width: max-content; min-width: 0; margin: 0; padding: 0 var(--team-chamber-inset);
+.team-toolbar > .team-status-row {
+  grid-area: status; display: grid; grid-template-columns: var(--team-edge-tab-inline-size) minmax(0, 1fr);
+  box-sizing: border-box; min-width: 0; padding-inline: var(--team-toolbar-inline-inset);
 }
-/* Fill each physical column bottom-to-top, then advance right-to-left. */
+.team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); }
+.team-status-row > .team-lights {
+  --team-pip-columns: 3; --team-pip-rows: 2; display: grid;
+  grid-template-columns: repeat(var(--team-pip-columns), var(--app-presence-pip-size)); grid-template-rows: repeat(var(--team-pip-rows), var(--app-presence-pip-size));
+  grid-auto-flow: column dense; direction: rtl; place-content: center; gap: var(--team-pip-gap);
+  inline-size: var(--team-edge-tab-inline-size); min-width: 0; margin: 0; padding: 0;
+}
+/* Preserve newest-first bottom-to-top ordering while centering each matrix. */
 .team-lights > :nth-child(odd of .app-presence-pip) { grid-row: 2; }
 .team-lights > :nth-child(even of .app-presence-pip) { grid-row: 1; }
+.team-lights[data-team-size="1"] { --team-pip-columns: 1; --team-pip-rows: 1; }
+.team-lights[data-team-size="1"] > .app-presence-pip { grid-row: 1; }
+.team-lights[data-team-size="2"] { --team-pip-columns: 1; }
+.team-lights:is([data-team-size="3"], [data-team-size="4"]) { --team-pip-columns: 2; }
+/* Three and five lights stagger their shorter row by half one pip pitch. */
+.team-lights:is([data-team-size="3"], [data-team-size="5"]) > :nth-child(even of .app-presence-pip) { transform: translateX(calc(-1 * (var(--app-presence-pip-size) + var(--team-pip-gap)) / 2)); }
 /* The leading total reserves width; the task scroller keeps its symmetric fades. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
@@ -489,13 +502,15 @@ path.image-annotation-hit { fill: none; }
   display: grid;
   grid-area: tasks;
   align-self: end;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: var(--team-edge-tab-inline-size) minmax(0, 1fr);
   min-width: 0;
-  margin: 0 8px;
+  margin: 0 var(--team-toolbar-inline-inset);
   overflow: hidden;
 }
 .team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { align-self: end; }
-.team-task-rail > [data-work-scope="team"] { min-inline-size: var(--team-edge-tab-min-inline-size); }
+.team-task-rail > [data-work-scope="team"] { box-sizing: border-box; inline-size: var(--team-edge-tab-inline-size); }
+.team-task-rail > [data-work-scope="team"] > button { flex: 1 1 auto; justify-content: center; }
+.team-task-rail > [data-work-scope="team"] .app-count-badge { display: inline-flex; justify-content: center; box-sizing: content-box; inline-size: 2ch; }
 .team-task-rail > [data-work-scope="team"] { grid-column: 1; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;
@@ -542,6 +557,7 @@ path.image-annotation-hit { fill: none; }
   padding: 0 var(--team-chamber-inset);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));
 }
+.team-status-row:not(:has(> .team-lights)) > .ticker { grid-column: 1; }
 .team-status-row > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"])
   > :is(.ticker-age, .ticker-prefix, .ticker-detail) {
   opacity: var(--inactive-lane-opacity);
@@ -1462,5 +1478,3 @@ a.relative-age {
   padding: 16px 6px;
   font-size: var(--app-type-sm);
 }
-
-

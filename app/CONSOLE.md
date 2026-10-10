@@ -4,17 +4,17 @@ Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger. Its
 task strip keeps the full first row. The second row is one full-width status
-band: a two-row, three-column matrix of 8px presence pips sits at its physical
-left, followed by the ticker in the remaining width. Canonical members fill
-bottom-to-top and right-to-left: #1 lower-right, #2 upper-right, #3 lower-middle,
-#4 upper-middle, #5 lower-left, #6 upper-left. Partial populations keep these
-positions; the app's outer LTR flow is unchanged. The status row uses the same
-theme-aware surface as the message stream, with one composer-bottom-strength
-top rule throughout;
-bound and unbound status dims only its text, never that surface. The ticker
-retains relative age, lane-status class, agent/tool/command prefix and accent,
-accessible label, and live-region semantics; an empty fleet has no pip reserve
-and keeps the full surfaced status slot without inventing status.
+band: a leading segment centered beneath the team total holds 8px presence pips,
+followed by the ticker in the remaining width. One member is centered; two
+stack vertically; three form a triangle; four form a square; five form a
+centered two-over-three group; and six form a three-by-two matrix. Canonical
+members continue bottom-to-top and right-to-left within the rectangular forms;
+the app's outer LTR flow is unchanged. The status row uses the same theme-aware
+surface as the message stream, with one composer-bottom-strength top rule
+throughout; bound and unbound status dims only its text, never that surface.
+The ticker retains relative age, lane-status class, agent/tool/command prefix
+and accent, accessible label, and live-region semantics; an empty fleet has no
+pip reserve and keeps the full surfaced status slot without inventing status.
 Adjacent teams share one faint vertical seam on the physical-right edge of the
 left team. It starts below the composer block and its painted continuation,
 continues to the fleet bottom, and takes no layout space; neither outer fleet
@@ -68,12 +68,14 @@ is the sum of the stem badges and the number of handles. Activating it opens
 the unified overview with the team's complete current task set already
 selected. It does not change the durable location.
 
-The team total holds its own column at the rail's inline start, so the first
-stem tab sits one `--mosaic-gap` past it whatever its badge width. Stem and
-task tabs scroll beneath mirrored alpha screens at both ends; the leading
-underlap reaches back beneath the total. The trailing end reserves no pip tab.
-Matching inline and scroll padding keeps the first and last tabs fully opaque
-at their respective extents and keeps a no-overflow rail out of both fades.
+The team total holds a fixed two-digit column at the rail's inline start, so a
+one-digit count, a two-digit count through 99, and the pip segment beneath them
+share one centerline without resizing the tab. The first stem tab sits one
+`--mosaic-gap` past that column. Stem and task tabs scroll beneath mirrored
+alpha screens at both ends; the leading underlap reaches back beneath the
+total. The trailing end reserves no pip tab. Matching inline and scroll padding
+keeps the first and last tabs fully opaque at their respective extents and keeps
+a no-overflow rail out of both fades.
 
 Flags follow Work's clustering rule: from in-flight, ready, blocked, and
 deferred offer order, each visibility-qualified stem's first task places one
