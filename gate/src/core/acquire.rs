@@ -38,7 +38,7 @@ use super::{
     RepoDocsEvidence, StagingEvidence, core_declarations,
 };
 use crate::GateId;
-use crate::input::Contract;
+use crate::input::ParsedContract;
 use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
 use crate::metrics::{
@@ -224,7 +224,7 @@ impl CoreSource {
     /// identity. A partially digested tree is never returned.
     pub fn capture(
         tree: &SelectedTree,
-        contract: &Contract,
+        contract: &ParsedContract,
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
@@ -234,7 +234,7 @@ impl CoreSource {
 
     fn capture_inner(
         tree: &SelectedTree,
-        contract: &Contract,
+        contract: &ParsedContract,
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
@@ -502,7 +502,7 @@ impl Drop for GitIsolation {
 /// an arm vector the family will not admit.
 pub fn acquire_core(
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
     baselines: &BaselineCapture,
 ) -> Result<CoreInputs, CoreInputError> {
     acquire_core_with_observations(source, contract, baselines).map(|(inputs, _)| inputs)
@@ -511,7 +511,7 @@ pub fn acquire_core(
 /// Acquire the complete core family and retain its exact state observations.
 pub(crate) fn acquire_core_with_observations(
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
     baselines: &BaselineCapture,
 ) -> Result<(CoreInputs, Vec<LatchObservation>), CoreInputError> {
     let configuration = ConfigurationInventorySource::capture(source)?;
@@ -547,7 +547,7 @@ pub(crate) fn acquire_core_with_observations(
 /// Acquire exactly one core arm and the elastic bounds that arm decided.
 pub(crate) fn acquire_core_arm(
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
     baselines: &BaselineCapture,
     gate_id: GateId,
     reached: Option<&[String]>,
@@ -591,7 +591,7 @@ pub(crate) fn acquire_core_arm(
 fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
     baselines: &BaselineCapture,
     configuration: Option<&ConfigurationInventorySource>,
     reached: Option<&[String]>,
@@ -631,7 +631,7 @@ fn observe(
 
 fn repo_docs(
     source: &CoreSource,
-    contract: &Contract,
+    contract: &ParsedContract,
     baselines: &BaselineCapture,
     reached: Option<&[String]>,
     bounds: &mut Vec<BoundDecision>,
@@ -718,7 +718,7 @@ fn repo_docs(
 /// never claimed for the same reason, since it has no cap left to breach.
 fn document_measurement(
     actor: &ActorCapture,
-    contract: &Contract,
+    contract: &ParsedContract,
     latches: &[LatchEntry],
     path: &str,
     characters: u64,

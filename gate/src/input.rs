@@ -151,9 +151,13 @@ impl KillProfile {
     }
 }
 
-/// Loaded current execution inputs, ready for ordinary, Camp, or Kill runs.
+/// Parsed tracked inputs that contain no observation of external tools.
+///
+/// This type is suitable for in-process policy and acquisition evaluation. It
+/// cannot produce a gate receipt: only [`Contract::load`] returns a complete
+/// execution contract with operational tool identities.
 #[derive(Debug)]
-pub struct Contract {
+pub struct ParsedContract {
     gate_set: GateSet,
     policy: Policy,
     rule_policy: RulePolicy,
@@ -168,8 +172,22 @@ pub struct Contract {
     baseline: Option<Baseline>,
     ratchet: Option<Ratchet>,
     bounds: Bounds,
-    tools: Vec<ToolIdentity>,
     compiled_walk_rules: usize,
+}
+
+/// Loaded current execution inputs, ready for an ordinary gate run.
+#[derive(Debug)]
+pub struct Contract {
+    parsed: ParsedContract,
+    tools: Vec<ToolIdentity>,
+}
+
+impl std::ops::Deref for Contract {
+    type Target = ParsedContract;
+
+    fn deref(&self) -> &Self::Target {
+        &self.parsed
+    }
 }
 
 struct PolicyInputs<'a> {
@@ -199,8 +217,7 @@ impl Contract {
         let baseline_path = root.join(BASELINE_PATH);
         let policy_text = read_tracked(&policy_path)?;
         let baseline_text = read_tracked(&baseline_path)?;
-        Self::from_inputs(
-            root,
+        let parsed = ParsedContract::from_inputs(
             PolicyInputs {
                 path: &policy_path,
                 tracked_text: &policy_text,
@@ -211,8 +228,15 @@ impl Contract {
                 path: &baseline_path,
                 text: Some(&baseline_text),
             },
-            true,
-        )
+        )?;
+        let tools = parsed
+            .gate_set
+            .tools
+            .iter()
+            .map(|tool| identify_tool(tool, root, &parsed.bounds))
+            .collect::<Result<_, _>>()
+            .map_err(ContractError::Tool)?;
+        Ok(Self { parsed, tools })
     }
 
     /// Load the generic installed-builtin inputs for one selected repository.
@@ -239,8 +263,7 @@ impl Contract {
                 Some(text) => (text, POLICY_PATH, text),
                 None => ("", PACKAGED_GENERIC_POLICY_SOURCE, PACKAGED_GENERIC_POLICY),
             };
-        Self::from_inputs(
-            root,
+        let parsed = ParsedContract::from_inputs(
             PolicyInputs {
                 path: &policy_path,
                 tracked_text: tracked_policy_text,
@@ -251,21 +274,27 @@ impl Contract {
                 path: &baseline_path,
                 text: baseline_text.as_deref(),
             },
-            false,
-        )
+        )?;
+        Ok(Self {
+            parsed,
+            tools: Vec::new(),
+        })
     }
+}
 
-    /// Build from already selected tracked bytes while retaining their paths in
-    /// every refusal. Tool execution is outside this in-process parsing boundary.
+impl ParsedContract {
+    /// Parse already selected tracked bytes while retaining their paths in
+    /// every refusal.
+    ///
+    /// This boundary performs no tool execution and therefore does not return
+    /// an execution-ready [`Contract`].
     pub fn from_tracked(
-        root: &Path,
         policy_path: &Path,
         policy_text: &str,
         baseline_path: &Path,
         baseline_text: &str,
     ) -> Result<Self, ContractError> {
         Self::from_inputs(
-            root,
             PolicyInputs {
                 path: policy_path,
                 tracked_text: policy_text,
@@ -276,15 +305,12 @@ impl Contract {
                 path: baseline_path,
                 text: Some(baseline_text),
             },
-            false,
         )
     }
 
     fn from_inputs(
-        root: &Path,
         policy: PolicyInputs<'_>,
         baseline: BaselineInputs<'_>,
-        identify_compiled_tools: bool,
     ) -> Result<Self, ContractError> {
         let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
@@ -325,16 +351,6 @@ impl Contract {
             runner: gate_set.build_kill(),
             floor: baseline.as_ref().map(Baseline::mutation_floor),
         };
-        let tools = if identify_compiled_tools {
-            gate_set
-                .tools
-                .iter()
-                .map(|tool| identify_tool(tool, root, &bounds))
-                .collect::<Result<_, _>>()
-                .map_err(ContractError::Tool)?
-        } else {
-            Vec::new()
-        };
 
         Ok(Self {
             gate_set,
@@ -351,7 +367,6 @@ impl Contract {
             baseline,
             ratchet,
             bounds,
-            tools,
             compiled_walk_rules,
         })
     }
@@ -465,12 +480,6 @@ impl Contract {
         &self.bounds
     }
 
-    /// Operational identities of every compiled tool.
-    #[must_use]
-    pub fn tools(&self) -> &[ToolIdentity] {
-        &self.tools
-    }
-
     /// Number of leading [`policy`](Self::policy) walk rules that are compiled.
     ///
     /// Rules below this index came from `DEFAULT_SKIP`; rules at or above it are
@@ -479,6 +488,14 @@ impl Contract {
     #[must_use]
     pub const fn compiled_walk_rules(&self) -> usize {
         self.compiled_walk_rules
+    }
+}
+
+impl Contract {
+    /// Operational identities of every compiled tool.
+    #[must_use]
+    pub fn tools(&self) -> &[ToolIdentity] {
+        &self.tools
     }
 }
 

@@ -1,8 +1,8 @@
 use gate::metrics::BaselineCapture;
 use gate::{
-    ActorCapture, ArmObservation, ArmOutcome, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput,
+    ActorCapture, ArmObservation, ArmOutcome, CORE_GATE_IDS, ClaimCapture, CoreArmInput,
     CoreArmReport, CoreEvidence, CoreInputs, CoreObservation, CoreReport, CoreSource, GateId,
-    LatchEntry, Selector, ToolchainDeclaration, acquire_core, evaluate_core,
+    LatchEntry, ParsedContract, Selector, ToolchainDeclaration, acquire_core, evaluate_core,
 };
 
 use std::fs;
@@ -124,12 +124,12 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
 
 /// Parse a fixture's already selected contract bytes without executing its tools.
 #[allow(dead_code)]
-pub(crate) fn selected_contract(root: &Path) -> Contract {
+pub(crate) fn selected_contract(root: &Path) -> ParsedContract {
     let policy_path = root.join(gate::POLICY_PATH);
     let baseline_path = root.join(gate::BASELINE_PATH);
     let policy = fs::read_to_string(&policy_path).expect("read selected policy");
     let baseline = fs::read_to_string(&baseline_path).expect("read selected baseline");
-    Contract::from_tracked(root, &policy_path, &policy, &baseline_path, &baseline)
+    ParsedContract::from_tracked(&policy_path, &policy, &baseline_path, &baseline)
         .expect("parse the selected contract")
 }
 
@@ -215,7 +215,7 @@ pub(crate) fn acquired_inputs(
 }
 
 /// Committed texts captured beside a direct core fixture source.
-pub(crate) fn captured_baselines(repository: &Tree, contract: &Contract) -> BaselineCapture {
+pub(crate) fn captured_baselines(repository: &Tree, contract: &ParsedContract) -> BaselineCapture {
     let classes = contract.rule_policy().document().file_classes();
     let mut suffixes = classes.file_shape().to_vec();
     suffixes.extend(classes.complexity().iter().cloned());

@@ -6,7 +6,7 @@ use toml::Value;
 use wire::ConfigSource;
 
 use super::{ConfigKeyEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreObservation};
-use crate::input::Contract;
+use crate::input::ParsedContract;
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const TRACKED_WORKTREE: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Worktree];
@@ -116,7 +116,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("proof.runner", LOCAL),
 ];
 
-pub(super) fn config_keys(contract: &Contract) -> Result<CoreObservation, CoreInputError> {
+pub(super) fn config_keys(contract: &ParsedContract) -> Result<CoreObservation, CoreInputError> {
     let mut findings = Vec::new();
     let Value::Table(table) = contract.tracked_configuration() else {
         return Err(CoreInputError::new(
