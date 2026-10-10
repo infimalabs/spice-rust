@@ -100,5 +100,6 @@ most every ten minutes, empties the least recently used Cargo profile
 directories until `target/` fits, fingerprints first, keeping Cargo's lock
 files. A profile directory whose `.cargo-lock`, `.cargo-build-lock`, or
 `.cargo-artifact-lock` a live Cargo or rust-analyzer holds is left whole, and
-no output is removed while another such run holds the lease. `spice dev
+no output is removed while another such run holds the lease. A run refuses
+before consuming Cargo output if it cannot acquire the lease. `spice dev
 cargo-footprint` reports the footprint per profile directory and the bound.
