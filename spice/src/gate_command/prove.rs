@@ -528,7 +528,8 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     let repository = Repository::discover(&current)
         .map_err(|error| ProveFailure::fault(spice::repository::ResolveError::REASON, error))?;
     #[cfg(unix)]
-    let _lease = crate::cargo_command::output_lease(&repository);
+    let _lease = crate::cargo_command::output_lease(&repository)
+        .map_err(|error| ProveFailure::fault("cargo-output::lease-unavailable", error))?;
     let candidate_tree =
         spice::gate::capture_candidate_tree(&repository).map_err(ProveFailure::run)?;
     let anchor = spice::change_gate::prepare_staged_anchor().map_err(ProveFailure::selection)?;

@@ -259,7 +259,14 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
         )
     })?;
     #[cfg(unix)]
-    let _lease = output_lease(&repository);
+    let _lease = output_lease(&repository).map_err(|error| {
+        rejected(
+            FaultClass::Environment,
+            "cargo-output::lease-unavailable",
+            error.to_string(),
+            1,
+        )
+    })?;
     let host = host(&repository).map_err(isolation_rejection)?;
     let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
     let mut command = native_command(
@@ -295,45 +302,39 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
 /// Hold this worktree's Cargo output lease for the caller's whole run,
 /// reclaiming over-bound output first when no other run holds it.
 ///
-/// A lease or reclamation failure is reported and the run continues: a
-/// footprint over its bound is recoverable, a refused build or gate is not.
+/// A reclamation failure is reported and the run continues while protected by
+/// the shared lease. Failure to acquire that lease refuses the caller.
+///
+/// # Errors
+///
+/// Returns a refusal admitting, opening or locking the worktree lease.
 #[cfg(unix)]
-pub(crate) fn output_lease(repository: &Repository) -> Option<OutputLease> {
+pub(crate) fn output_lease(repository: &Repository) -> io::Result<OutputLease> {
     use std::io::Write as _;
 
     let target = cargo_output::worktree_target(repository.worktree_root());
-    let entered = repository
+    let state = repository
         .admit_state()
-        .map_err(|error| io::Error::other(error.to_string()))
-        .and_then(|state| {
-            OutputLease::enter(
-                state.worktree_locks(),
-                &target,
-                cargo_output::LANE_OUTPUT_BOUND,
-                std::time::SystemTime::now(),
-            )
-        });
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let (lease, pass) = OutputLease::enter(
+        state.worktree_locks(),
+        &target,
+        cargo_output::LANE_OUTPUT_BOUND,
+        std::time::SystemTime::now(),
+    )?;
     let mut stderr = io::stderr().lock();
-    match entered {
-        Ok((lease, pass)) => {
-            match pass {
-                Pass::Ran(Ok(reclamation))
-                    if !reclamation.removed.is_empty() || !reclamation.busy.is_empty() =>
-                {
-                    let _ = writeln!(stderr, "[cargo output] {reclamation}");
-                }
-                Pass::Ran(Err(error)) => {
-                    let _ = writeln!(stderr, "[cargo output] reclamation failed: {error}");
-                }
-                Pass::Ran(Ok(_)) | Pass::NotDue | Pass::Shared => {}
-            }
-            Some(lease)
+    match pass {
+        Pass::Ran(Ok(reclamation))
+            if !reclamation.removed.is_empty() || !reclamation.busy.is_empty() =>
+        {
+            let _ = writeln!(stderr, "[cargo output] {reclamation}");
         }
-        Err(error) => {
-            let _ = writeln!(stderr, "[cargo output] lease unavailable: {error}");
-            None
+        Pass::Ran(Err(error)) => {
+            let _ = writeln!(stderr, "[cargo output] reclamation failed: {error}");
         }
+        Pass::Ran(Ok(_)) | Pass::NotDue | Pass::Shared => {}
     }
+    Ok(lease)
 }
 
 /// Report this worktree's Cargo output footprint and the bound it is held to.
