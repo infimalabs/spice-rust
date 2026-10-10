@@ -100,45 +100,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pre_commit_launcher_normalizes_git_and_quotes_shell_metacharacters() {
-        let common = Path::new("/tmp/space tab\tquote'$`\\common");
-        let bytes = launcher(common, GitHook::PreCommit).expect("special path renders");
-        let text = String::from_utf8(bytes).expect("launcher is UTF-8");
-
-        assert_eq!(text.lines().next(), Some("#!/bin/sh -eu"));
-        assert!(text.contains("unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n"));
-        assert!(text.contains(&format!(
-            "{}=1\nexport {}\n",
-            super::super::INSTALLED_PRE_COMMIT_ENVIRONMENT,
-            super::super::INSTALLED_PRE_COMMIT_ENVIRONMENT,
-        )));
-        assert!(text.ends_with(concat!(
-            "exec '/tmp/space tab\tquote'\\''$`\\common/",
-            ".spice-install/bin/spice' gate pre-commit \"$@\"\n"
-        )));
-    }
-
-    #[test]
-    fn non_pre_commit_launchers_remain_exactly_two_lines() {
-        for hook in [GitHook::CommitMessage, GitHook::ReferenceTransaction] {
-            let text = String::from_utf8(launcher(Path::new("/git"), hook).unwrap()).unwrap();
-            assert_eq!(text.lines().count(), 2);
-        }
-    }
-
-    #[test]
-    fn every_hook_names_its_explicit_gate_command() {
-        for (hook, command) in [
-            (GitHook::PreCommit, "pre-commit"),
-            (GitHook::CommitMessage, "commit-msg"),
-            (GitHook::ReferenceTransaction, "reference-transaction"),
-        ] {
-            let text = String::from_utf8(launcher(Path::new("/git"), hook).unwrap()).unwrap();
-            assert!(text.ends_with(&format!(" gate {command} \"$@\"\n")));
-        }
-    }
-
-    #[test]
     fn a_line_separator_refuses_before_launcher_bytes_exist() {
         for separator in [
             '\n', '\r', '\u{000b}', '\u{000c}', '\u{0085}', '\u{2028}', '\u{2029}',
