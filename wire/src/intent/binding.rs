@@ -12,12 +12,11 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneRead,
     LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, ReportAnswer, ReportRead, StateAnswer,
-    SteerDispose, SteerHistory, SteerInbox, SteerSend, SteerTell, TaskAdd, TaskAnswer, TaskAssign,
-    TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone,
-    TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer,
-    TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd,
-    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
-    VendorCatalog, VendorCatalogAnswer,
+    SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose,
+    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
+    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
+    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -85,8 +84,6 @@ pub enum BodyShape {
     DocApply,
     /// [`SteerSend`]
     SteerSend,
-    /// [`SteerTell`]
-    SteerTell,
     /// [`SteerInbox`]
     SteerInbox,
     /// [`SteerHistory`]
@@ -449,7 +446,6 @@ impl CommandKind {
             | Self::ClaimLapse
             | Self::DocApply => self.board_binding(),
             Self::SteerSend
-            | Self::SteerTell
             | Self::SteerInbox
             | Self::SteerHistory
             | Self::SteerResend
@@ -528,7 +524,6 @@ impl CommandKind {
 
         match self {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
-            Self::SteerTell => Binding::of(B::SteerTell, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
             Self::SteerHistory => Binding::of(B::SteerHistory, A::DirectionHistory),
             Self::SteerResend | Self::SteerRecover | Self::SteerCancel => {
@@ -642,8 +637,6 @@ pub enum Intent {
     DocApply(DocApply),
     /// [`BodyShape::SteerSend`]
     SteerSend(SteerSend),
-    /// [`BodyShape::SteerTell`]
-    SteerTell(SteerTell),
     /// [`BodyShape::SteerInbox`]
     SteerInbox(SteerInbox),
     /// [`BodyShape::SteerHistory`]
@@ -725,7 +718,6 @@ impl Intent {
             | Self::ClaimRenew(_)
             | Self::DocApply(_) => self.board_shape(),
             Self::SteerSend(_)
-            | Self::SteerTell(_)
             | Self::SteerInbox(_)
             | Self::SteerHistory(_)
             | Self::DirectiveRef(_)
@@ -791,7 +783,6 @@ impl Intent {
     const fn runtime_shape(&self) -> BodyShape {
         match self {
             Self::SteerSend(_) => BodyShape::SteerSend,
-            Self::SteerTell(_) => BodyShape::SteerTell,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
             Self::SteerHistory(_) => BodyShape::SteerHistory,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
@@ -946,7 +937,6 @@ impl BodyShape {
         if matches!(
             self,
             Self::SteerSend
-                | Self::SteerTell
                 | Self::SteerInbox
                 | Self::SteerHistory
                 | Self::DirectiveRef
@@ -982,7 +972,6 @@ impl BodyShape {
     fn decode_coordination_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
-            Self::SteerTell => Intent::SteerTell(crate::decode(bytes)?),
             Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
             Self::SteerHistory => Intent::SteerHistory(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),

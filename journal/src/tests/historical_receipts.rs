@@ -85,6 +85,41 @@ fn historical_corruption_is_reported_without_weakening_current_receipts() {
     }
 }
 
+#[test]
+fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("tell.sqlite3");
+    let current = historical_fixture(&path);
+    insert_tell(&current.connection, "command_receipts", &tell_request());
+    drop(current);
+    let journal = Journal::open(&path).expect("tell evidence reopens");
+    assert_eq!(
+        journal.verify().expect("tell evidence verifies").receipts,
+        2
+    );
+    drop(journal);
+
+    let mut padded = tell_request();
+    padded.push(b' ');
+    for (table, request) in [
+        ("historical_command_receipts", tell_request()),
+        ("command_receipts", padded),
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("tell-corruption.sqlite3");
+        let current = historical_fixture(&path);
+        insert_tell(&current.connection, table, &request);
+        drop(current);
+        let journal = Journal::open(&path).expect("current authority reopens");
+        assert!(
+            refused_violations(&journal)
+                .iter()
+                .any(|v| v.class == ViolationClass::Receipt),
+            "a misplaced or altered tell receipt escaped verification: {table}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn authenticated_restore_keeps_and_verifies_historical_receipt_evidence() {
@@ -191,6 +226,35 @@ fn insert_retired(connection: &Connection, id: &str) {
         "INSERT INTO historical_command_receipts VALUES (?1, 'operator', 'gate::findings', ?2, ?3, ?4, 1, 3, NULL, ?5)",
         params![id, serde_json::to_vec(&request).expect("request encodes"), b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
     ).expect("insert historical receipt");
+}
+
+fn tell_request() -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "v": 1, "id": RETIRED, "epoch": EPOCH, "kind": "steer::tell", "expected": [],
+        "body": {"lane": "018f82d4-6f59-7d06-92e3-bce913116302", "message": "the parser moved"},
+    }))
+    .expect("request encodes")
+}
+
+fn insert_tell(connection: &Connection, table: &str, request: &[u8]) {
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: uuid(RETIRED),
+        epoch: uuid(EPOCH),
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(1),
+                last: seq(3),
+            }),
+            body: json!({"key": "dVhAAAAAA"}),
+        }),
+    };
+    connection
+        .execute(
+            &format!("INSERT INTO {table} VALUES (?1, 'lane:018f82d4-6f59-7d06-92e3-bce913116303', 'steer::tell', ?2, ?3, ?4, 1, 3, NULL, ?5)"),
+            params![RETIRED, request, b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
+        )
+        .expect("insert tell receipt");
 }
 
 fn receipt(connection: &Connection, table: &str, id: &str) -> Vec<rusqlite::types::Value> {

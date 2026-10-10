@@ -306,7 +306,7 @@ fn no_rendered_row_promotes_a_lane_principal() {
 }
 
 #[test]
-fn an_operator_steer_pane_offers_every_command_but_a_lane_speaking_as_itself() {
+fn an_operator_steer_pane_offers_every_command() {
     let operator = operator();
     let steer = SteerPane::over(&operator);
 
@@ -315,8 +315,7 @@ fn an_operator_steer_pane_offers_every_command_but_a_lane_speaking_as_itself() {
         .copied()
         .filter(|kind| !steer.offers(*kind))
         .collect::<Vec<_>>();
-    assert_eq!(withheld, [CommandKind::SteerTell]);
-    assert!(SteerPane::over(&lane()).offers(CommandKind::SteerTell));
+    assert_eq!(withheld, []);
 }
 
 #[test]

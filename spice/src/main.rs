@@ -527,14 +527,16 @@ impl NativeInvocation<'_> {
                 form,
                 bootstrap_environment(steer::hook::LANE).is_some(),
             ),
-            ["steer"]
-            | ["steer", "cancel"]
-            | ["steer", "resend"]
-            | ["steer", "recover"]
-            | ["tell"] => deliver(
-                &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
-                form,
-            ),
+            ["steer"] | ["steer", "cancel"] | ["steer", "resend"] | ["steer", "recover"] => {
+                deliver(
+                    &steering_command::run(
+                        leaf,
+                        contract,
+                        bootstrap_environment(steer::hook::LANE),
+                    ),
+                    form,
+                )
+            }
             ["inbox"] => deliver_display(
                 &steering_command::inbox::run(
                     leaf,

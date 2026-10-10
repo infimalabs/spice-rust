@@ -261,7 +261,6 @@ impl<'a> SteerPane<'a> {
         match kind.law().authority {
             Authority::Connected => true,
             Authority::Operator => self.principal.is_operator(),
-            Authority::Lane => matches!(self.principal.actor(), Actor::Lane(_)),
         }
     }
 

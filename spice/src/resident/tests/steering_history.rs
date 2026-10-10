@@ -12,7 +12,7 @@ const FIRST: u8 = 2;
 const SECOND: u8 = 4;
 const THIRD: u8 = 6;
 
-/// Three seated lanes, three operator fanouts, one peer tell between them,
+/// Three seated lanes, three operator fanouts, one peer MSG between them,
 /// and one canceled recipient.
 struct Directions {
     root: PathBuf,
@@ -51,7 +51,7 @@ impl Directions {
         };
         fixture.send(10, FIRST, 30, "Alpha first");
         fixture.send(11, SECOND, 30, "Alpha first");
-        fixture.tell(12, FIRST, SECOND, "peer alpha note");
+        fixture.message(FIRST, SECOND, "peer alpha note");
         // Authored instants carry milliseconds; keep each fanout distinct.
         std::thread::sleep(Duration::from_millis(3));
         fixture.send(13, FIRST, 31, "beta second");
@@ -128,29 +128,68 @@ impl Directions {
         assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
     }
 
-    fn tell(&self, id: u8, from: u8, to: u8, message: &str) {
-        let tell = wire::intent::SteerTell {
-            lane: test_uuid(to),
-            message: message.to_owned(),
-        };
-        let command = self
-            .admit(
-                CommandKind::SteerTell,
-                id,
-                Actor::Lane(test_uuid(from)),
-                vec![self.seat(to)],
-                &tell,
+    /// Publish one MSG the occupant of `from` authored to the occupant of `to`.
+    fn message(&self, from: u8, to: u8, text: &str) {
+        let address = self
+            .bus
+            .task_snapshot()
+            .expect("snapshot reads")
+            .facts()
+            .occupant_address(test_uuid(to), test_uuid(to + 1))
+            .expect("the recipient's birth proves its address");
+        let root = self
+            .paths
+            .tape
+            .join(test_uuid(from).to_string())
+            .join("omp");
+        let tape = tape::Tape::open(&root).expect("the lane tape opens");
+        let streamed = serde_json::json!({
+            "type": "message_update",
+            "message": {"role": "assistant"},
+            "assistantMessageEvent": {
+                "type": "text_end",
+                "contentIndex": 0,
+                "content": format!("MSG {address}: {text}"),
+            },
+        });
+        tape.tee(format!("{streamed}\n").as_bytes())
+            .expect("the streamed block is durable");
+        let source = tape
+            .source_id()
+            .expect("the tape has a generation")
+            .as_str()
+            .parse()
+            .expect("the generation is a UUID");
+        let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("the tape scans");
+        let mut published = 0;
+        for record in scan.records {
+            let listen::RecordPayload::Events(events) = record.payload else {
+                continue;
+            };
+            let events = events
+                .into_iter()
+                .map(|sourced| sourced.event)
+                .collect::<Vec<_>>();
+            published += steering::publish_authored(
+                &self.bus,
+                &self.paths,
+                self.epoch,
+                &steer::Config::default(),
+                &steering::AuthoredRecord {
+                    lane: test_uuid(from),
+                    author: test_uuid(from + 1),
+                    source,
+                    locus: record.locus,
+                    events: &events,
+                },
+                steering::Refusals::Record,
+                &mut Vec::new(),
             )
-            .expect("a lane's tell admits");
-        let outcome = steering::tell(
-            &self.bus,
-            self.epoch,
-            &steer::Config::default(),
-            &command,
-            &tell,
-            &mut CommandEffects::default(),
-        );
-        assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+            .into_iter()
+            .filter(Result::is_ok)
+            .count();
+        }
+        assert_eq!(published, 1, "the MSG publishes once");
     }
 
     fn cancel(&self, id: u8, directive: CanonicalUuid) {
