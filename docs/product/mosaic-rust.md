@@ -12,11 +12,12 @@ A seating that starts a fresh vendor session renders a "started fresh session"
 divider shaped like a compaction boundary. An exact-session resume renders none,
 and a seating that recorded no session disposition infers none.
 
-Older history pages only on reader demand: a member's placed frontier card
-within reach of the viewport, or the plane's trailing edge. A card still
-measuring is not demand, so arriving pages never chain into autonomous paging.
-A page that a dropped socket never answered is requested again after reconnect,
-so an unscrolled cold load retains the same history whatever the socket timing.
+Older history pages when a placed member frontier is near the viewport, the
+reader reaches the plane's trailing edge, or a member lacks composer prose.
+Missing prose can demand successive offscreen pages; a card still measuring
+does not itself establish viewport demand. Each frontier is requested once
+unless a fresh viewport gesture follows a completed page. An unanswered page
+is requested again after reconnect, even if its frontier has moved offscreen.
 
 Compaction and lifecycle dividers stay full-width boundaries between
 chronological epochs. A replayed epoch rests against its retained boundary,
