@@ -363,6 +363,20 @@ fn recall_live_steering_provenance(
                 None,
             ))
         }
+        // The packet locus is where the sender authored the message, not
+        // where a lane answered, so it stays out of the answer locus.
+        wire::FactKind::SteerMessaged => {
+            let body: wire::body::SteerMessaged = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(wire::body::SteeringStage::Published),
+                Vec::new(),
+                None,
+                None,
+            ))
+        }
         wire::FactKind::SteerEscalated => {
             let body: wire::body::SteerEscalated = recall_body(fact)?;
             Some(steering_provenance(

@@ -365,6 +365,15 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         held,
         views.diagnostic,
     )?;
+    // A noticed record the sweep did not cover was accounted, and its packets
+    // read, by an earlier pass; only the sweep's own records are new to MSG.
+    let noticed_new = observations.iter().any(|observation| {
+        observation.batch.lane == record.lane
+            && observation
+                .records
+                .iter()
+                .any(|swept| swept.locus == record.locus)
+    });
     let swept = sweep::swept_records(record, &mut observations);
     {
         let mut state = lock_state(views.state)?;
@@ -372,6 +381,15 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         state.observations.extend(observations);
     }
     sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)?;
+    let authored = if noticed_new { &swept[..] } else { &swept[1..] };
+    publish_swept(
+        bus,
+        epoch,
+        surfaces,
+        authored,
+        steering::Refusals::Notify,
+        &mut views,
+    )?;
     hear_swept(
         bus,
         surfaces.paths,
@@ -380,6 +398,48 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         &swept,
         views.diagnostic,
     )
+}
+
+/// Publish the MSG packets each swept record's author wrote.
+///
+/// Authorship is the sweep's capture binding: a live sweep's records belong
+/// to the noticed occupant, a closing sweep's to the occupant that left.
+fn publish_swept<P>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    surfaces: &CaptureSurfaces<'_, P>,
+    swept: &[std::borrow::Cow<'_, lane::capture::CaptureRecord>],
+    refusals: steering::Refusals,
+    views: &mut CaptureViews<'_>,
+) -> CommandResult<()> {
+    let sources = {
+        let state = lock_state(views.state)?;
+        swept
+            .iter()
+            .map(|record| state.observations.source(record.lane, record.locus))
+            .collect::<Vec<_>>()
+    };
+    for (record, source) in swept.iter().zip(sources) {
+        let Some(source) = source else {
+            continue;
+        };
+        steering::publish_authored(
+            bus,
+            surfaces.paths,
+            epoch,
+            surfaces.steering,
+            &steering::AuthoredRecord {
+                lane: record.lane,
+                author: record.occupant,
+                source,
+                locus: record.locus,
+                events: record.decoded.events(),
+            },
+            refusals,
+            views.diagnostic,
+        );
+    }
+    Ok(())
 }
 
 /// Retire the directives the swept prose answered.
@@ -449,6 +509,14 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
         state.observations.extend(observations);
     }
     sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)?;
+    publish_swept(
+        bus,
+        epoch,
+        surfaces,
+        &swept,
+        steering::Refusals::Record,
+        &mut views,
+    )?;
     lock_state(views.state)?.media_hydration.clear_lane(lane);
     Ok(())
 }

@@ -41,6 +41,22 @@ pub struct Locus {
     pub column: usize,
 }
 
+impl Locus {
+    /// Where one byte offset of `prose` sits, on the lines the scanner reads.
+    #[must_use]
+    pub fn at(prose: &str, offset: usize) -> Self {
+        let before = &prose.as_bytes()[..offset];
+        let start = before
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |newline| newline + 1);
+        Self {
+            line: before.iter().filter(|byte| **byte == b'\n').count() + 1,
+            column: offset - start + 1,
+        }
+    }
+}
+
 impl fmt::Display for Locus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}:{}", self.line, self.column)

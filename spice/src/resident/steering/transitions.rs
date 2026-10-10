@@ -264,7 +264,7 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
     Ok(())
 }
 
-fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome<CommandAnswer>> {
+pub(super) fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome<CommandAnswer>> {
     let bytes = proposal
         .envelope_byte_bound()
         .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;

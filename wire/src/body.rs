@@ -171,6 +171,55 @@ impl SteerReplied {
     }
 }
 
+/// An authored MSG packet opened one peer message to one exact recipient.
+///
+/// The packet's assistant transcript record is the source evidence, and the
+/// resident journals one fact per recipient in a single guarded write, so a
+/// packet publishes to every recipient or to none. The directive identity is
+/// derived from the source packet and the recipient, so rereading the same
+/// packet never opens a second message. The opened directive is ordinary peer
+/// steering for the recipient lane; answering it replies to `from`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerMessaged {
+    /// Durable message identity, derived from the source packet and recipient.
+    pub directive: CanonicalUuid,
+    /// Message key.
+    pub key: String,
+    /// Recipient lane.
+    pub lane: CanonicalUuid,
+    /// Recipient occupant the residency seated when the packet published.
+    pub occupant: CanonicalUuid,
+    /// Lane whose occupant authored the packet.
+    pub from: CanonicalUuid,
+    /// Occupant whose captured transcript authored the packet.
+    pub sender: CanonicalUuid,
+    /// The packet's exact body.
+    pub text: String,
+    /// Assistant transcript locus of the packet's MSG header.
+    pub locus: TranscriptLocus,
+    /// Instant the message expires without a disposition.
+    pub expires: Instant,
+}
+
+impl SteerMessaged {
+    /// The directive this message opens, as the publication steering folds.
+    #[must_use]
+    pub fn as_sent(&self) -> SteerSent {
+        SteerSent {
+            directive: self.directive,
+            fanout: None,
+            key: self.key.clone(),
+            lane: self.lane,
+            text: self.text.clone(),
+            from: Some(self.from),
+            control: None,
+            attachments: Vec::new(),
+            expires: self.expires,
+        }
+    }
+}
+
 /// Compatibility spelling for the one shared media value.
 pub type DirectiveAttachment = crate::Media;
 
