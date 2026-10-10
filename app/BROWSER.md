@@ -345,6 +345,16 @@ reminder or review feedback wears exactly one such pill right after its own
 source age and name, where its words begin. Literal `[TASTE]` or `[REVIEW]`
 in any prose remains ordinary Markdown.
 
+Classification and disposition badges share the same speaker-owned hunk rule;
+none changes source attribution or message direction. An authenticated peer MSG
+context, whether quoted by ACK or NAK, keeps its original sender, arrow, and
+exact destination from the creating journal fact. A fanout reply quotes its
+own delivered destination, not other recipients. The quoted source retains its
+age; the answer's badge stays on the answer's hunks. An outgoing packet lists
+all addressed occupants in header order through the same direction lead.
+Subsequent submissions and history refresh preserve these identities. Departed
+occupants never inherit a successor's name or accent.
+
 When that opening run continues into another paragraph, the later paragraph
 keeps the ordinary Markdown paragraph gap; making the first paragraph inline
 for attribution does not collapse the boundary between them.

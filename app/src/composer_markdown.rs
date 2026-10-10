@@ -655,12 +655,7 @@ fn directive_attribution(
     let target = context.quote_target.to_string();
     image_flow::Attribution {
         controls_target: target.clone(),
-        signoff: quotes::signoff_html(
-            &context_author(context),
-            &target,
-            quote_agents,
-            quote_sources,
-        ),
+        signoff: quotes::directive_signoff_html(context, &target, quote_agents, quote_sources),
         disposition: String::new(),
         badge: context.badge.map_or_else(String::new, directive_badge_html),
         task_tail: quotes::task_tail_html(&target),

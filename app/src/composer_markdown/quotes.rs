@@ -65,6 +65,11 @@ pub(crate) fn referenced_quote_agents(
             wire::Actor::Lane(lane) => Some(lane),
             wire::Actor::Operator | wire::Actor::Spice => None,
         })
+        .chain(
+            directives
+                .iter()
+                .filter_map(|directive| directive.recipient.map(|recipient| recipient.lane)),
+        )
         .chain(sends.iter().flat_map(|send| {
             std::iter::once(send.from).chain(send.recipients.iter().map(|recipient| recipient.lane))
         }))
@@ -164,6 +169,73 @@ pub(super) fn signoff_html(
     format!("<span class=\"message-quote-signoff\">{age}{name}</span>")
 }
 
+/// Source attribution is independent of the answer's badge. A peer context
+/// carries the immutable destination proved by its creating message fact.
+pub(super) fn directive_signoff_html(
+    context: &wire::MessageDirective,
+    target: &str,
+    agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
+) -> String {
+    let author = super::context_author(context);
+    let Some(source) = sources.get(target) else {
+        return String::new();
+    };
+    let age = quote_age_slot_html(&author, agents, source);
+    let name = quote_author_name_html(&author, agents, source);
+    let destination = context.recipient.map_or_else(String::new, |recipient| {
+        participant_html(recipient.lane, recipient.occupant, None, agents)
+    });
+    packet_signoff_html(&age, &name, &destination, "incoming")
+}
+
+fn packet_signoff_html(age: &str, sender: &str, recipients: &str, direction: &str) -> String {
+    if recipients.is_empty() {
+        return format!("<span class=\"message-quote-signoff\">{age}{sender}</span>");
+    }
+    format!(
+        "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\">{age}{sender}\
+         <span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
+         <span class=\"message-quote-recipients\">{recipients}</span></span>"
+    )
+}
+
+fn participant_html(
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    address: Option<wire::OccupantAddress>,
+    agents: &super::QuoteAgents,
+) -> String {
+    let (agent, state) = occupant_agent(agents, lane, occupant)
+        .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
+    let label = agent.map_or_else(
+        || {
+            Cow::Owned(address.map_or_else(
+                || {
+                    format!(
+                        "{}/{}",
+                        crate::watchband::short(lane),
+                        crate::watchband::short(occupant)
+                    )
+                },
+                |address| address.to_string(),
+            ))
+        },
+        |agent| Cow::Borrowed(agent.label.as_str()),
+    );
+    let address = address.map_or_else(String::new, |address| {
+        format!(" data-quote-recipient-address=\"{address}\" title=\"{address}\"")
+    });
+    quote_name_html(
+        &label,
+        &format!(
+            " data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+             data-quote-author-state=\"{state}\"{address}"
+        ),
+        agent.map(|agent| agent.accent),
+    )
+}
+
 /// The accent slot of the speaker a quote's attribution names: the slot that
 /// speaker's own top-level cards wear, carried on the quote's shell so its rail
 /// wears it too. Operators and Spice speak in the neutral accent and have no
@@ -219,9 +291,9 @@ fn historical_agent<'a>(
 }
 
 /// The lead of an MSG the card's author sent: its exact authoring occupant,
-/// an outgoing arrow, then every addressed occupant in header order. The
-/// arrow and the recipients are what set it apart from a quote of words the
-/// card answers, which leads with the quoted source's age and author.
+/// an outgoing arrow, then every addressed occupant in header order. A quoted
+/// peer context uses the same direction lead with its own recorded destination;
+/// badges never change either side's attribution.
 pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
     let (sender, state) = occupant_agent(agents, send.from, send.sender)
         .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
@@ -235,40 +307,28 @@ pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteA
         },
         |agent| Cow::Borrowed(agent.label.as_str()),
     );
-    let mut html = format!(
-        "<span class=\"message-quote-signoff\" data-quote-direction=\"outgoing\">{}\
-         <span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
-         <span class=\"message-quote-recipients\">",
-        quote_name_html(
-            &label,
-            &format!(
-                " data-quote-author=\"agent\" data-quote-agent-lane=\"{}\" \
-                 data-quote-agent-occupant=\"{}\" data-quote-author-state=\"{state}\"",
-                send.from, send.sender
-            ),
-            sender.map(|agent| agent.accent),
+    let sender = quote_name_html(
+        &label,
+        &format!(
+            " data-quote-author=\"agent\" data-quote-agent-lane=\"{}\" \
+             data-quote-agent-occupant=\"{}\" data-quote-author-state=\"{state}\"",
+            send.from, send.sender
         ),
+        sender.map(|agent| agent.accent),
     );
+    let mut recipients = String::new();
     for (index, recipient) in send.recipients.iter().enumerate() {
         if index > 0 {
-            html.push_str("<span class=\"message-quote-recipient-separator\">, </span>");
+            recipients.push_str("<span class=\"message-quote-recipient-separator\">, </span>");
         }
-        let (agent, state) = occupant_agent(agents, recipient.lane, recipient.occupant)
-            .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
-        let address = recipient.address.to_string();
-        html.push_str(&quote_name_html(
-            agent.map_or(address.as_str(), |agent| agent.label.as_str()),
-            &format!(
-                " data-quote-recipient-address=\"{address}\" \
-                 data-quote-agent-lane=\"{}\" data-quote-agent-occupant=\"{}\" \
-                 data-quote-author-state=\"{state}\" title=\"{address}\"",
-                recipient.lane, recipient.occupant
-            ),
-            agent.map(|agent| agent.accent),
+        recipients.push_str(&participant_html(
+            recipient.lane,
+            recipient.occupant,
+            Some(recipient.address),
+            agents,
         ));
     }
-    html.push_str("</span></span>");
-    html
+    packet_signoff_html("", &sender, &recipients, "outgoing")
 }
 
 /// The accent slot of the occupant that sent one MSG, which its quote's rail

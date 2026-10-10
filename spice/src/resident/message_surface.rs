@@ -705,6 +705,7 @@ struct PresentationDirective {
     actor: wire::Actor,
     /// Exact occupant that authored the directive as an MSG packet.
     sender: Option<CanonicalUuid>,
+    recipient: Option<wire::MessageDestination>,
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
     retirement: Option<wire::body::TranscriptLocus>,
@@ -784,6 +785,12 @@ impl PresentationDirectives {
                         .fact
                         .read::<wire::body::SteerMessaged>()
                         .map(|message| message.sender),
+                    recipient: row.created().fact.read::<wire::body::SteerMessaged>().map(
+                        |message| wire::MessageDestination {
+                            lane: message.lane,
+                            occupant: message.occupant,
+                        },
+                    ),
                     published: row.created().at,
                 },
             );
@@ -974,6 +981,7 @@ fn hydrate_directive_contexts(
                 authored: directive.published,
                 badge: directive.badge(),
                 sender: directive.sender,
+                recipient: directive.recipient,
             })
         })
         .collect()

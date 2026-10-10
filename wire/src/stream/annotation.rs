@@ -63,6 +63,20 @@ pub struct MessageDirective {
     /// context names instead of whoever now represents the sending lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<crate::CanonicalUuid>,
+    /// Exact destination of an authored peer message. Classification badges
+    /// do not change this provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<MessageDestination>,
+}
+
+/// A peer message's immutable destination, independent of current seating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageDestination {
+    /// Lane the published message addressed.
+    pub lane: crate::CanonicalUuid,
+    /// Occupant seated there when the message was published.
+    pub occupant: crate::CanonicalUuid,
 }
 
 impl MessageDirective {
@@ -75,6 +89,8 @@ impl MessageDirective {
         start < end
             && text.get(start..end).is_some()
             && matches!(&self.quote_target, QuoteTarget::Steering { .. })
+            && (self.recipient.is_none()
+                || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_))))
     }
 }
 /// Whether directive contexts are exact, ordered, and non-overlapping.
