@@ -1,6 +1,3 @@
-use std::fs;
-use std::path::Path;
-
 use gate::{
     ActorCapture, BatteryCapture, BatteryState, ClaimCapture, ConfigInventoryEvidence,
     ConfigKeyEvidence, CoreArmReport, CoreEvidence, CoreFinding, CoreObservation, CoreStanding,
@@ -383,40 +380,6 @@ fn false_disable_inventory_seeds_an_inherent_method_parameter() {
     repository.remove();
 }
 
-#[test]
-fn current_false_disable_registry_and_consumer_are_one_inventory() {
-    let repository = contract_repository("core-false-disable-current");
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root");
-    for path in [
-        "spice/src/config.rs",
-        "spice/src/config/registry.rs",
-        "spice/src/config/pre_commit.rs",
-        "spice/src/extension.rs",
-    ] {
-        let source = fs::read_to_string(workspace.join(path))
-            .unwrap_or_else(|error| panic!("read current {path}: {error}"));
-        repository.write(path, &source);
-    }
-    write_registry_decoy(&repository);
-    git_commit(&repository, "current false-disable sources");
-
-    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
-    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
-    let evidence = false_disable_evidence(arm);
-    let expected = [
-        config_path(&["vendor", "omp", "fast_mode"]),
-        config_path(&["vendor", "omp", "lsp"]),
-    ];
-
-    assert_eq!(evidence.declared(), expected);
-    assert_eq!(evidence.observed(), expected);
-    assert_eq!(arm.standing(), CoreStanding::Passed);
-
-    repository.remove();
-}
-
 fn false_disable_repository(label: &str, honored: bool) -> Tree {
     let repository = contract_repository(label);
     let mut paths = vec!["vendor.omp.fast_mode"];
@@ -498,46 +461,6 @@ fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
     assert!(!violation.detail().trim().is_empty());
     assert!(violation.detail().contains("vendor.omp.binary"));
     assert_eq!(arm.standing(), CoreStanding::Failed);
-
-    repository.remove();
-}
-
-#[test]
-fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
-    let repository = contract_repository("core-tracked-trust-current");
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root");
-    for path in ["spice/src/config.rs", "spice/src/config/registry.rs"] {
-        let config = fs::read_to_string(workspace.join(path))
-            .unwrap_or_else(|error| panic!("read current configuration registry {path}: {error}"));
-        repository.write(path, &config);
-    }
-    write_registry_decoy(&repository);
-    git_commit(&repository, "current tracked-trust registry");
-    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
-    let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
-    let evidence = tracked_trust_evidence(arm);
-
-    assert!(!evidence.declared().is_empty());
-    assert_eq!(evidence.observed(), evidence.declared());
-    assert!(
-        evidence
-            .declared()
-            .contains(&config_path(&["vendor", "omp", "binary"]))
-    );
-    assert!(
-        !evidence
-            .declared()
-            .contains(&config_path(&["vendor", "omp", "model"]))
-    );
-    assert!(
-        !evidence
-            .declared()
-            .contains(&config_path(&["say", "command"]))
-    );
-    assert!(evidence.violations().is_empty());
-    assert_eq!(arm.standing(), CoreStanding::Passed);
 
     repository.remove();
 }

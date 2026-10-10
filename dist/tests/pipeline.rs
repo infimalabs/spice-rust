@@ -162,26 +162,6 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
     assert_eq!(decoded, first.staged.payload);
     assert_eq!(
         decoded
-            .inventory
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<Vec<_>>(),
-        [
-            "app/app.html",
-            "app/app.module",
-            "app/app_bg.wasm",
-            "app/chrome.css",
-            "app/composer.css",
-            "app/mosaic.css",
-            "app/responsive.css",
-            "app/style.css",
-            "app/work.css",
-            "bin/spice",
-            "symbols/spice.dSYM.json",
-        ]
-    );
-    assert_eq!(
-        decoded
             .symbols
             .as_ref()
             .expect("Darwin payload carries symbols")

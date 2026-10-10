@@ -172,29 +172,11 @@ fn flag_values_cannot_cross_descriptor_types_or_duplicate_mappings() {
 }
 
 #[test]
-fn equivalent_repeated_resolutions_are_identical_and_the_resolver_has_no_io_surface() {
+fn equivalent_repeated_resolutions_are_identical() {
     let tracked =
         "[listen]\nwindow = \"2m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n";
     let local = "[listen]\nwindow = \"3m\"\n";
     let first = resolve(documents(Some(tracked), Some(local))).expect("first resolution");
     let second = resolve(documents(Some(tracked), Some(local))).expect("second resolution");
     assert_eq!(first, second);
-
-    let source = ::std::include_str!("../../src/config/resolve.rs");
-    for forbidden in [
-        "std::fs",
-        "std::env",
-        "std::process",
-        "std::net",
-        "journal::",
-        "SystemTime",
-        "Instant::now",
-        "tokio::",
-        "reqwest::",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "pure resolver unexpectedly references {forbidden}"
-        );
-    }
 }

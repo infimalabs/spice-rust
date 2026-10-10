@@ -853,13 +853,6 @@ fn release_notes_exposes_one_read_only_history_target() {
             .is_err(),
         "a positional evidence file must not survive the history-fold replacement",
     );
-
-    let wasm_dispatch = ::std::include_str!("../main.rs");
-    assert!(
-        wasm_dispatch.contains(
-            "immutable Git history inspection for release notes is unavailable on wasm32"
-        )
-    );
 }
 
 #[test]

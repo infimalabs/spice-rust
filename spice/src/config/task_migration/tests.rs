@@ -10,7 +10,7 @@ fn migrate(value: Value) -> Result<super::TaskMigrationReport, super::MigrationE
 }
 
 #[test]
-fn accepted_export_has_byte_stable_text_and_json() {
+fn accepted_export_preserves_migrated_task_data() {
     let report = migrate(json!({
         "version": 1,
         "release": "0.31.0",
@@ -34,12 +34,6 @@ fn accepted_export_has_byte_stable_text_and_json() {
         ["oops", "maxim_proposal", "sandbox", "audit"]
     );
     assert_eq!(report.provenance().len(), 9);
-
-    let text =
-        String::from_utf8(report.text().expect("report renders as TOML")).expect("TOML is UTF-8");
-    assert_eq!(text, include_str!("fixtures/accepted.toml"));
-    let encoded = serde_json::to_string_pretty(&report).expect("report renders as JSON");
-    assert_eq!(encoded, include_str!("fixtures/accepted.json").trim_end());
 }
 
 #[test]

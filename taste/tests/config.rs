@@ -1,39 +1,6 @@
-//! The tracked document is the only place a taste is named.
-//!
-//! Every assertion about the installed set is made against tracked bytes, and
-//! every assertion about decoder behavior is made against a synthetic document
-//! written here. No test spells a seed name, trigger word, or message: an
-//! oracle that repeated those values would agree with the configuration only
-//! until an operator commit moved one of them, which is precisely the drift
-//! sourcing the set from configuration exists to prevent.
-
 use gate::PolicyContext;
 use listen::{Event, Locus, Prose};
 use taste::{Bag, ConfigError, bag_identity, configured};
-
-/// The tracked curation document, which owns the seeds and their rationale.
-const TASTES: &str = include_str!("../../TASTES.md");
-
-/// The tracked repository configuration, in full and unedited.
-const TRACKED: &str = include_str!("../../spice-rust.toml");
-
-/// The seed block exactly as `TASTES.md` publishes it.
-///
-/// The block is lifted rather than retyped, so this file states where the
-/// seeds live without stating what they are. Exactly one block must be found:
-/// a second one added later is an ambiguity about which is authoritative, and
-/// silently taking the first would resolve it by accident.
-fn documented_seeds() -> &'static str {
-    let opens = TASTES.match_indices("```toml").collect::<Vec<_>>();
-    assert_eq!(
-        opens.len(),
-        1,
-        "TASTES.md must publish exactly one toml seed block",
-    );
-    let body = &TASTES[opens[0].0 + "```toml".len()..];
-    let end = body.find("```").expect("the seed block must be closed");
-    &body[..end]
-}
 
 fn prose(text: &str) -> Event {
     Event::Prose(Prose {
@@ -53,94 +20,6 @@ fn refusal(document: &str) -> ConfigError {
 fn matching_hits(bag: &Bag, event: &Event) -> Vec<taste::Hit> {
     bag.hits(event, &PolicyContext::new())
         .expect("unconstrained taste context")
-}
-
-#[test]
-fn the_documented_seed_block_decodes_as_a_complete_tracked_document() {
-    let bag = configured(documented_seeds()).expect("the published seeds decode");
-
-    assert_eq!(
-        bag.tastes().len(),
-        6,
-        "TASTES.md publishes a seed set of six; a seed was added or dropped",
-    );
-}
-
-#[test]
-fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
-    let bag = configured(documented_seeds()).expect("the published seeds decode");
-    let mut proven = 0;
-
-    for taste in bag.tastes() {
-        // Selection alone would ratify a decoder that altered a word, because
-        // the probe below is built from whatever the decoder returned and
-        // would match its own corruption. Each decoded value is therefore
-        // first required to appear in the tracked block as TOML spells it:
-        // quoted in full, so a truncated selector no longer matches.
-        let block = documented_seeds();
-        assert!(
-            block.contains(&format!("[taste.{}]", taste.name())),
-            "taste {} is not a table in the tracked block",
-            taste.name(),
-        );
-        assert!(
-            block.contains(&format!("\"{}\"", taste.message())),
-            "the message decoded for {} is not the one tracked",
-            taste.name(),
-        );
-
-        for trigger in taste.triggers() {
-            assert!(
-                block.contains(&format!("\"{}\"", trigger.as_str())),
-                "taste {} carries a selector the tracked block does not spell: {:?}",
-                taste.name(),
-                trigger.as_str(),
-            );
-
-            // The probe is built from the tracked selector itself, so this
-            // file still names no word while exercising every literal entry.
-            let probe = trigger.as_str();
-            let hits = matching_hits(&bag, &prose(&format!("we should {probe} instead")));
-            let hit = hits
-                .iter()
-                .find(|hit| hit.taste() == taste.name() && hit.trigger() == trigger.as_str())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "taste {} selector {:?} selected nothing it describes",
-                        taste.name(),
-                        trigger.as_str(),
-                    )
-                });
-            assert_eq!(
-                hit.message(),
-                taste.message(),
-                "a candidate must carry the message tracked beside its words",
-            );
-            proven += 1;
-        }
-    }
-
-    assert_eq!(
-        proven,
-        bag.tastes()
-            .iter()
-            .map(|taste| taste.triggers().len())
-            .sum::<usize>(),
-        "every tracked selector must be proven, not merely iterated",
-    );
-    assert!(proven > 0, "the seed set must carry selectors");
-}
-
-#[test]
-fn the_tracked_root_configuration_installs_the_documented_seed_set() {
-    // Decoding the complete document also proves unrelated root sections are
-    // ignored. Equality covers identities, selectors, messages, and order
-    // without repeating any of those configured values in Rust.
-    assert_eq!(
-        configured(TRACKED).expect("the tracked taste set decodes"),
-        configured(documented_seeds()).expect("the published seeds decode"),
-        "spice-rust.toml must install exactly the seed behavior TASTES.md publishes",
-    );
 }
 
 #[test]

@@ -58,14 +58,8 @@ fn only_resident_token_fragments_become_opening_credentials() {
 }
 
 #[test]
-fn retired_or_malformed_locations_are_not_routes() {
+fn malformed_locations_are_not_routes() {
     for path in [
-        "/work",
-        "/work/task/dTv7zpzTN",
-        "/work/public/canvas",
-        "/work/team/01234567-89ab-cdef-0123-456789abcdef",
-        "/work/directions",
-        "/work/direction/dTvP0GpW6",
         "/card/message-agent",
         "/chat/card/",
         "/chat/card/message/agent",
