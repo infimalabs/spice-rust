@@ -4,7 +4,7 @@
 
 Allocation, handoffs, locality, and the dry-board result live in the
 [work register](../invariants/identity.md#work-allocation-ranks-in-a-fixed-ladder).
-Steering escalation lives in the [steering loop](../loops.md#l-steer--intent-made-durable).
+Steering escalation lives in the [steering register](../invariants/identity.md#steering-escalation-is-driven-by-silence-measured-from-publication).
 
 ## Closed loop: Capacity — the work-availability wake
 

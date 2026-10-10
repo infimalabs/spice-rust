@@ -1,17 +1,15 @@
 # Operating loops
 
-The transformative loops this appliance runs, stated independently of the
-language, framework, or visual spelling that realizes them.
+The loops Spice runs and the state machines they keep. Contracts with a home in
+the [invariant register](invariants.md) are linked, not restated.
 
 ---
 
-
 ## L-TASK — the unit of work
 
-**Intent.** A task moves through named phases, and every accepted advance is an
-attested journal fact. New task-owned work additionally publishes one
-synthesized mutating landing; when the baseline already contains that work,
-integration advances or fast-forwards without a synthetic merge.
+**Intent.** A task moves through named phases, and every accepted advance is a
+journal fact. [Claims and allocation](invariants/identity.md#work-claims-and-allocation)
+govern who holds it.
 
 Stored workflow status is one small machine:
 
@@ -37,59 +35,15 @@ stateDiagram-v2
   lapsed --> [*]
 ```
 
-Voluntary release is one guarded Git-and-journal transition:
+Renewal, carry, rebound, and steal add no disposition:
 
 ```mermaid
 flowchart LR
-  A["active self-held claim"] --> M{"open merge or paused replay?"}
-  M -- yes --> X["refusal;<br/>claim and lane unchanged"]
-  M -- no --> C{"lane dirty?"}
-  C -- yes --> S["commit-tree saves dirty work<br/>as a dangling snapshot"]
-  C -- no --> P["retain exact SHAs of lane commits<br/>the published upstream lacks"]
-  S --> P
-  P --> R["reset lane to newest<br/>published lane commit"]
-  R --> F["claim&#58;&#58;freed records<br/>commits and optional snapshot"]
-  F --> N["next claim replays real commits,<br/>then restores snapshot uncommitted"]
-```
-
-Release needs no claim-time baseline. However far a relaunch fast-forwarded the
-lane, the parked commits are exactly the lane commits the published upstream
-does not contain. Without an upstream, the claim-time head stands in for
-published history. A dirty lane additionally saves its tracked, staged, and
-non-ignored untracked worktree content through a temporary index and
-`commit-tree -p HEAD`; its original index remains available for guarded rollback.
-
-Saved commits and snapshots are intentionally unreachable: Spice creates no
-stash or preservation ref. Before moving a claimant's lane, every parked object
-must exist; a pruned object refuses `git::parked-object-missing` without changing
-the board or lane. The next claim replays real commits oldest first onto its
-fast-forwarded HEAD. Its answer's `transplant` names the commits applied or
-already present, and the separate worktree snapshot. That snapshot is applied
-with no commit, so restored work must still pass the ordinary pre-commit gate.
-
-A real-commit conflict leaves Git's cherry-pick paused for the claimant, with
-later commits queued behind it. A snapshot waits behind that sequence in the
-durable task Git marker; after resolving the committed replay, retry task
-completion to restore the snapshot uncommitted. Snapshot conflicts are resolved
-and staged as ordinary unfinished work, not continued into a snapshot commit.
-Open merges and paused replays cannot be parked as another snapshot.
-
-Plan completion uses the same guarded parking before advancing to `todo`:
-in-flight edits survive without authorizing implementation commits in `plan`.
-
-Deferral by the holder uses that same release transaction before recording the
-deferral. Deferral by another actor changes scheduling only; it does not take
-possession from the holder or move that holder's lane.
-
-The surrounding fact and command vocabulary does not add dispositions:
-
-```mermaid
-flowchart LR
-  A["active claim"] --> R["claim::renewed<br/>lease only"] --> AR["same active claim"]
-  A --> C["claim::carried<br/>successor occupant"] --> AC["active retained"]
-  A --> B["claim::rebound<br/>residency repaired"] --> AB["active retained"]
+  A["active claim"] --> R["renewed: lease only"] --> AR["same active claim"]
+  A --> C["carried: successor occupant"] --> AC["active retained"]
+  A --> B["rebound: residency repaired"] --> AB["active retained"]
   A --> S{"exact steal admitted?"}
-  S -- yes --> W["new claim::won"] --> N["new holder active"]
+  S -- yes --> W["new claim won"] --> N["new holder active"]
   S -- no --> F["refusal; no replacement"]
 ```
 
@@ -105,7 +59,8 @@ flowchart LR
 ```
 
 Landing is the Git consequence of one class of accepted advance, never a stored
-workflow or claim state:
+workflow or claim state; the [integration boundaries](model/boundaries.md#the-three-lane-integration-git-boundaries)
+govern it:
 
 ```mermaid
 flowchart TD
@@ -113,104 +68,62 @@ flowchart TD
   X -- no --> P["next phase;<br/>status remains pending"]
   X -- yes --> C["status becomes completed"]
   A --> T{"tree consequence?"}
-  T -- "new task-owned tree" --> L["one attested synthesized<br/>baseline-first landing / merge"]
-  T -- "baseline already contains work" --> F["advance / fast-forward;<br/>no synthetic merge"]
+  T -- "new task-owned tree" --> L["one synthesized<br/>baseline-first landing"]
+  T -- "baseline already contains work" --> F["fast-forward;<br/>no synthetic merge"]
   T -- "no tree change" --> J["no Git merge"]
+```
+
+Voluntary release is one guarded Git-and-journal transition:
+
+```mermaid
+flowchart LR
+  A["active self-held claim"] --> M{"open merge or paused replay?"}
+  M -- yes --> X["refusal;<br/>claim and lane unchanged"]
+  M -- no --> C{"lane dirty?"}
+  C -- yes --> S["save dirty work<br/>as a dangling snapshot"]
+  C -- no --> P["retain the lane commits<br/>the published upstream lacks"]
+  S --> P
+  P --> R["reset lane to newest<br/>published lane commit"]
+  R --> F["claim freed, recording<br/>commits and optional snapshot"]
+  F --> N["next claim replays real commits,<br/>then restores snapshot uncommitted"]
 ```
 
 **Invariants**
 
-- Every task names an origin realm with the open wire shape
-   `<nonempty-class>:<nonempty-value>`. `ack:<key>` and
-   `task:<born-stamp>` are ordinary conventions; typed system routes
-   conventionally use proved `gate:<report-digest>` or
-   `doc:<preview-digest>` causes. Other authored classes pass unchanged.
-- `workflow.status` is exactly `pending`, `completed`, or `deleted`. Deferral,
-   dependency blocking, readiness, active possession, and landing are not
-   workflow statuses.
-- At most one active claim per actor, at most one actor per claim.
-- `claim::won` mints an `active` head; `claim::renewed`, `claim::carried`, and
-   `claim::rebound` retain `active` while changing their named lease or residency
-   fields. An exact steal is a guarded replacement that emits a new
-   `claim::won`, not a `stolen` disposition.
-- A live claim's lease rolls with its occupant: while the claim's lane still
-   seats the occupant that holds it, the resident extends the lease on its own
-   rolling horizon, so a lapse follows the occupant leaving rather than one long
-   foreground command outliving a fixed lease. An occupant that ends its turn
-   on an unfinished deadline-bounded job leaves the vacant lane's lease rolling
-   until one rolling window past that job's admitted expiry (deadline plus the
-   keeper's terminate and delivery grace), never further, so the successor the
-   keeper wakes still finds the claim live; a service never extends it, and
-   another occupant taking the seat stops it. A lease iced on the canonical
-   indefinite horizon is the one live lease that never rolls.
-- `task free`, self-deferral, and plan-phase release never strand unfinished
-  work on a lane. Release parks unpublished commit identities and an optional
-  dangling worktree snapshot under the task, returns the lane to its newest
-  shared published commit, and records the coordinates with `claim::freed`.
-  The next claim restores real commits first and dirty content uncommitted.
-- Failed guarded journal writes are atomic refusals: the claim and lane return
-  to their pre-command state, including the original staged/worktree split on
-  release and abandoning a paused or dirty replay on claim.
-- Dirty-handoff recovery has two explicit ownership boundaries. `task recover
-  HANDLE` seals a dirty generation before claiming an existing ready task.
-  `task add TITLE --project PROJECT --recover` creates a new target and its
-  recovery-identified active claim in one guarded journal transaction; it is
-  mutually exclusive with `--claim`, so no board read can select the new row
-  between creation and possession.
-- Restart reconciles by the sealed transaction identity. The exact active
-  recovery claim replays once. If another claim moved the target first,
-  `task recover --restore` (with no handle) leaves the task unchanged, restores
-  the original staged, unstaged, and untracked generation, and retires only
-  that quarantine. A moved repository boundary, unexpected dirty path, active
-  claim held by the restoring actor, or mismatched recovery identity refuses
-  without deleting the quarantine.
-- A peer-authored deferral does not release another actor's claim.
-- Every phase transition is accepted into the durable task journal and appears
-   through the board projection, including a transition that changes no tree.
-- When integration must synthesize a new mutating landing, it creates exactly one
-   merge whose first parent is the baseline. A baseline that already contains the
-   work instead fast-forwards with no synthetic merge. The tree is computed before
-   the working tree is mutated, so the visible terminal state is either the
-   untouched pre-merge tree or a recoverable merge. Never a half-installed
-   conflict.
-- The publication carries `Task-Key`, `Task-Project`, `Task-Phase`,
-   `Task-Session`. First-parent history is the ledger of mutating landings, not
-   the authority for every phase transition.
-- An accepted lapse transition changes claim disposition to `lapsed` without
-   losing work committed under the claim. Readers then recompute readiness from
-   every current eligibility predicate.
-- Self-authored review is the last-resort eligibility class, never a
-   refusal. A peer wins whenever one exists; a solo agent still progresses.
-- A review that changes nothing still advances the phase. Absence of a
-   commit is not absence of review.
-
-**Policy** — a manual claim opens with a 3600s lease and a 7200s renewal maximum
-that the resident then rolls while the occupant holds the lane,
-and records the lane's exact accounted source boundary. `task add --flow`
-passes one explicit comma-separated route to the resident, which applies the
-ordinary phase grammar. With no named flow, a task lacking acceptance receives
-`plan` to `todo` to `review`; every other task receives `todo` to `review`,
-independent of visibility. A hidden `.oops` row is parked in `plan` but retains
-the complete `plan` to `todo` to `review`
-flow and leaves `.oops` only through an explicit `task wake`.
-`task oops --project PROJECT` parks the row as `.oops.PROJECT`, refusing a
-project manual filing would not admit. `task wake --into PROJECT` names the
-destination outright; a bare wake promotes into the parked recommendation while
-it still passes manual admission, otherwise into `task` followed by the parked
-segments up to the minimum public depth (`.oops` becomes `task.oops`). Every
-destination passes manual admission or the wake refuses without writing. The
-parked row keeps the `OOPS` handle family; promotion renames it. Self-authored
-review is a last-resort eligibility class, not an urgency coefficient.
-
-**Incidental** — the task store, the handle alphabet, concrete phase names, and
-flow length beyond the nonempty, unique-name membership law. The three workflow
-statuses and three claim dispositions are not incidental.
-
-**Acceptance** — journal authority and the board reconstruct every accepted phase
-transition; first-parent history of the explicitly resolved integrated baseline
-or release commit reconstructs the mutating landing subset; after an accepted
-lapse, the task becomes selectable if every other predicate admits it; a solo
-agent completes a review phase.
+- `pending`, `completed`, and `deleted` are the only workflow statuses, and
+  `active`, `freed`, and `lapsed` the only claim dispositions. Deferral,
+  dependency blocking, readiness, possession, and landing are projections.
+- Release never strands unfinished work on a lane. The parked commits are
+  exactly the lane commits the published upstream lacks, or, without an
+  upstream, those after the claim-time head; a dirty lane also parks its
+  tracked, staged, and non-ignored untracked content as a snapshot. Parked
+  objects are intentionally unreachable: Spice creates no stash or preservation
+  ref, and a pruned object refuses the next claim without changing the board or
+  the lane.
+- The next claim replays real commits oldest first, then applies the snapshot
+  without committing it, so restored work still passes the ordinary pre-commit
+  gate. A conflicting commit leaves the replay paused for the claimant with the
+  snapshot waiting behind it until task completion is retried.
+- `task free`, the holder's own deferral, and plan completion all park this way.
+  A peer's deferral changes scheduling only and never takes possession.
+- A failed guarded write is an atomic refusal: the claim and lane return to
+  their prior state, including the staged and worktree split.
+- Dirty-handoff recovery has two ownership boundaries. `task recover HANDLE`
+  seals a dirty generation before claiming an existing ready task; `task add
+  --recover` creates the target and its recovery claim in one transaction, so no
+  board read can select the row between creation and possession. After a
+  restart the exact recovery claim replays once; if another claim moved the
+  target first, `task recover --restore` restores the sealed generation and
+  leaves the task unchanged, refusing rather than deleting the quarantine on any
+  mismatch.
+- Every phase transition is a journal fact visible on the board, including one
+  that changes no tree. A landing commit carries the task's key, project, phase,
+  and session trailers; first-parent history records mutating landings, not
+  every transition.
+- With no named flow, a task runs `todo` then `review`, with `plan` first when
+  it lacks acceptance. `task oops` parks a row in plan on a hidden `.oops`
+  channel; only an explicit `task wake` promotes it, and every destination
+  passes manual admission.
 
 ---
 
@@ -218,7 +131,9 @@ agent completes a review phase.
 
 **Intent.** After journal acceptance returns a live durable key, operator intent
 survives failures until the agent answers it. Before that boundary, the
-browser-local queued or sent prediction remains ephemeral.
+browser-local queued or sent prediction remains ephemeral. The
+[steering register](invariants/identity.md#steering) states delivery,
+answering, escalation, and recovery.
 
 ```mermaid
 stateDiagram-v2
@@ -227,59 +142,13 @@ stateDiagram-v2
   live --> declined: agent NAK
   live --> canceled: operator cancellation
   live --> lapsed: lapse transaction accepted
-  live --> deadlettered: PendingInbox automatic wake is Unstarted or terminal-class failed
+  live --> deadlettered: terminal pending-inbox wake failure
   lapsed --> live: recovery retains presentation stage
   deadlettered --> live: recovery retains presentation stage
   acked --> [*]
   declined --> [*]
   canceled --> [*]
 ```
-
-```mermaid
-flowchart LR
-  J["journal standing is live<br/>with retained presentation stage"] --> S["authenticated supervisor read<br/>at startup or resident kick"]
-  S --> SR["occupant-local dedupe, nudge,<br/>interruption, and compaction reset"]
-  SR --> U["observation only;<br/>journal standing and stage unchanged"]
-```
-
-**Invariants**
-
-- The journal fact and current pending head exist before any delivery reader is
-  notified. Recovery preserves identity, lineage, presentation stage, and
-  presentation history.
-- A read changes neither disposition nor presentation stage. At every live
-   stage, `acked`, `declined`, `canceled`, `lapsed`, and `deadlettered` are the
-   same typed exits.
-- A reasoned refusal retires the item as `declined`, just as acknowledgement
-   retires it as `acked`. Decline must be as reachable as acknowledgement
-   everywhere acknowledgement is taught.
-- Unanswered intent escalates on a stable lineage key. A resend
-   is the same intent insisting, not a new intent.
-- Only a `PendingInbox` automatic wake that returns `Unstarted` or a
-   terminal-class start failure moves every pending directive on that lane to
-   `deadlettered` through an accepted transaction. Each retains its live
-   presentation stage; prior delivery is not a prerequisite. Held-claim,
-   capacity, operator-start, nonterminal-error, and arbitrary delivery-failure
-   paths do not deadletter.
-- Delivery runs through the command-driven supervisor, which queries the
-  current authenticated journal inbox directly. It catches up at occupant start, reads again on resident kicks,
-  deduplicates unchanged renderings, nudges repeated keys, interrupts active
-  commands for unheard direction, and resets occupant-local telling state after
-  compaction. Descendant shells remain unmodified.
-- Submit cost is independent of backlog depth; the journal allocates identity
-   without reading queued bodies.
-
-**Policy** — 24h lapse threshold; every directive follows the same named
-escalation cadence.
-
-**Incidental** — the rendered interjection format and the key alphabet.
-
-**Acceptance** — before the authority returns a live durable key, the
-browser-local queued or sent prediction may be lost with the browser; durability
-has not crossed. After the key returns, kill the browser or the agent: the item
-survives and remains pending. Answer only that live key: the count drops by one.
-A response that dispositions several live keys drops it by the number
-dispositioned.
 
 ---
 
@@ -288,9 +157,8 @@ dispositioned.
 **Intent.** Capacity follows work. Lifecycle authority may seat one new occupant
 in a vacant lane when derived eligible work warrants it. Every occupant turn
 ends by vacating its lane; only a later serialized lifecycle decision may launch
-another. Ordinary capacity therefore needs no hand-managed agent count; the
-explicit operator-authorized lane-wake route remains available, including for a
-Drain lane.
+another. Ordinary capacity needs no hand-managed agent count; the
+operator-authorized lane wake remains available, including for a Drain lane.
 
 The detached supervisor records the phase of one process turn:
 
@@ -305,27 +173,22 @@ stateDiagram-v2
   failed --> [*]
 ```
 
-No supervisor request is published until the lane's worktree is admitted as a
-root inside the resident's own Git common directory. A lane naming another
-repository's worktree, as in a resident started on a copied journal, parks with
-a refusal; the resident and its other lanes continue.
-
-The UI independently derives lane presentation; pending steering outranks
-liveness:
+The UI derives lane status independently; pending direction that can wake the
+lane outranks liveness:
 
 ```mermaid
 flowchart TD
-  Q{"pending steering?"}
+  Q{"pending waking direction?"}
   Q -- yes --> QUEUED["queued"]
-  Q -- no --> L{"resident liveness projection"}
+  Q -- no --> L{"resident liveness"}
   L -- working --> WORKING["working"]
   L -- running --> RUNNING["running"]
+  L -- "vacant, a job's ending owed" --> WAITING["waiting"]
   L -- "vacant, session declared" --> BOUND["bound"]
   L -- "vacant, never bound" --> UNBOUND["unbound"]
 ```
 
-Durable resident lifecycle is a third layer. Its staged vocabulary is separate
-from both supervisor phase and UI status; resident replacement may move directly
+Resident lifecycle is a third vocabulary; resident replacement may move directly
 to `dark` while detached supervisors remain live:
 
 ```mermaid
@@ -334,85 +197,59 @@ flowchart LR
   S -. "resident replacement;<br/>supervisors survive" .-> X
 ```
 
-The wake decision itself is the hardened part:
+The wake decision:
 
 ```mermaid
 flowchart TD
-  B["board scan"] --> H{"selected row carries<br/>a phase handoff?"}
-  H -- yes --> W["select ONE vacant lane immediately:<br/>ordinary work before a lane's own last resort,<br/>then configured claim order (lane.wake_order)"]
-  H -- no --> R{"derived eligible count<br/>is at least 2?"}
-  R -- yes --> S{"selected row's READY origin<br/>aged at least 3s?"}
-  R -- no --> L{"lone row aged<br/>at least 3 min?"}
+  B["board scan selects<br/>the lane's next row"] --> H{"selected row carries<br/>a phase handoff?"}
+  H -- yes --> W["wake ONE vacant lane<br/>in configured claim order"]
+  H -- no --> R{"at least 2 eligible rows?"}
+  R -- yes --> S{"selected row's READY origin<br/>aged past the settle interval?"}
+  R -- no --> L{"lone row aged past<br/>the starvation age?"}
   S -- yes --> W
   S -- no --> B
   L -- yes --> W
   L -- no --> B
-  W --> C["capacity, selection, claim::won,<br/>and supervisor start<br/>= one serialized decision"]
+  W --> C["capacity, selection, claim,<br/>and supervisor start<br/>= one serialized decision"]
   C --> B
 ```
 
 **Invariants**
 
-- Supervisor phase is exactly `starting`, `running`, `exited`, or `failed`; UI
-   lane presentation is exactly `queued`, `working`, `running`, `waiting`,
-   `bound`, or `unbound`; resident lifecycle is exactly `seated`, `quiescing`,
-   `draining`, `terminating`, `killing`, `verifying`, or `dark`. These
-   vocabularies do not form one machine.
-- Every agent turn or process exit, including code zero, ends that occupant and
-   vacates the lane. `working` and `waiting` may describe activity inside one
-   supervisor's `running` turn; neither persists after its exit. A detached job
-   continues, and an ending left unheard through its delivery grace requests a
-   lane wake so startup catch-up can deliver the completion.
-- Wake launches **exactly one** occupant per decision. Capacity check, candidate
-   selection, claim win, and startup are a single serialized decision; a later
-   inventory refresh must observe the occupied lane before capacity can expand
-   again.
-- Supervisor session proof does not occupy the resident writer. Admission and
-  spawn remain part of the serialized decision; a worker blocks on the
-  supervisor's state watcher, and one completion event returns the retained
-  authority to the resident for revalidation, start commit or failure
-  compensation, and only then the wake answer. No resident timer observes
-  progress, so unrelated controls continue while proof is pending. Going dark
-  first settles every pending proof the same way, because a successor
-  generation adopts only committed occupants: a proven occupant commits and is
-  adopted, a failed one is compensated, and its waker is answered before the
-  dark reply.
-- Two ready tasks are the normal trigger — one for the new occupant to claim,
-   one left on the board. READY is a derived eligibility projection and
-   excludes active claims, so occupied lanes do not inflate the backlog count.
-- A single ordinary ready task is never stranded. After the starvation age, one
-   is enough. This is an *age*, not a retry interval.
-- Newly ready ordinary work [settles before lifecycle wakes
-   it](model/decisions.md#closed-loop-capacity--the-work-availability-wake).
-- Rendering never launches. The snapshot, the live bus, and the UI
-   project settled decisions; no read path can start or renew an occupant.
-- Decisions for one worktree are serialized; sibling lanes proceed
-   independently.
-
-**Policy** — start threshold 2, starvation 180s, settle 3s, ensure retry 5s.
-
-**Incidental** — the scan trigger, process primitive, and transport. The
-supervisor-phase, UI-presentation, and resident-lifecycle vocabularies are not.
-
-**Acceptance** — file two eligible tasks with every lane vacant: exactly one new
-occupant starts. File one ordinary task and wait: one starts after the starvation
-age, not before. Transition a phase under a durable handoff: its selected owner
-starts without those ordinary ages. Let any turn exit, including code zero: its
-lane becomes vacant. File a burst at once: occupants still come up one decision
-at a time.
-
-> **Rendering never launches is the invariant most likely to be lost.** It is
-> very natural to let a lane "ensure" an occupant while rendering. That makes
-> opening a browser tab a
-> side-effecting act and turns a refresh into a fleet-wide launch storm.
+- Supervisor phase, UI lane status, and resident lifecycle are separate
+  vocabularies and do not form one machine.
+- Every turn or process exit, including code zero, ends that occupant and
+  vacates the lane. [Kept jobs](planes/hooks.md#cadence-is-reachability) deliver
+  their endings to a later occupant.
+- No supervisor request is published until the lane's worktree is admitted as a
+  root inside the resident's own Git common directory. A lane naming another
+  repository's worktree parks with a refusal; the resident and its other lanes
+  continue.
+- Two ready tasks are the normal trigger: one for the new occupant to claim, one
+  left on the board. READY excludes active claims, so occupied lanes do not
+  inflate the count. A single ordinary task is never stranded: after the
+  starvation age, one is enough. That is an age, not a retry interval.
+- Lifecycle first selects the row allocation would give the lane, then times
+  the wake from that row's own READY transition, not the newest row on the
+  board. A Drain team with no occupied member settles its first wake even for a
+  lone row. A selected phase handoff wakes at once; a lane its ownership window
+  temporarily excludes is reconsidered when that window ends.
+- Proving a new occupant's session does not hold the resident writer, so
+  unrelated controls continue while proof is pending. Going dark first settles
+  every pending proof, because a successor generation adopts only committed
+  occupants.
+- Rendering never launches. The snapshot, the live bus, and the UI project
+  settled decisions; no read path can start or renew an occupant. Otherwise
+  opening a browser tab becomes a side effect and a refresh a fleet-wide launch
+  storm.
 
 ---
 
 ## L-LANE — the place
 
 **Intent.** A lane is an independently steerable worktree seat, not the agent.
-It is the stable address for attention, drafts, and history; a team
-groups one or more lanes into one console and owns their shared task policy.
+It is the stable address for attention, drafts, and history; a team groups one
+or more lanes into one console and owns their shared task policy.
 
 ```mermaid
 flowchart LR
@@ -431,84 +268,46 @@ flowchart LR
 
 **Invariants**
 
-- Lane is not agent. Renewal replaces the occupant; history, drafts, and scroll
-   position survive. The team and its shared task policy also remain because
-   renewal does not move the lane. Moving a lane to another team subjects it
-   to that team's policy; policy never follows the lane across that move.
-- Renewal is intent, never a start. A marked lane keeps its mark until the
-   next start of that lane consumes it and launches a fresh successor; the
-   operator can withdraw the mark until then. A live predecessor receives a
-   private preparation notice, never a durable steering message, and is never
-   forcibly terminated; a vacant lane's predecessor is neither started nor
-   notified. Cancellation replaces preparation on the same coalescing aside
-   channel. Exact occupant identity and journal-position ordering prevent a
-   stale request from overriding cancellation or reaching a successor. The
-   successor's startup briefing derives its predecessor's thread and
-   rehydration route from the handoff-pending record, so it too receives no
-   steering message. Startup retires retained handoff directives once,
-   preserving their history; runtime delivery uses only private notices and
-   the derived briefing. While the mark stands, the agent's action menu carries
-   it, so it stays visible after the drawer closes.
-- Model, effort, and fast mode are seat authority. `lane model ID [MODEL]`,
-  `lane effort ID [EFFORT]`, and `lane fast ID on|off` topology-guard and
-  journal the value every future launch reads; model and effort omission
-  restores vendor configuration. Fast mode is additive: a launch runs fast when
-  the seat's flag, its team's flag (`TeamConfigure.fast_mode`, kept on the
-  residency head's team subscription), or the global setting is on. Lane rows
-  report the running `model`/`effort`/`fast_mode` separately from
-  `seat_model`/`seat_effort`/`seat_fast_mode`; a team or seat change that flips
-  a running OMP occupant's effective fast mode asks it live. A command-driven
-  OMP occupant is asked only after the seat or team commits, and its running
-  value changes only after the exact correlated `set_model`,
-  `set_thinking_level`, or `set_fast_mode` response succeeds, journaled against
-  the then-current head while the same occupant still runs. Live model
-  selection requires explicit `provider/model`; bare models, model and effort
-  clears, unsupported occupants, refusals, and interrupted RPC retain the
-  running value. Omp refuses to enable fast mode on a model without a priority
-  tier. An OMP launch states
-  its seat effort through that same `set_thinking_level` command at open,
-  before the first turn and over the level a resumed session restores; its
-  model still rides `--model`, because omp's live `set_model` admits no bare
-  model. A refused opening effort fails the launch.
-- A lane names exactly one worktree seat. A team may hold one or many lanes;
-   the singular team is the degenerate topology, not a different type.
-- Topology is server truth. The client never mounts a lane from local storage;
-   local storage holds only bounded narration cursors, while in-memory reducers
-   hold presentation preferences.
-- A fused team renders one merged stream on one host; every member
-   remains its own concrete send address.
+- Lane is not agent. Renewal replaces the occupant; history, drafts, scroll
+  position, team, and team policy survive because the lane does not move.
+  Moving a lane to another team subjects it to that team's policy.
+- Renewal is intent, never a start. The mark stands until the lane's next start
+  consumes it, and the operator can withdraw it until then. A live predecessor
+  receives a private preparation notice, never a steering message, and is never
+  forcibly terminated; a vacant lane's predecessor is neither started nor
+  notified. The successor's briefing names its predecessor's thread. The
+  agent's action menu shows a standing mark.
+- Model, effort, and fast mode are seat authority that every future launch
+  reads; omitting model or effort restores vendor configuration. Fast mode is
+  additive: a launch runs fast when the seat, its team, or the global setting
+  enables it. Lane rows report running values separately from seat values. A
+  running OMP occupant is retuned only after the seat or team change commits,
+  and its running value changes only when the provider confirms; a bare model, a
+  clear, an unsupported occupant, a refusal, or an interrupted request leaves it
+  unchanged. A launch applies the seat's effort before the first turn, and a
+  refused opening effort fails the launch.
+- A lane names exactly one worktree. A team holds one or many lanes; the
+  singular team is the degenerate topology, not a different type.
+- Topology is server truth. The client never mounts a lane from local storage,
+  which holds only browser preferences and narration cursors.
+- A fused team renders one merged stream on one host; every member remains its
+  own concrete send address.
 - Canonical member order runs from the right control edge: member zero is the
-   main agent and each later member sits one place farther left. Position controls
-   composer order and accent slot, while message chronology and explicit lane
-   attribution do not derive from position. A member that momentarily fails to
-   resolve keeps its seat rather than re-entering at the tail. A member that
-   joins an existing team enters at its tail, so current members keep their
-   positions and accents; only an explicit arrangement reorders them.
-- `Leave all teams` removes one member from its team through the resident, so
-   that member becomes an independent agent in every browser; a team whose last
-   member leaves leaves the lane table. A refusal leaves the team as it was. No
-   browser hides a team locally.
-- Message order is a pure function of the messages, never of member
-   order. Reordering composers must not reorder the stream.
-
-**Policy** — membership is not bounded by the finite accent palette.
-
-**Incidental** — tiling, fuse gestures, menu placement, the accent palette
-itself.
-
-**Acceptance** — renew an agent mid-draft: the draft is still there. Retune a
-running OMP lane with a named effort or exact `provider/model`: running and seat
-values converge only after provider success. Retune an unsupported or
-ambiguous lane: only its seat value changes. Reorder composers: no card moves.
-Kill the server: the topology and seat selections return identically.
+  main agent. Position controls composer order and accent; a member that
+  momentarily fails to resolve keeps its seat, and a joining member enters at
+  the tail, so only an explicit arrangement reorders. Message order is a pure
+  function of the messages, never of member order.
+- `Leave all teams` removes a member through the resident, making it
+  independent in every browser; a team whose last member leaves leaves the lane
+  table. No browser hides a team locally.
+- Membership is not bounded by the finite accent palette.
 
 ---
 
 ## L-DRAFT — the watchband
 
-**Intent.** One strip that is simultaneously the *status face* of every agent in
-the team and the *writing surface* for all of them. You read it like a watch and
-you write into it without leaving it.
+**Intent.** One strip is both the status face of every agent in the team and
+the writing surface for all of them.
 
 ```mermaid
 stateDiagram-v2
@@ -521,106 +320,27 @@ stateDiagram-v2
     accepted --> reconciled: post-acceptance read covers directive and key
     pending --> composing: rejected — drafts restored intact
     reconciled --> [*]
-    note right of pending
-      one shard per member
-      a rejection stops the queue and
-      returns every undelivered draft
-    end note
 ```
 
 **Invariants**
 
-- One horizontal composer column per member, in member order; the strip owns
-   east/west overflow. Each shard is a concrete send address. Nothing is ever
-   broadcast to a team.
+- One composer column per member, in member order. Each shard is a concrete
+  send address; nothing is ever broadcast to a team, so a fused submit enqueues
+  one submission per nonempty shard.
 - A draft is detached at submit. A typed wake, residency, or write refusal or
-   fault restores it intact — including attachments and quote drafts,
-   concatenated newest-last. Transport loss requeues in memory instead.
-- Sends drain serially per lane. A rejection stops the queue and returns
-   every undelivered draft.
-- The pending count is a floor over backend truth. A live acceptance retains its
-   prediction in that floor until a post-acceptance read covers the same directive
-   and key; only then does captured identity retire it — never decrement, never
-   timeout.
-- Unsubmitted intent is protected on page exit: an unsafe draft or queued
-   submission installs the browser's `beforeunload` confirmation guard.
+  fault restores it intact, including attachments and quote drafts,
+  concatenated newest-last. Transport loss requeues in memory instead.
+- Sends drain serially per lane. A rejection stops the queue and returns every
+  undelivered draft.
+- The pending count is a floor over backend truth. A live acceptance keeps its
+  prediction in that floor until a post-acceptance read covers the same
+  directive and key; only captured identity retires it, never a decrement or a
+  timeout.
+- An unsafe draft or queued submission guards page exit with the browser's
+  unload confirmation.
 - A late completion never steals focus the operator has since moved.
-- Shard order runs right-to-left from canonical member zero, and accent advances
-   with that position. Every card explicitly names the lane that would answer it.
-- The band reports state the operator did not ask for: age, run state,
-   pending, claimed task. It is a status surface first and a composer second.
-
-**Policy** — up to 8 attachments per steering send, with at most 3,145,728
-combined data-URL bytes (3 MiB, including base64 expansion and URL prefixes).
-The complete durable envelope must fit within 4,194,304 bytes (4 MiB),
-including escaped text, attachment metadata, and reserved journal cursor width.
-Admission names the violated bound before commit; rejection restores the draft.
-Existing directives and transcript media retain their canonical decoding
-contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
-those bytes is not a new steering send.
-
-**Draft image annotations.** Open a pasted or dropped lane/quote attachment,
-then choose **Annotate** in its full-size preview. The toolbar keeps **Cancel**
-and **Apply** together at the upper right while the editing controls wrap
-independently. **Rectangle**, **Line**, and **Arrow** draw marks in
-original-image coordinates; `V`, `R`, `L`, `A`, and `T` choose Select,
-Rectangle, Line, Arrow, and Text from anywhere in the editor except an active
-text field. The fixed palette (red, yellow, green, blue, black, white) sets the
-colour of new marks, and keys `1` through `6` select those swatches in order.
-Choosing a colour while a mark is selected recolours it as one undoable edit;
-taking up a different tool lets go of the selection so the palette sets up the
-next mark. Labels carry a contrasting halo in every colour, so they read on
-light and dark images, and Apply exports each mark in its on-screen colour.
-
-A line or arrow routes straight; hold Shift while drawing to snap it to 45°
-steps, Alt/Option to route an axis-aligned elbow, or Command/Control to bend a
-curve, and the arrowhead follows the final segment. The route button or `G`
-cycles the selected line or arrow—or the next one drawn—through Straight,
-Elbow, and Curve. **Text** places a label at the pressed point: Enter or leaving
-the field keeps it, Escape abandons it, and an empty label is discarded;
-double-click a label or press Enter on a selected one to edit it again.
-**Select** moves a mark, and the two handles adjust rectangle corners or line
-and arrow endpoints. Selected marks move with arrow keys (Shift moves ten
-pixels), are removed with Delete or Backspace, and use Command/Control+Z,
-Shift+Command/Control+Z, or Command/Control+Y for undo and redo. Escape cancels
-an active label, gesture, or selection first; another Escape leaves annotation
-mode. An interrupted pointer gesture is discarded.
-
-**Apply**, or Command/Control+Enter, replaces that exact draft attachment with
-a native-resolution PNG. The draft retains the original raster and editable
-shape list, so reopening **Annotate** edits the marks, colours included, without
-drawing over previously flattened marks. **Cancel**, closing the preview, or
-leaving its owning composer discards unapplied edits. Identical pasted images
-are separate edit targets; a removed, submitted, or superseded attachment
-cannot receive a stale export.
-
-Original pixels and marks survive optimistic-send refusal restoration, but
-remain browser-local draft state: reloading the page does not persist them.
-The resident receives only the rendered raster under the existing media and
-send-size limits, not an SVG document or editable drawing state. Already-sent
-media, Markdown images, and diagrams retain the read-only Copy/Download/Close
-preview. SVG presentation and direct canvas PNG export require no drawing
-dependency or relaxation of the application CSP.
-
-OMP session records may replace inline image data with
-`blob:sha256:<lowercase-hex>`. Session readers resolve that reference only
-against the OMP state root's `blobs/` directory, require a regular
-non-symbolic file, verify its SHA-256 and declared image signature, and then
-present the same canonical media value as an inline record. A missing,
-unreadable, oversized, mismatched, or invalid blob is an explicit transcript
-residue; surrounding typed history remains available.
-
-**Incidental** — visual styling, concrete column and track sizing, truncation,
-and iconography. Horizontal ordered columns, strip-owned east/west overflow,
-and the age, run-state, pending-count, and claimed-task field set are fixed.
-
-**Acceptance** — after the browser accepts the submission action, a transport
-loss requeues the submission for socket replay rather than returning it to the
-composer. A typed wake, residency, or write refusal restores the affected text.
-Submit a fused team with several nonempty shards: the gesture enqueues one
-concrete-addressed submission per nonempty shard. Each resulting message
-reaches exactly one worktree and is never broadcast. Reorder shards: neither
-the stream nor existing accents change.
+- Image annotations stay browser-local draft state; the resident receives only
+  the rendered raster.
 
 ---
 
@@ -646,159 +366,68 @@ flowchart TD
 
 **Invariants**
 
-- A card whose position did not change receives **no style write**.
-   Enforced by skipping the write, not by relying on idempotence.
+- A card whose position did not change receives no style write, by skipping
+  the write rather than relying on idempotence.
 - New content places by insert. Existing cards are never re-decided,
-   re-measured, or re-spanned.
+  re-measured, or re-spanned.
 - Each reader pages retained member history from its own cursor. Exhausting the
-   shared durable source or reaching its retention budget closes further source
-   reads, not access to cached older cards. Cache-backed pages precede new
-   durable reads; reload does not reopen a closed source, even when compaction
-   trimming subsequently frees cache space.
-- A card's column and span stay latched between full geometry replays. During
-   incremental content changes, only its vertical position may settle; nothing
-   hops sideways.
+  shared durable source or its retention budget closes further source reads, not
+  access to cached older cards; reload does not reopen a closed source.
+- A card's column and span stay latched between full geometry replays; during
+  incremental changes only its vertical position may settle.
 - Growth pushes down transitively along the original layout. A frozen card's
-   shrink keeps its reserved rows; a liquid card adopts the smaller height and
-   replays the liquid region. Preserving a frozen card's reservation outranks
-   reclaiming a row.
+  shrink keeps its reserved rows; a liquid card adopts the smaller height and
+  replays the liquid region.
 - Layout is a pure function of committed creation order, measured content, and
-   geometry. Replays of that same ordered input produce the same layout on any
-   machine; arrival order itself is an input, and later source-vector reorder
-   does not rewrite it.
-- A pending image uses a generic placeholder. Load or error increments the
-   content revision and remeasures the whole card at its latched horizontal
-   span; changed height may grow or shrink and settles vertically.
-- A reader more than 80px from the top is compensated in the same frame.
-   Positions from 0 through 80px use near-top behavior and show the push-down,
-   because there it is the signal.
-- Nothing transitions until the board first settles. An unmeasurable surface
-   keeps cards readable in ordinary base flow but commits no lattice geometry
-   or fingerprint until a measurable width arrives.
-
-**Policy** — wide tier at twice the width when a card measures tall *and* the
-wider measurement is genuinely shorter, freeze depth 2, resize debounce 200ms. A
-tall card whose height does not depend on width, such as a letterboxed image,
-keeps its base lane.
-
-**Incidental** — track count, span ladder, the placement key's tie-breakers,
-tween duration, the entire visual style.
-
-**Acceptance** — replay a recorded event log: identical positions. Resolve two
-pending cards in either order: identical layout. Let content arrive while more
-than 80px from the top: the visible anchor keeps its viewport offset. Repeat
-from 0 through 80px: the push-down appears without a position tween.
+  geometry, so replaying the same input produces the same layout on any machine.
+- A pending image uses a placeholder; load or error remeasures the whole card at
+  its latched span.
+- A reader scrolled away from the top is compensated in the same frame; near the
+  top, the push-down shows, because there it is the signal.
+- Nothing transitions until the board first settles.
+- A tall card takes the wide tier only when the wider measurement is genuinely
+  shorter, so a card whose height does not depend on width keeps its base lane.
 
 ---
 
 ## The Jitter Contract
 
-Cross-cutting. Not a loop — a property every loop must preserve. This is the
-appliance's most distinctive quality and the hardest to recover once lost.
+Cross-cutting: a property every loop must preserve, and the appliance's most
+distinctive quality.
 
-```mermaid
-flowchart LR
-  J["reader's frame of reference"] --> Movement["motion names real change<br/>off-top reading stays anchored"]
-  J --> Overlays["overlays never displace"]
-  J --> LiveText["live text never resizes"]
-  J --> FixedCounts["fixed-slot live counts<br/>never reflow"]
-  J --> TaskPill["content-sized stem count badge<br/>may resize with digits"]
-  J --> Identity["identity never re-measures"]
-```
-
-- **Movement means change.** Any motion the reader sees must correspond to
-   something that actually changed. Re-render is not change.
+- **Movement means change.** Any motion the reader sees corresponds to something
+  that actually changed. Re-render is not change.
 - **Affordances open out of flow.** Every revealed menu, picker, overlay, and
-   drag-ghost surface opens out of the document flow, so revealing one cannot
-   reflow the board. This is why they read as *in-place*. The in-flow agent-menu
-   `<details>` control remains bounded to its own shard and cannot disturb a
-   sibling.
-- **Live text lives in fixed slots.** Relative ages schedule only the next
-   instant their visible spelling can change: each second while seconds-old,
-   then at minute, hour, or day boundaries, and never after saturation. Every
-   label renders into a padded, fixed-width single-line slot, so an update never
-   changes a box.
+  drag ghost opens out of the document flow, so revealing one cannot reflow the
+  board.
+- **Live text lives in fixed slots.** Every live label renders into a fixed-width
+  single-line slot, so an update never changes a box.
 - **Task counts show one open total.** Every global and team roll-up tab shows
-   one badge counting open tasks; a global tab's title and accessible name carry
-   the ready, active, and blocked-or-deferred breakdown. A stem badge is
-   content-sized, so a digit-width change may resize its tab; the total tabs
-   reserve one minimum badge footprint.
-- **Presentation changes do not directly touch card identity or style.**
-   Recolouring and attribution toggles do not force a re-measure. Member count
-   remains outside card identity and style, but it changes team weight; when
-   that changes the settled host width, one full geometry replay is the
-   legitimate correction.
-- **Programmatic scroll is not a gesture.** Compensation and restore must
-   be excluded from anything that reads user intent, or the surface competes
-   with itself.
+  one badge counting open tasks; a global tab's title and accessible name carry
+  the ready, active, and blocked-or-deferred breakdown. A stem badge is
+  content-sized, so a digit-width change may resize its tab; the total tabs
+  reserve one minimum badge footprint.
+- **Presentation changes do not touch card identity or style.** Recolouring and
+  attribution toggles force no re-measure. A member-count change that alters the
+  settled host width earns one full geometry replay.
+- **Programmatic scroll is not a gesture.** Compensation and restore are
+  excluded from anything that reads user intent, or the surface competes with
+  itself.
 - **Publish each changed frame.** Every admitted stream frame that changes the
-   runtime immediately sets the browser surface. There is no arrival batch or
-   animation-frame coalescing guarantee.
-- **Unmeasurable means uncommitted.** Cards remain readable in ordinary base
-   flow while the surface is too narrow to measure. No lattice fingerprint is
-   committed; a measurable reveal establishes the plane as a correction.
-
-**Acceptance** — instrument style writes per frame. A no-op refresh must produce
-zero. Insert new content: existing columns and spans remain latched. More than
-80px from the top, the visible anchor retains its viewport offset; near the top,
-the push-down is immediate and untweened.
+  runtime immediately updates the browser surface.
+- **Unmeasurable means uncommitted.** While the surface is too narrow to
+  measure, cards stay readable in ordinary flow and no lattice geometry is
+  committed; a measurable reveal establishes the plane.
 
 ---
 
 ## The spice surface hierarchy
 
-What the operator actually manipulates, stated as a component contract.
+- **The team console is the unit of tiling.** Consoles sit side by side, one per
+  live team; membership widens a console but never adds another peer console.
+- **The mosaic is the evidence layer.** Every agent and compaction card names its
+  author lane and worktree explicitly; accent is redundant continuity, never the
+  sole identity.
 
-```mermaid
-block-beta
-  columns 1
-  G["GLOBAL, task overview action | Spice sidebar"]
-  C["CHAT, one always-mounted console per live team"]
-  H["HEADER, lane lights | live status | contextual task sets"]
-  W["COMPOSE, one member shard per lane, status face + composer"]
-  A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
-  M["MOSAIC, merged stream, newest first, explicit lane attribution"]
-```
-
-**Contract**
-
-- **Chat is the one durable surface.** Work opens a browser-local task set and
-  the Spice button opens browser-local resident controls; both occupy the same
-  sidebar without changing Chat's location.
-- **The team console is the unit of tiling in Agents.** Consoles sit side by
-   side; each is the complete operator surface for one live team containing
-   one or more member lanes. Adding an agent widens its team console through the
-   six-share visual ceiling; later members retain that maximum rather than
-   narrowing it. Membership never adds another peer console.
-- **The team header is the summary and overview boundary.** The lane lights
-  expose compact membership and presence. The middle ticker announces age,
-  standing, prefix, accent, and detail as live status without consuming a
-  separate row. The team's task pill opens the unified overview with that
-  complete current team set; no Work or Directions page is copied into the
-  console.
-- **The member shards are the identity and composer-address summary.** They
-  expose the concrete lane/worktree address, agent label, vendor identity, one
-  mutually exclusive presence state with its age, pending direction, and held
-  task as applicable. Presence is `working`, `idle in seat`, `starting`, or
-  `vacant`; the lane menu's Task row names the held claim.
-- **The mosaic is the evidence layer.** It answers *what happened*. Every agent
-   and compaction card repeats explicit short author/lane plus worktree-leaf
-   attribution, including unnamed members; accent is redundant continuity rather
-   than sole identity.
-- **Card controls are an island in the prose.** An agent card's badges and
-   actions float as one group in the top inline-end corner of its message, sized
-   to the badges and buttons it shows and never to a hidden placeholder, so prose
-   fills the lines beside them and regains the full width below. A leading quote
-   keeps its full width under the island while its lines wrap beside it. Cards
-   reserve height in rows of three type-ramp lines at three or more lanes, two
-   at two lanes and one at one lane, so neighbouring tops align often enough for
-   wide cards to find flat room. A card's spare committed height opens below the
-   prose. A column too narrow for the island and a readable line stacks it above
-   the prose.
-- **Autonomy is never implicit.** The submit control carries the lifetime's own
-  name, so intent cannot be sent without its autonomy being visible in the same
-  gesture.
-
-**Incidental** — console tiling rules, iconography, colour, and concrete member
-column sizing. The member shards remain horizontal ordered columns with
-strip-owned east/west overflow.
+The [console](../../app/CONSOLE.md) and [browser](../../app/BROWSER.md)
+contracts own concrete layout.
