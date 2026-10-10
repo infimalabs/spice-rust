@@ -344,7 +344,7 @@ impl Runtime {
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
-        lane_surface::reconcile_renewal(bus, paths, epoch, &config.steering)?;
+        lane_surface::reconcile_renewal(bus, paths, epoch)?;
         let mut snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;

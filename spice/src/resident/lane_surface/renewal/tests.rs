@@ -51,13 +51,12 @@ fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
     seats
         .seat_detached(fixture.lane, fixture.occupant, Box::new(RunningProcess))
         .expect("fixture predecessor seats");
-    let config = steer::Config::default();
     let renewal_request = request(&fixture, true);
 
-    assert_invalid_requests(&fixture, &bus, &seats, &config, renewal_request);
-    assert_first_request(&fixture, &bus, &seats, &config, renewal_request);
-    assert_duplicate_and_retired(&fixture, &bus, &seats, &config, renewal_request);
-    assert_cancellation(&fixture, &bus, &seats, &config);
+    assert_invalid_requests(&fixture, &bus, &seats, renewal_request);
+    assert_first_request(&fixture, &bus, &seats, renewal_request);
+    assert_duplicate_request(&fixture, &bus, &seats, renewal_request);
+    assert_cancellation(&fixture, &bus, &seats);
 
     seats.release_all();
     super::super::super::steering::remove_lane_surface(&fixture.paths, fixture.lane);
@@ -103,7 +102,6 @@ fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor()
         &fixture.paths,
         fixture.epoch,
         &seats,
-        &steer::Config::default(),
         &command(&fixture, 10, &request),
         &request,
     );
@@ -121,18 +119,15 @@ fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor()
     bus.shutdown().expect("vacant renewal bus stops");
 }
 
-/// A marked replacement waits. Reconciliation starts nothing, and it retires
-/// the handoff the departed predecessor was asked for: a directive left
-/// standing on a vacant lane is itself a reason to wake one.
+/// A marked replacement waits without creating steering that could wake it.
 #[test]
 fn a_pending_replacement_reconciles_without_starting_a_successor() {
     let fixture = LaunchFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, false)), true);
     let discovery = publish_surface(&fixture);
-    let config = steer::Config::default();
 
-    reconcile(&bus, &fixture.paths, fixture.epoch, &config).expect("requested renewal reconciles");
-    assert_eq!(controls(&bus, fixture.lane), [HANDOFF_CONTROL]);
+    reconcile(&bus, &fixture.paths, fixture.epoch).expect("requested renewal reconciles");
+    assert!(controls(&bus, fixture.lane).is_empty());
 
     supervisor_failed(
         &bus,
@@ -142,7 +137,7 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
         "detached supervisor ended",
     )
     .expect("terminal predecessor failure commits");
-    reconcile(&bus, &fixture.paths, fixture.epoch, &config).expect("pending renewal reconciles");
+    reconcile(&bus, &fixture.paths, fixture.epoch).expect("pending renewal reconciles");
 
     let current = current_residency(&bus, fixture.epoch).expect("pending renewal reads");
     assert!(
@@ -164,7 +159,6 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
         &fixture.paths,
         fixture.epoch,
         &Seats::new(),
-        &config,
         &command(&fixture, 12, &withdraw),
         &withdraw,
     );
@@ -238,7 +232,6 @@ fn assert_invalid_requests(
     fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
-    config: &steer::Config,
     renewal_request: wire::intent::LaneRenewal,
 ) {
     let mut stale = renewal_request;
@@ -249,7 +242,6 @@ fn assert_invalid_requests(
             &fixture.paths,
             fixture.epoch,
             seats,
-            config,
             &command(fixture, 8, &stale),
             &stale,
         ),
@@ -263,7 +255,6 @@ fn assert_invalid_requests(
             &fixture.paths,
             fixture.epoch,
             seats,
-            config,
             &command(fixture, 9, &moved),
             &moved,
         ),
@@ -276,7 +267,6 @@ fn assert_first_request(
     fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
-    config: &steer::Config,
     renewal_request: wire::intent::LaneRenewal,
 ) {
     let first = set(
@@ -284,7 +274,6 @@ fn assert_first_request(
         &fixture.paths,
         fixture.epoch,
         seats,
-        config,
         &command(fixture, 10, &renewal_request),
         &renewal_request,
     );
@@ -294,22 +283,21 @@ fn assert_first_request(
         head.body().renewals[0].state,
         wire::LaneRenewalState::Requested { team_slot: 0, .. }
     ));
-    assert_eq!(controls(bus, fixture.lane), [HANDOFF_CONTROL]);
+    assert!(controls(bus, fixture.lane).is_empty());
 }
 
-fn assert_duplicate_and_retired(
+fn assert_duplicate_request(
     fixture: &LaunchFixture,
     bus: &Bus,
     seats: &Seats,
-    config: &steer::Config,
     renewal_request: wire::intent::LaneRenewal,
 ) {
+    let before = bus.cursor().expect("requested cursor reads");
     let duplicate = set(
         bus,
         &fixture.paths,
         fixture.epoch,
         seats,
-        config,
         &command(fixture, 11, &renewal_request),
         &renewal_request,
     );
@@ -317,37 +305,18 @@ fn assert_duplicate_and_retired(
         duplicate,
         Outcome::Refusal(refusal) if refusal.reason() == "lane::renewal-already-active"
     ));
-    assert_eq!(controls(bus, fixture.lane), [HANDOFF_CONTROL]);
-    let requested = current_residency(bus, fixture.epoch)
-        .expect("requested renewal reads")
-        .body()
-        .renewals[0]
-        .clone();
-    cancel_handoff(
-        bus,
-        &fixture.paths,
-        fixture.epoch,
-        handoff_directive(&requested),
-        fixture.lane,
-        &handoff_control(&requested),
-    )
-    .expect("fixture retires the predecessor request as though acknowledged");
-    ensure_handoff(bus, &fixture.paths, fixture.epoch, config, fixture.lane)
-        .expect("reconciliation observes durable handoff publication");
-    assert!(
-        controls(bus, fixture.lane).is_empty(),
-        "an acknowledged handoff request must not be recreated"
-    );
+    reconcile(bus, &fixture.paths, fixture.epoch).expect("requested renewal projects privately");
+    assert_eq!(bus.cursor().expect("reconciled cursor reads"), before);
+    assert!(controls(bus, fixture.lane).is_empty());
 }
 
-fn assert_cancellation(fixture: &LaunchFixture, bus: &Bus, seats: &Seats, config: &steer::Config) {
+fn assert_cancellation(fixture: &LaunchFixture, bus: &Bus, seats: &Seats) {
     let clear = request(fixture, false);
     let canceled = set(
         bus,
         &fixture.paths,
         fixture.epoch,
         seats,
-        config,
         &command(fixture, 12, &clear),
         &clear,
     );

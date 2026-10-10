@@ -9,20 +9,13 @@
 
 use super::*;
 
-const HANDOFF_CONTROL: &str = "lane-renewal-handoff";
 const CONTEXT_CONTROL: &str = "lane-renewal-context";
-
-const HANDOFF_TEXT: &str = concat!(
-    "Agent renewal requested. Complete or hand off the current phase cleanly, ",
-    "post a concise handoff, do not claim additional work, and finish this agent turn."
-);
 
 pub(in crate::resident) fn set(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
-    steering: &steer::Config,
     command: &wire::AdmittedCommand,
     request: &wire::intent::LaneRenewal,
 ) -> Outcome<CommandAnswer> {
@@ -30,13 +23,15 @@ pub(in crate::resident) fn set(
         Ok(admitted) => admitted,
         Err(outcome) => return outcome,
     };
-    let transition = match resolve_set(observed.body(), &row, seats, current, request) {
-        Ok(transition) => transition,
+    let record = match if request.requested {
+        resolve_request(observed.body(), &row, seats, current, request)
+    } else {
+        resolve_cancel(current)
+    } {
+        Ok(record) => record,
         Err(outcome) => return typed_outcome(outcome),
     };
-    commit_set(
-        bus, paths, epoch, steering, command, request, observed, transition,
-    )
+    commit_set(bus, paths, epoch, command, request, observed, record)
 }
 
 type AdmittedSet = (
@@ -80,38 +75,6 @@ fn admit_set(
         .map_err(typed_outcome)?
         .cloned();
     Ok((observed, row, current))
-}
-
-struct SetTransition {
-    record: Option<wire::LaneRenewalRecord>,
-    cancellation: Option<(CanonicalUuid, String)>,
-    needs_handoff: bool,
-}
-
-fn resolve_set(
-    head: &wire::ResidencyHead,
-    row: &wire::LaneResidency,
-    seats: &Seats,
-    current: Option<wire::LaneRenewalRecord>,
-    request: &wire::intent::LaneRenewal,
-) -> CommandResult<SetTransition> {
-    let cancellation = current.as_ref().and_then(|record| {
-        matches!(record.state, wire::LaneRenewalState::Requested { .. })
-            .then(|| (handoff_directive(record), handoff_control(record)))
-    });
-    let record = if request.requested {
-        resolve_request(head, row, seats, current, request)?
-    } else {
-        resolve_cancel(current)?
-    };
-    let needs_handoff = record
-        .as_ref()
-        .is_some_and(|record| matches!(record.state, wire::LaneRenewalState::Requested { .. }));
-    Ok(SetTransition {
-        record,
-        cancellation,
-        needs_handoff,
-    })
 }
 
 fn resolve_request(
@@ -185,14 +148,13 @@ fn commit_set(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    steering: &steer::Config,
     command: &wire::AdmittedCommand,
     request: &wire::intent::LaneRenewal,
     observed: journal::JournalHead<wire::ResidencyHead>,
-    transition: SetTransition,
+    record: Option<wire::LaneRenewalRecord>,
 ) -> Outcome<CommandAnswer> {
     let mut next = observed.body().clone();
-    replace_renewal(&mut next, request.lane, transition.record.clone());
+    replace_renewal(&mut next, request.lane, record.clone());
     let mut proposal = match write(
         command.actor().clone(),
         epoch,
@@ -205,7 +167,7 @@ fn commit_set(
     let changed = wire::body::LaneRenewalChanged {
         team: request.team,
         lane: request.lane,
-        renewal: transition.record.clone(),
+        renewal: record.clone(),
     };
     let head = match proposal.fact(changed, FactCause::Existing(observed.position())) {
         Ok(head) => head,
@@ -218,7 +180,7 @@ fn commit_set(
         team: request.team,
         lane: request.lane,
         topology_revision: request.topology_revision,
-        renewal: transition.record.clone(),
+        renewal: record,
     };
     if let Err(error) = proposal.command_result(
         Command {
@@ -238,43 +200,19 @@ fn commit_set(
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    finish_set(
-        bus,
-        paths,
-        epoch,
-        steering,
-        request.lane,
-        transition,
-        committed,
-        answer,
-    )
+    finish_set(bus, paths, epoch, committed, answer)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the post-commit phase carries the committed renewal boundary"
-)]
 fn finish_set(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    steering: &steer::Config,
-    lane: CanonicalUuid,
-    transition: SetTransition,
     committed: bus::JournalCommit,
     answer: wire::intent::LaneRenewalAnswer,
 ) -> Outcome<CommandAnswer> {
-    let reconciled = if transition.needs_handoff {
-        ensure_handoff(bus, paths, epoch, steering, lane)
-    } else if let Some((directive, control)) = transition.cancellation.as_ref() {
-        cancel_handoff(bus, paths, epoch, *directive, lane, control)
-    } else {
-        Ok(())
-    };
-    if let Err(outcome) = reconciled {
+    if let Err(outcome) = reconcile(bus, paths, epoch) {
         return typed_outcome(outcome);
     }
-    super::super::steering::notify_inbox(paths, lane);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),
@@ -476,35 +414,32 @@ pub(super) fn prepare(
     super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)
 }
 
-/// Deliver and retire the steering one durable renewal owns.
+/// Project current renewal intent to the exact running occupants privately.
 ///
-/// A requested renewal asks its running predecessor to finish. Once that
-/// occupant is gone the request is retired rather than left standing: a
-/// directive waiting on a vacant lane is itself a reason to start one, and a
-/// mark must never start anything.
+/// Reconciliation starts no process and creates no steering message.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    steering: &steer::Config,
 ) -> CommandResult<()> {
     let observed = current_residency(bus, epoch)?;
-    for renewal in &observed.body().renewals {
-        match renewal.state {
-            wire::LaneRenewalState::Requested { .. } => {
-                ensure_handoff(bus, paths, epoch, steering, renewal.lane)?;
-            }
-            wire::LaneRenewalState::HandoffPending { .. } => cancel_handoff(
-                bus,
-                paths,
-                epoch,
-                handoff_directive(renewal),
-                renewal.lane,
-                &handoff_control(renewal),
-            )?,
-            wire::LaneRenewalState::SuccessorStarted { .. }
-            | wire::LaneRenewalState::LaunchRefused { .. } => {}
-        }
+    for row in &observed.body().lanes {
+        let Some(occupant) = row.occupant else {
+            continue;
+        };
+        let requested = renewal_for(observed.body(), row.lane)?.is_some_and(|renewal| {
+            matches!(&renewal.state, wire::LaneRenewalState::Requested { predecessor, .. }
+                if predecessor.occupant == occupant)
+        });
+        super::super::supervisor::command::renewal::notify(
+            paths,
+            row.lane,
+            super::super::supervisor::command::renewal::Notice {
+                occupant,
+                position: observed.position().get(),
+                requested,
+            },
+        );
     }
     Ok(())
 }
@@ -563,71 +498,6 @@ fn ensure_context(
     )?;
     commit(bus, proposal)?;
     super::super::steering::notify_inbox(paths, renewal.lane);
-    Ok(())
-}
-
-fn ensure_handoff(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    steering: &steer::Config,
-    lane: CanonicalUuid,
-) -> CommandResult<()> {
-    let observed = current_residency(bus, epoch)?;
-    let Some(renewal) = renewal_for(observed.body(), lane)? else {
-        return Ok(());
-    };
-    if !matches!(renewal.state, wire::LaneRenewalState::Requested { .. }) {
-        return Ok(());
-    }
-    let control = handoff_control(renewal);
-    let directive = handoff_directive(renewal);
-    if super::super::steering::control_standing(bus, directive, lane, &control)?.is_some() {
-        return Ok(());
-    }
-    let (mut proposal, published) = super::super::steering::internal_write(epoch)?;
-    guard_residency(&mut proposal, &observed);
-    super::super::steering::append_internal_directive(
-        bus,
-        &mut proposal,
-        epoch,
-        super::super::steering::InternalDirective {
-            directive,
-            lane,
-            text: HANDOFF_TEXT.to_owned(),
-            control,
-            lifetime: steering.expiry().get(),
-            cause: FactCause::Existing(observed.position()),
-            published,
-        },
-    )?;
-    commit(bus, proposal)?;
-    super::super::steering::notify_inbox(paths, lane);
-    Ok(())
-}
-
-fn cancel_handoff(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    directive: CanonicalUuid,
-    lane: CanonicalUuid,
-    control: &str,
-) -> CommandResult<()> {
-    let (mut proposal, published) = super::super::steering::internal_write(epoch)?;
-    let Some(_canceled) = super::super::steering::append_control_cancellation(
-        bus,
-        &mut proposal,
-        directive,
-        lane,
-        control,
-        published,
-    )?
-    else {
-        return Ok(());
-    };
-    commit(bus, proposal)?;
-    super::super::steering::notify_inbox(paths, lane);
     Ok(())
 }
 
@@ -710,16 +580,8 @@ fn state_name(state: &wire::LaneRenewalState) -> &'static str {
     }
 }
 
-fn handoff_control(renewal: &wire::LaneRenewalRecord) -> String {
-    format!("{HANDOFF_CONTROL}:{}", predecessor(&renewal.state).occupant)
-}
-
 fn context_control(renewal: &wire::LaneRenewalRecord) -> String {
     format!("{CONTEXT_CONTROL}:{}", predecessor(&renewal.state).occupant)
-}
-
-fn handoff_directive(renewal: &wire::LaneRenewalRecord) -> CanonicalUuid {
-    control_identity("handoff", predecessor(&renewal.state).occupant)
 }
 
 fn context_directive(renewal: &wire::LaneRenewalRecord) -> CanonicalUuid {

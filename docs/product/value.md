@@ -179,9 +179,10 @@ transcript — the difference between a board and a landfill.
 ### The lane outlives the agent
 
 A lane is an operator-owned container over a worktree; the agent is a tenant.
-Renewal is ordinary steering, not termination: it hands the lane to a new
-thread while history, drafts, scroll position, and the team's task policy
-survive.
+Renewal is replacement intent, not forced termination: private lifecycle notices
+ask the predecessor to hand off or tell it the request was cancelled. The next
+start replaces the occupant while history, drafts, scroll position, and the
+team's task policy survive.
 
 **Value:** agents become *disposable*. If the agent were the lane, every renewal
 would cost the operator their context, and hoarding long-lived agents — the
