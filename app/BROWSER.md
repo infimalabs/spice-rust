@@ -43,7 +43,7 @@ the application sources.
 
 Flush etched glass is the shipped primary panel described under
 [Team composer controls](#team-composer-controls); the gallery reproduces its
-geometry, 2px recipient rim, and contact depression. Smoked pearl and Frosted
+geometry, 3px recipient rim, and contact depression. Smoked pearl and Frosted
 instrument are reference-only finishes on the same geometry, not the current
 selection. Every finish keeps sharp panel corners, circular BASIC/TURBO, menu,
 and SEND controls, and two pill-shaped slider flyers labeled Quiet / Speak /
@@ -241,7 +241,8 @@ shadow, and dim the rim; release restores its flat face without grid reflow.
 Touch-only contact is projected from native pointer events and clears on release,
 cancellation, or lost capture without intercepting activation. Reduced motion
 removes transitions, not contact feedback. Held ordinary-submit modifiers add a
-focused-agent command ring; a held broadcast uses its occupied recipients' rim
+1px focused-agent command ring outside the 3px recipient rim, so the recipient
+bands stay the heavier line; a held broadcast uses its occupied recipients' rim
 while retaining the neutral face, and its command ring is their light combined
 into the theme's ink signal, near white on dark and near black on light, rather
 than any one accent.
