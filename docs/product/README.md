@@ -25,25 +25,23 @@ implementation choice is part of the contract.
 | --- | --- |
 | [invariants.md](invariants.md) | The product contract: a semantic register of named invariants. |
 | [cases.md](cases.md) | The case battery. Every registered invariant is covered by a case or by a declared audit where execution cannot demonstrate absence. |
-| [value.md](value.md) | Why this is valuable: the workflow guarantees, interface components, and how they compose. |
+| [value.md](value.md) | Why Spice is worth using: durability, attribution, calm, and how they compose. |
 | [loops.md](loops.md) | The transformative loops, jitter contract, and interface-surface contract. |
 | [model.md](model.md) | Domain model, state machines, policies, loops, boundaries, failure semantics, journeys, and ontology. |
 | [planes.md](planes.md) | Session forensics, metrics, hooks, distribution, cross-cutting principles, and what is fixed versus free. |
 | [interfaces.md](interfaces.md) | Task documents, wire seam, extensions, diagnostics, and media. |
-| [stories.md](stories.md) | Who each guarantee serves and the failure modes each one answers. |
 | [checks.md](checks.md) | Commit checks: gates, pressure, instruments, waivers, and isolation. |
 | [rust.md](rust.md) | The Rust implementation profile: concrete appliance selections and the code and executable evidence that own them. |
 
-Start with [value models](value.md) and [operating
-loops](loops.md) for the model. Use the [invariant
-register](invariants.md) as the product contract, then read the [core
-model](model.md), [supporting planes](planes.md), and
-[interfaces](interfaces.md) for the whole system. The [stories
-and failures](stories.md) supply the reasoning; [surface
-invariants](invariants/lifecycle.md#surface) guide interface implementation; the
-[checks](checks.md) describe what may be committed. This repository's
-[Rust implementation profile](rust.md) fixes the concrete appliance choices left
-open by the portable model and names their implementation owners.
+Start with [why Spice is valuable](value.md) and [operating
+loops](loops.md). Use the [invariant register](invariants.md) as the product
+contract, then read the [core model](model.md), [supporting
+planes](planes.md), and [interfaces](interfaces.md) for the whole system.
+[Surface invariants](invariants/lifecycle.md#surface) guide interface
+implementation; the [checks](checks.md) describe what may be committed. This
+repository's [Rust implementation profile](rust.md) fixes the concrete
+appliance choices left open by the portable model and names their implementation
+owners.
 
 The register states what is true of the product. Code and tests provide evidence
 that the contract is implemented; they do not create a second product model.
