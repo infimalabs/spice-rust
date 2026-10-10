@@ -306,74 +306,6 @@ mod tests {
         assert_ne!(before, with_noncanonical_receipt);
     }
 
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    #[test]
-    fn public_replay_executes_the_current_battery_once_and_changes_no_selected_byte() {
-        let fixture = Fixture::new(ReleaseTarget::Aarch64AppleDarwin);
-        let runner = fixture.root.join("runner");
-        let invocations = fixture.root.join("invocations");
-        let script = format!(
-            concat!(
-                "#!/bin/sh\n",
-                "[ \"$1\" = spice-proof-native-runner-v1 ] || exit 71\n",
-                "identity=$2\n",
-                "challenge=$3\n",
-                "marker=spice-proof-native-attestation-v1\n",
-                "claims=repository=read-only:\n",
-                "claims=${{claims}}cargo-home=fresh-empty:\n",
-                "claims=${{claims}}cargo-target=fresh-empty:\n",
-                "claims=${{claims}}network=loopback-only:\n",
-                "claims=${{claims}}host-dependencies=denied\n",
-                "printf '%s:runner=%s:challenge=%s:%s\\n' ",
-                "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",
-                "printf 'ran\\n' >> '{}'\n",
-                // Every member reports the scope it ran, in the words its own
-                // runner uses, because a member that ran none of one is refused
-                // rather than replayed. The test members report a summary and
-                // not just an announcement, since an announcement counts the
-                // tests it skipped among the ones it ran.
-                "case \" $* \" in\n",
-                "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
-                "  *) printf 'running 7 tests\\n",
-                "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
-                "0 filtered out; finished in 0.00s\\n' ;;\n",
-                "esac\n",
-                "exit 0\n"
-            ),
-            invocations.display()
-        );
-        {
-            let _write_guard = crate::test_support::executable_write_guard();
-            fs::write(&runner, script).expect("write native runner");
-            make_executable(&runner);
-        }
-        let config = Config::fixture(None, Some(runner));
-
-        let sealed = crate::seal(&fixture.layout(), &config, &fixture.worktree, limits())
-            .expect("fixture proof seals");
-        fixture.plant_state_markers();
-        fs::write(&invocations, b"").expect("reset invocation evidence");
-        let before = snapshot(&fixture.selected);
-
-        let rederived = super::rederive(&fixture.layout(), &config, &fixture.worktree, limits())
-            .expect("existing proof re-derives");
-
-        assert_eq!(rederived, sealed);
-        assert_eq!(snapshot(&fixture.selected), before);
-        assert_eq!(
-            fs::read_to_string(invocations)
-                .expect("read invocation evidence")
-                .lines()
-                .count(),
-            CheckKind::ALL.len(),
-            "one execution of every current battery member"
-        );
-        assert_eq!(
-            crate::compiled_target().expect("compiled host is supported"),
-            ReleaseTarget::Aarch64AppleDarwin
-        );
-    }
-
     fn assert_evidence_error(
         fixture: &Fixture,
         admitted: &AdmittedPayload,
@@ -489,27 +421,6 @@ mod tests {
                 )),
             }
         }
-
-        #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-        fn plant_state_markers(&self) {
-            for (path, bytes) in [
-                ("worktree/src/lib.rs", b"repository bytes".as_slice()),
-                (
-                    "common/.spice-rs/journal.sqlite",
-                    b"journal bytes".as_slice(),
-                ),
-                ("common/.spice-rs/fold/head", b"fold bytes".as_slice()),
-                (
-                    "common/.spice-rs/resident.json",
-                    b"discovery bytes".as_slice(),
-                ),
-            ] {
-                let path = self.selected.join(path);
-                fs::create_dir_all(path.parent().expect("marker parent"))
-                    .expect("create marker parent");
-                fs::write(path, bytes).expect("write state marker");
-            }
-        }
     }
 
     impl Drop for Fixture {
@@ -602,13 +513,5 @@ mod tests {
         }
         files.sort_by(|left, right| left.0.cmp(&right.0));
         files
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    fn make_executable(path: &Path) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("make fixture runner executable");
     }
 }

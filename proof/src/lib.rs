@@ -10,22 +10,53 @@
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
     use wire::manifest::{InventoryEntry, MacSymbolMetadata, ReleaseTarget};
     use wire::{Digest, Domain};
 
-    static EXECUTABLE_FIXTURE_BARRIER: RwLock<()> = RwLock::new(());
+    use crate::container::{Captured, Execution, ExecutionCompletion};
 
-    pub(crate) fn process_spawn_guard() -> RwLockReadGuard<'static, ()> {
-        EXECUTABLE_FIXTURE_BARRIER
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// The arguments a bounded process spec hands its program, as text.
+    pub(crate) fn arguments(spec: &sill::Spec) -> Vec<String> {
+        spec.argv
+            .arguments()
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
     }
 
-    pub(crate) fn executable_write_guard() -> RwLockWriteGuard<'static, ()> {
-        EXECUTABLE_FIXTURE_BARRIER
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// A process that exited with `code` after writing both streams whole.
+    pub(crate) fn exited(
+        code: i32,
+        stdout: impl Into<Vec<u8>>,
+        stderr: impl Into<Vec<u8>>,
+    ) -> Execution {
+        Execution {
+            completion: ExecutionCompletion::Exited {
+                success: code == 0,
+                code: Some(code),
+            },
+            stdout: whole(stdout),
+            stderr: whole(stderr),
+        }
+    }
+
+    pub(crate) fn whole(bytes: impl Into<Vec<u8>>) -> Captured {
+        Captured {
+            bytes: bytes.into(),
+            truncated: false,
+            complete: true,
+        }
+    }
+
+    /// A regular executable file that admission can inspect and digest.
+    pub(crate) fn executable(path: &std::path::Path, bytes: &[u8]) {
+        std::fs::write(path, bytes).expect("fixture executable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("make fixture executable");
+        }
     }
 
     pub(crate) fn symbols(
@@ -58,6 +89,7 @@ pub mod config;
 pub mod container;
 pub mod environment;
 pub mod evidence;
+mod launch;
 pub mod layout;
 pub mod manifest;
 pub mod native;

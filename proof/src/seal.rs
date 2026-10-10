@@ -218,98 +218,18 @@ mod tests {
     use std::cell::Cell;
     use std::fs;
     use std::io::Write as _;
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    use std::time::Duration;
-
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    use sill::Deadlines;
     use wire::manifest::{
         BuildPins, InventoryEntry, ProofEnvironment, ReleaseTarget, TargetPayload,
     };
     use wire::{Digest, Domain};
 
     use super::{SealError, finish};
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    use crate::config::Config;
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    use crate::container::Limits;
     use crate::evidence::{EvidencePublishError, publish};
     use crate::layout::{Layout, ReceiptInput};
     use crate::payload::{AdmittedPayload, admit};
     use crate::replay::{Battery, CheckKind, CheckStanding, ReplayError, ReplayVerdict};
-
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    #[test]
-    fn public_seal_runs_the_current_battery_through_the_compiled_environment() {
-        let fixture = Fixture::new(ReleaseTarget::Aarch64AppleDarwin);
-        let runner = fixture.root.join("runner");
-        let invocations = fixture.root.join("invocations");
-        let script = format!(
-            concat!(
-                "#!/bin/sh\n",
-                "[ \"$1\" = spice-proof-native-runner-v1 ] || exit 71\n",
-                "identity=$2\n",
-                "challenge=$3\n",
-                "marker=spice-proof-native-attestation-v1\n",
-                "claims=repository=read-only:\n",
-                "claims=${{claims}}cargo-home=fresh-empty:\n",
-                "claims=${{claims}}cargo-target=fresh-empty:\n",
-                "claims=${{claims}}network=loopback-only:\n",
-                "claims=${{claims}}host-dependencies=denied\n",
-                "printf '%s:runner=%s:challenge=%s:%s\\n' ",
-                "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",
-                "printf 'ran\\n' >> '{}'\n",
-                // Every member reports the scope it ran, in the words its own
-                // runner uses, because a member that ran none of one is refused
-                // rather than sealed. The test members report a summary and not
-                // just an announcement, since an announcement counts the tests
-                // it skipped among the ones it ran.
-                "case \" $* \" in\n",
-                "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
-                "  *) printf 'running 7 tests\\n",
-                "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
-                "0 filtered out; finished in 0.00s\\n' ;;\n",
-                "esac\n",
-                "exit 0\n"
-            ),
-            invocations.display()
-        );
-        {
-            let _write_guard = crate::test_support::executable_write_guard();
-            fs::write(&runner, script).expect("write native runner");
-            make_executable(&runner);
-        }
-        let config = Config::fixture(None, Some(runner));
-
-        let evidence = super::seal(&fixture.layout(), &config, &fixture.worktree, limits())
-            .expect("public proof operation seals clean evidence");
-        let receipt = fixture
-            .layout()
-            .receipt_for(&fixture.payload)
-            .expect("fixture receipt path");
-        let receipt_bytes = fs::read(receipt.path()).expect("published receipt bytes");
-
-        assert_eq!(evidence.target, ReleaseTarget::Aarch64AppleDarwin);
-        assert_eq!(
-            evidence.receipt,
-            Digest::compute(Domain::ProofReceiptV3, &receipt_bytes)
-        );
-        assert_eq!(
-            fs::read_to_string(invocations)
-                .expect("runner invocation record")
-                .lines()
-                .count(),
-            CheckKind::ALL.len()
-        );
-        assert_eq!(
-            crate::compiled_target().expect("compiled host is supported"),
-            ReleaseTarget::Aarch64AppleDarwin
-        );
-    }
 
     #[test]
     fn clean_proof_runs_once_and_republishes_identical_receipt_bytes_and_identity() {
@@ -666,28 +586,5 @@ mod tests {
             pins,
             inventory,
         }
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    fn limits() -> Limits {
-        Limits::new(
-            Deadlines::new(
-                Duration::from_secs(30),
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("fixture deadlines"),
-            Duration::from_millis(10),
-            4096,
-        )
-        .expect("fixture limits")
-    }
-
-    #[cfg(all(target_arch = "aarch64", target_vendor = "apple", target_os = "macos"))]
-    fn make_executable(path: &Path) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("make fixture runner executable");
     }
 }

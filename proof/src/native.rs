@@ -6,8 +6,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use sill::{Argv, Completion, Spec, SpecError, WaitError};
+use sill::{Argv, Spec, SpecError, WaitError};
 use wire::{Digest, Domain};
 
 use crate::challenge::Challenge;
@@ -15,6 +16,7 @@ use crate::container::{
     Captured, ContainerError, Execution, ExecutionCompletion, Limits, is_executable,
     validate_command,
 };
+use crate::launch::{Launch, LaunchError, System};
 
 /// The first argument every admitted runner is launched with.
 pub const PROTOCOL: &str = "spice-proof-native-runner-v1";
@@ -45,6 +47,7 @@ pub struct NativeRunner {
     identity: Digest,
     workspace: PathBuf,
     limits: Limits,
+    launcher: Arc<dyn Launch>,
 }
 
 impl NativeRunner {
@@ -59,7 +62,20 @@ impl NativeRunner {
         workspace: impl AsRef<Path>,
         limits: Limits,
     ) -> Result<Self, NativeError> {
-        let requested = binary.as_ref();
+        Self::attest_with(
+            Arc::new(System),
+            binary.as_ref(),
+            workspace.as_ref(),
+            limits,
+        )
+    }
+
+    pub(crate) fn attest_with(
+        launcher: Arc<dyn Launch>,
+        requested: &Path,
+        requested_workspace: &Path,
+        limits: Limits,
+    ) -> Result<Self, NativeError> {
         if !requested.is_absolute() {
             return Err(NativeError::RunnerNotAbsolute(requested.to_path_buf()));
         }
@@ -74,7 +90,6 @@ impl NativeRunner {
         })?;
         let identity = Digest::compute(Domain::ProofNativeRunner, &bytes);
 
-        let requested_workspace = workspace.as_ref();
         let workspace = fs::canonicalize(requested_workspace).map_err(|source| {
             NativeError::InspectWorkspace {
                 path: requested_workspace.to_path_buf(),
@@ -90,6 +105,7 @@ impl NativeRunner {
             identity,
             workspace,
             limits,
+            launcher,
         })
     }
 
@@ -143,39 +159,13 @@ impl NativeRunner {
         self.verify_identity()?;
         let challenge = Challenge::fresh().map_err(NativeError::CreateChallenge)?;
         let spec = self.spec(program, arguments, &challenge)?;
-        let running = {
-            #[cfg(test)]
-            let _spawn_guard = crate::test_support::process_spawn_guard();
-            sill::spawn(spec)
-        }
-        .map_err(NativeError::Spawn)?;
-        let outcome = running.wait().map_err(NativeError::Wait)?;
-        let completion = match outcome.completion() {
-            Completion::Exited(status) => ExecutionCompletion::Exited {
-                success: status.success(),
-                code: status.code(),
-            },
-            Completion::TimedOut(status) => ExecutionCompletion::TimedOut {
-                code: status.code(),
-            },
-            Completion::Cancelled(status) => ExecutionCompletion::Cancelled {
-                code: status.code(),
-            },
-        };
-        let stdout = outcome
-            .stdout()
-            .map(Captured::from)
-            .ok_or(NativeError::MissingCapture("stdout"))?;
-        let mut stderr = outcome
-            .stderr()
-            .map(Captured::from)
-            .ok_or(NativeError::MissingCapture("stderr"))?;
-        self.verify_attestation(&mut stderr, &challenge)?;
-        Ok(Execution {
-            completion,
-            stdout,
-            stderr,
-        })
+        let mut execution = self.launcher.run(spec).map_err(|error| match error {
+            LaunchError::Spawn(source) => NativeError::Spawn(source),
+            LaunchError::Wait(source) => NativeError::Wait(source),
+            LaunchError::MissingCapture(stream) => NativeError::MissingCapture(stream),
+        })?;
+        self.verify_attestation(&mut execution.stderr, &challenge)?;
+        Ok(execution)
     }
 
     fn spec(
@@ -424,85 +414,84 @@ impl Error for NativeError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    use sill::{Deadlines, ProcessGroup, StdinPolicy, StreamPolicy};
+    use sill::{Deadlines, ProcessGroup, Spec, StdinPolicy, StreamPolicy};
 
-    use super::{NativeError, NativeRunner};
+    use super::{ATTESTATION_PREFIX, ISOLATION_CLAIMS, NativeError, NativeRunner, PROTOCOL};
     use crate::challenge::Challenge;
-    use crate::container::{Captured, Limits};
+    use crate::container::{Captured, Execution, ExecutionCompletion, Limits};
     use crate::environment::SealedEnvironment;
+    use crate::launch::{Launch, LaunchError};
     use crate::replay::{CheckKind, replay};
+    use crate::test_support::{arguments, exited, whole};
 
-    const VALID_RUNNER: &str = r#"#!/bin/sh
-[ "$1" = spice-proof-native-runner-v1 ] || exit 71
-identity=$2
-challenge=$3
-shift 3
-marker=spice-proof-native-attestation-v1
-claims=repository=read-only:
-claims=${claims}cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:
-claims=${claims}network=loopback-only:
-claims=${claims}host-dependencies=denied
-printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$claims" >&2
-printf 'challenge:%s\nexecuted:%s\n' "$challenge" "$*"
-exit 0
-"#;
-    const FIXED_RUNNER: &str = r#"#!/bin/sh
-marker=spice-proof-native-attestation-v1
-claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=loopback-only:
-claims=${claims}host-dependencies=denied
-printf '%s:runner=fixed:challenge=fixed:%s\n' "$marker" "$claims" >&2
-exit 0
-"#;
-    const STALE_RUNNER: &str = r#"#!/bin/sh
-identity=$2
-marker=spice-proof-native-attestation-v1
-claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=loopback-only:
-claims=${claims}host-dependencies=denied
-printf '%s:runner=%s:challenge=stale-challenge:%s\n' "$marker" "$identity" "$claims" >&2
-exit 0
-"#;
-    const WRONG_IDENTITY_RUNNER: &str = r#"#!/bin/sh
-challenge=$3
-marker=spice-proof-native-attestation-v1
-wrong=00000000000000000000000000000000
-wrong=${wrong}00000000000000000000000000000000
-claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=loopback-only:
-claims=${claims}host-dependencies=denied
-printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$wrong" "$challenge" "$claims" >&2
-exit 0
-"#;
-    const SILENT_RUNNER: &str = "#!/bin/sh\nexit 0\n";
-    const FAILED_RUNNER: &str = "#!/bin/sh\nexit 70\n";
-    const ATTESTED_FAILED_RUNNER: &str = r#"#!/bin/sh
-identity=$2
-challenge=$3
-marker=spice-proof-native-attestation-v1
-claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=loopback-only:
-claims=${claims}host-dependencies=denied
-printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$claims" >&2
-exit 70
-"#;
-    const TIMED_OUT_RUNNER: &str = "#!/bin/sh\n/bin/sleep 2\n";
-    /// A runner that exits at once and leaves its stderr held open behind it.
-    ///
-    /// The backgrounded child inherits the capture pipe, so the reader never
-    /// reaches end of output no matter how idle the host is. That is the one
-    /// input that makes a drain deadline decide the ending, which is what
-    /// [`an_abandoned_output_drain_refuses_as_incomplete_not_unattested`] needs
-    /// and what every other fixture here must not depend on.
-    const HELD_PIPE_RUNNER: &str = "#!/bin/sh\n/bin/sleep 2 &\n";
+    /// How one native runner answers the exchange it was launched with.
+    #[derive(Clone, Copy, Debug)]
+    enum Runner {
+        /// Speaks the protocol, attests the identity and challenge it was
+        /// handed, and reports the command it ran.
+        Attesting,
+        /// Attests correctly, then the command it ran fails.
+        AttestingFailure(i32),
+        /// Writes nothing and succeeds.
+        Silent,
+        /// Writes nothing and fails.
+        Failing(i32),
+        /// Writes one public marker, whatever it was handed.
+        FixedMarker,
+        /// Answers a challenge from some other exchange.
+        StaleChallenge,
+        /// Attests an identity other than the admitted bytes.
+        WrongIdentity,
+        /// Is stopped by its runtime deadline before it writes anything.
+        TimedOut,
+    }
+
+    impl Runner {
+        fn marker(identity: &str, challenge: &str) -> String {
+            format!(
+                "{ATTESTATION_PREFIX}:runner={identity}:challenge={challenge}:{ISOLATION_CLAIMS}\n"
+            )
+        }
+    }
+
+    impl Launch for Runner {
+        fn run(&self, spec: Spec) -> Result<Execution, LaunchError> {
+            let arguments = arguments(&spec);
+            if arguments.first().map(String::as_str) != Some(PROTOCOL) {
+                return Ok(exited(71, "", ""));
+            }
+            let (identity, challenge) = (&arguments[1], &arguments[2]);
+            Ok(match *self {
+                Self::Attesting => exited(
+                    0,
+                    format!(
+                        "challenge:{challenge}\nexecuted:{}\n",
+                        arguments[3..].join(" ")
+                    ),
+                    Self::marker(identity, challenge),
+                ),
+                Self::AttestingFailure(code) => exited(code, "", Self::marker(identity, challenge)),
+                Self::Silent => exited(0, "", ""),
+                Self::Failing(code) => exited(code, "", ""),
+                Self::FixedMarker => exited(0, "", Self::marker("fixed", "fixed")),
+                Self::StaleChallenge => exited(0, "", Self::marker(identity, "stale-challenge")),
+                Self::WrongIdentity => exited(0, "", Self::marker(&"0".repeat(64), challenge)),
+                Self::TimedOut => Execution {
+                    completion: ExecutionCompletion::TimedOut { code: None },
+                    stdout: whole(""),
+                    stderr: whole(""),
+                },
+            })
+        }
+    }
 
     #[test]
     fn native_spec_uses_the_shared_sealed_process_laws() {
-        let fixture = Fixture::new(VALID_RUNNER, limits());
+        let fixture = Fixture::new(Runner::Attesting);
         let runner = fixture.runner();
         let spec = runner
             .spec(
@@ -511,12 +500,7 @@ exit 70
                 &Challenge::fixture("fixture-challenge"),
             )
             .expect("native spec");
-        let arguments = spec
-            .argv
-            .arguments()
-            .iter()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let arguments = arguments(&spec);
 
         assert_eq!(spec.group, ProcessGroup::New);
         assert!(spec.environment.entries().is_empty());
@@ -545,7 +529,7 @@ exit 70
 
     #[test]
     fn every_battery_member_runs_and_attestation_never_enters_evidence() {
-        let fixture = Fixture::new(VALID_RUNNER, limits());
+        let fixture = Fixture::new(Runner::Attesting);
         let environment = SealedEnvironment::fixture_native(fixture.runner());
         let verdict = replay(&environment).expect("all native exchanges attest");
         let mut challenges = std::collections::BTreeSet::new();
@@ -572,115 +556,35 @@ exit 70
     }
 
     #[test]
-    fn fixed_stale_wrong_missing_and_failed_attestations_refuse_execution() {
-        for script in [
-            SILENT_RUNNER,
-            FIXED_RUNNER,
-            STALE_RUNNER,
-            WRONG_IDENTITY_RUNNER,
-            FAILED_RUNNER,
+    fn fixed_stale_wrong_missing_failed_and_timed_out_attestations_refuse_execution() {
+        for answer in [
+            Runner::Silent,
+            Runner::FixedMarker,
+            Runner::StaleChallenge,
+            Runner::WrongIdentity,
+            Runner::Failing(70),
+            Runner::TimedOut,
         ] {
-            let fixture = Fixture::new(script, limits());
+            let fixture = Fixture::new(answer);
             let error = fixture
                 .runner()
                 .execute("cargo", &["test".to_owned()])
                 .expect_err("invalid attestation cannot create Execution");
-            // Named for the same reason the timed-out fixture below is: this
-            // one assertion answers for five scripts, so its message carries
-            // the script beside the ending it rejected.
             assert!(
                 matches!(error, NativeError::RunnerNotAttested { .. }),
-                "runner script {script:?}, whose marker is absent, fixed, stale, wrong, \
-                 or failed, refused for another reason: {error:?}"
+                "runner {answer:?} refused for another reason: {error:?}"
             );
         }
     }
 
-    /// A runner killed by its runtime deadline is still held to the marker.
-    ///
-    /// The ending is asserted by name because everything ahead of the marker
-    /// comparison can refuse first, and each of those means something different
-    /// about the host rather than about attestation. Only two of them can be
-    /// reached by a host under load, and both are held off by construction
-    /// rather than by hoping the machine is idle: `IncompleteAttestation`,
-    /// which [`Self::verify_attestation`] returns before it ever compares the
-    /// marker, needs a reader still working when the drain deadline arrives,
-    /// and `WaitError::ReapDeadlineExceeded` needs a signalled child still
-    /// unreaped -- both are bounded by [`CLEANUP_DEADLINE`], which is five
-    /// seconds here and is spent only when one of them is genuinely stuck.
-    /// `MissingCapture` cannot be reached at all: `process_spec` captures both
-    /// streams unconditionally, so neither is ever absent. `Spawn` remains, and
-    /// it is admitted rather than defended against, because a host that cannot
-    /// fork has failed in a way no fixture should paper over -- the message
-    /// below names it instead of reporting that a pattern did not hold.
-    #[test]
-    fn a_timed_out_exchange_without_a_marker_refuses_execution() {
-        let fixture = Fixture::new(TIMED_OUT_RUNNER, short_limits());
-        let error = fixture
-            .runner()
-            .execute("cargo", &["test".to_owned()])
-            .expect_err("timed-out attestation cannot create Execution");
-
-        assert!(
-            matches!(error, NativeError::RunnerNotAttested { .. }),
-            "a timed-out runner that never attested refused for another reason: {error:?}"
-        );
-    }
-
-    /// An abandoned drain is a different ending, and the assertion can tell.
-    ///
-    /// This is the ending the fixture above must never reach, constructed on
-    /// purpose so that the difference is measured rather than assumed. The
-    /// runner exits immediately and leaves a child holding the capture pipe, so
-    /// the reader cannot reach end of output and the drain deadline -- 20ms
-    /// here, against five seconds there -- decides the ending. Neither the
-    /// runner nor the deadline waits on anything the host controls: the pipe is
-    /// held open by construction, so no amount of idleness closes it and no
-    /// amount of load is needed to keep it open.
-    ///
-    /// Both endings mean "no marker was read", which is why the bare pattern
-    /// they were once both asserted with could not separate them, and why a
-    /// loaded run reporting only that the pattern failed named neither.
-    ///
-    /// The deadline is what decides, and that was measured rather than assumed:
-    /// on 2026-08-05 this same runner, given [`CLEANUP_DEADLINE`] to drain
-    /// instead of 20ms, outlived its held pipe and ended as
-    /// `RunnerNotAttested { observed: "" }` in 2.12s. The contrast is recorded
-    /// here rather than kept as a second fixture because the arm that proves it
-    /// costs those two seconds on every run, and the ending it demonstrates is
-    /// already the one the timed-out fixture above asserts.
-    #[test]
-    fn an_abandoned_output_drain_refuses_as_incomplete_not_unattested() {
-        let fixture = Fixture::new(
-            HELD_PIPE_RUNNER,
-            limits_with_deadlines(Duration::from_secs(30), Duration::from_millis(20)),
-        );
-        let error = fixture
-            .runner()
-            .execute("cargo", &["test".to_owned()])
-            .expect_err("an incomplete capture cannot create Execution");
-
-        assert!(
-            matches!(
-                error,
-                NativeError::IncompleteAttestation {
-                    truncated: false,
-                    complete: false
-                }
-            ),
-            "a capture abandoned with its reader still working was not reported \
-             as incomplete: {error:?}"
-        );
-    }
-
     #[test]
     fn preflight_requires_an_attested_clean_cargo_probe() {
-        Fixture::new(VALID_RUNNER, limits())
+        Fixture::new(Runner::Attesting)
             .runner()
             .preflight()
             .expect("valid runner preflight");
 
-        let error = Fixture::new(ATTESTED_FAILED_RUNNER, limits())
+        let error = Fixture::new(Runner::AttestingFailure(70))
             .runner()
             .preflight()
             .expect_err("nonzero attested probe is not a clean preflight");
@@ -692,7 +596,7 @@ exit 70
 
     #[test]
     fn truncated_and_incomplete_attestation_captures_refuse() {
-        let fixture = Fixture::new(VALID_RUNNER, limits());
+        let fixture = Fixture::new(Runner::Attesting);
         let runner = fixture.runner();
         let challenge = Challenge::fixture("fixture-challenge");
         for (truncated, complete) in [(true, true), (false, false), (true, false)] {
@@ -710,13 +614,9 @@ exit 70
 
     #[test]
     fn runner_byte_mutation_after_admission_refuses_before_process_start() {
-        let fixture = Fixture::new(VALID_RUNNER, limits());
+        let fixture = Fixture::new(Runner::Attesting);
         let runner = fixture.runner();
-        {
-            let _write_guard = crate::test_support::executable_write_guard();
-            fs::write(&fixture.runner, FAILED_RUNNER).expect("mutate admitted runner");
-            make_executable(&fixture.runner);
-        }
+        crate::test_support::executable(&fixture.executable, b"mutated runner");
 
         assert!(matches!(
             runner.execute("cargo", &["test".to_owned()]),
@@ -726,38 +626,39 @@ exit 70
 
     struct Fixture {
         root: std::path::PathBuf,
-        runner: std::path::PathBuf,
+        executable: std::path::PathBuf,
         workspace: std::path::PathBuf,
-        limits: Limits,
+        answer: Runner,
     }
 
     impl Fixture {
-        fn new(script: &str, limits: Limits) -> Self {
+        fn new(answer: Runner) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
                 "spice-proof-native-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            let runner = root.join("runner");
+            let executable = root.join("runner");
             let workspace = root.join("workspace");
             fs::create_dir_all(&workspace).expect("fixture workspace");
-            {
-                let _write_guard = crate::test_support::executable_write_guard();
-                fs::write(&runner, script).expect("fixture runner");
-                make_executable(&runner);
-            }
+            crate::test_support::executable(&executable, b"admitted runner");
             Self {
                 root,
-                runner,
+                executable,
                 workspace,
-                limits,
+                answer,
             }
         }
 
         fn runner(&self) -> NativeRunner {
-            NativeRunner::attest(&self.runner, &self.workspace, self.limits)
-                .expect("fixture runner admits")
+            NativeRunner::attest_with(
+                Arc::new(self.answer),
+                &self.executable,
+                &self.workspace,
+                limits(),
+            )
+            .expect("fixture runner admits")
         }
     }
 
@@ -767,47 +668,17 @@ exit 70
         }
     }
 
-    /// The cleanup bound every fixture that is not about cleanup gets.
-    ///
-    /// A drain or reap deadline is an upper bound on tidying up after the
-    /// subject has already finished, so a generous one costs nothing when it is
-    /// not needed and never lengthens a passing run: both loops exit the moment
-    /// their condition holds. A tight one buys nothing either, and on a starved
-    /// host it converts a fixture's real ending into an unrelated variant --
-    /// `IncompleteAttestation` from an abandoned reader, or
-    /// `WaitError::ReapDeadlineExceeded` from a child the kernel has not yet
-    /// reaped. Only a deadline a test is actually about is worth keeping short.
-    const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
-
     fn limits() -> Limits {
-        limits_with_runtime(Duration::from_secs(30))
-    }
-
-    fn short_limits() -> Limits {
-        limits_with_runtime(Duration::from_millis(20))
-    }
-
-    fn limits_with_runtime(runtime: Duration) -> Limits {
-        limits_with_deadlines(runtime, CLEANUP_DEADLINE)
-    }
-
-    fn limits_with_deadlines(runtime: Duration, output_drain: Duration) -> Limits {
         Limits::new(
-            Deadlines::new(runtime, output_drain, CLEANUP_DEADLINE).expect("deadlines"),
+            Deadlines::new(
+                Duration::from_secs(30),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+            )
+            .expect("deadlines"),
             Duration::from_millis(10),
             4096,
         )
         .expect("limits")
     }
-
-    #[cfg(unix)]
-    fn make_executable(path: &std::path::Path) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("make runner executable");
-    }
-
-    #[cfg(not(unix))]
-    fn make_executable(_path: &std::path::Path) {}
 }
