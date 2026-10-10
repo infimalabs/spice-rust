@@ -205,22 +205,25 @@ pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
         .map_err(|error| store_fault("steer::index-unwritable", &error.to_string()))
 }
 
-/// Migrate steering-backed task reminders into current task authority once.
+/// Migrate steering-backed private notices into current authority once at startup.
 ///
-/// The claim generation already retains every reminder's semantic state. A
+/// Claim generations and renewal marks already retain their semantic state. A
 /// cancellation preserves the retired directive as evidence while preventing
 /// the old delivery mechanism from becoming an executable runtime arm.
-pub(super) fn migrate_task_generation_notices(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-) -> CommandResult<()> {
+pub(super) fn migrate_private_notices(bus: &Bus, epoch: CanonicalUuid) -> CommandResult<()> {
     let pending = bus
         .read(|read| crate::steering_read::pending(read, None))
         .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
     let legacy = pending
         .iter()
         .filter_map(|head| {
-            is_legacy_task_generation_control(head.body().control.as_deref()).then_some(head.body())
+            (is_legacy_task_generation_control(head.body().control.as_deref())
+                || head
+                    .body()
+                    .control
+                    .as_deref()
+                    .is_some_and(|control| control.starts_with("lane-renewal-handoff:")))
+            .then_some(head.body())
         })
         .collect::<Vec<_>>();
     if legacy.is_empty() {

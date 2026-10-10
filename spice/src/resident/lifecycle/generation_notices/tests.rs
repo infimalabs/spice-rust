@@ -161,43 +161,55 @@ fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
 fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
     let fixture = LaunchFixture::new();
     let (bus, _) = claimed_fixture(&fixture);
-    let control = "task-generation:1kKRRsDQ:33:4".to_owned();
     let (mut proposal, published) =
         crate::resident::steering::internal_write(fixture.epoch).expect("internal write builds");
-    crate::resident::steering::append_internal_directive(
-        &bus,
-        &mut proposal,
-        fixture.epoch,
-        crate::resident::steering::InternalDirective {
-            directive: crate::resident::new_uuid(),
-            lane: fixture.lane,
-            text: "retired keyed reminder".to_owned(),
-            control,
-            lifetime: Duration::from_secs(3_600),
-            cause: FactCause::Root,
-            published,
-        },
-    )
-    .expect("legacy directive builds");
-    committed(bus.commit(proposal).expect("legacy directive commits"));
-
+    for control in [
+        "task-generation:1kKRRsDQ:33:4".to_owned(),
+        format!("lane-renewal-handoff:{}", fixture.occupant),
+        "ordinary-control".to_owned(),
+    ] {
+        crate::resident::steering::append_internal_directive(
+            &bus,
+            &mut proposal,
+            fixture.epoch,
+            crate::resident::steering::InternalDirective {
+                directive: crate::resident::new_uuid(),
+                lane: fixture.lane,
+                text: control.clone(),
+                control,
+                lifetime: Duration::from_secs(3_600),
+                cause: FactCause::Root,
+                published,
+            },
+        )
+        .expect("retained directive builds");
+    }
+    committed(bus.commit(proposal).expect("retained directives commit"));
     assert_eq!(
         bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
             .expect("steering index reads")
             .len(),
-        1,
+        3,
         "predecessor evidence starts live",
     );
-    crate::resident::steering::migrate_task_generation_notices(&bus, fixture.epoch)
+    crate::resident::steering::migrate_private_notices(&bus, fixture.epoch)
         .expect("startup migration succeeds");
-    crate::resident::steering::migrate_task_generation_notices(&bus, fixture.epoch)
+    let migrated = bus.cursor().expect("migrated cursor reads");
+    crate::resident::steering::migrate_private_notices(&bus, fixture.epoch)
         .expect("completed migration is inert");
-    assert!(
-        bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
-            .expect("steering index reads")
-            .is_empty(),
-        "legacy reminder is durably canceled",
+    assert_eq!(
+        bus.cursor().expect("repeated migration cursor reads"),
+        migrated
     );
+    let pending = bus
+        .read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
+        .expect("steering index reads");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].body().control.as_deref(),
+        Some("ordinary-control")
+    );
+    assert_eq!(pending[0].body().text, "ordinary-control");
     finish(bus);
 }
 

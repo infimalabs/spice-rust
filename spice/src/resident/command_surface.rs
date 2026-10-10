@@ -178,17 +178,9 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneState, Intent::LaneState(state)) => {
                 Some(self.dispatch_lane_state(seats, command, state))
             }
-            (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => {
-                ordinary(lane_surface::renew(
-                    self.bus,
-                    self.paths,
-                    self.epoch,
-                    seats,
-                    &self.config.steering,
-                    command,
-                    renewal,
-                ))
-            }
+            (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => ordinary(
+                lane_surface::renew(self.bus, self.paths, self.epoch, seats, command, renewal),
+            ),
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => ordinary(
                 lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall),
             ),

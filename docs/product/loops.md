@@ -441,11 +441,15 @@ flowchart LR
    to that team's policy; policy never follows the lane across that move.
 - Renewal is intent, never a start. A marked lane keeps its mark until the
    next start of that lane consumes it and launches a fresh successor; the
-   operator can withdraw the mark until then. A live predecessor is
-   additionally asked to hand off, and is never forcibly terminated; a vacant
-   lane's predecessor is neither started nor notified. While the mark stands,
-   the agent's action menu carries it, so the request stays visible after the
-   drawer that placed it closes.
+   operator can withdraw the mark until then. A live predecessor receives a
+   private preparation notice, never a durable steering message, and is never
+   forcibly terminated; a vacant lane's predecessor is neither started nor
+   notified. Cancellation replaces preparation on the same coalescing aside
+   channel. Exact occupant identity and journal-position ordering prevent a
+   stale request from overriding cancellation or reaching a successor. Startup
+   retires retained handoff directives once, preserving their history; runtime
+   delivery uses only private notices. While the mark stands, the agent's
+   action menu carries it, so it stays visible after the drawer closes.
 - Model, effort, and fast mode are seat authority. `lane model ID [MODEL]`,
   `lane effort ID [EFFORT]`, and `lane fast ID on|off` topology-guard and
   journal the value every future launch reads; model and effort omission

@@ -133,7 +133,7 @@ sequenceDiagram
   participant N as successor
   L->>L: renewal requested, lane marked for replacement
   opt predecessor occupied
-    L->>P: ordinary handoff steering
+    L->>P: private preparation notice
     P->>P: finishes its turn and exits
   end
   Note over L,N: the mark waits; renewal starts nothing

@@ -77,6 +77,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     task_generation: Mutex<Option<(String, u64, u64)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
     task_assignment: Mutex<Option<(String, u64)>>,
+    /// Latest renewal state observed by this exact occupant.
+    renewal: Mutex<Option<renewal::Notice>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -187,6 +189,8 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
+    /// Current renewal intent for this exact occupant.
+    Renewal(renewal::Notice),
     /// Change one setting on this exact running occupant and answer through a
     /// one-shot callback door after the correlated provider response.
     Retune {
@@ -290,6 +294,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             misdirected: Mutex::new(BTreeSet::new()),
             task_generation: Mutex::new(None),
             task_assignment: Mutex::new(None),
+            renewal: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -1391,6 +1396,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_assignment(&notice);
                         }
                         Ok(Kick::TaskAssignment(_)) => {}
+                        Ok(Kick::Renewal(notice)) if notice.occupant == occupant => {
+                            driver.deliver_renewal(notice);
+                        }
+                        Ok(Kick::Renewal(_)) => {}
                         Ok(Kick::Retune {
                             occupant: target,
                             request,
@@ -1423,3 +1432,4 @@ impl Drop for KickDoor {
 #[cfg(test)]
 mod event_tests;
 mod media;
+pub(in crate::resident) mod renewal;
