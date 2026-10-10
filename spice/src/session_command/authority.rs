@@ -53,6 +53,7 @@ impl RecallAuthorities {
                 lane: None,
                 own_claim: None,
                 peer_claims: None,
+                renewed_from: None,
             },
             posture: None,
             directions: Vec::new(),
@@ -107,6 +108,7 @@ pub(crate) fn observe_lane(
 
 struct ObservedAuthorities {
     lane: Option<wire::LaneResidency>,
+    renewed_from: Option<String>,
     residency_error: Option<AuthorityReadError>,
     hold: Option<Result<Option<wire::body::LaneHeld>, AuthorityReadError>>,
     ledger: Option<Result<steer::Ledger, AuthorityReadError>>,
@@ -240,6 +242,7 @@ fn read_authorities(
     let Some(lane) = lane else {
         return Ok(ObservedAuthorities {
             lane: None,
+            renewed_from: None,
             residency_error: residency.err(),
             ledger: None,
             hold: None,
@@ -249,6 +252,10 @@ fn read_authorities(
             board: None,
         });
     };
+    let renewed_from = residency
+        .as_ref()
+        .ok()
+        .and_then(|residency| handoff_predecessor(&residency.renewals, lane.lane));
     let actor = Actor::Lane(lane.lane);
     let hold = read
         .current_lane_hold(lane.lane)
@@ -282,6 +289,7 @@ fn read_authorities(
     let board = glance::board(read).map_err(AuthorityReadError::Journal);
     Ok(ObservedAuthorities {
         lane: Some(lane),
+        renewed_from,
         residency_error: residency.err(),
         ledger: Some(ledger),
         hold: Some(hold),
@@ -289,6 +297,20 @@ fn read_authorities(
         peer_claims: Some(peer_claims),
         directions: Some(directions),
         board: Some(board),
+    })
+}
+
+/// The predecessor thread a lane's handoff-pending renewal hands its next
+/// fresh occupant; the mark settles to successor-started once one starts.
+pub(super) fn handoff_predecessor(
+    renewals: &[wire::LaneRenewalRecord],
+    lane: wire::CanonicalUuid,
+) -> Option<String> {
+    renewals.iter().find_map(|record| match &record.state {
+        wire::LaneRenewalState::HandoffPending { predecessor, .. } if record.lane == lane => {
+            Some(predecessor.thread.clone())
+        }
+        _ => None,
     })
 }
 
@@ -309,6 +331,7 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
         return;
     };
     recall.held_work.lane = Some(lane.lane.to_string());
+    recall.held_work.renewed_from = observed.renewed_from;
     if recall.held_work.thread.is_none() {
         recall.held_work.thread = lane
             .session

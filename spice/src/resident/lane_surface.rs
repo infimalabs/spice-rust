@@ -695,25 +695,18 @@ fn remove_seat_surface(
 }
 
 /// Drain, wake, or remove one current lane.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one lane state change carries the complete admitted command boundary"
-)]
 pub(super) fn state(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
-    steering: &steer::Config,
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
     match request.action {
         LaneAction::Drain => drain(bus, epoch, seats, command, request),
-        LaneAction::Wake => wake(
-            bus, paths, epoch, seats, runtime, steering, command, request,
-        ),
+        LaneAction::Wake => wake(bus, paths, epoch, seats, runtime, command, request),
         LaneAction::Remove => remove(bus, paths, epoch, seats, runtime, command, request),
     }
 }

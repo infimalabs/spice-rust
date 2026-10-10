@@ -9,8 +9,6 @@
 
 use super::*;
 
-const CONTEXT_CONTROL: &str = "lane-renewal-context";
-
 pub(in crate::resident) fn set(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -396,21 +394,17 @@ pub(super) fn pending_for(
     Ok(Some(renewal.clone()))
 }
 
-/// Deliver what the successor of one consumed mark is owed, before it exists.
+/// Settle what the successor of one consumed mark is owed, before it exists.
 ///
-/// The predecessor's rehydration context is published first so the successor's
-/// first inbox read already carries it, and every consent request the
-/// predecessor left pending lapses because the occupant that would have
-/// answered a ruling is gone.
+/// Every consent request the predecessor left pending lapses because the
+/// occupant that would have answered a ruling is gone. The successor's
+/// rehydration context needs no publication: its launch briefing derives it
+/// from this handoff-pending record.
 pub(super) fn prepare(
     bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    steering: &steer::Config,
     runtime: &Runtime<'_>,
     renewal: &wire::LaneRenewalRecord,
 ) -> CommandResult<()> {
-    ensure_context(bus, paths, epoch, steering, renewal)?;
     super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)
 }
 
@@ -441,63 +435,6 @@ pub(in crate::resident) fn reconcile(
             },
         );
     }
-    Ok(())
-}
-
-fn ensure_context(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    steering: &steer::Config,
-    renewal: &wire::LaneRenewalRecord,
-) -> CommandResult<()> {
-    let control = context_control(renewal);
-    let directive = context_directive(renewal);
-    if super::super::steering::control_standing(bus, directive, renewal.lane, &control)?
-        == Some(wire::Disposition::Live)
-    {
-        return Ok(());
-    }
-    let wire::LaneRenewalState::HandoffPending { predecessor, .. } = &renewal.state else {
-        return Err(store_fault(
-            "lane::renewal-state-moved",
-            "rehydration context requires a handoff-pending renewal",
-        ));
-    };
-    let observed = current_residency(bus, epoch)?;
-    if renewal_for(observed.body(), renewal.lane)? != Some(renewal) {
-        return Err(Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "lane::renewal-state-moved".to_owned(),
-                Some("the selected handoff-pending renewal".to_owned()),
-                None,
-                None,
-            )
-            .with_detail("reconcile the current renewal state before launching a successor"),
-        )));
-    }
-    let text = format!(
-        "Renewal successor context: previous agent thread {}. Your launch briefing names the transcript it read; when that is not this thread, resolve it with `spice session thread {}` and run `spice session briefing PATH` and `spice session sweep PATH --limit 4` on the returned path before continuing.",
-        predecessor.thread, predecessor.thread,
-    );
-    let (mut proposal, published) = super::super::steering::internal_write(epoch)?;
-    guard_residency(&mut proposal, &observed);
-    super::super::steering::append_internal_directive(
-        bus,
-        &mut proposal,
-        epoch,
-        super::super::steering::InternalDirective {
-            directive,
-            lane: renewal.lane,
-            text,
-            control,
-            lifetime: steering.expiry().get(),
-            cause: FactCause::Existing(observed.position()),
-            published,
-        },
-    )?;
-    commit(bus, proposal)?;
-    super::super::steering::notify_inbox(paths, renewal.lane);
     Ok(())
 }
 
@@ -577,31 +514,6 @@ fn state_name(state: &wire::LaneRenewalState) -> &'static str {
         wire::LaneRenewalState::HandoffPending { .. } => "handoff-pending",
         wire::LaneRenewalState::SuccessorStarted { .. } => "successor-started",
         wire::LaneRenewalState::LaunchRefused { .. } => "launch-refused",
-    }
-}
-
-fn context_control(renewal: &wire::LaneRenewalRecord) -> String {
-    format!("{CONTEXT_CONTROL}:{}", predecessor(&renewal.state).occupant)
-}
-
-fn context_directive(renewal: &wire::LaneRenewalRecord) -> CanonicalUuid {
-    control_identity("context", predecessor(&renewal.state).occupant)
-}
-
-fn control_identity(kind: &str, occupant: CanonicalUuid) -> CanonicalUuid {
-    let identity = format!("spice:lane-renewal:{kind}:{occupant}");
-    let digest = blake3::hash(identity.as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    CanonicalUuid::new(uuid::Uuid::from_bytes(bytes))
-}
-
-fn predecessor(state: &wire::LaneRenewalState) -> &wire::RenewalIdentity {
-    match state {
-        wire::LaneRenewalState::Requested { predecessor, .. }
-        | wire::LaneRenewalState::HandoffPending { predecessor, .. }
-        | wire::LaneRenewalState::SuccessorStarted { predecessor, .. }
-        | wire::LaneRenewalState::LaunchRefused { predecessor, .. } => predecessor,
     }
 }
 

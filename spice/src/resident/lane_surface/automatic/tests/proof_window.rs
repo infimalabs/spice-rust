@@ -120,7 +120,6 @@ fn an_operator_wake_commits_after_unrelated_commits() {
         window.fixture.epoch,
         &window.seats,
         &runtime,
-        &steer::Config::default(),
         &request,
     )
     .unwrap_or_else(|outcome| panic!("operator wake refused admission: {outcome:?}"));
@@ -173,7 +172,6 @@ fn an_operator_wake_carries_the_claim_and_its_successor_lease_keeps_renewing() {
         window.fixture.epoch,
         &window.seats,
         &runtime,
-        &steer::Config::default(),
         &request,
     )
     .unwrap_or_else(|outcome| panic!("operator wake refused admission: {outcome:?}"));

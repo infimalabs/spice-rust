@@ -462,6 +462,7 @@ mod tests {
                     acceptance: (0..rows).map(|_| text(bytes)).collect(),
                 }),
                 peer_claims: Some(rows),
+                renewed_from: None,
             },
             posture: None,
             directions: (0..rows)

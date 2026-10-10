@@ -29,17 +29,12 @@ pub(in crate::resident) struct PendingWake {
     fresh_session: bool,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one manual wake needs the whole command context"
-)]
 pub(in crate::resident) fn begin_wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     runtime: &Runtime<'_>,
-    steering: &steer::Config,
     request: &LaneState,
 ) -> Result<WakeLaunch, Outcome<CommandAnswer>> {
     let observed = current_residency(bus, epoch).map_err(typed_outcome)?;
@@ -62,7 +57,7 @@ pub(in crate::resident) fn begin_wake(
     let claim = held_claim_authority(bus, None, request.lane).map_err(typed_outcome)?;
     let renewal =
         super::renewal::pending_for(observed.body(), request.lane).map_err(typed_outcome)?;
-    let resume = wake_resume(bus, paths, epoch, steering, runtime, &row, renewal.as_ref())?;
+    let resume = wake_resume(bus, paths, runtime, &row, renewal.as_ref())?;
     let fast_mode = super::super::settings_surface::lane_fast_mode(bus, observed.body(), &row)
         .map_err(typed_outcome)?;
     let occupant = new_uuid();
@@ -171,21 +166,16 @@ pub(in crate::resident) fn finish_wake(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the synchronous test boundary exercises the same split launch continuation"
-)]
 pub(super) fn wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
-    steering: &steer::Config,
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
-    let launch = match begin_wake(bus, paths, epoch, seats, runtime, steering, request) {
+    let launch = match begin_wake(bus, paths, epoch, seats, runtime, request) {
         Ok(launch) => launch,
         Err(outcome) => return outcome,
     };
@@ -201,16 +191,14 @@ pub(super) fn wake(
     )
 }
 
-/// The successor's resume posture, with any renewal context published first.
+/// The successor's resume posture, with the predecessor's consent settled first.
 ///
 /// A replacement starts fresh: its predecessor's session is exactly what the
-/// operator asked to leave behind, and the rehydration context reaches the
-/// successor's first inbox read because it is published before the launch.
+/// operator asked to leave behind, and its launch briefing derives the
+/// rehydration context from the handoff-pending record.
 fn wake_resume(
     bus: &Bus,
     paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    steering: &steer::Config,
     runtime: &Runtime<'_>,
     row: &wire::LaneResidency,
     renewal: Option<&wire::LaneRenewalRecord>,
@@ -218,8 +206,7 @@ fn wake_resume(
     let Some(renewal) = renewal else {
         return launch_resume(paths, row).map_err(typed_outcome);
     };
-    super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)
-        .map_err(typed_outcome)?;
+    super::renewal::prepare(bus, runtime, renewal).map_err(typed_outcome)?;
     Ok(vendor::Resume::Fresh)
 }
 
@@ -312,7 +299,6 @@ pub(in crate::resident) fn begin_automatic_wake(
     epoch: CanonicalUuid,
     seats: &Seats,
     runtime: &Runtime<'_>,
-    steering: &steer::Config,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     decision: Option<&bus::TaskSnapshot>,
@@ -327,7 +313,7 @@ pub(in crate::resident) fn begin_automatic_wake(
     };
     let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
     if let Some(renewal) = admitted.renewal.as_ref() {
-        super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)?;
+        super::renewal::prepare(bus, runtime, renewal)?;
     }
     let fresh_session = matches!(admitted.resume, vendor::Resume::Fresh);
     let launch = match super::super::supervisor::begin_launch(
@@ -444,7 +430,6 @@ pub(in crate::resident) fn wake_automatic(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
-    steering: &steer::Config,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     decision: Option<&bus::TaskSnapshot>,
@@ -453,7 +438,7 @@ pub(in crate::resident) fn wake_automatic(
     promotion_at: Option<wire::Instant>,
 ) -> CommandResult<AutomaticWake> {
     match begin_automatic_wake(
-        bus, paths, epoch, seats, runtime, steering, lane, occupant, decision, reserved, inbox,
+        bus, paths, epoch, seats, runtime, lane, occupant, decision, reserved, inbox,
     )? {
         BeginAutomaticWake::Unstarted(outcome) => Ok(AutomaticWake::Unstarted(outcome)),
         BeginAutomaticWake::Launch(launch) => {

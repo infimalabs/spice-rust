@@ -209,27 +209,14 @@ impl<'a> Surface<'a> {
         }
         if state.action == wire::intent::LaneAction::Wake {
             return match lane_surface::begin_wake(
-                self.bus,
-                self.paths,
-                self.epoch,
-                seats,
-                &self.lane,
-                &self.config.steering,
-                state,
+                self.bus, self.paths, self.epoch, seats, &self.lane, state,
             ) {
                 Ok(launch) => CommandDispatch::wake(launch),
                 Err(outcome) => CommandDispatch::ordinary(outcome),
             };
         }
         CommandDispatch::ordinary(lane_surface::state(
-            self.bus,
-            self.paths,
-            self.epoch,
-            seats,
-            &self.lane,
-            &self.config.steering,
-            command,
-            state,
+            self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
         ))
     }
 

@@ -404,6 +404,10 @@ pub(crate) struct HeldWorkView {
     pub(crate) lane: Option<String>,
     pub(crate) own_claim: Option<HeldClaimView>,
     pub(crate) peer_claims: Option<usize>,
+    /// Predecessor thread a handoff-pending renewal hands this lane's fresh
+    /// successor, read from the durable renewal record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) renewed_from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
