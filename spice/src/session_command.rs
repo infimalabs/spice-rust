@@ -648,6 +648,9 @@ fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
 }
 
 #[cfg(test)]
+mod contract;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

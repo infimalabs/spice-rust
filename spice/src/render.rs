@@ -56,6 +56,11 @@ impl Rendering {
         &self.document
     }
 
+    #[cfg(test)]
+    pub(crate) const fn stream(&self) -> Stream {
+        self.stream
+    }
+
     /// Writes this rendering to the stream it names.
     ///
     /// A terminal that has gone away is not this process's business to report:

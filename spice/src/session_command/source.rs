@@ -118,14 +118,14 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
     }
 
     let started = std::time::Instant::now();
-    let current = std::env::current_dir().map_err(|error| {
+    let current = environment.cwd.as_deref().ok_or_else(|| {
         refusal(
             "session::cwd-unavailable",
-            Some(error.to_string()),
+            None,
             "restore the working directory or pass an absolute transcript path",
         )
     })?;
-    let paths = TranscriptSearch::ambient(&current, started)
+    let paths = TranscriptSearch::ambient(current, started)
         .run()
         .map_err(|error| {
             refusal(

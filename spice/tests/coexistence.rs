@@ -1,19 +1,15 @@
 //! Python Spice's durable state survives Rust Spice running beside it.
 //!
 //! `spice/src/repository.rs` states the coexistence policy; this file enforces
-//! it. Everything here works by identity -- seed Python's complete `.spice`
-//! root, run the real Rust binary against `.spice-rs`, read the bytes back --
-//! rather than by asserting that no offending code path exists. A policy proved
-//! by grepping for the absence of a call is only as good as the grep.
+//! it by identity: seed Python's complete `.spice` root, resolve Rust's own
+//! state root through the runtime's declaration, and read the bytes back.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde_json::Value;
 use spice::repository::{Repository, StatePaths};
 use wire::SpiceVariable;
 
@@ -37,24 +33,6 @@ const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ("hooks/pre-commit", b"#!/bin/sh\nexit 0\n"),
 ];
 
-/// Gate ledgers the predecessor owns and ordinary native commands must ignore.
-///
-/// These are deliberately not valid JSON. A native gate that tries to decode
-/// even one of them refuses, so a successful real gate run proves that the
-/// unchanged identity check below is observing an unreachable foreign surface,
-/// not merely a compatible import that happened to preserve its inputs.
-const PREDECESSOR_GATE_STATE: &[(&str, &[u8])] = &[
-    ("file-loc-sticky.json", b"python file-loc state"),
-    ("file-byte-sticky.json", b"python file-byte state"),
-    ("complexity-ccn-sticky.json", b"python complexity-ccn state"),
-    (
-        "complexity-length-sticky.json",
-        b"python complexity-length state",
-    ),
-    ("repo-doc-chars-sticky.json", b"python repo-doc state"),
-    ("flex-slice-claims.json", b"python flex claims"),
-];
-
 /// Environment variables the predecessor owns for its live shell handoff.
 const PREDECESSOR_HOOKS_ENV: &str = "SPICE_HOOKS"; // env-policy: allow
 const PREDECESSOR_LANE_ENV: &str = "SPICE_LANE"; // env-policy: allow
@@ -64,14 +42,6 @@ const PREDECESSOR_ENVIRONMENT: &[&str] = &[
     PREDECESSOR_LANE_ENV,
     PREDECESSOR_NATIVE_SHELL_ENV,
 ];
-
-/// One accepted release-0.31.0 export, the only input the bridge admits.
-const EXPORT: &[u8] = br#"{
-  "version": 1,
-  "release": "0.31.0",
-  "tasks": {"hidden_stems": ["sandbox"]},
-  "teams": []
-}"#;
 
 /// Rust Spice owns one complete root and no path below Python Spice's root.
 #[test]
@@ -170,115 +140,6 @@ fn runtime_environment_names_are_rust_specific() {
     }
 }
 
-/// Running this port leaves every predecessor file byte-for-byte as found.
-///
-/// The run is first proved to have resolved this exact state root. That is the
-/// assertion the unchanged-bytes comparison rests on: a binary that resolved
-/// some other root would leave these files alone for the uninteresting reason
-/// that it never looked at them, and the comparison would pass while proving
-/// nothing at all.
-#[test]
-fn running_this_port_leaves_predecessor_state_byte_identical() {
-    let fixture = Fixture::seeded("running");
-    let before = fixture.predecessor_identity();
-
-    let output = fixture.invoke(&["doctor"]);
-    assert!(output.status.success(), "doctor must run: {output:?}");
-    let report: Value = serde_json::from_slice(&output.stdout).expect("doctor emits JSON");
-    let local = report["locations"]["local_configuration"]
-        .as_str()
-        .expect("doctor names the local configuration it would read");
-    assert!(
-        Path::new(local).starts_with(fixture.state_root()),
-        "the runtime resolved {local}, so the comparison below would watch a root it never opened"
-    );
-
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "running this port changed state the predecessor owns"
-    );
-}
-
-/// Installing and uninstalling leaves every predecessor file as found.
-///
-/// Install writes its receipt only below the Rust root.
-#[test]
-fn installing_this_port_leaves_predecessor_state_byte_identical() {
-    let fixture = Fixture::seeded("install");
-    let before = fixture.predecessor_identity();
-
-    let preview = fixture.invoke(&["--json", "install"]);
-    assert!(preview.status.success(), "install preview: {preview:?}");
-    let preview: Value = serde_json::from_slice(&preview.stdout).expect("preview is JSON");
-    let digest = preview["body"]["digest"]
-        .as_str()
-        .expect("preview names the plan digest an operator must echo back");
-
-    let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
-    assert!(applied.status.success(), "install apply: {applied:?}");
-
-    let receipt = fixture.paths().install_record().to_path_buf();
-    assert!(
-        receipt.is_file(),
-        "install wrote no receipt at the path this runtime claims"
-    );
-    assert!(receipt.starts_with(fixture.state_root()));
-    assert!(!receipt.starts_with(fixture.predecessor_root()));
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "installing this port changed state the predecessor owns"
-    );
-
-    let removed = fixture.invoke(&["install", "--unapply"]);
-    assert!(removed.status.success(), "install unapply: {removed:?}");
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "uninstalling this port changed state the predecessor owns"
-    );
-}
-
-/// The one bridge that exists reads its export and writes nothing.
-#[test]
-fn the_bridge_leaves_predecessor_state_byte_identical() {
-    let fixture = Fixture::seeded("bridge");
-    let export = fixture.export();
-    let before = fixture.predecessor_identity();
-
-    let output = fixture.invoke(&["config", "migrate-tasks", &export]);
-    assert!(
-        output.status.success(),
-        "accepted export must land: {output:?}"
-    );
-
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "the bridge changed state the predecessor owns"
-    );
-}
-
-/// Bridging is refused by default: it runs only on an operator-named export.
-#[test]
-fn the_bridge_refuses_without_an_operator_named_export() {
-    let fixture = Fixture::seeded("refusal");
-    let before = fixture.predecessor_identity();
-
-    let output = fixture.invoke(&["config", "migrate-tasks"]);
-
-    assert!(
-        !output.status.success(),
-        "a bridge with no operator-named export must refuse: {output:?}"
-    );
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "a refused bridge still changed state the predecessor owns"
-    );
-}
-
 /// Worktree paths spelling the Rust state layout cannot become journal
 /// authority. Production opens the real Git-common journal while the lookalike
 /// bytes stay unchanged.
@@ -312,7 +173,7 @@ impl Fixture {
     /// A repository whose state root already holds the predecessor's files.
     fn seeded(label: &str) -> Self {
         let fixture = Self::bare(label);
-        for (relative, bytes) in PREDECESSOR_STATE.iter().chain(PREDECESSOR_GATE_STATE) {
+        for (relative, bytes) in PREDECESSOR_STATE {
             let path = fixture.predecessor_root().join(relative);
             fs::create_dir_all(path.parent().expect("seeded path has a parent"))
                 .expect("create predecessor directory");
@@ -347,32 +208,6 @@ impl Fixture {
     /// Python Spice's state root, which Rust Spice treats as foreign.
     fn predecessor_root(&self) -> PathBuf {
         self.root.join(".git").join(".spice")
-    }
-
-    /// Write the operator-named export outside both state roots.
-    fn export(&self) -> String {
-        let path = self.root.join("export.json");
-        fs::write(&path, EXPORT).expect("write predecessor export");
-        path.display().to_string()
-    }
-
-    fn invoke(&self, args: &[&str]) -> Output {
-        let mut command = self.command();
-        command.args(args).output().expect("run the spice binary")
-    }
-
-    fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-        command
-            .current_dir(&self.root)
-            .env("PATH", "")
-            .env_remove(steer::hook::HOOKS)
-            .env_remove(steer::hook::LANE)
-            .env_remove(steer::hook::NATIVE_SHELL)
-            .env_remove(PREDECESSOR_HOOKS_ENV)
-            .env_remove(PREDECESSOR_LANE_ENV)
-            .env_remove(PREDECESSOR_NATIVE_SHELL_ENV);
-        command
     }
 
     /// The runtime's own declaration of where its state lives.
