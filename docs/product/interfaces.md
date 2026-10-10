@@ -161,7 +161,10 @@ utterances. An utterance settles on the browser's end or error, and a failure
 is a nonblocking notice that never blocks the visible stream — the transcript
 remains the record. `say.voices` is an ordered list of voice names, scoped to
 the agent's worktree: each device speaks an agent's messages with the first
-listed name it publishes, and the agent keeps that voice for the page. An
-empty list uses the device default. A browser that has not yet published
-voices is waited for under a bound; a published list holding none of the names
-refuses, naming the voices the browser offers.
+listed name it publishes, and the agent keeps that voice for the page. With an
+empty list, each device spreads agents across its published voices sharing the
+default voice's language: an agent keeps the voice its lane hashes to unless a
+teammate already holds it, so teammates sound different until a team
+outnumbers the voices, and agents on different teams may share. A browser that
+has not yet published voices is waited for under a bound; a published list
+holding none of the names refuses, naming the voices the browser offers.

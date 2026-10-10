@@ -7,6 +7,8 @@ use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Event, SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
 use crate::speech_owner::PlaybackOwnership;
+use crate::voice_spread::{self, OfferedVoice};
+use wire::CanonicalUuid;
 
 const REFERENCE_WORDS_PER_MINUTE: f32 = 175.0;
 const MIN_SYSTEM_RATE: f32 = 0.5;
@@ -34,6 +36,20 @@ pub struct SystemObservers<Voices, Ended, Failed> {
     pub ended: Ended,
     /// The utterance failed, carrying the browser's own error code.
     pub failed: Failed,
+}
+
+/// Which voice one system request asks for.
+#[derive(Clone, Copy)]
+pub enum VoiceRequest<'a> {
+    /// Configured voice names in preference order.
+    Listed(&'a [String]),
+    /// No names are configured: this roster member's spread voice.
+    Spread {
+        teams: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
+        member: CanonicalUuid,
+    },
+    /// No names are configured and the speaker is not on the roster.
+    Default,
 }
 
 /// One browser playback owner. Replacements always stop the prior utterance first.
@@ -94,22 +110,25 @@ impl Controller {
 
     /// Speak `text` for `agent` through the browser's system synthesis.
     ///
-    /// An empty `voices` list speaks with the device's default voice. Otherwise
-    /// the first candidate this browser publishes wins and stays the agent's
-    /// voice for the rest of the page.
+    /// A [`VoiceRequest::Listed`] request speaks with the first candidate this
+    /// browser publishes, which stays the agent's voice for the rest of the
+    /// page. A [`VoiceRequest::Spread`] request speaks with the member's slot
+    /// among the published voices sharing the device default's language, so
+    /// teammates sound different. [`VoiceRequest::Default`] speaks with the
+    /// device's default voice.
     ///
     /// A browser publishes its voice list asynchronously: on a fresh page
     /// `get_voices` answers an empty list until the engine has enumerated the
     /// installed voices and fired `voiceschanged`. An empty list is therefore
     /// no verdict on the candidates; it installs the observer that resumes this
     /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
-    /// list carrying no candidate is refused.
+    /// list carrying no listed candidate is refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
         agent: &str,
         text: &str,
-        voices: &[String],
+        request: VoiceRequest<'_>,
         words_per_minute: u32,
         observers: SystemObservers<Voices, Ended, Failed>,
     ) -> Result<SystemStart, String>
@@ -130,30 +149,27 @@ impl Controller {
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .speech_synthesis()
             .map_err(|_| "system speech is unavailable".to_owned())?;
-        let voice = match self.chosen.get(agent) {
-            _ if voices.is_empty() => None,
-            Some(voice) if voices.contains(&voice.name()) => Some(voice.clone()),
-            _ => {
-                let offered: Vec<SpeechSynthesisVoice> = synthesis
-                    .get_voices()
-                    .iter()
-                    .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
-                    .collect();
-                if offered.is_empty() {
-                    let observed = Closure::wrap(
-                        Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>
-                    );
-                    synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
-                    self.synthesis = Some(synthesis);
-                    self.on_voices = Some(observed);
-                    return Ok(SystemStart::AwaitingVoices);
+        let voice = match request {
+            VoiceRequest::Default => None,
+            VoiceRequest::Listed(voices) => match self.chosen.get(agent) {
+                Some(voice) if voices.contains(&voice.name()) => Some(voice.clone()),
+                _ => {
+                    let Some(offered) = self.published(&synthesis, on_voices) else {
+                        return Ok(SystemStart::AwaitingVoices);
+                    };
+                    let voice = voices
+                        .iter()
+                        .find_map(|name| offered.iter().find(|voice| voice.name() == *name))
+                        .ok_or_else(|| unavailable_voices(voices, &offered))?;
+                    self.chosen.insert(agent.to_owned(), voice.clone());
+                    Some(voice.clone())
                 }
-                let voice = voices
-                    .iter()
-                    .find_map(|name| offered.iter().find(|voice| voice.name() == *name))
-                    .ok_or_else(|| unavailable_voices(voices, &offered))?;
-                self.chosen.insert(agent.to_owned(), voice.clone());
-                Some(voice.clone())
+            },
+            VoiceRequest::Spread { teams, member } => {
+                let Some(offered) = self.published(&synthesis, on_voices) else {
+                    return Ok(SystemStart::AwaitingVoices);
+                };
+                spread_voice(&offered, teams, member)
             }
         };
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
@@ -178,12 +194,60 @@ impl Controller {
         self.on_voices = None;
         Ok(SystemStart::Speaking)
     }
+
+    /// The voices this browser publishes, or `None` once the observer that
+    /// resumes the request on `voiceschanged` is installed.
+    fn published(
+        &mut self,
+        synthesis: &SpeechSynthesis,
+        on_voices: impl Fn() + 'static,
+    ) -> Option<Vec<SpeechSynthesisVoice>> {
+        let offered: Vec<SpeechSynthesisVoice> = synthesis
+            .get_voices()
+            .iter()
+            .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
+            .collect();
+        if !offered.is_empty() {
+            return Some(offered);
+        }
+        let observed =
+            Closure::wrap(Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>);
+        synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
+        self.synthesis = Some(synthesis.clone());
+        self.on_voices = Some(observed);
+        None
+    }
 }
 
 impl Drop for Controller {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// The member's slot among the published voices sharing the device default's
+/// language; no such voice leaves the device default speaking.
+fn spread_voice(
+    offered: &[SpeechSynthesisVoice],
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    member: CanonicalUuid,
+) -> Option<SpeechSynthesisVoice> {
+    let traits: Vec<(String, String, bool)> = offered
+        .iter()
+        .map(|voice| (voice.name(), voice.lang(), voice.default()))
+        .collect();
+    let described: Vec<OfferedVoice<'_>> = traits
+        .iter()
+        .map(|(name, lang, default)| OfferedVoice {
+            name,
+            lang,
+            default: *default,
+        })
+        .collect();
+    let language = web_sys::window().and_then(|window| window.navigator().language());
+    let pool = voice_spread::pool(&described, language.as_deref());
+    let slot = voice_spread::voice_slot(teams, member, pool.len())?;
+    offered.get(pool[slot]).cloned()
 }
 
 /// Refuse a voice list this device carries none of, naming what it offers.
