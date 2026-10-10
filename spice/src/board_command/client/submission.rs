@@ -325,7 +325,7 @@ fn submit_task_add_with_rule(
     attach_steering_origin_artifacts(repository, steering_origin.as_ref(), outcome)
 }
 
-fn append_ambient_plan_witnesses(
+pub(in crate::board_command) fn append_ambient_plan_witnesses(
     board: &BoardAnswer,
     add: &TaskAdd,
     expected: &mut Vec<Witness>,

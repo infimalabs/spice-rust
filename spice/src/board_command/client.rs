@@ -126,6 +126,8 @@ use recovery::{client_add_recovery, client_recover};
 mod completion;
 use completion::{client_done, client_review};
 mod submission;
+#[cfg(test)]
+pub(in crate::board_command) use submission::append_ambient_plan_witnesses;
 pub(super) use submission::mutation_read;
 pub(in crate::board_command) use submission::{
     artifact_operation_failure, repository_state_failure,
