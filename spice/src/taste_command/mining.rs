@@ -292,7 +292,13 @@ fn corrections(
 ) -> Result<(Vec<Correction>, usize, usize), EvidenceError> {
     let mut sent = BTreeMap::<CanonicalUuid, (Seq, bool, SteerSent)>::new();
     for envelope in snapshot.facts() {
-        if let Some(body) = envelope.fact.read::<SteerSent>() {
+        let opened = envelope.fact.read::<SteerSent>().or_else(|| {
+            envelope
+                .fact
+                .read::<wire::body::SteerMessaged>()
+                .map(|body| body.as_sent())
+        });
+        if let Some(body) = opened {
             sent.entry(body.directive).or_insert((
                 envelope.seq,
                 envelope.actor == Actor::Operator,

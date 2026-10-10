@@ -229,6 +229,8 @@ vocabulary! {
     SteerDeclined = "steer::declined" by AckScanner;
     /// A lane's answer to a live peer message opened a reply to its sender.
     SteerReplied = "steer::replied" by AckScanner;
+    /// An authored MSG packet opened one peer message to one exact recipient.
+    SteerMessaged = "steer::messaged" by AckScanner;
     /// An ACK named no live directive; nothing retired.
     SteerMissed = "steer::missed" by AckScanner;
     /// A directive reached expiry without a valid disposition.
@@ -391,6 +393,7 @@ impl FactKind {
         Self::SteerDeclined,
         Self::SteerMissed,
         Self::SteerReplied,
+        Self::SteerMessaged,
         Self::SteerLapsed,
         Self::SteerDeadLettered,
         Self::SteerCanceled,

@@ -291,7 +291,7 @@ pub(super) async fn run_surface(
     let channels = capture::channels();
     let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
-    recover_transcripts(bus, paths, epoch, progress)?;
+    recover_transcripts(bus, paths, epoch, &config.steering, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;

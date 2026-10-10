@@ -51,6 +51,7 @@ const PINNED: &[(&str, &str)] = &[
     ("SteerAcked", "steer::acked"),
     ("SteerDeclined", "steer::declined"),
     ("SteerReplied", "steer::replied"),
+    ("SteerMessaged", "steer::messaged"),
     ("SteerMissed", "steer::missed"),
     ("SteerLapsed", "steer::lapsed"),
     ("SteerDeadLettered", "steer::deadlettered"),

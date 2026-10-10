@@ -24,6 +24,7 @@ use super::{
 
 mod exit;
 mod history;
+mod message;
 mod preview;
 mod reply;
 #[cfg(test)]
@@ -33,6 +34,9 @@ mod transitions;
 
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 pub(super) use history::history;
+pub(super) use message::{AuthoredRecord, Refusals, publish_at_startup, publish_authored};
+#[cfg(test)]
+pub(super) use message::{Packet, Published, Unpublished, publish_packet};
 use preview::directive_preview;
 use transitions::evidence_refusal;
 pub(super) use transitions::{cancel, recover, resend, send, tell};
