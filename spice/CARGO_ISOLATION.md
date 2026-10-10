@@ -1,105 +1,58 @@
 # Cargo isolation
 
-Spice resident lanes receive a private `CARGO_HOME` over one immutable,
-content-addressed directory-source store. Spice captures the bootstrap Cargo
-home from `SPICE_RS_BOOTSTRAP_CARGO_HOME`, then `CARGO_HOME`, then
-`HOME/.cargo`, in that precedence order. The store is rooted at the captured
-home's `spice/source-store-v2` and is keyed by the exact `Cargo.lock` bytes
-plus schema version. Descendant Cargo processes receive that captured home as
-`SPICE_RS_BOOTSTRAP_CARGO_HOME` while their private home is exported as
-`CARGO_HOME`. Cargo, rustc, and rustdoc are admitted as one exact native
-toolchain before `CARGO_HOME` changes. A complete explicit
-`SPICE_RS_NATIVE_CARGO`/`SPICE_RS_NATIVE_RUSTC`/`SPICE_RS_NATIVE_RUSTDOC`
-trio takes precedence; otherwise Spice resolves all three through the channel
-declared by the worktree's `rust-toolchain.toml` and the exact `rustup` below
-the bootstrap Cargo home. Partial declarations, missing executables, and paths
-from different toolchain directories are refused before Cargo starts. `PATH`
-is not a compiler-authority resolver.
+Resident lanes receive a private `CARGO_HOME` over one immutable,
+content-addressed directory-source store keyed by the exact `Cargo.lock` bytes.
+`spice dev cargo -- CARGO_ARGS...` and `spice dev xtask -- XTASK_ARGS...` are the
+only supported Cargo routes; [AGENTS.md](../AGENTS.md#cargo-isolation) states
+when to use them.
 
-Task, session, and steering authority belongs to the active harness. Native
-harness authority remains in force unless the invocation explicitly entered
-through an installed Spice bootstrap. Development surfaces such as `dev cargo`
-and `dev xtask` use only the exact Git-common Rust appliance; they do not
-establish or imply harness authority. In a supervised repository shell,
-tracked wrapper policy resolves ambient `spice` to that appliance:
+## Homes and toolchain
 
-```sh
-spice dev cargo -- test --locked -p spice
-spice dev xtask -- verify --package spice
-```
+The bootstrap Cargo home is `SPICE_RS_BOOTSTRAP_CARGO_HOME`, else `CARGO_HOME`,
+else `HOME/.cargo`, and descendants inherit it as
+`SPICE_RS_BOOTSTRAP_CARGO_HOME` while their private home is `CARGO_HOME`.
+Cargo, rustc, and rustdoc are admitted as one native toolchain before
+`CARGO_HOME` changes: either a complete `SPICE_RS_NATIVE_CARGO`,
+`SPICE_RS_NATIVE_RUSTC`, `SPICE_RS_NATIVE_RUSTDOC` trio, or the channel
+`rust-toolchain.toml` declares, resolved by the bootstrap home's own `rustup`.
+A partial trio, a missing executable, or tools from different toolchain
+directories refuse before Cargo starts; `PATH` never selects the compiler.
 
-Replace the trailing example argument vector with the exact Cargo or xtask
-operation required; retain the ambient appliance command and `dev ... --`
-boundary.
+Package trees are sealed after atomic publication, except that regular source
+files keep owner-write permission: build scripts that copy inputs into
+`OUT_DIR` preserve permissions, and read-only inputs would poison later
+rebuilds. Cargo's directory-source checksums reject changed bytes, and
+`spice dev cargo-store` verifies every package digest and reports drift without
+repairing it. `spice dev cargo-store --cleanup` removes only recognized expired
+temporary state and unreferenced generations, and retains everything when any
+home's liveness is uncertain.
 
-A missing, symbolic, non-regular, or non-executable appliance is a hard stop at
-wrapper resolution. Do not select another Cargo route or point `CARGO_HOME` at
-a shared mutable cache to bypass that refusal.
+Each `dev cargo` process holds a kernel-backed reader pin on its generation
+until its Cargo child exits, and cleanup never removes a pinned generation. A
+resident lane's home needs no pin: only one process group can occupy the lane,
+and a replacement cannot advance that home until the seat is vacant. Proof
+planning binds the staged lock bytes to an already-admitted home and never
+advances a lane home or seeds dependencies; unadmitted generations refuse.
 
-Package directory entries are sealed after their atomic publication. Regular
-source files retain owner-write permission because supported Cargo build
-scripts may preserve source permissions when copying generated inputs into
-their mutable `OUT_DIR`; making those inputs read-only poisons later rebuilds.
-Cargo's directory-source checksums reject changed package bytes during builds,
-and Spice inspection independently verifies every package tree digest and
-reports any permission or content drift without repairing it.
+## Output
 
-Use `spice dev cargo -- CARGO_ARGS...` whenever a command may create
-or refresh `Cargo.lock`, or when a non-resident command needs the supported
-isolated boundary. Use `spice dev xtask -- XTASK_ARGS...` for the
-repository's build, verification, staging, cache, and refresh orchestrator; it
-prepares the same private home before expanding to the locked `xtask` package.
-Use `spice dev cargo-store` to inspect the owned schema
-and `spice dev cargo-store --cleanup` to remove only recognized expired
-temporary state and valid unreferenced generations/packages. Cleanup has a
-seven-day grace, retains all generations if any home has uncertain liveness,
-and reports malformed links, records, modes, file types, or digests rather than
-repairing or deleting them.
+Both surfaces forward the argument vector, environment, and exit status
+exactly. Cargo's diagnostics are captured whole in
+`<git-common>/.spice-rs/cargo-output/DIGEST.log`, with a periodic heartbeat
+naming Cargo's current step. Success prints one summary line with the capture
+path; failure adds a bounded tail and an inspection command. Output that is the
+command's product (`dev xtask` tasks, `cargo run`, `metadata`, `--list`, JSON
+message formats, and similar) reaches standard output byte for byte and is also
+retained. `--verbose` before `--` streams captured lines live. Under a
+pre-commit worker, which captures its configured leaf itself, the streams stay
+verbatim.
 
-Both surfaces forward the exact argument vector, environment, and exit status
-but are failure-focused on the terminal. Cargo's standard error, and its
-standard output unless that output is the command's product, are retained as
-one complete `<git-common>/.spice-rs/cargo-output/DIGEST.log` capture (newest
-64 kept); progress is a 30-second heartbeat naming Cargo's current step. Success
-prints one standard-error line with identity, outcome, timing, test, crate, and
-warning counts, and the capture path. Failure adds the last 40 lines (at most
-4 KiB, control bytes replaced) with how many lines and earlier bytes were
-withheld, the capture path and size, and an exact `grep` inspection command.
-Product output is delivered to standard output byte for byte and also
-retained: every `dev xtask` task, and Cargo's `run`, `metadata`, `tree`,
-`pkgid`, `locate-project`, `read-manifest`, `verify-project`, `version`,
-`help`, `config`, `search`, and `info`, help and version requests, JSON
-`--message-format`, and `test`/`bench` with `-- --list`. Other subcommands,
-including repository aliases, are captured. `--verbose` before `--` streams
-captured lines live, each clipped, up to 200 lines. A child terminated by a
-signal, such as a shell deadline, reports the signal with its tail. Under a
-supervising pre-commit worker, which parses its configured leaf's protocol and
-captures it itself, the child's streams stay verbatim.
+## Target budget
 
-Each Rust `dev cargo` process holds a unique kernel-backed reader pin from
-before store preparation unlocks until its native Cargo child exits. Cleanup
-retains every actively pinned generation, removes unlocked records left by a
-crashed wrapper, and retains all generations if a pin cannot be classified.
-Resident occupants need no transient pin: their lane-specific home remains the
-current reference for the one process group that can occupy that lane, and a
-replacement cannot advance the same home until the seat is vacant.
-
-Proof planning binds the exact staged lock bytes to an already-admitted private
-home. When a synchronized tree has moved past the occupied lane's generation,
-the same worktree's development home may supply that generation after admission
-through `spice dev cargo`. Selection neither advances the lane home nor seeds
-dependencies. Foreign owners, malformed homes, and unadmitted generations still
-refuse. A reader pin retains the selected generation through proof planning and
-execution; metadata and Cargo use that exact home, and completion revalidates it
-without switching to another home.
-
-Each worktree's `target/` is held to 24 GiB. `dev cargo`, `dev xtask`,
-`spice gate prove`, and the pre-commit gate hold the worktree's Cargo output
-lease shared for their whole run. The first of them to find the lease free, at
-most every ten minutes, empties the least recently used Cargo profile
-directories until `target/` fits, fingerprints first, keeping Cargo's lock
-files. A profile directory whose `.cargo-lock`, `.cargo-build-lock`, or
-`.cargo-artifact-lock` a live Cargo or rust-analyzer holds is left whole, and
-no output is removed while another such run holds the lease. A run refuses
-before consuming Cargo output if it cannot acquire the lease. `spice dev
-cargo-footprint` reports the footprint per profile directory and the bound.
+Each worktree's `target/` has a size bound. `dev cargo`, `dev xtask`,
+`spice gate prove`, and the pre-commit gate share the worktree's Cargo-output
+lease for their whole run; the first to find it free trims least recently used
+profile directories until `target/` fits, leaving whole any profile whose Cargo
+lock a live Cargo or rust-analyzer holds. A run that cannot take the lease
+refuses before touching Cargo output. `spice dev cargo-footprint` reports usage
+per profile and the bound.

@@ -1,65 +1,38 @@
 # Sealed Darwin proof runner
 
-`build.sh` seals the `aarch64-apple-darwin` half of the release appliance: the
-`proof` crate's `spice-proof-darwin-runner` binary, built with one compiled pin
-document naming the exact source commit, the vendored closure of `Cargo.lock`,
-the SDK, developer, and Cargo cache directories, and the path and bytes of the
-five directly selected boundary tools: Cargo, rustc, cargo-mutants, Git, and
-`sandbox-exec`. Seal the runner from the repository root:
+`build.sh` seals the `aarch64-apple-darwin` half of release proof: the `proof`
+crate's `spice-proof-darwin-runner`, compiled with one pin document naming the
+source commit, the vendored `Cargo.lock` closure, the SDK, developer, and Cargo
+cache directories, and the path and bytes of each boundary tool (Cargo, rustc,
+cargo-mutants, Git, and `sandbox-exec`). Run it from the repository root:
 
 ```sh
 dist/proof-runner/build.sh
 ```
 
-The command requires native arm64 macOS, a tracked tree at `HEAD`, and no
-non-ignored untracked files outside release output. It writes the runner, its
-vendored closure, and a readable copy of the pin document under
-`target/proof-native-darwin/`, then exercises the runner protocol end to end
-before reporting the runner's identity.
+It requires native arm64 macOS, a tracked tree at `HEAD`, and no non-ignored
+untracked files outside release output. It writes the runner, its vendored
+closure, and a readable copy of the pins under `target/proof-native-darwin/`,
+then exercises the runner protocol end to end and reports the runner's
+identity.
 
 Bind that path as `proof.runner` in machine-local configuration. Nothing else
-selects a runner: `spice dev xtask -- stage-target aarch64-apple-darwin` refuses to
-stage until the configured runner attests, and proof replay admits the runner by
-digesting the exact bytes it is about to execute.
+selects a runner: `spice dev xtask -- stage-target aarch64-apple-darwin` refuses
+until the configured runner attests, and proof replay admits it by digesting
+the exact bytes it is about to execute.
 
-Pins live inside the executable rather than beside it, so a runner built without
-them refuses instead of running unpinned, and editing them produces a different
-executable with a different identity. The runner re-reads its own bytes before
-every execution, revalidates every pin, then emits its attestation on stderr and
-runs the battery member under `sandbox-exec` with every route off this host
-denied, the repository read-only, the host's Cargo caches unreadable, the
-package-manager prefixes and framework directory a `-sys` build script probes
-for a library unreadable, every checkout beside this one neither readable nor
-writable, and fresh empty Cargo home, target, and mutation-output directories
-that it removes
-afterward. Loopback stays reachable because the battery's own corpus binds it,
-which is the boundary the container half gets from a network namespace holding
-nothing but a loopback interface.
+Pins are compiled into the executable, so a runner built without them refuses
+and editing them changes its identity. Before every execution the runner
+re-reads its own bytes, revalidates every pin, emits its attestation on stderr,
+and runs the battery under `sandbox-exec`: routes off the host denied (loopback
+stays, because the battery's own corpus binds it), the repository read-only,
+host Cargo caches and the library prefixes `-sys` build scripts probe
+unreadable, neighbouring checkouts neither readable nor writable, and fresh
+Cargo home, target, and mutation-output directories removed afterward.
 
-That profile opens with `(allow default)`, so it denies named things rather than
-admitting named things, and it therefore still denies less than the container
-half, which has no host filesystem to deny at all. What it establishes about
-host dependencies is that the prefixes such a dependency is found under are
-unreachable, not that the host is absent.
-
-The neighbouring checkouts are the exception that proves the shape: the
-directory the workspace sits in is denied for reading and writing alike, and
-the parent node's metadata and three paths are then read back — the workspace,
-the Git common directory the runner resolved, and the run's own scratch root.
-The literal parent allowance lets Cargo and the compiler resolve those admitted
-descendants without revealing the parent's entries or any peer's metadata or
-bytes. Only reading is given back there. Within that denied workspace,
-Git-common, and workspace-parent neighbourhood, the one restored write
-allowance is the scratch root, named by the last rule in the profile, so a
-scratch root that happens to sit in the neighbourhood survives the denial while
-the workspace and its repository stay read-only, which they already were.
-Denying reads alone would have left the sharper half open: a
-run that cannot see a peer's source can still truncate it, and the receipt would
-name neither. The common directory is read back because a linked worktree
-keeps it beside the workspace rather than inside it, so denying the
-neighbourhood would otherwise take the repository being proved. A seal whose
-workspace parent holds a pinned path instead refuses, naming that pin: the
-denial would take it with nothing to allow it back from. The rustup toolchain
-root is not pinned by name and needs no pin of its own, because `build.sh` seals
-the compiler `rustup which rustc` resolves and that binary lives inside the
-root.
+The profile opens with `(allow default)`, so it denies named things and still
+denies less than the container half, which has no host filesystem at all: it
+establishes that the prefixes host dependencies are found under are
+unreachable, not that the host is absent. The rationale for each rule lives
+with the profile in
+[`proof/src/bin/spice-proof-darwin-runner/main.rs`](../../proof/src/bin/spice-proof-darwin-runner/main.rs).

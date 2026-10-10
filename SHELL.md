@@ -1,175 +1,73 @@
 # Shell boundary inventory
 
-Every tracked shell file remains only at a boundary Rust cannot cross without
-adding a prior binary artifact or losing source-in-the-current-shell behavior.
-This is the complete inventory of tracked shell files.
+A tracked shell file exists only at a boundary Rust cannot cross without a
+prior binary artifact or without losing source-in-the-current-shell behavior.
+This is the complete inventory.
 
 ## Generated Git-hook launchers
 
 `spice install` generates `pre-commit`, `commit-msg`, and
-`reference-transaction` under the Git-common `.spice-install/git-hooks`. These
-are installed artifacts rather than tracked shell files. Their exact forms are
-shown with a representative absolute Git-common prefix. `pre-commit` first
-normalizes Git and Command Line Tools environment inherited from the hook.
-Nested Git invocations prepend Git's execution directory once per level, so
-every leading repetition is removed; later authored `PATH` entries survive:
+`reference-transaction` under the Git-common `.spice-install/git-hooks` from
+[`spice/src/install/git_hooks.rs`](spice/src/install/git_hooks.rs). They are
+installed artifacts, not tracked files. Each is a `#!/bin/sh -eu` script whose
+final line `exec`s the absolute Git-common appliance's `gate HOOK` leaf,
+forwarding Git's argv, standard input, output, and exit status unchanged.
+`pre-commit` first strips Git- and Command-Line-Tools-injected environment that
+would select a different Git or toolchain context. No launcher reads policy or
+routes anywhere else.
 
-```sh
-#!/bin/sh -eu
-SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1
-export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE
-git_exec_path=${GIT_EXEC_PATH-}
-while [ -n "$git_exec_path" ]; do
-  case ${PATH-} in
-    "$git_exec_path":*) PATH=${PATH#"$git_exec_path":}; export PATH ;;
-    *) break ;;
-  esac
-done
-unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX
-case $git_exec_path in
-  /Library/Developer/CommandLineTools/*)
-    [ "${CPATH-}" != /usr/local/include ] || unset CPATH
-    [ "${LIBRARY_PATH-}" != /usr/local/lib ] || unset LIBRARY_PATH
-    case ${SDKROOT-} in /Library/Developer/CommandLineTools/*) unset SDKROOT ;; esac
-    case ${MANPATH-} in *Library/Developer/CommandLineTools*) unset MANPATH ;; esac
-    ;;
-esac
-exec '/absolute/git-common/.spice-install/bin/spice' gate pre-commit "$@"
-```
+The absolute path is in the body rather than the shebang because a shebang
+depends on kernel length and argument-splitting rules, cannot portably carry
+the `gate HOOK` subcommand, and would hide a repository move inside a kernel
+launch failure. In the body, the non-portable identity stays inspectable and is
+repaired by a fresh digest-bound install.
 
-The other launchers are exactly two lines:
+## `.githooks/{pre-commit,commit-msg,reference-transaction}`
 
-```sh
-#!/bin/sh -eu
-exec '/absolute/git-common/.spice-install/bin/spice' gate commit-msg "$@"
-```
-
-```sh
-#!/bin/sh -eu
-exec '/absolute/git-common/.spice-install/bin/spice' gate reference-transaction "$@"
-```
-
-Each final `exec` preserves Spice's exit status, stdout, and stderr and forwards
-Git's exact argv. `pre-commit` receives no operands; its Rust dispatcher captures
-the staged index. `commit-msg` receives exactly the message-file path. Both
-inherit standard input without reading it. `reference-transaction` receives
-exactly one state operand and preserves Git's update records on standard input;
-the Rust gate consumes them only for `prepared`, while `committed` and `aborted`
-are inert. No launcher reads policy or performs fallback routing.
-
-The short `#!/bin/sh -eu` line names a stable system interpreter and makes a
-failed expansion or command fatal. The shell performs no policy: `pre-commit`
-only removes inherited environment that would select a different Git/toolchain
-context, and every launcher quotes and `exec`s the explicit absolute appliance
-path. Putting that long path in the shebang would depend on kernel shebang length
-and argument-parsing rules, could not portably encode the `gate HOOK` subcommand,
-and would leave repository relocation hidden inside kernel launch failure. The
-generated body makes that absolute, non-portable identity inspectable and
-repairable through a fresh digest-bound install plan.
-
-The tracked `.githooks` files are development launchers, not installed assets.
-They resolve the Git common directory and dispatch directly to its installed
-Spice. They never invoke Cargo or `xtask`; current-source policy is the separate
-configured `spice dev cargo -- run --quiet --locked --package spice --bin spice
--- gate selection` leaf.
-
-## `.githooks/commit-msg`
-
-Caller: Git when the tracked development hook path is selected for a commit.
-
-Disposition: Irreducible glue.
-
-Reason: The hook begins outside the Rust process. It resolves the Git common
-directory and `exec`s the already-installed appliance’s `gate commit-msg` leaf,
-preserving Git’s message-file operand and process I/O without duplicating policy.
-
-## `.githooks/pre-commit`
-
-Caller: Git when the tracked development hook path is selected for a commit.
-
-Disposition: Irreducible glue.
-
-Reason: The hook begins outside the Rust process. It resolves the Git common
-directory and `exec`s the already-installed appliance’s `gate pre-commit` leaf,
-preserving Git’s process contract without invoking a build system or duplicating
-policy.
-
-## `.githooks/reference-transaction`
-
-Caller: Git while a tracked development reference transaction holds the shared
-repository reference lock.
-
-Disposition: Irreducible glue.
-
-Reason: The hook must enter the already-installed Rust appliance without
-building under Git’s shared lock. It resolves the Git common directory and
-`exec`s `gate reference-transaction`, preserving the state operand, update
-records, exit status, and process I/O without duplicating policy.
+Development launchers Git runs when the tracked hook path is selected. Each
+resolves the Git common directory and `exec`s the installed appliance's
+matching `gate` leaf. They never build: `reference-transaction` runs under Git's
+shared reference lock.
 
 ## `dist/proof-image/cargo-wrapper.sh`
 
-Caller: `dist/proof-image/Dockerfile`, installed as `/opt/spice/bin/cargo`
-inside the sealed Linux image.
-
-Disposition: Irreducible glue.
-
-Reason: It creates `/cargo-target/tmp` after the proof boundary mounts an empty
-target tmpfs, then `exec`s the image's real Cargo. A Rust wrapper would require
-a prebuilt `linux/amd64` binary before the image that establishes and records
-that binary's toolchain exists.
+Installed as `/opt/spice/bin/cargo` in the sealed Linux proof image. It creates
+`/cargo-target/tmp` on the empty target tmpfs and `exec`s the real Cargo. A Rust
+wrapper would need a prebuilt `linux/amd64` binary before the image that
+records its toolchain exists.
 
 ## `dist/proof-runner/build.sh`
 
-Caller: Native arm64 macOS release operator via
-`dist/proof-runner/README.md`.
-
-Disposition: Irreducible glue.
-
-Reason: It is the transparent bootstrap recipe that runs the unsealed runner
-to derive compile-time pins, then compiles and exercises the sealed runner.
-Moving that derivation into the runner being sealed would make the target
-author its own trust inputs; introducing a second prebuilt Rust sealer would
-only move the unsealed bootstrap and add another binary identity.
+The macOS release operator's bootstrap that runs the unsealed runner to derive
+compile-time pins, then compiles and exercises the sealed runner. Moving that
+derivation into the runner would let the target author its own trust inputs.
 
 ## `steer/hooks/entry.sh`
 
-Caller: The installed shell startup hook embedded by `steer::hook` and
-published by `spice::install`; supervised agent launches set this executable as
-their outer `SHELL`.
+Supervised launches set this as the outer `SHELL`. It receives the shell tool's
+complete argument vector before any native shell exists and replaces itself
+with `spice run` and the inner stage. A Rust child cannot replace the shell
+process that chose to start it.
 
-Disposition: Irreducible glue.
+## `steer/hooks/shell/.zshenv` and `steer/hooks/shell/bash_env`
 
-Reason: It receives the shell tool's complete argument vector before the native
-command shell exists, then replaces itself with `spice run` and the separately
-packaged inner stage. When the configured RTK executable can be launched,
-`spice run` first gives it the complete top-level command through this hook;
-every unusable rewrite answer reports a command-local degradation and runs the
-original argv unchanged. Only an unlaunchable executable removes the selector
-from the lane. A Rust child cannot replace the shell process that chose to
-start it.
+Startup files selected through `ZDOTDIR` and `BASH_ENV` for agent tools that
+start zsh or bash directly instead of honoring `SHELL`. While the shell still
+holds the complete execution string, each re-enters `spice run` with the inner
+stage once; an interactive shell clears both selectors and starts normally.
+Only a file the shell sources itself sees that string.
 
 ## `steer/hooks/static/stage.sh`
 
-Caller: Executed by `spice run` as its one immediate child for every supervised
-top-level shell command.
-
-Disposition: Irreducible glue.
-
-Reason: It removes the packaged routing variables, restores `SHELL` to the
-user's native shell, and replaces itself with that shell. This preserves the
-wrapper's child process identity across `exec` while ensuring executed scripts
-and descendant shells start natively; a Rust child cannot mutate its own
-process environment and then replace itself on the caller's behalf.
+The one immediate child of `spice run` for every supervised command. It removes
+the routing variables, restores `SHELL` to the user's native shell, and `exec`s
+that shell, so the wrapper's child identity survives while scripts and
+descendant shells start natively. A Rust child cannot change its own
+environment and then replace itself on the caller's behalf.
 
 ## `steer/hooks/wrappers/spice`
 
-Caller: Agent command lookup through the installed wrapper directory prepended
-to supervised launch `PATH` when `[wrappers] spice = "appliance"` is configured.
-
-Disposition: Irreducible glue.
-
-Reason: The shell must resolve the ambient `spice` word before the Rust
-appliance can run. The resident validates and exports the exact Git-common
-appliance path; this extensionless wrapper performs no discovery or policy and
-replaces itself with that typed executable while preserving the caller's exact
-arguments and process status.
+Prepended to supervised `PATH` when `[wrappers] spice = "appliance"` is
+configured. The shell must resolve the ambient `spice` word before Rust runs;
+this script `exec`s the exact appliance the resident validated, with the
+caller's arguments, and performs no discovery or policy.

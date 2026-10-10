@@ -1,11 +1,10 @@
 # Spice
 
 Spice is an operations console for supervising coding agents in real Git
-worktrees. The [product model](docs/product/README.md) defines portable behavior;
-the [Rust implementation profile](docs/product/rust.md) fixes this appliance's
-concrete authority, storage, transport, verification, and release choices.
+worktrees. The [product model](docs/product/README.md) states what Spice is and
+the invariants its code keeps.
 
-## Install and run
+## Install
 
 Preview the digest-bound installation plan, review it, then apply that exact
 plan:
@@ -15,125 +14,51 @@ cargo run --locked -p spice -- install
 cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ```
 
-An already installed appliance can update from an explicitly materialized
-sealed release-package directory without a Rust toolchain or source checkout:
+An installed appliance updates from a sealed release-package directory without
+a Rust toolchain or source checkout:
 
 ```sh
 spice install --package /absolute/path/to/spice-release-package
 spice install --package /absolute/path/to/spice-release-package --apply=DIGEST_FROM_PREVIEW
 ```
 
-Both commands verify the complete package and execute only its proof-bound
-current-platform Spice binary. Apply does not restart a resident; use the
-installed `spice down` and `spice up` commands when that restart is intended.
+[INSTALL.md](INSTALL.md) owns activation, upgrade, reversal, and recovery.
 
-Installation publishes the executable, bootstrap skill, supervised-shell
-entry/static/wrapper assets, and three Git hooks under the Git common directory,
-then switches hook authority last. It refuses conflicting linked-worktree
-selections before writing. [INSTALL.md](INSTALL.md) owns the complete
-activation, upgrade, and reversal procedure;
-[INSTALL_RECOVERY.md](INSTALL_RECOVERY.md) owns exceptional recovery.
-
-Within a supervised repository shell, tracked wrapper policy resolves ambient
-`spice` to the exact Git-common appliance. A missing, symbolic, non-file, or
-non-executable asset is a hard stop before the command runs:
+## Run
 
 ```sh
 spice dev xtask -- app
 spice up
 ```
 
-`up` returns after owner-only discovery and authenticated bootstrap agree on the
-resident generation:
+`up` returns once the resident is authenticated and prints its endpoint.
+`--open` opens the browser, `--foreground` keeps the process attached, and
+`spice down` drains the resident and releases its lock. Detached diagnostics
+append to `<git-common>/.spice-rs/resident.log`. The resident listens on a
+loopback port the kernel picks unless `--host IP` or `--port PORT` names one; a
+named port keeps the URL stable across restarts.
 
-```json
-{"endpoint":"http://127.0.0.1:53817","epoch":"..."}
-```
-
-`--open` opens the browser. `up --foreground` keeps process, signals, endpoint
-output, and terminal outcome attached. Detached diagnostics append to Git-common
-`.spice-rs/resident.log`; `spice down` drains the resident, withdraws discovery,
-and releases its lock. `up` listens on loopback at a free port the kernel
-picks; `--host IP` and `--port PORT` name the address instead, and a named port
-keeps the same URL across restarts.
-
-A non-loopback listener requires `--allow-insecure-bind`. Add a bearer token of
-16–256 ASCII letters, digits, hyphens, periods, underscores, or tildes unless
-the surrounding network is the intended access boundary:
+A non-loopback listener requires `--allow-insecure-bind`. Add a URL-safe bearer
+token unless the surrounding network is the intended access boundary:
 
 ```sh
 spice up --host 0.0.0.0 --allow-insecure-bind \
   --auth-token correct-horse-battery-staple --open
 ```
 
-The initiating CLI receives the token in its own argv, then passes it to the
-detached resident through a one-shot private descriptor. It is absent from the
-resident child's argv and environment and from discovery, log URLs, and replies.
-`--open` places it in the URL fragment, outside the HTTP origin.
+The token reaches the detached resident through a one-shot private descriptor.
+It never appears in the resident's argv or environment, discovery, log URLs, or
+replies; `--open` places it in the URL fragment, outside the HTTP origin.
 
-Supervised shells may use an optional configured
-[RTK](https://github.com/rtk-ai/rtk) executable. When that executable can be
-launched, the installed shell hooks route each top-level command across a
-bounded `rtk rewrite -- ...` selector. Any nonempty, parseable, faithful output
-selects the rewrite regardless of selector status; exit 1 with empty output
-keeps the native command without a diagnostic. Other empty answers, launch
-failures, timeouts, and unusable rewrites report
-`RTK rewrite degraded to native` and execute the original argv unchanged. RTK
-is not an appliance asset. Its lane-specific history is isolated at
-`<git-common>/.spice-rs/rtk/<lane>/history.db` through `RTK_DB_PATH`, and
-`spice doctor` observes the exact configured executable through one bounded
-launch check without starting a resident. Version and rewrite statuses are
-advisory; rewrite validation belongs to the command that will execute it.
-
-Activation requires all three installed hooks. Pre-commit runs the staged
-selector: recognized paths execute their affected Cargo targets and policy
-arms; authority, unclassified, and out-of-workspace Rust paths refuse before
-execution. There is no exhaustive fallback. Use staged selection or
-`spice dev xtask -- verify --package PACKAGE` for bounded feedback.
+Supervised shells may route commands through an optional configured
+[RTK](https://github.com/rtk-ai/rtk) executable. An unusable rewrite reports
+`RTK rewrite degraded to native` and runs the original command unchanged; each
+lane's RTK history is isolated under `<git-common>/.spice-rs/rtk/`, and
+`spice doctor` checks the configured executable.
 
 ## Develop
 
-Source work completes through validation, commit, and the active harness's handoff
-or landing path. Installation is a separate operator or supervisor action.
-
-Use package-scoped feedback while work is moving:
-
-```sh
-spice dev cargo -- fmt --all -- --check
-spice dev xtask -- verify --package gate
-```
-
-At the commit boundary, stage the exact change and inspect its proof receipts:
-
-```sh
-spice gate prove
-```
-
-Inspection never runs missing work. Follow its exact remediation with
-`spice gate prove ACTION`, or generate all current misses with
-`spice gate prove --missing`, then use the normal `git commit` path. Only the
-proof runner publishes trusted receipts; ad hoc Cargo, app, or shell output
-is useful feedback but is not reusable commit evidence. A trust refusal remains
-an operator boundary and is never bypassed by proof generation.
-
-The browser app keeps its Rust checks and production compiler. Browser interactions
-are verified with disposable actual-surface experiments, not a permanent
-process-backed suite or browser-shard proof actions. See
-[Gate evidence](docs/product/planes/gate-evidence.md) for the receipt and cache
-contract.
-
-Native `spice gate pre-commit` resolves tracked policy and fingerprint authority
-once in an isolated worker, restores the canonical staged selection from the
-manifest, verifies its exact receipts, then runs live and admitted configured
-checks. `pre_commit_builtins = false` runs only configured commands and refuses
-an empty battery. Selection, policy, tests, and reporting consume one captured
-source. Configured commands receive its identity and selected paths as metadata,
-run from the live repository root, and must bind their own source bytes when
-required. Every child executes under bounded process-group containment; a clean
-run is silent and a refusal names only selected findings plus its private report
-path.
-
-[DEVELOPMENT.md](DEVELOPMENT.md) owns crate seams, generated surfaces, the test
-portfolio, feedback tiers, concurrency, and safe cache cleanup.
-[SHELL.md](SHELL.md) inventories every tracked shell boundary.
-[TASTES.md](TASTES.md) owns the checked taste seeds and curation law.
+[DEVELOPMENT.md](DEVELOPMENT.md) owns the development loop, crate seams, and
+cleanup; [Gate evidence](docs/product/planes/gate-evidence.md) owns commit
+proof; [SHELL.md](SHELL.md) inventories every tracked shell file;
+[TASTES.md](TASTES.md) owns taste curation.
