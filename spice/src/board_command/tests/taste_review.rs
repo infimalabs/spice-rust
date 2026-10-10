@@ -320,6 +320,104 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
 }
 
 #[test]
+fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
+    let (root, bus, epoch, _seats) = fixture("taste-review-withdraw", 0);
+    let repository = configured_repository(&root, &["delay"]);
+    let (inserted, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-inserted",
+        "Delay the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+    let authored_born = stamp("TASTE-authored");
+    let authored = TaskHandle::for_project("board.test", &authored_born);
+    assert_committed(issue_repository(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: authored_born,
+        }],
+        &TaskAdd {
+            title: "Delay the planned change".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["focused tests pass".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:taste-review".parse().expect("fixture origin")),
+            flow: Some("plan,todo".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    let held = board(&bus, epoch, Actor::Operator);
+    let phases = |board: &BoardAnswer, task: &TaskHandle| {
+        let workflow = &at(board, task).workflow.body;
+        (
+            workflow.phase.as_str().to_owned(),
+            workflow
+                .flow
+                .iter()
+                .map(|phase| phase.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        phases(&held, &inserted),
+        (
+            "plan".to_owned(),
+            vec!["plan".into(), "todo".into(), "review".into()]
+        ),
+    );
+    assert_eq!(
+        phases(&held, &authored),
+        ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
+    );
+
+    for (task, title) in [
+        (&inserted, "Ship the lifecycle change"),
+        (&authored, "Ship the planned change"),
+    ] {
+        assert_committed(modify_with_repository(
+            &bus,
+            &repository,
+            epoch,
+            Actor::Operator,
+            task,
+            title,
+        ));
+    }
+    let cleared = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        phases(&cleared, &inserted),
+        ("todo".to_owned(), vec!["todo".into(), "review".into()]),
+        "the plan phase the hold inserted leaves with the hold",
+    );
+    assert_eq!(
+        phases(&cleared, &authored),
+        ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
+        "an authored plan phase outlives the hold",
+    );
+    for task in [&inserted, &authored] {
+        assert!(
+            at(&cleared, task)
+                .statement
+                .body
+                .tags
+                .iter()
+                .all(|tag| !SYSTEM_TAGS.contains(&tag.as_str())),
+            "a cleared hold leaves no board-owned tags behind",
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
 fn blank_acceptance_is_refused_and_whitespace_is_absent_for_default_flow() {
     let (root, bus, epoch, _seats) = fixture("taste-review-blank-acceptance", 0);
     let repository = configured_repository(&root, &["unrelated"]);

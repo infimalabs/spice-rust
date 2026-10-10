@@ -182,7 +182,8 @@ pub struct TaskAdded {
     pub creation: TaskCreationContext,
 }
 
-/// A claimed phase completed and workflow advanced.
+/// The workflow head moved to another phase: a claimed phase completed, or an
+/// edit that cleared a taste hold withdrew the plan phase the hold inserted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskPhased {
     /// Advanced task.

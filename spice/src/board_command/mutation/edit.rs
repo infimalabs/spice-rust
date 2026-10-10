@@ -53,7 +53,7 @@ fn prepare_correction(
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
     let mut statement = corrected_statement(entry, edit, projects)?;
-    let (taste_review, was_required) =
+    let (taste_review, was_required, released) =
         review_taste(repository, snapshot, command, edit, entry, &mut statement)?;
     let at = current_instant()?;
     let requirement_change = requirements::prepare(
@@ -66,7 +66,10 @@ fn prepare_correction(
     )?;
     let post = Entry::new(
         statement.clone(),
-        entry.workflow().clone(),
+        released.as_ref().map_or_else(
+            || entry.workflow().clone(),
+            |released| released.workflow().clone(),
+        ),
         entry.claim().cloned(),
         requirement_change
             .lease()
@@ -86,6 +89,7 @@ fn prepare_correction(
         at,
         requirement_change,
         taste_review: taste_review.filter(|review| was_required || review.required()),
+        released,
     };
     Ok((statement, publication))
 }
@@ -97,7 +101,7 @@ fn review_taste(
     edit: &TaskEdit,
     entry: &Entry,
     statement: &mut TaskHead,
-) -> Result<(Option<TasteReview>, bool), Outcome<CommandAnswer>> {
+) -> Result<(Option<TasteReview>, bool, Option<ReleasedPlan>), Outcome<CommandAnswer>> {
     let review = task_taste_review(
         repository,
         snapshot,
@@ -107,8 +111,13 @@ fn review_taste(
         &statement.acceptance,
     )?;
     let was_required = has_taste_review(&statement.tags);
+    let mut released = None;
     match review.as_ref().map(TasteReview::required) {
-        Some(false) => clear_taste_review(&mut statement.tags),
+        Some(false) => {
+            if let Some(workflow) = clear_taste_review(&mut statement.tags, entry.workflow()) {
+                released = Some(ReleasedPlan::observe(snapshot, entry.born(), workflow)?);
+            }
+        }
         Some(true) if was_required || entry.workflow().phase.as_str() == "plan" => {
             require_taste_review(&mut statement.tags);
         }
@@ -127,7 +136,7 @@ fn review_taste(
         }
         None => {}
     }
-    Ok((review, was_required))
+    Ok((review, was_required, released))
 }
 
 /// Build the statement a correction publishes, or the refusal it earns.
@@ -227,6 +236,8 @@ struct CorrectionPublication {
     at: Instant,
     requirement_change: requirements::Change,
     taste_review: Option<TasteReview>,
+    /// The authored workflow a cleared hold returns the task to.
+    released: Option<ReleasedPlan>,
 }
 
 fn publish_correction(
@@ -241,6 +252,7 @@ fn publish_correction(
         at,
         requirement_change,
         taste_review,
+        released,
     } = publication;
     let revision = u32::try_from(statement.revision.get())
         .unwrap_or(u32::MAX)
@@ -271,6 +283,11 @@ fn publish_correction(
             review,
             FactCause::Pending(edited),
         )
+    {
+        return outcome;
+    }
+    if let Some(released) = released
+        && let Err(outcome) = released.write(&mut write, &statement.born, edited)
     {
         return outcome;
     }

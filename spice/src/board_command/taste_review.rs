@@ -4,6 +4,13 @@ use super::*;
 
 pub(super) const TASTE_REVIEW_TAG: &str = "taste-review:required";
 
+/// Marks a plan phase the board inserted for a taste hold, as opposed to one
+/// the author's flow named. Only a marked phase leaves with its hold.
+pub(super) const TASTE_PLAN_TAG: &str = "taste-review:plan-prepended";
+
+/// Statement tags the board owns; authors never write or see them.
+pub(super) const SYSTEM_TAGS: [&str; 2] = [TASTE_REVIEW_TAG, TASTE_PLAN_TAG];
+
 /// Opening words of every durable taste-review audit note.
 pub(super) const AUDIT_PREFIX: &str = "taste-review audit ";
 
@@ -38,7 +45,8 @@ pub(super) fn has_taste_review(tags: &[String]) -> bool {
 }
 
 pub(super) fn visible_tags(tags: &[String]) -> impl Iterator<Item = &String> {
-    tags.iter().filter(|tag| tag.as_str() != TASTE_REVIEW_TAG)
+    tags.iter()
+        .filter(|tag| !SYSTEM_TAGS.contains(&tag.as_str()))
 }
 
 pub(super) fn substantive_acceptance(acceptance: &[String]) -> bool {
@@ -67,13 +75,144 @@ pub(super) fn require_taste_review(tags: &mut Vec<String>) {
     }
 }
 
-pub(super) fn clear_taste_review(tags: &mut Vec<String>) {
-    tags.retain(|tag| tag != TASTE_REVIEW_TAG);
-}
-
-pub(super) fn prepend_plan(flow: &mut Vec<wire::Phase>) {
+/// Hold a new task for taste review in a plan phase.
+///
+/// A flow that already opens in plan keeps that phase as authored; only a plan
+/// phase this inserts is marked, so the hold's clearance can withdraw exactly
+/// what the hold added.
+pub(super) fn hold_for_taste(flow: &mut Vec<wire::Phase>, tags: &mut Vec<String>) {
+    require_taste_review(tags);
     if flow.first().is_none_or(|phase| phase.as_str() != "plan") {
         flow.insert(0, phase("plan"));
+        tags.push(TASTE_PLAN_TAG.to_owned());
+    }
+}
+
+/// Clear a satisfied taste hold, withdrawing the plan phase it inserted.
+///
+/// Returns the workflow the task enters when the hold's own plan phase is still
+/// current: the authored flow, positioned at its first phase, with every other
+/// workflow field intact. A plan phase the author named stays.
+pub(super) fn clear_taste_review(
+    tags: &mut Vec<String>,
+    workflow: &wire::WorkflowHead,
+) -> Option<wire::WorkflowHead> {
+    let prepended = tags.iter().any(|tag| tag == TASTE_PLAN_TAG);
+    tags.retain(|tag| !SYSTEM_TAGS.contains(&tag.as_str()));
+    let in_prepended_phase = workflow.phase.as_str() == "plan"
+        && workflow.flow.first() == Some(&workflow.phase)
+        && workflow.flow.len() > 1;
+    if !prepended || !in_prepended_phase {
+        return None;
+    }
+    let mut released = workflow.clone();
+    released.flow.remove(0);
+    released.phase = released.flow[0].clone();
+    Some(released)
+}
+
+/// Refuse an authored document that writes a board-owned tag.
+pub(super) fn refuse_system_tags(tags: &[String]) -> Result<(), Outcome<CommandAnswer>> {
+    match tags.iter().find(|tag| SYSTEM_TAGS.contains(&tag.as_str())) {
+        Some(tag) => Err(refusal(
+            "doc::tag-reserved",
+            Some(tag.clone()),
+            "remove the system-owned taste-review marker from the authored document",
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Carry a document task's taste hold into the statement its document rewrites.
+///
+/// A new task is held like any other. An existing held task keeps the
+/// board-owned tags while it still matches and, once it no longer does, returns
+/// to the workflow its hold displaced.
+pub(super) fn resync_taste_hold(
+    snapshot: &ValidatedSnapshot,
+    existing: Option<&Entry>,
+    required: bool,
+    flow: &mut Vec<wire::Phase>,
+    tags: &mut Vec<String>,
+) -> Result<Option<ReleasedPlan>, Outcome<CommandAnswer>> {
+    let Some(entry) = existing else {
+        if required {
+            hold_for_taste(flow, tags);
+        }
+        return Ok(None);
+    };
+    let mut held = entry.statement().tags.clone();
+    if !has_taste_review(&held) {
+        if required {
+            require_taste_review(tags);
+        }
+        return Ok(None);
+    }
+    if required {
+        held.retain(|tag| SYSTEM_TAGS.contains(&tag.as_str()));
+        tags.extend(held);
+        return Ok(None);
+    }
+    clear_taste_review(&mut held, entry.workflow())
+        .map(|workflow| ReleasedPlan::observe(snapshot, entry.born(), workflow))
+        .transpose()
+}
+
+/// The workflow a cleared hold returns its task to, guarded on the workflow
+/// head the clearance read.
+pub(super) struct ReleasedPlan {
+    witness: Witness,
+    workflow: wire::WorkflowHead,
+}
+
+impl ReleasedPlan {
+    pub(super) fn observe(
+        snapshot: &ValidatedSnapshot,
+        task: &wire::TaskStamp,
+        workflow: wire::WorkflowHead,
+    ) -> Result<Self, Outcome<CommandAnswer>> {
+        let observed = snapshot
+            .answer
+            .tasks
+            .iter()
+            .find(|heads| heads.statement.body.born == *task)
+            .ok_or_else(|| {
+                protocol_fault(
+                    "task::snapshot-incoherent",
+                    "validated board snapshot lost a task entry",
+                )
+            })?;
+        Ok(Self {
+            witness: workflow_witness(observed),
+            workflow,
+        })
+    }
+
+    pub(super) const fn workflow(&self) -> &wire::WorkflowHead {
+        &self.workflow
+    }
+
+    /// Record the phase change as a `task::phased` fact caused by the edit that
+    /// cleared the hold, so every phase replay follows it.
+    pub(super) fn write(
+        self,
+        write: &mut JournalWrite,
+        task: &wire::TaskStamp,
+        edited: PendingFact,
+    ) -> Result<PendingFact, Outcome<CommandAnswer>> {
+        guard(write, vec![self.witness]);
+        let phased = write
+            .fact(
+                body::TaskPhased {
+                    task: task.clone(),
+                    phase: self.workflow.phase.clone(),
+                },
+                FactCause::Pending(edited),
+            )
+            .map_err(|error| store_fault("task::phase-build", &error.to_string()))?;
+        let workflow = self.workflow;
+        write.workflow_head(task.clone(), phased, move |_| workflow);
+        Ok(phased)
     }
 }
 
