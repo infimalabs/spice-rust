@@ -114,33 +114,6 @@ pub(crate) fn seed_app_stage_as(worktree: &Path, identity: &[u8]) {
     .expect("write fixture app pointer");
 }
 
-/// Add one synthetic linked worktree sharing `main`'s common Git directory.
-#[allow(
-    dead_code,
-    reason = "shared by only the linked-worktree integration targets"
-)]
-pub(crate) fn link(main: &Path, linked: &Path, name: &str) -> PathBuf {
-    let common = initialize(main);
-    fs::create_dir_all(linked).expect("create linked fixture worktree");
-    let git_dir = common.join("worktrees").join(name);
-    fs::create_dir_all(&git_dir).expect("create linked fixture Git directory");
-    fs::write(
-        linked.join(".git"),
-        format!("gitdir: {}\n", git_dir.display()),
-    )
-    .expect("write linked fixture Git pointer");
-    fs::write(git_dir.join("commondir"), "../..\n")
-        .expect("write linked fixture common-directory pointer");
-    fs::write(
-        git_dir.join("gitdir"),
-        format!("{}\n", linked.join(".git").display()),
-    )
-    .expect("write linked fixture reverse pointer");
-    fs::write(git_dir.join("HEAD"), format!("ref: refs/heads/{name}\n"))
-        .expect("write linked fixture head");
-    git_dir
-}
-
 fn open(worktree: &Path) -> gix::Repository {
     gix::open_opts(worktree, gix::open::Options::isolated()).expect("open fixture repository")
 }
