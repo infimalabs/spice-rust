@@ -248,6 +248,13 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "cargo_isolation::store"
     ),
+    local_direct!(
+        ["dev", "cargo-footprint"],
+        "dev cargo-footprint",
+        [Daemonless, Offline],
+        Reply,
+        "cargo_output::footprint"
+    ),
     row!(
         ["lock"],
         "lock",

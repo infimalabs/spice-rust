@@ -13,6 +13,8 @@ use spice::cargo_isolation::{
     NATIVE_RUSTC_VARIABLE, NATIVE_RUSTDOC_VARIABLE, RUSTC_VARIABLE, RUSTDOC_VARIABLE,
     prepare_manual,
 };
+#[cfg(unix)]
+use spice::cargo_output::{self, OutputLease, Pass};
 use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Reply, ReplyPosition};
 
@@ -256,6 +258,8 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
             1,
         )
     })?;
+    #[cfg(unix)]
+    let _lease = output_lease(&repository);
     let host = host(&repository).map_err(isolation_rejection)?;
     let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
     let mut command = native_command(
@@ -286,6 +290,87 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
         Stage::Relay(error) => relay_rejection(&error),
         Stage::Wait(error) => wait_rejection(&error),
     })
+}
+
+/// Hold this worktree's Cargo output lease for the caller's whole run,
+/// reclaiming over-bound output first when no other run holds it.
+///
+/// A lease or reclamation failure is reported and the run continues: a
+/// footprint over its bound is recoverable, a refused build or gate is not.
+#[cfg(unix)]
+pub(crate) fn output_lease(repository: &Repository) -> Option<OutputLease> {
+    use std::io::Write as _;
+
+    let target = cargo_output::worktree_target(repository.worktree_root());
+    let entered = repository
+        .admit_state()
+        .map_err(|error| io::Error::other(error.to_string()))
+        .and_then(|state| {
+            OutputLease::enter(
+                state.worktree_locks(),
+                &target,
+                cargo_output::LANE_OUTPUT_BOUND,
+                std::time::SystemTime::now(),
+            )
+        });
+    let mut stderr = io::stderr().lock();
+    match entered {
+        Ok((lease, pass)) => {
+            match pass {
+                Pass::Ran(Ok(reclamation))
+                    if !reclamation.removed.is_empty() || !reclamation.busy.is_empty() =>
+                {
+                    let _ = writeln!(stderr, "[cargo output] {reclamation}");
+                }
+                Pass::Ran(Err(error)) => {
+                    let _ = writeln!(stderr, "[cargo output] reclamation failed: {error}");
+                }
+                Pass::Ran(Ok(_)) | Pass::NotDue | Pass::Shared => {}
+            }
+            Some(lease)
+        }
+        Err(error) => {
+            let _ = writeln!(stderr, "[cargo output] lease unavailable: {error}");
+            None
+        }
+    }
+}
+
+/// Report this worktree's Cargo output footprint and the bound it is held to.
+#[cfg(unix)]
+pub(crate) fn footprint() -> Outcome<cargo_output::Footprint> {
+    let repository = match std::env::current_dir()
+        .map_err(|error| {
+            (
+                "cargo-output::working-directory-unavailable",
+                error.to_string(),
+            )
+        })
+        .and_then(|working| {
+            Repository::discover(&working)
+                .map_err(|error| (spice::repository::ResolveError::REASON, error.to_string()))
+        }) {
+        Ok(repository) => repository,
+        Err((reason, detail)) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: reason.to_owned(),
+                detail,
+            });
+        }
+    };
+    let target = cargo_output::worktree_target(repository.worktree_root());
+    match cargo_output::measure(&target, cargo_output::LANE_OUTPUT_BOUND) {
+        Ok(body) => Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body,
+        }),
+        Err(error) => Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "cargo-output::unmeasurable".to_owned(),
+            detail: format!("{}: {error}", target.display()),
+        }),
+    }
 }
 
 /// Native Cargo over the private home, leading its own process group so a

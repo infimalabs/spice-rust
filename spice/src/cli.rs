@@ -324,6 +324,7 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["dev", "cargo"]
             | ["dev", "xtask"]
             | ["dev", "cargo-store"]
+            | ["dev", "cargo-footprint"]
             | ["dev", "report-page"]
             | ["lock"]
             | ["lock", "run"]
