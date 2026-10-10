@@ -426,8 +426,6 @@ path.image-annotation-hit { fill: none; }
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
   --team-pip-gap: calc(var(--app-presence-pip-size) / 2);
-  /* One stable two-digit task tab also owns the centered status-light column. */
-  --team-edge-tab-inline-size: 3.25rem;
   --team-toolbar-inline-inset: 8px;
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
@@ -475,7 +473,7 @@ path.image-annotation-hit { fill: none; }
   padding: 0;
 }
 .team-toolbar > .team-status-row {
-  grid-area: status; display: grid; grid-template-columns: var(--team-edge-tab-inline-size) minmax(0, 1fr);
+  grid-area: status; display: grid; grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr);
   box-sizing: border-box; min-width: 0; padding-inline: var(--team-toolbar-inline-inset);
 }
 .team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); }
@@ -483,7 +481,7 @@ path.image-annotation-hit { fill: none; }
   --team-pip-columns: 3; --team-pip-rows: 2; display: grid;
   grid-template-columns: repeat(var(--team-pip-columns), var(--app-presence-pip-size)); grid-template-rows: repeat(var(--team-pip-rows), var(--app-presence-pip-size));
   grid-auto-flow: column dense; direction: rtl; place-content: center; gap: var(--team-pip-gap);
-  inline-size: var(--team-edge-tab-inline-size); min-width: 0; margin: 0; padding: 0;
+  inline-size: var(--app-total-tab-inline-size); min-width: 0; margin: 0; padding: 0;
 }
 /* Preserve newest-first bottom-to-top ordering while centering each matrix. */
 .team-lights > :nth-child(odd of .app-presence-pip) { grid-row: 2; }
@@ -502,15 +500,12 @@ path.image-annotation-hit { fill: none; }
   display: grid;
   grid-area: tasks;
   align-self: end;
-  grid-template-columns: var(--team-edge-tab-inline-size) minmax(0, 1fr);
+  grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr);
   min-width: 0;
   margin: 0 var(--team-toolbar-inline-inset);
   overflow: hidden;
 }
 .team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { align-self: end; }
-.team-task-rail > [data-work-scope="team"] { box-sizing: border-box; inline-size: var(--team-edge-tab-inline-size); }
-.team-task-rail > [data-work-scope="team"] > button { flex: 1 1 auto; justify-content: center; }
-.team-task-rail > [data-work-scope="team"] .app-count-badge { display: inline-flex; justify-content: center; box-sizing: content-box; inline-size: 2ch; }
 .team-task-rail > [data-work-scope="team"] { grid-column: 1; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;

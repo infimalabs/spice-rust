@@ -495,8 +495,9 @@ Chat tiles one always-mounted console per live team: identity, liveness, member
 standing, composer, and the lane-attributed stream. Each member lane stays the
 concrete address of one worktree; a team is never a broadcast identity. The
 header's first row fixes the team total at the left when work exists and scrolls
-task tabs after it. The total reserves one two-digit width through 99 tasks and
-centers either digit count without resizing. The second row centers the ordered
+task tabs after it. The total keeps the global total's one-digit badge width:
+a second digit takes its room from the badge padding, centered, so the total
+never resizes and both totals align. The second row centers the ordered
 lane-light matrix directly beneath that total: one dot, a vertical pair, a
 triangle, a square, a centered two-over-three group, or a three-by-two matrix
 for one through six members. The status ticker uses the remaining row width for

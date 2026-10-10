@@ -68,8 +68,9 @@ is the sum of the stem badges and the number of handles. Activating it opens
 the unified overview with the team's complete current task set already
 selected. It does not change the durable location.
 
-The team total holds a fixed two-digit column at the rail's inline start, so a
-one-digit count, a two-digit count through 99, and the pip segment beneath them
+The team total holds the global total's one-digit width at the rail's inline
+start: a wider count eats the badge's inline padding with its digits centered,
+so both totals and the pip segment beneath them
 share one centerline without resizing the tab. The first stem tab sits one
 `--mosaic-gap` past that column. Stem and task tabs scroll beneath mirrored
 alpha screens at both ends; the leading underlap reaches back beneath the

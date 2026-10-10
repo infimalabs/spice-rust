@@ -187,10 +187,12 @@ rule, while only status text dims for bound/unbound state.
 ## Work tabs
 
 Global and team totals use four-pixel outer inline rails; global stems and team
-stem containers use the thinner ordinary tab rails. The team total holds one
-fixed two-digit column through 99 tasks, with either digit count centered.
+stem containers use the thinner ordinary tab rails. Global and team totals share
+one tab width sized for a one-digit badge; a wider count takes its room from the
+badge's own inline padding with the digits centered, so the badge, both totals,
+and their alignment never change with the count.
 Presence pips live in an equally wide leading segment of the status row directly
-beneath it, not a trailing task tab. Task handles remain borderless segments
+beneath the team total, not a trailing task tab. Task handles remain borderless segments
 inside their stem container; the final handle meets the container's single
 right rail. The task scroller reserves the total's fixed width and uses mirrored
 fade, padding, and scroll-padding boundaries at its ends. Counts and navigation
