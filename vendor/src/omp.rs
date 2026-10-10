@@ -333,9 +333,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 }
 
 /// The configuration overlay a lane writes before launch, stating the
-/// compaction threshold, Anthropic service tier, language-server disposition,
-/// todo reminder disposition, and OpenAI live-steering disposition this seat
-/// runs.
+/// compaction threshold, language-server disposition, Anthropic service tier,
+/// and todo reminder disposition this seat runs.
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
