@@ -681,7 +681,6 @@ fn acquire_inventory_with_resolution(
     cargo: &OsStr,
     require_resolution: bool,
 ) -> Result<Inventory, WorkspaceTestError> {
-    mark_metadata_launch()?;
     let mut arguments = vec!["metadata", "--locked", "--format-version", "1"];
     if !require_resolution {
         arguments.push("--no-deps");
@@ -700,28 +699,6 @@ fn acquire_inventory_with_resolution(
         .wait()
         .map_err(|error| WorkspaceTestError::new(format!("metadata wait failed: {error}")))?;
     metadata_from_outcome(outcome, root, require_resolution)
-}
-
-#[cfg(debug_assertions)]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the debug-only process marker is controlled by integration tests"
-)]
-fn mark_metadata_launch() -> Result<(), WorkspaceTestError> {
-    let Some(path) = std::env::var_os(super::TEST_CARGO_METADATA_MARKER) else {
-        return Ok(());
-    };
-    fs::write(&path, b"cargo metadata launched").map_err(|error| {
-        WorkspaceTestError::new(format!(
-            "cannot write Cargo metadata test marker {}: {error}",
-            Path::new(&path).display(),
-        ))
-    })
-}
-
-#[cfg(not(debug_assertions))]
-fn mark_metadata_launch() -> Result<(), WorkspaceTestError> {
-    Ok(())
 }
 
 fn metadata_from_outcome(

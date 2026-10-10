@@ -764,12 +764,11 @@ fn classify_prepared(
 }
 
 fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
-    const LOCATION_ONLY: [&str; 5] = [
+    const LOCATION_ONLY: [&str; 4] = [
         "PWD",
         "CARGO_HOME",
         "CARGO_TARGET_DIR",
         "CARGO_BUILD_BUILD_DIR",
-        gate::TEST_CARGO_METADATA_MARKER,
     ];
     const DISABLED_WRAPPERS: [&str; 2] = ["RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"];
     let mut normalized = values
