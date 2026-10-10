@@ -367,6 +367,8 @@ fn run_profiled(
         Ok(repository) => repository,
         Err(error) => return fault(spice::repository::ResolveError::REASON, error),
     };
+    #[cfg(unix)]
+    let _lease = crate::cargo_command::output_lease(&repository);
     let capture_started = Instant::now();
     let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
         match capture_appliance_generation_fence(&repository) {

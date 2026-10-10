@@ -13,6 +13,8 @@ pub mod agent_prose;
 pub mod agent_wrapper;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cargo_isolation;
+#[cfg(unix)]
+pub mod cargo_output;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod change_gate;
 pub mod claim_lease;

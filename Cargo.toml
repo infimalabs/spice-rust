@@ -70,8 +70,13 @@ opt-level = 3
 [profile.dev.package.spice]
 strip = "symbols"
 
+# Test executables carry no debug information. On macOS debug information stays
+# in each codegen unit's object file beside the executable, and Cargo never
+# removes the objects a relink stops referencing, so test debug information
+# would grow each lane's output with every edit. A panic still reports its
+# source location without it.
 [profile.test]
-debug = 1
+debug = 0
 
 [profile.test.package.blake3]
 opt-level = 3
