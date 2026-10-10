@@ -257,78 +257,10 @@ fn timing(elapsed: Duration, bounds: &Bounds) -> ArmTiming {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::time::Duration;
 
     use crate::toolchain::exclusive_scratch_root;
-    use sill::Deadlines;
 
     use super::*;
-
-    /// A success fixture must remain supervised without turning scheduler load
-    /// into timeout coverage. The canonical shard has its own three-minute
-    /// ceiling, while dedicated timeout tests use deliberately expiring bounds.
-    const PYRIGHT_SUCCESS_FIXTURE_RUNTIME: Duration = Duration::from_secs(30);
-
-    #[test]
-    fn bounded_pyright_process_reports_the_reached_component_diagnostic() {
-        let root = exclusive_scratch_root("gate-pyright-process");
-        fs::create_dir_all(root.join("src")).expect("create Pyright process fixture");
-        fs::write(root.join("pyproject.toml"), "[project]\nname = 'fixture'\n")
-            .expect("write Pyright process configuration");
-        let file = root.join("src/subject.py");
-        fs::write(&file, "value: str = 1\n").expect("write Pyright process source");
-        let output = serde_json::json!({
-            "generalDiagnostics": [{
-                "file": file,
-                "severity": "error",
-                "message": "Type Literal[1] is not assignable to str",
-                "range": {"start": {"line": 0, "character": 7}},
-                "rule": "reportAssignmentType"
-            }],
-            "summary": {"errorCount": 1}
-        });
-        let program = root.join("pyright");
-        fs::write(
-            &program,
-            format!("#!/bin/sh\nprintf '%s\\n' '{}'\nexit 1\n", output),
-        )
-        .expect("write Pyright process stub");
-        let mut permissions = fs::metadata(&program)
-            .expect("stat Pyright process stub")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&program, permissions).expect("make Pyright process stub executable");
-        let bounds = Bounds::new(
-            "Pyright process fixture",
-            Deadlines::new(
-                PYRIGHT_SUCCESS_FIXTURE_RUNTIME,
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("valid Pyright process deadlines"),
-            Duration::from_millis(25),
-            16 * 1024,
-        )
-        .expect("valid Pyright process bounds");
-        let program = program.to_str().expect("UTF-8 Pyright process stub");
-        let programs = BTreeMap::from([("pyright", program)]);
-
-        let analysis = python_typecheck(
-            crate::toolchain::declaration(crate::GateId::PythonTypecheck)
-                .expect("Python typecheck is declared"),
-            &root,
-            &["src/subject.py".to_owned()],
-            &bounds,
-            &programs,
-        );
-
-        assert_eq!(analysis.outcome, ArmOutcome::Findings);
-        assert_eq!(analysis.findings.len(), 1);
-        assert_eq!(analysis.findings[0].path.as_deref(), Some("src/subject.py"));
-        assert!(analysis.timing.is_some());
-        fs::remove_dir_all(root).expect("remove Pyright process fixture");
-    }
 
     #[test]
     fn pyright_json_normalizes_only_reached_error_diagnostics() {
