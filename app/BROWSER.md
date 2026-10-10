@@ -104,6 +104,11 @@ has room and one column in narrow layouts.
 
 ## Provider quota rows
 
+The **Accounts lacking usage** and **Disabled credentials** sections appear
+only when their respective collections contain entries. Empty collections
+omit the entire section, including its heading; account limits and quota
+status remain visible independently.
+
 Each account-limit row reads from left to right as the limit name, flexible
 capacity bar, amount, and compact reset cadence. Percent amounts describe the
 remaining quota as `N% full`; counted limits retain their explicit remaining
