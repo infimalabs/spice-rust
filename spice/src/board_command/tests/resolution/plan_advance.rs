@@ -314,8 +314,8 @@ fn assert_plan_release_and_replay(
 }
 
 #[test]
-fn gated_plan_reverses_its_edge_and_then_completes() {
-    let (root, bus, epoch, seats) = fixture("reverse-gated-plan", 1);
+fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan() {
+    let (root, bus, epoch, seats) = fixture("gated-plan-child", 1);
     let lane = Actor::Lane(seats[0].lane);
     let plan = add_raw_task(
         &bus,
@@ -336,35 +336,125 @@ fn gated_plan_reverses_its_edge_and_then_completes() {
     );
     connect_child(&bus, epoch, &child, &plan);
 
-    let gated = board(&bus, epoch, Actor::Operator);
+    let held = board(&bus, epoch, lane.clone());
+    let child_heads = at(&held, &child);
+    let stale_expected = progress_witnesses(
+        &held,
+        at(&held, &plan),
+        seats[0].lane,
+        seats[0].occupant,
+        false,
+    )
+    .expect("plan-only completion carries reverse child witnesses");
+    assert!(stale_expected.contains(&statement_witness(child_heads)));
+    assert!(stale_expected.contains(&workflow_witness(child_heads)));
+
+    let visible = board(&bus, epoch, Actor::Operator);
     assert_committed(issue(
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::TaskDepends,
-        dependency_removal_witnesses(&gated, &child, &[&plan], None, false),
-        &TaskDepends {
+        CommandKind::TaskEdit,
+        vec![statement_witness(at(&visible, &child))],
+        &TaskEdit {
             task: child.clone(),
-            after: vec![plan.clone()],
-            remove: true,
+            title: None,
+            description: None,
+            acceptance: vec!["the changed implementation behavior is verified".to_owned()],
+            requirements: None,
+            priority: None,
+            project: None,
         },
     ));
-    let ungated = board(&bus, epoch, Actor::Operator);
-    assert!(at(&ungated, &child).statement.body.dependencies.is_empty(),);
-    connect_child(&bus, epoch, &plan, &child);
-    let organized = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&organized, &plan).statement.body.dependencies,
-        [at(&organized, &child).statement.body.born.clone()],
-    );
-
-    let held = board(&bus, epoch, lane.clone());
     let done = TaskDone {
         task: plan.clone(),
-        validation: "accepted child now follows the plan".to_owned(),
+        validation: "the accepted child is gated behind the plan".to_owned(),
         operation: Some(completion_operation()),
     };
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        stale_expected,
+        &done,
+    );
+    assert_refusal(refused, "task::plan-witness-missing");
+
+    let refreshed = board(&bus, epoch, lane.clone());
     let CommandAnswer::Task(answer) = assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &refreshed,
+            at(&refreshed, &plan),
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("refreshed child witnesses admit plan completion"),
+        &done,
+    )) else {
+        panic!("plan-only completion returned another answer")
+    };
+    assert_eq!(answer.status, "completed");
+    clean(&root, bus);
+}
+
+#[test]
+fn plan_only_completion_rejects_reverse_children_without_pending_acceptance() {
+    let (root, bus, epoch, seats) = fixture("ineligible-gated-plan-children", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let plan = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qr",
+        "Plan-only parent",
+        &[],
+        Some("plan"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &plan);
+    let unaccepted = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qs",
+        "Unaccepted implementation",
+        &[],
+        Some("todo"),
+    );
+    let completed = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qt",
+        "Completed accepted implementation",
+        &["the implementation behavior is verified"],
+        Some("todo"),
+    );
+    connect_child(&bus, epoch, &unaccepted, &plan);
+    connect_child(&bus, epoch, &completed, &plan);
+    let visible = board(&bus, epoch, Actor::Operator);
+    let completed_heads = at(&visible, &completed);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(completed_heads),
+            workflow_witness(completed_heads),
+            claim_witness(completed_heads),
+        ],
+        &TaskClose {
+            task: completed,
+            validation: "implementation is complete".to_owned(),
+            force_claimed: false,
+        },
+    ));
+
+    let held = board(&bus, epoch, lane.clone());
+    let refused = issue(
         &bus,
         epoch,
         lane,
@@ -376,18 +466,13 @@ fn gated_plan_reverses_its_edge_and_then_completes() {
             seats[0].occupant,
             false,
         )
-        .expect("plan-only completion carries child witnesses"),
-        &done,
-    )) else {
-        panic!("plan-only completion returned another answer")
-    };
-    assert_eq!(answer.status, "completed");
-    assert_eq!(
-        at(&board(&bus, epoch, Actor::Operator), &plan)
-            .workflow
-            .body
-            .status,
-        "completed",
+        .expect("plan completion carries its own witnesses"),
+        &TaskDone {
+            task: plan,
+            validation: "ineligible children do not satisfy planning".to_owned(),
+            operation: Some(completion_operation()),
+        },
     );
+    assert_refusal(refused, "task::plan-incomplete");
     clean(&root, bus);
 }

@@ -1069,9 +1069,19 @@ pub(super) fn progress_witnesses(
     if heads.workflow.body.phase.as_str() == "plan" {
         for dependency in &heads.statement.body.dependencies {
             let child = task_heads_by_stamp(board, dependency)?;
-            if child.workflow.body.status == "pending"
-                && !child.statement.body.acceptance.is_empty()
-            {
+            if pending_accepted(child) {
+                expected.push(statement_witness(child));
+                expected.push(workflow_witness(child));
+            }
+        }
+        for child in board.tasks.iter().filter(|child| {
+            child
+                .statement
+                .body
+                .dependencies
+                .contains(&heads.statement.body.born)
+        }) {
+            if pending_accepted(child) {
                 expected.push(statement_witness(child));
                 expected.push(workflow_witness(child));
             }
