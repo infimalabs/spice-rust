@@ -44,6 +44,7 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
     };
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
+    let born = seed_birth(&bus, &durable, old_epoch, start);
     seed_restart_claim(
         &bus, &task, &durable, old_epoch, new_epoch, start, expiry, maximum,
     );
@@ -78,6 +79,17 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
         .body()
         .clone();
     assert_eq!(carried.get("occupant"), carried.get("ancestor"));
+    assert_eq!(
+        snapshot.facts().occupant_address(lane, occupant),
+        Ok(born),
+        "adoption keeps the occupant's original birth address"
+    );
+    assert_eq!(
+        bus.resolve_occupant(born)
+            .expect("resolver answers")
+            .map(|birth| (birth.lane, birth.occupant, birth.epoch)),
+        Ok((lane, occupant, old_epoch))
+    );
     bus.verify().expect("adopted authority verifies");
     bus.shutdown().expect("fixture bus stops");
 }
@@ -158,6 +170,69 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
     assert_eq!(residency.body().epoch, new_epoch);
     bus.verify().expect("atomic restart authority verifies");
     bus.shutdown().expect("fixture bus stops");
+}
+
+/// Record the occupant's one launch birth beneath the generation it started in.
+pub(in crate::resident) fn seed_birth(
+    bus: &Bus,
+    durable: &wire::LaneResidency,
+    epoch: CanonicalUuid,
+    at: wire::Instant,
+) -> wire::OccupantAddress {
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("resident origin");
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    write
+        .fact(
+            wire::body::LaneStarted {
+                lane: durable.lane,
+                occupant: durable.occupant.expect("durable occupant"),
+                epoch,
+                group: 7,
+                fresh_session: Some(true),
+            },
+            FactCause::Root,
+        )
+        .expect("birth fact builds");
+    match bus.commit(write).expect("fixture birth commits") {
+        bus::CommitOutcome::Committed(committed) => wire::OccupantAddress::new(
+            committed
+                .cursor()
+                .position()
+                .expect("a commit has a position"),
+        ),
+        other => panic!("fixture birth did not commit: {other:?}"),
+    }
+}
+
+/// A successor owns a new executable address on the lane; its ancestor's
+/// address stays readable history and refuses execution as expired.
+pub(in crate::resident) fn assert_successor_address(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    (ancestor, ancestor_occupant): (wire::OccupantAddress, CanonicalUuid),
+    successor_occupant: CanonicalUuid,
+) {
+    let snapshot = bus.task_snapshot().expect("successor heads read");
+    let successor = snapshot
+        .facts()
+        .occupant_address(lane, successor_occupant)
+        .expect("the successor's birth is recorded");
+    assert_ne!(successor, ancestor);
+    let resolved = bus.resolve_occupant(successor).expect("resolver answers");
+    assert_eq!(resolved.map(|birth| birth.occupant), Ok(successor_occupant));
+    let historical = bus.occupant_birth(ancestor).expect("resolver answers");
+    let historical = historical.expect("the ancestor birth stays proved");
+    assert_eq!(
+        (historical.lane, historical.occupant),
+        (lane, ancestor_occupant)
+    );
+    let expired = bus.resolve_occupant(ancestor).expect("resolver answers");
+    assert_eq!(
+        expired,
+        Err(bus::AddressRefusal::Expired { birth: historical })
+    );
 }
 
 #[allow(

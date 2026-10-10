@@ -22,7 +22,8 @@ use crate::envelope::{Actor, Seq};
 use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
 
-const TASK_STAMP_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
+pub(crate) const TASK_STAMP_ALPHABET: &[u8; 52] =
+    b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
 const TASK_STAMP_SPACE: u64 = 52_u64.pow(TaskStamp::WIDTH as u32);
 
 /// A task's sole durable identity: its encoded birth instant.

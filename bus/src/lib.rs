@@ -25,6 +25,9 @@ mod runtime {
     type FactPage =
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
 
+    mod occupant_address;
+    pub use occupant_address::{AddressProof, AddressRefusal, OccupantBirth};
+    use occupant_address::{AddressRead, BirthRecord};
     mod task_snapshot;
     pub use task_snapshot::{
         AllocationFault, AllocationRead, AllocationWork, TaskFacts, TaskOrigin, context_opening,
@@ -1002,6 +1005,10 @@ mod runtime {
         AppHeads {
             answer: SyncSender<Result<AppHeads, BusReadError>>,
         },
+        Occupant {
+            read: AddressRead,
+            answer: SyncSender<Result<AddressProof, BusReadError>>,
+        },
         Shutdown {
             answer: SyncSender<()>,
         },
@@ -1131,6 +1138,9 @@ mod runtime {
                 Request::AppHeads { answer } => {
                     let _ = answer.send(app_heads(&task_snapshot));
                 }
+                Request::Occupant { read, answer } => {
+                    let _ = answer.send(occupant_address::answer(&journal, &task_snapshot, read));
+                }
                 Request::Shutdown { answer } => {
                     let _ = answer.send(());
                     break;
@@ -1242,7 +1252,10 @@ mod runtime {
     }
 
     fn request_needs_task_snapshot(request: &Request) -> bool {
-        matches!(request, Request::Steering { .. } | Request::AppHeads { .. })
+        matches!(
+            request,
+            Request::Steering { .. } | Request::AppHeads { .. } | Request::Occupant { .. }
+        )
     }
 
     fn steering_presentations(
@@ -1447,9 +1460,9 @@ mod runtime {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
-    AllocationFault, AllocationRead, AllocationWork, AppHeads, BroadcastSubscriber, Bus, BusError,
-    BusReadError, BusReader, BusVerifyError, CommitOutcome, CommitSubscriber, DependencyStanding,
-    JournalCommit, JournalTransaction, MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation,
-    SteeringSnapshot, TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions,
-    context_opening,
+    AddressProof, AddressRefusal, AllocationFault, AllocationRead, AllocationWork, AppHeads,
+    BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CommitOutcome,
+    CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
+    MAX_STEERING_PRESENTATION_KEYS, OccupantBirth, SteeringPresentation, SteeringSnapshot,
+    TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
 };

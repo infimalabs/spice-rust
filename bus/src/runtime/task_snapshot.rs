@@ -196,6 +196,8 @@ struct Indexes {
         journal::crossing::Seq,
     >,
     explicit_releases: HashMap<journal::crossing::TaskStamp, journal::crossing::Seq>,
+    /// Births by occupant, shared until a commit records another lane start.
+    births: Arc<HashMap<journal::crossing::CanonicalUuid, BirthRecord>>,
     lane_occupants: HashMap<journal::crossing::CanonicalUuid, journal::crossing::CanonicalUuid>,
     lane_sessions: HashMap<
         (
@@ -223,6 +225,13 @@ impl Indexes {
                 next.lane_occupants.insert(started.lane, started.occupant);
                 next.context_anchors
                     .insert((started.lane, started.occupant), row.seq);
+                let births = Arc::make_mut(&mut next.births);
+                let record = BirthRecord::recorded(
+                    births.get(&started.occupant).copied(),
+                    started.lane,
+                    row.seq,
+                );
+                births.insert(started.occupant, record);
             } else if let Some(added) = row.fact.read::<journal::crossing::body::TaskAdded>() {
                 let origin = match &row.actor {
                     journal::crossing::Actor::Operator => {
@@ -523,6 +532,32 @@ impl TaskFacts {
         occupant: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
         self.indexes.context_anchors.get(&(lane, occupant)).copied()
+    }
+
+    /// The address of one occupant on its lane, derived from the one
+    /// `lane::started` fact recording its birth there.
+    ///
+    /// A compaction or renewal never moves it: only the birth counts.
+    pub fn occupant_address(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Result<journal::crossing::OccupantAddress, AddressRefusal> {
+        match self.birth_record(occupant) {
+            Some(BirthRecord::Unique {
+                lane: born,
+                position,
+            }) if born == lane => Ok(journal::crossing::OccupantAddress::new(position)),
+            Some(BirthRecord::Repeated) => Err(AddressRefusal::RepeatedBirth { occupant }),
+            _ => Err(AddressRefusal::MissingBirth { lane, occupant }),
+        }
+    }
+
+    pub(super) fn birth_record(
+        &self,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Option<BirthRecord> {
+        self.indexes.births.get(&occupant).copied()
     }
 
     fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {

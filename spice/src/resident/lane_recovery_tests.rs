@@ -6,6 +6,7 @@ use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
 use super::*;
 use crate::resident::lane_surface::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof,
+    assert_successor_address, seed_birth,
 };
 
 static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1153,6 +1154,12 @@ fn assert_imported_facts(fixture: &Fixture) {
 #[test]
 fn import_moves_seat_team_session_and_claim_into_the_successor_worktree() {
     let fixture = fixture();
+    let ancestor = seed_birth(
+        &fixture.bus,
+        &occupied_row(&fixture),
+        fixture.old_epoch,
+        fixture.at,
+    );
     seed_lanes(&fixture, vec![vacant_row(&fixture)]);
     reseat(&fixture);
     let carried = observe_carried_claim(&fixture.bus, fixture.lane, fixture.ancestor, fixture.at)
@@ -1189,6 +1196,8 @@ fn import_moves_seat_team_session_and_claim_into_the_successor_worktree() {
     .expect("import proposal composes");
     commit(&fixture.bus, proposal).expect("import commits atomically");
     assert_imported(&fixture);
+    let ancestor = (ancestor, fixture.ancestor);
+    assert_successor_address(&fixture.bus, fixture.lane, ancestor, fixture.successor);
     finish(fixture);
 }
 
