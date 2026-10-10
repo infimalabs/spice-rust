@@ -752,7 +752,7 @@ fn metadata_from_outcome(
     inventory_from_metadata(metadata, root, require_resolution)
 }
 
-fn inventory_from_metadata(
+pub(super) fn inventory_from_metadata(
     metadata: Metadata,
     root: &Path,
     require_resolution: bool,

@@ -187,6 +187,7 @@ pub(super) struct Coordinator<'a, W> {
     environment: Environment,
     cargo: OsString,
     policy: RunPolicy,
+    launcher: Arc<dyn ShardLauncher>,
     cancellation: CancellationToken,
     sender: mpsc::Sender<ShardResult>,
     receiver: mpsc::Receiver<ShardResult>,
@@ -222,6 +223,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
             environment,
             cargo,
             policy,
+            Arc::new(SystemShards),
             output,
         )
     }
@@ -240,6 +242,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
             environment,
             cargo,
             policy,
+            Arc::new(SystemShards),
             output,
         )
     }
@@ -250,6 +253,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         environment: Environment,
         cargo: OsString,
         policy: RunPolicy,
+        launcher: Arc<dyn ShardLauncher>,
         output: &'a mut W,
     ) -> Self {
         let total = shards.len();
@@ -264,6 +268,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
             environment,
             cargo,
             policy,
+            launcher,
             cancellation: CancellationToken::new(),
             sender,
             receiver,
@@ -364,6 +369,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         let cargo = self.cargo.clone();
         let cancellation = self.cancellation.clone();
         let policy = self.policy;
+        let launcher = Arc::clone(&self.launcher);
         let observer = Arc::new(LastTest::default());
         let worker_observer = Arc::clone(&observer);
         let panic_observer = Arc::clone(&observer);
@@ -382,6 +388,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
                     cargo,
                     cancellation,
                     policy,
+                    launcher.as_ref(),
                     worker_observer,
                     output_lane,
                 )
@@ -597,6 +604,46 @@ struct ShardResult {
     success: bool,
 }
 
+/// The process boundary one shard crosses.
+///
+/// A launcher runs the composed specification to completion, reports each
+/// observed stdout line to `observer`, and stops the shard's whole process
+/// tree when `cancellation` fires or the specification's deadline elapses.
+pub(super) trait ShardLauncher: Send + Sync {
+    fn run(
+        &self,
+        spec: Spec,
+        observer: Arc<LastTest>,
+        cancellation: &CancellationToken,
+        policy: RunPolicy,
+    ) -> Result<WaitOutcome, WorkspaceTestError>;
+}
+
+/// Shards run as real host processes.
+struct SystemShards;
+
+impl ShardLauncher for SystemShards {
+    fn run(
+        &self,
+        spec: Spec,
+        observer: Arc<LastTest>,
+        cancellation: &CancellationToken,
+        policy: RunPolicy,
+    ) -> Result<WaitOutcome, WorkspaceTestError> {
+        let observation = Observation::new(
+            OutputStream::Stdout,
+            RECORD_FRAME_LIMIT,
+            RECORD_QUEUE_CAPACITY,
+            policy.output_drain,
+            observer as Arc<dyn RecordObserver>,
+        )
+        .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+        let running = sill::spawn_observed(spec, observation)
+            .map_err(|error| WorkspaceTestError::new(format!("shard launch failed: {error}")))?;
+        wait_for_shard_process(running, cancellation, policy)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_shard(
     index: usize,
@@ -606,6 +653,7 @@ fn run_shard(
     cargo: OsString,
     cancellation: CancellationToken,
     policy: RunPolicy,
+    launcher: &dyn ShardLauncher,
     observer: Arc<LastTest>,
     output_lane: usize,
 ) -> ShardResult {
@@ -633,17 +681,7 @@ fn run_shard(
             policy,
             &owner,
         )?;
-        let observation = Observation::new(
-            OutputStream::Stdout,
-            RECORD_FRAME_LIMIT,
-            RECORD_QUEUE_CAPACITY,
-            policy.output_drain,
-            Arc::clone(&observer) as Arc<dyn RecordObserver>,
-        )
-        .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
-        let running = sill::spawn_observed(spec, observation)
-            .map_err(|error| WorkspaceTestError::new(format!("shard launch failed: {error}")))?;
-        wait_for_shard_process(running, &cancellation, policy)
+        launcher.run(spec, Arc::clone(&observer), &cancellation, policy)
     })();
     shard_result(
         index,
@@ -1114,184 +1152,344 @@ fn exit_name(status: std::process::ExitStatus) -> String {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+    use std::sync::atomic::AtomicUsize;
+
     use super::*;
-    use std::os::unix::process::CommandExt as _;
-    use std::process::Command;
 
-    const DESCENDANT_FIXTURE_ROOT: &str = "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT"; // env-policy: allow
-    const REEXEC_TEST: &str = concat!(
-        "workspace_tests::coordinator::tests::",
-        "cancelled_shard_reaps_nested_fixture_group_before_root_removal"
-    );
-
-    #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the re-executed test receives and forwards only its explicit swt fixture path"
-    )]
-    fn cancelled_shard_reaps_nested_fixture_group_before_root_removal() {
-        if let Some(root) = std::env::var_os(DESCENDANT_FIXTURE_ROOT) {
-            run_nested_group_owner(Path::new(&root));
-            return;
-        }
-
-        let temporary = ShardTemporaryRoot::create().expect("create swt fixture root");
-        let root = temporary.path().to_path_buf();
-        let pid_file = root.join("nested.pid");
-        let term_file = root.join("nested.term");
-        let mut cleanup = FixtureGroupCleanup::new(pid_file.clone());
-        let executable = std::env::current_exe().expect("current gate test executable");
-        let mut environment = std::env::vars_os().collect::<BTreeMap<_, _>>();
-        environment.insert(
-            OsString::from(DESCENDANT_FIXTURE_ROOT),
-            root.as_os_str().to_owned(),
-        );
-        let environment = Environment::new(environment).expect("fixture environment is valid");
-        let cancellation = CancellationToken::new();
-        let policy = fixture_policy();
-        let spec = process_spec(
-            executable.as_os_str(),
-            [
-                OsStr::new(REEXEC_TEST),
-                OsStr::new("--exact"),
-                OsStr::new("--nocapture"),
-            ],
-            &std::env::current_dir().expect("current test directory"),
-            environment,
-            policy.shard_deadline,
-            Cancellation::Token(cancellation.clone()),
-            "nested workspace-test fixture",
-        )
-        .expect("fixture process specification");
-        let running = sill::spawn(spec).expect("spawn fixture test owner");
-        let group = wait_for_group(&pid_file);
-
-        cancellation.cancel();
-        let outcome = wait_for_shard_process(running, &cancellation, policy)
-            .expect("cancelled fixture tree is cleaned");
-
-        assert!(
-            matches!(outcome.completion(), Completion::Cancelled(_)),
-            "fixture owner reports cancellation: {:?}",
-            outcome.completion()
-        );
-        assert!(term_file.is_file(), "nested fixture observed SIGTERM");
-        assert_group_absent(group);
-        cleanup.disarm();
-        drop(temporary);
-        assert!(
-            !root.exists(),
-            "swt fixture root survives owner cancellation"
-        );
+    #[derive(Clone, Copy)]
+    enum Behavior {
+        Pass,
+        Exit(i32),
+        TimeOut,
+        Refuse,
+        UntilCancelled,
+        /// Hold the lane long enough for any shard started beside it to be
+        /// seen, recording the most shards that ran at once meanwhile.
+        Hold,
     }
 
-    fn run_nested_group_owner(root: &Path) {
-        let script = concat!(
-            "trap 'printf term > \"$2\"; exit 0' TERM INT\n",
-            "printf '%s\\n' \"$$\" > \"$1\"\n",
-            "while :; do :; done\n",
-        );
-        let mut command = Command::new("/bin/sh");
-        command
-            .args([
-                OsStr::new("-c"),
-                OsStr::new(script),
-                OsStr::new("nested-fixture"),
-                root.join("nested.pid").as_os_str(),
-                root.join("nested.term").as_os_str(),
-            ])
-            .process_group(0);
-        let mut nested = command.spawn().expect("spawn nested fixture group");
-        let _completion = nested.wait().expect("wait for nested fixture group");
-        loop {
-            thread::sleep(Duration::from_secs(1));
+    struct Launched {
+        argv: Vec<String>,
+        target_directory: Option<String>,
+        temporary: PathBuf,
+        temporary_present: bool,
+        concurrent_while_held: Option<usize>,
+    }
+
+    /// Which shard a behavior answers for.
+    #[derive(Clone, Copy)]
+    enum Selector {
+        /// The Cargo shard naming this package id.
+        Package(&'static str),
+        /// The prebuilt partition running the exclusive-lane case, which is
+        /// the one partition that does not skip it.
+        Exclusive(&'static str),
+    }
+
+    impl Selector {
+        fn selects(self, argv: &[String]) -> bool {
+            match self {
+                Self::Package(id) => argv.iter().any(|argument| argument == id),
+                Self::Exclusive(case) => !argv.iter().any(|argument| argument == case),
+            }
         }
     }
 
-    const fn fixture_policy() -> RunPolicy {
+    /// Shards answered in process, each by the behavior its selector names.
+    struct Shards {
+        behaviors: Vec<(Selector, Behavior)>,
+        active: AtomicUsize,
+        peak: AtomicUsize,
+        cancelled: AtomicBool,
+        launched: Mutex<Vec<Launched>>,
+    }
+
+    impl Shards {
+        fn new(behaviors: &[(Selector, Behavior)]) -> Arc<Self> {
+            Arc::new(Self {
+                behaviors: behaviors.to_vec(),
+                active: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                cancelled: AtomicBool::new(false),
+                launched: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn behavior(&self, argv: &[String]) -> Behavior {
+            self.behaviors
+                .iter()
+                .find(|(selector, _)| selector.selects(argv))
+                .map_or(Behavior::Pass, |(_, behavior)| *behavior)
+        }
+
+        fn launched(&self) -> std::sync::MutexGuard<'_, Vec<Launched>> {
+            self.launched.lock().expect("launch record")
+        }
+    }
+
+    impl ShardLauncher for Shards {
+        fn run(
+            &self,
+            spec: Spec,
+            _observer: Arc<LastTest>,
+            cancellation: &CancellationToken,
+            _policy: RunPolicy,
+        ) -> Result<WaitOutcome, WorkspaceTestError> {
+            let active = self.active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            self.peak.fetch_max(active, AtomicOrdering::SeqCst);
+            let argv = spec
+                .argv
+                .arguments()
+                .iter()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let variable = |name: &str| {
+                spec.environment
+                    .entries()
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.to_string_lossy().into_owned())
+            };
+            let temporary = PathBuf::from(variable("TMPDIR").expect("shard temporary root"));
+            let behavior = self.behavior(&argv);
+            let concurrent_while_held = matches!(behavior, Behavior::Hold).then(|| {
+                thread::sleep(Duration::from_millis(50));
+                self.peak.load(AtomicOrdering::SeqCst)
+            });
+            self.launched().push(Launched {
+                target_directory: variable("CARGO_TARGET_DIR"),
+                temporary_present: temporary.is_dir(),
+                temporary,
+                concurrent_while_held,
+                argv,
+            });
+            let completion = match behavior {
+                Behavior::Pass | Behavior::Hold => Completion::Exited(exit(0)),
+                Behavior::Exit(code) => Completion::Exited(exit(code)),
+                Behavior::TimeOut => Completion::TimedOut(exit(0)),
+                Behavior::Refuse => {
+                    self.active.fetch_sub(1, AtomicOrdering::SeqCst);
+                    return Err(WorkspaceTestError::new("fixture launch refused"));
+                }
+                Behavior::UntilCancelled => {
+                    let started = Instant::now();
+                    while started.elapsed() < Duration::from_secs(5) {
+                        if cancellation.is_cancelled() {
+                            self.cancelled.store(true, AtomicOrdering::SeqCst);
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Completion::Cancelled(exit(0))
+                }
+            };
+            self.active.fetch_sub(1, AtomicOrdering::SeqCst);
+            Ok(WaitOutcome::externally_reaped_completion(completion))
+        }
+    }
+
+    fn exit(code: i32) -> ExitStatus {
+        ExitStatus::from_raw(code << 8)
+    }
+
+    fn target(package: &str, kind: &str, name: &str) -> TargetIdentity {
+        TargetIdentity {
+            package: package.to_owned(),
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            required_features: Vec::new(),
+            source: PathBuf::from(format!("/workspace/{package}/src/lib.rs")),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        }
+    }
+
+    fn package(name: &str) -> PackageInventory {
+        let targets = vec![target(name, "lib", name)];
+        PackageInventory {
+            id: format!("{name}-id"),
+            name: name.to_owned(),
+            root: PathBuf::from(format!("/workspace/{name}")),
+            dependencies: Vec::new(),
+            namespace_context: FileMacroCrateContext::from_metadata(name, "2024", &[])
+                .expect("fixture namespace"),
+            compile_time_authority: None,
+            declared_targets: targets.clone(),
+            removed_targets: Vec::new(),
+            targets,
+            data_roots: Vec::new(),
+        }
+    }
+
+    fn policy(concurrency: usize) -> RunPolicy {
         RunPolicy {
-            concurrency: 1,
-            shared_outputs: true,
+            concurrency,
+            shared_outputs: false,
             cargo_jobs: None,
             test_threads: Some(1),
             shard_deadline: Duration::from_secs(10),
-            progress_interval: Duration::from_secs(1),
-            output_drain: Duration::from_secs(2),
-            reap: Duration::from_secs(2),
+            progress_interval: Duration::from_secs(10),
+            output_drain: Duration::from_secs(1),
+            reap: Duration::from_secs(1),
             grace: Duration::from_secs(1),
         }
     }
 
-    fn wait_for_group(path: &Path) -> u32 {
-        let started = Instant::now();
-        loop {
-            if let Ok(text) = fs::read_to_string(path)
-                && let Ok(group) = text.trim().parse::<u32>()
-            {
-                return group;
-            }
+    fn run(
+        shards: Vec<ExecutionShard>,
+        concurrency: usize,
+        launcher: &Arc<Shards>,
+    ) -> Result<(), WorkspaceTestError> {
+        let environment =
+            Environment::new([("CARGO_TARGET_DIR", "/target-root")]).expect("fixture environment");
+        let mut output = Vec::new();
+        Coordinator::from_execution_shards(
+            shards,
+            PathBuf::from("/workspace"),
+            environment,
+            OsString::from("cargo"),
+            policy(concurrency),
+            Arc::clone(launcher) as Arc<dyn ShardLauncher>,
+            &mut output,
+        )
+        .run()
+    }
+
+    fn cargo_shards(names: &[&str]) -> Vec<ExecutionShard> {
+        names
+            .iter()
+            .map(|name| ExecutionShard::package(package(name)))
+            .collect()
+    }
+
+    #[test]
+    fn every_shard_runs_once_within_the_bound_in_its_own_lane_and_temporary_root() {
+        let launcher = Shards::new(&[]);
+        run(cargo_shards(&["a", "b", "c", "d", "e"]), 2, &launcher)
+            .expect("passing shards complete the run");
+
+        let launched = launcher.launched();
+        let mut packages = launched
+            .iter()
+            .map(|launch| {
+                let position = launch
+                    .argv
+                    .iter()
+                    .position(|argument| argument == "--package")
+                    .expect("a Cargo shard names its package");
+                launch.argv[position + 1].clone()
+            })
+            .collect::<Vec<_>>();
+        packages.sort();
+        assert_eq!(packages, ["a-id", "b-id", "c-id", "d-id", "e-id"]);
+        assert!(launcher.peak.load(AtomicOrdering::SeqCst) <= 2);
+        for launch in launched.iter() {
+            let lane = launch
+                .target_directory
+                .as_deref()
+                .and_then(|path| path.strip_prefix("/target-root/spice-workspace-test-shards/"))
+                .expect("a concurrent Cargo shard publishes into a lane-owned target");
             assert!(
-                started.elapsed() < Duration::from_secs(5),
-                "nested fixture did not publish its process group at {}",
-                path.display()
+                ["shard-1", "shard-2"].contains(&lane),
+                "lane {lane} lies outside the admitted concurrency"
             );
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn assert_group_absent(group: u32) {
-        let started = Instant::now();
-        loop {
-            if !group_exists(group) {
-                return;
-            }
             assert!(
-                started.elapsed() < Duration::from_secs(2),
-                "nested fixture process group {group} survived cleanup"
+                launch.temporary_present,
+                "the shard ran without its temporary root"
             );
-            thread::sleep(Duration::from_millis(10));
+            assert!(
+                !launch.temporary.exists(),
+                "the shard temporary root outlived its shard"
+            );
+        }
+        let temporaries = launched
+            .iter()
+            .map(|launch| &launch.temporary)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(temporaries.len(), launched.len());
+    }
+
+    #[test]
+    fn a_failed_shard_cancels_its_running_peers_and_starts_no_more() {
+        let launcher = Shards::new(&[
+            (Selector::Package("a-id"), Behavior::Exit(1)),
+            (Selector::Package("b-id"), Behavior::UntilCancelled),
+        ]);
+        let error = run(cargo_shards(&["a", "b", "c"]), 2, &launcher)
+            .expect_err("a failing shard fails the run")
+            .to_string();
+
+        assert!(
+            error.contains("\"a\"") && error.contains("exit code=1"),
+            "the failure names neither the failed package nor its exit: {error}"
+        );
+        assert!(
+            launcher.cancelled.load(AtomicOrdering::SeqCst),
+            "the running peer never observed cancellation"
+        );
+        let launched = launcher.launched();
+        assert_eq!(
+            launched.len(),
+            2,
+            "a pending shard started after the failure"
+        );
+        assert!(
+            launched
+                .iter()
+                .all(|launch| !launch.argv.iter().any(|argument| argument == "c-id"))
+        );
+    }
+
+    #[test]
+    fn each_unsuccessful_completion_fails_the_run_by_its_disposition() {
+        for (behavior, disposition) in [
+            (Behavior::Exit(3), "exit code=3"),
+            (Behavior::TimeOut, "timeout"),
+            (Behavior::Refuse, "supervision-error"),
+        ] {
+            let launcher = Shards::new(&[(Selector::Package("a-id"), behavior)]);
+            let error = run(cargo_shards(&["a"]), 1, &launcher)
+                .expect_err("an unsuccessful shard fails the run")
+                .to_string();
+            assert!(
+                error.contains(disposition),
+                "expected {disposition} in {error}"
+            );
         }
     }
 
-    fn group_exists(group: u32) -> bool {
-        Command::new("/bin/kill")
-            .args(["-0", "--", &format!("-{group}")])
-            .output()
-            .is_ok_and(|output| output.status.success())
-    }
+    #[test]
+    fn an_exclusive_partition_holds_the_whole_coordinator() {
+        let test = PrebuiltTest {
+            package: "x".to_owned(),
+            package_root: PathBuf::from("/workspace/x"),
+            target: target("x", "test", "suite"),
+            executable: PathBuf::from("/workspace/target/debug/deps/suite"),
+            partition: None,
+        };
+        let cases = ["exclusive_lane_alone", "first", "second", "third"].map(str::to_owned);
+        let partitions = test.into_partitions(&cases, 3);
+        assert_eq!(partitions.len(), 3);
+        let launcher =
+            Shards::new(&[(Selector::Exclusive("exclusive_lane_alone"), Behavior::Hold)]);
+        run(
+            partitions
+                .into_iter()
+                .map(ExecutionShard::prebuilt)
+                .collect(),
+            3,
+            &launcher,
+        )
+        .expect("partitions complete the run");
 
-    struct FixtureGroupCleanup {
-        pid_file: PathBuf,
-        armed: bool,
-    }
-
-    impl FixtureGroupCleanup {
-        fn new(pid_file: PathBuf) -> Self {
-            Self {
-                pid_file,
-                armed: true,
-            }
-        }
-
-        fn disarm(&mut self) {
-            self.armed = false;
-        }
-    }
-
-    impl Drop for FixtureGroupCleanup {
-        fn drop(&mut self) {
-            if !self.armed {
-                return;
-            }
-            let Ok(text) = fs::read_to_string(&self.pid_file) else {
-                return;
-            };
-            let Ok(group) = text.trim().parse::<u32>() else {
-                return;
-            };
-            let _ = Command::new("/bin/kill")
-                .args(["-KILL", "--", &format!("-{group}")])
-                .output();
-        }
+        let launched = launcher.launched();
+        assert_eq!(launched.len(), 3);
+        let held = launched
+            .iter()
+            .find_map(|launch| launch.concurrent_while_held)
+            .expect("the exclusive partition ran");
+        assert_eq!(held, 1, "a shard ran beside the exclusive partition");
     }
 }
