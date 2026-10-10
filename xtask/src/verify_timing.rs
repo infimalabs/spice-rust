@@ -290,9 +290,8 @@ impl StageWaiter for RealWaiter {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
-    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, mpsc};
 
@@ -319,13 +318,13 @@ mod tests {
             if !self.child_started {
                 self.started
                     .recv_timeout(Duration::from_secs(1))
-                    .expect("silent fixture child starts");
+                    .expect("silent fixture stage starts");
                 self.child_started = true;
             }
             if self.released {
                 let outcome = receiver
                     .recv_timeout(Duration::from_secs(1))
-                    .expect("released fixture child terminates");
+                    .expect("released fixture stage terminates");
                 self.elapsed += Duration::from_secs(1);
                 return StageWait::Ready(outcome);
             }
@@ -344,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn silent_child_crosses_every_threshold_before_failure_and_the_next_action() {
+    fn silent_stage_crosses_every_threshold_before_failure_and_the_next_action() {
         let (started_sender, started_receiver) = mpsc::sync_channel(1);
         let (release_sender, release_receiver) = mpsc::channel();
         let terminated = Arc::new(AtomicBool::new(false));
@@ -360,7 +359,7 @@ mod tests {
         let stage = Stage {
             ordinal: 1,
             total: 2,
-            identity: "silent fixture process",
+            identity: "silent fixture stage",
             family: "child-process:fixture",
         };
 
@@ -369,22 +368,12 @@ mod tests {
             stage,
             &mut waiter,
             move || {
-                let mut child = Command::new("/bin/sh")
-                    .args(["-c", "read fixture_input; exit 17"])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .expect("spawn silent fixture child");
-                let input = child.stdin.take().expect("fixture child has stdin");
-                started_sender.send(()).expect("announce fixture child");
+                started_sender.send(()).expect("announce fixture stage");
                 release_receiver
                     .recv()
                     .expect("receive accelerated release");
-                drop(input);
-                let status = child.wait().expect("wait for silent fixture child");
                 worker_terminated.store(true, Ordering::Release);
-                (status.success(), status.code())
+                (false, Some(17))
             },
             |(success, code), _| {
                 let disposition = Disposition::from_status(code);
@@ -407,7 +396,7 @@ mod tests {
         );
         assert!(
             terminated.load(Ordering::Acquire),
-            "the stage returned before its child terminated"
+            "the stage returned before its work terminated"
         );
         writeln!(output, "[verify] later action").expect("write later fixture action");
 
@@ -426,7 +415,7 @@ mod tests {
                 output.contains(&format!(
                     "stage=progress ordinal=1/2 elapsed_ms={elapsed} \
                      policy_band={band} threshold={threshold} \
-                     family=child-process:fixture identity=\"silent fixture process\""
+                     family=child-process:fixture identity=\"silent fixture stage\""
                 )),
                 "missing threshold record from {output}"
             );
@@ -437,7 +426,7 @@ mod tests {
         let later = output.find("later action").expect("later action exists");
         assert!(
             terminal < later,
-            "later action crossed the child wait: {output}"
+            "later action crossed the stage wait: {output}"
         );
         assert!(output.contains("disposition=exit code=17"));
     }

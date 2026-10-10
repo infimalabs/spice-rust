@@ -155,7 +155,6 @@ impl<'a> Surface<'a> {
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
     ) -> Option<CommandDispatch> {
-        let mut effects = CommandEffects::default();
         let ordinary = |outcome| Some(CommandDispatch::ordinary(outcome));
         match (command.kind(), command.body()) {
             (CommandKind::UpChange, Intent::UpChange(change)) => ordinary(dispatch_up_change(
@@ -176,47 +175,9 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => ordinary(
                 lane_surface::arrange(self.bus, self.paths, self.epoch, seats, command, arrange),
             ),
-            (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => Some(
-                match lane_recovery::begin_import(
-                    self.bus,
-                    self.paths,
-                    self.epoch,
-                    seats,
-                    &self.recovery,
-                    state,
-                ) {
-                    Ok(launch) => CommandDispatch::import(launch),
-                    Err(outcome) => CommandDispatch::ordinary(outcome),
-                },
-            ),
-            (CommandKind::LaneState, Intent::LaneState(state))
-                if state.action == wire::intent::LaneAction::Wake =>
-            {
-                Some(
-                    match lane_surface::begin_wake(
-                        self.bus,
-                        self.paths,
-                        self.epoch,
-                        seats,
-                        &self.lane,
-                        &self.config.steering,
-                        state,
-                    ) {
-                        Ok(launch) => CommandDispatch::wake(launch),
-                        Err(outcome) => CommandDispatch::ordinary(outcome),
-                    },
-                )
+            (CommandKind::LaneState, Intent::LaneState(state)) => {
+                Some(self.dispatch_lane_state(seats, command, state))
             }
-            (CommandKind::LaneState, Intent::LaneState(state)) => ordinary(lane_surface::state(
-                self.bus,
-                self.paths,
-                self.epoch,
-                seats,
-                &self.lane,
-                &self.config.steering,
-                command,
-                state,
-            )),
             (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => {
                 ordinary(lane_surface::renew(
                     self.bus,
@@ -228,20 +189,76 @@ impl<'a> Surface<'a> {
                     renewal,
                 ))
             }
-            (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => {
-                let outcome = lane_surface::retune(
-                    self.bus,
-                    self.paths,
-                    self.epoch,
-                    seats,
-                    command,
-                    retune,
-                    &mut effects,
-                );
-                Some(CommandDispatch::with_effects(outcome, effects))
-            }
+            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => ordinary(
+                lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall),
+            ),
+            _ => self.dispatch_lane_effects(seats, command),
+        }
+    }
+
+    fn dispatch_lane_state(
+        &self,
+        seats: &mut Seats,
+        command: &wire::AdmittedCommand,
+        state: &wire::intent::LaneState,
+    ) -> CommandDispatch {
+        if state.worktree.is_some() {
+            return match lane_recovery::begin_import(
+                self.bus,
+                self.paths,
+                self.epoch,
+                seats,
+                &self.recovery,
+                state,
+            ) {
+                Ok(launch) => CommandDispatch::import(launch),
+                Err(outcome) => CommandDispatch::ordinary(outcome),
+            };
+        }
+        if state.action == wire::intent::LaneAction::Wake {
+            return match lane_surface::begin_wake(
+                self.bus,
+                self.paths,
+                self.epoch,
+                seats,
+                &self.lane,
+                &self.config.steering,
+                state,
+            ) {
+                Ok(launch) => CommandDispatch::wake(launch),
+                Err(outcome) => CommandDispatch::ordinary(outcome),
+            };
+        }
+        CommandDispatch::ordinary(lane_surface::state(
+            self.bus,
+            self.paths,
+            self.epoch,
+            seats,
+            &self.lane,
+            &self.config.steering,
+            command,
+            state,
+        ))
+    }
+
+    fn dispatch_lane_effects(
+        &self,
+        seats: &mut Seats,
+        command: &wire::AdmittedCommand,
+    ) -> Option<CommandDispatch> {
+        let mut effects = CommandEffects::default();
+        let outcome = match (command.kind(), command.body()) {
+            (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => lane_surface::retune(
+                self.bus,
+                self.paths,
+                self.epoch,
+                seats,
+                command,
+                retune,
+                &mut effects,
+            ),
             (CommandKind::LaneEffortRetune, Intent::LaneEffortRetune(retune)) => {
-                let outcome = lane_surface::retune_effort(
+                lane_surface::retune_effort(
                     self.bus,
                     self.paths,
                     self.epoch,
@@ -249,11 +266,10 @@ impl<'a> Surface<'a> {
                     command,
                     retune,
                     &mut effects,
-                );
-                Some(CommandDispatch::with_effects(outcome, effects))
+                )
             }
             (CommandKind::LaneFastRetune, Intent::LaneFastRetune(retune)) => {
-                let outcome = lane_surface::retune_fast(
+                lane_surface::retune_fast(
                     self.bus,
                     self.paths,
                     self.epoch,
@@ -261,11 +277,10 @@ impl<'a> Surface<'a> {
                     command,
                     retune,
                     &mut effects,
-                );
-                Some(CommandDispatch::with_effects(outcome, effects))
+                )
             }
             (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
-                let outcome = lane_surface::arrange_teams(
+                lane_surface::arrange_teams(
                     self.bus,
                     self.paths,
                     self.epoch,
@@ -273,11 +288,10 @@ impl<'a> Surface<'a> {
                     command,
                     arrange,
                     &mut effects,
-                );
-                Some(CommandDispatch::with_effects(outcome, effects))
+                )
             }
             (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => {
-                let outcome = lane_surface::configure(
+                lane_surface::configure(
                     self.bus,
                     self.paths,
                     self.epoch,
@@ -285,14 +299,11 @@ impl<'a> Surface<'a> {
                     command,
                     configure,
                     &mut effects,
-                );
-                Some(CommandDispatch::with_effects(outcome, effects))
+                )
             }
-            (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => ordinary(
-                lane_surface::recall(self.bus, self.paths, self.epoch, seats, command, recall),
-            ),
-            _ => None,
-        }
+            _ => return None,
+        };
+        Some(CommandDispatch::with_effects(outcome, effects))
     }
 
     fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {

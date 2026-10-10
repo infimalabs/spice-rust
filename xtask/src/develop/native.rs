@@ -10,7 +10,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use spice::install::{self, InstallError};
@@ -49,6 +49,31 @@ struct RestartBinding {
     auth_token: Option<OsString>,
 }
 
+/// The effects a refresh orders without deciding: publishing one executable
+/// through the installer and running one appliance command to completion.
+/// Every choice around them — what to park, stop, restore, or restart, and how
+/// to read each answer — belongs to the refresh itself.
+trait Host {
+    /// Republish the installed executable from `binary`.
+    fn install(&mut self, repository: &Repository, binary: &Path) -> Result<Digest, InstallError>;
+
+    /// Run `command` and answer its status and captured streams.
+    fn run(&mut self, command: &mut Command) -> std::io::Result<Output>;
+}
+
+/// The digest-bound installer and real child processes.
+struct System;
+
+impl Host for System {
+    fn install(&mut self, repository: &Repository, binary: &Path) -> Result<Digest, InstallError> {
+        refresh_install(repository, binary)
+    }
+
+    fn run(&mut self, command: &mut Command) -> std::io::Result<Output> {
+        command.output()
+    }
+}
+
 /// Build the current tree, republish the appliance, and restart its resident.
 pub(super) fn perform(
     request: &RefreshRequest,
@@ -62,7 +87,7 @@ pub(super) fn perform(
     let stamp = source_stamp(repository.worktree_root())?;
     writeln!(output, "source stamp {stamp}")?;
     let built = build(request.release, request.symbols, &stamp, output)?;
-    install_built(&repository, built, request, output)
+    install_built(&mut System, &repository, built, request, output)
 }
 
 /// Refuse a refresh from a lane this repository seats, before anything builds.
@@ -99,6 +124,7 @@ fn refuse_seated_lane(repository: &Repository, lane: Option<&OsStr>) -> Result<(
 
 /// Publish one completed build and reconcile the resident around that cutover.
 fn install_built(
+    host: &mut impl Host,
     repository: &Repository,
     built: PathBuf,
     request: &RefreshRequest,
@@ -134,7 +160,7 @@ fn install_built(
 
     if let (true, Some(authority)) = (request.restart, authority.as_deref()) {
         let stopping = Instant::now();
-        if let Err(error) = stop(repository, authority, output) {
+        if let Err(error) = stop(host, repository, authority, output) {
             if let (true, Some(rollback)) = (retained_authority.is_some(), &rollback) {
                 let _ = fs::remove_file(rollback);
             }
@@ -157,7 +183,7 @@ fn install_built(
                 restart: request.restart,
                 binding: binding.clone(),
             };
-            restore_resident(repository, &unwind, output);
+            restore_resident(host, repository, &unwind, output);
             return Err(error.into());
         }
         rollback = Some(stable);
@@ -171,11 +197,11 @@ fn install_built(
         binding: binding.clone(),
     };
     let installing = Instant::now();
-    let digest = match refresh_install(repository, &built) {
+    let digest = match host.install(repository, &built) {
         Ok(digest) => digest,
         Err(error) => {
             return Err(restore_if_changed(
-                repository, &unwind, &before, output, error,
+                host, repository, &unwind, &before, output, error,
             ));
         }
     };
@@ -186,23 +212,25 @@ fn install_built(
         installing.elapsed()
     );
 
-    let endpoint =
-        match restart_admitting_reappearance(repository, &installed, &binding, request, output) {
-            Ok(endpoint) => endpoint,
-            Err(error) => {
-                let Some((journal, before_schema)) = &schema else {
-                    return Err(error);
-                };
-                return Err(recover_start_failure(
-                    repository,
-                    &unwind,
-                    journal,
-                    *before_schema,
-                    output,
-                    error,
-                ));
-            }
-        };
+    let endpoint = match restart_admitting_reappearance(
+        host, repository, &installed, &binding, request, output,
+    ) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            let Some((journal, before_schema)) = &schema else {
+                return Err(error);
+            };
+            return Err(recover_start_failure(
+                host,
+                repository,
+                &unwind,
+                journal,
+                *before_schema,
+                output,
+                error,
+            ));
+        }
+    };
     if let (true, Some(resident)) = (request.restart, resident_rollback) {
         let _ = fs::remove_file(resident);
     }
@@ -243,6 +271,7 @@ fn inspect_schema(path: &Path) -> Result<Option<u32>, spice::journal_schema::Ins
 }
 
 fn recover_start_failure(
+    host: &mut impl Host,
     repository: &Repository,
     rollback: &Rollback<'_>,
     journal: &Path,
@@ -251,6 +280,7 @@ fn recover_start_failure(
     cause: RefreshError,
 ) -> RefreshError {
     recover_start_failure_after(
+        host,
         repository,
         rollback,
         before_schema,
@@ -261,6 +291,7 @@ fn recover_start_failure(
 }
 
 fn recover_start_failure_after(
+    host: &mut impl Host,
     repository: &Repository,
     rollback: &Rollback<'_>,
     before_schema: Option<u32>,
@@ -280,7 +311,7 @@ fn recover_start_failure_after(
         }
     };
     if schema_rollback_safe(before_schema, after_schema) {
-        return restore(repository, rollback, output, cause);
+        return restore(host, repository, rollback, output, cause);
     }
     let _ = writeln!(
         output,
@@ -680,6 +711,7 @@ struct Rollback<'a> {
 /// executable changed, while still bringing back a resident this attempt
 /// stopped before the installer refused.
 fn restore_if_changed(
+    host: &mut impl Host,
     repository: &Repository,
     rollback: &Rollback<'_>,
     before: &InstallSnapshot,
@@ -688,16 +720,17 @@ fn restore_if_changed(
 ) -> RefreshError {
     let cause = cause.into();
     if snapshot_install(repository, rollback.installed).is_ok_and(|after| after == *before) {
-        restore_resident(repository, rollback, output);
+        restore_resident(host, repository, rollback, output);
         cause
     } else {
-        restore(repository, rollback, output, cause)
+        restore(host, repository, rollback, output, cause)
     }
 }
 
 /// Reinstall the parked executable, restart what was running, and report the
 /// failure that forced both.
 fn restore(
+    host: &mut impl Host,
     repository: &Repository,
     rollback: &Rollback<'_>,
     output: &mut impl Write,
@@ -708,7 +741,7 @@ fn restore(
         return cause;
     };
     let _ = writeln!(output, "restoring previous executable after: {cause}");
-    match refresh_install(repository, executable) {
+    match host.install(repository, executable) {
         Ok(digest) => {
             let _ = writeln!(output, "restored plan={digest}");
         }
@@ -719,7 +752,7 @@ fn restore(
             };
         }
     }
-    restore_resident(repository, rollback, output);
+    restore_resident(host, repository, rollback, output);
     cause
 }
 
@@ -731,7 +764,12 @@ fn restore(
 /// was taken away. A resident that will not come back is reported rather than
 /// raised, because the failure worth answering is the one that forced the
 /// restore, not the restore's own aftermath.
-fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &mut impl Write) {
+fn restore_resident(
+    host: &mut impl Host,
+    repository: &Repository,
+    rollback: &Rollback<'_>,
+    output: &mut impl Write,
+) {
     if !rollback.restart || rollback.published.is_none() {
         return;
     }
@@ -741,9 +779,14 @@ fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &m
         ..RefreshRequest::default()
     };
     let executable = rollback.resident_executable.unwrap_or(rollback.installed);
-    if let Err(error) =
-        restart_admitting_reappearance(repository, executable, &rollback.binding, &request, output)
-    {
+    if let Err(error) = restart_admitting_reappearance(
+        host,
+        repository,
+        executable,
+        &rollback.binding,
+        &request,
+        output,
+    ) {
         let _ = writeln!(output, "previous resident did not come back: {error}");
     }
 }
@@ -924,15 +967,17 @@ fn resident_stop_executable(
 /// an inherited stream puts the refusal wherever the parent's happens to go,
 /// which is not this command's own report and is not what the error carries.
 fn stop(
+    host: &mut impl Host,
     repository: &Repository,
     installed: &Path,
     output: &mut impl Write,
 ) -> Result<(), RefreshError> {
     writeln!(output, "stopping resident")?;
-    let answer = Command::new(installed)
-        .arg("down")
-        .current_dir(repository.worktree_root())
-        .output()?;
+    let answer = host.run(
+        Command::new(installed)
+            .arg("down")
+            .current_dir(repository.worktree_root()),
+    )?;
     if !answer.status.success() {
         let refusal = refusal_text(&answer.stderr);
         writeln!(output, "down refused ({}): {refusal}", answer.status)?;
@@ -985,6 +1030,7 @@ fn refusal_text(diagnostics: &[u8]) -> String {
 /// it runs the predecessor, stop it once and let the installed successor take
 /// the lock.
 fn restart_admitting_reappearance(
+    host: &mut impl Host,
     repository: &Repository,
     installed: &Path,
     binding: &RestartBinding,
@@ -993,7 +1039,7 @@ fn restart_admitting_reappearance(
 ) -> Result<Option<String>, RefreshError> {
     let mut replaced_predecessor = false;
     loop {
-        match restart(repository, installed, binding, request, output) {
+        match restart(host, repository, installed, binding, request, output) {
             Ok(endpoint) => return Ok(endpoint),
             Err(error) => {
                 let RefreshError::ResidentStartRefused(refusal) = &error else {
@@ -1022,7 +1068,7 @@ fn restart_admitting_reappearance(
                     "previous resident reappeared during install; stopping it and retrying"
                 )?;
                 let authority = resident_stop_executable(repository, installed)?;
-                stop(repository, &authority, output)?;
+                stop(host, repository, &authority, output)?;
                 replaced_predecessor = true;
             }
         }
@@ -1080,6 +1126,7 @@ fn running_resident_version(
 
 /// Start the refreshed resident and answer the endpoint it published.
 fn restart(
+    host: &mut impl Host,
     repository: &Repository,
     installed: &Path,
     binding: &RestartBinding,
@@ -1091,7 +1138,7 @@ fn restart(
     }
     let starting = Instant::now();
     let mut command = restart_command(installed, binding, request);
-    let answer = command.current_dir(repository.worktree_root()).output()?;
+    let answer = host.run(command.current_dir(repository.worktree_root()))?;
     if !answer.status.success() {
         let refusal = refusal_text(&answer.stderr);
         writeln!(
