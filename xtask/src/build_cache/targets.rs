@@ -1,11 +1,13 @@
 //! Admission of Cargo-tagged target roots below their owning worktrees.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
 use super::{
-    BuildCacheError, BuildCacheRootKind, BuildCacheRootReport, inventory_root, malformed_root,
+    BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheRootKind,
+    BuildCacheRootReport, inventory_root, malformed_root,
 };
 
 /// One Cargo target directory bound to the worktree that owns it.
@@ -26,6 +28,33 @@ impl BuildCacheTargetDirectory {
             directory: directory.into(),
         }
     }
+}
+
+pub(super) fn inventory_target_roots(
+    context: &BuildCacheContext,
+    roots: &mut Vec<BuildCacheRootReport>,
+    current_roots: &mut BTreeSet<PathBuf>,
+    requested_live_roots: &mut BTreeSet<PathBuf>,
+) -> Result<Option<PathBuf>, BuildCacheError> {
+    let mut current_target = None;
+    if let Some(target) = &context.target_directory
+        && let Some(root) = inventory_target_root(target)?
+    {
+        if root.disposition == BuildCacheDisposition::Kept {
+            current_target = Some(root.path.clone());
+            current_roots.insert(root.path.clone());
+        }
+        insert_distinct_root(roots, root);
+    }
+    for target in &context.live_target_directories {
+        if let Some(root) = inventory_target_root(target)? {
+            if root.disposition == BuildCacheDisposition::Kept {
+                requested_live_roots.insert(root.path.clone());
+            }
+            insert_distinct_root(roots, root);
+        }
+    }
+    Ok(current_target)
 }
 
 pub(super) fn inventory_target_root(

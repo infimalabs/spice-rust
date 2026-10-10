@@ -147,10 +147,15 @@ Preview the bounded collector before applying it:
 spice dev xtask -- build-cache --dry-run --max-bytes BYTES --retain-live-worktrees COUNT
 ```
 
+The collector inventories Cargo-reported build and target directories across
+linked worktrees. An ordinary worktree `target/` needs no managed hierarchy;
+configured hashed build roots are inventoried alongside Cargo-tagged targets.
 Use `--free-space-floor BYTES` when free space is the constraint, then replace
-`--dry-run` with `--apply` after review. The collector protects current/live
-and held `.cargo-build-lock` roots. Clean `target` only with no Cargo/rustc
-owner, and remove retired worktrees without `--force` after preserving wanted
+`--dry-run` with `--apply` after review. The collector protects current roots,
+the configured hottest linked worktree roots, and held Cargo locks. Targets
+must be real Cargo-tagged directories below their owning worktrees; unrelated,
+untagged, and symlinked roots are not collected. Remove retired worktrees
+without `--force` after preserving wanted
 changes. Never use `git clean -fdX`: appliance state, bootstrap skill,
 artifacts, generations, dependencies, and compiler output have distinct
 lifecycles.

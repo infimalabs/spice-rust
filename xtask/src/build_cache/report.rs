@@ -9,10 +9,14 @@ pub(super) fn render_report(
     apply: bool,
     output: &mut impl Write,
 ) -> Result<(), BuildCacheError> {
+    match &report.hierarchy {
+        Some(hierarchy) => write!(output, "[build-cache] hierarchy={}", hierarchy.display()),
+        None => write!(output, "[build-cache] hierarchy=none"),
+    }
+    .map_err(BuildCacheError::Output)?;
     writeln!(
         output,
-        "[build-cache] hierarchy={} scope=managed-build-and-worktree-targets mode={}",
-        report.hierarchy.display(),
+        " scope=managed-build-and-worktree-targets mode={}",
         if apply { "apply" } else { "dry-run" },
     )
     .map_err(BuildCacheError::Output)?;

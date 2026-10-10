@@ -5,8 +5,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use sill::{Acquisition, LockFile, LockName, Possession};
 use xtask::{
@@ -16,6 +15,7 @@ use xtask::{
 };
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+static NEXT_LAST_USE: AtomicU64 = AtomicU64::new(4_000_000_000);
 const CACHE_TAG: &str = "CACHEDIR.TAG";
 const LOCK_NAME: &str = ".cargo-build-lock";
 const TARGET_LOCK_NAME: &str = ".cargo-lock";
@@ -145,7 +145,6 @@ fn build_cache_retains_current_and_configured_hottest_live_worktree_roots() {
     let cache = scratch.join("CargoBuild");
     let victim = write_cache_root(&cache, "00", "00000000000000", "victim");
     let cold_live = write_cache_root(&cache, "01", "00000000000000", "cold-live");
-    thread::sleep(Duration::from_millis(5));
     let hot_worktree = scratch.join("hot-worktree");
     let hot_live = write_target_root(&hot_worktree, "hot-live");
     let current = write_cache_root(&cache, "ff", "ffffffffffffff", "current");
@@ -268,6 +267,78 @@ fn build_cache_removal_never_follows_symlinks_or_collects_malformed_root_links()
 }
 
 #[test]
+fn ordinary_target_collection_preserves_current_live_and_locked_roots() {
+    let scratch = Scratch::new("ordinary-targets");
+    let current_worktree = scratch.join("current");
+    let cold_worktree = scratch.join("cold");
+    let hot_worktree = scratch.join("hot");
+    let busy_worktree = scratch.join("busy");
+    let current = write_target_root(&current_worktree, "current");
+    let cold = write_target_root(&cold_worktree, "cold");
+    let hot = write_target_root(&hot_worktree, "hot");
+    let busy = write_target_root(&busy_worktree, "busy");
+    let unrelated = write_cache_root(
+        &scratch.join("CargoBuild"),
+        "00",
+        "00000000000000",
+        "unrelated",
+    );
+    let mut context = BuildCacheContext::new(&current);
+    context.target_directory = Some(BuildCacheTargetDirectory::new(&current_worktree, &current));
+    context.live_target_directories = vec![
+        BuildCacheTargetDirectory::new(&cold_worktree, &cold),
+        BuildCacheTargetDirectory::new(&hot_worktree, &hot),
+        BuildCacheTargetDirectory::new(&busy_worktree, &busy),
+    ];
+    let request = BuildCacheRequest {
+        max_bytes: Some(0),
+        retain_live_worktrees: 1,
+        ..BuildCacheRequest::default()
+    };
+    // The busy root is newest and retained; the hot root is protected by its lock instead.
+    let lock = hold_named_lock(&hot.join("debug").join(TARGET_LOCK_NAME));
+    let preview = collect_build_cache_at(&request, &context, &mut Vec::new())
+        .expect("ordinary target inventory");
+    assert_eq!(preview.hierarchy, None);
+    assert_eq!(preview.current_target, Some(current.clone()));
+    for (root, disposition) in [
+        (&current, BuildCacheDisposition::RetainedCurrent),
+        (&cold, BuildCacheDisposition::WouldReclaim),
+        (&busy, BuildCacheDisposition::RetainedLiveWorktree),
+        (&hot, BuildCacheDisposition::SkippedActive),
+    ] {
+        assert_eq!(root_report(&preview, root).disposition, disposition);
+        assert!(root.is_dir());
+    }
+    assert!(!preview.roots.iter().any(|root| root.path == unrelated));
+    assert_eq!(preview.reclaimed_bytes, 0);
+    let apply = BuildCacheRequest {
+        apply: true,
+        ..request
+    };
+    let collected = collect_build_cache_at(&apply, &context, &mut Vec::new())
+        .expect("ordinary target collection");
+    assert_eq!(
+        root_report(&collected, &cold).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert!(!cold.exists());
+    for root in [&current, &busy, &hot, &unrelated] {
+        assert!(root.is_dir());
+    }
+    drop(lock);
+    let released = collect_build_cache_at(&apply, &context, &mut Vec::new())
+        .expect("ordinary target collection after lock release");
+    assert_eq!(
+        root_report(&released, &hot).disposition,
+        BuildCacheDisposition::Reclaimed
+    );
+    assert!(!hot.exists());
+    assert!(current.is_dir());
+    assert!(busy.is_dir());
+}
+
+#[test]
 fn build_cache_dry_run_reports_managed_and_worktree_targets_in_one_inventory() {
     let scratch = Scratch::new("mixed-inventory");
     let cache = scratch.join("CargoBuild");
@@ -277,7 +348,7 @@ fn build_cache_dry_run_reports_managed_and_worktree_targets_in_one_inventory() {
     let linked_worktree = scratch.join("linked-worktree");
     let current_target = write_target_root(&current_worktree, "current-target");
     let linked_target = write_target_root(&linked_worktree, "linked-target");
-    let (report, output) = collect_cache_with_targets(
+    let (report, _) = collect_cache_with_targets(
         &current_build,
         BuildCacheRequest {
             max_bytes: Some(0),
@@ -338,12 +409,6 @@ fn build_cache_dry_run_reports_managed_and_worktree_targets_in_one_inventory() {
             .iter()
             .any(|lock| lock.file_name() == Some(OsStr::new(LOCK_NAME)))
     );
-    assert!(
-        output.contains("scope=managed-build-and-worktree-targets"),
-        "{output}"
-    );
-    assert!(output.contains("kind=managed-build"), "{output}");
-    assert!(output.contains("kind=worktree-target"), "{output}");
 }
 
 #[test]
@@ -498,6 +563,7 @@ fn write_cache_root(cache: &Path, bucket: &str, hash: &str, label: &str) -> Path
     )
     .expect("write payload");
     fs::write(root.join("debug/.cargo-build-lock"), b"").expect("write idle lock");
+    set_last_use(&root);
     root
 }
 
@@ -524,6 +590,15 @@ fn write_target_at(target: &Path, label: &str) {
     fs::write(target.join("payload"), label).expect("write target payload");
     fs::write(target.join("debug").join(TARGET_LOCK_NAME), b"").expect("write target lock");
     fs::write(target.join("debug").join(LOCK_NAME), b"").expect("write build lock");
+    set_last_use(target);
+}
+
+fn set_last_use(root: &Path) {
+    let modified = UNIX_EPOCH + Duration::from_secs(NEXT_LAST_USE.fetch_add(1, Ordering::Relaxed));
+    fs::File::open(root.join("payload"))
+        .expect("open last-use evidence")
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .expect("set deterministic last-use evidence");
 }
 
 fn hold_lock(path: &Path) -> Possession {

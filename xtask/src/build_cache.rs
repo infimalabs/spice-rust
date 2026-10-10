@@ -6,7 +6,7 @@ mod targets;
 
 use report::render_report;
 pub use targets::BuildCacheTargetDirectory;
-use targets::{insert_distinct_root, inventory_target_root};
+use targets::inventory_target_roots;
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -38,7 +38,7 @@ macro_rules! is_hex_name {
 pub struct BuildCacheRequest {
     /// Remove selected roots instead of only reporting what would be removed.
     pub apply: bool,
-    /// Maximum physical bytes the hierarchy should retain.
+    /// Maximum physical bytes the inventoried cache roots should retain.
     pub max_bytes: Option<u64>,
     /// Minimum free bytes the containing filesystem should have after collection.
     pub free_space_floor: Option<u64>,
@@ -68,7 +68,7 @@ pub struct BuildCacheContext {
     pub live_build_directories: Vec<PathBuf>,
     /// Cargo target directories and owning linked worktrees.
     pub live_target_directories: Vec<BuildCacheTargetDirectory>,
-    /// Available bytes for the filesystem containing the hierarchy.
+    /// Available bytes for the filesystem containing the current build root.
     pub available_bytes: Option<u64>,
 }
 
@@ -89,8 +89,8 @@ impl BuildCacheContext {
 /// Result of one build-cache collection pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BuildCacheReport {
-    /// The resolved `CargoBuild` hierarchy whose descendants were considered.
-    pub hierarchy: PathBuf,
+    /// The managed build hierarchy, absent when Cargo builds in its target root.
+    pub hierarchy: Option<PathBuf>,
     /// The current worktree's resolved build root.
     pub current: PathBuf,
     /// The current worktree's resolved target root, when it is an admitted root.
@@ -197,30 +197,32 @@ pub fn build_cache(
 ) -> Result<BuildCacheReport, BuildCacheError> {
     let workspace = workspace_root()?;
     let directories = discovery::discover_cargo_directories(&workspace)?;
-    let build_directory = directories.current.build_directory;
-    let hierarchy = hierarchy_from_build_directory(&build_directory)?;
-    let available_bytes = filesystem_available_bytes(&hierarchy.root).ok();
-    let mut live_build_directories = Vec::new();
-    let mut live_target_directories = Vec::new();
-    for linked in directories.linked {
-        if root_under_boundary(&hierarchy.root, &linked.directories.build_directory).is_ok() {
-            live_build_directories.push(linked.directories.build_directory);
-        }
-        live_target_directories.push(BuildCacheTargetDirectory::new(
-            linked.worktree,
-            linked.directories.target_directory,
-        ));
-    }
-    let context = BuildCacheContext {
-        build_directory,
+    let mut context = BuildCacheContext {
+        available_bytes: filesystem_available_bytes(&directories.current.build_directory).ok(),
+        build_directory: directories.current.build_directory,
         target_directory: Some(BuildCacheTargetDirectory::new(
             &workspace,
             directories.current.target_directory,
         )),
-        live_build_directories,
-        live_target_directories,
-        available_bytes,
+        live_build_directories: Vec::new(),
+        live_target_directories: Vec::new(),
     };
+    let hierarchy = hierarchy_from_context(&context)?;
+    for linked in directories.linked {
+        if let Some(hierarchy) = &hierarchy
+            && root_under_boundary(&hierarchy.root, &linked.directories.build_directory).is_ok()
+        {
+            context
+                .live_build_directories
+                .push(linked.directories.build_directory);
+        }
+        context
+            .live_target_directories
+            .push(BuildCacheTargetDirectory::new(
+                linked.worktree,
+                linked.directories.target_directory,
+            ));
+    }
     collect_build_cache_at(request, &context, output)
 }
 
@@ -233,37 +235,31 @@ pub fn collect_build_cache_at(
     context: &BuildCacheContext,
     output: &mut impl Write,
 ) -> Result<BuildCacheReport, BuildCacheError> {
-    let hierarchy = hierarchy_from_build_directory(&context.build_directory)?;
-    let mut roots = inventory_hierarchy(&hierarchy)?;
+    let hierarchy = hierarchy_from_context(context)?;
+    let mut roots = match &hierarchy {
+        Some(hierarchy) => inventory_hierarchy(hierarchy)?,
+        None => Vec::new(),
+    };
     let current =
         fs::canonicalize(&context.build_directory).map_err(|source| BuildCacheError::Io {
             path: context.build_directory.clone(),
             source,
         })?;
     let mut current_roots = BTreeSet::from([current.clone()]);
-    let mut requested_live_roots = context
-        .live_build_directories
-        .iter()
-        .map(|path| root_under_boundary(&hierarchy.root, path))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    let mut current_target = None;
-    if let Some(target) = &context.target_directory
-        && let Some(root) = inventory_target_root(target)?
-    {
-        if root.disposition == BuildCacheDisposition::Kept {
-            current_target = Some(root.path.clone());
-            current_roots.insert(root.path.clone());
-        }
-        insert_distinct_root(&mut roots, root);
-    }
-    for target in &context.live_target_directories {
-        if let Some(root) = inventory_target_root(target)? {
-            if root.disposition == BuildCacheDisposition::Kept {
-                requested_live_roots.insert(root.path.clone());
-            }
-            insert_distinct_root(&mut roots, root);
-        }
-    }
+    let mut requested_live_roots = match &hierarchy {
+        Some(hierarchy) => context
+            .live_build_directories
+            .iter()
+            .map(|path| root_under_boundary(&hierarchy.root, path))
+            .collect::<Result<BTreeSet<_>, _>>()?,
+        None => BTreeSet::new(),
+    };
+    let current_target = inventory_target_roots(
+        context,
+        &mut roots,
+        &mut current_roots,
+        &mut requested_live_roots,
+    )?;
     let live_roots =
         retained_live_roots(request.retain_live_worktrees, &requested_live_roots, &roots);
 
@@ -320,7 +316,7 @@ pub fn collect_build_cache_at(
 
     roots.sort_by(|left, right| left.path.cmp(&right.path));
     let report = BuildCacheReport {
-        hierarchy: hierarchy.root,
+        hierarchy: hierarchy.map(|hierarchy| hierarchy.root),
         current,
         current_target,
         total_bytes,
@@ -374,6 +370,19 @@ pub fn parse_byte_quantity(value: &str) -> Result<u64, BuildCacheError> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CacheHierarchy {
     root: PathBuf,
+}
+
+fn hierarchy_from_context(
+    context: &BuildCacheContext,
+) -> Result<Option<CacheHierarchy>, BuildCacheError> {
+    if context.target_directory.as_ref().is_some_and(|target| {
+        target.directory == context.build_directory
+            && target.directory != target.worktree
+            && target.directory.starts_with(&target.worktree)
+    }) {
+        return Ok(None);
+    }
+    hierarchy_from_build_directory(&context.build_directory).map(Some)
 }
 
 fn hierarchy_from_build_directory(
