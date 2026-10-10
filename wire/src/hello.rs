@@ -199,7 +199,8 @@ pub enum SpeechPlayback {
     /// The browser speaks through its system synthesis implementation.
     System {
         /// Voice names in preference order; a device speaks with the first one
-        /// it publishes.
+        /// it publishes. An empty list spreads agents across the device's own
+        /// voices.
         voices: Vec<String>,
         /// Base speaking rate projected into the browser API.
         words_per_minute: u32,

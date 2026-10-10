@@ -3,7 +3,7 @@
 //! hooks that stop or abandon playback.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use gloo_timers::future::TimeoutFuture;
@@ -15,11 +15,13 @@ use yew::prelude::*;
 use super::watchband::TeamSpeech;
 use super::{SurfaceData, toast};
 use crate::AppRuntime;
-use crate::speech::{SystemObservers, SystemStart};
+use crate::runtime::LaneRow;
+use crate::speech::{SystemObservers, SystemStart, VoiceRequest};
 use crate::speech_queue::{
     Advance, AutomaticChange, Enqueue, NarrationCursorRow, NarrationCursors, NarrationMessage,
     SpeechEntry, SpeechOwner, SpeechQueue, SpeechRequest,
 };
+use wire::CanonicalUuid;
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 
@@ -59,6 +61,28 @@ pub(super) struct SpeechRuntime {
     pub(super) controller: Rc<RefCell<crate::speech::Controller>>,
     pub(super) status: UseStateHandle<SpeechStatus>,
     pub(super) owner: UseStateHandle<Option<SpeechOwner>>,
+    pub(super) roster: Rc<RefCell<VoiceRoster>>,
+}
+
+/// The roster voice spreading reads: every team's members, and the member
+/// lane each worktree speaks for.
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct VoiceRoster {
+    teams: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    members: HashMap<String, CanonicalUuid>,
+}
+
+impl VoiceRoster {
+    fn new(lanes: &[LaneRow]) -> Self {
+        Self {
+            teams: crate::watchband::topology(lanes),
+            members: lanes
+                .iter()
+                .flat_map(|team| &team.members)
+                .map(|member| (member.worktree.clone(), member.lane))
+                .collect(),
+        }
+    }
 }
 
 impl SpeechRuntime {
@@ -102,30 +126,43 @@ impl SpeechRuntime {
         let awaiting = self.clone();
         let id = entry.id();
         let resumed = entry.clone();
-        let result = self.controller.borrow_mut().start_system(
-            generation,
-            entry.worktree(),
-            entry.text(),
-            &voices,
-            words_per_minute,
-            SystemObservers {
-                voices: {
-                    let voices = voices.clone();
-                    move || {
-                        awaiting.resume_system(
-                            resumed.clone(),
-                            generation,
-                            voices.clone(),
-                            words_per_minute,
-                        );
-                    }
+        let result = {
+            let roster = self.roster.borrow();
+            let request = if !voices.is_empty() {
+                VoiceRequest::Listed(&voices)
+            } else if let Some(member) = roster.members.get(entry.worktree()) {
+                VoiceRequest::Spread {
+                    teams: &roster.teams,
+                    member: *member,
+                }
+            } else {
+                VoiceRequest::Default
+            };
+            self.controller.borrow_mut().start_system(
+                generation,
+                entry.worktree(),
+                entry.text(),
+                request,
+                words_per_minute,
+                SystemObservers {
+                    voices: {
+                        let voices = voices.clone();
+                        move || {
+                            awaiting.resume_system(
+                                resumed.clone(),
+                                generation,
+                                voices.clone(),
+                                words_per_minute,
+                            );
+                        }
+                    },
+                    ended: move || ended.defer_finish(id, None),
+                    failed: move |issue| {
+                        failed.defer_finish(id, Some(issue));
+                    },
                 },
-                ended: move || ended.defer_finish(id, None),
-                failed: move |issue| {
-                    failed.defer_finish(id, Some(issue));
-                },
-            },
-        );
+            )
+        };
         match result {
             Ok(SystemStart::Speaking) => {}
             // The browser has published no voices yet. This entry stays the
@@ -311,6 +348,24 @@ pub(super) fn use_page_hide_speech_stop(speech_runtime: SpeechRuntime) {
                     callback.as_ref().unchecked_ref(),
                 );
             }
+        }
+    });
+}
+
+/// Keep the roster voice spreading reads in step with the rendered lanes.
+#[hook]
+pub(super) fn use_voice_roster(
+    surface: &UseStateHandle<SurfaceData>,
+    roster: Rc<RefCell<VoiceRoster>>,
+) {
+    let current = surface
+        .read()
+        .as_ref()
+        .and_then(AppRuntime::lanes)
+        .map(|lanes| VoiceRoster::new(&lanes.lanes));
+    use_effect_with(current, move |current| {
+        if let Some(current) = current {
+            *roster.borrow_mut() = current.clone();
         }
     });
 }

@@ -67,6 +67,7 @@ pub mod speech_owner;
 pub mod speech_queue;
 pub mod state;
 pub mod view;
+pub mod voice_spread;
 pub mod watchband;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod work;

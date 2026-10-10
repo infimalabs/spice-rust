@@ -65,9 +65,9 @@ use sender::{
     SenderHandle, action_identity, admit_action, queue_submission, queue_submissions, random_uuid,
 };
 use speech_runtime::{
-    AgentSpeechControls, NarrationBatch, SpeechRuntime, SpeechStatus, load_narration_cursors,
-    use_agent_speech_controls, use_page_hide_speech_stop, use_speech_failure_toast,
-    use_team_speech_abandonment,
+    AgentSpeechControls, NarrationBatch, SpeechRuntime, SpeechStatus, VoiceRoster,
+    load_narration_cursors, use_agent_speech_controls, use_page_hide_speech_stop,
+    use_speech_failure_toast, use_team_speech_abandonment, use_voice_roster,
 };
 use view::{AppRender, render_app};
 use watchband::ComposerAction;
@@ -563,6 +563,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         controller: use_mut_ref(crate::speech::Controller::default),
         status: speech_status.clone(),
         owner: speech_owner.clone(),
+        roster: use_mut_ref(VoiceRoster::default),
     };
     let speech_ref = use_mut_ref(|| speech_runtime.clone());
     *speech_ref.borrow_mut() = speech_runtime.clone();
@@ -652,6 +653,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         },
     );
     task_feedback::use_feedback(state);
+    use_voice_roster(&state.surface, speech_runtime.roster.clone());
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
     use_speech_failure_toast(&state.speech_status);
