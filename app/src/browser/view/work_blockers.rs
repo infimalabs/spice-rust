@@ -354,7 +354,7 @@ fn render_trust_requirement(
     let (ready, explanation, unavailable_label) = match trust {
         None => (
             false,
-            "The exact configuration has not been captured by a producing worktree. Capture its current executable configuration before approval.".to_owned(),
+            "The exact configuration has not been captured. Run `spice trust pend` from any worktree carrying this exact configuration before approval.".to_owned(),
             "Capture required",
         ),
         Some(head)
@@ -365,21 +365,18 @@ fn render_trust_requirement(
         {
             (
                 false,
-                "The recorded configuration has no producing-worktree evidence. Capture the exact current configuration before approval.".to_owned(),
+                "The recorded configuration has no worktree evidence. Run `spice trust pend` from any worktree carrying this exact configuration before approval.".to_owned(),
                 "Capture required",
             )
         }
         Some(head) if head.state == wire::TrustState::Pended => (
             true,
-            format!(
-                "Only the operator can trust executable configuration. Approve only if this exact digest is expected for producing worktree {}.",
-                head.worktree.as_deref().expect("ready trust has a worktree"),
-            ),
+            "Only the operator can trust executable configuration. Approve only if this exact digest is expected; its pending record carries verified worktree provenance.".to_owned(),
             "",
         ),
         Some(head) if head.state == wire::TrustState::Revoked => (
             false,
-            "This exact configuration was revoked. The producing worktree must capture a different current configuration before approval.".to_owned(),
+            "This exact configuration was revoked. A worktree carrying the next exact configuration must run `spice trust pend` before approval.".to_owned(),
             "Revoked",
         ),
         Some(_) => (
