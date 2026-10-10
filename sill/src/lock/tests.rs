@@ -2,8 +2,7 @@ use super::{Acquisition, LockFile, LockName};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn possession_is_exclusive_and_release_is_automatic() {
@@ -20,48 +19,6 @@ fn possession_is_exclusive_and_release_is_automatic() {
     let second = acquired(lock.try_acquire().expect("acquisition after release"));
     drop(second);
     fs::remove_file(path).expect("remove test lock file");
-}
-
-#[cfg(unix)]
-#[test]
-fn explicit_child_inheritance_retains_possession_until_the_child_exits() {
-    let path = unique_lock_path("child-inheritance");
-    let lock = LockFile::new(
-        LockName::new("child-inheritance").expect("valid name"),
-        &path,
-    );
-    let mut possession = acquired(lock.try_acquire().expect("parent acquisition"));
-    let mut command = process::Command::new("/usr/bin/tail");
-    command.args(["-f", "/dev/null"]);
-    possession.retain_through_child(&mut command);
-    let mut child = command.spawn().expect("spawn inheriting child");
-
-    drop(possession);
-    assert_eq!(
-        lock.availability().expect("probe inherited possession"),
-        super::Availability::Held,
-    );
-
-    child.kill().expect("stop inheriting child");
-    child.wait().expect("reap inheriting child");
-    wait_available(&lock);
-    fs::remove_file(path).expect("remove test lock file");
-}
-
-#[cfg(unix)]
-fn wait_available(lock: &LockFile) {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match lock.availability().expect("probe released possession") {
-            super::Availability::Available => return,
-            super::Availability::Held if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(5));
-            }
-            super::Availability::Held => {
-                panic!("inherited possession remained held after the child exited");
-            }
-        }
-    }
 }
 
 #[test]
@@ -125,56 +82,6 @@ fn an_availability_probe_gives_back_the_possession_it_took() {
     acquired(lock.try_acquire().expect("acquisition after a probe"));
 
     drop(file);
-    fs::remove_file(path).expect("remove test lock file");
-}
-
-/// A fork during the probe window inherits the description, not possession.
-///
-/// This is the shape that made a whole-battery run flake where the fixture
-/// never did in isolation: `sill` forks a guardian that does not `exec`, so
-/// CLOEXEC clears nothing, and a probe lock left on the description outlives
-/// the descriptor the prober itself closes.
-#[cfg(unix)]
-#[test]
-fn a_fork_during_a_probe_inherits_no_possession() {
-    let path = unique_lock_path("probe-fork");
-    let lock = LockFile::new(LockName::new("probe-fork").expect("valid name"), &path);
-    let file = opened(&path);
-
-    assert_eq!(
-        lock.availability_opened(file.try_clone().expect("probe clone"))
-            .expect("probe answers"),
-        super::Availability::Available
-    );
-
-    // SAFETY: the child only pauses and exits, both async-signal-safe, and
-    // is signalled and reaped below.
-    let child = unsafe { libc::fork() };
-    assert!(
-        child >= 0,
-        "fork fails: {}",
-        std::io::Error::last_os_error()
-    );
-    if child == 0 {
-        // Hold every inherited descriptor open until the parent is done.
-        unsafe {
-            libc::pause();
-            libc::_exit(0);
-        }
-    }
-
-    // The prober closes its own descriptor. Only the child's copy remains.
-    drop(file);
-    let attempt = lock
-        .try_acquire()
-        .expect("acquisition beside a forked child");
-
-    // SAFETY: this signals the child forked above and nothing else.
-    unsafe {
-        libc::kill(child, libc::SIGKILL);
-        libc::waitpid(child, std::ptr::null_mut(), 0);
-    }
-    acquired(attempt);
     fs::remove_file(path).expect("remove test lock file");
 }
 

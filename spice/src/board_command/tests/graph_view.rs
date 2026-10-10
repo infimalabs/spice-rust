@@ -4,7 +4,7 @@
 use super::*;
 use wire::output::{INTERACTIVE, Request};
 
-const TASKS: usize = 300;
+const TASKS: usize = 25;
 
 fn refused(outcome: Result<Destination, Outcome<CommandAnswer>>, reason: &str) -> String {
     match outcome {

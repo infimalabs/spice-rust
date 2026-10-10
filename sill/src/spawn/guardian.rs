@@ -40,15 +40,6 @@ pub(super) struct PendingGuardian {
 
 impl PendingGuardian {
     pub(super) fn start(file: &File) -> io::Result<Self> {
-        Self::start_configured(file, true)
-    }
-
-    #[cfg(test)]
-    pub(super) fn start_refusing_descriptor_setup(file: &File) -> io::Result<Self> {
-        Self::start_configured(file, false)
-    }
-
-    fn start_configured(file: &File, descriptor_setup: bool) -> io::Result<Self> {
         let (mut notifier, receiver) = UnixStream::pair()?;
         let lock = duplicate(file.as_raw_fd())?;
         let notice = duplicate(receiver.as_raw_fd())?;
@@ -60,7 +51,7 @@ impl PendingGuardian {
             return Err(io::Error::last_os_error());
         }
         if pid == 0 {
-            guardian_main(lock.as_raw_fd(), notice.as_raw_fd(), descriptor_setup);
+            guardian_main(lock.as_raw_fd(), notice.as_raw_fd(), true);
         }
 
         drop(receiver);

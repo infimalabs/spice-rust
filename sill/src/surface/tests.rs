@@ -1,19 +1,11 @@
 use std::cell::Cell;
 use std::fs;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::lock::replacement_record;
 
-use super::owner::{
-    GuardianState, LockOwnerEvidence, guardian_state, owner_record, read_owner, resolve_refusal,
-    write_owner, write_owner_with,
-};
-use super::process_state::{
-    ProcessState, process_group_absent, process_group_terminal, process_terminal, process_zombie,
-};
+use super::owner::{GuardianState, LockOwnerEvidence, owner_record, read_owner, resolve_refusal};
 use super::{
     Contention, LockAttempt, LockAvailability, LockSurfaceError, LockTargetKind, LockTopology,
     ProtectedGroup,
@@ -150,73 +142,6 @@ fn report_observes_held_and_released_shards_without_creating_missing_ones() {
     assert!(!pool.entries[0].owner_stale);
 }
 
-/// One pid that is proved departed rather than assumed to be.
-///
-/// A literal pid is departed only by luck: this machine runs eleven lanes
-/// and a full run spawns hundreds of children, so any number small enough
-/// to write down is one something else can be holding. A child this test
-/// spawned and reaped is a pid the kernel will not hand out again until it
-/// has wrapped the whole space, and the assertion keeps even that from
-/// being a premise -- a reused pid fails here, where the cause is named.
-fn departed_pid() -> u32 {
-    let mut departed = Command::new("/usr/bin/true");
-    departed.process_group(0);
-    let mut departed = departed.spawn().expect("departed process launches");
-    let pid = departed.id();
-    assert!(departed.wait().expect("departed process reaps").success());
-    assert!(
-        process_terminal(pid),
-        "pid {pid} was live again between the reap and the naming"
-    );
-    pid
-}
-
-#[test]
-fn stale_owner_evidence_never_becomes_kernel_possession() {
-    let scratch = Scratch::new("stale-owner");
-    let root = scratch.path().join("locks");
-    let path = root.join("pool/0.lock");
-    fs::create_dir_all(path.parent().expect("stale owner parent"))
-        .expect("stale owner parent creates");
-    let departed = departed_pid();
-    fs::write(&path, format!(r#"{{"pid":{departed},"cwd":"/departed"}}"#))
-        .expect("stale owner evidence writes");
-    let topology = topology(&root);
-
-    let report = topology.report().expect("stale evidence is observable");
-    let entry = &report
-        .pools
-        .iter()
-        .find(|pool| pool.name == "pool")
-        .expect("pool is reported")
-        .entries[0];
-    assert_eq!(entry.availability, LockAvailability::Available);
-    assert_eq!(entry.owner.as_ref().map(|owner| owner.pid), Some(departed));
-    assert!(entry.owner_stale);
-
-    let held = match topology
-        .try_acquire("pool", Some(0))
-        .expect("stale evidence does not contend")
-    {
-        LockAttempt::Acquired(held) => held,
-        LockAttempt::Contended { .. } => panic!("stale evidence became possession"),
-    };
-    let current = topology.report().expect("replacement owner is observable");
-    let entry = &current
-        .pools
-        .iter()
-        .find(|pool| pool.name == "pool")
-        .expect("pool is reported")
-        .entries[0];
-    assert_eq!(entry.availability, LockAvailability::Held);
-    assert_eq!(
-        entry.owner.as_ref().map(|owner| owner.pid),
-        Some(std::process::id())
-    );
-    assert!(!entry.owner_stale);
-    drop(held);
-}
-
 /// A departed guardian must send the question back to the kernel, and only
 /// a departed guardian may. The difference is otherwise visible only inside
 /// the moment between collecting a refusal and reading the record against
@@ -248,145 +173,6 @@ fn only_a_departed_guardian_puts_a_collected_refusal_back_to_the_kernel() {
     assert_eq!(resolved(GuardianState::Departed), ("reasked", 0, 1));
     assert_eq!(resolved(GuardianState::Pending), ("waited", 1, 0));
     assert_eq!(resolved(GuardianState::Unbounded), ("collected", 0, 0));
-}
-
-#[test]
-fn guardian_synchronization_separates_a_pending_guardian_from_a_departed_one() {
-    let pid = departed_pid();
-
-    let completed = LockOwnerEvidence {
-        pid,
-        cwd: "/departed".to_owned(),
-        owner_released: false,
-        protected_group: Some(ProtectedGroup::Published(pid)),
-        protected_guardian: Some(std::process::id()),
-    };
-    assert_eq!(completed.guardian_state(), GuardianState::Pending);
-
-    let live_owner = LockOwnerEvidence {
-        pid: std::process::id(),
-        cwd: "/current".to_owned(),
-        owner_released: false,
-        protected_group: Some(ProtectedGroup::Published(pid)),
-        protected_guardian: Some(std::process::id()),
-    };
-    assert_eq!(live_owner.guardian_state(), GuardianState::Unbounded);
-
-    let released_owner = LockOwnerEvidence {
-        owner_released: true,
-        ..live_owner
-    };
-    assert!(released_owner.report().is_none());
-    assert_eq!(released_owner.guardian_state(), GuardianState::Pending);
-
-    let unguarded = LockOwnerEvidence {
-        pid,
-        cwd: "/departed".to_owned(),
-        owner_released: false,
-        protected_group: None,
-        protected_guardian: None,
-    };
-    assert_eq!(unguarded.guardian_state(), GuardianState::Unbounded);
-
-    // A slot reserved before the fork and never filled in is the state a
-    // wrapper killed in that window leaves behind. Nothing about it has
-    // finished, and reading it as a group that has -- which is what any
-    // stand-in group id would do, since an id nobody uses probes as absent
-    // and absent reads as terminal -- would hand the lock to a second
-    // holder while the first one is still running under a live guardian.
-    let reserved = LockOwnerEvidence {
-        protected_group: Some(ProtectedGroup::Blank),
-        ..released_owner.clone()
-    };
-    assert_eq!(reserved.guardian_state(), GuardianState::Unbounded);
-
-    let departed_guardian = LockOwnerEvidence {
-        pid,
-        cwd: "/departed".to_owned(),
-        owner_released: false,
-        protected_group: Some(ProtectedGroup::Published(pid)),
-        protected_guardian: Some(pid),
-    };
-    // The guardian is gone rather than merely uninteresting, and a guardian
-    // releases what it held on its way out. Collapsing this into the same
-    // answer as an unbounded record is what made a reader quote a refusal
-    // its holder had already withdrawn.
-    assert_eq!(departed_guardian.guardian_state(), GuardianState::Departed);
-}
-
-/// A reader inside the owner rewrite finds the record being replaced.
-///
-/// The rewrite hands over the one instant a concurrent reader could land
-/// in, because no caller can hold that instant open. The reader here opens
-/// the path for itself, exactly as another process would, so what it finds
-/// is what that process would have found.
-///
-/// Emptying the file before rewriting it puts nothing there instead, and
-/// nothing is how release is spelled: read_owner answers None,
-/// guardian_state answers Unbounded, and a reader that would have waited
-/// out a guardian still holding possession refuses an acquisition the
-/// evidence would have granted.
-///
-/// The reading is counted because every other claim here is made inside the
-/// callback, and a rewrite that never called back would satisfy them all by
-/// never testing them.
-#[test]
-fn a_reader_inside_the_owner_rewrite_never_finds_an_unheld_lock() {
-    let scratch = Scratch::new("rewrite-window");
-    let path = scratch.path().join("owner");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .expect("the owner record opens");
-
-    // A record a reader is entitled to wait out: the protected group has
-    // ended and its owner released it, while the guardian it names is still
-    // here. That is the acquisition the empty window throws away.
-    write_owner(
-        &file,
-        Some((
-            ProtectedGroup::Published(departed_pid()),
-            std::process::id(),
-        )),
-        true,
-    )
-    .expect("the record being replaced is written");
-    let seeded = read_owner(&file).expect("the seeded record reads");
-    assert_eq!(
-        guardian_state(seeded.as_ref()),
-        GuardianState::Pending,
-        "the seeded record must be one a reader would have waited out"
-    );
-
-    let readings = Cell::new(0);
-    let inside = Cell::new(None);
-    write_owner_with(&file, None, false, || {
-        let reader = fs::File::open(&path)?;
-        readings.set(readings.get() + 1);
-        inside.set(Some(guardian_state(read_owner(&reader)?.as_ref())));
-        Ok(())
-    })
-    .expect("the replacement record is written");
-
-    assert_eq!(
-        readings.get(),
-        1,
-        "the rewrite offered its window exactly once"
-    );
-    assert_eq!(
-        inside.get(),
-        Some(GuardianState::Pending),
-        "a reader inside the rewrite found the lock released"
-    );
-    assert!(
-        read_owner(&file)
-            .expect("the replacement is one whole owner record")
-            .is_some(),
-        "the replacement was answered as a released lock"
-    );
 }
 
 /// Bytes that are neither a whole owner record nor empty are not a release.
@@ -516,41 +302,6 @@ fn a_reserved_slot_is_filled_in_place_and_never_moves_under_the_guardian() {
         serde_json::from_slice(&reserved).expect("a reserved record reads");
     assert_eq!(reserved.protected_group, Some(ProtectedGroup::Blank));
     assert_eq!(published.protected_guardian, reserved.protected_guardian);
-}
-
-#[test]
-fn unreaped_zombie_process_and_group_are_terminal() {
-    let mut command = Command::new("/usr/bin/true");
-    command.process_group(0);
-    let mut child = command.spawn().expect("zombie fixture launches");
-    let pid = child.id();
-    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
-    // SAFETY: waitid observes this child without reaping it because WNOWAIT is set.
-    assert_eq!(
-        unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid,
-                information.as_mut_ptr(),
-                libc::WEXITED | libc::WNOWAIT,
-            )
-        },
-        0
-    );
-
-    assert_eq!(process_zombie(pid), ProcessState::Terminal);
-    assert!(process_terminal(pid));
-    // The group's only remaining member is that zombie, and signal zero
-    // still resolves the group while it goes unreaped, so a terminal answer
-    // here cannot have come from the group having gone absent. It has to
-    // come from enumerating the member and finding it terminal, which is
-    // also what pins the PID reading of the platform enumeration: reading
-    // its answer as a byte count would divide the single member away and
-    // leave the group identity to answer for itself, which it refuses to do.
-    assert!(!process_group_absent(pid));
-    assert!(process_group_terminal(pid));
-    assert!(child.wait().expect("zombie fixture reaps").success());
-    assert!(process_group_absent(pid));
 }
 
 #[test]

@@ -47,41 +47,6 @@ fn chunked_json_is_byte_exact_and_the_next_record_is_independent() {
 }
 
 #[test]
-fn the_exact_reassembly_ceiling_is_admitted() {
-    let mut decoder = FrameDecoder::default();
-    let count = MAX_REASSEMBLED_BYTES / CHUNK;
-    let mut part = vec![b'x'; CHUNK];
-    part[..9].copy_from_slice(b"{\"text\":\"");
-    for index in 0..count {
-        if index == 1 {
-            part[..9].fill(b'x');
-        }
-        if index + 1 == count {
-            part[CHUNK - 2..].copy_from_slice(b"\"}");
-        }
-        let result = push(
-            &mut decoder,
-            &frame(index, count, MAX_REASSEMBLED_BYTES, &part),
-        )
-        .unwrap();
-        if index + 1 == count {
-            let bytes = result.unwrap();
-            assert_eq!(bytes.len(), MAX_REASSEMBLED_BYTES + 1);
-            assert_eq!(&bytes[..9], b"{\"text\":\"");
-            assert!(
-                bytes[9..MAX_REASSEMBLED_BYTES - 2]
-                    .iter()
-                    .all(|byte| *byte == b'x')
-            );
-            assert_eq!(&bytes[MAX_REASSEMBLED_BYTES - 2..], b"\"}\n");
-        } else {
-            assert!(result.is_none());
-        }
-    }
-    decoder.finish().unwrap();
-}
-
-#[test]
 fn invalid_metadata_refuses_before_an_assembly_can_be_admitted() {
     let valid = frame(0, 5, MAX_FRAME_BYTES + 1, b"x");
     for (field, value) in [

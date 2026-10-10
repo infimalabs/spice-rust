@@ -19,30 +19,6 @@ pub(super) fn spawn_inner(
     guarded: Option<&File>,
     arm: &mut dyn FnMut(u32) -> io::Result<()>,
 ) -> io::Result<Running> {
-    spawn_inner_with_guardian(spec, observation, guarded, arm, PendingGuardian::start)
-}
-
-#[cfg(test)]
-pub(super) fn spawn_inner_refusing_descriptor_setup(
-    spec: Spec,
-    guarded: &File,
-) -> io::Result<Running> {
-    spawn_inner_with_guardian(
-        spec,
-        None,
-        Some(guarded),
-        &mut |_| Ok(()),
-        PendingGuardian::start_refusing_descriptor_setup,
-    )
-}
-
-fn spawn_inner_with_guardian(
-    spec: Spec,
-    observation: Option<Observation>,
-    guarded: Option<&File>,
-    arm: &mut dyn FnMut(u32) -> io::Result<()>,
-    start_guardian: fn(&File) -> io::Result<PendingGuardian>,
-) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
     if guarded.is_some() && spec.group != ProcessGroup::New {
         return Err(io::Error::new(
@@ -51,7 +27,7 @@ fn spawn_inner_with_guardian(
         ));
     }
     let wakes = SpawnWakes::new(&spec, observation.as_ref())?;
-    let guardian = guarded.map(start_guardian).transpose()?;
+    let guardian = guarded.map(PendingGuardian::start).transpose()?;
     // The record is armed before the child exists, because after this line
     // there is no moment at which this process can be relied on to reach one.
     // `spawn` does not return until the child has already `exec`ed, so no
