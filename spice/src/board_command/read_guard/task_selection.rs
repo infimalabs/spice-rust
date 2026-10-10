@@ -146,6 +146,40 @@ fn context_tasks(
         }));
     }
     if dependencies {
+        let selected_plans = selected
+            .iter()
+            .filter(|task| {
+                observed
+                    .tasks()
+                    .binary_search_by(|heads| heads.statement().body().born.cmp(task))
+                    .ok()
+                    .is_some_and(|index| {
+                        let heads = &observed.tasks()[index];
+                        heads.workflow().body().status == "pending"
+                            && heads.workflow().body().phase.as_str() == "plan"
+                    })
+            })
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        if !selected_plans.is_empty() {
+            selected.extend(
+                observed
+                    .tasks()
+                    .iter()
+                    .filter(|child| {
+                        child.workflow().body().status == "pending"
+                            && substantive_acceptance(&child.statement().body().acceptance)
+                            && child
+                                .statement()
+                                .body()
+                                .dependencies
+                                .iter()
+                                .any(|dependency| selected_plans.contains(dependency))
+                    })
+                    .map(|child| child.statement().body().born.clone()),
+            );
+        }
+
         let mut pending: Vec<_> = selected.iter().cloned().collect();
         while let Some(task) = pending.pop() {
             // The immutable bus projection is ordered by durable task stamp.

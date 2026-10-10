@@ -1,5 +1,33 @@
 use super::*;
 
+fn progress_read(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    tasks: Vec<TaskStamp>,
+    claims: bool,
+) -> BoardAnswer {
+    match issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks,
+            dependencies: true,
+            claims,
+            notes: false,
+        },
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) => *answer,
+        outcome => panic!("progress board read failed: {outcome:?}"),
+    }
+}
+
 #[test]
 fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
     let (root, bus, epoch, seats) = fixture("plan-team-contract", 1);
@@ -314,7 +342,7 @@ fn assert_plan_release_and_replay(
 }
 
 #[test]
-fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan() {
+fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
     let (root, bus, epoch, seats) = fixture("gated-plan-child", 1);
     let lane = Actor::Lane(seats[0].lane);
     let plan = add_raw_task(
@@ -325,7 +353,6 @@ fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan()
         &[],
         Some("plan"),
     );
-    claim_task(&bus, epoch, &seats[0], &lane, &plan);
     let child = add_raw_task(
         &bus,
         epoch,
@@ -335,8 +362,29 @@ fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan()
         Some("todo"),
     );
     connect_child(&bus, epoch, &child, &plan);
+    let unrelated = todo_task(&bus, epoch, "unrelated", "Unrelated work");
 
-    let held = board(&bus, epoch, lane.clone());
+    let named = progress_read(
+        &bus,
+        epoch,
+        lane.clone(),
+        vec![plan.born().expect("plan task stamp")],
+        false,
+    );
+    assert_eq!(named.tasks.len(), 2);
+    assert_eq!(at(&named, &plan).workflow.body.phase.as_str(), "plan");
+    assert_eq!(at(&named, &child).workflow.body.status, "pending");
+    assert!(
+        named
+            .tasks
+            .iter()
+            .all(|heads| heads.statement.body.handle != unrelated),
+        "a named plan read stays bounded to the plan and its accepted child"
+    );
+
+    claim_task(&bus, epoch, &seats[0], &lane, &plan);
+    let held = progress_read(&bus, epoch, lane.clone(), Vec::new(), true);
+    assert_eq!(held.tasks.len(), 2);
     let child_heads = at(&held, &child);
     let stale_expected = progress_witnesses(
         &held,
@@ -345,7 +393,7 @@ fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan()
         seats[0].occupant,
         false,
     )
-    .expect("plan-only completion carries reverse child witnesses");
+    .expect("ambient plan completion carries reverse child witnesses");
     assert!(stale_expected.contains(&statement_witness(child_heads)));
     assert!(stale_expected.contains(&workflow_witness(child_heads)));
 
@@ -381,7 +429,7 @@ fn plan_only_completion_accepts_a_pending_accepted_child_gated_behind_the_plan()
     );
     assert_refusal(refused, "task::plan-witness-missing");
 
-    let refreshed = board(&bus, epoch, lane.clone());
+    let refreshed = progress_read(&bus, epoch, lane.clone(), Vec::new(), true);
     let CommandAnswer::Task(answer) = assert_committed(issue(
         &bus,
         epoch,
