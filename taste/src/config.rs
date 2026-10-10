@@ -1,16 +1,15 @@
 //! The tracked configuration document as the sole taste authority.
 //!
-//! `TASTES.md` owns the curation law and the rationale for each installed
-//! seed; the tracked TOML owns which tastes are active. No taste name, trigger
-//! word, or message appears in Rust, here or anywhere else in the crate,
-//! because a named copy would be a second register that an operator commit
-//! could not move.
+//! `TASTES.md` owns the curation law; the tracked TOML owns which tastes are
+//! active. No taste name, trigger word, or message appears in Rust, here or
+//! anywhere else in the crate, because a named copy would be a second register
+//! that an operator commit could not move.
 //!
 //! Acquisition stays outside. This decoder takes document text a caller
 //! already holds and returns a [`Bag`]; nothing here opens a file, consults an
 //! environment variable, or knows where the document lives. That is what lets
-//! the same function decode the tracked root document, a documented seed
-//! block, and a synthetic fixture without one of them being a special case.
+//! the same function decode the tracked root document and a synthetic fixture
+//! without either being a special case.
 
 use std::error::Error;
 use std::fmt;
