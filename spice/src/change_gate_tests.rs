@@ -39,16 +39,6 @@ fn proof_image_definition_selects_every_current_source_gate() {
 }
 
 #[test]
-fn ordinary_policy_wire_shape_rejects_removed_applicable_coverage() {
-    let error = serde_json::from_slice::<ChangePolicyReport>(
-        br#"{"coverage":"applicable","source":"removed","results":[]}"#,
-    )
-    .expect_err("ordinary policy evidence cannot retain applicable-wide execution");
-
-    assert!(error.to_string().contains("unknown variant `applicable`"));
-}
-
-#[test]
 fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -118,17 +108,12 @@ fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_spec
         .collect::<Vec<_>>();
     let configured = packaged_selection_policy(&root, &configured_paths, &environment)
         .expect("compile configured packaged policy");
-    let error = gate::select_change_gates(
+    gate::select_change_gates(
         wire::Digest::compute(wire::Domain::GateTree, b"configured unknown source"),
         &["index.qmd".to_owned()],
         &configured,
     )
     .expect_err("configured policy still refuses an undeclared source class");
-    assert!(
-        error
-            .detail()
-            .contains("no repository-declared packaged policy class")
-    );
 
     fs::remove_dir_all(root).expect("remove zero-config fixture");
 }

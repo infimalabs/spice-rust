@@ -90,11 +90,7 @@ mod tests {
             AUTHORITY_ONLY_BACKUP_VERSION,
             vec![member("artifact"), member("spicejournal.sqlite3")],
         ));
-        assert!(matches!(
-            extra,
-            Err(BackupVerifyError::Invalid { detail, .. })
-                if detail.contains("exactly one authority member")
-        ));
+        assert!(matches!(extra, Err(BackupVerifyError::Invalid { .. })));
         assert!(matches!(
             admit_manifest_generation(manifest(0, vec![member("spicejournal.sqlite3")])),
             Err(BackupVerifyError::UnsupportedVersion { found: 0, current })

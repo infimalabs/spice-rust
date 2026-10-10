@@ -226,14 +226,13 @@ fn document_ledger_previews_with_a_bound_and_exports_the_exact_document() {
     assert!(!preview.contains(&document), "{preview}");
 
     let destination = root.join("ledger.md");
-    let receipt = ledger_output(
+    ledger_output(
         &task,
         &document,
         Some(destination.to_str().expect("fixture path is UTF-8")),
         budget,
     )
     .expect("ledger exports");
-    assert!(receipt.starts_with("exported 9022 bytes to "), "{receipt}");
     assert_eq!(
         std::fs::read_to_string(destination).expect("exported ledger reads"),
         document

@@ -235,9 +235,6 @@ fn a_witnessed_restart_nobody_finishes_is_one_not_admitting_refusal_naming_the_r
         .detail()
         .expect("the refusal explains the bound the client waited");
     assert!(detail.contains(&uuid(50).to_string()), "{detail}");
-    assert!(detail.contains("1s"), "{detail}");
-    assert!(detail.contains("run the command again"), "{detail}");
-    assert!(!detail.contains("spice up"), "{detail}");
 }
 
 #[test]

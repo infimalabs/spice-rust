@@ -130,10 +130,9 @@ fn unchanged_residency_reuses_one_canonical_decode_and_advancing_heads_invalidat
         )
         .expect("plant changed noncanonical residency");
 
-    let error = journal
+    journal
         .read(|read| read.residency_head())
         .expect_err("changed noncanonical residency is rejected");
-    assert!(error.to_string().contains("not stored as canonical"));
 }
 
 #[test]

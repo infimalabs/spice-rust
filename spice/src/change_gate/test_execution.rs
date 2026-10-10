@@ -200,7 +200,6 @@ mod tests {
         .expect_err("applicable declared Cargo engine needs its compiled executable");
 
         assert_eq!(error.reason(), "gate::change-gate-tests-refused");
-        assert!(error.detail().contains("metadata launch failed"), "{error}");
         fs::remove_dir_all(root).expect("remove absent-Cargo fixture");
     }
 

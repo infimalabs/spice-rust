@@ -61,7 +61,6 @@ fn publication_validation_refuses_merge_control_movement() {
     let error = validate_source(&repository, staged.anchor(), &candidate_tree)
         .expect_err("publication validation must refuse moved merge controls");
     assert_eq!(error.reason(), "gate::source-moved");
-    assert!(error.detail().contains("merge-control source moved"));
 }
 
 #[test]
@@ -243,11 +242,10 @@ fn non_reusable_cargo_shard_is_refused_before_action_identity_preparation() {
         .first()
         .expect("fixture has a typecheck shard");
 
-    let Err(ProveFailure::Refusal { reason, detail }) = require_reusable_cargo_shard(shard) else {
+    let Err(ProveFailure::Refusal { reason, .. }) = require_reusable_cargo_shard(shard) else {
         panic!("non-reusable shard must be refused before identity preparation");
     };
     assert_eq!(reason, "gate::prove-cargo-action-not-reusable");
-    assert!(detail.contains("computed or interpolated compile-time output"));
     fs::remove_dir_all(root).expect("remove Cargo planning fixture");
 }
 

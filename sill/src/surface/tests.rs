@@ -429,12 +429,6 @@ fn a_torn_owner_record_refuses_acquisition_instead_of_spelling_release() {
         } => {
             assert_eq!(refused, path);
             assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
-            assert!(
-                source
-                    .to_string()
-                    .contains("neither empty nor a whole record"),
-                "the refusal did not name the third record state: {source}"
-            );
         }
         other => panic!("a torn owner record reached the wrong refusal: {other}"),
     }

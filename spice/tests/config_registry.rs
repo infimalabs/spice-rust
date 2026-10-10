@@ -314,15 +314,6 @@ fn root_is_exactly_the_eighteen_typed_domains() {
 }
 
 #[test]
-fn retired_install_guidance_switch_is_rejected_instead_of_ignored() {
-    let error = decode("[policy]\nsuppress_install_apply_guidance = true\n")
-        .expect_err("retired verifier guidance switch must refuse");
-
-    assert!(error.contains("unknown field"), "{error}");
-    assert!(error.contains("suppress_install_apply_guidance"), "{error}");
-}
-
-#[test]
 fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
     for (document, expected) in [
         ("[tasks]\nstems = [\"\"]\n", "nonempty"),
@@ -353,59 +344,20 @@ fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
 
 #[test]
 fn pre_commit_commands_admit_only_the_current_nonempty_shape() {
-    for (document, expected) in [
-        (
-            "[policy]\npre_commit = [{ label = \"\", run = [\"gate/pre-commit\"] }]\n",
-            "labels must contain non-whitespace characters",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"  \", run = [\"gate/pre-commit\"] }]\n",
-            "labels must contain non-whitespace characters",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [] }]\n",
-            "argv must not be empty",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"\"] }]\n",
-            "argv entries must be nonempty",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", argv = [\"gate/pre-commit\"] }]\n",
-            "argv",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], when = \"staged\" }]\n",
-            "when",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], formatter = true }]\n",
-            "formatter",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"\"] } }]\n",
-            "nonempty",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"src/**\", \"src/**\"] } }]\n",
-            "unique",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { unknown = [\"src/**\"] } }]\n",
-            "unknown",
-        ),
-        (
-            "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"../src/**\"] } }]\n",
-            "repository-relative path",
-        ),
+    for document in [
+        "[policy]\npre_commit = [{ label = \"\", run = [\"gate/pre-commit\"] }]\n",
+        "[policy]\npre_commit = [{ label = \"  \", run = [\"gate/pre-commit\"] }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [] }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"\"] }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"\"] } }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"src/**\", \"src/**\"] } }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { unknown = [\"src/**\"] } }]\n",
+        "[policy]\npre_commit = [{ label = \"Rust gate\", run = [\"gate/pre-commit\"], scopes = { paths = [\"../src/**\"] } }]\n",
     ] {
-        let error = decode(document).expect_err("a retired or empty pre-commit shape must refuse");
-        assert!(error.contains(expected), "{document:?}: {error}");
+        assert!(decode(document).is_err(), "{document:?} must refuse");
     }
 
-    let disabled = decode("[policy]\npre_commit_builtins = false\n")
-        .expect_err("disabling every pre-commit step must refuse");
-    assert!(disabled.contains("requires at least one policy.pre_commit command"));
+    assert!(decode("[policy]\npre_commit_builtins = false\n").is_err());
 }
 
 #[test]

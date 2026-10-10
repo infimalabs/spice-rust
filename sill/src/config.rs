@@ -652,9 +652,7 @@ mod tests {
             r#"{"busy":77,"full":77}"#,
             r#"{"taken":77,"full":77}"#,
         ] {
-            let error =
-                serde_json::from_str::<LockConfig>(document).expect_err("duplicate must refuse");
-            assert!(error.to_string().contains("must differ"), "{error}");
+            assert!(serde_json::from_str::<LockConfig>(document).is_err());
         }
     }
 

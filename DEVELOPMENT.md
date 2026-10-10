@@ -50,12 +50,24 @@ Tests overlap by purpose, not name. Use Cargo metadata for target inventory and
 test binaries; add the intended target selector when narrowing to `--lib`,
 `--test TARGET`, or `--doc`.
 
+Permanent tests are fast, deterministic and in-process. They assert current
+observable contracts: typed refusals, admission boundaries, state transitions,
+precedence, and preservation of actual serialized or user-supplied data.
+Generated guidance and error sentences are not pinned wording contracts.
+Delete wording-only or wiring-only tests instead of replacing their assertions
+with a new sentence, a mock echo, or a bare successful call.
+
+Process-backed lifecycle, CLI and browser evidence uses disposable smoke
+checks. Do not retain process-spawning tests or child fixtures in the permanent
+suite; stop owned services and remove disposable scaffolding after recording
+the result.
+
 | Portfolio | Purpose and scope | Feedback invocation |
 | --- | --- | --- |
 | Source-local unit tests | Private invariants, parsers, reducers, and state machines. | `spice dev cargo -- test --locked -p PACKAGE --lib` or one exact test filter. |
 | Package integration targets | Public seams and policy contracts. | `spice dev cargo -- test --locked -p PACKAGE --test TARGET`; package verification uses ordinary Cargo all-targets test selection. |
 | Doctests | Public API examples and compile-time documentation contracts. | `spice dev cargo -- test --locked -p PACKAGE --doc`. |
-| Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
+| Disposable external smoke | Actual executable, process-death, resource-limit and supervisor behavior that cannot be exercised in process. | Run an isolated throwaway check, record the result and clean up its processes; do not register it in the permanent suite. |
 | App-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- app-wasm-typecheck`. |
 | App pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
 | Browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then launch the current worktree through `spice dev xtask -- app-demo` (`--open` also opens the system browser), under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and stop the disposable resident when finished. |

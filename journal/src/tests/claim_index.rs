@@ -193,9 +193,7 @@ fn verification_names_claim_index_predicate_disagreement() {
         .verify()
         .expect_err("claim index disagreement must fail verification");
     assert!(error.violations().iter().any(|violation| {
-        violation.class == ViolationClass::Head
-            && violation.subject == "claim_index:1kKRRsDP"
-            && violation.detail.contains("predicate columns disagree")
+        violation.class == ViolationClass::Head && violation.subject == "claim_index:1kKRRsDP"
     }));
 }
 

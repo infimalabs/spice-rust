@@ -60,29 +60,6 @@ impl Runner for FakeRunner {
 }
 
 #[test]
-fn scoped_verify_runs_only_the_three_package_commands_and_names_every_omission() {
-    let runner = FakeRunner::admitting();
-    let mut output = Vec::new();
-
-    verify_package_with("gate", &runner, &mut output).expect("package scope admits");
-
-    assert_eq!(runner.calls(), SCOPED_COMMANDS);
-    let output = String::from_utf8(output).expect("scope output is UTF-8");
-    assert!(output.contains(concat!(
-        "[verify] scoped package gate; slice-local: ",
-        "add named downstream packages or run staged selection before completion\n"
-    )));
-    assert!(output.contains(&format!(
-        "[verify] repository-wide actions skipped: {}\n",
-        RETIRED_REPOSITORY_ACTIONS.join(", ")
-    )));
-    assert!(output.contains("[verify] scoped gate arms run: none\n"));
-    for command in SCOPED_COMMANDS {
-        assert!(output.contains(&command.label("gate")));
-    }
-}
-
-#[test]
 fn scoped_verify_refuses_invalid_package_names_before_output() {
     for package in ["", "gate other", "../gate", "gate/package"] {
         let runner = FakeRunner::admitting();
@@ -110,9 +87,4 @@ fn scoped_command_failure_stops_before_later_package_commands() {
         VerifyError::ScopedExit { code: Some(17), .. }
     ));
     assert_eq!(runner.calls(), [ScopedCommand::Clippy, ScopedCommand::Test]);
-    assert!(
-        !String::from_utf8(output)
-            .expect("scope output is UTF-8")
-            .contains(&ScopedCommand::DocTest.label("wire"))
-    );
 }

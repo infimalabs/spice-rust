@@ -161,23 +161,16 @@ fn every_task_handle_occurrence_renders_in_source_order() {
 }
 
 #[test]
-fn task_chip_hover_uses_escaped_context_and_an_explicit_fallback() {
+fn task_chip_hover_escapes_supplied_context() {
     let contextual =
         render_received("CONTROL-1kKbC3j4 · Diagnose \"quoted\" rollbacks & preserve authority.");
     assert!(
-        contextual.html.contains(
-            "aria-label=\"Open task CONTROL-1kKbC3j4\" \
-             title=\"Diagnose “quoted” rollbacks &amp; preserve authority\""
-        ),
+        contextual
+            .html
+            .contains("title=\"Diagnose “quoted” rollbacks &amp; preserve authority\""),
         "{}",
         contextual.html
     );
-
-    let isolated = render_received("`CONTROL-1kKbC3j4`");
-    assert!(isolated.html.contains(
-        "aria-label=\"Open task CONTROL-1kKbC3j4\" \
-         title=\"Open task CONTROL-1kKbC3j4\""
-    ));
 }
 
 #[test]

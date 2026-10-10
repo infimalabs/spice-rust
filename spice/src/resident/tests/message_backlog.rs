@@ -281,7 +281,6 @@ fn each_resident_generation_restores_durable_prose_before_app_subscription() {
         assert_eq!(messages[1].lane, lane);
         assert_eq!(messages[1].author, author);
         assert_eq!(messages[1].activity, wire::AgentActivityKind::Compaction);
-        assert_eq!(messages[1].text, "Context compacted");
         assert!(messages[1].authored_synthetic);
         assert_eq!(messages[1].observed.as_ref(), Some(&observed));
         assert_bootstrap(generation, empty_lane);
@@ -386,7 +385,6 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
         let window = complete_message_history(&source, &accepted, epoch, lane, generation);
         assert_eq!(window.len(), 220);
         assert_eq!(window[0].activity, wire::AgentActivityKind::Compaction);
-        assert_eq!(window[0].text, "Context compacted");
         assert_eq!(window[140].activity, wire::AgentActivityKind::Compaction);
         assert!(window[219].text.starts_with("message 299 "));
         generation_windows.push(window);

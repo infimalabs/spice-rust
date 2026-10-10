@@ -929,16 +929,13 @@ mod tests {
             String::from_utf8(encoded)
                 .expect("JSON text")
                 .replacen("{", "{\"unknown\":true,", 1);
-        let refused =
-            CampReport::decode(unknown.as_bytes()).expect_err("unknown report fields must refuse");
-        assert!(refused.to_string().contains("unknown field"));
+        CampReport::decode(unknown.as_bytes()).expect_err("unknown report fields must refuse");
 
         let nested_unknown = String::from_utf8(report.encode().expect("encode nested unknown"))
             .expect("report JSON")
             .replacen("\"limit\":100", "\"limit\":100,\"unknown\":true", 1);
-        let refused = CampReport::decode(nested_unknown.as_bytes())
+        CampReport::decode(nested_unknown.as_bytes())
             .expect_err("unknown distribution fields must refuse");
-        assert!(refused.to_string().contains("unknown field"));
 
         let mut alternate = vec![b' '];
         alternate.extend_from_slice(&report.encode().expect("encode report again"));

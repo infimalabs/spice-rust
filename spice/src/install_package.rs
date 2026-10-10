@@ -357,7 +357,6 @@ mod tests {
         let error = acquire(&path).expect_err("regular file cannot be a package root");
         fs::remove_file(&path).expect("fixture file removes");
         assert!(matches!(error, Error::Input(_)));
-        assert!(error.to_string().contains("unlinked directory"));
     }
 
     #[test]

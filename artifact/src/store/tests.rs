@@ -228,9 +228,6 @@ fn opaque_binary_without_an_admitted_extension_refuses_without_publication() {
         .expect_err("opaque binary requires an explicit media type");
 
     assert_eq!(failure.class(), ErrorClass::Refusal);
-    let detail = failure.to_string();
-    assert!(detail.contains("cannot infer a media type"), "{detail}");
-    assert!(detail.contains("pass --type"), "{detail}");
     assert!(
         !fixture.store.root().exists(),
         "refused input published an artifact task directory"
@@ -435,7 +432,6 @@ fn missing_and_corrupt_payloads_fail_as_store_corruption() {
         .list(&task)
         .expect_err("missing payload refused");
     assert_eq!(missing.class(), ErrorClass::Corrupt);
-    assert!(missing.to_string().contains("payload is missing"));
 
     fs::write(&payload, b"different").expect("write corrupt payload");
     let corrupt = fixture
@@ -463,11 +459,6 @@ fn dangling_manifest_link_is_corruption_not_an_omitted_backup_task() {
         .capture()
         .expect_err("linked manifest must not disappear from backup discovery");
     assert_eq!(failure.class(), ErrorClass::Corrupt);
-    assert!(
-        failure
-            .to_string()
-            .contains("manifest is not a regular file")
-    );
 }
 
 #[test]
@@ -485,9 +476,6 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
         .expect_err("release-one task directory must be refused");
 
     assert_eq!(failure.class(), ErrorClass::Refusal);
-    assert!(failure.to_string().contains("artifact store release 1"));
-    assert!(failure.to_string().contains("version 2"));
-    assert!(failure.to_string().contains("birth-stamp directory"));
 }
 
 #[test]
@@ -556,23 +544,15 @@ fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
         preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
             .expect("admit member through exact count bound");
     }
-    let too_many =
-        preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
-            .expect_err("member beyond exact count bound refused");
-    assert!(too_many.to_string().contains("4096 members"));
+    preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
+        .expect_err("member beyond exact count bound refused");
 
     let oversized = fixture.store.root().join("oversized-member");
     let file = fs::File::create(&oversized).expect("create sparse aggregate fixture");
     file.set_len(MAX_BACKUP_BYTES + 1)
         .expect("extend sparse aggregate fixture");
-    let aggregate_failure =
-        preflight_capture_member(fixture.store.root(), &oversized, &mut Vec::new(), &mut 0)
-            .expect_err("aggregate beyond fixed byte bound refused");
-    assert!(
-        aggregate_failure
-            .to_string()
-            .contains("536870912 aggregate bytes")
-    );
+    preflight_capture_member(fixture.store.root(), &oversized, &mut Vec::new(), &mut 0)
+        .expect_err("aggregate beyond fixed byte bound refused");
 
     let oversized_source = BoundSource {
         bytes: MAX_BACKUP_BYTES + 1,
