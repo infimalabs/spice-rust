@@ -514,12 +514,6 @@ impl<'a, W: Write> Coordinator<'a, W> {
         self.failure.get_or_insert(detail);
         self.pending.clear();
         self.cancellation.cancel();
-        // The in-process launcher used by the coordinator contracts blocks on
-        // this worker's park token instead of a supervised process wake.
-        #[cfg(test)]
-        for active in self.active.values() {
-            active.thread.thread().unpark();
-        }
     }
 
     fn finish(mut self) -> Result<(), WorkspaceTestError> {

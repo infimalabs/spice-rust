@@ -282,8 +282,15 @@ impl CancellationToken {
         self.0.cancelled.load(Ordering::Acquire)
     }
 
+    /// Call `waker` once when this token is cancelled.
+    ///
+    /// A token that is already cancelled calls `waker` before returning and
+    /// yields no registration. Otherwise the waker stays registered until the
+    /// returned registration drops, so a caller that stops waiting withdraws
+    /// it.
     #[cfg(unix)]
-    fn register_waker(
+    #[must_use = "dropping the registration withdraws the waker"]
+    pub fn register_waker(
         &self,
         waker: Arc<dyn Fn() + Send + Sync>,
     ) -> Option<CancellationRegistration> {
@@ -312,7 +319,7 @@ impl CancellationToken {
 }
 
 #[cfg(unix)]
-pub(crate) struct CancellationRegistration {
+pub struct CancellationRegistration {
     state: Weak<CancellationState>,
     id: u64,
 }

@@ -32,6 +32,8 @@ pub use spawn::{
     CapturedOutput, Completion, ProcessUsage, Running, WaitError, WaitOutcome, WaitStep, spawn,
     spawn_observed,
 };
+#[cfg(unix)]
+pub use spec::CancellationRegistration;
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,
