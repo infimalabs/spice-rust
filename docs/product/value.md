@@ -664,7 +664,7 @@ membership changes do not move old work, and project names are not filters. A
 request shows as pending on the lifetime control until the command settles.
 Beside the draft, one fixed 80 × 160 control panel begins with a three-pixel
 top inset and has four rows separated by three three-pixel gaps: a 34-pixel
-two-slot button row, a 56-pixel `Send` row, then two equal 29-pixel range rows
+two-slot button row, two equal 29-pixel range rows, then a 56-pixel `Send` row,
 because $(160 - 3 - 34 - 56 - 3 \times 3) / 2 = 29$. `TURBO` occupies the
 upper-left slot at the same diameter as the global `Spice` control, giving it
 equal three-pixel top and left clearance. A same-diameter hamburger in the

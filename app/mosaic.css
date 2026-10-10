@@ -857,8 +857,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-control-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
   --team-control-rim-width: 2px;
 }
-/* The sharp 80 × 160 panel holds two round utility buttons, central SEND,
-   and two pill flyers. Range rows receive the remaining height. */
+/* The sharp 80 × 160 panel holds two round utility buttons, two pill flyers,
+   and SEND. Range rows receive the remaining height. */
 .team-composer .team-composer-controls {
   --app-control-glass-depth: calc(var(--app-glass-thickness) + var(--app-glass-thickness) + var(--app-glass-thickness));
   --team-control-gap: 3px;
@@ -873,7 +873,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-slider-thumb-inset: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
   position: relative; display: grid; row-gap: var(--team-control-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
   margin-block-start: 0; padding-block-start: var(--team-control-gap); block-size: var(--team-composer-block-size);
-  grid-template: var(--team-control-button-size) var(--team-control-send-size) repeat(2, var(--team-slider-row-block)) / repeat(2, minmax(0, 1fr));
+  grid-template: var(--team-control-button-size) repeat(2, var(--team-slider-row-block)) var(--team-control-send-size) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
@@ -902,7 +902,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-turbo { grid-row: 1; grid-column: 1; }
 .team-composer .team-menu { grid-row: 1; grid-column: 2; }
 .team-composer .team-send {
-  grid-row: 2; grid-column: 1 / -1;
+  grid-row: 4; grid-column: 1 / -1;
   width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size);
 }
 .team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):hover,
@@ -957,8 +957,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider[data-stop="2"] { --team-slider-position: 1; --team-slider-accent: #efc36b; }
 /* Pill flyers use the same flush face and fine optical edge as the buttons. */
 .team-composer .team-slider { grid-column: 1 / -1; }
-.team-composer .team-speech { grid-row: 3; }
-.team-composer .team-lifetime { grid-row: 4; }
+.team-composer .team-speech { grid-row: 2; }
+.team-composer .team-lifetime { grid-row: 3; }
 .team-slider input {
   -webkit-appearance: none; appearance: none;
   position: relative; inline-size: calc(100% - 2 * var(--team-slider-thumb-inset)); block-size: var(--team-slider-groove-block);
