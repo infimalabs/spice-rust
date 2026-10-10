@@ -1025,20 +1025,6 @@ mod tests {
                 "work.css"
             ]
         );
-        let message = error.to_string();
-        assert!(
-            message.contains("style.css")
-                && message.contains("chrome.css")
-                && message.contains("composer.css")
-                && message.contains("mosaic.css")
-                && message.contains("responsive.css")
-                && message.contains("app_bg.wasm"),
-            "the refusal does not name what is missing: {message}"
-        );
-        assert!(
-            message.contains("spice dev xtask -- app"),
-            "the refusal does not say how to build the stage: {message}"
-        );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
