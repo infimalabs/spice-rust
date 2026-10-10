@@ -60,23 +60,9 @@ impl Fixture {
         let cargo = root.join("native-cargo");
         let rustc = root.join("native-rustc");
         let rustdoc = root.join("native-rustdoc");
-        let script = format!(
-            concat!(
-                "#!/bin/sh\n",
-                "set -eu\n",
-                "destination=\n",
-                "for argument in \"$@\"; do destination=$argument; done\n",
-                "cp -R {} \"$destination/fixture-dependency-1.0.0\"\n",
-                "printf '[source.crates-io]\\nreplace-with = \"vendored-sources\"\\n\\n",
-                "[source.vendored-sources]\\ndirectory = \"%s\"\\n' \"$destination\"\n",
-            ),
-            shell_word(&package),
-        );
-        fs::write(&cargo, script).expect("write fake native Cargo");
-        fs::set_permissions(&cargo, fs::Permissions::from_mode(0o700))
-            .expect("make fake native Cargo executable");
-        write_executable(&rustc, "#!/bin/sh\nexit 0\n");
-        write_executable(&rustdoc, "#!/bin/sh\nexit 0\n");
+        for tool in [&cargo, &rustc, &rustdoc] {
+            write_executable(tool, "#!/bin/sh\nexit 0\n");
+        }
 
         Self {
             root,
@@ -98,6 +84,22 @@ impl Fixture {
         )
         .expect("admit fixture host")
     }
+
+    /// Prepare this worktree's home, vendoring the fixture package as
+    /// `cargo vendor --versioned-dirs` would lay it out.
+    fn prepare(&self, lane: Option<CanonicalUuid>) -> Result<PreparedHome, IsolationError> {
+        store::prepare_with(&self.repository, lane, &self.host(), &|_, vendor| {
+            copy_tree(&self.package, &vendor.join("fixture-dependency-1.0.0"));
+            Ok(toml::from_str(&format!(
+                concat!(
+                    "[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n",
+                    "[source.vendored-sources]\ndirectory = {:?}\n",
+                ),
+                vendor.to_str().expect("UTF-8 vendor path"),
+            ))
+            .expect("vendored source configuration parses"))
+        })
+    }
 }
 
 impl Drop for Fixture {
@@ -111,12 +113,11 @@ impl Drop for Fixture {
 fn identical_lanes_reuse_one_immutable_generation_and_bounded_homes() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let first = store::prepare(&fixture.repository, None, &host).expect("prepare manual home");
+    let first = fixture.prepare(None).expect("prepare manual home");
     let lane = "018f82d4-6f59-7d06-92e3-bce9131163c7"
         .parse()
         .expect("canonical fixture lane");
-    let second =
-        store::prepare(&fixture.repository, Some(lane), &host).expect("prepare resident home");
+    let second = fixture.prepare(Some(lane)).expect("prepare resident home");
 
     assert_eq!(first.generation(), second.generation());
     assert!(!first.reused_generation());
@@ -154,11 +155,10 @@ fn inspection_of_an_absent_store_is_non_mutating() {
 fn exact_lockfile_bytes_advance_the_home_to_a_new_generation() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let first = store::prepare(&fixture.repository, None, &host).expect("prepare first generation");
+    let first = fixture.prepare(None).expect("prepare first generation");
     fs::write(fixture.repository.join("Cargo.lock"), lockfile("refreshed"))
         .expect("advance lockfile bytes");
-    let second =
-        store::prepare(&fixture.repository, None, &host).expect("prepare refreshed generation");
+    let second = fixture.prepare(None).expect("prepare refreshed generation");
 
     assert_ne!(first.generation(), second.generation());
     assert_eq!(first.home(), second.home());
@@ -175,12 +175,14 @@ fn exact_lockfile_bytes_advance_the_home_to_a_new_generation() {
 #[test]
 fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
     let retained = Fixture::new();
-    let retained_home = store::prepare(&retained.repository, None, &retained.host())
+    let retained_home = retained
+        .prepare(None)
         .expect("prepare retained source generation");
     let lock_bytes = fs::read(retained.repository.join("Cargo.lock")).unwrap();
     let current = Fixture::new();
     fs::write(current.repository.join("Cargo.lock"), &lock_bytes).unwrap();
-    let current_home = store::prepare(&current.repository, None, &current.host())
+    let current_home = current
+        .prepare(None)
         .expect("prepare current source generation");
 
     let authority = readmit_source_generation(
@@ -231,8 +233,7 @@ fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
 #[test]
 fn malformed_existing_home_config_is_retained_instead_of_repaired() {
     let fixture = Fixture::new();
-    let host = fixture.host();
-    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare owned home");
+    let prepared = fixture.prepare(None).expect("prepare owned home");
     let config = prepared.home().join("config.toml");
     let original = fs::read(&config).expect("read admitted home config");
     fs::set_permissions(&config, fs::Permissions::from_mode(0o644))
@@ -240,7 +241,8 @@ fn malformed_existing_home_config_is_retained_instead_of_repaired() {
     fs::write(fixture.repository.join("Cargo.lock"), lockfile("refreshed"))
         .expect("advance lockfile for refused repair");
 
-    let error = store::prepare(&fixture.repository, None, &host)
+    let error = fixture
+        .prepare(None)
         .expect_err("malformed existing config must not be repaired");
     assert_eq!(error.reason(), "cargo-isolation::permission-mismatch");
     assert_eq!(mode(&config), 0o644);
@@ -280,7 +282,8 @@ fn registry_package_with_an_unlisted_file_is_refused_before_publication() {
         .expect("add unlisted package file");
     let host = fixture.host();
 
-    let error = store::prepare(&fixture.repository, None, &host)
+    let error = fixture
+        .prepare(None)
         .expect_err("unlisted registry package file must be refused");
     assert_eq!(error.reason(), "cargo-isolation::package-file-set-mismatch");
     let packages = host.store_root().join("packages");
@@ -321,7 +324,8 @@ fn git_package_without_an_exact_revision_is_refused_before_publication() {
     )
     .expect("write unpinned Git lockfile");
 
-    let error = store::prepare(&fixture.repository, None, &fixture.host())
+    let error = fixture
+        .prepare(None)
         .expect_err("an unpinned Git source must not publish");
     assert_eq!(error.reason(), "cargo-isolation::git-revision-unpinned");
     assert_eq!(
@@ -366,7 +370,8 @@ fn registry_checksum_cannot_escape_the_package_store() {
     )
     .expect("write malformed registry lockfile");
 
-    let error = store::prepare(&fixture.repository, None, &fixture.host())
+    let error = fixture
+        .prepare(None)
         .expect_err("a malformed registry checksum must not publish");
     assert_eq!(error.reason(), "cargo-isolation::registry-checksum-invalid");
     assert!(!fixture.bootstrap.join("spice/outside-store").exists());
@@ -517,52 +522,44 @@ fn tracked_toolchain_resolves_the_complete_trio_through_exact_rustup() {
     let bin = fixture.bootstrap.join("bin");
     fs::create_dir(&bin).expect("create bootstrap bin");
     let rustup = bin.join("rustup");
-    write_executable(
-        &rustup,
-        &format!(
-            concat!(
-                "#!/bin/sh\n",
-                "set -eu\n",
-                "test \"$1\" = which\n",
-                "test \"$2\" = --toolchain\n",
-                "test \"$3\" = fixture-1.0\n",
-                "case \"$4\" in\n",
-                "  cargo) printf '%s\\n' {} ;;\n",
-                "  rustc) printf '%s\\n' {} ;;\n",
-                "  rustdoc) printf '%s\\n' {} ;;\n",
-                "  *) exit 44 ;;\n",
-                "esac\n",
-            ),
-            shell_word(&fixture.cargo),
-            shell_word(&fixture.rustc),
-            shell_word(&fixture.rustdoc),
-        ),
-    );
+    write_executable(&rustup, "#!/bin/sh\nexit 0\n");
+    let entries = [(
+        OsString::from("HOME"),
+        fixture.root.clone().into_os_string(),
+    )]
+    .into_iter()
+    .collect();
 
-    let host = Host::from_environment(
+    let resolved = resolve_tracked_toolchain(
         &fixture.repository,
-        [
-            (
-                OsString::from(BOOTSTRAP_HOME_VARIABLE),
-                fixture.bootstrap.clone().into_os_string(),
-            ),
-            (
-                OsString::from("HOME"),
-                fixture.root.clone().into_os_string(),
-            ),
-        ],
+        &fixture.bootstrap,
+        &entries,
+        |asked, home, channel, tool| {
+            assert_eq!(asked, fs::canonicalize(&rustup).unwrap());
+            assert_eq!(home, fixture.root.join(".rustup"));
+            assert_eq!(channel, "fixture-1.0");
+            Ok(match tool {
+                "cargo" => fixture.cargo.clone(),
+                "rustc" => fixture.rustc.clone(),
+                "rustdoc" => fixture.rustdoc.clone(),
+                other => panic!("rustup was asked for {other}"),
+            })
+        },
     )
     .expect("tracked toolchain resolves one native trio");
-    assert_eq!(host.cargo(), fs::canonicalize(&fixture.cargo).unwrap());
-    assert_eq!(host.rustc(), fs::canonicalize(&fixture.rustc).unwrap());
-    assert_eq!(host.rustdoc(), fs::canonicalize(&fixture.rustdoc).unwrap());
+    assert_eq!(resolved.cargo, fs::canonicalize(&fixture.cargo).unwrap());
+    assert_eq!(resolved.rustc, fs::canonicalize(&fixture.rustc).unwrap());
+    assert_eq!(
+        resolved.rustdoc,
+        fs::canonicalize(&fixture.rustdoc).unwrap()
+    );
 }
 
 #[test]
 fn malformed_links_and_uncertain_home_liveness_are_reported_and_retained() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare generation");
+    let prepared = fixture.prepare(None).expect("prepare generation");
     let generation = prepared
         .store()
         .join("generations")
@@ -614,7 +611,7 @@ fn malformed_links_and_uncertain_home_liveness_are_reported_and_retained() {
 fn package_files_preserve_cargo_copy_semantics_and_permission_drift_is_retained() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare generation");
+    let prepared = fixture.prepare(None).expect("prepare generation");
     let package = fs::read_dir(prepared.store().join("packages"))
         .expect("read package store")
         .next()
@@ -646,7 +643,7 @@ fn package_files_preserve_cargo_copy_semantics_and_permission_drift_is_retained(
 fn recognized_interrupted_temporaries_are_reclaimed_but_live_generation_is_not() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare generation");
+    let prepared = fixture.prepare(None).expect("prepare generation");
     let temporary = prepared
         .store()
         .join("packages/.spice-tmp-package-interrupted");
@@ -674,8 +671,8 @@ fn recognized_interrupted_temporaries_are_reclaimed_but_live_generation_is_not()
 fn manual_reader_pins_coexist_and_unlocked_crash_residue_is_reclaimed() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let first = store::prepare(&fixture.repository, None, &host).expect("prepare first reader");
-    let second = store::prepare(&fixture.repository, None, &host).expect("prepare second reader");
+    let first = fixture.prepare(None).expect("prepare first reader");
+    let second = fixture.prepare(None).expect("prepare second reader");
     let pins = first.store().join("pins");
     let active = fs::read_dir(&pins)
         .expect("read active reader pins")
@@ -714,7 +711,7 @@ fn manual_reader_pins_coexist_and_unlocked_crash_residue_is_reclaimed() {
 fn uncertain_reader_pin_is_not_followed_and_retains_every_generation() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let prepared = store::prepare(&fixture.repository, None, &host).expect("prepare generation");
+    let prepared = fixture.prepare(None).expect("prepare generation");
     let generation = prepared
         .store()
         .join("generations")
@@ -772,8 +769,18 @@ fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn shell_word(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+/// Copy a directory tree, keeping each file's permission bits as `cp -R` does.
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).expect("create vendored directory");
+    for entry in fs::read_dir(source).expect("read vendored source") {
+        let entry = entry.expect("read vendored entry");
+        let target = destination.join(entry.file_name());
+        if entry.file_type().expect("vendored entry type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).expect("copy vendored file");
+        }
+    }
 }
 
 fn write_executable(path: &Path, contents: &str) {

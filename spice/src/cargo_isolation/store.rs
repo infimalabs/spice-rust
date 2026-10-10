@@ -429,6 +429,21 @@ pub(super) fn prepare(
     lane: Option<CanonicalUuid>,
     host: &Host,
 ) -> Result<PreparedHome, IsolationError> {
+    prepare_with(worktree, lane, host, &|worktree, vendor| {
+        seed::run_vendor(worktree, vendor, host)
+    })
+}
+
+/// Populate one empty vendor directory for a worktree's exact lock, returning
+/// the source configuration that points Cargo at it.
+pub(super) type Vendor<'a> = &'a dyn Fn(&Path, &Path) -> Result<toml::Value, IsolationError>;
+
+pub(super) fn prepare_with(
+    worktree: &Path,
+    lane: Option<CanonicalUuid>,
+    host: &Host,
+    vendor: Vendor<'_>,
+) -> Result<PreparedHome, IsolationError> {
     let layout = Layout::initialize(host)?;
     let _store_lock = acquire_lock(&layout, "store-mutation")?;
     let worktree = fs::canonicalize(worktree).map_err(|error| {
@@ -440,7 +455,7 @@ pub(super) fn prepare(
     })?;
     let generation = generation_digest(&lock_bytes);
     let (manifest, reused_generation) =
-        ensure_generation(&layout, &worktree, &lock_bytes, &generation, host)?;
+        ensure_generation(&layout, &worktree, &lock_bytes, &generation, vendor)?;
     let home = ensure_home(&layout, &worktree, lane, &manifest)?;
     let pin = if lane.is_none() {
         Some(pins::GenerationPin::acquire(&layout, &generation)?)

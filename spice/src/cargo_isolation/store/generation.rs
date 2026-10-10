@@ -14,7 +14,7 @@ pub(super) fn ensure_generation(
     worktree: &Path,
     lock_bytes: &[u8],
     generation: &str,
-    host: &Host,
+    vendor: Vendor<'_>,
 ) -> Result<(GenerationManifest, bool), IsolationError> {
     let final_path = layout.generations.join(generation);
     if final_path.exists() {
@@ -25,18 +25,23 @@ pub(super) fn ensure_generation(
         return validate_generation(layout, generation).map(|manifest| (manifest, true));
     }
     let temporary = TemporaryDirectory::create(&layout.generations, "generation")?;
-    let vendor = temporary.path().join("vendor");
-    fs::create_dir(&vendor)
-        .map_err(|error| IsolationError::io("cargo-isolation::seed-unavailable", &vendor, error))?;
+    let vendor_directory = temporary.path().join("vendor");
+    fs::create_dir(&vendor_directory).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::seed-unavailable",
+            &vendor_directory,
+            error,
+        )
+    })?;
     let locked = locked_packages(lock_bytes)?;
     let final_vendor = final_path.join("vendor");
     let (source_config, packages) = if locked.is_empty() {
         (empty_source_config(&final_vendor)?, Vec::new())
     } else {
-        let source_config = seed::run_vendor(worktree, &vendor, host)?;
-        let packages = publish_packages(layout, &vendor, &locked)?;
+        let source_config = vendor(worktree, &vendor_directory)?;
+        let packages = publish_packages(layout, &vendor_directory, &locked)?;
         (
-            rebind_source_config(source_config, &vendor, &final_vendor)?,
+            rebind_source_config(source_config, &vendor_directory, &final_vendor)?,
             packages,
         )
     };

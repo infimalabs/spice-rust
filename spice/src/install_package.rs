@@ -31,6 +31,24 @@ fn delegate(
     json: bool,
 ) -> Result<ExitStatus, Error> {
     let staged = StagedPackage::new(acquired)?;
+    install_command(&staged, worktree, apply, json)
+        .status()
+        .map_err(|source| {
+            Error::environment(
+                "launch verified package executable",
+                staged.executable(),
+                source,
+            )
+        })
+}
+
+/// The staged executable's own install transaction, run from the worktree.
+fn install_command(
+    staged: &StagedPackage,
+    worktree: &Path,
+    apply: Option<&str>,
+    json: bool,
+) -> Command {
     let mut command = Command::new(staged.executable());
     command.current_dir(worktree).arg("install");
     if let Some(digest) = apply {
@@ -39,13 +57,7 @@ fn delegate(
     if json {
         command.arg("--json");
     }
-    command.status().map_err(|source| {
-        Error::environment(
-            "launch verified package executable",
-            staged.executable(),
-            source,
-        )
-    })
+    command
 }
 
 fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
@@ -368,10 +380,9 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::create_dir(&root).expect("delegate fixture root creates");
-        let observed = root.join("arguments");
         let package = root.join("package");
         fs::create_dir(&package).expect("package fixture root creates");
-        let tree = complete_package(&observed);
+        let tree = complete_package();
         write_package(&package, &tree);
         let acquired = acquire(&package).expect("complete package acquires");
         let symbol_path = "targets/aarch64-apple-darwin/symbols/spice.dSYM.json";
@@ -381,7 +392,10 @@ mod tests {
         );
         let staged = StagedPackage::new(&acquired).expect("selected package stages");
         let staged_root = staged.root.clone();
-        assert!(staged.executable().is_file());
+        assert_eq!(
+            fs::read(staged.executable()).expect("staged executable reads"),
+            platform_executable(current_target().unwrap()),
+        );
         assert_eq!(
             fs::metadata(&staged_root).unwrap().permissions().mode() & 0o777,
             0o700,
@@ -426,41 +440,25 @@ mod tests {
                     .unwrap(),
             );
         }
+
+        let verified = install_command(&staged, &root, Some("abc123"), true);
+        assert_eq!(verified.get_program(), staged.executable().as_os_str());
+        assert_eq!(verified.get_current_dir(), Some(root.as_path()));
+        assert_eq!(
+            verified.get_args().collect::<Vec<_>>(),
+            ["install", "--apply=abc123", "--json"]
+        );
+        let preview = install_command(&staged, &root, None, false);
+        assert_eq!(preview.get_args().collect::<Vec<_>>(), ["install"]);
+
         drop(staged);
         assert!(!staged_root.exists());
-        fs::remove_dir_all(&package).expect("remove admitted source package");
-
-        let status =
-            delegate(&root, &acquired, Some("abc123"), true).expect("verified generation launches");
-        assert!(status.success());
-        assert_eq!(
-            fs::read_to_string(&observed).expect("delegated argv reads"),
-            "install --apply=abc123 --json\n"
-        );
         fs::remove_dir_all(&root).expect("delegate fixture root removes");
     }
 
-    #[test]
-    fn current_complete_package_acquires_and_delegates_its_platform_executable() {
-        let root = std::env::temp_dir().join(format!(
-            "spice-complete-package-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir(&root).expect("package fixture root creates");
-        let marker = root.join("selected-executable-ran");
-        let tree = complete_package(&marker);
-        write_package(&root, &tree);
-
-        let selected = acquire(&root).expect("complete package acquires");
-        let status =
-            delegate(&root, &selected, None, false).expect("selected executable delegates");
-        assert!(status.success());
-        assert_eq!(
-            fs::read_to_string(&marker).expect("delegate marker reads"),
-            "install\n"
-        );
-        fs::remove_dir_all(&root).expect("package fixture removes");
+    /// Each target's executable bytes, distinct so staging proves which it took.
+    fn platform_executable(target: ReleaseTarget) -> Vec<u8> {
+        format!("#!/bin/sh\n# {}\n", target.as_str()).into_bytes()
     }
 
     fn write_package(root: &Path, tree: &proof::PackageTree) {
@@ -475,7 +473,7 @@ mod tests {
         }
     }
 
-    fn complete_package(marker: &Path) -> proof::PackageTree {
+    fn complete_package() -> proof::PackageTree {
         const TARGETS: [ReleaseTarget; 2] = [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
@@ -496,15 +494,8 @@ mod tests {
         let mut manifest_targets = Vec::new();
 
         for target in TARGETS {
-            let (executable, payload, proof, sealed) = target_evidence(
-                target,
-                marker,
-                &source,
-                &app_identity,
-                &app,
-                &battery,
-                &environment,
-            );
+            let (executable, payload, proof, sealed) =
+                target_evidence(target, &source, &app_identity, &app, &battery, &environment);
             executables.push(executable);
             payloads.push(payload);
             proofs.push(proof);
@@ -586,18 +577,13 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn target_evidence(
         target: ReleaseTarget,
-        marker: &Path,
         source: &Digest,
         app_identity: &Digest,
         app: &[(String, Vec<u8>)],
         battery: &Digest,
         environment: &ProofEnvironment,
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>, ReleaseManifestTarget) {
-        let executable = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n",
-            marker.display()
-        )
-        .into_bytes();
+        let executable = platform_executable(target);
         let native = Digest::compute(Domain::DistArtifact, &executable);
         let pins = BuildPins {
             rust: "rustc 1.97.1".to_owned(),

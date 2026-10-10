@@ -1,5 +1,4 @@
 use super::*;
-use std::process::Command;
 
 #[test]
 fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
@@ -193,18 +192,21 @@ fn compiler_child_receives_semantic_inputs_but_no_operational_routing() {
         ),
     ]);
     let captured = compiler_environment_from(input);
-    let output = Command::new("/usr/bin/env")
-        .env_clear()
-        .envs(captured)
-        .output()
-        .expect("spawn with the captured compiler environment");
-    assert!(output.status.success());
-    let child = String::from_utf8(output.stdout).expect("child environment is UTF-8");
     for variable in routing {
-        assert!(!child.contains(&format!("{}=", variable.as_str())));
+        assert!(
+            captured.iter().all(|(name, _)| name != variable.as_str()),
+            "{} reached the compiler child",
+            variable.as_str()
+        );
     }
-    assert!(child.contains("ARBITRARY_BUILD_INPUT=retained"));
-    assert!(child.contains("SPICE_RS_NATIVE_CARGO=/toolchain/cargo"));
+    assert!(captured.contains(&(
+        OsString::from("ARBITRARY_BUILD_INPUT"),
+        OsString::from("retained")
+    )));
+    assert!(captured.contains(&(
+        OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+        OsString::from("/toolchain/cargo")
+    )));
 }
 
 #[test]

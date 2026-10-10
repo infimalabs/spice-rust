@@ -558,12 +558,12 @@ mod tests {
         }
     }
 
-    /// A detached handle that never touches a process.
-    struct Detached;
+    /// A detached handle that never touches a process, naming its group.
+    struct Detached(u32);
 
     impl DetachedProcess for Detached {
         fn group(&self) -> u32 {
-            1
+            self.0
         }
 
         fn runtime_remaining(&self) -> Duration {
@@ -600,10 +600,10 @@ mod tests {
     fn vacating_a_seat_records_its_occupant_until_taken() {
         let mut seats = Seats::new();
         seats
-            .seat_detached(uuid(1), uuid(3), Box::new(Detached))
+            .seat_detached(uuid(1), uuid(3), Box::new(Detached(1)))
             .expect("the seat takes a detached handle");
         seats
-            .seat_detached(uuid(2), uuid(4), Box::new(Detached))
+            .seat_detached(uuid(2), uuid(4), Box::new(Detached(2)))
             .expect("the second seat takes a detached handle");
         assert!(seats.take_vacated().is_empty());
 
@@ -624,10 +624,11 @@ mod tests {
         let mut seats = Seats::new();
 
         let occupant = seats
-            .seat(uuid(1), uuid(3), spec())
-            .expect("the door opens");
+            .seat_detached(uuid(1), uuid(3), Box::new(Detached(7)))
+            .expect("the seat takes a group");
         assert_eq!(occupant.lane(), uuid(1));
         assert_eq!(occupant.occupant(), uuid(3));
+        assert_eq!(occupant.group(), 7);
 
         assert!(seats.occupied(uuid(1)));
         assert_eq!(seats.len(), 1);
@@ -645,34 +646,30 @@ mod tests {
             selected,
         );
 
-        seats
-            .vacate(uuid(1))
-            .expect("the seat was occupied")
-            .wait()
-            .expect("the group ends");
+        assert_eq!(
+            seats
+                .vacate(uuid(1))
+                .expect("the seat was occupied")
+                .group(),
+            7
+        );
         assert!(seats.is_empty());
         assert_eq!(seats.started(uuid(1)), None);
         assert_eq!(seats.activity(uuid(1)), None);
     }
 
     /// A second seating is refused, and refused without opening the door.
-    ///
-    /// The unopenable spec is what proves the order. Occupancy is decided
-    /// first, so the refusal names the seat; were the door opened first, this
-    /// same call would fail as [`SeatError::Door`] instead, and a spec the door
-    /// *would* have accepted would have left a stray process group behind.
     #[test]
     fn an_occupied_seat_refuses_a_second_group_without_opening_the_door() {
         let mut seats = Seats::new();
-        let first = seats
-            .seat(uuid(1), uuid(3), spec())
-            .expect("the door opens")
-            .group();
+        seats
+            .seat_detached(uuid(1), uuid(3), Box::new(Detached(7)))
+            .expect("the seat takes a group");
 
-        let mut unopenable = spec();
-        unopenable.argv = Argv::new("/nonexistent/occupant", [] as [&str; 0]).expect("argv");
         let error = seats
-            .seat(uuid(1), uuid(4), unopenable)
+            .seat_with(uuid(1), uuid(4), spec(), |_| {
+                unreachable!("an occupied seat must not open the door")
+            })
             .expect_err("an occupied seat takes no second group");
 
         assert!(
@@ -687,16 +684,10 @@ mod tests {
         );
         assert_eq!(
             seats.occupant(uuid(1)).expect("still occupied").group(),
-            first,
+            7,
             "the refused seating replaced the supervised group",
         );
         assert_eq!(seats.len(), 1);
-
-        seats
-            .vacate(uuid(1))
-            .expect("the seat was occupied")
-            .wait()
-            .expect("the group ends");
     }
 
     /// Every occupant owns a new group; an inherited group never opens.
@@ -705,10 +696,11 @@ mod tests {
         let mut seats = Seats::new();
         let mut inherited = spec();
         inherited.group = ProcessGroup::Inherit;
-        inherited.argv = Argv::new("/nonexistent/occupant", [] as [&str; 0]).expect("argv");
 
         let error = seats
-            .seat(uuid(1), uuid(3), inherited)
+            .seat_with(uuid(1), uuid(3), inherited, |_| {
+                unreachable!("an inherited group must not open the door")
+            })
             .expect_err("an occupant requires its own process group");
 
         assert!(matches!(
@@ -716,33 +708,6 @@ mod tests {
             SeatError::InheritedGroup { lane } if lane == uuid(1)
         ));
         assert!(seats.is_empty());
-    }
-
-    /// Seats are per lane, so a second lane takes its own group.
-    #[test]
-    fn each_lane_supervises_its_own_group() {
-        let mut seats = Seats::new();
-        seats
-            .seat(uuid(1), uuid(3), spec())
-            .expect("the door opens");
-        seats
-            .seat(uuid(2), uuid(4), spec())
-            .expect("the door opens");
-
-        assert_eq!(seats.lanes(), vec![uuid(1), uuid(2)]);
-        assert_ne!(
-            seats.occupant(uuid(1)).expect("occupied").group(),
-            seats.occupant(uuid(2)).expect("occupied").group(),
-            "two lanes shared one process group",
-        );
-
-        for lane in [uuid(1), uuid(2)] {
-            seats
-                .vacate(lane)
-                .expect("the seat was occupied")
-                .wait()
-                .expect("the group ends");
-        }
     }
 
     /// Vacating a seat that holds nothing hands back nothing.

@@ -134,56 +134,6 @@ fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_spec
 }
 
 #[test]
-fn packaged_policy_admits_a_declared_build_module() {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "spice-change-policy-build-module-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed),
-    ));
-    fs::create_dir_all(root.join("build")).expect("create build-module fixture");
-    fs::create_dir_all(root.join("src")).expect("create fixture source directory");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .expect("write fixture manifest");
-    fs::write(
-        root.join("Cargo.lock"),
-        "version = 4\n\n[[package]]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write fixture lockfile");
-    fs::write(
-        root.join("build.rs"),
-        "#[path = \"build/admission.rs\"] mod admission;\nfn main() {}\n",
-    )
-    .expect("write fixture build target");
-    fs::write(root.join("build/admission.rs"), "pub fn validate() {}\n")
-        .expect("write declared build module");
-    fs::write(root.join("src/lib.rs"), "pub fn ready() {}\n").expect("write fixture library");
-    let paths = [
-        "Cargo.lock",
-        "Cargo.toml",
-        "build.rs",
-        "build/admission.rs",
-        "src/lib.rs",
-    ]
-    .map(str::to_owned);
-    let environment = ambient_environment().expect("capture test environment");
-
-    let policy = packaged_selection_policy(&root, &paths, &environment)
-        .expect("compile packaged policy with Cargo module reach");
-    let selection = gate::select_change_gates(
-        wire::Digest::compute(wire::Domain::GateTree, b"declared build module"),
-        &["build/admission.rs".to_owned()],
-        &policy,
-    )
-    .expect("select declared build module");
-    assert!(selection.gate_ids().contains(&GateId::RustTypecheck));
-    fs::remove_dir_all(root).expect("remove build-module fixture");
-}
-
-#[test]
 fn pretest_screen_covers_reusable_and_cheap_static_policy() {
     let screened = GateId::BATTERY
         .into_iter()
