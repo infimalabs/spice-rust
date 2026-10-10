@@ -8,8 +8,8 @@ use spice::repository::Repository;
 use wire::{Actor, ResidencyHead};
 
 use super::model::{
-    AuthorityUnknown, BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, PostureView,
-    RepositoryGlanceView, RetiredDirectionView,
+    AuthorityUnknown, BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, PeerView,
+    PostureView, RepositoryGlanceView, RetiredDirectionView,
 };
 use super::{Environment, glance, source};
 
@@ -19,6 +19,7 @@ pub(crate) struct RecallAuthorities {
     pub(crate) asks: Option<Vec<PendingAsk>>,
     pub(crate) held_work: HeldWorkView,
     pub(crate) posture: Option<PostureView>,
+    pub(crate) peers: Vec<PeerView>,
     pub(crate) directions: Vec<RetiredDirectionView>,
     pub(crate) board: Option<BoardGlanceView>,
     pub(crate) repository: Option<RepositoryGlanceView>,
@@ -54,8 +55,10 @@ impl RecallAuthorities {
                 own_claim: None,
                 peer_claims: None,
                 renewed_from: None,
+                address: None,
             },
             posture: None,
+            peers: Vec::new(),
             directions: Vec::new(),
             board: None,
             repository: None,
@@ -116,7 +119,14 @@ struct ObservedAuthorities {
     peer_claims: Option<Result<usize, AuthorityReadError>>,
     directions: Option<Result<Vec<journal::RetiredSteering>, AuthorityReadError>>,
     board: Option<Result<BoardGlanceView, AuthorityReadError>>,
+    team: Option<Result<TeamAddresses, AuthorityReadError>>,
 }
+
+/// This lane's team in residency order and the address each seat offers.
+type TeamAddresses = (
+    Vec<wire::LaneResidency>,
+    std::collections::BTreeMap<wire::CanonicalUuid, wire::SeatAddress>,
+);
 
 fn observe_current_authorities(
     seat: Seat<'_>,
@@ -250,6 +260,7 @@ fn read_authorities(
             peer_claims: None,
             directions: None,
             board: None,
+            team: None,
         });
     };
     let renewed_from = residency
@@ -287,6 +298,20 @@ fn read_authorities(
         .retired_steering(Some(lane.lane), glance::DIRECTION_ROWS)
         .map_err(AuthorityReadError::Journal);
     let board = glance::board(read).map_err(AuthorityReadError::Journal);
+    let team = residency
+        .as_ref()
+        .map(|residency| {
+            residency
+                .lanes
+                .iter()
+                .filter(|row| row.team == lane.team)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let team = bus::journal_seat_addresses(read, &team)
+        .map(|addresses| (team, addresses))
+        .map_err(AuthorityReadError::Journal);
     Ok(ObservedAuthorities {
         lane: Some(lane),
         renewed_from,
@@ -297,6 +322,7 @@ fn read_authorities(
         peer_claims: Some(peer_claims),
         directions: Some(directions),
         board: Some(board),
+        team: Some(team),
     })
 }
 
@@ -415,6 +441,34 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
             Err(error) => unknown(recall, "board", "glance", &error),
         }
     }
+    if let Some(team) = observed.team {
+        match team {
+            Ok(team) => apply_team(recall, lane.lane, team),
+            Err(error) => unknown(recall, "journal", "seat-addresses", &error),
+        }
+    }
+}
+
+/// This lane's own address, and every teammate with the address it offers.
+fn apply_team(
+    recall: &mut RecallAuthorities,
+    own: wire::CanonicalUuid,
+    (team, mut addresses): TeamAddresses,
+) {
+    recall.held_work.address = addresses.remove(&own);
+    recall.peers = team
+        .into_iter()
+        .filter_map(|row| {
+            let address = addresses.remove(&row.lane)?;
+            Some(PeerView {
+                lane: row.lane.to_string(),
+                name: row.name,
+                vendor: row.vendor.to_string(),
+                model: row.model,
+                address,
+            })
+        })
+        .collect();
 }
 
 fn unavailable_probes(recall: &mut RecallAuthorities, detail: &str) {

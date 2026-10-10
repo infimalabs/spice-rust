@@ -408,6 +408,22 @@ pub(crate) struct HeldWorkView {
     /// successor, read from the durable renewal record.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) renewed_from: Option<String>,
+    /// The peer address this lane's own seat offers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) address: Option<wire::SeatAddress>,
+}
+
+/// Another lane of this lane's team and the address its seat offers now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PeerView {
+    pub(crate) lane: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+    pub(crate) vendor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<String>,
+    pub(crate) address: wire::SeatAddress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -525,6 +541,9 @@ pub(crate) enum Report {
         asks: Option<Bounded<OutstandingAskView>>,
         held_work: HeldWorkView,
         posture: Option<PostureView>,
+        /// The other lanes of this lane's team, in residency order.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        peers: Vec<PeerView>,
         /// Operator direction this lane already retired, newest first.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         directions: Vec<RetiredDirectionView>,

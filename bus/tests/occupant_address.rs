@@ -3,13 +3,14 @@
 use bus::{AddressRefusal, Bus, CommitOutcome, OccupantBirth};
 use journal::crossing::{
     Actor, CanonicalUuid, FactKind, Instant, LaneResidency, OccupantAddress, Producer,
-    ResidencyHead, ResidentState, Seq, body,
+    ResidencyHead, ResidentState, SeatAddress, Seq, body,
 };
 use journal::{FactCause, Journal, JournalWrite};
 
 const EPOCH: u64 = 1;
 const LANE_A: u64 = 2;
 const LANE_B: u64 = 3;
+const LANE_C: u64 = 8;
 const FIRST: u64 = 4;
 const SECOND: u64 = 5;
 const SUCCESSOR: u64 = 6;
@@ -169,6 +170,64 @@ fn a_seat_without_a_retained_birth_has_no_address() {
             address: address(4),
             kind: FactKind::LaneRenewed,
         })
+    );
+    bus.shutdown().expect("writer stops");
+}
+
+#[test]
+fn every_seat_address_resolves_to_its_shown_occupant_with_or_without_a_resident() {
+    let bus = seeded();
+    let mut write = lane_write();
+    let successor = write
+        .fact(started(LANE_A, SUCCESSOR), FactCause::Root)
+        .expect("successor start builds");
+    write
+        .fact(started(LANE_B, SECOND), FactCause::Root)
+        .expect("repeated start builds");
+    write.residency_head(successor, |_| {
+        let mut vacant = row(LANE_C, RENEWED);
+        vacant.occupant = None;
+        vacant.disposition = "vacant".to_owned();
+        residency(vec![row(LANE_A, SUCCESSOR), row(LANE_B, SECOND), vacant])
+    });
+    commit(&bus, write);
+
+    let snapshot = bus.task_snapshot().expect("snapshot reads");
+    let lanes = snapshot
+        .residency()
+        .expect("residency head")
+        .body()
+        .lanes
+        .clone();
+    let resident = snapshot.facts().seat_addresses(&lanes);
+    let daemonless = bus
+        .read(move |read| bus::journal_seat_addresses(read, &lanes))
+        .expect("journal projection reads");
+    assert_eq!(resident, daemonless, "both projections agree");
+    assert_eq!(
+        resident.into_iter().collect::<Vec<_>>(),
+        [
+            (
+                uuid(LANE_A),
+                SeatAddress::Seated {
+                    occupant: uuid(SUCCESSOR),
+                    address: address(4),
+                },
+            ),
+            (
+                uuid(LANE_B),
+                SeatAddress::Unproved {
+                    occupant: uuid(SECOND),
+                    reason: "address::repeated-birth".to_owned(),
+                },
+            ),
+            (uuid(LANE_C), SeatAddress::Vacant),
+        ],
+        "the replaced occupant's address 2 is never offered for its lane"
+    );
+    assert_eq!(
+        bus.resolve_occupant(address(4)).expect("resolver answers"),
+        Ok(birth(4, LANE_A, SUCCESSOR))
     );
     bus.shutdown().expect("writer stops");
 }

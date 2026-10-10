@@ -68,7 +68,7 @@ pub mod steering;
 pub mod stream;
 pub mod witness;
 
-pub use address::{OccupantAddress, OccupantAddressError};
+pub use address::{OccupantAddress, OccupantAddressError, SeatAddress};
 pub use command::{
     AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
     LawError,

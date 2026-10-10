@@ -141,6 +141,7 @@ fn validated_snapshot_from_with_occupant(
             history: None,
             trust: positioned_trust(observed),
             appliance,
+            addresses: observed.facts().seat_addresses(&residency.body.lanes),
             residency,
         },
         entries,

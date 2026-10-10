@@ -45,6 +45,7 @@
 | An address names a position holding some other fact, or no fact yet | `address::not-birth` or `address::unrecorded`; no occupant is inferred | [An address proves one exact birth](../invariants/identity.md#identity-an-address-proves-one-exact-birth) |
 | The resident restarts and adopts a still-running occupant | the occupant keeps its birth and therefore its address | [An address executes only for its seated occupant](../invariants/identity.md#identity-an-address-executes-only-for-its-seated-occupant) |
 | A lane is woken, resumed, imported, or renewed onto a new occupant | the successor receives a new address; the predecessor's address reads as history and refuses `address::expired` for execution | [An address executes only for its seated occupant](../invariants/identity.md#identity-an-address-executes-only-for-its-seated-occupant) |
+| An agent reads its briefing or `spice lane list` while a teammate's seat is vacant and another's occupant has no unique birth | its own and each provable seat's address is shown; the vacant and unproved seats read `unavailable:` with their reason, never a predecessor's address | [A discovered seat address resolves to the occupant shown](../invariants/identity.md#identity-a-discovered-seat-address-resolves-to-the-occupant-shown) |
 
 ### Claims and allocation
 

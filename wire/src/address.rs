@@ -130,6 +130,54 @@ impl<'de> Deserialize<'de> for OccupantAddress {
     }
 }
 
+/// The peer address one lane offers right now.
+///
+/// Only a seated occupant whose birth the journal proves exactly once on
+/// this lane is addressable; every other seat is explicitly unavailable, never
+/// advertised with a guessed or predecessor address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SeatAddress {
+    /// The seated occupant and its proved birth address.
+    Seated {
+        /// Occupant the residency seats on the lane.
+        occupant: crate::CanonicalUuid,
+        /// Address that resolves to exactly that occupant.
+        address: OccupantAddress,
+    },
+    /// No occupant sits on the lane.
+    Vacant,
+    /// The seated occupant has no birth the journal proves exactly once.
+    Unproved {
+        /// Occupant the residency seats on the lane.
+        occupant: crate::CanonicalUuid,
+        /// Stable refusal naming why no address is proved.
+        reason: String,
+    },
+}
+
+impl SeatAddress {
+    /// The usable address, when the seat has one.
+    #[must_use]
+    pub const fn address(&self) -> Option<OccupantAddress> {
+        match self {
+            Self::Seated { address, .. } => Some(*address),
+            Self::Vacant | Self::Unproved { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for SeatAddress {
+    /// The address itself, or `unavailable:` and why.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Seated { address, .. } => address.fmt(formatter),
+            Self::Vacant => formatter.write_str("unavailable:vacant"),
+            Self::Unproved { reason, .. } => write!(formatter, "unavailable:{reason}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{OccupantAddress, OccupantAddressError};

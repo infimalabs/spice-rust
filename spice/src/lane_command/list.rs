@@ -1,12 +1,14 @@
 //! Bounded, relevance-ordered lane list projection.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use clap::ArgMatches;
 use spice::repository::Repository;
-use wire::intent::{BoardAnswer, BoardRead, CommandAnswer, TextAnswer};
+use wire::intent::{BoardAnswer, BoardRead, CommandAnswer};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply,
+    Actor, CanonicalUuid, ClaimDisposition, CommandKind, Fault, FaultClass, Outcome, Refusal,
+    Reply, SeatAddress,
 };
 
 use crate::cli::Contract;
@@ -16,7 +18,7 @@ pub(super) fn run(
     repository: &Repository,
     matches: &ArgMatches,
     contract: &Contract,
-) -> Outcome<CommandAnswer> {
+) -> Outcome<LanePage> {
     let options = match LaneListOptions::from_matches(matches) {
         Ok(options) => options,
         Err(outcome) => return outcome,
@@ -31,10 +33,10 @@ pub(super) fn run(
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Board(board),
-        }) => match lane_list_text(&board, &options) {
-            Ok(text) => Outcome::Reply(Reply {
+        }) => match lane_list(&board, &options) {
+            Ok(page) => Outcome::Reply(Reply {
                 position,
-                body: CommandAnswer::Text(TextAnswer { text }),
+                body: page,
             }),
             Err(outcome) => outcome,
         },
@@ -47,6 +49,28 @@ pub(super) fn run(
     }
 }
 
+/// One bounded page of lanes, each with the peer address it offers.
+///
+/// Text form speaks one line per lane; `--json` keeps the typed rows.
+#[derive(Debug, serde::Serialize)]
+#[serde(transparent)]
+pub(crate) struct LanePage(wire::output::Bounded<LaneListRow>);
+
+impl fmt::Display for LanePage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut lines = self
+            .0
+            .rows
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if let Some(omission) = &self.0.omission {
+            lines.push(omission.to_string());
+        }
+        formatter.write_str(&lines.join("\n"))
+    }
+}
+
 #[derive(Clone, Default)]
 struct LaneListOptions {
     limit: Option<usize>,
@@ -55,7 +79,7 @@ struct LaneListOptions {
 }
 
 impl LaneListOptions {
-    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<LanePage>> {
         let limit = numeric_option(matches, "limit", "lane::list-limit")?;
         let max_bytes = numeric_option(matches, "max-bytes", "lane::list-max-bytes")?;
         let _ = lane_list_budget(limit, max_bytes)?;
@@ -89,41 +113,46 @@ struct LaneListCandidate<'a> {
     lane: CanonicalUuid,
     seated: bool,
     claim: Option<&'a str>,
+    address: &'a SeatAddress,
 }
 
+/// One lane, its claim, and the peer address its seat offers now.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-struct LaneListRow {
+pub(crate) struct LaneListRow {
     lane: CanonicalUuid,
-    text: String,
+    seated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim: Option<String>,
+    address: SeatAddress,
 }
 
-fn lane_list_text(
+impl fmt::Display for LaneListRow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "lane {} seated={} claim={} address={}",
+            self.lane,
+            self.seated,
+            self.claim.as_deref().unwrap_or("-"),
+            self.address
+        )
+    }
+}
+
+fn lane_list(
     board: &BoardAnswer,
     options: &LaneListOptions,
-) -> Result<String, Outcome<CommandAnswer>> {
+) -> Result<LanePage, Outcome<LanePage>> {
     let actor = match board.principal {
         Actor::Lane(lane) => Some(lane),
         Actor::Operator | Actor::Spice => None,
     };
-    let page = lane_list_page(lane_list_candidates(board)?, actor, options)?;
-    let mut output = page
-        .rows
-        .into_iter()
-        .map(|row| row.text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    if let Some(omission) = page.omission {
-        if !output.is_empty() {
-            output.push('\n');
-        }
-        output.push_str(&omission.to_string());
-    }
-    Ok(output)
+    lane_list_page(lane_list_candidates(board)?, actor, options).map(LanePage)
 }
 
 fn lane_list_candidates(
     board: &BoardAnswer,
-) -> Result<Vec<LaneListCandidate<'_>>, Outcome<CommandAnswer>> {
+) -> Result<Vec<LaneListCandidate<'_>>, Outcome<LanePage>> {
     let mut claims = BTreeMap::new();
     for task in &board.tasks {
         let Some(claim) = task
@@ -143,24 +172,33 @@ fn lane_list_candidates(
             ));
         }
     }
-    Ok(board
+    board
         .residency
         .body
         .lanes
         .iter()
-        .map(|row| LaneListCandidate {
-            lane: row.lane,
-            seated: row.disposition == "occupied" && row.occupant.is_some(),
-            claim: claims.get(&row.lane).copied(),
+        .map(|row| {
+            let address = board.addresses.get(&row.lane).ok_or_else(|| {
+                protocol_fault(
+                    "lane::list-address-missing",
+                    "the board snapshot names no seat address for a residency lane",
+                )
+            })?;
+            Ok(LaneListCandidate {
+                lane: row.lane,
+                seated: row.disposition == "occupied" && row.occupant.is_some(),
+                claim: claims.get(&row.lane).copied(),
+                address,
+            })
         })
-        .collect())
+        .collect()
 }
 
 fn lane_list_page(
     mut candidates: Vec<LaneListCandidate<'_>>,
     actor: Option<CanonicalUuid>,
     options: &LaneListOptions,
-) -> Result<wire::output::Bounded<LaneListRow>, Outcome<CommandAnswer>> {
+) -> Result<wire::output::Bounded<LaneListRow>, Outcome<LanePage>> {
     candidates.sort_by(|left, right| {
         lane_relevance(*left, actor)
             .cmp(&lane_relevance(*right, actor))
@@ -186,12 +224,9 @@ fn lane_list_page(
         admission
             .offer(LaneListRow {
                 lane: candidate.lane,
-                text: format!(
-                    "lane {} seated={} claim={}",
-                    candidate.lane,
-                    candidate.seated,
-                    candidate.claim.unwrap_or("-")
-                ),
+                seated: candidate.seated,
+                claim: candidate.claim.map(str::to_owned),
+                address: candidate.address.clone(),
             })
             .expect("a lane list row always serializes");
     }
@@ -237,7 +272,7 @@ fn numeric_option(
     matches: &ArgMatches,
     name: &str,
     reason: &str,
-) -> Result<Option<usize>, Outcome<CommandAnswer>> {
+) -> Result<Option<usize>, Outcome<LanePage>> {
     matches
         .get_one::<String>(name)
         .map(|written| {
@@ -255,7 +290,7 @@ fn numeric_option(
 fn lane_list_budget(
     rows: Option<usize>,
     bytes: Option<usize>,
-) -> Result<wire::output::Budget, Outcome<CommandAnswer>> {
+) -> Result<wire::output::Budget, Outcome<LanePage>> {
     wire::output::INTERACTIVE
         .budget(wire::output::Request {
             rows,
@@ -271,7 +306,7 @@ fn lane_list_budget(
         })
 }
 
-fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Outcome<CommandAnswer> {
+fn refusal<B>(reason: &str, observed: Option<String>, detail: &str) -> Outcome<B> {
     Outcome::Refusal(Refusal::bare(
         wire::RefusalDiagnostic::new(reason.to_owned(), None, None, observed).with_detail(detail),
     ))
@@ -293,12 +328,15 @@ mod tests {
         CanonicalUuid::new(uuid::Uuid::from_u128(value))
     }
 
+    static VACANT: SeatAddress = SeatAddress::Vacant;
+
     fn candidates() -> Vec<LaneListCandidate<'static>> {
         (1..=206)
             .map(|value| LaneListCandidate {
                 lane: uuid(value),
                 seated: value % 2 == 0,
                 claim: (value % 5 == 0).then_some("TASK-claim"),
+                address: &VACANT,
             })
             .collect()
     }

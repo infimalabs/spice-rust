@@ -1036,6 +1036,9 @@ pub struct BoardAnswer {
     pub appliance: crate::manifest::ProductVersion,
     /// Current resident and lane head used by possession witnesses.
     pub residency: Positioned<crate::ResidencyHead>,
+    /// The peer address every residency lane offers at this barrier.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub addresses: std::collections::BTreeMap<crate::CanonicalUuid, crate::SeatAddress>,
 }
 
 impl BoardAnswer {

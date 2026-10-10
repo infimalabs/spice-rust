@@ -259,6 +259,7 @@ pub(crate) fn recall(
         asks,
         held_work: authorities.held_work,
         posture: authorities.posture,
+        peers: authorities.peers,
         directions: authorities.directions,
         board: authorities.board,
         repository: authorities.repository,

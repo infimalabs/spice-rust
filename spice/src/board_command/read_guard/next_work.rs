@@ -119,6 +119,7 @@ pub(super) fn read_next_work(
         trust: positioned_trust(observed),
         appliance,
         residency,
+        addresses: Default::default(),
     })
 }
 

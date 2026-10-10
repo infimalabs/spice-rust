@@ -543,14 +543,18 @@ impl TaskFacts {
         lane: journal::crossing::CanonicalUuid,
         occupant: journal::crossing::CanonicalUuid,
     ) -> Result<journal::crossing::OccupantAddress, AddressRefusal> {
-        match self.birth_record(occupant) {
-            Some(BirthRecord::Unique {
-                lane: born,
-                position,
-            }) if born == lane => Ok(journal::crossing::OccupantAddress::new(position)),
-            Some(BirthRecord::Repeated) => Err(AddressRefusal::RepeatedBirth { occupant }),
-            _ => Err(AddressRefusal::MissingBirth { lane, occupant }),
-        }
+        BirthRecord::address(self.birth_record(occupant), lane, occupant)
+    }
+
+    /// The address each of `lanes` offers, keyed by lane: a seated
+    /// occupant's birth address, or why that lane has none.
+    #[must_use]
+    pub fn seat_addresses(
+        &self,
+        lanes: &[journal::crossing::LaneResidency],
+    ) -> std::collections::BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::SeatAddress>
+    {
+        super::occupant_address::seat_addresses(lanes, |occupant| self.birth_record(occupant))
     }
 
     pub(super) fn birth_record(

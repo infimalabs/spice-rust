@@ -26,7 +26,9 @@ mod runtime {
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
 
     mod occupant_address;
-    pub use occupant_address::{AddressProof, AddressRefusal, OccupantBirth};
+    pub use occupant_address::{
+        AddressProof, AddressRefusal, OccupantBirth, journal_seat_addresses,
+    };
     use occupant_address::{AddressRead, BirthRecord};
     mod task_snapshot;
     pub use task_snapshot::{
@@ -1465,4 +1467,5 @@ pub use runtime::{
     CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
     MAX_STEERING_PRESENTATION_KEYS, OccupantBirth, SteeringPresentation, SteeringSnapshot,
     TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
+    journal_seat_addresses,
 };
