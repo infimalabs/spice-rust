@@ -146,9 +146,11 @@ Departed occupants never inherit a successor's name or accent.
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never
 reads it. An isolated task-handle chip's hover title is its surrounding
-activity prose, or `Open task HANDLE` alone. A quote's rail shows its speaker:
-an agent's or peer lane's quote wears that lane's accent; operator, Spice,
-taste, broadcast, review, and unattributed quotes take the neutral accent; an
+activity prose, or `Open task HANDLE` alone. Directly trailing sentence
+punctuation stays on the chip's line without preventing a break before it. A
+quote's rail shows its speaker: an agent's or peer lane's quote wears that
+lane's accent; operator, Spice, taste, broadcast, review, and unattributed
+quotes take the neutral accent; an
 unavailable quote keeps its warning rail.
 
 A card's linked relative age is its permalink. Arriving through it outlines
