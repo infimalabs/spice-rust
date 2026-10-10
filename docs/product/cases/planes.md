@@ -26,6 +26,7 @@
 | --- | --- | --- |
 | Agent compacts mid-task | briefing restores ask, delivery, working set, pending steering | [The briefing answers four questions mechanically](../invariants/session.md#session-the-briefing-answers-four-questions-mechanically) |
 | Agent is renewed | successor gets the same briefing surface | [The briefing answers four questions mechanically](../invariants/session.md#session-the-briefing-answers-four-questions-mechanically) |
+| A renewal successor starts fresh | its startup briefing names the predecessor thread and rehydration route derived from the handoff-pending record; no steering message or acknowledgment key is created, and resumed seats and ordinary starts show none | [Renewal uses private lifecycle notices](../invariants/lifecycle.md#lifecycle-renewal-uses-private-lifecycle-notices) |
 | The steering ledger cannot be read | `asks` is absent and a typed unknown names the probe, never an empty inbox | [An unread inbox is not an empty inbox](../invariants/session.md#session-an-unread-inbox-is-not-an-empty-inbox) |
 | A window is unreadable | reported loudly | [Windows the engine could not read are reported loudly](../invariants/session.md#session-windows-the-engine-could-not-read-are-reported-loudly) |
 | Recovery text is only assistant prose | not rendered as the user's ask | [Recovery shows the recovered ask](../invariants/session.md#session-recovery-shows-the-recovered-ask) |

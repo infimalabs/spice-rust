@@ -139,6 +139,7 @@ sequenceDiagram
   Note over L,N: the mark waits; renewal starts nothing
   L->>L: next start of this lane consumes the mark
   L->>N: launch fresh successor
+  Note over L,N: startup briefing derives the predecessor thread<br/>from the handoff-pending record; no steering is published
   opt active claim retained
     L->>N: ClaimCarried fact, disposition remains active
   end

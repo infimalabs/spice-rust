@@ -166,6 +166,7 @@ fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
     for control in [
         "task-generation:1kKRRsDQ:33:4".to_owned(),
         format!("lane-renewal-handoff:{}", fixture.occupant),
+        format!("lane-renewal-context:{}", fixture.occupant),
         "ordinary-control".to_owned(),
     ] {
         crate::resident::steering::append_internal_directive(
@@ -189,7 +190,7 @@ fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
         bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
             .expect("steering index reads")
             .len(),
-        3,
+        4,
         "predecessor evidence starts live",
     );
     crate::resident::steering::migrate_private_notices(&bus, fixture.epoch)

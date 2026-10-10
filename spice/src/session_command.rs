@@ -243,10 +243,17 @@ fn render_lane_briefing(
         Ok(Report::Recall {
             held_work, digest, ..
         }) => {
-            let Some(notice) = assignment_notice(moment, held_work.own_claim.as_ref()) else {
-                return format!("<system-notice>\n{}\n</system-notice>", digest.trim_end());
-            };
-            format!("{notice}\n\n{}", digest.trim_end())
+            let notices = [
+                assignment_notice(moment, held_work.own_claim.as_ref()),
+                renewal_notice(moment, &held_work),
+            ];
+            let mut page = String::new();
+            for notice in notices.into_iter().flatten() {
+                page.push_str(&notice);
+                page.push_str("\n\n");
+            }
+            page.push_str(digest.trim_end());
+            page
         }
         Ok(_) => unreachable!("lane recall builds only a briefing"),
         Err(refusal) => digest::refused(&refusal),
@@ -262,6 +269,18 @@ fn assignment_notice(
     Some(format!(
         "# Task already assigned\n\n`{}` is already assigned to this lane in phase `{}`: {}. Continue this task now; run `spice task show {}` for its contract before asking the allocator for work.",
         claim.handle, claim.phase, claim.title, claim.handle,
+    ))
+}
+
+/// The startup-only rehydration route a renewal successor owes its context.
+///
+/// Derived from the lane's durable handoff-pending record, never published as
+/// steering, so it carries no acknowledgment key and leaves no inbox residue.
+fn renewal_notice(moment: BriefingMoment, held_work: &model::HeldWorkView) -> Option<String> {
+    let predecessor = (matches!(moment, BriefingMoment::Startup))
+        .then_some(held_work.renewed_from.as_deref())??;
+    Some(format!(
+        "# Lane renewed\n\nThis is a fresh successor of agent thread `{predecessor}`, which handed this lane off. Rehydrate its context before continuing: resolve its transcript with `spice session thread {predecessor}`, then run `spice session briefing PATH` and `spice session sweep PATH --limit 4` on the returned path."
     ))
 }
 
@@ -796,5 +815,72 @@ mod tests {
             None,
         );
         assert_eq!(assignment_notice(BriefingMoment::Startup, None), None);
+    }
+
+    #[test]
+    fn only_a_fresh_start_of_a_handoff_pending_lane_carries_renewal_context() {
+        let id = |n: u8| -> wire::CanonicalUuid {
+            format!("00000000-0000-4000-8000-0000000000{n:02x}")
+                .parse()
+                .expect("canonical fixture identity")
+        };
+        let identity = |occupant: u8, thread: &str| wire::RenewalIdentity {
+            occupant: id(occupant),
+            session: format!("session-{thread}"),
+            thread: thread.to_owned(),
+        };
+        let record = |lane: u8, state| wire::LaneRenewalRecord {
+            team: id(9),
+            lane: id(lane),
+            revision: 1,
+            state,
+        };
+        let renewals = [
+            record(
+                1,
+                wire::LaneRenewalState::Requested {
+                    predecessor: identity(11, "requested"),
+                    team_slot: 0,
+                },
+            ),
+            record(
+                2,
+                wire::LaneRenewalState::HandoffPending {
+                    predecessor: identity(12, "handed-off"),
+                    team_slot: 1,
+                },
+            ),
+            record(
+                3,
+                wire::LaneRenewalState::SuccessorStarted {
+                    predecessor: identity(13, "replaced"),
+                    successor: identity(23, "successor"),
+                    team_slot: 2,
+                },
+            ),
+        ];
+        assert_eq!(authority::handoff_predecessor(&renewals, id(1)), None);
+        assert_eq!(
+            authority::handoff_predecessor(&renewals, id(2)).as_deref(),
+            Some("handed-off"),
+        );
+        assert_eq!(authority::handoff_predecessor(&renewals, id(3)), None);
+        assert_eq!(authority::handoff_predecessor(&renewals, id(4)), None);
+
+        let mut held = model::HeldWorkView {
+            thread: Some("handed-off".to_owned()),
+            lane: Some(id(2).to_string()),
+            own_claim: None,
+            peer_claims: None,
+            renewed_from: Some("handed-off".to_owned()),
+        };
+        let notice = renewal_notice(BriefingMoment::Startup, &held).expect("successor startup");
+        assert!(
+            notice.contains("spice session thread handed-off"),
+            "{notice}"
+        );
+        assert_eq!(renewal_notice(BriefingMoment::Refresh, &held), None);
+        held.renewed_from = None;
+        assert_eq!(renewal_notice(BriefingMoment::Startup, &held), None);
     }
 }

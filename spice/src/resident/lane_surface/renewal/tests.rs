@@ -178,8 +178,8 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
     bus.shutdown().expect("pending renewal bus stops");
 }
 
-/// The start is what renews: it seats a fresh successor, records it, and
-/// hands it the predecessor's rehydration context.
+/// The start is what renews: it seats a fresh successor and records it,
+/// publishing no steering for the successor to acknowledge.
 #[test]
 fn the_next_start_consumes_the_pending_replacement() {
     let fixture = LaunchFixture::new();
@@ -200,7 +200,6 @@ fn the_next_start_consumes_the_pending_replacement() {
         fixture.epoch,
         &mut seats,
         &runtime,
-        &steer::Config::default(),
         &wake_command(&fixture, 11, &request),
         &request,
     );
@@ -219,7 +218,7 @@ fn the_next_start_consumes_the_pending_replacement() {
         "{:?}",
         current.body().renewals,
     );
-    assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
+    assert!(controls(&bus, fixture.lane).is_empty());
 
     seats.release_all();
     super::super::super::steering::remove_lane_surface(&fixture.paths, fixture.lane);

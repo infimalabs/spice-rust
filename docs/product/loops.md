@@ -446,9 +446,12 @@ flowchart LR
    forcibly terminated; a vacant lane's predecessor is neither started nor
    notified. Cancellation replaces preparation on the same coalescing aside
    channel. Exact occupant identity and journal-position ordering prevent a
-   stale request from overriding cancellation or reaching a successor. Startup
-   retires retained handoff directives once, preserving their history; runtime
-   delivery uses only private notices. While the mark stands, the agent's
+   stale request from overriding cancellation or reaching a successor. The
+   successor's startup briefing derives its predecessor's thread and
+   rehydration route from the handoff-pending record, so it too receives no
+   steering message. Startup retires retained handoff and successor-context
+   directives once, preserving their history; runtime delivery uses only
+   private notices and the derived briefing. While the mark stands, the agent's
    action menu carries it, so it stays visible after the drawer closes.
 - Model, effort, and fast mode are seat authority. `lane model ID [MODEL]`,
   `lane effort ID [EFFORT]`, and `lane fast ID on|off` topology-guard and
