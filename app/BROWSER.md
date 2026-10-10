@@ -171,21 +171,23 @@ the lift without sending.
 The activity age keeps its fixed three-character measure and meets the main
 status with only the status line's ordinary inline spacing. It adds no trailing
 margin of its own. The status line owns the complete second header row.
-The status bar starts with a two-row, three-column matrix of 8px presence pips.
-Canonical members fill bottom-to-top, then right-to-left: #1 lower-right,
-#2 upper-right, #3 lower-middle, #4 upper-middle, #5 lower-left, #6 upper-left.
-Partial populations retain those positions. The ticker uses the remaining
-width; an empty team has no pip segment. The full row shares one surface and
-top rule, while only status text dims for bound/unbound state.
+The status bar starts with a fixed leading segment centered beneath the team
+total. Its 8px presence pips center as one dot, a vertical pair, a three-dot
+triangle, a four-dot square, a centered two-over-three group, or a three-by-two
+matrix for one through six members. Within the rectangular forms canonical
+members continue bottom-to-top and right-to-left. The ticker uses the remaining
+width; an empty team has no pip segment. The full row shares one surface and top
+rule, while only status text dims for bound/unbound state.
 
 ## Work tabs
 
-Global and team totals use four-pixel outer inline rails; global stems and
-team stem containers use the thinner ordinary tab rails. The team total keeps
-its leading edge column and grows right with its count. Presence pips live in
-the status row, not a trailing task tab. Task handles remain borderless segments
+Global and team totals use four-pixel outer inline rails; global stems and team
+stem containers use the thinner ordinary tab rails. The team total holds one
+fixed two-digit column through 99 tasks, with either digit count centered.
+Presence pips live in an equally wide leading segment of the status row directly
+beneath it, not a trailing task tab. Task handles remain borderless segments
 inside their stem container; the final handle meets the container's single
-right rail. The task scroller reserves the total's width and uses mirrored
+right rail. The task scroller reserves the total's fixed width and uses mirrored
 fade, padding, and scroll-padding boundaries at its ends. Counts and navigation
 remain independent of the status matrix.
 
