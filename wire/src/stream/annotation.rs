@@ -59,6 +59,10 @@ pub struct MessageDirective {
     /// typed provenance. The absent wire spelling means ordinary direction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<DirectiveBadge>,
+    /// Exact occupant that authored the directive as an MSG packet, which the
+    /// context names instead of whoever now represents the sending lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<crate::CanonicalUuid>,
 }
 
 impl MessageDirective {

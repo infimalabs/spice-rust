@@ -1,7 +1,7 @@
 //! Resident-owned steering reads and transitions.
 //! Transcript-backed disposition is the sole acknowledgment path.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use bus::Bus;
@@ -34,7 +34,9 @@ mod transitions;
 
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 pub(super) use history::history;
-pub(super) use message::{AuthoredRecord, Refusals, publish_at_startup, publish_authored};
+pub(super) use message::{
+    AuthoredRecord, Refusals, dead_letter_departed, publish_at_startup, publish_authored,
+};
 #[cfg(test)]
 pub(super) use message::{Packet, Published, Unpublished, publish_packet};
 use preview::directive_preview;
@@ -592,6 +594,17 @@ pub(super) fn inbox(
             None => None,
         };
         let mut pending = pending_presentations(&snapshot.ledger, &snapshot.waking, lane.lane);
+        pending.retain_mut(|directive| {
+            let Some(message) = snapshot.messaged.get(&directive.directive) else {
+                return true;
+            };
+            // An MSG addresses one exact occupant; no successor hears it.
+            if lane.occupant != Some(message.occupant) {
+                return false;
+            }
+            directive.sender = Some(peer_sender(&snapshot.authority, message));
+            true
+        });
         for directive in &mut pending {
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
@@ -630,10 +643,26 @@ struct SteeringSnapshot {
     ledger: steer::Ledger,
     /// Pending directives an operator send opened, which alone wake a lane.
     waking: BTreeSet<CanonicalUuid>,
+    /// Pending directives an authored MSG packet opened, by directive.
+    messaged: BTreeMap<CanonicalUuid, wire::body::SteerMessaged>,
     retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
+}
+
+/// The exact occupant that wrote one MSG, with the address its birth proves.
+fn peer_sender(
+    authority: &bus::TaskSnapshot,
+    message: &wire::body::SteerMessaged,
+) -> wire::intent::PeerSender {
+    wire::intent::PeerSender {
+        occupant: message.sender,
+        address: authority
+            .facts()
+            .occupant_address(message.from, message.sender)
+            .ok(),
+    }
 }
 
 fn pending_snapshot(
@@ -702,9 +731,22 @@ fn pending_snapshot(
             })
             .map(|head| head.directive)
             .collect();
+        let messaged = heads
+            .iter()
+            .map(journal::JournalHead::body)
+            .filter_map(|head| {
+                let message = authority
+                    .facts()
+                    .at(head.created)?
+                    .fact
+                    .read::<wire::body::SteerMessaged>()?;
+                (message.directive == head.directive).then_some((head.directive, message))
+            })
+            .collect();
         return Ok(SteeringSnapshot {
             ledger,
             waking,
+            messaged,
             retired: first.into_retired(),
             position,
             authority,
@@ -780,6 +822,7 @@ fn pending_directive(directive: &steer::Directive, wakes: bool) -> PendingDirect
         fanout: directive.fanout(),
         text: directive.text().to_owned(),
         from: directive.from(),
+        sender: None,
         wakes,
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),

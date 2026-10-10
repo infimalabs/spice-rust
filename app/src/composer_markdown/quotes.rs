@@ -329,8 +329,9 @@ fn quote_author_name_html(
         QuoteAuthor::Directive {
             actor: wire::Actor::Lane(lane),
         } => {
-            // A peer message names its sending lane, not an occupant: the
-            // lane's team member speaks for it, seated or vacant.
+            // A lane directive with no recorded authoring occupant names its
+            // sending lane: the lane's team member speaks for it, seated or
+            // vacant. An MSG names its exact occupant as an `Agent` instead.
             let member = lane_member_agent(agents, *lane);
             let (label, state) = member.map_or_else(
                 || {

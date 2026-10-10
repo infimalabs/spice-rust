@@ -869,6 +869,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 actor: wire::Actor::Operator,
                 authored: at("2030-04-12T18:44:08.000Z"),
                 badge: Some(DirectiveBadge::Taste),
+                sender: None,
             }],
             quotes: Vec::new(),
             automatic_speech: None,

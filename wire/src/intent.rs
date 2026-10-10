@@ -631,6 +631,16 @@ pub struct PendingDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
+    /// Exact occupant that authored this directive as an MSG packet.
+    ///
+    /// Absent on every other directive, including `steer::tell` messages and
+    /// replies, which name only their sending lane.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub sender: Option<PeerSender>,
     /// Whether this directive can wake its lane.
     ///
     /// Only operator direction wakes a lane. Peer messages, peer replies, and
@@ -663,6 +673,24 @@ pub struct PendingDirective {
     pub escalations: Vec<crate::body::SteeringTransition>,
     /// Instant at which the directive lapses.
     pub expires: Instant,
+}
+
+/// The exact occupant that authored an MSG peer message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerSender {
+    /// Sending occupant, as the message's creating fact records it.
+    pub occupant: CanonicalUuid,
+    /// That occupant's address, derived from its birth on the sending lane.
+    ///
+    /// Absent when the journal no longer proves exactly one such birth; an
+    /// absent address is reported as missing, never replaced by another.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub address: Option<crate::OccupantAddress>,
 }
 
 /// Most retired directives one inbox read returns per lane.

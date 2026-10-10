@@ -1031,6 +1031,7 @@ mod tests {
     fn pending(id: &str, key: &str) -> PendingDirective {
         PendingDirective {
             from: None,
+            sender: None,
             wakes: true,
             fanout: None,
             directive: uuid(id),

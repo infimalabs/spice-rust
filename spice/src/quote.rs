@@ -283,12 +283,25 @@ impl QuoteStore for ResidentStore<'_> {
         if head.key != key {
             return Err(SourceError::Unknown);
         }
+        // An MSG names the exact occupant that wrote it, so a later occupant of
+        // the sending lane never inherits its authorship.
+        let author = presentation
+            .created()
+            .fact
+            .read::<wire::body::SteerMessaged>()
+            .map_or_else(
+                || QuoteAuthor::Directive {
+                    actor: presentation.created().actor.clone(),
+                },
+                |message| QuoteAuthor::Agent {
+                    lane: message.from,
+                    occupant: message.sender,
+                },
+            );
         Ok(SourceQuote {
             identity: None,
             text: head.text.clone(),
-            author: QuoteAuthor::Directive {
-                actor: presentation.created().actor.clone(),
-            },
+            author,
             disposition: Some(head.disposition),
             media: head.attachments.clone(),
         })
