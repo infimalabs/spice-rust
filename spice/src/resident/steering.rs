@@ -205,11 +205,6 @@ pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
         .map_err(|error| store_fault("steer::index-unwritable", &error.to_string()))
 }
 
-/// Retained renewal steering controls whose content renewal authority now
-/// carries privately: handoff preparation and successor rehydration context.
-const RETIRED_RENEWAL_CONTROL_PREFIXES: [&str; 2] =
-    ["lane-renewal-handoff:", "lane-renewal-context:"];
-
 /// Migrate steering-backed private notices into current authority once at startup.
 ///
 /// Claim generations and renewal marks already retain their semantic state. A
@@ -222,13 +217,12 @@ pub(super) fn migrate_private_notices(bus: &Bus, epoch: CanonicalUuid) -> Comman
     let legacy = pending
         .iter()
         .filter_map(|head| {
-            let control = head.body().control.as_deref();
-            (is_legacy_task_generation_control(control)
-                || control.is_some_and(|control| {
-                    RETIRED_RENEWAL_CONTROL_PREFIXES
-                        .iter()
-                        .any(|prefix| control.starts_with(prefix))
-                }))
+            (is_legacy_task_generation_control(head.body().control.as_deref())
+                || head
+                    .body()
+                    .control
+                    .as_deref()
+                    .is_some_and(|control| control.starts_with("lane-renewal-handoff:")))
             .then_some(head.body())
         })
         .collect::<Vec<_>>();
