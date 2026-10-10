@@ -196,7 +196,7 @@ that relationship in blocking order.
 
 The primary panel uses Flush etched glass in a sharp-cornered 80 × 160px frame.
 Round 34px TURBO and team-menu buttons share the first row; two pill-shaped
-slider flyers follow, and round 56px SEND anchors the panel below them. Faces
+slider flyers follow, and round 62px SEND anchors the panel below them. Faces
 transmit the neutral background, with fine etched edges and no opaque
 recipient-color fill, domes, or nested ridges. Team and Settings global TURBO
 retain the same lettering:
