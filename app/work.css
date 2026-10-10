@@ -362,6 +362,19 @@
   color: var(--muted);
   font-weight: 600;
 }
+/* Deleted work is gone rather than waiting: a dashed, muted outline and a
+   dimmed face keep it apart from blocked's attention tone. */
+.work-map-node-button[data-work-disposition="deleted"] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--work-card-tone) 35%, var(--line));
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+.work-map-node-button[data-work-disposition="deleted"]::after {
+  border-style: dashed;
+  border-color: var(--line);
+  color: color-mix(in srgb, var(--work-card-tone) 50%, var(--muted));
+  font-weight: 600;
+}
 .work-map-node-button:hover,
 .work-map-node-button:focus-visible {
   border-color: var(--focus);
