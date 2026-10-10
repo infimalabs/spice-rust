@@ -4,12 +4,13 @@ Every populated or empty team surface keeps its Chat composer and message plane
 mounted continuously. It has no Work/Chat rail, local Work pane, mode-owned
 scroll state, or return-to-mode behavior. The toolbar has no hamburger. Its
 task strip keeps the full first row. The second row is one full-width status
-band: the ticker leads into a fixed 80px pip segment directly above the
-physical-right send/slider column. Up to six unified 8px pips occupy that
-segment in the same rendered order as the composer columns. Both sequences use
-local RTL flow so canonical member zero remains control-adjacent; the app's
-outer LTR flow is unchanged. The status row uses the same theme-aware surface
-as the message stream and one composer-bottom-strength top rule throughout;
+band: a two-row, three-column matrix of 8px presence pips sits at its physical
+left, followed by the ticker in the remaining width. Canonical members fill
+bottom-to-top and right-to-left: #1 lower-right, #2 upper-right, #3 lower-middle,
+#4 upper-middle, #5 lower-left, #6 upper-left. Partial populations keep these
+positions; the app's outer LTR flow is unchanged. The status row uses the same
+theme-aware surface as the message stream, with one composer-bottom-strength
+top rule throughout;
 bound and unbound status dims only its text, never that surface. The ticker
 retains relative age, lane-status class, agent/tool/command prefix and accent,
 accessible label, and live-region semantics; an empty fleet has no pip reserve
@@ -26,9 +27,8 @@ status band, while the team surface frames nothing around them. The 56px
 circular send button remains centered in its independent 80px physical-right
 composer-control column. That column's opaque field is the stream surface, so
 it reads apart from the composers' lighter glass and as one band with the
-status row. The status band's matching 80px segment aligns directly above it,
-shares the ticker's stream-surface fill and stronger top rule, and centers up
-to six 8px pips in the same local right-to-left order as the composer columns.
+status row. That full-width row owns one continuous top rule; its pip matrix
+reserves only the leading segment, not a column above the composer controls.
 When a composer is fully collapsed, its bottom edge matches that status rule,
 visually bracketing the status row. Pips retain the unified presence palette:
 active, queued, waiting, and dim bound/unbound states remain distinguishable
@@ -70,9 +70,8 @@ selected. It does not change the durable location.
 
 The team total holds its own column at the rail's inline start, so the first
 stem tab sits one `--mosaic-gap` past it whatever its badge width. Stem and
-task tabs scroll beneath mirrored alpha screens: a short leading fade reaches
-back under the total and through that gap so tabs disappear behind it, while
-the trailing fade spans the full 80px composer-control and pip column.
+task tabs scroll beneath mirrored alpha screens at both ends; the leading
+underlap reaches back beneath the total. The trailing end reserves no pip tab.
 Matching inline and scroll padding keeps the first and last tabs fully opaque
 at their respective extents and keeps a no-overflow rail out of both fades.
 

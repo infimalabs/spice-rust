@@ -427,9 +427,6 @@ path.image-annotation-hit { fill: none; }
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
   --team-pip-gap: calc(var(--app-presence-pip-size) / 2);
   --team-edge-tab-min-inline-size: calc(var(--app-presence-pip-size) + 2 * var(--app-horn-tab-inset) + 2 * var(--message-rail));
-  --team-pip-tab-max-inline-size: calc(
-    6 * var(--app-presence-pip-size) + 5 * var(--team-pip-gap) + 2 * var(--app-horn-tab-inset) + 2 * var(--message-rail)
-  );
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
   /* The composer controls keep a fixed right-edge column below the full-width
@@ -464,7 +461,7 @@ path.image-annotation-hit { fill: none; }
 .team-surface[data-team-weight="5"] { --team-weight: 5; }
 .team-surface[data-team-weight="6"] { --team-weight: 6; }
 
-/* The fixed header gives presence and tasks the first row and the ticker the second. */
+/* Work owns the first row; the left pip matrix and ticker share the status row. */
 .team-toolbar {
   display: grid;
   flex: 0 0 auto;
@@ -475,24 +472,16 @@ path.image-annotation-hit { fill: none; }
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* The right edge stays fixed; one through six natural pips grow left, then compress. */
-.team-task-rail > .team-lights {
-  grid-column: 3;
-  grid-row: 1;
-  z-index: 3;
-  align-self: end;
-  justify-self: end;
-  align-items: center;
-  justify-content: center;
-  direction: rtl;
-  gap: var(--team-pip-gap);
-  width: max-content;
-  min-width: var(--team-edge-tab-min-inline-size);
-  max-width: var(--team-pip-tab-max-inline-size);
-  margin: 0;
-  padding: 0 var(--app-horn-tab-inset);
+.team-toolbar > .team-status-row { grid-area: status; display: grid; grid-template-columns: auto minmax(0, 1fr); min-width: 0; }
+.team-status-row > .team-lights {
+  display: grid; grid-template-columns: repeat(3, var(--app-presence-pip-size)); grid-template-rows: repeat(2, var(--app-presence-pip-size));
+  grid-auto-flow: column dense; direction: rtl; gap: var(--team-pip-gap); align-content: center;
+  width: max-content; min-width: 0; margin: 0; padding: 0 var(--team-chamber-inset);
 }
-/* Live edge columns reserve width; the scroller underlaps both by one symmetric fade. */
+/* Fill each physical column bottom-to-top, then advance right-to-left. */
+.team-lights > :nth-child(odd of .app-presence-pip) { grid-row: 2; }
+.team-lights > :nth-child(even of .app-presence-pip) { grid-row: 1; }
+/* The leading total reserves width; the task scroller keeps its symmetric fades. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
   --team-task-screen: calc(var(--team-task-fade) + var(--mosaic-gap));
@@ -500,13 +489,13 @@ path.image-annotation-hit { fill: none; }
   display: grid;
   grid-area: tasks;
   align-self: end;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   min-width: 0;
   margin: 0 8px;
   overflow: hidden;
 }
-.team-task-rail > :is(.team-tasks, [data-work-scope="team"], .team-lights) { align-self: end; }
-.team-task-rail > :is([data-work-scope="team"], .team-lights) { min-inline-size: var(--team-edge-tab-min-inline-size); }
+.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { align-self: end; }
+.team-task-rail > [data-work-scope="team"] { min-inline-size: var(--team-edge-tab-min-inline-size); }
 .team-task-rail > [data-work-scope="team"] { grid-column: 1; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;
@@ -546,17 +535,14 @@ path.image-annotation-hit { fill: none; }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 
-/* The ticker now owns the complete status row. Its top rule matches the
-   composer's bottom edge, and its surface stops at the padding box so the
-   translucent stroke keeps the same compositing geometry across the team. */
-.team-toolbar > .ticker {
-  grid-area: status;
-  align-self: stretch;
+/* The shared status surface owns one top rule; text keeps its own live region. */
+.team-status-row > .ticker {
+  grid-column: 2; align-self: stretch; border-block-start: 0; background: transparent;
   min-width: 0;
   padding: 0 var(--team-chamber-inset);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));
 }
-.team-toolbar > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"])
+.team-status-row > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"])
   > :is(.ticker-age, .ticker-prefix, .ticker-detail) {
   opacity: var(--inactive-lane-opacity);
 }
