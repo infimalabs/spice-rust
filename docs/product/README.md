@@ -24,7 +24,6 @@ implementation choice is part of the contract.
 | File | What it answers |
 | --- | --- |
 | [invariants.md](invariants.md) | The product contract: a semantic register of named invariants. |
-| [cases.md](cases.md) | The case battery. Every registered invariant is covered by a case or by a declared audit where execution cannot demonstrate absence. |
 | [value.md](value.md) | Why this is valuable: the workflow guarantees, interface components, and how they compose. |
 | [loops.md](loops.md) | The transformative loops, jitter contract, and interface-surface contract. |
 | [model.md](model.md) | Domain model, state machines, policies, loops, boundaries, failure semantics, journeys, and ontology. |
@@ -82,7 +81,9 @@ evidence. A disagreement is a defect, never an alternate product model.
   behavior.
 - **Which properties fail most quietly when violated?** See [The properties most
   worth guarding](invariants/distribution.md#the-properties-most-worth-guarding).
-- **How is this tested?** See [The case battery](cases.md#the-battery).
+- **How is this tested?** Executable suites are the evidence; the [Rust
+  implementation profile](rust.md) names the code and coverage that own each
+  concrete selection.
 - **What does this word mean?** See [The ontology and its
   anti-vocabulary](model/failures.md#ontology).
 - **Why does the interface feel like this?** See [The jitter
@@ -95,7 +96,6 @@ evidence. A disagreement is a defect, never an alternate product model.
 ## Model integrity
 
 The product model is internally sound only while every relative link and
-semantic anchor resolves, every Mermaid fence renders, every invariant has a
-unique name and anchor, every case has a unique situation, and every registered
-invariant is covered by a case or declared audit. A check that cannot inspect
-its input must refuse rather than report a clean result.
+semantic anchor resolves, every Mermaid fence renders, and every invariant has a
+unique name and anchor. A check that cannot inspect its input must refuse rather
+than report a clean result.
