@@ -223,8 +223,8 @@ edge through resizes only while the operator leaves it there; once they scroll
 to another team, a keyboard opening or closing, a rotation, or a team arriving
 keeps their place.
 
-The range words ride inside their pill flyers. Each 22px-high thumb travels
-inside a 26px-high groove, inset 2px at both ends; label travel follows that
+The range words ride inside their pill flyers. Each 19px-high thumb travels
+inside a 23px-high groove, inset 2px at both ends; label travel follows that
 same rail at every stop. Both rows use one light map: Quiet and Steer keep the
 neutral groove, Speak and Drive illuminate its complete backplane green, and
 Narrate and Drain illuminate it amber. Each colored stop is one uniform
@@ -245,15 +245,16 @@ An idle team with no draft, quote, or image dims the send frame while leaving
 the sliders usable; draft input rerenders that frame only when its active answer
 changes.
 
-The panel begins with a three-pixel top inset and has four rows separated by
-three three-pixel gaps: a 34-pixel two-slot button row, two equal 26-pixel
-range rows, then the 62-pixel SEND row, because
-$(160 - 3 - 34 - 62 - 3 \times 3) / 2 = 26$. TURBO occupies the upper-left slot
-at the global Spice control's diameter, with equal three-pixel top and left
-clearance; the team-menu button in the upper-right slot opens the swap/join
-arrangement menu beside the control column and closes it again. Each range runs
-left to right, minimum to maximum, as a 46 × 22 labeled thumb in a 74 × 26
-groove with three pixels of panel inset at each end. Every current-value word
-fills the same 32 × 9 label box, centered with seven pixels of horizontal and
-six-and-a-half pixels of vertical thumb clearance; the box clips overscan before
-it reaches the rounded edge.
+The panel begins with a three-pixel top inset and holds four rows: a 34-pixel
+two-slot button row, two 23-pixel range grooves, then the 62-pixel SEND row.
+Each range row is exactly its groove, so the remaining height divides into three
+equal five-pixel gaps (button row to first groove, groove to groove, second
+groove to SEND), because $(160 - 3 - 34 - 2 \times 23 - 62) / 3 = 5$. TURBO
+occupies the upper-left slot at the global Spice control's diameter, with equal
+three-pixel top and left clearance; the team-menu button in the upper-right slot
+opens the swap/join arrangement menu beside the control column and closes it
+again. Each range runs left to right, minimum to maximum, as a 46 × 19 labeled
+thumb in a 74 × 23 groove with three pixels of panel inset at each end. Every
+current-value word fills the same 32 × 9 label box, centered with seven pixels
+of horizontal and five pixels of vertical thumb clearance; the box clips
+overscan before it reaches the rounded edge.

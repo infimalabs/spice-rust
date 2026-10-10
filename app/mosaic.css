@@ -844,22 +844,22 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-send-rim-width: 3px; --team-send-command-ring-width: 1px;
 }
 /* The sharp 80 × 160 panel holds two round utility buttons, two pill flyers,
-   and SEND. Range rows receive the remaining height. */
+   and SEND below a three-pixel top inset. Each slider row is exactly its
+   groove, and the remaining height divides into three equal gaps. */
 .team-composer .team-composer-controls {
   --app-control-glass-depth: calc(var(--app-glass-thickness) + var(--app-glass-thickness) + var(--app-glass-thickness));
-  --team-control-gap: 3px;
+  --team-control-inset: 3px;
   --team-control-send-size: 62px;
   --team-control-button-size: var(--app-round-control-size);
-  --team-control-fixed-block: calc(var(--team-control-send-size) + var(--team-control-button-size) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap) + var(--team-control-gap));
-  --team-slider-row-block: calc((var(--team-composer-block-size) - var(--team-control-fixed-block)) / 2);
-  --team-slider-inset: var(--team-control-gap);
-  --team-slider-groove-block: 26px;
+  --team-slider-inset: var(--team-control-inset);
+  --team-slider-groove-block: 23px;
   --team-slider-thumb-inline: 46px;
-  --team-slider-thumb-block: 22px;
+  --team-slider-thumb-block: 19px;
   --team-slider-thumb-inset: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
-  position: relative; display: grid; row-gap: var(--team-control-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
-  margin-block-start: 0; padding-block-start: var(--team-control-gap); block-size: var(--team-composer-block-size);
-  grid-template: var(--team-control-button-size) repeat(2, var(--team-slider-row-block)) var(--team-control-send-size) / repeat(2, minmax(0, 1fr));
+  --team-control-row-gap: calc((var(--team-composer-block-size) - var(--team-control-inset) - var(--team-control-button-size) - var(--team-slider-groove-block) - var(--team-slider-groove-block) - var(--team-control-send-size)) / 3);
+  position: relative; display: grid; row-gap: var(--team-control-row-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
+  margin-block-start: 0; padding-block-start: var(--team-control-inset); block-size: var(--team-composer-block-size);
+  grid-template: var(--team-control-button-size) repeat(2, var(--team-slider-groove-block)) var(--team-control-send-size) / repeat(2, minmax(0, 1fr));
   border: 0; border-radius: 0;
   isolation: isolate;
   box-shadow:
@@ -972,7 +972,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider .team-slider-words {
   position: absolute; inset-block: 0; margin-block: auto;
   inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-thumb-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - 2 * var(--team-slider-thumb-inset) - var(--team-slider-thumb-inline)) + 7px);
-  inline-size: calc(var(--team-slider-thumb-inline) - 14px); block-size: calc(var(--team-slider-thumb-block) - 13px);
+  inline-size: calc(var(--team-slider-thumb-inline) - 14px); block-size: calc(var(--team-slider-thumb-block) - 10px);
   z-index: 1; color: var(--ink); pointer-events: none; transition: inset-inline-start var(--app-motion-settle) var(--app-ease-standard);
 }
 .team-slider-words > span { position: absolute; inset: 0; }
