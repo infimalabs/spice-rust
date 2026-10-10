@@ -3,13 +3,20 @@
 use std::ffi::OsString;
 use std::time::Duration;
 
+use lane::occupant::Seats;
 use sill::Environment;
+
+use crate::resident::lane_surface::{
+    AdvisoryRtkFixture, AutomaticWake, BeginAutomaticWake, begin_automatic_wake,
+    finish_automatic_wake,
+};
 
 use super::super::super::supervisor::terminal::{Job, Jobs};
 use super::*;
 
 /// How long a test waits for a keeper to publish its state.
 const KEEPER_BOUND: Duration = Duration::from_secs(2);
+const PREDECESSOR_SESSION: &str = "018f7777-7777-7444-8888-999999999999";
 
 struct Supervisors(PathBuf);
 
@@ -202,59 +209,211 @@ fn a_vacant_lane_with_only_a_service_and_ended_jobs_stops_rolling() {
 }
 
 #[test]
-fn a_timed_out_job_hands_its_lane_back_with_the_claim_still_live() {
-    let fixture = automatic_fixture();
-    let supervisors = Supervisors::new("deadline");
-    let timeout = Duration::from_secs(60);
-    let job = supervisors.start(fixture.authority.lane, "sleep 30", Some(timeout));
-    let started = job
-        .state()
-        .expect("job state reads")
-        .expect("keeper published")
-        .started_millis;
-    // Keeper start, timeout, one second to terminate, two to deliver: the
-    // instant the keeper wakes the lane for a job that ran into its timeout.
-    let woken = Instant::new(
-        jiff::Timestamp::from_millisecond(
-            i64::try_from(started + 60_000 + 1_000 + 2_000).expect("fixture millis"),
-        )
-        .expect("fixture wake"),
-    )
-    .expect("fixture wake is canonical");
-    let rolling = crate::board_command::AUTOMATIC_ROLLING_SECONDS;
-    vacate(&fixture);
-    renew_claim(&fixture, shifted(woken, 60));
+fn a_successor_wake_carries_the_claim_after_a_vacant_job_times_out() {
+    let advisory = AdvisoryRtkFixture::new();
+    let fixture = automatic_fixture_for(&advisory);
+    let supervisors = Supervisors(advisory.paths.supervisors.clone());
+    let timeout = Duration::from_millis(200);
+    let job = supervisors.start(fixture.authority.lane, "sleep 1", Some(timeout));
     let mut timers = supervisors.timers(&fixture);
 
-    // The last heartbeat lands as the job runs into its timeout.
-    let heartbeat = shifted(woken, -10);
+    let heartbeat = Instant::new(jiff::Timestamp::now()).expect("fixture heartbeat is canonical");
     assert_eq!(
         renew_at(&mut timers, &fixture, heartbeat),
         Fired::ClaimRenew
     );
-    let carried = lease(&fixture);
-    assert_eq!(carried.expiry, shifted(heartbeat, rolling));
-    let promoted = crate::resident::lane_surface::promoted_lease(
-        &carried,
-        fixture.authority.epoch,
-        woken,
-        false,
-    )
-    .expect("the keeper's wake finds the claim live");
+    let renewed = lease(&fixture);
     assert_eq!(
-        promoted.expiry,
-        shifted(woken, rolling),
-        "the woken successor gets a full rolling window to reclaim",
+        renewed.expiry,
+        shifted(heartbeat, crate::board_command::AUTOMATIC_ROLLING_SECONDS)
     );
 
-    // A keeper that never reports still bounds the vacated lease.
-    let silent = shifted(woken, 20);
-    assert_eq!(renew_at(&mut timers, &fixture, silent), Fired::ClaimRenew);
-    assert_eq!(lease(&fixture).expiry, shifted(woken, rolling));
+    let waited = std::time::Instant::now();
+    while job.ended().is_none() {
+        assert!(
+            waited.elapsed() < KEEPER_BOUND,
+            "the timed-out keeper publishes its ending"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
+        endpoint: "http://127.0.0.1:1".to_owned(),
+        capability: advisory.capability,
+        epoch: advisory.epoch,
+    };
+    crate::resident::steering::publish_lane_surface(
+        &advisory.paths,
+        &discovery,
+        advisory.lane,
+        advisory.capability,
+    )
+    .expect("fixture lane surface publishes");
+    let runtime = advisory.lane_runtime(&fixture.bus, &capabilities, &discovery);
+    let snapshot = fixture
+        .bus
+        .task_snapshot()
+        .expect("wake decision snapshot reads");
+    let successor = uuid(42);
+    let launch = match begin_automatic_wake(
+        &fixture.bus,
+        &advisory.paths,
+        advisory.epoch,
+        &Seats::new(),
+        &runtime,
+        &steer::Config::default(),
+        advisory.lane,
+        successor,
+        Some(&snapshot),
+        None,
+        false,
+    )
+    .expect("successor wake is admitted")
+    {
+        BeginAutomaticWake::Launch(launch) => launch,
+        BeginAutomaticWake::Unstarted(outcome) => {
+            panic!("successor launch did not spawn: {outcome:?}")
+        }
+    };
+    let (launch, pending) = launch.into_parts();
+    let wake_started = Instant::new(jiff::Timestamp::now()).expect("wake instant is canonical");
+    let mut seats = Seats::new();
+    let outcome = finish_automatic_wake(
+        &fixture.bus,
+        &advisory.paths,
+        advisory.epoch,
+        &mut seats,
+        pending,
+        launch.establish(),
+    )
+    .expect("successor wake commits");
+    assert!(matches!(outcome, AutomaticWake::Started));
+
+    let carried = fixture.bus.task_snapshot().expect("carried claim reads");
+    let carried = carried
+        .tasks()
+        .iter()
+        .find(|heads| heads.statement().body().born == fixture.authority.born())
+        .expect("carried task remains");
+    let claim = carried.claim().expect("carried claim remains");
+    let promoted = carried.lease().expect("carried lease remains");
+    assert_eq!(claim.body().occupant, successor);
+    assert_eq!(claim.position(), promoted.position());
+    assert!(
+        promoted.body().expiry > renewed.expiry,
+        "the successor receives a new rolling window after the job timeout"
+    );
+    assert!(
+        promoted.body().expiry
+            >= shifted(
+                wake_started,
+                crate::board_command::AUTOMATIC_ROLLING_SECONDS
+            )
+    );
+    let facts = fixture.bus.fact_snapshot().expect("carried facts read");
+    let carried_fact = facts
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == claim.position())
+        .expect("claim head names its carried fact");
+    assert_eq!(carried_fact.fact.kind(), wire::FactKind::ClaimCarried);
+
+    seats.release_all();
+    crate::resident::steering::remove_lane_surface(&advisory.paths, advisory.lane);
     job.stop().expect("the job stops");
     drop(timers);
+    fixture.bus.verify().expect("fixture authority verifies");
     fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+fn automatic_fixture_for(advisory: &AdvisoryRtkFixture) -> Fixture {
+    let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let start = shifted(
+        now,
+        -(crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS + 1),
+    );
+    let authority = Authority {
+        task: task(),
+        lane: advisory.lane,
+        occupant: advisory.occupant,
+        epoch: advisory.epoch,
+        worktree: advisory.root.to_string_lossy().into_owned(),
+        start,
+        expiry: shifted(start, crate::board_command::AUTOMATIC_PROVISIONAL_SECONDS),
+        maximum: shifted(start, crate::board_command::AUTOMATIC_MAXIMUM_SECONDS),
+    };
+    let mut vacant = lane_residency(&authority);
+    vacant.occupant = None;
+    vacant.disposition = "vacant".to_owned();
+    let record = format!(
+        r#"{{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{{"sessionId":"{PREDECESSOR_SESSION}"}}}}"#
+    );
+    let tape = tape::Tape::open(
+        advisory
+            .paths
+            .tape
+            .join(advisory.lane.to_string())
+            .join(advisory.vendor.as_str()),
+    )
+    .expect("fixture tape opens");
+    let locus = tape
+        .tee(record.as_bytes())
+        .expect("fixture session declaration commits");
+    vacant.session = Some(wire::LaneSession {
+        lane: advisory.lane,
+        occupant: advisory.occupant,
+        worktree: authority.worktree.clone(),
+        vendor: advisory.vendor.clone(),
+        launch: None,
+        epoch: advisory.epoch,
+        stream: "stdout".to_owned(),
+        identity: PREDECESSOR_SESSION.to_owned(),
+        locus: wire::TapeLocus {
+            member: locus.member,
+            offset: locus.offset,
+            length: locus.length,
+        },
+    });
+    let mut journal = journal::Journal::in_memory().expect("fixture journal opens");
+    journal
+        .apply(seed_write_with_lanes(&authority, vec![vacant]))
+        .expect("fixture vacant automatic authority seeds");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let residency = bus
+        .residency_head()
+        .expect("fixture residency reads")
+        .expect("fixture residency exists")
+        .body()
+        .clone();
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let mut recognition = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{}", advisory.epoch)
+            .parse()
+            .expect("fixture resident origin"),
+        at,
+        Producer::CommandDoor,
+    );
+    let seated = recognition
+        .fact(
+            body::UpSeated {
+                epoch: advisory.epoch,
+            },
+            FactCause::Root,
+        )
+        .expect("fixture resident fact builds");
+    recognition.residency_head(seated, move |_| residency);
+    assert!(matches!(
+        bus.commit(recognition)
+            .expect("fixture resident recognition commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
+    Fixture {
+        bus,
+        projects: projects(),
+        authority,
+    }
 }
 
 /// Run the armed renewal at `at` rather than at wall time.
