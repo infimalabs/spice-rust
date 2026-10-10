@@ -1,35 +1,9 @@
 //! The fact vocabulary is closed, and every kind in it is spelled exactly once.
 //!
-//! `FactKind` declares itself closed: a spelling absent from the enum is not a
-//! fact. A closed set earns nothing unless something enforces it, so this
-//! fixture enforces it from two sides.
-//!
-//! The compiler holds one side. [`plane`] matches `FactKind` exhaustively from
-//! outside the defining crate, which is only possible because the enum is not
-//! `#[non_exhaustive]`. Adding a variant fails the build naming the variant it
-//! did not cover, before any test runs.
-//!
-//! The source holds the other side. The spellings are read out of
-//! `wire/src/fact.rs` rather than restated here, so a kind cannot be added,
-//! renamed, or left unspelled without this suite saying which one. Restating
-//! the list would only pin a copy against a copy.
-//!
-//! What is read is the `vocabulary!` table, because that table is where a kind
-//! is declared: one row names the variant, its spelling, and the producer class
-//! that mints it, and the enum, the spellings, and the body registry are all
-//! expanded from it. Reading the expansion instead would read this crate's own
-//! output back to itself, which is why the parser below looks for the table and
-//! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
-//! at it would find no variants and prove nothing about all 69 of them.
-//!
-//! [`PINNED`] holds the third side, and the one neither of the others can
-//! supply. Both of those read the crate under test: the match covers its enum
-//! and the parser reads its source, so a renamed spelling moves the enum, the
-//! source, and every expectation drawn from either of them at once, and nothing
-//! fails. An oracle taken from the artifact it judges detects absence, never
-//! drift. `PINNED` is written out by hand here, so a spelling that changes in
-//! `wire/src/fact.rs` alone is a spelling that disagrees with an independent
-//! statement of what it was agreed to be.
+//! [`PINNED`] states each kind's agreed wire spelling independently of the
+//! crate under test. The compiled vocabulary must cross as exactly those
+//! spellings, name no kind the table lacks, and decode every pinned spelling
+//! back to its own kind, so two kinds can never share one word.
 
 use std::collections::BTreeMap;
 
@@ -38,11 +12,9 @@ use wire::FactKind;
 /// Every kind's wire spelling, written out here rather than read from the crate
 /// under test.
 ///
-/// The parser answers "what does `fact.rs` say today". This answers "what were
-/// these spellings agreed to be", and only a deliberate edit here can change
-/// that answer. Renaming `taste::confirmed` to `taste::vindicated` in the
-/// vocabulary table used to pass the whole workspace suite in silence, because
-/// every expectation was drawn from the file being renamed.
+/// A spelling drawn from `wire/src/fact.rs` would move with every rename of
+/// that file; this answers "what were these spellings agreed to be", and only a
+/// deliberate edit here can change that answer.
 ///
 /// Silence is the expensive part. These spellings cross the socket, rest in the
 /// journal, and compile into the browser app, so a rename nobody is forced to

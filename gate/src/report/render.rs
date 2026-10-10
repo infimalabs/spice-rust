@@ -141,12 +141,9 @@ pub(super) fn render_movement(rendered: &mut String, movement: ReportMutationMov
 
 /// Name every cause refusing this tree, and the evidence behind each one.
 ///
-/// Public because two callers need exactly these words, and only one of them
-/// can see this crate's insides. The report fixtures adjudicate the live
-/// workspace from within; `tracked_inputs_load_one_operational_current_contract`
-/// in `gate/tests/input.rs` adjudicates the same root from outside, and without
-/// this would fail with a bare standing that names no metric and no path. One
-/// copy is what stops the two explanations from drifting apart.
+/// Public so a gate caller outside this crate can explain a refused live
+/// workspace with the same words the in-crate report fixtures use, instead of a
+/// bare standing that names no metric and no path.
 ///
 /// A refusal here says nothing about an earlier compiler or test step having
 /// passed: those steps can be green on a tree these assertions reject.
