@@ -692,7 +692,9 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
 }
 
 /// A quoted MSG names the occupant that wrote it; the sending lane's later
-/// occupant never inherits its authorship.
+/// occupant never inherits its authorship. Once the author departs, a vacant
+/// lane still names itself as the historical author, and a lane gone from the
+/// roster leaves the exact identities unresolved.
 #[test]
 fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
     let id = |suffix: &str| -> wire::CanonicalUuid {
@@ -728,4 +730,33 @@ fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
     assert!(!render(&reseated).contains("successor-agent"));
     let seated = BTreeMap::from([((lane, Some(author)), agent("author-agent"))]);
     assert!(render(&seated).contains("author-agent"));
+
+    let name = |state: &str, label: &str| {
+        format!(
+            "data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{author}\" \
+             data-quote-author-state=\"{state}\"{}>{label}</span>",
+            if state == "unresolved" {
+                ""
+            } else {
+                " data-accent=\"2\""
+            }
+        )
+    };
+    let vacant = render(&BTreeMap::from([((lane, None), agent("vacant-lane"))]));
+    assert!(
+        vacant.contains(&name("historical", "vacant-lane")),
+        "{vacant}"
+    );
+    let absent = render(&QuoteAgents::new());
+    assert!(
+        absent.contains(&name(
+            "unresolved",
+            &format!(
+                "{}/{}",
+                crate::watchband::short(lane),
+                crate::watchband::short(author)
+            )
+        )),
+        "{absent}"
+    );
 }
