@@ -12,10 +12,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::measure::spawn;
 use serde::{Deserialize, Serialize};
 use sill::{
     Argv, Cancellation, CapturedOutput, Deadlines, Environment, Output, ProcessGroup, Redaction,
-    RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy, spawn,
+    RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 use wire::{Digest, Domain};
 

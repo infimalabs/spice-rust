@@ -5,8 +5,9 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::measure::spawn;
 use serde::Deserialize;
-use sill::{Argv, Completion, spawn};
+use sill::{Argv, Completion};
 
 use super::{Analysis, Captured, complete_output, extension, selected_changes, tool_environment};
 use crate::measure::Bounds;

@@ -29,6 +29,7 @@ toml = { version = "1.1.4", default-features = false, features = [
 wire = { path = "../wire" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parking_lot = "0.12.5"
 gix = { version = "0.86.0", default-features = false, features = ["blob-diff", "index", "revision", "sha1", "tree-editor"] }
 gix-diff = { version = "0.66.0", default-features = false, features = ["index"] }
 tree-sitter = "0.26.11"

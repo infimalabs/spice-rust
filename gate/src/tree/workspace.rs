@@ -192,7 +192,10 @@ impl BuildRoot {
             staged_authority,
             publishes_state,
             retained: self.retained,
-            possession: self.possession.take(),
+            possession: self
+                .possession
+                .take()
+                .map(|possession| super::consumer::ConsumerLease::new(&self.root, possession)),
         }
     }
 }
@@ -409,8 +412,10 @@ pub(super) fn workspace_lock(workspace: &Path) -> Result<LockFile, String> {
 /// A lock whose workspace is absent is considered separately. That shape can
 /// be residue from a run killed after removing its workspace, but it is also the
 /// shape of a live run between locking a fresh name and creating its directory.
-/// The lock is therefore unlinked only while this sweep possesses it and a
+/// Ephemeral locks are unlinked only while this sweep possesses them and a
 /// second absence check proves that no directory appeared during acquisition.
+/// Retained-slot locks keep their inode even without a workspace: the reused
+/// name must exclude openers that have not yet acquired kernel possession.
 ///
 /// A retained workspace is the one shape an unheld lock does not condemn. It
 /// is kept on purpose, between runs, for the repository named in its owner
@@ -451,6 +456,11 @@ fn reclaim_parentless_lock(lock_path: &Path) {
     let Some(workspace) = workspace_named_by_lock(lock_path) else {
         return;
     };
+    // Retained slots are reused names. Unlinking their lock could strand an
+    // opener on the old inode and admit a second owner on its replacement.
+    if is_retained_workspace(&workspace) {
+        return;
+    }
     if !matches!(workspace.try_exists(), Ok(false)) || !is_workspace_lock_file(lock_path) {
         return;
     }
@@ -518,6 +528,8 @@ fn reclaim_workspace(workspace: &Path, possession: &Possession) -> HeldRootRemov
 /// nothing left to describe once the workspace is gone, and a workspace name
 /// carries a fresh nonce per run, so a lock retained for every run ever made
 /// would accumulate exactly what this reclaim exists to prevent.
+/// Retained slot names are reused rather than nonce-minted, so their lock
+/// inodes remain stable even after their workspace is reclaimed.
 ///
 /// The order is what keeps that safe. The lock is unlinked last, and only on a
 /// removal that succeeded, so this never leaves a workspace standing with no
@@ -525,7 +537,7 @@ fn reclaim_workspace(workspace: &Path, possession: &Possession) -> HeldRootRemov
 /// act on, and so the one state a workspace could never be reclaimed from.
 pub(super) fn release_workspace(workspace: &Path, possession: &Possession) -> HeldRootRemoval {
     let removal = reclaim_workspace(workspace, possession);
-    if matches!(removal, HeldRootRemoval::Removed) {
+    if matches!(removal, HeldRootRemoval::Removed) && !is_retained_workspace(workspace) {
         let _ = fs::remove_file(possession.lock().path());
     }
     removal
@@ -536,5 +548,37 @@ impl Drop for BuildRoot {
         if let Some(possession) = self.possession.take() {
             retire_workspace(&self.workspace, &possession, self.retained);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_slot_openers_keep_one_exclusive_lock_across_reclamation() {
+        let fixture = crate::test_repository::Fixture::repository("retained-slot-ownership");
+        let workspace = fixture.join(format!("{RETAINED_PREFIX}slot-0"));
+        let lock = workspace_lock(&workspace).unwrap();
+        let descriptor = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock.path())
+            .unwrap();
+        reclaim_parentless_lock(lock.path());
+        let Acquisition::Acquired(possession) = lock.try_acquire_opened(descriptor).unwrap() else {
+            panic!("first opener must acquire");
+        };
+        assert!(matches!(
+            lock.try_acquire().unwrap(),
+            Acquisition::Contended
+        ));
+        drop(possession);
+        assert!(matches!(
+            lock.try_acquire().unwrap(),
+            Acquisition::Acquired(_)
+        ));
     }
 }

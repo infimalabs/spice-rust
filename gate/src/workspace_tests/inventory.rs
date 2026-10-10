@@ -694,7 +694,7 @@ fn acquire_inventory_with_resolution(
         Cancellation::Never,
         "workspace-test metadata",
     )?;
-    let outcome = sill::spawn(spec)
+    let outcome = crate::measure::spawn(spec)
         .map_err(|error| WorkspaceTestError::new(format!("metadata launch failed: {error}")))?
         .wait()
         .map_err(|error| WorkspaceTestError::new(format!("metadata wait failed: {error}")))?;

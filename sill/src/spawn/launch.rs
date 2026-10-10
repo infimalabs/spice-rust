@@ -16,6 +16,7 @@ use std::os::unix::process::CommandExt;
 pub(super) fn spawn_inner(
     spec: Spec,
     observation: Option<Observation>,
+    retained: Option<&mut crate::Possession>,
     guarded: Option<&File>,
     arm: &mut dyn FnMut(u32) -> io::Result<()>,
 ) -> io::Result<Running> {
@@ -46,7 +47,11 @@ pub(super) fn spawn_inner(
     if let Some(guardian) = guardian.as_ref() {
         arm(guardian.id())?;
     }
-    let mut child = command(&spec, guardian.as_ref()).spawn()?;
+    let mut command = command(&spec, guardian.as_ref());
+    if let Some(possession) = retained {
+        possession.retain_through_child(&mut command);
+    }
+    let mut child = command.spawn()?;
     let started = Instant::now();
     let pid = child.id();
     let pipes = match capture_pipes(&mut child, &spec) {

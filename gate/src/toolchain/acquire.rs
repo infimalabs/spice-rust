@@ -39,7 +39,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 
-use sill::{Argv, Completion, spawn};
+use crate::measure::spawn;
+use sill::{Argv, Completion};
 use wire::{Digest, Domain};
 
 use super::analyze::{self, Analysis};

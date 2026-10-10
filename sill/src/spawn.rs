@@ -361,7 +361,26 @@ pub struct Running {
 
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
-    spawn_inner(spec, None, None, &mut |_| Ok(()))
+    spawn_inner(spec, None, None, None, &mut |_| Ok(()))
+}
+
+/// Spawn a consumer that inherits an already-held resource lock.
+///
+/// The inherited open description keeps possession until the consumer and
+/// its descendants close it, including when the spawning parent exits first.
+/// Only this validated descriptor has close-on-exec cleared in the child.
+///
+/// # Errors
+///
+/// Returns an I/O error if observation configuration, descriptor inheritance,
+/// child creation, or capture setup fails.
+#[cfg(unix)]
+pub fn spawn_retaining(
+    spec: Spec,
+    observation: Option<Observation>,
+    possession: &mut crate::Possession,
+) -> io::Result<Running> {
+    spawn_inner(spec, observation, Some(possession), None, &mut |_| Ok(()))
 }
 
 /// Spawn one child whose possession outlives this process, publishing the
@@ -378,7 +397,7 @@ pub(crate) fn spawn_guarded(
     file: &File,
     arm: &mut dyn FnMut(u32) -> io::Result<()>,
 ) -> io::Result<Running> {
-    spawn_inner(spec, None, Some(file), arm)
+    spawn_inner(spec, None, None, Some(file), arm)
 }
 
 /// Spawn one child with a bounded selected-stream observer.
@@ -392,7 +411,7 @@ pub(crate) fn spawn_guarded(
 /// or when the child and its capture workers cannot be created.
 #[cfg(unix)]
 pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
-    spawn_inner(spec, Some(observation), None, &mut |_| Ok(()))
+    spawn_inner(spec, Some(observation), None, None, &mut |_| Ok(()))
 }
 
 #[cfg(not(unix))]

@@ -9,16 +9,15 @@
 //! repository cannot be pointed at a different one.
 //!
 //! Each materialization is a real directory of real bytes below the temporary
-//! directory, and a run that unwinds removes its own. A run that is *killed*
-//! unwinds nothing, so every workspace is held under the advisory lock the
-//! crate's `held_root` module supplies, for exactly as long as it is live. That
-//! lock is what lets a later run tell a killed run's wreckage from a tree a live
-//! gate is measuring, and reclaim only the first.
+//! directory. Retained staged slots preserve unchanged source timestamps.
+//! Every source-consuming child inherits the slot's lock description, so a
+//! dropped or killed gate cannot expose its compiler's source to a refill.
+//! Ephemeral roots are reclaimed only when no consumer holds their lock;
+//! abandoned-workspace recovery applies the same kernel possession check.
 
 use std::path::{Path, PathBuf};
 
 use gix::objs::WriteTo as _;
-use sill::Possession;
 
 use crate::state::RenameMap;
 
@@ -27,18 +26,20 @@ const STAGED_RENAME_SIMILARITY: f32 = 0.5;
 /// Zero is the plumbing API's explicit unlimited-candidate setting.
 const STAGED_RENAME_LIMIT: usize = 0;
 
+mod consumer;
 mod error;
 mod materialize;
 mod source;
 mod workspace;
 
+pub(crate) use consumer::spawn as spawn_consumer;
 pub use error::TreeError;
 use materialize::{
     create_private_directory_tree, create_private_workspace, make_immutable, make_removable,
     materialize_items, private_directory, verify_immutable, write_private_source,
 };
 use source::{IndexSeal, RevisionSeal, SelectionSeal, head_seal};
-use workspace::{BuildRoot, retire_workspace};
+use workspace::BuildRoot;
 
 /// Which immutable Git source a gate should measure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,11 +233,10 @@ pub enum RefreshableSourceState {
     IndexChanged,
 }
 
-/// One private materialization owned for the duration of a gate run.
+/// One private materialization held through its gate and source consumers.
 ///
-/// The possession is kept in an [`Option`] so [`Drop`] can take it: the removal
-/// this tree owes runs while its lock is still held, which is the invariant
-/// `held_root::remove_held_root` carries in its signature.
+/// Dropping the tree retires its parent lease. Inherited child descriptions
+/// continue to exclude refills and reclamation until their last close.
 #[derive(Debug)]
 pub struct SelectedTree {
     workspace: PathBuf,
@@ -248,7 +248,7 @@ pub struct SelectedTree {
     staged_authority: Option<StagedAuthority>,
     publishes_state: bool,
     retained: bool,
-    possession: Option<Possession>,
+    possession: Option<consumer::ConsumerLease>,
 }
 
 /// Git file mode retained for one regular selected-tree entry.
@@ -479,7 +479,7 @@ fn write_index_tree(repo: &gix::Repository, items: &[Item]) -> Result<String, Tr
 impl Drop for SelectedTree {
     fn drop(&mut self) {
         if let Some(possession) = self.possession.take() {
-            retire_workspace(&self.workspace, &possession, self.retained);
+            possession.retire(&self.workspace, self.retained);
         }
     }
 }

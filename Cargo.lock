@@ -786,6 +786,7 @@ dependencies = [
  "gix-glob",
  "inotify",
  "libc",
+ "parking_lot",
  "proc-macro2",
  "regex",
  "rustpython-ast",

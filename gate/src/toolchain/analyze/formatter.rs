@@ -4,7 +4,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sill::{Argv, Completion, spawn};
+use crate::measure::spawn;
+use sill::{Argv, Completion};
 
 use super::*;
 

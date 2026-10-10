@@ -28,6 +28,8 @@ pub use observe::{
 };
 #[cfg(unix)]
 pub use process_tree::DescendantGroups;
+#[cfg(unix)]
+pub use spawn::spawn_retaining;
 pub use spawn::{
     CapturedOutput, Completion, ProcessUsage, Running, WaitError, WaitOutcome, WaitStep, spawn,
     spawn_observed,
