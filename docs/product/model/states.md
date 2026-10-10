@@ -120,9 +120,10 @@ request along with the ambiguity.
 
 **Invariant —** The plan phase closes only when acceptance exists — on the task
 itself, or on at least one pending child carrying acceptance. The child may be
-the plan's dependency or may depend on the plan; either edge connects the work,
-and completion witnesses the same child state. A plan that produced no statable
-outcome has not planned anything.
+the plan's dependency or may depend on the plan; either edge connects the work.
+A completion preflight carries that connected child's exact statement and
+workflow without widening the bounded read to unrelated tasks. A plan that
+produced no statable outcome has not planned anything.
 
 **Invariant —** A plan-only flow must connect a pending child with acceptance
 in either dependency direction. Its entire product is the board it leaves
