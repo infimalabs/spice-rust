@@ -52,9 +52,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                 runtime: render.runtime,
                 retry: render.retry_relations.clone(),
             })}
-            if let Some(lanes) = render.lanes {
-                {super::work_jobs::render(&lanes.lanes)}
-            }
             <section class="work-overview-details" aria-labelledby="work-overview-details-title">
                 <div class="work-map-heading">
                     <h3 id="work-overview-details-title">{"Task details"}</h3>
@@ -87,6 +84,9 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                     })}
                 }
             </section>
+            if let Some(lanes) = render.lanes {
+                {super::work_jobs::render(&lanes.lanes)}
+            }
         </div>
     };
     let overlay = blockers.render_review(

@@ -44,13 +44,14 @@ so it never covers the node's label.
 The sheet reserves geometry: a region whose read can change holds one fixed
 footprint from first paint, so loading, enrichment, other lanes' board
 changes, and jobs starting or finishing move nothing below it. The graph frame
-is 18–28rem viewport-relative whatever the diagram's shape. The relationship
-list and any truncation scroll inside one 14–24rem viewport-relative region.
-**Running jobs** always holds five and a half rows (two and a half cards when
-narrow) and scrolls beyond them. A first detail read's placeholder holds a full
-sheet height, so its answer moves nothing still on screen. Status changes
-replace text in place: a trust approval in progress relabels its own button.
-Only a shown task's own detail content may grow or shrink in place.
+is 18–28rem viewport-relative whatever the diagram's shape. The Lineage,
+Reviews, and Lifecycle lenses list their evidence, and any truncation, inside
+one 14–24rem viewport-relative region below the graph. The Dependency lens has
+no list, since its graph already shows every task; only a truncated read adds
+its frontier there. A first detail read's placeholder holds a full sheet
+height, so its answer moves nothing still on screen. Status changes replace
+text in place: a trust approval in progress relabels its own button. Only a
+shown task's own detail content may grow or shrink in place.
 
 Every selected task then owns a full detail section below the graph. Current
 ownership and claim, task state and contract, project/team location, timestamps
@@ -61,6 +62,10 @@ rather than behind tabs, pagination, or next/previous controls. Activating a
 selected graph node scrolls and moves focus to that task's detail section;
 activating a related external task follows that lead in the same overview.
 Reduced-motion mode also removes graph transitions.
+
+**Running jobs** closes the sheet, after every task's details. It always holds
+five and a half rows (two and a half cards when narrow) and scrolls beyond
+them.
 
 Replacing a retained relationship or detail read keeps the admitted answer on
 screen and shows, toasts, and announces nothing. A first detail read holds a

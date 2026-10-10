@@ -242,7 +242,7 @@
 }
 /* Graph evidence arrives with enrichment and changes with the board, so its
    rows and any truncation scroll inside one fixed footprint instead of moving
-   jobs and details below. At its bounds, scrolling continues to the side view. */
+   the task details below. At its bounds, scrolling continues to the side view. */
 .work-map-list-scroll {
   display: grid;
   align-content: start;
