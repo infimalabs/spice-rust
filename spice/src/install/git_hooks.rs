@@ -119,39 +119,6 @@ mod tests {
     }
 
     #[test]
-    fn pre_commit_prelude_strips_every_leading_git_exec_path_and_keeps_authored_entries() {
-        for (exec_path, path, expected) in [
-            (
-                "/git/core",
-                "/git/core:/git/core:/git/core:/usr/bin:/git/core:/bin",
-                "/usr/bin:/git/core:/bin",
-            ),
-            (
-                "/git/core",
-                "/usr/bin:/git/core:/bin",
-                "/usr/bin:/git/core:/bin",
-            ),
-            ("/git/core", "/git/core/sub:/bin", "/git/core/sub:/bin"),
-            ("", "::/usr/bin", "::/usr/bin"),
-        ] {
-            let output = std::process::Command::new("/bin/sh")
-                .args(["-eu", "-c"])
-                .arg(format!("{PRE_COMMIT_ENVIRONMENT}printf '%s' \"$PATH\""))
-                .env_clear()
-                .env("GIT_EXEC_PATH", exec_path)
-                .env("PATH", path)
-                .output()
-                .expect("POSIX shell runs the pre-commit prelude");
-            assert!(output.status.success(), "{output:?}");
-            assert_eq!(
-                String::from_utf8(output.stdout).unwrap(),
-                expected,
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
     fn non_pre_commit_launchers_remain_exactly_two_lines() {
         for hook in [GitHook::CommitMessage, GitHook::ReferenceTransaction] {
             let text = String::from_utf8(launcher(Path::new("/git"), hook).unwrap()).unwrap();

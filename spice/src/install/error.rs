@@ -71,9 +71,6 @@ pub enum InstallError {
         path: String,
         observed: Option<Digest>,
     },
-    Interrupted {
-        operation: usize,
-    },
 }
 
 impl InstallError {
@@ -114,8 +111,7 @@ impl fmt::Display for InstallError {
             | Self::RecordMissing
             | Self::ApplyInProgress
             | Self::UnapplyInProgress
-            | Self::Drift { .. }
-            | Self::Interrupted { .. } => fmt_progress_error(self, formatter),
+            | Self::Drift { .. } => fmt_progress_error(self, formatter),
         }
     }
 }
@@ -242,9 +238,6 @@ fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) 
                 .as_ref()
                 .map_or_else(|| "absence".to_owned(), ToString::to_string)
         ),
-        InstallError::Interrupted { operation } => {
-            write!(formatter, "fixture interrupted after operation {operation}")
-        }
         _ => unreachable!("progress error formatter received another install error"),
     }
 }

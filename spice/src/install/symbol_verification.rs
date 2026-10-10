@@ -208,21 +208,12 @@ pub fn verify_symbols(
         .into());
     }
     let executable_bytes = read(repository, binary)?;
-    expect_uuid(
-        SymbolImage::Executable,
-        binary,
-        &executable_bytes,
-        provenance,
-    )?;
     let dwarf_bytes = read(repository, dwarf)?;
-    expect_uuid(SymbolImage::Dwarf, dwarf, &dwarf_bytes, provenance)?;
-    let observed = format!("{:x}", Sha256::digest(&executable_bytes));
-    if observed != provenance.executable_sha256() {
-        return Err(SymbolVerificationError::ExecutableSha256 {
-            expected: provenance.executable_sha256().to_owned(),
-            observed,
-        });
-    }
+    let observed = verify_images(
+        provenance,
+        (&binary.path, &executable_bytes),
+        (&dwarf.path, &dwarf_bytes),
+    )?;
     verify_progress(repository, &record)?;
     Ok(SymbolVerification {
         receipt: record.plan_digest.clone(),
@@ -252,10 +243,28 @@ fn read(repository: &Repository, operation: &Operation) -> Result<Vec<u8>, Insta
     fs::read(&path).map_err(|error| InstallError::io("read installed symbol image", path, error))
 }
 
+/// Prove both retained images declare the recorded `LC_UUID`, then that the
+/// executable still hashes to the recorded digest, which this returns.
+fn verify_images(
+    provenance: &SymbolProvenance,
+    executable: (&str, &[u8]),
+    dwarf: (&str, &[u8]),
+) -> Result<String, SymbolVerificationError> {
+    expect_uuid(SymbolImage::Executable, executable, provenance)?;
+    expect_uuid(SymbolImage::Dwarf, dwarf, provenance)?;
+    let observed = format!("{:x}", Sha256::digest(executable.1));
+    if observed != provenance.executable_sha256() {
+        return Err(SymbolVerificationError::ExecutableSha256 {
+            expected: provenance.executable_sha256().to_owned(),
+            observed,
+        });
+    }
+    Ok(observed)
+}
+
 fn expect_uuid(
     image: SymbolImage,
-    operation: &Operation,
-    bytes: &[u8],
+    (path, bytes): (&str, &[u8]),
     provenance: &SymbolProvenance,
 ) -> Result<(), SymbolVerificationError> {
     let observed = symbols::executable_uuid(bytes);
@@ -264,8 +273,91 @@ fn expect_uuid(
     }
     Err(SymbolVerificationError::Uuid {
         image,
-        path: operation.path.clone(),
+        path: path.to_owned(),
         recorded: provenance.uuid().to_owned(),
         observed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXECUTABLE: &str = ".spice-install/bin/spice";
+
+    fn provenance(uuid: &str, executable: &[u8]) -> SymbolProvenance {
+        serde_json::from_value(serde_json::json!({
+            "executable_sha256": format!("{:x}", Sha256::digest(executable)),
+            "uuid": uuid,
+            "commit": "0".repeat(40),
+            "dirty": false,
+            "path": symbols::SYMBOLS_PATH,
+        }))
+        .expect("fixture provenance decodes")
+    }
+
+    #[test]
+    fn images_verify_only_when_both_uuids_and_the_executable_digest_agree() {
+        let recorded = [0xE3; 16];
+        let executable = symbols::macho_with_uuid(recorded);
+        let uuid = symbols::executable_uuid(&executable).expect("fixture declares a UUID");
+        let provenance = provenance(&uuid, &executable);
+        let dwarf_path = symbols::SYMBOLS_DWARF_PATH;
+        let agreeing_dwarf = symbols::macho_with_uuid(recorded);
+
+        assert_eq!(
+            verify_images(
+                &provenance,
+                (EXECUTABLE, &executable),
+                (dwarf_path, &agreeing_dwarf)
+            )
+            .expect("the agreeing pair verifies"),
+            provenance.executable_sha256()
+        );
+
+        let foreign = symbols::macho_with_uuid([0x59; 16]);
+        let foreign_uuid = symbols::executable_uuid(&foreign);
+        let Err(SymbolVerificationError::Uuid {
+            image: SymbolImage::Dwarf,
+            path,
+            recorded: named,
+            observed,
+        }) = verify_images(
+            &provenance,
+            (EXECUTABLE, &executable),
+            (dwarf_path, &foreign),
+        )
+        else {
+            panic!("a replaced dSYM names its own UUID");
+        };
+        assert_eq!(
+            (path.as_str(), named.as_str(), observed),
+            (dwarf_path, uuid.as_str(), foreign_uuid.clone())
+        );
+
+        assert!(matches!(
+            verify_images(
+                &provenance,
+                (EXECUTABLE, b"not mach-o"),
+                (dwarf_path, &foreign)
+            ),
+            Err(SymbolVerificationError::Uuid {
+                image: SymbolImage::Executable,
+                observed: None,
+                ..
+            })
+        ));
+
+        let mut rebuilt = executable.clone();
+        rebuilt.push(0);
+        let Err(SymbolVerificationError::ExecutableSha256 { expected, observed }) = verify_images(
+            &provenance,
+            (EXECUTABLE, &rebuilt),
+            (dwarf_path, &agreeing_dwarf),
+        ) else {
+            panic!("same-UUID executable bytes that changed report their digest");
+        };
+        assert_eq!(expected, provenance.executable_sha256());
+        assert_eq!(observed, format!("{:x}", Sha256::digest(&rebuilt)));
+    }
 }

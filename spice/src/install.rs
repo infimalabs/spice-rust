@@ -42,10 +42,7 @@ use files::{
 };
 use path::validate_relative;
 pub use progress::PreparedInstall;
-use progress::{
-    apply_prepared_with_interruption, apply_with_interruption, unapply_with_interruption,
-    verify_progress,
-};
+use progress::{apply_expected, apply_prepared_record, unapply_record, verify_progress};
 use record::{RefreshRecord, read_record, read_record_for_refresh};
 use validation::{asset_contract, fixed_content_differs_from_current_build};
 
@@ -434,7 +431,7 @@ pub fn apply(
     spice_binary: Option<&Path>,
     expected: &Digest,
 ) -> Result<InstallReceipt, InstallError> {
-    apply_with_interruption(repository, spice_binary, expected, None)
+    apply_expected(repository, spice_binary, expected)
 }
 
 /// Apply a plan this process prepared, without deriving it a second time.
@@ -443,13 +440,13 @@ pub fn apply_prepared(
     spice_binary: Option<&Path>,
     prepared: PreparedInstall,
 ) -> Result<InstallReceipt, InstallError> {
-    apply_prepared_with_interruption(repository, spice_binary, prepared, None)
+    apply_prepared_record(repository, spice_binary, prepared)
 }
 
 /// Reverse the complete current install without touching drifted targets.
 pub fn unapply(repository: &Repository) -> Result<InstallReceipt, InstallError> {
     reclaim_temporary_records(repository)?;
-    unapply_with_interruption(repository, None)
+    unapply_record(repository)
 }
 
 fn build_plan(
