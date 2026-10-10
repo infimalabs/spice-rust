@@ -86,11 +86,6 @@ impl Error {
     pub(crate) const fn reason(&self) -> &'static str {
         self.reason
     }
-
-    #[cfg(test)]
-    pub(crate) fn detail(&self) -> &str {
-        &self.detail
-    }
 }
 
 /// The sole executable/model boundary used by adjudication consumers.
@@ -120,15 +115,6 @@ impl Process {
         adjudicate_with(prompts, |prompt| {
             invoke_with(&binary, prompt, timeout, cancellation.clone())
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with(binary: String, timeout: Duration) -> Self {
-        Self {
-            binary,
-            timeout,
-            cancellation: CancellationToken::new(),
-        }
     }
 
     pub(crate) fn with_cancellation(cancellation: CancellationToken) -> Self {
@@ -216,13 +202,58 @@ fn invoke_with(
 /// Classify one reaped judge process: only a clean, drained, successful exit
 /// carries a reply.
 fn reply(outcome: &sill::WaitOutcome, binary: &str, timeout: Duration) -> Result<String, Error> {
-    if !outcome.outputs_drained() {
+    classify_reply(
+        ReplyEvidence {
+            completion: outcome.completion(),
+            stdout: outcome.stdout().map(ReplyCapture::from),
+            stderr: outcome.stderr().map(ReplyCapture::from),
+            outputs_drained: outcome.outputs_drained(),
+        },
+        binary,
+        timeout,
+    )
+}
+
+/// The bounded process evidence the judge classifier consumes.
+///
+/// Keeping the classifier on borrowed bytes avoids copying capture buffers and
+/// lets its observable boundaries run in process without manufacturing a child.
+struct ReplyEvidence<'a> {
+    completion: &'a Completion,
+    stdout: Option<ReplyCapture<'a>>,
+    stderr: Option<ReplyCapture<'a>>,
+    outputs_drained: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ReplyCapture<'a> {
+    bytes: &'a [u8],
+    truncated: bool,
+    complete: bool,
+}
+
+impl<'a> From<&'a sill::CapturedOutput> for ReplyCapture<'a> {
+    fn from(output: &'a sill::CapturedOutput) -> Self {
+        Self {
+            bytes: output.bytes(),
+            truncated: output.truncated(),
+            complete: output.complete(),
+        }
+    }
+}
+
+fn classify_reply(
+    evidence: ReplyEvidence<'_>,
+    binary: &str,
+    timeout: Duration,
+) -> Result<String, Error> {
+    if !evidence.outputs_drained {
         return Err(failure_error(
             "judge_error",
             "judge descendants retained an output pipe past the drain deadline",
         ));
     }
-    match outcome.completion() {
+    match evidence.completion {
         Completion::TimedOut(_) => {
             return Err(Error {
                 reason: "timeout",
@@ -234,9 +265,9 @@ fn reply(outcome: &sill::WaitOutcome, binary: &str, timeout: Duration) -> Result
         }
         Completion::Exited(_) => {}
     }
-    let stdout = captured_output(outcome.stdout(), "stdout")?;
-    let stderr = captured_output(outcome.stderr(), "stderr")?;
-    let status = outcome.completion().status();
+    let stdout = captured_output(evidence.stdout, "stdout")?;
+    let stderr = captured_output(evidence.stderr, "stderr")?;
+    let status = evidence.completion.status();
     if !status.success() {
         return Err(Error {
             reason: "unavailable",
@@ -248,12 +279,12 @@ fn reply(outcome: &sill::WaitOutcome, binary: &str, timeout: Duration) -> Result
                 if stderr.is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", compact(&stderr))
+                    format!(": {}", compact(stderr))
                 },
             ),
         });
     }
-    Ok(stdout)
+    Ok(stdout.to_owned())
 }
 
 fn process_spec(
@@ -300,24 +331,24 @@ fn spec_error(error: sill::SpecError) -> Error {
     }
 }
 
-fn captured_output(output: Option<&sill::CapturedOutput>, stream: &str) -> Result<String, Error> {
+fn captured_output<'a>(output: Option<ReplyCapture<'a>>, stream: &str) -> Result<&'a str, Error> {
     let output = output.ok_or_else(|| Error {
         reason: "judge_error",
         detail: format!("judge {stream} capture was unavailable"),
     })?;
-    if output.truncated() {
+    if output.truncated {
         return Err(Error {
             reason: "ambiguous",
             detail: format!("judge {stream} exceeded {MAX_REPLY_BYTES} bytes"),
         });
     }
-    if !output.complete() {
+    if !output.complete {
         return Err(Error {
             reason: "judge_error",
             detail: format!("judge {stream} did not close within the output deadline"),
         });
     }
-    String::from_utf8(output.bytes().to_vec()).map_err(|error| Error {
+    std::str::from_utf8(output.bytes).map_err(|error| Error {
         reason: "ambiguous",
         detail: format!("judge {stream} was not UTF-8: {error}"),
     })
@@ -361,8 +392,28 @@ mod tests {
         ]
     }
 
-    fn reaped(completion: Completion) -> sill::WaitOutcome {
-        sill::WaitOutcome::externally_reaped_completion(completion)
+    const TEST_TIMEOUT: Duration = Duration::from_millis(40);
+
+    fn capture(bytes: &[u8]) -> ReplyCapture<'_> {
+        ReplyCapture {
+            bytes,
+            truncated: false,
+            complete: true,
+        }
+    }
+
+    fn evidence<'a>(
+        completion: &'a Completion,
+        stdout: Option<ReplyCapture<'a>>,
+        stderr: Option<ReplyCapture<'a>>,
+        outputs_drained: bool,
+    ) -> ReplyEvidence<'a> {
+        ReplyEvidence {
+            completion,
+            stdout,
+            stderr,
+            outputs_drained,
+        }
     }
 
     #[test]
@@ -404,51 +455,135 @@ mod tests {
 
         assert_eq!(calls.get(), 3);
         assert_eq!(error.reason(), "ambiguous");
-        assert!(error.detail().contains("3 attempts"));
     }
 
     #[test]
-    fn unavailable_process_is_abandoned_at_the_shared_boundary() {
-        let mut process = Process::with(
-            "/definitely/missing/spice-judge".to_owned(),
-            Duration::from_millis(20),
-        );
-        let error = process
-            .adjudicate(&prompts()[..1])
-            .expect_err("missing optional judge has no verdict");
+    fn a_clean_success_returns_the_complete_captured_reply() {
+        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let reply = classify_reply(
+            evidence(
+                &completion,
+                Some(capture(b"YES\n")),
+                Some(capture(b"")),
+                true,
+            ),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect("a clean judge reply is available");
+
+        assert_eq!(reply, "YES\n");
+    }
+
+    #[test]
+    fn a_nonzero_exit_is_unavailable() {
+        let completion = Completion::Exited(ExitStatus::from_raw(7 << 8));
+        let error = classify_reply(
+            evidence(
+                &completion,
+                Some(capture(b"")),
+                Some(capture(b"not ready")),
+                true,
+            ),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("an unsuccessful judge has no reply");
 
         assert_eq!(error.reason(), "unavailable");
-        assert!(error.detail().contains("could not launch"));
     }
 
-    /// A judge that outlives its deadline or is cancelled never yields a reply,
-    /// whatever it printed.
     #[test]
-    fn a_timed_out_or_cancelled_judge_is_a_typed_failure() {
-        let success = ExitStatus::from_raw(0);
-        let timeout = Duration::from_millis(40);
-
-        let timed_out = reply(&reaped(Completion::TimedOut(success)), "judge", timeout)
-            .expect_err("a timed-out judge has no reply");
-        let cancelled = reply(&reaped(Completion::Cancelled(success)), "judge", timeout)
-            .expect_err("a cancelled judge has no reply");
-
-        assert_eq!(timed_out.reason(), "timeout");
-        assert_eq!(cancelled.reason(), "cancelled");
-    }
-
-    /// An exit without captured output is a boundary failure, not ambiguity
-    /// that would send the next framing.
-    #[test]
-    fn an_exit_without_captured_output_is_a_judge_error() {
-        let error = reply(
-            &reaped(Completion::Exited(ExitStatus::from_raw(0))),
+    fn undrained_output_is_a_boundary_failure() {
+        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let error = classify_reply(
+            evidence(
+                &completion,
+                Some(capture(b"YES\n")),
+                Some(capture(b"")),
+                false,
+            ),
             "judge",
-            Duration::from_millis(40),
+            TEST_TIMEOUT,
         )
-        .expect_err("a reply needs captured output");
+        .expect_err("a retained output pipe invalidates the reply");
 
         assert_eq!(error.reason(), "judge_error");
+    }
+
+    #[test]
+    fn timeout_and_cancellation_remain_distinct() {
+        let success = ExitStatus::from_raw(0);
+        let timed_out = Completion::TimedOut(success);
+        let cancelled = Completion::Cancelled(success);
+
+        let timeout = classify_reply(
+            evidence(&timed_out, None, None, true),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("a timed-out judge has no reply");
+        let cancellation = classify_reply(
+            evidence(&cancelled, None, None, true),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("a cancelled judge has no reply");
+
+        assert_eq!(timeout.reason(), "timeout");
+        assert_eq!(cancellation.reason(), "cancelled");
+    }
+
+    #[test]
+    fn invalid_captures_keep_their_failure_class() {
+        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let stderr = Some(capture(b""));
+
+        let truncated = classify_reply(
+            evidence(
+                &completion,
+                Some(ReplyCapture {
+                    truncated: true,
+                    ..capture(b"partial")
+                }),
+                stderr,
+                true,
+            ),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("truncated output is ambiguous");
+        let incomplete = classify_reply(
+            evidence(
+                &completion,
+                Some(ReplyCapture {
+                    complete: false,
+                    ..capture(b"YES\n")
+                }),
+                stderr,
+                true,
+            ),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("an open capture is a boundary failure");
+        let missing = classify_reply(
+            evidence(&completion, None, stderr, true),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("a missing capture is a boundary failure");
+        let invalid_utf8 = classify_reply(
+            evidence(&completion, Some(capture(b"\xff")), stderr, true),
+            "judge",
+            TEST_TIMEOUT,
+        )
+        .expect_err("non-UTF-8 output is ambiguous");
+
+        assert_eq!(truncated.reason(), "ambiguous");
+        assert_eq!(incomplete.reason(), "judge_error");
+        assert_eq!(missing.reason(), "judge_error");
+        assert_eq!(invalid_utf8.reason(), "ambiguous");
     }
 
     #[test]

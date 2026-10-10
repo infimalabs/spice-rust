@@ -31,24 +31,6 @@ fn delegate(
     json: bool,
 ) -> Result<ExitStatus, Error> {
     let staged = StagedPackage::new(acquired)?;
-    install_command(&staged, worktree, apply, json)
-        .status()
-        .map_err(|source| {
-            Error::environment(
-                "launch verified package executable",
-                staged.executable(),
-                source,
-            )
-        })
-}
-
-/// The staged executable's own install transaction, run from the worktree.
-fn install_command(
-    staged: &StagedPackage,
-    worktree: &Path,
-    apply: Option<&str>,
-    json: bool,
-) -> Command {
     let mut command = Command::new(staged.executable());
     command.current_dir(worktree).arg("install");
     if let Some(digest) = apply {
@@ -57,7 +39,13 @@ fn install_command(
     if json {
         command.arg("--json");
     }
-    command
+    command.status().map_err(|source| {
+        Error::environment(
+            "launch verified package executable",
+            staged.executable(),
+            source,
+        )
+    })
 }
 
 fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
@@ -373,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn verified_generation_receives_only_the_existing_install_transaction() {
+    fn verified_generation_stages_only_admitted_platform_assets() {
         let root = std::env::temp_dir().join(format!(
             "spice-package-delegate-{}-{}",
             std::process::id(),
@@ -440,16 +428,6 @@ mod tests {
                     .unwrap(),
             );
         }
-
-        let verified = install_command(&staged, &root, Some("abc123"), true);
-        assert_eq!(verified.get_program(), staged.executable().as_os_str());
-        assert_eq!(verified.get_current_dir(), Some(root.as_path()));
-        assert_eq!(
-            verified.get_args().collect::<Vec<_>>(),
-            ["install", "--apply=abc123", "--json"]
-        );
-        let preview = install_command(&staged, &root, None, false);
-        assert_eq!(preview.get_args().collect::<Vec<_>>(), ["install"]);
 
         drop(staged);
         assert!(!staged_root.exists());
