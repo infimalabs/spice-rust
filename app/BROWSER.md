@@ -414,6 +414,10 @@ zero-width two-line prop keeps associated image rows below the controls.
 Each hunk directly owned by the message body starts one quote-block padding
 unit lower, matching the quote control cadence. A hunk nested under a quote
 card does not inherit that outer margin; its quote shell owns the spacing.
+A top-level hunk immediately following a blockquote or authenticated quote card
+uses two quote-block units (8px) of leading margin instead of the ordinary 4px.
+This adds 4px at the quote-to-answer boundary without changing nested quote
+padding, ordinary adjacent-hunk spacing, or the action island's own footprint.
 
 Quote and Play form one 35px control pair with one internal seam and no outer
 right edge. Their fill follows the owning lane or quote accent, with neutral
