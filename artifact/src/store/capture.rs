@@ -143,7 +143,7 @@ impl BackupGeneration {
 
     /// Capture and validate caller-authenticated streaming members.
     pub fn from_sources(sources: &[&dyn BackupSource]) -> Result<Self, Error> {
-        if sources.len() > JOURNAL_BACKUP_MAX_MEMBERS {
+        if !within_member_bound(sources.len()) {
             return Err(Error::corrupt(
                 "artifact backup inventory",
                 format!("capture exceeds {JOURNAL_BACKUP_MAX_MEMBERS} members"),
@@ -163,15 +163,12 @@ impl BackupGeneration {
                     "backup member has an invalid mode or repeats a path",
                 ));
             }
-            aggregate = aggregate
-                .checked_add(bytes)
-                .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
-                .ok_or_else(|| {
-                    Error::corrupt(
-                        "artifact backup inventory",
-                        format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
-                    )
-                })?;
+            aggregate = admit_backup_bytes(aggregate, bytes).ok_or_else(|| {
+                Error::corrupt(
+                    "artifact backup inventory",
+                    format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
+                )
+            })?;
             plans.push(SourcePlan {
                 source: *source,
                 path,
@@ -231,15 +228,12 @@ fn capture_source(
         }
         copied
     };
-    *aggregate = aggregate
-        .checked_add(copied)
-        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
-        .ok_or_else(|| {
-            Error::corrupt(
-                "artifact backup generation",
-                format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
-            )
-        })?;
+    *aggregate = admit_backup_bytes(*aggregate, copied).ok_or_else(|| {
+        Error::corrupt(
+            "artifact backup generation",
+            format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
+        )
+    })?;
     target
         .sync_all()
         .map_err(|error| Error::io("synchronize streamed artifact member", &captured, error))?;
@@ -382,13 +376,26 @@ pub(super) struct CapturePlan {
     identity: FileIdentity,
 }
 
-pub(super) fn preflight_capture_member(
+/// Whether a backup capture of `members` members stays within the shared bound.
+pub(super) const fn within_member_bound(members: usize) -> bool {
+    members <= JOURNAL_BACKUP_MAX_MEMBERS
+}
+
+/// The aggregate after adding one member's bytes, or `None` on overflow or a
+/// total past the shared inclusive byte bound.
+pub(super) fn admit_backup_bytes(aggregate: u64, bytes: u64) -> Option<u64> {
+    aggregate
+        .checked_add(bytes)
+        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
+}
+
+fn preflight_capture_member(
     root: &Path,
     path: &Path,
     plans: &mut Vec<CapturePlan>,
     aggregate: &mut u64,
 ) -> Result<(), Error> {
-    if plans.len() >= JOURNAL_BACKUP_MAX_MEMBERS {
+    if !within_member_bound(plans.len() + 1) {
         return Err(Error::corrupt(
             "artifact backup inventory",
             format!("capture exceeds {JOURNAL_BACKUP_MAX_MEMBERS} members"),
@@ -418,15 +425,12 @@ pub(super) fn preflight_capture_member(
         ));
     }
     let identity = FileIdentity::from_metadata(&metadata);
-    *aggregate = aggregate
-        .checked_add(identity.len)
-        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
-        .ok_or_else(|| {
-            Error::corrupt(
-                "artifact backup inventory",
-                format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
-            )
-        })?;
+    *aggregate = admit_backup_bytes(*aggregate, identity.len).ok_or_else(|| {
+        Error::corrupt(
+            "artifact backup inventory",
+            format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
+        )
+    })?;
     plans.push(CapturePlan {
         source: path.to_path_buf(),
         path: spelling,
@@ -476,15 +480,12 @@ fn capture_member(
             }
         })?
     };
-    *aggregate = aggregate
-        .checked_add(bytes)
-        .filter(|total| *total <= JOURNAL_BACKUP_MAX_BYTES)
-        .ok_or_else(|| {
-            Error::corrupt(
-                "artifact backup generation",
-                format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
-            )
-        })?;
+    *aggregate = admit_backup_bytes(*aggregate, bytes).ok_or_else(|| {
+        Error::corrupt(
+            "artifact backup generation",
+            format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
+        )
+    })?;
     require_unchanged_capture_source(&plan.source, &source, &plan.identity, bytes)?;
     target
         .sync_all()
