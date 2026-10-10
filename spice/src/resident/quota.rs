@@ -333,21 +333,11 @@ impl SampleFailure {
     }
 }
 
-/// How a started runtime takes each sample: by launching OMP's usage command.
-#[cfg(not(test))]
-const SAMPLE: fn(&Settings, CancellationToken) -> Result<Snapshot, SampleFailure> = sample;
-
-/// A resident under test launches no usage command: every sample finds none,
-/// as on a host without OMP.
-#[cfg(test)]
-const SAMPLE: fn(&Settings, CancellationToken) -> Result<Snapshot, SampleFailure> =
-    |_, _| Err(SampleFailure::new(FailureKind::ExecutableUnavailable));
-
 impl Runtime {
     pub(super) fn start(binary: impl Into<OsString>, extension: PathBuf) -> Self {
         let settings = Settings::production(binary, extension);
         Self::start_with(Arc::new(move |cancellation| {
-            SAMPLE(&settings, cancellation)
+            sample(&settings, cancellation)
         }))
     }
 
@@ -510,8 +500,21 @@ impl Drop for Runtime {
     }
 }
 
-#[cfg(not(test))]
+/// A resident test build samples the unavailable-provider result without
+/// launching OMP. The production branch remains compiled in every build.
 fn sample(settings: &Settings, cancellation: CancellationToken) -> Result<Snapshot, SampleFailure> {
+    if cfg!(test) {
+        Err(SampleFailure::new(FailureKind::ExecutableUnavailable))
+    } else {
+        sample_process(settings, cancellation)
+    }
+}
+
+/// Launch OMP's bounded usage command and judge its complete output.
+fn sample_process(
+    settings: &Settings,
+    cancellation: CancellationToken,
+) -> Result<Snapshot, SampleFailure> {
     let spec = settings.spec(cancellation).map_err(SampleFailure::new)?;
     let running = sill::spawn(spec).map_err(|error| {
         let kind = if matches!(
