@@ -86,9 +86,9 @@
 Ranked by how quietly they fail rather than by importance.
 
 - **[Proof replays the current candidate checkout](#distribution-proof-replays-the-current-candidate-checkout)** — presenting proof as payload-only isolation hides that the workspace itself supplies the replay source and is not checked against the payload's source digest.
-- **[Only lifecycle authority launches or renews occupants](lifecycle.md#lifecycle-only-lifecycle-authority-launches-or-renews-occupants)** — rendering must not launch. A refresh becoming a launch storm is
+- **[Only lifecycle authority launches or renews occupants](../loops.md#l-agent--the-work-availability-loop)** — rendering must not launch. A refresh becoming a launch storm is
    invisible until it is expensive.
-- **[A card whose position did not change receives no style write](lifecycle.md#surface-a-card-whose-position-did-not-change-receives-no-style-write) / [A card's column and span latch between geometry replays](lifecycle.md#surface-a-card-s-column-and-span-latch-between-geometry-replays)** — zero-write and latched columns. Both look correct in a
+- **[Zero-write refresh and latched card placement](../loops.md#l-message--the-mosaic)** — zero-write and latched columns. Both look correct in a
    screenshot and fail only under concurrency.
 - **[Prior state is captured once, at first application](#distribution-prior-state-is-captured-once-at-first-application)** — prior state re-derived on a repeat install records the
    installer's own output as what was there before. Nothing is wrong until the
@@ -96,9 +96,9 @@ Ranked by how quietly they fail rather than by importance.
 - **[Self-authored review is ranked last, never excluded](identity.md#work-self-authored-review-is-ranked-last-never-excluded)** — review preference implemented as a hard refusal starves the review
    phase whenever peers are busy.
 - **[A resume cursor belongs to one exact stream](identity.md#identity-a-resume-cursor-belongs-to-one-exact-stream)** — accepting a cursor across an application generation or resident epoch can silently splice incompatible histories.
-- **[A failed enumeration is not evidence of absence](lifecycle.md#topology-a-failed-enumeration-is-not-evidence-of-absence) / [Absence of evidence is not evidence of absence](#conduct-absence-of-evidence-is-not-evidence-of-absence)** — an empty enumeration read as absence destroys state on a
+- **[Absence of evidence is not evidence of absence](#conduct-absence-of-evidence-is-not-evidence-of-absence)** — an empty enumeration read as absence destroys state on a
    transient error.
 - **[A fact whose classification disagrees with the evidence backing it aborts the projection](session.md#session-a-fact-whose-classification-disagrees-with-the-evidence-backing-it-aborts-the-projection)** — a projection that degrades instead of aborting produces a record
    indistinguishable from a good one, and everything downstream inherits it.
-- **[A deferred render does not commit its fingerprint](lifecycle.md#surface-a-deferred-render-does-not-commit-its-fingerprint)** — a deferred render that commits its fingerprint leaves a
+- **[Unmeasurable surfaces commit no layout](../loops.md#the-jitter-contract)** — a deferred render that commits its fingerprint leaves a
    permanently blank surface with no error.
