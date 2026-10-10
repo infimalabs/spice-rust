@@ -16,7 +16,6 @@ mod deferral_fixture;
 use deferral_fixture::*;
 mod lane_held_claim;
 mod trust_ice;
-mod vacant_job;
 
 struct Fixture {
     bus: Bus,

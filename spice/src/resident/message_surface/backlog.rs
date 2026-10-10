@@ -99,23 +99,6 @@ impl BacklogReader {
         Self::default()
     }
 
-    #[cfg(test)]
-    pub(in crate::resident) fn from_snapshot(
-        snapshot: &journal::FactSnapshot,
-    ) -> CommandResult<Self> {
-        let steering = PresentationDirectives::from_snapshot(snapshot)
-            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
-        Ok(Self {
-            cursors: BTreeMap::new(),
-            startup_work: StartupWork::default(),
-            state: MessageState {
-                observations: MessageObservations::from_snapshot(snapshot),
-                ..MessageState::default()
-            },
-            steering,
-        })
-    }
-
     pub(in crate::resident) fn into_state(self) -> MessageState {
         self.state
     }

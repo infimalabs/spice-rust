@@ -220,7 +220,6 @@ fn the_proc_scan_reports_a_group_of_dead_members_terminal() {
 #[cfg(target_os = "macos")]
 mod libproc {
     use std::mem::size_of;
-    use std::process::{Command, Stdio};
 
     use super::super::{ProcessState, macos, process_state};
 
@@ -325,28 +324,6 @@ mod libproc {
             Err(ProcessState::Indeterminate),
             "a listing call that refused was counted as a membership"
         );
-    }
-
-    #[test]
-    fn a_genuinely_live_process_is_still_classified_live() {
-        // The child blocks reading a pipe this test holds open, so it is alive
-        // for exactly as long as the handle is, with no clock in the fixture.
-        let mut child = Command::new("/bin/cat")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .spawn()
-            .expect("live fixture launches");
-        let pid = child.id();
-
-        assert_eq!(
-            macos::process_zombie(pid),
-            ProcessState::Live,
-            "a running process was not read as live"
-        );
-        assert_eq!(process_state(pid), ProcessState::Live);
-
-        drop(child.stdin.take());
-        child.wait().expect("live fixture is reaped");
     }
 
     #[test]

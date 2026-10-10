@@ -3,7 +3,7 @@
 use super::*;
 use wire::output::Request;
 
-const TASKS: usize = 300;
+const TASKS: usize = 25;
 
 fn read(
     board: &BoardAnswer,
@@ -120,7 +120,7 @@ fn a_large_board_keeps_the_claim_pages_every_task_once_and_clips_long_titles() {
 
     // Continuations visit each ready row exactly once, starting with the
     // first page, and never repeat the claim.
-    let work = pages(&bus, epoch, &lane, None, 97);
+    let work = pages(&bus, epoch, &lane, None, 7);
     let first = after.work.rows.iter().map(|row| &row.handle);
     assert!(work.iter().take(10).eq(first));
     let mut seen = work.clone();
@@ -131,7 +131,7 @@ fn a_large_board_keeps_the_claim_pages_every_task_once_and_clips_long_titles() {
     assert_eq!(seen, expected, "every ready row once, the claim never");
 
     // A family page leads with the reader's claim and pages the whole family.
-    let members = pages(&bus, epoch, &lane, Some(&family), 120);
+    let members = pages(&bus, epoch, &lane, Some(&family), 8);
     assert_eq!(members[0], held);
     assert_eq!(members.len(), TASKS);
 

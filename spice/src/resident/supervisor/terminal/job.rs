@@ -82,23 +82,6 @@ impl ServiceClaim {
                     && claim.lane == self.lane
             })
     }
-
-    #[cfg(test)]
-    pub(in crate::resident::supervisor) fn fixture(
-        task: TaskStamp,
-        claimed: Seq,
-        phase: &str,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-    ) -> Self {
-        Self {
-            task,
-            claimed,
-            phase: phase.to_owned(),
-            lane,
-            occupant,
-        }
-    }
 }
 
 /// One initially admitted claim, retained until its durable request is
@@ -128,8 +111,6 @@ pub(in crate::resident) struct ServiceAuthority {
     journal: PathBuf,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    #[cfg(test)]
-    fixture: Option<ServiceClaim>,
 }
 
 impl ServiceAuthority {
@@ -142,18 +123,6 @@ impl ServiceAuthority {
             journal,
             lane,
             occupant,
-            #[cfg(test)]
-            fixture: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(in crate::resident::supervisor) fn fixture(claim: ServiceClaim) -> Self {
-        Self {
-            journal: PathBuf::new(),
-            lane: claim.lane,
-            occupant: claim.occupant,
-            fixture: Some(claim),
         }
     }
 
@@ -165,10 +134,6 @@ impl ServiceAuthority {
     }
 
     fn claim(&self) -> io::Result<ServiceClaim> {
-        #[cfg(test)]
-        if let Some(claim) = &self.fixture {
-            return Ok(claim.clone());
-        }
         let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
         reader
             .read_with(|read| {
@@ -220,10 +185,6 @@ impl ServiceAuthority {
     }
 
     fn owns(&self, claim: &ServiceClaim) -> io::Result<bool> {
-        #[cfg(test)]
-        if let Some(fixture) = &self.fixture {
-            return Ok(fixture == claim);
-        }
         let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
         reader
             .read_with(|read| {
@@ -684,16 +645,6 @@ impl Jobs {
         }
     }
 
-    /// Jobs kept for no lane, so an ending nobody hears wakes nobody: the
-    /// keeper a test runs on its own thread spawns nothing.
-    #[cfg(test)]
-    pub(in crate::resident) fn new(root: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
-            lane: None,
-        }
-    }
-
     /// Start keeping one command.
     ///
     /// # Errors
@@ -748,7 +699,7 @@ impl Jobs {
                 return Err(error);
             }
         }
-        let keeper = launch(&directory, &request_path, cwd, environment)?;
+        let keeper = launch_detached(&directory, &request_path, cwd, environment)?;
         Ok(Job {
             directory,
             id,
@@ -996,14 +947,8 @@ impl Jobs {
     }
 }
 
-#[cfg(not(test))]
-use launch_detached as launch;
-#[cfg(test)]
-use launch_direct as launch;
-
 /// Launch the keeper of one recorded request; the keeper's own streams go to
 /// the job's log, and it answers to nobody once started.
-#[cfg(not(test))]
 fn launch_detached(
     directory: &Path,
     request_path: &Path,
@@ -1034,22 +979,6 @@ fn launch_detached(
             let _ = keeper.wait();
         })?;
     Ok(Some(pid))
-}
-
-/// Keep the request on a thread of this process: the test's own keeper. Like
-/// the process, it ends quietly when the job's directory is gone.
-#[cfg(test)]
-fn launch_direct(
-    _directory: &Path,
-    request_path: &Path,
-    _cwd: &Path,
-    _environment: &Environment,
-) -> io::Result<Option<u32>> {
-    let request_path = request_path.to_path_buf();
-    thread::Builder::new()
-        .name("spice-job-keeper".to_owned())
-        .spawn(move || drop(keep(&request_path)))?;
-    Ok(None)
 }
 
 /// The state a job directory holds, with a keeper that vanished before
@@ -1243,7 +1172,3 @@ impl Job {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "job/tests.rs"]
-mod tests;

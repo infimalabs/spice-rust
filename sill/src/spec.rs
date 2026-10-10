@@ -6,8 +6,6 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-#[cfg(all(test, unix))]
-use std::sync::Condvar;
 #[cfg(unix)]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -229,8 +227,6 @@ struct CancellationState {
     next_waker: AtomicU64,
     #[cfg(unix)]
     wakers: Mutex<BTreeMap<u64, Arc<dyn Fn() + Send + Sync>>>,
-    #[cfg(all(test, unix))]
-    registration_wake: Condvar,
 }
 
 impl CancellationToken {
@@ -241,8 +237,6 @@ impl CancellationToken {
             next_waker: AtomicU64::new(0),
             #[cfg(unix)]
             wakers: Mutex::new(BTreeMap::new()),
-            #[cfg(all(test, unix))]
-            registration_wake: Condvar::new(),
         }))
     }
 
@@ -310,27 +304,10 @@ impl CancellationToken {
 
         let id = self.0.next_waker.fetch_add(1, Ordering::Relaxed);
         wakers.insert(id, waker);
-        #[cfg(test)]
-        self.0.registration_wake.notify_all();
         Some(CancellationRegistration {
             state: Arc::downgrade(&self.0),
             id,
         })
-    }
-
-    #[cfg(all(test, unix))]
-    pub(crate) fn wait_for_registration(&self, timeout: Duration) -> bool {
-        let Ok(wakers) = self.0.wakers.lock() else {
-            return false;
-        };
-        let Ok((wakers, _timeout)) =
-            self.0
-                .registration_wake
-                .wait_timeout_while(wakers, timeout, |wakers| wakers.is_empty())
-        else {
-            return false;
-        };
-        !wakers.is_empty()
     }
 }
 

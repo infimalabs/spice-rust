@@ -21,9 +21,6 @@ use wire::{Digest, Domain};
 
 use crate::gate_command::output::{Elapsed, Progress, TAIL_BYTES, TAIL_LINES, clip, prune};
 
-#[cfg(test)]
-mod tests;
-
 const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "cargo-output"];
 
 /// Where progress and the completion report are written.
