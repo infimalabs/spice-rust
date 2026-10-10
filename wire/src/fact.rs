@@ -231,6 +231,8 @@ vocabulary! {
     SteerReplied = "steer::replied" by AckScanner;
     /// An authored MSG packet opened one peer message to one exact recipient.
     SteerMessaged = "steer::messaged" by AckScanner;
+    /// An authored MSG packet published to no one; rereads leave it unpublished.
+    SteerWithheld = "steer::withheld" by AckScanner;
     /// An ACK named no live directive; nothing retired.
     SteerMissed = "steer::missed" by AckScanner;
     /// A directive reached expiry without a valid disposition.

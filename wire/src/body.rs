@@ -220,6 +220,27 @@ impl SteerMessaged {
     }
 }
 
+/// An authored MSG packet resolved against the residency and published to no
+/// one.
+///
+/// The refusal is the packet's settled judgment: a later reread of the same
+/// source record, including startup recovery, finds it and leaves the packet
+/// unpublished even when the cause of the refusal has since changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerWithheld {
+    /// Lane whose occupant authored the packet.
+    pub from: CanonicalUuid,
+    /// Occupant whose captured transcript authored the packet.
+    pub sender: CanonicalUuid,
+    /// Assistant transcript locus of the packet's MSG header.
+    pub locus: TranscriptLocus,
+    /// Stable refusal reason.
+    pub reason: String,
+    /// What made the packet unpublishable when it was judged.
+    pub detail: String,
+}
+
 /// Compatibility spelling for the one shared media value.
 pub type DirectiveAttachment = crate::Media;
 

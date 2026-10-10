@@ -10,12 +10,14 @@ use super::*;
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
+const THIRD: u8 = 8;
 
 struct Lanes {
     root: PathBuf,
     paths: RuntimePaths,
     bus: Bus,
     epoch: CanonicalUuid,
+    worktree: String,
 }
 
 impl Lanes {
@@ -31,22 +33,38 @@ impl Lanes {
                 .expect("fixture bus starts");
         let epoch = test_uuid(1);
         commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-        for lane in [SENDER, FIRST, SECOND] {
-            seed_vendor_lane_in_worktree(
-                &bus,
-                epoch,
-                test_uuid(lane),
-                test_uuid(lane + 1),
-                &worktree,
-                "omp",
-            );
-        }
-        Self {
+        let lanes = Self {
             root,
             paths,
             bus,
             epoch,
+            worktree,
+        };
+        for lane in [SENDER, FIRST, SECOND] {
+            lanes.seat(lane);
         }
+        lanes
+    }
+
+    /// Seat one more lane whose occupant is born on it now.
+    fn seat(&self, lane: u8) {
+        seed_vendor_lane_in_worktree(
+            &self.bus,
+            self.epoch,
+            test_uuid(lane),
+            test_uuid(lane + 1),
+            &self.worktree,
+            "omp",
+        );
+    }
+
+    fn cursor(&self) -> u64 {
+        self.bus
+            .task_snapshot()
+            .expect("snapshot reads")
+            .cursor()
+            .expect("the fixture journal has facts")
+            .get()
     }
 
     fn address(&self, lane: u8) -> OccupantAddress {
@@ -224,6 +242,96 @@ impl Lanes {
             .expect("exit fact is valid");
         ending.residency_head(exited, move |_| vacant);
         commit(&self.bus, ending).expect("vacancy commits");
+    }
+
+    /// Declare the lane occupant's session at the tape's current end.
+    fn declare(&self, lane: u8) -> listen::Locus {
+        let declaration = self
+            .tape(lane)
+            .tee(br#"{"type":"session","id":"session-1","version":3,"timestamp":"2030-04-12T18:44:09.271Z","cwd":"/"}
+"#)
+            .expect("the declaration is durable");
+        let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
+        let mut declared = observed.body().clone();
+        let row = declared
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == test_uuid(lane))
+            .expect("declared lane exists");
+        let session = wire::LaneSession {
+            lane: row.lane,
+            occupant: test_uuid(lane + 1),
+            worktree: row.worktree.clone(),
+            vendor: row.vendor.clone(),
+            launch: None,
+            epoch: self.epoch,
+            stream: "stdout".to_owned(),
+            identity: "session-1".to_owned(),
+            locus: wire::TapeLocus {
+                member: declaration.member,
+                offset: declaration.offset,
+                length: declaration.length,
+            },
+        };
+        row.session = Some(session.clone());
+        let mut write = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("declaration write starts");
+        crate::resident::shutdown::guard_residency(&mut write, &observed);
+        let fact = write
+            .fact(
+                crate::resident::lane_surface::session_fact(&session, test_uuid(30)),
+                FactCause::Existing(observed.position()),
+            )
+            .expect("declaration fact is valid");
+        write.residency_head(fact, move |_| declared);
+        commit(&self.bus, write).expect("declaration commits");
+        declaration
+    }
+
+    fn recover(&self) {
+        steering::publish_at_startup(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &steer::Config::default(),
+            &mut Vec::new(),
+        )
+        .expect("recovery reads");
+    }
+
+    /// Judge the lane's newest streamed record live, as its seated author's.
+    fn hear_newest(
+        &self,
+        lane: u8,
+    ) -> (
+        listen::Locus,
+        Vec<Result<steering::Published, steering::Unpublished>>,
+    ) {
+        let (source, records) = self.records(lane);
+        let newest = &records[records.len() - 2];
+        let listen::RecordPayload::Events(events) = &newest.payload else {
+            panic!("the streamed record decodes");
+        };
+        let events = events
+            .iter()
+            .map(|sourced| sourced.event.clone())
+            .collect::<Vec<_>>();
+        let outcomes = steering::publish_authored(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &steer::Config::default(),
+            &steering::AuthoredRecord {
+                lane: test_uuid(lane),
+                author: test_uuid(lane + 1),
+                source,
+                locus: newest.locus,
+                events: &events,
+            },
+            steering::Refusals::Record,
+            &mut Vec::new(),
+        );
+        (newest.locus, outcomes)
     }
 
     fn finish(self) {
@@ -473,92 +581,15 @@ fn startup_recovery_publishes_only_unpublished_packets_after_the_declaration() {
     let lanes = Lanes::new("msg-recover");
     let first = lanes.address(FIRST);
     lanes.author(SENDER, &format!("MSG {first}: before the session"));
-    let tape = lanes.tape(SENDER);
-    let declaration = tape
-        .tee(br#"{"type":"session","id":"session-1","version":3,"timestamp":"2030-04-12T18:44:09.271Z","cwd":"/"}
-"#)
-        .expect("the declaration is durable");
-    let observed = current_residency(&lanes.bus, lanes.epoch).expect("residency reads");
-    let mut declared = observed.body().clone();
-    let row = declared
-        .lanes
-        .iter_mut()
-        .find(|row| row.lane == test_uuid(SENDER))
-        .expect("sender lane exists");
-    let session = wire::LaneSession {
-        lane: row.lane,
-        occupant: test_uuid(SENDER + 1),
-        worktree: row.worktree.clone(),
-        vendor: row.vendor.clone(),
-        launch: None,
-        epoch: lanes.epoch,
-        stream: "stdout".to_owned(),
-        identity: "session-1".to_owned(),
-        locus: wire::TapeLocus {
-            member: declaration.member,
-            offset: declaration.offset,
-            length: declaration.length,
-        },
-    };
-    row.session = Some(session.clone());
-    let mut write = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
-        .expect("declaration write starts");
-    crate::resident::shutdown::guard_residency(&mut write, &observed);
-    let fact = write
-        .fact(
-            crate::resident::lane_surface::session_fact(&session, test_uuid(30)),
-            FactCause::Existing(observed.position()),
-        )
-        .expect("declaration fact is valid");
-    write.residency_head(fact, move |_| declared);
-    commit(&lanes.bus, write).expect("declaration commits");
+    let declaration = lanes.declare(SENDER);
 
     lanes.author(SENDER, &format!("MSG {first}: heard live"));
-    let (source, records) = lanes.records(SENDER);
-    let live = &records[records.len() - 2];
-    assert!(live.locus.offset > declaration.offset);
-    let listen::RecordPayload::Events(events) = &live.payload else {
-        panic!("the live record decodes");
-    };
-    let events = events
-        .iter()
-        .map(|sourced| sourced.event.clone())
-        .collect::<Vec<_>>();
-    steering::publish_authored(
-        &lanes.bus,
-        &lanes.paths,
-        lanes.epoch,
-        &steer::Config::default(),
-        &steering::AuthoredRecord {
-            lane: test_uuid(SENDER),
-            author: test_uuid(SENDER + 1),
-            source,
-            locus: live.locus,
-            events: &events,
-        },
-        steering::Refusals::Record,
-        &mut Vec::new(),
-    );
+    let (live, _) = lanes.hear_newest(SENDER);
+    assert!(live.offset > declaration.offset);
     lanes.author(SENDER, &format!("MSG {first}: lost to a crash"));
 
-    let config = steer::Config::default();
-    let mut diagnostics = Vec::new();
-    steering::publish_at_startup(
-        &lanes.bus,
-        &lanes.paths,
-        lanes.epoch,
-        &config,
-        &mut diagnostics,
-    )
-    .expect("recovery reads");
-    steering::publish_at_startup(
-        &lanes.bus,
-        &lanes.paths,
-        lanes.epoch,
-        &config,
-        &mut diagnostics,
-    )
-    .expect("a second recovery reads");
+    lanes.recover();
+    lanes.recover();
     let texts = lanes
         .messages()
         .into_iter()
@@ -570,8 +601,47 @@ fn startup_recovery_publishes_only_unpublished_packets_after_the_declaration() {
             ("heard live".to_owned(), test_uuid(SENDER + 1)),
             ("lost to a crash".to_owned(), test_uuid(SENDER + 1)),
         ],
-        "{}",
-        String::from_utf8_lossy(&diagnostics)
     );
+    lanes.finish();
+}
+
+/// A refusal is the packet's settled judgment: once the residency refused it,
+/// recovery publishes nothing even after the refused address names a seated
+/// occupant.
+#[test]
+fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
+    let lanes = Lanes::new("msg-withheld");
+    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
+    // Each seating writes the same facts, so the next birth lands as far past
+    // the cursor the seating starts from as the last one did.
+    let stride = second.birth().get() - first.birth().get();
+    let lag = lanes.cursor() - second.birth().get();
+    lanes.declare(SENDER);
+    // Judging the packet journals its one refusal before the next seating.
+    let unborn = OccupantAddress::from(
+        wire::Seq::new(lanes.cursor() + 1 + stride - lag).expect("nonzero position"),
+    );
+    lanes.author(SENDER, &format!("MSG {first} {unborn}: not yet born"));
+
+    let (_, outcomes) = lanes.hear_newest(SENDER);
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [Err(steering::Unpublished::Refused { reason, .. })] if reason == "msg::recipient-unavailable"
+        ),
+        "{outcomes:?}"
+    );
+    lanes.seat(THIRD);
+    assert_eq!(
+        lanes.address(THIRD),
+        unborn,
+        "the refused address now seats"
+    );
+
+    lanes.recover();
+    lanes.recover();
+    assert!(lanes.messages().is_empty());
+    assert!(lanes.pending(FIRST).is_empty());
+    assert!(lanes.pending(THIRD).is_empty());
     lanes.finish();
 }

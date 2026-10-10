@@ -506,6 +506,7 @@ fn producer_assignment_follows_the_specified_enumeration() {
         FactKind::SteerDeclined,
         FactKind::SteerReplied,
         FactKind::SteerMessaged,
+        FactKind::SteerWithheld,
         FactKind::SteerMissed,
     ];
     for kind in scanned {
