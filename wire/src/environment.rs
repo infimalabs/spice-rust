@@ -204,6 +204,12 @@ impl Environment {
         self
     }
 
+    /// Current authority head for one exact executable digest.
+    #[must_use]
+    pub fn trust_head(&self, digest: &crate::Digest) -> Option<&crate::TrustHead> {
+        self.trust.get(digest)
+    }
+
     /// Add the running resident appliance's product version.
     #[must_use]
     pub fn with_appliance(mut self, version: crate::manifest::ProductVersion) -> Self {

@@ -108,6 +108,25 @@ impl BoardView {
     pub fn requirement_satisfied(&self, requirement: &wire::EnvironmentRequirement) -> bool {
         self.environment.satisfies(requirement)
     }
+
+    /// Current authority head for one exact executable digest.
+    #[must_use]
+    pub fn trust_head(&self, digest: &Digest) -> Option<&wire::TrustHead> {
+        self.environment.trust_head(digest)
+    }
+
+    /// Whether current authority can perform this digest's exact
+    /// pended-to-granted transition.
+    #[must_use]
+    pub fn trust_grant_ready(&self, digest: &Digest) -> bool {
+        self.trust_head(digest).is_some_and(|head| {
+            head.state == wire::TrustState::Pended
+                && head
+                    .worktree
+                    .as_deref()
+                    .is_some_and(|worktree| !worktree.is_empty())
+        })
+    }
 }
 
 /// One agent-authored activity retained for a team status strip.
@@ -704,7 +723,7 @@ impl AppRuntime {
         revision: Seq,
         digest: &Digest,
     ) -> bool {
-        if !self.trust_grant_is_current(task, revision, digest)
+        if !self.trust_grant_is_ready(task, revision, digest)
             || matches!(
                 self.blocker_actions.get(digest),
                 Some(BlockerActionState::Pending | BlockerActionState::Approved)
@@ -717,32 +736,35 @@ impl AppRuntime {
         true
     }
 
-    /// Whether the same statement revision still requires this exact digest.
+    /// Whether the same statement revision still requires this exact digest
+    /// and current authority can perform its pended-to-granted transition.
     #[must_use]
-    pub fn trust_grant_is_current(
+    pub fn trust_grant_is_ready(
         &self,
         task: &wire::TaskStamp,
         revision: Seq,
         digest: &Digest,
     ) -> bool {
         self.board().is_some_and(|board| {
-            board.tasks.iter().any(|row| {
-                row.statement.body.born == *task
-                    && row.statement.body.revision == revision
-                    && row
-                        .statement
-                        .body
-                        .requirements
-                        .as_slice()
-                        .iter()
-                        .any(|requirement| {
-                            matches!(
-                                requirement,
-                                wire::EnvironmentRequirement::TrustGrant { value }
-                                    if value == digest && !board.requirement_satisfied(requirement)
-                            )
-                        })
-            })
+            board.trust_grant_ready(digest)
+                && board.tasks.iter().any(|row| {
+                    row.statement.body.born == *task
+                        && row.statement.body.revision == revision
+                        && row
+                            .statement
+                            .body
+                            .requirements
+                            .as_slice()
+                            .iter()
+                            .any(|requirement| {
+                                matches!(
+                                    requirement,
+                                    wire::EnvironmentRequirement::TrustGrant { value }
+                                        if value == digest
+                                            && !board.requirement_satisfied(requirement)
+                                )
+                            })
+                })
         })
     }
 
@@ -909,20 +931,22 @@ impl AppRuntime {
         self.apply_response(admitted, |runtime, answer| {
             let board = BoardView::from(answer);
             runtime.blocker_actions.retain(|digest, _| {
-                board.tasks.iter().any(|task| {
-                    task.statement
-                        .body
-                        .requirements
-                        .as_slice()
-                        .iter()
-                        .any(|requirement| {
-                            matches!(
-                                requirement,
-                                wire::EnvironmentRequirement::TrustGrant { value }
-                                    if value == digest && !board.requirement_satisfied(requirement)
-                            )
-                        })
-                })
+                board.trust_grant_ready(digest)
+                    && board.tasks.iter().any(|task| {
+                        task.statement
+                            .body
+                            .requirements
+                            .as_slice()
+                            .iter()
+                            .any(|requirement| {
+                                matches!(
+                                    requirement,
+                                    wire::EnvironmentRequirement::TrustGrant { value }
+                                        if value == digest
+                                            && !board.requirement_satisfied(requirement)
+                                )
+                            })
+                    })
             });
             runtime.board.replace(admitted.scope(), board);
         });

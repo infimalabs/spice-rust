@@ -347,12 +347,52 @@ fn render_trust_requirement(
     can_grant: bool,
     grant: &Callback<task_detail::TrustGrantRequest>,
 ) -> Html {
-    let state = runtime.and_then(|runtime| runtime.blocker_action(digest));
+    let action_state = runtime.and_then(|runtime| runtime.blocker_action(digest));
+    let trust = runtime
+        .and_then(AppRuntime::board)
+        .and_then(|board| board.trust_head(digest));
+    let (ready, explanation, unavailable_label) = match trust {
+        None => (
+            false,
+            "The exact configuration has not been captured by a producing worktree. Capture its current executable configuration before approval.".to_owned(),
+            "Capture required",
+        ),
+        Some(head)
+            if !head
+                .worktree
+                .as_deref()
+                .is_some_and(|worktree| !worktree.is_empty()) =>
+        {
+            (
+                false,
+                "The recorded configuration has no producing-worktree evidence. Capture the exact current configuration before approval.".to_owned(),
+                "Capture required",
+            )
+        }
+        Some(head) if head.state == wire::TrustState::Pended => (
+            true,
+            format!(
+                "Only the operator can trust executable configuration. Approve only if this exact digest is expected for producing worktree {}.",
+                head.worktree.as_deref().expect("ready trust has a worktree"),
+            ),
+            "",
+        ),
+        Some(head) if head.state == wire::TrustState::Revoked => (
+            false,
+            "This exact configuration was revoked. The producing worktree must capture a different current configuration before approval.".to_owned(),
+            "Revoked",
+        ),
+        Some(_) => (
+            false,
+            "This configuration is already granted; refresh the blocker snapshot before acting.".to_owned(),
+            "Refresh required",
+        ),
+    };
     let pending = matches!(
-        state,
+        action_state,
         Some(BlockerActionState::Pending | BlockerActionState::Approved)
     );
-    let action_label = match state {
+    let action_label = match action_state {
         Some(BlockerActionState::Pending) => "Approving…",
         Some(BlockerActionState::Approved) => "Approved",
         Some(BlockerActionState::Failed(_)) => "Retry approval",
@@ -372,21 +412,25 @@ fn render_trust_requirement(
         <section class="work-blocker-card work-blocker-card--action" data-blocker-kind="trust-grant">
             <div>
                 <strong>{"Executable trust approval required"}</strong>
-                <p>{"Only the operator can trust executable configuration. Approve only if this exact digest is expected for the producing worktree."}</p>
+                <p>{explanation}</p>
                 <code title={digest.to_string()}>{digest.to_string()}</code>
-                if let Some(BlockerActionState::Failed(issue)) = state {
+                if let Some(BlockerActionState::Failed(issue)) = action_state {
                     <p class="work-blocker-issue" role="alert">{issue.clone()}</p>
                 }
                 // Progress changes only the button's own label, so the card
                 // never grows a line while approval settles.
                 <span class="visually-hidden" role="status">{pending.then_some(action_label)}</span>
             </div>
-            <button
-                type="button"
-                class="app-compact-control"
-                disabled={!can_grant || pending}
-                onclick={approve}
-            >{action_label}</button>
+            if ready {
+                <button
+                    type="button"
+                    class="app-compact-control"
+                    disabled={!can_grant || pending}
+                    onclick={approve}
+                >{action_label}</button>
+            } else {
+                <span class="work-blocker-state">{unavailable_label}</span>
+            }
         </section>
     }
 }
