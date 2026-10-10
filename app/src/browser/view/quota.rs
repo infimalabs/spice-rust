@@ -375,33 +375,31 @@ fn render_reset_credits(
 }
 
 fn render_accounts_without_usage(scope: &str, accounts: &[wire::QuotaAccountWithoutUsage]) -> Html {
+    if accounts.is_empty() {
+        return Html::default();
+    }
     let heading = format!("{scope}-quota-without-usage-heading");
     html! {
         <section class="quota-detail-group" aria-labelledby={heading.clone()}>
             <h3 id={heading}>{"Accounts lacking usage"}</h3>
-            if accounts.is_empty() {
-                <p class="quota-empty">{"None."}</p>
-            } else {
-                <ul class="quota-simple-list">{for accounts.iter().map(|entry| {
-                    render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
-                })}</ul>
-            }
+            <ul class="quota-simple-list">{for accounts.iter().map(|entry| {
+                render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
+            })}</ul>
         </section>
     }
 }
 
 fn render_disabled(scope: &str, credentials: &[wire::QuotaDisabledCredential]) -> Html {
+    if credentials.is_empty() {
+        return Html::default();
+    }
     let heading = format!("{scope}-quota-disabled-heading");
     html! {
         <section class="quota-detail-group" aria-labelledby={heading.clone()}>
             <h3 id={heading}>{"Disabled credentials"}</h3>
-            if credentials.is_empty() {
-                <p class="quota-empty">{"None."}</p>
-            } else {
-                <ul class="quota-simple-list">{for credentials.iter().map(|entry| {
-                    render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
-                })}</ul>
-            }
+            <ul class="quota-simple-list">{for credentials.iter().map(|entry| {
+                render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
+            })}</ul>
         </section>
     }
 }
