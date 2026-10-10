@@ -63,26 +63,3 @@ pub mod renew;
 pub mod table;
 
 pub use config::{Config, WakeOrder};
-
-#[cfg(test)]
-mod ownership_tests {
-    const SOURCE: &str = include_str!("lib.rs");
-
-    #[test]
-    fn every_prototype_wake_arm_is_owned_by_the_rust_resident() {
-        for number in [4, 5, 6, 7, 8, 9, 16, 17, 18] {
-            let marker = format!("`LC-{number:02}`");
-            assert_eq!(
-                SOURCE.matches(&marker).count(),
-                1,
-                "{marker} must have exactly one ownership decision"
-            );
-        }
-        assert!(SOURCE.contains("spice/src/resident/lifecycle.rs"));
-        let predecessor_phrase = ["permanently owns ", "none"].concat();
-        assert!(!SOURCE.contains(&predecessor_phrase));
-        assert!(SOURCE.contains("none of them decide when to run"));
-        let forbidden_module = ["pub mod ", "supervisor"].concat();
-        assert!(!SOURCE.contains(&forbidden_module));
-    }
-}

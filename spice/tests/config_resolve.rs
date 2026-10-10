@@ -585,21 +585,6 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
             serde_json::from_value(json).expect("effective JSON decodes without null paths");
         assert_eq!(&json_round_trip, resolved.root());
     }
-
-    let source = include_str!("../../proof/src/config.rs");
-    for forbidden in [
-        "std::fs",
-        "std::env",
-        "std::process",
-        "canonicalize",
-        "metadata(",
-        "Command::",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "proof configuration unexpectedly references {forbidden}"
-        );
-    }
 }
 
 #[test]

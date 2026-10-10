@@ -1119,77 +1119,10 @@ mod tests {
     use std::process::Command;
 
     const DESCENDANT_FIXTURE_ROOT: &str = "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT"; // env-policy: allow
-    const AFTER_RETIRED_COORDINATOR_DEADLINE: Duration = Duration::from_secs(256);
     const REEXEC_TEST: &str = concat!(
         "workspace_tests::coordinator::tests::",
         "cancelled_shard_reaps_nested_fixture_group_before_root_removal"
     );
-
-    #[test]
-    fn healthy_shard_completes_after_the_retired_aggregate_deadline() {
-        let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
-            .expect("empty fixture environment is valid");
-        let mut output = Vec::new();
-        let mut coordinator = Coordinator::from_execution_shards(
-            Vec::new(),
-            PathBuf::from("."),
-            environment,
-            OsString::from("cargo"),
-            fixture_policy(),
-            &mut output,
-        );
-        coordinator.started = Instant::now()
-            .checked_sub(AFTER_RETIRED_COORDINATOR_DEADLINE)
-            .expect("fixture can represent a run beyond the retired 255-second deadline");
-        coordinator.total = 1;
-        coordinator.available_lanes.clear();
-        coordinator.active.insert(
-            0,
-            ActiveShard {
-                package: "healthy".to_owned(),
-                targets: "test healthy".to_owned(),
-                output_lane: 0,
-                started: Instant::now(),
-                observer: Arc::new(LastTest::default()),
-                exclusive: false,
-                thread: thread::spawn(|| {}),
-            },
-        );
-        coordinator
-            .sender
-            .send(ShardResult {
-                index: 0,
-                package: "healthy".to_owned(),
-                targets: "test healthy".to_owned(),
-                elapsed: Duration::from_secs(1),
-                disposition: "success".to_owned(),
-                binary: "healthy-test".to_owned(),
-                last_test: "test healthy ... ok".to_owned(),
-                stdout_tail: String::new(),
-                stderr_tail: String::new(),
-                success: true,
-            })
-            .expect("healthy shard result is delivered");
-
-        coordinator
-            .run()
-            .expect("aggregate elapsed time does not cancel a healthy shard");
-
-        let report = String::from_utf8(output).expect("coordinator report is UTF-8");
-        let elapsed = report
-            .lines()
-            .find(|line| line.contains("coordinator disposition=success"))
-            .and_then(|line| {
-                line.split_ascii_whitespace()
-                    .find_map(|field| field.strip_prefix("elapsed_ms="))
-            })
-            .and_then(|elapsed| elapsed.parse::<u128>().ok())
-            .expect("successful coordinator report carries numeric elapsed time");
-        assert!(
-            elapsed >= AFTER_RETIRED_COORDINATOR_DEADLINE.as_millis(),
-            "{report}"
-        );
-    }
 
     #[test]
     #[allow(

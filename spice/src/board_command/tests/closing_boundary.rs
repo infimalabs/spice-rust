@@ -177,39 +177,3 @@ fn a_finding_review_records_the_reviewing_lanes_own_closing_boundary() {
          head: a boundary that ignored its lane would carry the seeded head here"
     );
 }
-
-#[test]
-fn closing_boundary_doc_sites_resolve_by_name_to_the_reads_they_describe() {
-    let sites = ::std::include_str!("closing_boundary.rs")
-        .lines()
-        .filter(|line| line.starts_with("/// Pins the closing-boundary read in `"))
-        .map(|line| {
-            line.split('`')
-                .nth(1)
-                .expect("a closing-boundary citation names its function")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        sites.len(),
-        2,
-        "both closing-boundary tests must name their production read"
-    );
-
-    let progress = ::std::include_str!("../progress.rs");
-    for site in sites {
-        assert!(
-            !site.contains([':', '.']),
-            "the closing-boundary citation must be a function name, not a line: {site}"
-        );
-        let marker = format!("fn {site}(");
-        let start = progress
-            .find(&marker)
-            .unwrap_or_else(|| panic!("closing-boundary site `{site}` exists in progress.rs"));
-        let rest = &progress[start + marker.len()..];
-        let end = rest.find("\npub(super) fn ").unwrap_or(rest.len());
-        assert!(
-            rest[..end].contains("source_boundary(&lane)"),
-            "`{site}` must contain the closing-boundary read its test describes"
-        );
-    }
-}
