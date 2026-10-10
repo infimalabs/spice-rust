@@ -294,9 +294,16 @@ select, input, textarea { border-radius: var(--app-radius-control); }
     transparent
   );
 }
+.app-glass-control-surface:is(.team-status-row, .team-composer-controls) {
+  --app-control-glass-depth: calc(var(--app-glass-thickness) + var(--app-glass-thickness) + var(--app-glass-thickness));
+}
 .app-status-band {
   border-block-start: var(--app-edge);
   background: var(--message-stream-surface, var(--control-surface-soft)) padding-box;
+}
+.app-status-band.app-glass-control-surface {
+  background: var(--app-control-glass-paint) padding-box;
+  backdrop-filter: var(--overlay-frost);
 }
 .app-status-text {
   padding: 7px 16px;
