@@ -112,6 +112,7 @@ pub(super) fn render_team(
     for standing in &mut standings {
         standing.pending = view::member_pending(waiting, &submissions.status, standing.lane);
         standing.waking = view::member_waking(waiting, &submissions.status, standing.lane);
+        standing.wake_pending = submissions.status.wake_pending(standing.lane);
     }
     let authority =
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
@@ -386,7 +387,8 @@ fn render_compose(
 }
 
 /// With no agent running and no quote or image drafted, a team's controls step
-/// back unless a composer holds typed text, which only the controls follow.
+/// back unless a composer holds typed text or a wake is in flight, both of
+/// which only the controls follow.
 fn team_dormant(team: &crate::runtime::LaneRow, drafts: &ComposerDrafts) -> bool {
     let members = || team.members.iter();
     !members().any(|member| member.liveness != wire::intent::LaneLiveness::Vacant)
@@ -1074,6 +1076,8 @@ fn send_slots(
                 broadcast: broadcast_targets
                     .iter()
                     .any(|target| target.lane == member.lane),
+                waking: member.liveness == wire::intent::LaneLiveness::Vacant
+                    && standing.wake_pending,
             }
         })
         .collect()

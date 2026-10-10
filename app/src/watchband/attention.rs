@@ -303,6 +303,7 @@ mod tests {
             jobs: Vec::new(),
             pending: 0,
             waking: 0,
+            wake_pending: false,
             headline: None,
             handle: expires_at.map(|_| "alpha.core-dTaaaaaaa".to_owned()),
             task_title: None,

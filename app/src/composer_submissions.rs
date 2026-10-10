@@ -308,6 +308,14 @@ impl Stage {
             _ => None,
         }
     }
+
+    /// The document is still waiting on its lane's wake, before any residency.
+    const fn awaits_wake(&self) -> bool {
+        matches!(
+            self,
+            Self::WakeQueued | Self::WakeSent | Self::AwaitingResidency
+        )
+    }
 }
 
 /// Renderable fold of all submissions not yet covered by a fresh inbox.
@@ -321,6 +329,8 @@ struct Prediction {
 pub(crate) struct SubmissionStatus {
     rows: BTreeMap<CanonicalUuid, Vec<Prediction>>,
     keyless: usize,
+    /// Lanes holding a submission whose wake has not yet bound residency.
+    waking: BTreeSet<CanonicalUuid>,
 }
 
 impl SubmissionStatus {
@@ -330,6 +340,12 @@ impl SubmissionStatus {
 
     pub(crate) fn len(&self) -> usize {
         self.rows.values().map(Vec::len).sum()
+    }
+
+    /// This browser woke the lane for a submission, and neither a residency
+    /// bind nor a refusal has settled that wake yet.
+    pub(crate) fn wake_pending(&self, lane: CanonicalUuid) -> bool {
+        self.waking.contains(&lane)
     }
 
     /// Backend truth plus predictions whose stable identity it does not carry.
@@ -845,6 +861,12 @@ impl SubmissionQueue {
                 .flatten()
                 .filter(|submission| !matches!(&submission.stage, Stage::Accepted { .. }))
                 .count(),
+            waking: self
+                .rows
+                .iter()
+                .filter(|(_, rows)| rows.iter().any(|submission| submission.stage.awaits_wake()))
+                .map(|(lane, _)| *lane)
+                .collect(),
         }
     }
 
@@ -1225,5 +1247,39 @@ mod tests {
             queue.refuse_woken_lane(uuid(LANE_B)).unwrap()[0].draft.body,
             "unproven"
         );
+    }
+
+    #[test]
+    fn a_wake_stays_pending_until_residency_binds_or_a_refusal_restores_it() {
+        let mut queue = SubmissionQueue::default();
+        queue
+            .enqueue(wake_submission(ID_A, LANE_A, "first"))
+            .unwrap();
+        let pending = |queue: &SubmissionQueue, lane| queue.status().wake_pending(uuid(lane));
+        assert!(pending(&queue, LANE_A));
+        assert!(!pending(&queue, LANE_B));
+        queue.wake_sent(uuid(ID_A)).unwrap();
+        queue.reconnect();
+        assert!(pending(&queue, LANE_A));
+        queue.wake_sent(uuid(ID_A)).unwrap();
+        queue.wake_accepted(uuid(ID_A)).unwrap();
+        assert!(pending(&queue, LANE_A));
+        queue.bind_woken_lane(uuid(LANE_A), uuid(OCCUPANT), uuid(EPOCH));
+        assert!(!pending(&queue, LANE_A));
+
+        queue
+            .enqueue(wake_submission(ID_B, LANE_B, "refused"))
+            .unwrap();
+        queue.wake_sent(uuid(ID_B)).unwrap();
+        queue.refuse_wake(uuid(ID_B)).unwrap();
+        assert!(!pending(&queue, LANE_B));
+        queue
+            .enqueue(wake_submission(ID_C, LANE_B, "unproven"))
+            .unwrap();
+        queue.wake_sent(uuid(ID_C)).unwrap();
+        queue.wake_accepted(uuid(ID_C)).unwrap();
+        assert!(pending(&queue, LANE_B));
+        queue.refuse_woken_lane(uuid(LANE_B)).unwrap();
+        assert!(!pending(&queue, LANE_B));
     }
 }

@@ -137,7 +137,16 @@ for one recipient, equal separated arcs for several. The button title names the
 recipient total, which follows sendable typed text, quotes, and images under
 current command admission. A
 running team without drafted content has no recipient light; an idle team
-without agents or drafts dims and disables SEND. A pending allocation-policy
+without agents or drafts dims and disables SEND. A press that wakes a vacant
+member keeps the whole panel lit (TURBO, menu, sliders, and SEND) from the
+submission until the woken lane binds residency, so the draft-to-online
+progression has no dark interval. Until then SEND stays disabled unless
+something new is drafted, titles itself `Waking N agents`, and breathes a
+waking rim in the waking members' accents, steady under reduced motion. A
+drafted recipient rim replaces that waking rim. A refused, faulted, or unproven wake
+clears the indication as it restores the draft, and the panel then follows
+that draft. The indication is this browser's own wake submissions, not drafted
+text or pending direction. A pending allocation-policy
 command admits no send and lights no recipients. Existing wake/send and
 attachment behavior stays authoritative, not the reference gallery's simulated
 readiness.
