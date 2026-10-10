@@ -124,8 +124,11 @@ command for more.
   and task state, and do not bypass `session::context-live-session-self` by
   opening that transcript. If the description no longer matches repository or
   operator state, update, split, or release the task rather than force it.
-- A plan whose acceptance-bearing children lack dependency edges: repair it
-  with `spice task depends PARENT CHILD...`, then `spice task free HANDLE`.
+- A task added while this lane holds a plan claim becomes a dependency of that
+  ambient plan automatically. `task add --depends` instead names the new
+  task's own prerequisites and suppresses that link. If an acceptance-bearing
+  child still lacks its parent edge, repair it with
+  `spice task depends PARENT CHILD...`, then `spice task free HANDLE`.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

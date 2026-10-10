@@ -134,6 +134,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         tags,
         None,
         dependency_witnesses,
+        None,
         move |write| guard_proposal_observation(write, observation),
         None,
     )

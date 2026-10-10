@@ -527,11 +527,12 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--flow PHASES] [--requires-journal-schema SCHEMA] \
-         [--requires-trust-grant DIGEST] [--origin ORIGIN] [--claim] [--recover]",
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] \
+         [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
+         [--origin ORIGIN] [--claim] [--recover]",
         OperatorOrLane,
         Command,
-        [TaskAdded, TaskNoted, ClaimWon],
+        [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
         Reply,

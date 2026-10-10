@@ -275,6 +275,21 @@ impl Law {
         ],
         authority: Authority::Connected,
     };
+    /// Direct task creation may also guard the statement, workflow, and claim
+    /// of an ambient planning task that it atomically links to the new child.
+    /// Atomic create-and-claim retains the ordinary eligibility and residency
+    /// predicates.
+    pub const TASK_ADD: Self = Self {
+        required: &[WitnessKind::Absence],
+        optional: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Eligibility,
+            WitnessKind::Residency,
+        ],
+        authority: Authority::Connected,
+    };
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
@@ -830,7 +845,8 @@ impl CommandKind {
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
-            Self::TaskAdd | Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
+            Self::TaskAdd => Law::TASK_ADD,
+            Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskClose => Law::CLOSE,
