@@ -264,6 +264,16 @@
 /* The job board packs one fixed-height row per kept command. Every cell has a
    fixed width, so a standing change or an age tick rewrites text in place, and
    oldest-first order keeps every row above a starting job where it was. */
+.app-spice-jobs {
+  --app-spice-job-visible: 4;
+  --app-spice-job-row: 1.5rem;
+  --app-spice-job-gap: 1px;
+  /* Keep the empty/loading slot and short boards as tall as four dense rows. */
+  grid-template-rows: auto minmax(
+    calc(var(--app-spice-job-visible) * var(--app-spice-job-row) + (var(--app-spice-job-visible) - 1) * var(--app-spice-job-gap)),
+    auto
+  );
+}
 .app-spice-job-census {
   display: inline-flex;
   gap: .9ch;
@@ -272,7 +282,8 @@
 .app-spice-job-census > [data-job-standing="unheard"] { color: var(--muted); }
 .app-spice-job-board {
   display: grid;
-  gap: 1px;
+  align-content: start;
+  gap: var(--app-spice-job-gap);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -283,7 +294,7 @@
   grid-template-columns: 1.4em 9ch 3ch minmax(0, 1fr);
   column-gap: 1ch;
   align-items: center;
-  block-size: 1.5rem;
+  block-size: var(--app-spice-job-row);
   padding-inline: 4px 6px;
   border-left: var(--quote-rail) solid var(--accent-slot, var(--accent));
   background: color-mix(in srgb, var(--panel) 76%, var(--page));

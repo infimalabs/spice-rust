@@ -72,6 +72,8 @@ hollow once it ended unheard, the agent, its age, and the command. The heading
 counts each kind, zero included, and the unheard. Rows run oldest first, so a
 new job joins at the end and long-lived services settle at the top; every cell
 has a fixed width, so a tick or a standing change moves no row.
+The board reserves four rows of space, including when empty or loading, with
+short lists packed at the top. Larger lists grow naturally without clipping.
 
 ## Provider quota rows
 
