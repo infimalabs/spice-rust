@@ -895,9 +895,13 @@ pub(super) fn read_graph(
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &entries, &reviews)
-                .text()
-                .to_owned(),
+            text: if graph.all {
+                board::graph::render(view, &entries, &reviews)
+            } else {
+                board::graph::render_live(view, &entries, &reviews)
+            }
+            .text()
+            .to_owned(),
         }),
     )
 }

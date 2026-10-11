@@ -141,6 +141,20 @@ fn graph_cursors_bind_the_read_and_survive_other_first_pages() {
         })
         .expect("page");
     let resumed = next(&first).expect("continuation");
+    let mut archive = initial.clone();
+    archive.options.push(("all".to_owned(), None));
+    let archived = pages
+        .read(&archive, || {
+            Ok((
+                Seq::new(1).expect("sequence"),
+                "workflow\nold first\nold second".to_owned(),
+            ))
+        })
+        .expect("archive page");
+    let archived = next(&archived).expect("archive continuation");
+    pages
+        .read(&archived, || unreachable!())
+        .expect("identical live and archive text keeps distinct cursors");
     pages
         .read(&initial, || {
             Ok((
@@ -158,9 +172,12 @@ fn graph_cursors_bind_the_read_and_survive_other_first_pages() {
         view: "origin".to_owned(),
     };
     assert!(pages.read(&other_view, || unreachable!()).is_err());
-    let mut other_barrier = resumed;
+    let mut other_barrier = resumed.clone();
     set(&mut other_barrier, "at", "another".to_owned());
     assert!(pages.read(&other_barrier, || unreachable!()).is_err());
+    let mut other_scope = resumed;
+    other_scope.options.push(("all".to_owned(), None));
+    assert!(pages.read(&other_scope, || unreachable!()).is_err());
 }
 
 #[test]
@@ -218,6 +235,7 @@ fn retained_graph_snapshots_evict_oldest_at_count_and_byte_bounds() {
     let retained = Snapshot::new(
         "workflow",
         None,
+        false,
         Seq::new(1).expect("sequence"),
         text.clone(),
     )

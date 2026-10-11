@@ -39,6 +39,7 @@ fn a_large_graph_pages_its_first_lines_and_names_the_complete_file_export() {
         Vec::new(),
         &BoardGraph {
             view: "workflow".to_owned(),
+            all: false,
             at: None,
         },
     );
@@ -54,7 +55,7 @@ fn a_large_graph_pages_its_first_lines_and_names_the_complete_file_export() {
     let budget = INTERACTIVE
         .budget(Request::default())
         .expect("default budget");
-    let page = graph_page("workflow", &text, budget).expect("graph pages");
+    let page = graph_page("workflow", &text, budget, true).expect("graph pages");
 
     let shown = INTERACTIVE.default_limits().rows;
     assert_eq!(page.lines.rows.len(), shown);
@@ -77,6 +78,7 @@ fn a_large_graph_pages_its_first_lines_and_names_the_complete_file_export() {
             "board",
             "graph",
             "workflow",
+            "--all",
             "--output",
             "board-graph-workflow.txt"
         ]
@@ -87,7 +89,7 @@ fn a_large_graph_pages_its_first_lines_and_names_the_complete_file_export() {
 #[test]
 fn complete_snapshots_refuse_standard_output_and_name_the_file_command() {
     let graph = refused(
-        page_or_file("review", Request::default(), Some("-".to_owned())),
+        page_or_file("review", Request::default(), Some("-".to_owned()), false),
         "board::export-stdout",
     );
     assert!(
@@ -106,11 +108,16 @@ fn complete_snapshots_refuse_standard_output_and_name_the_file_command() {
         ..Request::default()
     };
     refused(
-        page_or_file("review", limited, Some("graph.txt".to_owned())),
+        page_or_file("review", limited, Some("graph.txt".to_owned()), false),
         "board::export-bounded",
     );
     assert_eq!(
-        page_or_file("review", Request::default(), Some("graph.txt".to_owned())),
+        page_or_file(
+            "review",
+            Request::default(),
+            Some("graph.txt".to_owned()),
+            false,
+        ),
         Ok(Destination::File("graph.txt".to_owned()))
     );
     assert_eq!(

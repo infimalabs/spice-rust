@@ -54,6 +54,7 @@ fn review_graph(bus: &Bus, epoch: CanonicalUuid) -> String {
         Vec::new(),
         &BoardGraph {
             view: "review".to_owned(),
+            all: true,
             at: None,
         },
     );

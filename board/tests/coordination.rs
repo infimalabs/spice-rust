@@ -401,6 +401,90 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
 }
 
 #[test]
+fn live_graphs_exclude_settled_history_but_name_direct_dependencies() {
+    let reviewer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
+    let author = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e412"));
+    let settled_head = statement("BOARD-settled");
+    let mut live_head = statement("BOARD-live");
+    live_head.dependencies.push(settled_head.born.clone());
+    let live = admitted(
+        live_head,
+        workflow("todo"),
+        Some(claim(ClaimDisposition::Active)),
+        Some(lease()),
+    )
+    .expect("live entry");
+    let mut settled_workflow = workflow("review");
+    settled_workflow.status = "completed".to_owned();
+    settled_workflow.completion = Some(instant("2026-08-01T07:00:00.000Z"));
+    let settled = admitted(
+        settled_head,
+        settled_workflow,
+        Some(claim(ClaimDisposition::Freed)),
+        None,
+    )
+    .expect("settled entry");
+    let reviews = [
+        graph::ReviewEdge::new(
+            live.handle().clone(),
+            Some((phase("todo"), author.clone())),
+            reviewer.clone(),
+            body::Verdict::Clean,
+            seq(50),
+        ),
+        graph::ReviewEdge::new(
+            settled.handle().clone(),
+            Some((phase("todo"), author.clone())),
+            reviewer.clone(),
+            body::Verdict::Clean,
+            seq(51),
+        ),
+    ];
+    let entries = [settled.clone(), live.clone()];
+
+    assert_eq!(
+        graph::render_live(View::Origin, &entries, &reviews).text(),
+        format!(
+            "graph origin\n{} -> {}\n",
+            live.statement().provenance,
+            live.handle()
+        )
+    );
+    assert_eq!(
+        graph::render_live(View::Dependencies, &entries, &reviews).text(),
+        format!(
+            "graph dependencies\n{} -> {}\n",
+            live.handle(),
+            settled.handle()
+        )
+    );
+    assert_eq!(
+        graph::render_live(View::Review, &entries, &reviews).text(),
+        format!(
+            "graph review\n{reviewer} -> {author} [{} todo clean]\n",
+            live.handle()
+        )
+    );
+    assert_eq!(
+        graph::render_live(View::Workflow, &entries, &reviews).text(),
+        format!("graph workflow\n{}: todo [pending]\n", live.handle())
+    );
+    assert_eq!(
+        graph::render_live(View::Claims, &entries, &reviews).text(),
+        format!("graph claims\n{}: spice [active]\n", live.handle())
+    );
+
+    for view in View::ALL {
+        assert_eq!(
+            graph::render_live(view, std::slice::from_ref(&settled), &reviews).text(),
+            format!("graph {}\n", view.as_str()),
+            "{} retained settled history",
+            view.as_str()
+        );
+    }
+}
+
+#[test]
 fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_law() {
     let projects = board::ProjectPolicy::new(
         ["board".to_owned()],

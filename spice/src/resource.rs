@@ -38,7 +38,7 @@ pub(crate) const SCHEME: &str = "spice://";
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
 spice://board  task status
-spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims) [?limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; after resumes a snapshot while held by this seat's bounded cache
+spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
 spice://task/HANDLE  task show HANDLE
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
@@ -227,6 +227,10 @@ const PAGE: &[Key] = &[
 /// A page bounded by rows and bytes, resumed after a cursor.
 const ROWS: &[Key] = &[once("limit"), once("max-bytes"), once("after")];
 const GRAPH: &[Key] = &[
+    Key {
+        name: "all",
+        arity: Arity::Flag,
+    },
     once("limit"),
     once("max-bytes"),
     once("max-text"),
