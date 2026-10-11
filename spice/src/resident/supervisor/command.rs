@@ -31,6 +31,7 @@ use wire::{CanonicalUuid, Disposition};
 
 use super::super::RuntimePaths;
 use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
+use crate::resident::steering::MessageRefusalNotice;
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 const KICK_BYTES: usize = 1024;
@@ -192,7 +193,7 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
-    /// An MSG packet this exact occupant authored published nothing.
+    /// An MSG packet this exact occupant authored missed some or every address.
     MessageRefused(MessageRefusalNotice),
     /// Current renewal intent for this exact occupant.
     Renewal(renewal::Notice),
@@ -231,21 +232,6 @@ pub(in crate::resident) struct TaskAssignmentNotice {
     pub(in crate::resident) phase: String,
 }
 
-/// One private MSG refusal, scoped to the packet's authoring occupant.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct MessageRefusalNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    /// Stable identity of the refused packet's source locus.
-    pub(in crate::resident) packet: String,
-    /// The packet header as authored, bounded.
-    pub(in crate::resident) header: String,
-    pub(in crate::resident) line: u32,
-    pub(in crate::resident) column: u32,
-    pub(in crate::resident) reason: String,
-    /// Why the packet was refused, bounded.
-    pub(in crate::resident) detail: String,
-}
 impl<W: Write + Send + 'static> Driver<W> {
     /// Own a child's stdin, authenticated resident discovery, lane identity,
     /// steering media root, and the terminal its commands run in.
@@ -508,19 +494,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// Tell this exact occupant that one MSG packet it authored sent nothing.
+    /// Tell this exact occupant which addresses an MSG packet it authored missed.
     fn deliver_message_refusal(&self, notice: &MessageRefusalNotice) {
-        let message = format!(
-            "<system-notice>\nYour MSG packet `{}` at line {}, column {} of its assistant \
-             text block published nothing: {}: {}. No recipient received it. Name only \
-             exact addresses of other seated occupants (`spice lane list` shows each lane's), \
-             each once, close the list with a colon, and author a corrected packet in new \
-             visible text. This is a private \
-             refusal notice; no acknowledgment key or visible ACK/NAK is required.\n\
-             </system-notice>",
-            notice.header, notice.line, notice.column, notice.reason, notice.detail,
-        );
-        let _ = self.background(&format!("msg:{}", notice.packet), &message);
+        let _ = self.background(&format!("msg:{}", notice.packet), &notice.text());
     }
 
     /// Send new direction once; replace reminders in the SDK aside bridge.
@@ -1290,7 +1266,8 @@ pub(in crate::resident) fn task_assignment(
     send(paths, lane, &Kick::TaskAssignment(notice));
 }
 
-/// Privately tell the exact authoring occupant that its MSG packet sent nothing.
+/// Privately tell the exact authoring occupant which addresses its MSG packet
+/// did not reach.
 pub(in crate::resident) fn message_refused(
     paths: &RuntimePaths,
     lane: CanonicalUuid,

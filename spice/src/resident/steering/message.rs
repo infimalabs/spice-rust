@@ -7,18 +7,20 @@
 //! A block is complete before it is decoded, so a truncated body never sends.
 //!
 //! One packet resolves every recipient against one residency view and
-//! journals one `steer::messaged` fact per recipient in one guarded write, so
-//! it publishes to every named seated occupant or to none. Each fact's
-//! directive identity is derived from the packet's transcript locus and its
-//! recipient, so rereading the same block — live, at exit, or at startup —
-//! finds the published directive instead of sending again, while the same
-//! body authored at another locus is another message.
+//! journals one `steer::messaged` fact per seated recipient in one guarded
+//! write. Each recipient is honored on its own: every named seated occupant
+//! receives the packet, and each address the view does not seat receives
+//! nothing and is named, with why, in one private notice to the author. Each
+//! fact's directive identity is derived from the packet's transcript locus
+//! and its recipient, so rereading the same block — live, at exit, or at
+//! startup — finds the published directive instead of sending again, while
+//! the same body authored at another locus is another message.
 //!
-//! A packet the residency refuses journals one `steer::withheld` fact before
-//! its author hears the refusal. That fact is the packet's settled judgment:
-//! a later reread finds it and leaves the packet unpublished even when the
-//! refusal's cause has since changed. A packet the grammar refuses needs no
-//! record, since its text refuses identically on every read.
+//! A packet that publishes to no one journals one `steer::withheld` fact
+//! before its author hears the refusal. That fact is the packet's settled
+//! judgment: a later reread finds it and leaves the packet unpublished even
+//! when the refusal's cause has since changed. A packet the grammar refuses
+//! needs no record, since its text refuses identically on every read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -33,6 +35,9 @@ use super::*;
 /// Residency views one packet may resolve against before it gives up on a
 /// residency that keeps moving under it.
 const PUBLISH_ATTEMPTS: usize = 3;
+
+/// The refusal a packet's author hears for each address that received nothing.
+const UNAVAILABLE: &str = "msg::recipient-unavailable";
 
 /// The recent tail startup recovery rereads for packets a crash left behind.
 const RECOVERY_WINDOW_BYTES: u64 = 64 * 1024 * 1024;
@@ -57,7 +62,7 @@ pub(in crate::resident) struct AuthoredRecord<'a> {
     pub(in crate::resident) events: &'a [listen::Event],
 }
 
-/// Who hears that a packet published nothing.
+/// Who hears which addresses a packet did not reach.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::resident) enum Refusals {
     /// The author is seated and receives a private notice.
@@ -79,8 +84,12 @@ pub(in crate::resident) struct Packet<'a> {
 /// What publishing one packet did.
 #[derive(Debug, Eq, PartialEq)]
 pub(in crate::resident) enum Published {
-    /// The packet's messages committed now, to these recipient lanes.
-    Sent(Vec<CanonicalUuid>),
+    /// The packet's messages committed now, to these recipient lanes; each
+    /// `unreached` entry names one address that received nothing, and why.
+    Sent {
+        lanes: Vec<CanonicalUuid>,
+        unreached: Vec<String>,
+    },
     /// An earlier read of the same packet already published it.
     Already,
 }
@@ -99,8 +108,8 @@ pub(in crate::resident) enum Unpublished {
 /// Publish every MSG packet one authored record holds.
 ///
 /// Returns each packet's outcome in source order. Recipients are told their
-/// inboxes changed; a refused packet is written to `diagnostic` and, under
-/// [`Refusals::Notify`], privately to its author.
+/// inboxes changed; each address a packet did not reach is written to
+/// `diagnostic` and, under [`Refusals::Notify`], privately to its author.
 pub(in crate::resident) fn publish_authored(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -438,13 +447,15 @@ fn moved(reason: &str) -> bool {
     matches!(reason, "steer::residency-moved" | "steer::identity-taken")
 }
 
-/// Resolve one packet against one residency view and journal all of its
-/// messages in one guarded write, or none of them.
+/// Resolve one packet against one residency view and journal a message to
+/// every seated recipient in one guarded write.
 ///
 /// The guard re-proves at commit that the residency is the one the view
-/// read and that every recipient lane still seats the resolved occupant, so
-/// a seat change between read and commit refuses the whole write instead of
-/// redirecting any message.
+/// read and that every recipient lane it publishes to still seats the
+/// resolved occupant, so a seat change between read and commit refuses the
+/// whole write instead of redirecting any message. A recipient the view does
+/// not seat receives nothing and is named in the outcome; a packet no
+/// recipient can hear publishes nothing.
 pub(in crate::resident) fn publish_packet(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -481,6 +492,12 @@ pub(in crate::resident) fn publish_packet(
             reason: "msg::sender-unproved".to_owned(),
             detail: refusal.to_string(),
         })?;
+    if packet.recipients.contains(&sender) {
+        return Err(Unpublished::Refused {
+            reason: "msg::recipient-self".to_owned(),
+            detail: format!("{sender} is the authoring occupant's own address"),
+        });
+    }
     let seated = residency
         .body()
         .lanes
@@ -492,17 +509,18 @@ pub(in crate::resident) fn publish_packet(
         })
         .collect::<BTreeMap<_, _>>();
     let mut targets = Vec::with_capacity(packet.recipients.len());
-    for recipient in &packet.recipients {
-        if *recipient == sender {
-            return Err(Unpublished::Refused {
-                reason: "msg::recipient-self".to_owned(),
-                detail: format!("{recipient} is the authoring occupant's own address"),
-            });
-        }
+    let mut unreached = Vec::new();
+    for (recipient, directive) in packet.recipients.iter().zip(identities) {
         match seated.get(recipient) {
-            Some(target) => targets.push(*target),
-            None => return Err(unavailable(bus, *recipient)),
+            Some(target) => targets.push((*target, directive)),
+            None => unreached.push(unavailable(bus, *recipient)?),
         }
+    }
+    if targets.is_empty() {
+        return Err(Unpublished::Refused {
+            reason: UNAVAILABLE.to_owned(),
+            detail: unreached.join("; "),
+        });
     }
     let at = current_instant().map_err(Unpublished::Failed)?;
     let expires = expiry(at, config.expiry().get()).map_err(Unpublished::Failed)?;
@@ -515,7 +533,7 @@ pub(in crate::resident) fn publish_packet(
         Producer::AckScanner,
     );
     let mut lanes = Vec::with_capacity(targets.len());
-    for ((lane, occupant), directive) in targets.into_iter().zip(identities) {
+    for ((lane, occupant), directive) in targets {
         let key = mint_key(minted_micros).map_err(Unpublished::Failed)?;
         minted_micros = key.minted_micros();
         proposal.guard(send_guard(
@@ -553,7 +571,7 @@ pub(in crate::resident) fn publish_packet(
     }
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
-    Ok(Published::Sent(lanes))
+    Ok(Published::Sent { lanes, unreached })
 }
 
 /// The one directive identity a packet's message to one recipient can own.
@@ -571,24 +589,16 @@ fn message_identity(locus: &TranscriptLocus, recipient: OccupantAddress) -> Cano
     CanonicalUuid::new(uuid::Uuid::from_bytes(bytes))
 }
 
-/// Why a recipient the view does not seat cannot hear the packet.
-fn unavailable(bus: &Bus, recipient: OccupantAddress) -> Unpublished {
-    let detail = match bus.resolve_occupant(recipient) {
-        Ok(Err(refusal)) => refusal.to_string(),
-        Ok(Ok(birth)) => format!(
-            "occupant {} at {recipient} was not seated in the residency this packet resolved against",
-            birth.occupant
-        ),
-        Err(error) => {
-            return Unpublished::Failed(typed_store_fault(
-                "steer::address-unreadable",
-                &error.to_string(),
-            ));
-        }
-    };
-    Unpublished::Refused {
-        reason: "msg::recipient-unavailable".to_owned(),
-        detail,
+/// Why a recipient the view does not seat cannot hear the packet, led by its
+/// address so a bounded notice still names it.
+fn unavailable(bus: &Bus, recipient: OccupantAddress) -> Result<String, Unpublished> {
+    match bus.resolve_occupant(recipient) {
+        Ok(Err(refusal)) => Ok(format!("{recipient} {}", refusal.reason())),
+        Ok(Ok(_)) => Ok(format!("{recipient} msg::recipient-unseated")),
+        Err(error) => Err(Unpublished::Failed(typed_store_fault(
+            "steer::address-unreadable",
+            &error.to_string(),
+        ))),
     }
 }
 
@@ -682,38 +692,111 @@ fn report(
     refusals: Refusals,
     diagnostic: &mut dyn io::Write,
 ) {
+    let refused = Refused {
+        paths,
+        record,
+        locus,
+        header,
+        refusals,
+    };
     match outcome {
-        Ok(Published::Sent(lanes)) => {
+        Ok(Published::Sent { lanes, unreached }) => {
             for lane in lanes {
                 notify_inbox(paths, *lane);
+            }
+            if !unreached.is_empty() {
+                refused.tell(UNAVAILABLE, &unreached.join("; "), lanes.len(), diagnostic);
             }
         }
         Ok(Published::Already) | Err(Unpublished::Withheld | Unpublished::Failed(_)) => {}
         Err(Unpublished::Refused { reason, detail }) => {
-            let _ = writeln!(
-                diagnostic,
-                "lane {} MSG at record {}:{} event {} line {}:{} refused: {reason}: {detail}",
-                record.lane, locus.member, locus.offset, locus.event, locus.line, locus.column,
-            );
-            if refusals == Refusals::Notify {
-                crate::resident::supervisor::command::message_refused(
-                    paths,
-                    record.lane,
-                    crate::resident::supervisor::command::MessageRefusalNotice {
-                        occupant: record.author,
-                        packet: format!(
-                            "{}:{}:{}:{}:{}",
-                            locus.member, locus.offset, locus.event, locus.line, locus.column
-                        ),
-                        header: bounded(header),
-                        line: locus.line,
-                        column: locus.column,
-                        reason: reason.clone(),
-                        detail: bounded(detail),
-                    },
-                );
-            }
+            refused.tell(reason, detail, 0, diagnostic);
         }
+    }
+}
+
+/// Where one packet's refusal is told.
+struct Refused<'a> {
+    paths: &'a RuntimePaths,
+    record: &'a AuthoredRecord<'a>,
+    locus: &'a TranscriptLocus,
+    header: &'a str,
+    refusals: Refusals,
+}
+
+impl Refused<'_> {
+    /// Record the refusal and, under [`Refusals::Notify`], tell the author
+    /// privately, with how many recipients the packet did reach.
+    fn tell(&self, reason: &str, detail: &str, reached: usize, diagnostic: &mut dyn io::Write) {
+        let (record, locus) = (self.record, self.locus);
+        let _ = writeln!(
+            diagnostic,
+            "lane {} MSG at record {}:{} event {} line {}:{} reached {reached} and refused: \
+             {reason}: {detail}",
+            record.lane, locus.member, locus.offset, locus.event, locus.line, locus.column,
+        );
+        if self.refusals == Refusals::Notify {
+            crate::resident::supervisor::command::message_refused(
+                self.paths,
+                record.lane,
+                MessageRefusalNotice {
+                    occupant: record.author,
+                    packet: format!(
+                        "{}:{}:{}:{}:{}",
+                        locus.member, locus.offset, locus.event, locus.line, locus.column
+                    ),
+                    header: bounded(self.header),
+                    line: locus.line,
+                    column: locus.column,
+                    reached,
+                    reason: reason.to_owned(),
+                    detail: bounded(detail),
+                },
+            );
+        }
+    }
+}
+
+/// One private MSG refusal, scoped to the packet's authoring occupant.
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct MessageRefusalNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    /// Stable identity of the refused packet's source locus.
+    pub(in crate::resident) packet: String,
+    /// The packet header as authored, bounded.
+    pub(in crate::resident) header: String,
+    pub(in crate::resident) line: u32,
+    pub(in crate::resident) column: u32,
+    /// How many named recipients the packet did reach.
+    pub(in crate::resident) reached: usize,
+    pub(in crate::resident) reason: String,
+    /// Which addresses the packet missed, or why it was refused, bounded.
+    pub(in crate::resident) detail: String,
+}
+
+impl MessageRefusalNotice {
+    /// The notice its author hears.
+    pub(in crate::resident) fn text(&self) -> String {
+        let (outcome, missed) = match self.reached {
+            0 => ("published nothing".to_owned(), "No recipient received it"),
+            reached => (
+                format!(
+                    "reached {reached} recipient{}, but not every address it named",
+                    if reached == 1 { "" } else { "s" }
+                ),
+                "Only the addresses named here did not receive it",
+            ),
+        };
+        format!(
+            "<system-notice>\nYour MSG packet `{}` at line {}, column {} of its assistant \
+             text block {outcome}: {}: {}. {missed}. Name only exact addresses of other \
+             seated occupants (`spice lane list` shows each lane's), each once, close the \
+             list with a colon, and author a packet to the addresses that still need it in \
+             new visible text. This is a private refusal notice; no acknowledgment key or \
+             visible ACK/NAK is required.\n</system-notice>",
+            self.header, self.line, self.column, self.reason, self.detail,
+        )
     }
 }
 

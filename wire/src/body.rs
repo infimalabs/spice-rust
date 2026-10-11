@@ -174,8 +174,8 @@ impl SteerReplied {
 /// An authored MSG packet opened one peer message to one exact recipient.
 ///
 /// The packet's assistant transcript record is the source evidence, and the
-/// resident journals one fact per recipient in a single guarded write, so a
-/// packet publishes to every recipient or to none. The directive identity is
+/// resident journals one fact per seated recipient in a single guarded write;
+/// a recipient no occupant seats receives nothing. The directive identity is
 /// derived from the source packet and the recipient, so rereading the same
 /// packet never opens a second message. The opened directive is ordinary peer
 /// steering for the recipient lane; answering it replies to `from`.

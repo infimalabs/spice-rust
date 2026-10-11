@@ -1,5 +1,6 @@
-//! An occupant's authored MSG packet publishes one peer message to every
-//! named seated occupant, or to none, exactly once per source packet.
+//! An occupant's authored MSG packet publishes one peer message to each named
+//! seated occupant exactly once per source packet, and names each address it
+//! did not reach.
 
 use std::collections::BTreeSet;
 
@@ -415,10 +416,7 @@ fn a_packet_publishes_its_exact_body_once_to_every_named_seated_occupant() {
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert_eq!(
         outcomes,
-        [Ok(steering::Published::Sent(vec![
-            test_uuid(FIRST),
-            test_uuid(SECOND)
-        ]))],
+        [Ok(sent(&[FIRST, SECOND], &[]))],
         "only the streamed block is a source: {diagnostics}"
     );
     let messages = lanes.messages();
@@ -458,10 +456,7 @@ fn a_packet_publishes_its_exact_body_once_to_every_named_seated_occupant() {
         outcomes,
         [
             Ok(steering::Published::Already),
-            Ok(steering::Published::Sent(vec![
-                test_uuid(FIRST),
-                test_uuid(SECOND)
-            ])),
+            Ok(sent(&[FIRST, SECOND], &[])),
         ],
         "the same body authored again is another message"
     );
@@ -469,9 +464,11 @@ fn a_packet_publishes_its_exact_body_once_to_every_named_seated_occupant() {
     lanes.finish();
 }
 
-/// One unavailable, own, or repeated recipient refuses the whole packet.
+/// Each seated recipient hears the packet and each unavailable address is
+/// named with why; a packet no recipient can hear, or one naming its own
+/// author or an address twice, publishes nothing.
 #[test]
-fn a_packet_naming_any_unavailable_or_own_address_publishes_nothing() {
+fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
     let lanes = Lanes::new("msg-refuse");
     let (sender, first, second) = (
         lanes.address(SENDER),
@@ -481,31 +478,46 @@ fn a_packet_naming_any_unavailable_or_own_address_publishes_nothing() {
     lanes.vacate(SECOND);
     let unrecorded = OccupantAddress::from(wire::Seq::new(9_999_999).expect("nonzero position"));
     lanes.author(SENDER, &format!("MSG {first} {second}: departed"));
+    lanes.author(SENDER, &format!("MSG {second} {unrecorded}: nobody"));
     lanes.author(SENDER, &format!("MSG {first} {sender}: myself"));
     lanes.author(SENDER, &format!("MSG {first} {first}: twice"));
-    lanes.author(SENDER, &format!("MSG {first} {unrecorded}: nobody"));
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    let reasons = outcomes
+    let refused = |reason: &str, detail: &str| {
+        Err(steering::Unpublished::Refused {
+            reason: reason.to_owned(),
+            detail: detail.to_owned(),
+        })
+    };
+    assert_eq!(
+        outcomes[..2],
+        [
+            Ok(sent(&[FIRST], &[&format!("{second} address::expired")])),
+            refused(
+                "msg::recipient-unavailable",
+                &format!("{second} address::expired; {unrecorded} address::unrecorded"),
+            ),
+        ],
+        "{diagnostics}"
+    );
+    let reasons = outcomes[2..]
         .iter()
         .map(|outcome| match outcome {
             Err(steering::Unpublished::Refused { reason, .. }) => reason.as_str(),
-            other => panic!("every packet refuses: {other:?}"),
+            other => panic!("the packet refuses whole: {other:?}"),
         })
         .collect::<Vec<_>>();
+    assert_eq!(reasons, ["msg::recipient-self", "msg::recipient-repeated"]);
+    assert_eq!(delivered(&lanes, FIRST).text, "departed");
+    assert_eq!(lanes.messages().len(), 1);
+
+    let (reread, _) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert_eq!(
-        reasons,
-        [
-            "msg::recipient-unavailable",
-            "msg::recipient-self",
-            "msg::recipient-repeated",
-            "msg::recipient-unavailable",
-        ]
+        reread[0],
+        Ok(steering::Published::Already),
+        "a partly delivered packet is published"
     );
-    assert!(diagnostics.contains("address::expired"), "{diagnostics}");
-    assert!(diagnostics.contains("address::unrecorded"), "{diagnostics}");
-    assert!(lanes.messages().is_empty());
-    assert!(lanes.pending(FIRST).is_empty());
+    assert_eq!(lanes.messages().len(), 1, "a reread sends nothing");
     lanes.finish();
 }
 
@@ -547,14 +559,11 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
 
     let current = lanes.bus.task_snapshot().expect("snapshot reads");
     let resolved = steering::publish_packet(&lanes.bus, lanes.epoch, &config, &packet, &current);
-    assert!(
-        matches!(
-            &resolved,
-            Err(steering::Unpublished::Refused { reason, .. }) if reason == "msg::recipient-unavailable"
-        ),
-        "{resolved:?}"
+    assert_eq!(
+        resolved,
+        Ok(sent(&[FIRST], &[&format!("{second} address::expired")]))
     );
-    assert!(lanes.messages().is_empty());
+    assert_eq!(lanes.messages().len(), 1);
     lanes.finish();
 }
 
@@ -609,11 +618,7 @@ fn a_packet_is_attributed_to_its_author_and_retires_nothing() {
     lanes.author(SENDER, &format!("MSG {first}: about {}", direction.key));
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    assert_eq!(
-        outcomes,
-        [Ok(steering::Published::Sent(vec![test_uuid(FIRST)]))],
-        "{diagnostics}"
-    );
+    assert_eq!(outcomes, [Ok(sent(&[FIRST], &[]))], "{diagnostics}");
     let keys = lanes
         .pending(SENDER)
         .into_iter()
@@ -682,7 +687,7 @@ fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
     let unborn = OccupantAddress::from(
         wire::Seq::new(lanes.cursor() + 1 + stride - lag).expect("nonzero position"),
     );
-    lanes.author(SENDER, &format!("MSG {first} {unborn}: not yet born"));
+    lanes.author(SENDER, &format!("MSG {unborn}: not yet born"));
 
     let (_, outcomes) = lanes.hear_newest(SENDER);
     assert!(
@@ -702,9 +707,15 @@ fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
     lanes.recover();
     lanes.recover();
     assert!(lanes.messages().is_empty());
-    assert!(lanes.pending(FIRST).is_empty());
     assert!(lanes.pending(THIRD).is_empty());
     lanes.finish();
+}
+
+fn sent(lanes: &[u8], unreached: &[&str]) -> steering::Published {
+    steering::Published::Sent {
+        lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
+        unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
+    }
 }
 
 /// The delivery a recipient hears names the exact body, the sending

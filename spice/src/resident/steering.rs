@@ -35,7 +35,8 @@ mod transitions;
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 pub(super) use history::history;
 pub(super) use message::{
-    AuthoredRecord, Refusals, dead_letter_departed, publish_at_startup, publish_authored,
+    AuthoredRecord, MessageRefusalNotice, Refusals, dead_letter_departed, publish_at_startup,
+    publish_authored,
 };
 #[cfg(test)]
 pub(super) use message::{Packet, Published, Unpublished, publish_packet};
