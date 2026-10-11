@@ -623,7 +623,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
                 terminal,
             );
             reporter.drive(Arc::clone(&driver));
-            driver.open(&opening)?;
+            driver.open(&opening, launch.first_prompt)?;
             let door = command::listen_for_kicks(
                 &paths,
                 request.lane,

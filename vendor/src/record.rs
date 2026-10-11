@@ -102,6 +102,7 @@ pub struct Record {
     stream: RecordStream,
     resume: Resume,
     opening: Option<Vec<u8>>,
+    first_prompt: Option<String>,
     environment: Vec<(OsString, OsString)>,
 }
 
@@ -123,6 +124,7 @@ impl Record {
             stream,
             resume,
             opening: None,
+            first_prompt: None,
             environment: Vec::new(),
         })
     }
@@ -133,6 +135,14 @@ impl Record {
     /// opens the conversation this way; the door keeps stdin piped for it.
     pub(crate) fn with_opening(mut self, opening: impl Into<Vec<u8>>) -> Self {
         self.opening = Some(opening.into());
+        self
+    }
+
+    /// State the message that starts the first turn, which a supervisor
+    /// writes after [`Self::opening`] once the vendor has answered the host
+    /// scheme registration that decides how the message names reads.
+    pub(crate) fn with_first_prompt(mut self, prompt: String) -> Self {
+        self.first_prompt = Some(prompt);
         self
     }
 
@@ -189,6 +199,13 @@ impl Record {
     #[must_use]
     pub fn opening(&self) -> Option<&[u8]> {
         self.opening.as_deref()
+    }
+
+    /// The message that starts the first turn, written after the opening once
+    /// the vendor has answered its host scheme registration.
+    #[must_use]
+    pub fn first_prompt(&self) -> Option<&str> {
+        self.first_prompt.as_deref()
     }
 
     /// Build the sole process-door specification for this record contract.
