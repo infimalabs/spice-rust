@@ -2,9 +2,8 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn live_changes_use_exact_requests_and_only_matching_provider_responses_apply() {
-    let scratch = Scratch::new("live-retune");
     let sink = Sink::default();
-    let driver = make_driver(sink.clone(), &scratch, None);
+    let driver = driver(&sink);
     let reply = Path::new("/tmp").join(format!("spice-retune-test-{}.sock", std::process::id()));
     let _ = fs::remove_file(&reply);
     let socket = std::os::unix::net::UnixDatagram::bind(&reply).expect("callback door binds");
@@ -113,9 +112,8 @@ fn live_changes_use_exact_requests_and_only_matching_provider_responses_apply() 
 #[cfg(unix)]
 #[test]
 fn fast_mode_requests_name_the_disposition_and_a_failed_response_refuses() {
-    let scratch = Scratch::new("live-fast-retune");
     let sink = Sink::default();
-    let driver = make_driver(sink.clone(), &scratch, None);
+    let driver = driver(&sink);
     let reply = Path::new("/tmp").join(format!("spice-fast-test-{}.sock", std::process::id()));
     let _ = fs::remove_file(&reply);
     let socket = std::os::unix::net::UnixDatagram::bind(&reply).expect("callback door binds");
