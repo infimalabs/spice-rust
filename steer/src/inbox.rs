@@ -128,6 +128,26 @@ pub fn keys(rendered: &str) -> impl Iterator<Item = &str> {
         })
 }
 
+/// The stage a rendering's header names for `key`, when it carries that key.
+pub fn stage<'a>(rendered: &'a str, key: &str) -> Option<&'a str> {
+    rendered
+        .lines()
+        .find(|line| header_key(line) == Some(key))?
+        .split(' ')
+        .find_map(|field| field.strip_prefix("stage="))
+}
+
+/// Whether a rendering is a post-compaction replay, carrying the recovery
+/// instruction under its seal.
+pub fn replays(rendered: &str) -> bool {
+    rendered
+        .split_inclusive('\n')
+        .nth(1)
+        .is_some_and(|line| line.starts_with(RECOVERY))
+}
+
+const RECOVERY: &str = "[POST-COMPACTION] Pending keys:";
+
 /// Keys originating from other lanes, whose notes carry information rather
 /// than operator authority.
 pub fn peer_keys(rendered: &str) -> impl Iterator<Item = &str> {
@@ -141,13 +161,11 @@ pub fn peer_keys(rendered: &str) -> impl Iterator<Item = &str> {
 /// An empty selection is empty; recovery instructions name only retained keys.
 #[must_use]
 pub fn retain(rendered: &str, mut keep: impl FnMut(&str) -> bool) -> String {
+    let recovery = replays(rendered);
     let mut lines = rendered.split_inclusive('\n').peekable();
     let Some(open) = lines.next() else {
         return String::new();
     };
-    let recovery = lines
-        .peek()
-        .is_some_and(|line| line.starts_with("[POST-COMPACTION] Pending keys:"));
     let mut retained = open.to_owned();
     let mut keeping = false;
     let mut any = false;
@@ -304,7 +322,9 @@ pub fn post_compaction(rendered: &str) -> String {
     };
     let mut replayed = String::with_capacity(rendered.len() + 192);
     replayed.push_str(seal);
-    replayed.push_str("\n[POST-COMPACTION] Pending keys: ");
+    replayed.push('\n');
+    replayed.push_str(RECOVERY);
+    replayed.push(' ');
     replayed.push_str(first);
     for key in pending {
         replayed.push(' ');
