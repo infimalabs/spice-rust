@@ -45,8 +45,23 @@ pub(in crate::board_command) fn claim_plan(
     allocation: &board::NextConfig,
 ) -> Result<ClaimPlan, Outcome<CommandAnswer>> {
     let possession = possession_rule(win)?;
-    let snapshot =
-        validated_working_snapshot(bus, command.actor().clone(), &[], projects, allocation)?;
+    // A named claim decides against its exact witnessed task even when that
+    // task is settled, so its refusal names ineligibility rather than absence.
+    let roots = command
+        .expected()
+        .iter()
+        .filter_map(|witness| match witness {
+            Witness::Task { task, .. } => Some(task.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let snapshot = validated_working_snapshot_for_tasks(
+        bus,
+        command.actor().clone(),
+        &roots,
+        projects,
+        allocation,
+    )?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;

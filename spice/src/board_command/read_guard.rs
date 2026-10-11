@@ -973,13 +973,7 @@ pub(super) fn read_ledger(
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let lane_reader = matches!(principal, Actor::Lane(_));
-    let snapshot = match validated_working_snapshot(
-        bus,
-        principal,
-        std::slice::from_ref(&ledger.task),
-        projects,
-        allocation,
-    ) {
+    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
