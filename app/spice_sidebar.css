@@ -261,3 +261,44 @@
   color: var(--muted);
 }
 .app-empty-state { margin: 0; padding: 3px 1px; color: var(--muted); font-size: var(--app-type-sm); line-height: 1.4; }
+/* The job board packs one fixed-height row per kept command. Every cell has a
+   fixed width, so a standing change or an age tick rewrites text in place, and
+   oldest-first order keeps every row above a starting job where it was. */
+.app-spice-job-census {
+  display: inline-flex;
+  gap: .9ch;
+  font-variant-numeric: tabular-nums;
+}
+.app-spice-job-census > [data-job-standing="unheard"] { color: var(--muted); }
+.app-spice-job-board {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--app-type-fact)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-spice-job {
+  display: grid;
+  grid-template-columns: 1.4em 9ch 3ch minmax(0, 1fr);
+  column-gap: 1ch;
+  align-items: center;
+  block-size: 1.5rem;
+  padding-inline: 4px 6px;
+  border-left: var(--quote-rail) solid var(--accent-slot, var(--accent));
+  background: color-mix(in srgb, var(--panel) 76%, var(--page));
+}
+.app-spice-job-glyph {
+  color: var(--accent-slot, var(--accent));
+  text-align: center;
+}
+.app-spice-job-agent,
+.app-spice-job-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-spice-job-agent { color: var(--ink); font-weight: 650; }
+.app-spice-job-age { color: var(--muted); text-align: right; }
+.app-spice-job-command { color: var(--ink); font: inherit; }
+.app-spice-job[data-job-standing="unheard"] :is(.app-spice-job-glyph, .app-spice-job-command) { color: var(--muted); }

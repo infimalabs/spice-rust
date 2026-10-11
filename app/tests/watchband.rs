@@ -660,11 +660,13 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
         wire::intent::LaneJob {
             id: "6ZbQk3mPx".to_owned(),
             command: "cargo test".to_owned(),
+            kind: wire::intent::LaneJobKind::Command,
             standing: wire::intent::LaneJobStanding::Running,
         },
         wire::intent::LaneJob {
             id: "6ZbQk3mPy".to_owned(),
             command: "cargo doc".to_owned(),
+            kind: wire::intent::LaneJobKind::Service,
             standing: wire::intent::LaneJobStanding::Unheard,
         },
     ];
@@ -702,6 +704,7 @@ fn team_jobs_interleave_members_by_start_and_keep_row_identity_across_standing()
     let job = |offset: i64, command: &str, standing| wire::intent::LaneJob {
         id: key(offset),
         command: command.to_owned(),
+        kind: wire::intent::LaneJobKind::Command,
         standing,
     };
     use wire::intent::LaneJobStanding::{Running, Unheard};

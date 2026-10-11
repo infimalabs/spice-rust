@@ -6,6 +6,7 @@ use crate::work::{TaskOverviewSelection, WorkProjection};
 pub(super) mod chrome;
 mod quota;
 mod sidebar;
+mod spice_jobs;
 mod spice_sidebar;
 mod work_blockers;
 mod work_detail;
@@ -199,6 +200,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
     })
 }
 fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> sidebar::Content {
+    let standings = spice_standings(render, runtime);
     let body = html! {
         <div class="app-spice-sidebar-content">
             {spice_sidebar::render_global_settings(
@@ -210,7 +212,8 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
             )}
             {spice_sidebar::render_operator(runtime)}
             {quota::render_sidebar(runtime)}
-            {render_spice_topology(render, runtime)}
+            {render_spice_topology(render, runtime, standings.as_deref())}
+            {spice_jobs::render(standings.as_deref())}
         </div>
     };
     let anchor = html! {
@@ -239,8 +242,35 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
     }
 }
 
-fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> Html {
-    let Some(lanes) = runtime.and_then(AppRuntime::lanes) else {
+/// Every lane's standing with this browser's own pending submissions folded
+/// in; `None` until the resident's lane state has arrived.
+fn spice_standings(
+    render: &AppRender<'_>,
+    runtime: Option<&AppRuntime>,
+) -> Option<Vec<crate::watchband::Standing>> {
+    let lanes = runtime.and_then(AppRuntime::lanes)?;
+    let waiting = runtime
+        .and_then(AppRuntime::inbox)
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
+    let tasks = runtime
+        .and_then(AppRuntime::board)
+        .map(|board| board.tasks.as_slice())
+        .unwrap_or(&[]);
+    let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
+    for standing in &mut standings {
+        standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
+        standing.waking = member_waking(waiting, &render.submissions.status, standing.lane);
+    }
+    Some(standings)
+}
+
+fn render_spice_topology(
+    render: &AppRender<'_>,
+    runtime: Option<&AppRuntime>,
+    standings: Option<&[crate::watchband::Standing]>,
+) -> Html {
+    let Some(standings) = standings else {
         return html! {
             <section
                 class="app-sheet-section app-spice-topology"
@@ -255,19 +285,6 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
             </section>
         };
     };
-    let waiting = runtime
-        .and_then(AppRuntime::inbox)
-        .map(|inbox| inbox.lanes.as_slice())
-        .unwrap_or(&[]);
-    let tasks = runtime
-        .and_then(AppRuntime::board)
-        .map(|board| board.tasks.as_slice())
-        .unwrap_or(&[]);
-    let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
-    for standing in &mut standings {
-        standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
-        standing.waking = member_waking(waiting, &render.submissions.status, standing.lane);
-    }
     let live = standings
         .iter()
         .filter(|standing| standing.thread.is_some())
@@ -293,7 +310,7 @@ fn render_spice_topology(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -
                 &spice_sidebar::Context {
                     sender: render.sender,
                 },
-                &standings,
+                standings,
             )}
         </section>
     }

@@ -973,6 +973,30 @@ impl LaneJobStanding {
     }
 }
 
+/// How one command a lane keeps lives, as its call declared it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LaneJobKind {
+    /// A deadline-bounded command the lane waits on or hears end later.
+    Command,
+    /// A long-lived service that runs until its claim ends or it is stopped.
+    Service,
+    /// A deadline-bounded command whose output lines reach the lane as events.
+    Watch,
+}
+
+impl LaneJobKind {
+    /// Exact operator-facing wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Command => "command",
+            Self::Service => "service",
+            Self::Watch => "watch",
+        }
+    }
+}
+
 /// One command a lane keeps beyond the call that started it, until the lane
 /// hears how it ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -982,6 +1006,8 @@ pub struct LaneJob {
     pub id: String,
     /// The command as the model wrote it.
     pub command: String,
+    /// How the command lives: waited on, served, or watched.
+    pub kind: LaneJobKind,
     /// Whether the command still runs, or ended unheard.
     pub standing: LaneJobStanding,
 }
