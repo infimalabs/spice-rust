@@ -30,7 +30,15 @@ refusals remain distinct from raw synchronization failures.
 ## Landing refusals
 
 A landing may touch only the task's footprint: paths touched by its own
-non-merge commits. A refusal names the excess and a repair recipe.
+non-merge commits. A merge, including the lane's own integration of the
+baseline, never widens it. A refusal names the excess and a repair recipe.
+
+A conflict resolution that drifts outside the footprint publishes nothing, but
+it commits the lane's integration of the baseline: the resolved tree with every
+drifted path as the baseline holds it. The resolved content of those paths
+stays staged, so the claimant either commits it as a non-merge commit that
+brings it inside the footprint, such as a baseline caller adapted to a function
+the task changed, or restores it from `HEAD`, and then completes again.
 
 When integration synthesizes a tree different from the authored tree, the
 configured cheap admission command must accept it before publication. This is

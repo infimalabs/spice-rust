@@ -178,6 +178,10 @@ enum Pending {
         target: String,
         tree: String,
     },
+    Integration {
+        expected: String,
+        target: String,
+    },
     Snapshot {
         commit: String,
     },
