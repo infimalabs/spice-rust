@@ -140,6 +140,14 @@ pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,web_search,lsp";
 /// lane's shell ahead of the first turn.
 pub const TOOLS_REQUEST_ID: &str = "spice-tools";
 
+/// The URI scheme a lane registers with omp so its `read` reaches spice.
+pub const URI_SCHEME: &str = "spice";
+
+/// What the `spice` scheme serves, as a refusal names it.
+pub const URI_SERVED: &str =
+    "spice:// serves reads of quote targets only: spice://quote/v1/tape/... or \
+     spice://quote/v1/steer/...";
+
 /// Name of the host tool the lane registers in place of omp's `bash`.
 ///
 /// omp refuses a host tool named after any tool it ships, so the lane's shell
@@ -590,6 +598,7 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
         launch.effort.as_str(),
     ));
     bytes.extend(host_tools_request());
+    bytes.extend(host_uri_schemes_request());
     bytes.extend(request_line(&Request {
         id: STATE_REQUEST_ID.to_owned(),
         kind: "get_state",
@@ -881,6 +890,20 @@ pub fn host_tools_request() -> Vec<u8> {
     }))
 }
 
+/// Register the `spice` scheme, so a quote link the lane was handed reads
+/// like a file. An omp without host-owned schemes refuses it under
+/// [`listen::OMP_URI_SCHEMES_REQUEST_ID`] and the lane runs on without it.
+fn host_uri_schemes_request() -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "id": listen::OMP_URI_SCHEMES_REQUEST_ID,
+        "type": "set_host_uri_schemes",
+        "schemes": [{
+            "scheme": URI_SCHEME,
+            "description": "Quoted text and its recorded author, by spice://quote/v1 target",
+        }],
+    }))
+}
+
 /// What the model asks of one job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JobOp {
@@ -1154,5 +1177,28 @@ pub fn host_tool_refused(id: &str, reason: &str) -> Vec<u8> {
         "id": id,
         "result": {"content": [{"type": "text", "text": reason}]},
         "isError": true,
+    }))
+}
+
+/// The answer to one read of a host-owned URI: the resource as Markdown.
+#[must_use]
+pub fn host_uri_result(id: &str, content: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "type": "host_uri_result",
+        "id": id,
+        "content": content,
+        "contentType": "text/markdown",
+    }))
+}
+
+/// The answer to a host-owned URI request the lane does not serve, which
+/// omp surfaces as the tool's error.
+#[must_use]
+pub fn host_uri_refused(id: &str, reason: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "type": "host_uri_result",
+        "id": id,
+        "isError": true,
+        "error": reason,
     }))
 }

@@ -150,6 +150,14 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                     .expect("one line")
             )
             .expect("JSON"),
+            serde_json::json!({
+                "id": listen::OMP_URI_SCHEMES_REQUEST_ID,
+                "type": "set_host_uri_schemes",
+                "schemes": [{
+                    "scheme": "spice",
+                    "description": "Quoted text and its recorded author, by spice://quote/v1 target",
+                }],
+            }),
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
             serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": omp::turn_prompt(&launch)}),
         ]

@@ -296,6 +296,9 @@ impl<'a> Surface<'a> {
             (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
                 self.bus, self.paths, self.epoch, command, inbox,
             )),
+            (CommandKind::QuoteRead, Intent::QuoteRead(request)) => {
+                Some(steering::quote(self.bus, self.paths, request))
+            }
             (CommandKind::SteerHistory, Intent::SteerHistory(request)) => {
                 Some(steering::history(self.bus, self.paths, request))
             }

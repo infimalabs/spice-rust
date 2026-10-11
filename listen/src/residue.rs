@@ -121,6 +121,16 @@ pub enum Dialog {
         /// The arguments the model composed for it.
         arguments: serde_json::Map<String, serde_json::Value>,
     },
+    /// A read or write of a URI scheme the host registered, which the host
+    /// answers with the resource or a refusal.
+    HostUri {
+        /// Identity the answer cites.
+        id: String,
+        /// `read` or `write`, as the vendor named it.
+        operation: String,
+        /// The full URI the agent named.
+        url: String,
+    },
 }
 
 impl Dialog {
@@ -128,7 +138,10 @@ impl Dialog {
     #[must_use]
     pub fn id(&self) -> &str {
         match self {
-            Self::Confirm { id, .. } | Self::Prompt { id } | Self::HostTool { id, .. } => id,
+            Self::Confirm { id, .. }
+            | Self::Prompt { id }
+            | Self::HostTool { id, .. }
+            | Self::HostUri { id, .. } => id,
         }
     }
 }

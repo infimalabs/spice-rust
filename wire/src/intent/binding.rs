@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::QuoteResolution;
 use crate::command::CommandKind;
 
 use super::{
@@ -10,13 +11,14 @@ use super::{
     ConsentRead, DirectionHistoryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply,
     DocLedger, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneRead,
-    LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, RecallAnswer,
-    RecognitionAnswer, Recognize, ReleasePublish, ReportAnswer, ReportRead, StateAnswer,
-    SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose,
-    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
-    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
-    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, QuoteRead,
+    RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, ReportAnswer, ReportRead,
+    StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer,
+    TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
+    TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
+    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
+    UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -92,6 +94,8 @@ pub enum BodyShape {
     DirectiveRef,
     /// [`SteerDispose`]
     SteerDispose,
+    /// [`QuoteRead`]
+    QuoteRead,
     /// [`ConsentDecide`]
     ConsentDecide,
     /// [`ConsentRead`]
@@ -185,6 +189,8 @@ pub enum AnswerShape {
     Taste,
     /// [`RecognitionAnswer`]
     Recognition,
+    /// [`QuoteResolution`]
+    Quote,
 }
 
 /// One decoded successful reply body, tagged by the shape its command selected.
@@ -241,6 +247,8 @@ pub enum CommandAnswer {
     Taste(TasteAnswer),
     /// [`AnswerShape::Recognition`]
     Recognition(RecognitionAnswer),
+    /// [`AnswerShape::Quote`]
+    Quote(QuoteResolution),
 }
 
 impl CommandAnswer {
@@ -273,6 +281,7 @@ impl CommandAnswer {
             Self::Recall(_) => AnswerShape::Recall,
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
+            Self::Quote(_) => AnswerShape::Quote,
         }
     }
 }
@@ -330,7 +339,8 @@ impl AnswerShape {
             | Self::Recall
             | Self::Taste
             | Self::Recognition
-            | Self::DirectionHistory => self.decode_secondary(source),
+            | Self::DirectionHistory
+            | Self::Quote => self.decode_secondary(source),
         }
     }
 
@@ -367,6 +377,7 @@ impl AnswerShape {
             Self::Taste => CommandAnswer::Taste(body.read()?),
             Self::Recognition => CommandAnswer::Recognition(body.read()?),
             Self::DirectionHistory => CommandAnswer::DirectionHistory(Box::new(body.read()?)),
+            Self::Quote => CommandAnswer::Quote(body.read()?),
             _ => unreachable!("answer-shape decode partition is closed"),
         })
     }
@@ -452,6 +463,7 @@ impl CommandKind {
             | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
+            | Self::QuoteRead
             | Self::ConsentRead
             | Self::ConsentPolicy
             | Self::ConsentDecide
@@ -530,6 +542,7 @@ impl CommandKind {
                 Binding::of(B::DirectiveRef, A::Directive)
             }
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
+            Self::QuoteRead => Binding::of(B::QuoteRead, A::Quote),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
             Self::ConsentRead => Binding::of(B::ConsentRead, A::ConsentQueue),
             Self::ConsentPolicy => Binding::of(B::ConsentPolicy, A::ConsentPolicy),
@@ -645,6 +658,8 @@ pub enum Intent {
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
     SteerDispose(SteerDispose),
+    /// [`BodyShape::QuoteRead`]
+    QuoteRead(QuoteRead),
     /// [`BodyShape::ConsentDecide`]
     ConsentDecide(ConsentDecide),
     /// [`BodyShape::ConsentRead`]
@@ -722,6 +737,7 @@ impl Intent {
             | Self::SteerHistory(_)
             | Self::DirectiveRef(_)
             | Self::SteerDispose(_)
+            | Self::QuoteRead(_)
             | Self::ConsentDecide(_)
             | Self::ConsentRead(_)
             | Self::ConsentPolicy(_)
@@ -787,6 +803,7 @@ impl Intent {
             Self::SteerHistory(_) => BodyShape::SteerHistory,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
+            Self::QuoteRead(_) => BodyShape::QuoteRead,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
             Self::ConsentRead(_) => BodyShape::ConsentRead,
             Self::ConsentPolicy(_) => BodyShape::ConsentPolicy,
@@ -941,6 +958,7 @@ impl BodyShape {
                 | Self::SteerHistory
                 | Self::DirectiveRef
                 | Self::SteerDispose
+                | Self::QuoteRead
                 | Self::ConsentDecide
                 | Self::ConsentRead
                 | Self::ConsentPolicy
@@ -976,6 +994,7 @@ impl BodyShape {
             Self::SteerHistory => Intent::SteerHistory(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
+            Self::QuoteRead => Intent::QuoteRead(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),
             Self::ConsentRead => Intent::ConsentRead(crate::decode(bytes)?),
             Self::ConsentPolicy => Intent::ConsentPolicy(crate::decode(bytes)?),
