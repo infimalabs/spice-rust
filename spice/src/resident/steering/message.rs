@@ -498,14 +498,12 @@ pub(in crate::resident) fn publish_packet(
             detail: format!("{sender} is the authoring occupant's own address"),
         });
     }
-    let seated = residency
-        .body()
-        .lanes
+    let lanes = seats(&residency.body().lanes, view);
+    let seated = lanes
         .iter()
-        .filter_map(|row| {
-            let occupant = row.occupant?;
-            let address = view.facts().occupant_address(row.lane, occupant).ok()?;
-            Some((address, (row.lane, occupant)))
+        .filter_map(|(lane, seat)| {
+            let (occupant, address) = (*seat)?;
+            Some((address?, (*lane, occupant)))
         })
         .collect::<BTreeMap<_, _>>();
     let mut targets = Vec::with_capacity(packet.recipients.len());
@@ -513,7 +511,7 @@ pub(in crate::resident) fn publish_packet(
     for (recipient, directive) in packet.recipients.iter().zip(identities) {
         match seated.get(recipient) {
             Some(target) => targets.push((*target, directive)),
-            None => unreached.push(unavailable(bus, *recipient)?),
+            None => unreached.push(unavailable(bus, &lanes, *recipient)?),
         }
     }
     if targets.is_empty() {
@@ -589,10 +587,42 @@ fn message_identity(locus: &TranscriptLocus, recipient: OccupantAddress) -> Cano
     CanonicalUuid::new(uuid::Uuid::from_bytes(bytes))
 }
 
+/// Each residency lane's occupant and, when proved, that occupant's address.
+type Seats = BTreeMap<CanonicalUuid, Option<(CanonicalUuid, Option<OccupantAddress>)>>;
+
+/// Every residency lane's occupant and its address as `view` proves it.
+fn seats(lanes: &[wire::LaneResidency], view: &bus::TaskSnapshot) -> Seats {
+    lanes
+        .iter()
+        .map(|row| {
+            let seat = row.occupant.map(|occupant| {
+                let address = view.facts().occupant_address(row.lane, occupant).ok();
+                (occupant, address)
+            });
+            (row.lane, seat)
+        })
+        .collect()
+}
+
 /// Why a recipient the view does not seat cannot hear the packet, led by its
-/// address so a bounded notice still names it.
-fn unavailable(bus: &Bus, recipient: OccupantAddress) -> Result<String, Unpublished> {
+/// address so a bounded notice still names it. An expired address also names
+/// what its birth lane seats in the same view, so its author can address the
+/// lane's current occupant; the packet itself never follows the lane.
+fn unavailable(
+    bus: &Bus,
+    lanes: &Seats,
+    recipient: OccupantAddress,
+) -> Result<String, Unpublished> {
     match bus.resolve_occupant(recipient) {
+        Ok(Err(refusal @ bus::AddressRefusal::Expired { birth })) => {
+            let now = match lanes.get(&birth.lane) {
+                Some(Some((_, Some(current)))) => format!("its lane seats {current}"),
+                Some(Some((_, None))) => "its lane seats an unproved occupant".to_owned(),
+                Some(None) => "its lane is vacant".to_owned(),
+                None => "its lane left the residency".to_owned(),
+            };
+            Ok(format!("{recipient} {} ({now})", refusal.reason()))
+        }
         Ok(Err(refusal)) => Ok(format!("{recipient} {}", refusal.reason())),
         Ok(Ok(_)) => Ok(format!("{recipient} msg::recipient-unseated")),
         Err(error) => Err(Unpublished::Failed(typed_store_fault(
