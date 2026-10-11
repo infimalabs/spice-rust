@@ -74,7 +74,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
                 .as_ref()
                 .map_or(asks.rows.len(), |omission| omission.population);
             page.section(
-                "Pending steering (answer every key)",
+                PENDING_TITLE,
                 asks.rows.iter().map(ask).collect(),
                 total,
                 &more,
@@ -143,6 +143,40 @@ pub(crate) fn refused(refusal: &wire::Refusal) -> String {
         "# Spice briefing unavailable\n{}{detail}\nRead the same ground with `{REFRESH}`, `{STATUS}`, and `{INBOX}`.\n",
         refusal.reason()
     ))
+}
+
+/// The section listing pending steering, one row per key, key first.
+const PENDING_TITLE: &str = "Pending steering (answer every key)";
+
+/// The page without the pending-steering rows whose key `answered` holds.
+///
+/// A section left with no row is dropped whole, as an empty inbox says
+/// nothing; a withheld-rows line still owes answers, so it keeps the section.
+pub(crate) fn without_answered(page: &str, answered: impl Fn(&str) -> bool) -> String {
+    let heading = format!("\n## {PENDING_TITLE}\n");
+    let Some(start) = page.find(&heading) else {
+        return page.to_owned();
+    };
+    let rows = start + heading.len();
+    let end = page[rows..]
+        .find("\n## ")
+        .map_or(page.len(), |offset| rows + offset);
+    let kept = page[rows..end]
+        .split_inclusive('\n')
+        .filter(|row| {
+            row.strip_prefix("- ")
+                .and_then(|row| row.split(' ').next())
+                .is_none_or(|key| !answered(key))
+        })
+        .collect::<String>();
+    let mut filtered = String::with_capacity(page.len());
+    filtered.push_str(&page[..start]);
+    if !kept.is_empty() {
+        filtered.push_str(&heading);
+        filtered.push_str(&kept);
+    }
+    filtered.push_str(&page[end..]);
+    filtered
 }
 
 struct Page {
@@ -438,7 +472,7 @@ mod tests {
         OutstandingAskView, PostureView, RecentTurnView, Report, RepositoryGlanceView,
         RetiredDirectionView,
     };
-    use super::{BRIEFING_BYTES, fold};
+    use super::{BRIEFING_BYTES, fold, without_answered};
 
     fn text(bytes: usize) -> wire::output::ClippedText {
         clip(&"word ".repeat(bytes / 5), bytes)
@@ -590,6 +624,35 @@ mod tests {
         };
         *asks = None;
         assert!(fold(&report, &[]).contains("## Pending steering\n- unread; see Unknown\n"));
+    }
+
+    #[test]
+    fn an_answered_key_leaves_the_briefing_while_its_peers_stay_owed() {
+        let page = fold(&recall(2, 40), &[]);
+        assert!(page.contains("- key0 (new") && page.contains("- key1 (new"));
+
+        let one = without_answered(&page, |key| key == "key0");
+        assert!(!one.contains("key0 ("), "{one}");
+        assert!(one.contains("## Pending steering (answer every key)\n- key1 (new"));
+        assert!(one.contains("\n\n## Held claim"), "{one}");
+
+        let none = without_answered(&page, |key| key.starts_with("key"));
+        assert!(!none.contains("## Pending steering"), "{none}");
+        assert_eq!(
+            none,
+            fold(
+                &{
+                    let mut report = recall(2, 40);
+                    let Report::Recall { asks, .. } = &mut report else {
+                        unreachable!()
+                    };
+                    asks.as_mut().expect("fixture asks").rows.clear();
+                    report
+                },
+                &[]
+            ),
+            "dropping every row leaves the page an empty inbox folds to"
+        );
     }
 
     #[test]

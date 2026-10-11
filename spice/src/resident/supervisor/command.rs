@@ -27,10 +27,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use listen::{Decoded, Dialog, Event, ProseRole};
 use serde::{Deserialize, Serialize};
 use vendor::omp::{JobCall, ShellCall};
-use wire::{CanonicalUuid, Disposition};
+use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
 use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
+use steering::{InboxDelivery, ReasoningReminder};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 const KICK_BYTES: usize = 1024;
@@ -64,6 +65,10 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// resend can say whether it saw a reply at all. Reasoning and tool
     /// arguments are not prose. Cleared with `told`.
     replied: Mutex<BTreeSet<String>>,
+    /// Keys the occupant's visible words answered that the journal still
+    /// lists. Every composition holds them back; compaction keeps them, since
+    /// the journal's lag is not the context's.
+    answered: Mutex<answered::Answered>,
     /// Hidden-reasoning attempts already corrected in this context and pending
     /// inbox generation. The text itself is never retained.
     reasoning_reminder: Mutex<ReasoningReminder>,
@@ -90,26 +95,6 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Correlated live retunes awaiting an OMP response.
     retunes: Mutex<HashMap<String, PendingRetune>>,
     registration: registration::Registration,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum InboxDelivery {
-    Update,
-    PostCompaction,
-}
-
-#[derive(Default)]
-struct ReasoningReminder {
-    pending: Option<Vec<u8>>,
-    nudged: BTreeSet<steer::Key>,
-}
-
-struct PendingKeys(BTreeSet<steer::Key>);
-
-impl steer::Standing for PendingKeys {
-    fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
-        self.0.contains(key).then_some(Disposition::Live)
-    }
 }
 
 /// What one host tool call asks of the lane.
@@ -314,6 +299,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             told: Mutex::new(BTreeSet::new()),
             recognized: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
+            answered: Mutex::new(answered::Answered::default()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
             seal,
             misdirected: Mutex::new(BTreeSet::new()),
@@ -523,113 +509,6 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _ = self.background(&format!("msg:{}", notice.packet), &message);
     }
 
-    /// Send new direction once; replace reminders in the SDK aside bridge.
-    /// An empty inbox cancels a queued reminder. Compaction replays pending
-    /// direction in full without interrupting the response that follows it.
-    fn interject(&self, delivery: InboxDelivery) {
-        let Some(rendered) = (self.read_inbox)() else {
-            return;
-        };
-        let mut delivered = self
-            .delivered
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if delivered.as_deref() == Some(rendered.as_slice()) {
-            return;
-        }
-        let message =
-            std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
-        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut recognized = self
-            .recognized
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let peers = steer::inbox::peer_keys(message).collect::<BTreeSet<_>>();
-        let fresh = if delivery == InboxDelivery::Update {
-            steer::inbox::retain(message, |key| {
-                !recognized.contains(key) && !peers.contains(key)
-            })
-        } else {
-            String::new()
-        };
-        let standing = steer::inbox::retain(message, |key| {
-            recognized.contains(key) || peers.contains(key)
-        });
-        if !fresh.is_empty() {
-            for handle in self
-                .calls
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-            {
-                handle.interrupt();
-            }
-            if self.steer(&fresh).is_err() {
-                return;
-            }
-            // This original is never replaced or removed. A later reminder
-            // follows it, whether omp took it live or at a tool boundary.
-            told.extend(steer::inbox::keys(&fresh).map(str::to_owned));
-            recognized.extend(steer::inbox::keys(&fresh).map(str::to_owned));
-        }
-        drop(recognized);
-        let previous = delivered
-            .as_deref()
-            .and_then(|bytes| std::str::from_utf8(bytes).ok());
-        let unchanged = previous == Some(standing.as_str());
-        if delivery == InboxDelivery::Update && unchanged && !standing.is_empty() {
-            *delivered = Some(rendered);
-            return;
-        }
-        let replied = self.replied.lock().unwrap_or_else(PoisonError::into_inner);
-        let reminder = if delivery == InboxDelivery::PostCompaction {
-            steer::inbox::post_compaction(message)
-        } else {
-            steer::inbox::nudge(&standing, |key| {
-                told.contains(key).then(|| {
-                    if replied.contains(key) {
-                        steer::inbox::Told::Replied
-                    } else {
-                        steer::inbox::Told::Silent
-                    }
-                })
-            })
-        };
-        drop(replied);
-        if self.background("inbox", &reminder).is_ok() {
-            self.recognized
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend(steer::inbox::keys(message).map(str::to_owned));
-            *delivered = Some(rendered);
-        }
-    }
-
-    /// Interject one message as steering, in sequence with the inbox.
-    fn steer(&self, message: &str) -> io::Result<()> {
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        self.write(&vendor::omp::steer_request(sequence, message))
-    }
-
-    /// Queue the lane's briefing beside the replayed steering once a
-    /// compaction has dropped the context it would have been read in.
-    ///
-    /// The briefing is composed on its own thread: it scans the transcript
-    /// and the journal, and the decoding path must keep reading events.
-    fn deliver_briefing(self: &Arc<Self>) {
-        let driver = Arc::clone(self);
-        let spawned = std::thread::Builder::new()
-            .name("spice-supervisor-briefing".to_owned())
-            .spawn(move || {
-                if let Some(briefing) = (driver.read_briefing)() {
-                    let _ = driver.background("briefing", &driver.for_seat(briefing));
-                }
-            });
-        if let Err(error) = spawned {
-            eprintln!("spice supervisor: briefing thread unavailable: {error}");
-        }
-    }
-
     /// Replace one queued notice without interrupting model or tool work.
     fn background(&self, purpose: &str, message: &str) -> io::Result<()> {
         self.update_background(purpose, |_| message.to_owned())
@@ -657,202 +536,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             queued.insert(purpose.to_owned(), message);
         }
         Ok(())
-    }
-
-    /// Correct attempts to answer pending steering in hidden reasoning.
-    ///
-    /// Detection reuses the prose scanner but consumes none of its outcomes:
-    /// this path writes only a private notice and never reaches journal
-    /// authority.
-    fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) {
-        let acknowledgement_prose = decoded
-            .events()
-            .iter()
-            .filter_map(|event| {
-                let Event::Reasoning(listen::Reasoning {
-                    content: listen::ReasoningContent::Plain(parts),
-                    ..
-                }) = event
-                else {
-                    return None;
-                };
-                Some(parts.as_slice())
-            })
-            .flatten()
-            .filter(|prose| steer::has_acknowledgement(prose))
-            .collect::<Vec<_>>();
-        if acknowledgement_prose.is_empty() {
-            return;
-        }
-        let pending = (self.read_inbox)().unwrap_or_default();
-        let Ok(rendered) = std::str::from_utf8(&pending) else {
-            return;
-        };
-        let standing = PendingKeys(
-            steer::inbox::keys(rendered)
-                .filter_map(|key| key.parse().ok())
-                .collect(),
-        );
-        let mut reminder = self
-            .reasoning_reminder
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if reminder.pending.as_deref() != Some(pending.as_slice()) {
-            reminder.pending = Some(pending);
-            reminder.nudged.clear();
-        }
-
-        let mut mentioned = BTreeSet::new();
-        for prose in acknowledgement_prose {
-            mentioned.extend(
-                steer::scan(prose, &standing).into_iter().filter_map(
-                    |recognition| match recognition.outcome {
-                        steer::Outcome::Retired { key, .. } => Some(key),
-                        steer::Outcome::Missed { .. } => None,
-                    },
-                ),
-            );
-        }
-        mentioned.retain(|key| !reminder.nudged.contains(key));
-        if mentioned.is_empty() {
-            return;
-        }
-        let keys = mentioned
-            .iter()
-            .map(steer::Key::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let message = format!(
-            "<system-notice>\nReasoning is not acknowledgment. Lead visible assistant prose, and \
-             the first tool intent when the message calls a tool, with `ACK {keys}: response` or \
-             `NAK {keys}: reason`.\n</system-notice>"
-        );
-        if self.background("hidden-ack", &message).is_ok() {
-            reminder.nudged.extend(mentioned);
-        }
-    }
-
-    /// Correct visible acknowledgment headers that name a key the occupant
-    /// does not hold.
-    ///
-    /// A header naming a mistyped key, or one retired before this occupant was
-    /// told anything, retires nothing, and an occupant that never hears so
-    /// believes it answered. A key still pending, one this occupant was told,
-    /// and the lane's own seal stay silent: the first retires, and the others
-    /// were really given to this occupant. Like the reasoning correction this
-    /// writes only a private notice and never reaches journal authority.
-    fn nudge_misdirected_acknowledgements(&self, decoded: &Decoded) {
-        let prose = decoded
-            .events()
-            .iter()
-            .filter_map(|event| match event {
-                Event::Prose(prose)
-                    if prose.role == ProseRole::Assistant
-                        && steer::has_acknowledgement(&prose.text) =>
-                {
-                    Some(prose.text.as_str())
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if prose.is_empty() {
-            return;
-        }
-        let inbox = (self.read_inbox)().unwrap_or_default();
-        let pending = std::str::from_utf8(&inbox)
-            .map(|rendered| steer::inbox::keys(rendered).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let standing = PendingKeys(pending.iter().filter_map(|key| key.parse().ok()).collect());
-        let recognized = self
-            .recognized
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut misdirected = self
-            .misdirected
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let mut named = BTreeSet::new();
-        for text in prose {
-            for recognition in steer::scan(text, &standing) {
-                if !recognition.outcome.placed() {
-                    continue;
-                }
-                let steer::Outcome::Missed { token, .. } = recognition.outcome else {
-                    continue;
-                };
-                if token != self.seal.as_str()
-                    && !recognized.contains(&token)
-                    && !misdirected.contains(&token)
-                {
-                    named.insert(token);
-                }
-            }
-        }
-        if named.is_empty() {
-            return;
-        }
-        let quoted = |keys: &mut dyn Iterator<Item = &str>| {
-            keys.map(|key| format!("`{key}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let pending = if pending.is_empty() {
-            "No steering is pending.".to_owned()
-        } else {
-            format!(
-                "Pending: {}; copy the key exactly as delivered.",
-                quoted(&mut pending.iter().copied())
-            )
-        };
-        let message = format!(
-            "<system-notice>\nYour acknowledgment named {}, which is not a pending steering key; \
-             it acknowledged nothing. {pending}\n</system-notice>",
-            quoted(&mut named.iter().map(String::as_str)),
-        );
-        if self.background("misdirected-ack", &message).is_ok() {
-            misdirected.extend(named);
-        }
-    }
-
-    /// Cancel answered reminders before the asynchronous journal catches up.
-    /// Durable steering disposition remains the resident's transcript-backed job.
-    fn cancel_answered_reminders(&self, decoded: &Decoded) {
-        let acknowledgement = decoded
-            .events()
-            .iter()
-            .filter_map(Event::assistant_text)
-            .any(steer::has_acknowledgement);
-        let pending = acknowledgement.then(|| (self.read_inbox)().unwrap_or_default());
-        if let Some(rendered) = pending
-            .as_deref()
-            .and_then(|pending| std::str::from_utf8(pending).ok())
-        {
-            let standing = PendingKeys(
-                steer::inbox::keys(rendered)
-                    .filter_map(|key| key.parse().ok())
-                    .collect(),
-            );
-            let answered = decoded
-                .events()
-                .iter()
-                .filter_map(Event::assistant_text)
-                .flat_map(|text| steer::scan(text, &standing))
-                .filter_map(|recognition| match recognition.outcome {
-                    steer::Outcome::Retired { key, .. } => Some(key),
-                    steer::Outcome::Missed { .. } => None,
-                })
-                .collect::<BTreeSet<_>>();
-            if !answered.is_empty() {
-                let _cancelled = self.update_background("inbox", |message| {
-                    steer::inbox::retain(message, |key| {
-                        key.parse().is_ok_and(|key| !answered.contains(&key))
-                    })
-                });
-                if standing.0.is_subset(&answered) {
-                    let _cancelled = self.background("hidden-ack", "");
-                }
-            }
-        }
     }
 
     /// Let one decoded record shape delivery, and state the consent request a
@@ -1488,9 +1171,13 @@ impl Drop for KickDoor {
     }
 }
 
+mod answered;
 #[cfg(test)]
 mod event_tests;
 mod media;
 mod registration;
 pub(in crate::resident) mod renewal;
+mod steering;
+#[cfg(test)]
+mod steering_tests;
 mod uri;
