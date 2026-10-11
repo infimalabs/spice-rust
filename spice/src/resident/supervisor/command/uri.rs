@@ -54,6 +54,7 @@ pub(super) fn resident_server(
         worktree,
         lane,
         environment,
+        graphs: Default::default(),
     };
     Box::new(move |url, access| {
         seat.serve(

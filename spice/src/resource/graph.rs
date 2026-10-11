@@ -1,0 +1,275 @@
+//! Native graph continuations retain the validated diagram for the seat's lifetime.
+//! The cursor names that immutable snapshot and the first unseen UTF-8 byte.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::ops::Range;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use serde::Serialize;
+use wire::output::{Budget, ClippedText, INTERACTIVE, Request};
+use wire::{Digest, Domain, Seq};
+
+use super::{Query, Shape};
+
+#[cfg(test)]
+mod tests;
+
+/// Incomplete diagrams remain readable even when the board or another read changes.
+#[derive(Default)]
+pub(crate) struct Pages(Mutex<BTreeMap<String, Arc<Snapshot>>>);
+
+struct Snapshot {
+    key: String,
+    view: String,
+    at: Option<String>,
+    barrier: Seq,
+    text: String,
+    lines: Vec<Range<usize>>,
+}
+
+impl Snapshot {
+    fn new(view: &str, at: Option<String>, barrier: Seq, text: String) -> Self {
+        let key = format!(
+            "{barrier}:{}",
+            Digest::compute(Domain::CliExport, text.as_bytes())
+        );
+        let mut offset = 0;
+        let lines = text
+            .split_inclusive('\n')
+            .map(|line| {
+                let content = line
+                    .strip_suffix("\r\n")
+                    .or_else(|| line.strip_suffix('\n'))
+                    .unwrap_or(line);
+                let end = offset + content.len();
+                let range = offset..end;
+                offset += line.len();
+                range
+            })
+            .collect();
+        Self {
+            key,
+            view: view.to_owned(),
+            at,
+            barrier,
+            text,
+            lines,
+        }
+    }
+
+    fn line(&self, line: usize) -> &str {
+        &self.text[self.lines[line].clone()]
+    }
+}
+
+struct Cursor {
+    key: String,
+    line: usize,
+    byte: usize,
+}
+
+impl Cursor {
+    fn parse(written: &str) -> Result<Self, String> {
+        let parse = || {
+            let (rest, byte) = written.rsplit_once(':')?;
+            let (key, line) = rest.rsplit_once(':')?;
+            Some(Self {
+                key: key.to_owned(),
+                line: line.parse().ok()?,
+                byte: byte.parse().ok()?,
+            })
+        };
+        parse().ok_or_else(|| {
+            "board::cursor-invalid: pass the graph continuation exactly as read".to_owned()
+        })
+    }
+
+    fn written(&self) -> String {
+        format!("{}:{}:{}", self.key, self.line, self.byte)
+    }
+}
+
+#[derive(Serialize)]
+struct Fragment {
+    line: usize,
+    offset: usize,
+    text: ClippedText,
+}
+
+struct Page {
+    rows: Vec<Fragment>,
+    next: Option<Cursor>,
+    widened: Request,
+    exhausted: &'static str,
+}
+
+impl Pages {
+    pub(super) fn read(
+        &self,
+        query: &Query,
+        load: impl FnOnce() -> Result<(Seq, String), String>,
+    ) -> Result<String, String> {
+        let Shape::Graph { view } = &query.shape else {
+            unreachable!("graph resource")
+        };
+        let bound = |key| {
+            option(query, key)
+                .map(|value| {
+                    value.parse::<usize>().map_err(|_| {
+                        format!("board::limit-invalid: {key} takes a non-negative integer")
+                    })
+                })
+                .transpose()
+        };
+        let budget = INTERACTIVE
+            .budget(Request {
+                rows: bound("limit")?,
+                bytes: bound("max-bytes")?,
+                text: bound("max-text")?,
+            })
+            .map_err(|error| format!("board::limit-invalid: {error}"))?;
+        let at = option(query, "at");
+        let (snapshot, cursor, fresh) = match option(query, "after") {
+            Some(after) => {
+                let cursor = Cursor::parse(after)?;
+                let snapshot = self.0.lock().unwrap_or_else(PoisonError::into_inner)
+                    .get(&cursor.key).cloned()
+                    .ok_or_else(|| "board::cursor-invalid: graph snapshot is not held by this seat; read the graph without after".to_owned())?;
+                if snapshot.view != *view || snapshot.at.as_deref() != at {
+                    return Err(
+                        "board::cursor-invalid: continuation names another graph read".to_owned(),
+                    );
+                }
+                (snapshot, cursor, false)
+            }
+            None => {
+                let (barrier, text) = load()?;
+                let snapshot = Arc::new(Snapshot::new(view, at.map(str::to_owned), barrier, text));
+                let cursor = Cursor {
+                    key: snapshot.key.clone(),
+                    line: 0,
+                    byte: 0,
+                };
+                (snapshot, cursor, true)
+            }
+        };
+        let page = page(&snapshot, cursor, budget)?;
+        if fresh && page.next.is_some() {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(snapshot.key.clone())
+                .or_insert_with(|| Arc::clone(&snapshot));
+        }
+        let mut document = format!(
+            "graph {} snapshot {}; {} lines",
+            snapshot.view,
+            snapshot.barrier,
+            snapshot.lines.len()
+        );
+        for fragment in &page.rows {
+            write!(
+                document,
+                "\n{}:{} {}",
+                fragment.line, fragment.offset, fragment.text
+            )
+            .expect("String writes are infallible");
+        }
+        if let Some(next) = page.next {
+            let mut continuation = query.clone();
+            set(&mut continuation, "after", next.written());
+            if let Some(bytes) = page.widened.bytes {
+                set(&mut continuation, "max-bytes", bytes.to_string());
+            }
+            if let Some(text) = page.widened.text {
+                set(&mut continuation, "max-text", text.to_string());
+            }
+            write!(
+                document,
+                "\nwithheld {} lines from line {} byte {} ({} limit); continue: {}",
+                snapshot.lines.len() - next.line,
+                next.line + 1,
+                next.byte,
+                page.exhausted,
+                continuation.url()
+            )
+            .expect("String writes are infallible");
+        }
+        Ok(document)
+    }
+}
+
+fn option<'a>(query: &'a Query, key: &str) -> Option<&'a str> {
+    query
+        .options
+        .iter()
+        .find(|(name, _)| name == key)
+        .and_then(|(_, value)| value.as_deref())
+}
+
+fn set(query: &mut Query, key: &str, value: String) {
+    if let Some((_, previous)) = query.options.iter_mut().find(|(name, _)| name == key) {
+        *previous = Some(value);
+    } else {
+        query.options.push((key.to_owned(), Some(value)));
+    }
+}
+
+fn page(snapshot: &Snapshot, mut cursor: Cursor, budget: Budget) -> Result<Page, String> {
+    if cursor.line > snapshot.lines.len()
+        || (cursor.line == snapshot.lines.len() && cursor.byte != 0)
+        || (cursor.line < snapshot.lines.len()
+            && !snapshot.line(cursor.line).is_char_boundary(cursor.byte))
+    {
+        return Err("board::cursor-invalid: graph cursor names no UTF-8 boundary".to_owned());
+    }
+    let limits = budget.limits();
+    let mut result = Page {
+        rows: Vec::new(),
+        next: None,
+        widened: Request::default(),
+        exhausted: "rows",
+    };
+    let mut bytes = 0;
+    while cursor.line < snapshot.lines.len() {
+        if result.rows.len() == limits.rows {
+            break;
+        }
+        let remaining = &snapshot.line(cursor.line)[cursor.byte..];
+        let clipped = budget.clip(remaining);
+        if clipped.text.is_empty() && !remaining.is_empty() {
+            result.exhausted = "text";
+            result.widened.text = remaining.chars().next().map(char::len_utf8);
+            break;
+        }
+        let fragment = Fragment {
+            line: cursor.line + 1,
+            offset: cursor.byte,
+            text: clipped,
+        };
+        let needed = wire::encoded_len(&fragment)
+            .map_err(|error| format!("board::row-unencodable: {error}"))?;
+        if needed > limits.bytes - bytes {
+            result.exhausted = "bytes";
+            if result.rows.is_empty() {
+                result.widened.bytes = Some(needed);
+            }
+            break;
+        }
+        bytes += needed;
+        cursor.byte += fragment.text.text.len();
+        let partial = fragment.text.withheld_bytes.is_some();
+        result.rows.push(fragment);
+        if partial {
+            result.exhausted = "text";
+            break;
+        }
+        cursor.line += 1;
+        cursor.byte = 0;
+    }
+    if cursor.line < snapshot.lines.len() {
+        result.next = Some(cursor);
+    }
+    Ok(result)
+}

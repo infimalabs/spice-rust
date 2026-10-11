@@ -121,7 +121,7 @@ mod graph;
 pub(in crate::board_command) use graph::{
     Destination, graph_page, handout_destination, page_or_file,
 };
-pub(crate) use graph::{GraphView, graph_view, graph_view_at};
+pub(crate) use graph::{GraphView, graph_snapshot_at, graph_view};
 
 mod read;
 pub(super) use read::*;

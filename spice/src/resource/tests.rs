@@ -252,6 +252,7 @@ fn only_a_whole_task_text_takes_a_write_and_only_a_write_takes_a_digest() {
         worktree: "/".into(),
         lane: wire::CanonicalUuid::new(uuid::Uuid::from_u128(7)),
         environment: crate::session_environment().rooted("/".into()),
+        graphs: Default::default(),
     };
     let digest = wire::Digest::compute(wire::Domain::TaskText, b"read text");
     let serve = |url: &str, access| seat.serve(url, access, |_| panic!("no quote is read"));
@@ -282,6 +283,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
             .parse()
             .expect("lane UUID"),
         environment: crate::session_environment().rooted(root.clone()),
+        graphs: Default::default(),
     };
     for url in [
         "spice://task?limit=100000",
