@@ -1,16 +1,35 @@
-//! The `spice://` scheme a lane's omp reads through: each read answers with
-//! the [`crate::resource`] the URL names, read over the lane's own connection.
+//! The `spice://` scheme a lane's omp reads and writes through: each request
+//! answers with the [`crate::resource`] the URL names, over the lane's own
+//! connection.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use wire::CanonicalUuid;
 
 use super::Driver;
+use crate::resource::Access;
 
-/// Answers one `spice://` URL with what a read of it returns, or the refusal.
-pub(super) type UriReader = Box<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
+/// Answers one `spice://` read or write with its result, or the refusal.
+pub(super) type UriServer = Box<dyn Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync>;
+
+/// The `spice://` server and the requests it is answering now. A withdrawn
+/// request leaves the pending set, and only a request still in it is answered.
+pub(super) struct Uris {
+    server: UriServer,
+    pending: Mutex<HashSet<String>>,
+}
+
+impl Uris {
+    pub(super) fn new(server: UriServer) -> Self {
+        Self {
+            server,
+            pending: Mutex::new(HashSet::new()),
+        }
+    }
+}
 
 /// The session state a read answers under: the identity and home the
 /// occupant's terminal carries, as its own command would see them, else the
@@ -22,23 +41,25 @@ pub(super) fn occupant_environment(
     terminal.map_or_else(|| resident.clone(), super::Terminal::session_environment)
 }
 
-/// Read `spice://` URLs as `lane`, whose checkout is `worktree` and whose
-/// occupant's session state is `environment`, resolving quote targets and
-/// CLI reads through the resident.
-pub(super) fn resident_reader(
+/// Serve `spice://` URLs as `lane`, whose checkout is `worktree` and whose
+/// occupant's session state is `environment`, resolving quote targets, CLI
+/// reads, and task text writes through the resident.
+pub(super) fn resident_server(
     discovery: PathBuf,
     lane: CanonicalUuid,
     worktree: PathBuf,
     environment: crate::session_command::Environment,
-) -> impl Fn(&str) -> Result<String, String> + Send + Sync + 'static {
+) -> UriServer {
     let seat = crate::resource::Seat {
         worktree,
         lane,
         environment,
     };
-    move |url| {
-        seat.read(url, |target| {
-            match crate::command_client::read_lane_quote(&discovery, lane, target) {
+    Box::new(move |url, access| {
+        seat.serve(
+            url,
+            access,
+            |target| match crate::command_client::read_lane_quote(&discovery, lane, target) {
                 Ok(resolution) => spice::quote::render(&resolution),
                 Err(wire::Outcome::Refusal(refusal)) => Err(format!(
                     "spice refused the quote read: {}",
@@ -51,23 +72,35 @@ pub(super) fn resident_reader(
                 Err(wire::Outcome::Reply(_)) => {
                     Err("spice answered the quote read with no resolution".to_owned())
                 }
-            }
-        })
-    }
+            },
+        )
+    })
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
-    /// Answer one host URI request: a read, answered on its own thread so the
-    /// stream keeps being read.
+    /// Answer one host URI request, a read or a write carrying its content,
+    /// on its own thread so the stream keeps being read. Any other operation
+    /// is refused at once.
     ///
-    /// Reading commits nothing, so omp may read as often as its tools ask. A
-    /// write is refused at once: the scheme only reads.
-    pub(super) fn serve_uri(self: &Arc<Self>, id: &str, operation: &str, url: &str) {
-        if operation != "read" {
-            let _refused = self.write(&vendor::omp::host_uri_refused(id, vendor::omp::URI_SERVED));
-            return;
-        }
+    /// Reading commits nothing, so omp may read as often as its tools ask.
+    pub(super) fn serve_uri(
+        self: &Arc<Self>,
+        id: &str,
+        operation: &str,
+        url: &str,
+        content: Option<&str>,
+    ) {
+        let content = match (operation, content) {
+            ("read", _) => None,
+            ("write", Some(content)) => Some(content.to_owned()),
+            _ => {
+                let _refused =
+                    self.write(&vendor::omp::host_uri_refused(id, vendor::omp::URI_SERVED));
+                return;
+            }
+        };
         self.uris
+            .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.to_owned());
@@ -75,26 +108,35 @@ impl<W: Write + Send + 'static> Driver<W> {
         let (answered, url) = (id.to_owned(), url.to_owned());
         let started = std::thread::Builder::new()
             .name("spice-uri".to_owned())
-            .spawn(move || driver.answer_uri(&answered, &url));
+            .spawn(move || {
+                let access = content.as_deref().map_or(Access::Read, Access::Write);
+                driver.answer_uri(&answered, &url, access);
+            });
         if let Err(error) = started {
             self.uris
+                .pending
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(id);
             let _refused = self.write(&vendor::omp::host_uri_refused(
                 id,
-                &format!("read thread failed: {error}"),
+                &format!("URI thread failed: {error}"),
             ));
         }
     }
 
-    /// Answer one read unless omp withdrew it meanwhile. The pending set
-    /// stays locked across the write, so a withdrawal either lands first and
-    /// silences the answer or lands after omp already holds it.
-    fn answer_uri(&self, id: &str, url: &str) {
-        let answer = (self.read_uri)(url);
-        let mut uris = self.uris.lock().unwrap_or_else(PoisonError::into_inner);
-        if !uris.remove(id) {
+    /// Answer one request unless omp withdrew it meanwhile. The pending set
+    /// stays locked across the answer, so a withdrawal either lands first and
+    /// silences it or lands after omp already holds it. A withdrawn write
+    /// that already committed stays committed; only its answer is silenced.
+    fn answer_uri(&self, id: &str, url: &str, access: Access<'_>) {
+        let answer = (self.uris.server)(url, access);
+        let mut pending = self
+            .uris
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !pending.remove(id) {
             return;
         }
         let _answered = self.write(&match answer {
@@ -103,9 +145,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         });
     }
 
-    /// Silence the answer to a withdrawn read, if one is still pending.
+    /// Silence the answer to a withdrawn request, if one is still pending.
     pub(super) fn withdraw_uri(&self, id: &str) {
         self.uris
+            .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(id);

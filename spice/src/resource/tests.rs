@@ -2,7 +2,8 @@ use std::fs;
 
 use spice::repository::Repository;
 
-use super::{Query, Request, Resource, rewrite_continuations};
+use super::{Access, Query, Request, Resource, Text, rewrite_continuations};
+use crate::board_command::TaskText;
 
 const HANDLE: &str = "TASK-dVlFq9qKp";
 
@@ -164,6 +165,67 @@ fn query_keys_are_those_the_read_admits_each_once() {
     ] {
         refusal(url);
     }
+}
+
+#[test]
+fn a_task_text_url_names_its_field_and_the_digest_a_write_carries() {
+    let digest = wire::Digest::compute(wire::Domain::TaskText, b"read text");
+    let handle: wire::TaskHandle = HANDLE.parse().expect("fixture handle");
+    for (url, field, named) in [
+        (
+            format!("spice://task/{HANDLE}/description"),
+            TaskText::Description,
+            None,
+        ),
+        (
+            format!("spice://task/{HANDLE}/acceptance?digest={digest}"),
+            TaskText::Acceptance,
+            Some(digest.clone()),
+        ),
+    ] {
+        assert_eq!(
+            Request::parse(&url).expect(&url).resource,
+            Resource::Text(Text {
+                handle: handle.clone(),
+                field,
+                digest: named,
+            }),
+            "{url}"
+        );
+    }
+    for url in [
+        format!("spice://task/{HANDLE}/description?digest=abc"),
+        format!("spice://task/{HANDLE}/description?limit=3"),
+        format!("spice://task/{HANDLE}/acceptance?digest={digest}&digest={digest}"),
+        format!("spice://task/{HANDLE}/title"),
+    ] {
+        refusal(&url);
+    }
+}
+
+#[test]
+fn only_a_whole_task_text_takes_a_write_and_only_a_write_takes_a_digest() {
+    let seat = super::Seat {
+        worktree: "/".into(),
+        lane: wire::CanonicalUuid::new(uuid::Uuid::from_u128(7)),
+        environment: crate::session_environment().rooted("/".into()),
+    };
+    let digest = wire::Digest::compute(wire::Domain::TaskText, b"read text");
+    let serve = |url: &str, access| seat.serve(url, access, |_| panic!("no quote is read"));
+    for url in [
+        "spice://".to_owned(),
+        "spice://board".to_owned(),
+        format!("spice://task/{HANDLE}"),
+        format!("spice://task/{HANDLE}/context"),
+        format!("spice://task/{HANDLE}/description?digest={digest}:2-3"),
+    ] {
+        serve(&url, Access::Write("text")).expect_err(&url);
+    }
+    serve(
+        &format!("spice://task/{HANDLE}/description?digest={digest}"),
+        Access::Read,
+    )
+    .expect_err("a read names no digest");
 }
 
 #[test]
