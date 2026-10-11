@@ -1157,4 +1157,6 @@ pub(in crate::resident) mod renewal;
 mod steering;
 #[cfg(test)]
 mod steering_tests;
+#[cfg(test)]
+mod tests;
 mod uri;
