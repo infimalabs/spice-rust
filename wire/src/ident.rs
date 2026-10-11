@@ -190,6 +190,9 @@ pub enum Domain {
     QuoteText,
     /// The exact bytes of one complete document a read exported to a file.
     CliExport,
+    /// The exact current text of one task's description or acceptance, which
+    /// a replacement of that text names.
+    TaskText,
 }
 
 impl Domain {
@@ -212,7 +215,13 @@ impl Domain {
             | Self::ReportCommandRecord
             | Self::TaskArtifactStore
             | Self::JournalRestorePlan
-            | Self::DistTargetPayload
+            | Self::TasteProse
+            | Self::TasteBag
+            | Self::MediaContent
+            | Self::QuoteText
+            | Self::CliExport
+            | Self::TaskText => self.product_tag(),
+            Self::DistTargetPayload
             | Self::DistArtifact
             | Self::InstallArtifact
             | Self::InstallPlan
@@ -223,12 +232,7 @@ impl Domain {
             | Self::DistReleaseNotes
             | Self::DistReleaseNotesContent
             | Self::DistReleasePackage
-            | Self::DistReleasePlan
-            | Self::TasteProse
-            | Self::TasteBag
-            | Self::MediaContent
-            | Self::QuoteText
-            | Self::CliExport => self.product_tag(),
+            | Self::DistReleasePlan => self.distribution_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -277,6 +281,18 @@ impl Domain {
             Self::ReportCommandRecord => "spice.report.command-record.v1",
             Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
+            Self::TasteProse => "spice.taste.prose.v1",
+            Self::TasteBag => "spice.taste.bag.v1",
+            Self::MediaContent => "spice.media.content.v1",
+            Self::QuoteText => "spice.quote.text.v1",
+            Self::CliExport => "spice.cli.export.v1",
+            Self::TaskText => "spice.task.text.v1",
+            _ => panic!("digest-domain tag partition is closed"),
+        }
+    }
+
+    const fn distribution_tag(self) -> &'static str {
+        match self {
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
@@ -289,11 +305,6 @@ impl Domain {
             Self::DistReleaseNotesContent => "spice.dist.release-notes-content.v1",
             Self::DistReleasePackage => "spice.dist.release-package.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
-            Self::TasteProse => "spice.taste.prose.v1",
-            Self::TasteBag => "spice.taste.bag.v1",
-            Self::MediaContent => "spice.media.content.v1",
-            Self::QuoteText => "spice.quote.text.v1",
-            Self::CliExport => "spice.cli.export.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

@@ -137,13 +137,14 @@ use completion::{client_done, client_review};
 mod submission;
 #[cfg(test)]
 pub(in crate::board_command) use submission::append_ambient_plan_witnesses;
+pub(in crate::board_command) use submission::mutate_from_board;
 pub(super) use submission::mutation_read;
 pub(in crate::board_command) use submission::{
     artifact_operation_failure, repository_state_failure,
 };
 use submission::{client_add, client_capture, client_oops, submit_recovery_task_add};
 pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
-use submission::{mutate_from_board, mutate_task, mutate_task_from_board};
+use submission::{mutate_task, mutate_task_from_board};
 
 fn client_ledger(
     repository: &Repository,

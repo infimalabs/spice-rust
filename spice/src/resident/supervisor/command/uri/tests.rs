@@ -3,17 +3,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::Driver;
+use crate::resource::Access;
 
 const TARGET: &str = "spice://quote/v1/steer/1kQnrzNZ/00";
 
 fn driver(
-    read_uri: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    serve: impl Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync + 'static,
 ) -> Arc<Driver<Vec<u8>>> {
-    Driver::with_readers(
+    Driver::with_server(
         Vec::new(),
         || None,
         || None,
-        read_uri,
+        Box::new(serve),
         steer::Key::for_identity(crate::resident::new_uuid()),
         None,
     )
@@ -44,15 +45,15 @@ fn settled(driver: &Arc<Driver<Vec<u8>>>) {
 
 #[test]
 fn a_read_answers_with_the_resource_or_its_refusal() {
-    let driver = driver(|target| {
+    let driver = driver(|target, _| {
         if target == TARGET {
             Ok("Quoted from operator:\n\nship it".to_owned())
         } else {
             Err("[quote unavailable: reason=digest-mismatch]".to_owned())
         }
     });
-    driver.serve_uri("u1", "read", TARGET);
-    driver.serve_uri("u2", "read", "spice://quote/v1/steer/1kQnrzNZ/11");
+    driver.serve_uri("u1", "read", TARGET, None);
+    driver.serve_uri("u2", "read", "spice://quote/v1/steer/1kQnrzNZ/11", None);
     settled(&driver);
     let mut answers = frames(&driver);
     answers.sort_by_key(|frame| frame["id"].as_str().map(str::to_owned));
@@ -73,23 +74,71 @@ fn a_read_answers_with_the_resource_or_its_refusal() {
             }),
         ]
     );
-    assert!(driver.uris.lock().expect("pending locks").is_empty());
+    assert!(
+        driver
+            .uris
+            .pending
+            .lock()
+            .expect("pending locks")
+            .is_empty()
+    );
 }
 
 #[test]
-fn a_write_is_refused_without_reading() {
-    let driver = driver(|_| panic!("a write never reads"));
-    driver.serve_uri("w", "write", TARGET);
-    assert_eq!(
-        frames(&driver),
-        [serde_json::json!({
+fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused() {
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let driver = driver({
+        let written = Arc::clone(&written);
+        move |url, access| {
+            let Access::Write(content) = access else {
+                panic!("a write never reads");
+            };
+            written
+                .lock()
+                .expect("writes lock")
+                .push((url.to_owned(), content.to_owned()));
+            Ok("edited".to_owned())
+        }
+    });
+    driver.serve_uri("w", "write", "spice://task/X/description", Some("new"));
+    driver.serve_uri("x", "write", TARGET, None);
+    driver.serve_uri("y", "list", TARGET, None);
+    settled(&driver);
+    let mut answers = frames(&driver);
+    answers.sort_by_key(|frame| frame["id"].as_str().map(str::to_owned));
+    let refused = |id: &str| {
+        serde_json::json!({
             "type": "host_uri_result",
-            "id": "w",
+            "id": id,
             "isError": true,
             "error": vendor::omp::URI_SERVED,
-        })]
+        })
+    };
+    assert_eq!(
+        answers,
+        [
+            serde_json::json!({
+                "type": "host_uri_result",
+                "id": "w",
+                "content": "edited",
+                "contentType": "text/markdown",
+            }),
+            refused("x"),
+            refused("y"),
+        ]
     );
-    assert!(driver.uris.lock().expect("pending locks").is_empty());
+    assert_eq!(
+        *written.lock().expect("writes lock"),
+        [("spice://task/X/description".to_owned(), "new".to_owned())]
+    );
+    assert!(
+        driver
+            .uris
+            .pending
+            .lock()
+            .expect("pending locks")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -97,7 +146,7 @@ fn a_withdrawn_quote_read_is_never_answered_and_leaves_nothing_pending() {
     let (entered, reading) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
     let (entered, released) = (Mutex::new(entered), Mutex::new(released));
-    let driver = driver(move |_| {
+    let driver = driver(move |_, _| {
         entered.lock().expect("entry").send(()).expect("test waits");
         released
             .lock()
@@ -106,7 +155,7 @@ fn a_withdrawn_quote_read_is_never_answered_and_leaves_nothing_pending() {
             .expect("test releases");
         Ok("late".to_owned())
     });
-    driver.serve_uri("u1", "read", TARGET);
+    driver.serve_uri("u1", "read", TARGET, None);
     reading.recv().expect("the read began");
     driver.cancel("u1");
     release.send(()).expect("the read waits");
@@ -115,5 +164,12 @@ fn a_withdrawn_quote_read_is_never_answered_and_leaves_nothing_pending() {
         frames(&driver).is_empty(),
         "a withdrawn read gets no answer"
     );
-    assert!(driver.uris.lock().expect("pending locks").is_empty());
+    assert!(
+        driver
+            .uris
+            .pending
+            .lock()
+            .expect("pending locks")
+            .is_empty()
+    );
 }

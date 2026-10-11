@@ -143,9 +143,9 @@ pub const TOOLS_REQUEST_ID: &str = "spice-tools";
 /// The URI scheme a lane registers with omp so its `read` reaches spice.
 pub const URI_SCHEME: &str = "spice";
 
-/// Why the `spice` scheme refuses a write.
-pub const URI_SERVED: &str =
-    "spice:// only reads; acts on the board stay spice commands. Read spice:// for the index";
+/// Why the `spice` scheme refuses an operation it does not serve.
+pub const URI_SERVED: &str = "spice:// serves reads, and writes that replace a task's description or acceptance; \
+     acts on the board stay spice commands. Read spice:// for the index";
 
 /// Name of the host tool the lane registers in place of omp's `bash`.
 ///
@@ -897,8 +897,9 @@ pub fn host_tools_request() -> Vec<u8> {
     }))
 }
 
-/// Register the `spice` scheme, so a quote link the lane was handed reads
-/// like a file. An omp without host-owned schemes refuses it under
+/// Register the `spice` scheme, so board, task, and quote reads read like
+/// files and a task's description or acceptance takes a write. An omp
+/// without host-owned schemes refuses it under
 /// [`listen::OMP_URI_SCHEMES_REQUEST_ID`] and the lane runs on without it.
 fn host_uri_schemes_request() -> Vec<u8> {
     request_line(&serde_json::json!({
@@ -906,7 +907,8 @@ fn host_uri_schemes_request() -> Vec<u8> {
         "type": "set_host_uri_schemes",
         "schemes": [{
             "scheme": URI_SCHEME,
-            "description": "Spice board, task, artifact, and quote reads; spice:// is the index",
+            "description": "Spice board, task, artifact, and quote reads, and task description or acceptance writes; spice:// is the index",
+            "writable": true,
         }],
     }))
 }
