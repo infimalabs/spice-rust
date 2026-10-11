@@ -806,6 +806,12 @@ impl Seat {
                 if let Outcome::Reply(reply) = &outcome {
                     session_trailer(&mut document, &reply.body);
                 }
+                // A briefing names the reads behind its cut rows; this seat
+                // reads them as URLs. Other session pages quote the transcript
+                // and stay verbatim.
+                if query.shape == Shape::Session(Session::Briefing) {
+                    document = served_reads(&document);
+                }
                 document
             }
             ["inbox"] => {
@@ -868,6 +874,57 @@ fn rendered<B>(
     }
 }
 
+/// What a seat whose omp serves `spice://` learns about the scheme: told in
+/// its first turn and again with each briefing after a compaction, never to
+/// a seat whose registration was refused or whose vendor has no host schemes.
+const SEAT_GUIDE: &str = "\
+<system-notice>
+# spice:// reads
+This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
+- A collection ends with `resources:`, the URLs of what it contains.
+- Query parameters are the read's own flags; a withheld page ends with `continue:` and the URL that resumes it; a trailing `:N-M` selects lines.
+- Reading changes nothing: it acknowledges no steering, claims nothing, and may repeat freely.
+- Writes and authority acts stay `spice` commands and visible ACK/NAK prose.
+</system-notice>";
+
+/// `text` as told to a seat whose omp serves `spice://`: each quoted `spice`
+/// read named by its URL, then the scheme guide.
+pub(crate) fn for_served_seat(text: &str) -> String {
+    format!("{}\n\n{SEAT_GUIDE}", served_reads(text))
+}
+
+/// Replace each backtick-quoted `spice` read a resource serves with its URL;
+/// any other quoted text, a placeholder handle included, stays as written.
+pub(crate) fn served_reads(text: &str) -> String {
+    let mut served = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('`') {
+        served.push_str(before);
+        let Some((quoted, after)) = after.split_once('`') else {
+            served.push('`');
+            rest = after;
+            break;
+        };
+        served.push('`');
+        served.push_str(read_url(quoted).as_deref().unwrap_or(quoted));
+        served.push('`');
+        rest = after;
+    }
+    served.push_str(rest);
+    served
+}
+
+/// The URL answering `command`, when it is a `spice` read a resource serves.
+fn read_url(command: &str) -> Option<String> {
+    let words = shell_words::split(command).ok()?;
+    match words.split_first() {
+        Some((spice, arguments)) if spice == "spice" => {
+            Query::from_arguments(arguments).map(|query| query.url())
+        }
+        _ => None,
+    }
+}
+
 /// Replace each page continuation a resource serves with its URL.
 fn rewrite_continuations(document: &str) -> String {
     const CONTINUE: &str = "; continue: ";
@@ -877,16 +934,7 @@ fn rewrite_continuations(document: &str) -> String {
             let Some((head, command)) = line.rsplit_once(CONTINUE) else {
                 return line.to_owned();
             };
-            let url = shell_words::split(command)
-                .ok()
-                .and_then(|words| match words.split_first() {
-                    Some((spice, arguments)) if spice == "spice" => {
-                        Query::from_arguments(arguments)
-                    }
-                    _ => None,
-                })
-                .map(|query| query.url());
-            match url {
+            match read_url(command) {
                 Some(url) => format!("{head}{CONTINUE}{url}"),
                 None => line.to_owned(),
             }

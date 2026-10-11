@@ -91,6 +91,7 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     uris: Mutex<HashSet<String>>,
     /// Correlated live retunes awaiting an OMP response.
     retunes: Mutex<HashMap<String, PendingRetune>>,
+    registration: registration::Registration,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -327,17 +328,10 @@ impl<W: Write + Send + 'static> Driver<W> {
             calls: Mutex::new(HashMap::new()),
             uris: Mutex::new(HashSet::new()),
             retunes: Mutex::new(HashMap::new()),
+            registration: registration::Registration::default(),
         })
     }
 
-    /// Write the opening request the vendor contract composed.
-    ///
-    /// # Errors
-    ///
-    /// Returns the pipe's error, or `BrokenPipe` once the stream is closed.
-    pub(in crate::resident) fn open(&self, opening: &[u8]) -> io::Result<()> {
-        self.write(opening)
-    }
     /// Submit one live setting change after registering its exact correlated
     /// response. A pipe failure is answered through the same callback path as
     /// a provider refusal.
@@ -631,7 +625,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             .name("spice-supervisor-briefing".to_owned())
             .spawn(move || {
                 if let Some(briefing) = (driver.read_briefing)() {
-                    let _ = driver.background("briefing", &briefing);
+                    let _ = driver.background("briefing", &driver.for_seat(briefing));
                 }
             });
         if let Err(error) = spawned {
@@ -877,6 +871,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// for a prompt nobody sends.
     pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
         self.observe_retune(decoded);
+        self.observe_uri_registration(decoded);
         // A telling seen on the transcript is now held verbatim. Background
         // delivery also releases its replacement slot for a future notice.
         for prose in decoded.events().iter().filter_map(|event| match event {
@@ -1494,5 +1489,6 @@ impl Drop for KickDoor {
 #[cfg(test)]
 mod event_tests;
 mod media;
+mod registration;
 pub(in crate::resident) mod renewal;
 mod uri;

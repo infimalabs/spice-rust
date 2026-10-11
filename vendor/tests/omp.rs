@@ -159,10 +159,16 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                 }],
             }),
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
-            serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": omp::turn_prompt(&launch)}),
         ]
     );
     assert!(opening.ends_with(b"\n"));
+    let first = record.first_prompt().expect("omp starts the first turn");
+    assert_eq!(first, omp::turn_prompt(&launch));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&omp::first_prompt_request(first))
+            .expect("one JSON request"),
+        serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": first}),
+    );
 }
 
 #[test]

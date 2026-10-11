@@ -2,7 +2,7 @@ use std::fs;
 
 use spice::repository::Repository;
 
-use super::{Query, Request, Resource, rewrite_continuations};
+use super::{Query, Request, Resource, rewrite_continuations, served_reads};
 
 const HANDLE: &str = "TASK-dVlFq9qKp";
 
@@ -80,6 +80,49 @@ fn each_resource_runs_exactly_its_cli_read() {
         ),
     ] {
         assert_eq!(arguments(url).join(" "), expected, "{url}");
+    }
+}
+
+#[test]
+fn a_served_seat_reads_each_quoted_served_read_as_its_url_and_nothing_else() {
+    let text = concat!(
+        "- … 3 more: `spice session sweep /t/x.jsonl --limit 4`\n",
+        "- board: `spice task status`; steering: `spice inbox`; peers: `spice lane list`\n",
+        "- typed: `spice session briefing --json`; act: `spice task next`\n",
+        "- held: `spice task show HANDLE` and `spice task show TASK-dVlFq9qKp`\n",
+        "- prose `not a command` then an unbalanced ` spice inbox",
+    );
+    let served = served_reads(text);
+    for url in [
+        "`spice://board`",
+        "`spice://inbox`",
+        "`spice://lane`",
+        "`spice://task/TASK-dVlFq9qKp`",
+    ] {
+        assert!(served.contains(url), "{url} missing: {served}");
+    }
+    let sweep = served
+        .lines()
+        .next()
+        .and_then(|line| line.split('`').nth(1))
+        .expect("first row quotes its read");
+    assert_eq!(
+        Query::from_arguments(&arguments(sweep)).map(|query| query.url()),
+        Some(sweep.to_owned()),
+        "the cut row's URL resumes the same sweep"
+    );
+    assert_eq!(
+        arguments(sweep).join(" "),
+        "session sweep /t/x.jsonl --limit 4"
+    );
+    for kept in [
+        "`spice session briefing --json`",
+        "`spice task next`",
+        "`spice task show HANDLE`",
+        "`not a command`",
+        "unbalanced ` spice inbox",
+    ] {
+        assert!(served.contains(kept), "{kept} rewritten: {served}");
     }
 }
 

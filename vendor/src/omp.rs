@@ -336,6 +336,7 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         launch.resume.clone(),
     )?
     .with_opening(opening_request(launch))
+    .with_first_prompt(turn_prompt(launch))
     .with_environment(environment))
 }
 
@@ -543,8 +544,9 @@ fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
 }
 
 /// The request lines that open a launch: the wire, the event filter, the queue
-/// dispositions, the reasoning effort, the lane's shell, a state query, then
-/// the first turn.
+/// dispositions, the reasoning effort, the lane's shell and `spice` scheme,
+/// then a state query. The first turn follows separately, through
+/// [`first_prompt_request`], once omp has answered the scheme registration.
 ///
 /// omp writes its `ready` frame before reading stdin, so every request may be
 /// queued before the child has answered anything. The version is negotiated
@@ -558,8 +560,8 @@ fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
 /// the command a live retune sends, so launch and retune share one path; it
 /// also replaces the level a resumed session restores from its own file. The
 /// lane's shell is registered next so the first turn's schema carries it; the
-/// state reply declares the session; the prompt starts the turn by naming the
-/// skill the system prompt already carries, so the agent re-grounds in it.
+/// `spice` scheme registration follows, and its answer decides how the first
+/// turn names reads; the state reply declares the session.
 ///
 /// A refused command answers `success: false`, which the lane reads as a
 /// vendor failure and reaps; a refused negotiation therefore ends the launch
@@ -604,13 +606,19 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
         message: None,
         streaming_behavior: None,
     }));
-    bytes.extend(request_line(&Request {
+    bytes
+}
+
+/// The prompt that starts the first turn, naming the skill the system prompt
+/// already carries so the agent re-grounds in it.
+#[must_use]
+pub fn first_prompt_request(message: &str) -> Vec<u8> {
+    request_line(&Request {
         id: PROMPT_REQUEST_ID.to_owned(),
         kind: "prompt",
-        message: Some(turn_prompt(launch)),
+        message: Some(message.to_owned()),
         streaming_behavior: None,
-    }));
-    bytes
+    })
 }
 
 /// One interjected steering message, numbered by its place in the launch.
