@@ -51,7 +51,6 @@ pub struct Rendering {
 }
 
 impl Rendering {
-    #[cfg(test)]
     pub(crate) fn document(&self) -> &[u8] {
         &self.document
     }

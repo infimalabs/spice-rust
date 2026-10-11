@@ -9,9 +9,8 @@
 //! turn over the same pipe before any signal is sent. A confirm dialog becomes one
 //! consent request the resident decides; a call on the lane's shell runs in
 //! the lane's own terminal and answers with what the command said; a read of
-//! a `spice://quote/v1` target answers with the resident's resolution of it;
-//! every other dialog is declined, since nobody at the lane can compose a
-//! choice or text for it.
+//! a `spice://` URL answers with the resource it names; every other dialog is
+//! declined, since nobody at the lane can compose a choice or text for it.
 //!
 //! Steering never waits on a command: unheard direction arriving while a
 //! command runs interrupts the call, which answers with what the command said
@@ -49,7 +48,7 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Read once per compaction, off the decoding path, since a briefing
     /// scans the transcript and the journal.
     read_briefing: BriefingReader,
-    read_quote: uri::QuoteReader,
+    read_uri: uri::UriReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -260,7 +259,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
-        let read_quote = uri::resident_reader(discovery.clone(), lane);
+        let read_uri = uri::resident_reader(discovery.clone(), lane, worktree.clone());
         let projector = media::Projector::new(steering_media, lane);
         let environment = crate::session_environment().rooted(worktree);
         Self::with_readers(
@@ -291,7 +290,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                     None,
                 ))
             },
-            read_quote,
+            read_uri,
             steer::Key::for_identity(lane),
             terminal,
         )
@@ -301,7 +300,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
-        read_quote: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+        read_uri: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
         seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
@@ -309,7 +308,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             stdin: Mutex::new(Some(stdin)),
             read_inbox: Box::new(read_inbox),
             read_briefing: Box::new(read_briefing),
-            read_quote: Box::new(read_quote),
+            read_uri: Box::new(read_uri),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),

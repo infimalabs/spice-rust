@@ -143,10 +143,9 @@ pub const TOOLS_REQUEST_ID: &str = "spice-tools";
 /// The URI scheme a lane registers with omp so its `read` reaches spice.
 pub const URI_SCHEME: &str = "spice";
 
-/// What the `spice` scheme serves, as a refusal names it.
+/// Why the `spice` scheme refuses a write.
 pub const URI_SERVED: &str =
-    "spice:// serves reads of quote targets only: spice://quote/v1/tape/... or \
-     spice://quote/v1/steer/...";
+    "spice:// only reads; acts on the board stay spice commands. Read spice:// for the index";
 
 /// Name of the host tool the lane registers in place of omp's `bash`.
 ///
@@ -899,7 +898,7 @@ fn host_uri_schemes_request() -> Vec<u8> {
         "type": "set_host_uri_schemes",
         "schemes": [{
             "scheme": URI_SCHEME,
-            "description": "Quoted text and its recorded author, by spice://quote/v1 target",
+            "description": "Spice board, task, artifact, and quote reads; spice:// is the index",
         }],
     }))
 }

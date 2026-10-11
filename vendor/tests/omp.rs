@@ -155,7 +155,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                 "type": "set_host_uri_schemes",
                 "schemes": [{
                     "scheme": "spice",
-                    "description": "Quoted text and its recorded author, by spice://quote/v1 target",
+                    "description": "Spice board, task, artifact, and quote reads; spice:// is the index",
                 }],
             }),
             serde_json::json!({"id": "spice-state", "type": "get_state"}),

@@ -7,13 +7,13 @@ use super::Driver;
 const TARGET: &str = "spice://quote/v1/steer/1kQnrzNZ/00";
 
 fn driver(
-    read_quote: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    read_uri: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
 ) -> Arc<Driver<Vec<u8>>> {
     Driver::with_readers(
         Vec::new(),
         || None,
         || None,
-        read_quote,
+        read_uri,
         steer::Key::for_identity(crate::resident::new_uuid()),
         None,
     )
@@ -43,7 +43,7 @@ fn settled(driver: &Arc<Driver<Vec<u8>>>) {
 }
 
 #[test]
-fn a_quote_read_answers_with_the_resolution_or_its_refusal() {
+fn a_read_answers_with_the_resource_or_its_refusal() {
     let driver = driver(|target| {
         if target == TARGET {
             Ok("Quoted from operator:\n\nship it".to_owned())
@@ -77,15 +77,18 @@ fn a_quote_read_answers_with_the_resolution_or_its_refusal() {
 }
 
 #[test]
-fn anything_but_a_quote_read_is_refused_without_asking_the_resident() {
-    let driver = driver(|_| panic!("only a quote read reaches the resident"));
+fn a_write_is_refused_without_reading() {
+    let driver = driver(|_| panic!("a write never reads"));
     driver.serve_uri("w", "write", TARGET);
-    driver.serve_uri("t", "read", "spice://task/VENDOR-dVlFd9fV8");
-    for frame in frames(&driver) {
-        assert_eq!(frame["isError"], true);
-        assert_eq!(frame["error"], vendor::omp::URI_SERVED);
-    }
-    assert_eq!(frames(&driver).len(), 2);
+    assert_eq!(
+        frames(&driver),
+        [serde_json::json!({
+            "type": "host_uri_result",
+            "id": "w",
+            "isError": true,
+            "error": vendor::omp::URI_SERVED,
+        })]
+    );
     assert!(driver.uris.lock().expect("pending locks").is_empty());
 }
 
