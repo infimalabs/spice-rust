@@ -407,13 +407,13 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
     {
         layers.push(layer);
     }
-    if let Some(document) = inputs.worktree
-        && let Some(layer) = parse_layer(ConfigSource::Worktree, document, &mut issues)
+    if let Some(document) = inputs.local
+        && let Some(layer) = parse_layer(ConfigSource::Local, document, &mut issues)
     {
         layers.push(layer);
     }
-    if let Some(document) = inputs.local
-        && let Some(layer) = parse_layer(ConfigSource::Local, document, &mut issues)
+    if let Some(document) = inputs.worktree
+        && let Some(layer) = parse_layer(ConfigSource::Worktree, document, &mut issues)
     {
         layers.push(layer);
     }
@@ -504,7 +504,7 @@ fn sanitize(
             let leaf = entry.template().as_str();
             let message = if layers.contains(&ConfigSource::Worktree) {
                 format!(
-                    "{leaf} is a worktree launch preference; set it in worktree .spice-rs/config.toml"
+                    "{leaf} is a per-worktree preference, never tracked; set it in Git-common .spice-rs/config.toml or in this worktree's Git-directory .spice-rs/worktree.toml"
                 )
             } else if layers.contains(&ConfigSource::Local)
                 && layers.contains(&ConfigSource::Tracked)

@@ -70,7 +70,8 @@ pub enum Builtin {
 pub enum PolicyClass {
     /// Behavior that is owned by tracked policy except for an explicit flag.
     Policy,
-    /// Per-worktree launch preference that never carries executable authority.
+    /// Per-worktree launch preference that never carries executable authority
+    /// and is never tracked: a Git-common default with a per-worktree override.
     WorktreeLocal,
     /// Machine-specific operation that admits a local value.
     MachineLocal,
@@ -267,7 +268,7 @@ impl Descriptor {
 }
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
-const TRACKED_WORKTREE: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Worktree];
+const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
 const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
@@ -677,14 +678,14 @@ configuration_registry! {
     fixed "vendor.omp.model" {
         kind: String,
         builtin: Some(Builtin::String(vendor::DEFAULT_OMP_MODEL)),
-        layers: TRACKED_WORKTREE,
+        layers: LOCAL_WORKTREE,
         class: WorktreeLocal,
         flag: None,
     }
     fixed "vendor.omp.effort" {
         kind: String,
         builtin: Some(Builtin::String("high")),
-        layers: TRACKED_WORKTREE,
+        layers: LOCAL_WORKTREE,
         class: WorktreeLocal,
         flag: None,
     }
@@ -775,7 +776,7 @@ configuration_registry! {
     fixed "say.voices" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
-        layers: TRACKED_WORKTREE,
+        layers: LOCAL_WORKTREE,
         class: WorktreeLocal,
         flag: None,
     }

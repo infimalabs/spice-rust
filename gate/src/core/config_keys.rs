@@ -9,7 +9,7 @@ use super::{ConfigKeyEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreOb
 use crate::input::ParsedContract;
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
-const TRACKED_WORKTREE: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Worktree];
+const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
 const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
@@ -95,8 +95,8 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("steer.expiry", TRACKED),
     ConfigKeyDeclaration::new("steer.resend", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.binary", TRACKED),
-    ConfigKeyDeclaration::new("vendor.omp.model", TRACKED_WORKTREE),
-    ConfigKeyDeclaration::new("vendor.omp.effort", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.omp.model", LOCAL_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.omp.effort", LOCAL_WORKTREE),
     ConfigKeyDeclaration::new("vendor.omp.fast_mode", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.lsp", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.auto_compact_window_tokens", TRACKED),
@@ -109,7 +109,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("lock.<name>.shards", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("serve.pack.rows", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.backend", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("say.voices", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("say.voices", LOCAL_WORKTREE),
     ConfigKeyDeclaration::new("say.words_per_minute", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
