@@ -670,7 +670,6 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         local,
         [
             "rtk.executable",
-            "judge.enabled",
             "lane.wake_order",
             "vendor.omp.model",
             "vendor.omp.effort",
@@ -704,15 +703,10 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
 
     for entry in descriptors() {
         let worktree_preference = entry.policy_class() == PolicyClass::WorktreeLocal;
-        let untracked = worktree_preference
-            || matches!(
-                entry.template().as_str(),
-                "proof.container" | "proof.runner"
-            );
         assert_eq!(
             entry.layers().contains(&ConfigSource::Tracked),
-            !untracked,
-            "{}",
+            entry.policy_class() == PolicyClass::Policy,
+            "only tracked policy is tracked: {}",
             entry.template().as_str()
         );
         assert!(!entry.layers().contains(&ConfigSource::Builtin));

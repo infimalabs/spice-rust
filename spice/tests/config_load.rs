@@ -198,10 +198,7 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     let root = repository(&scratch, "main worktree");
     let start = root.join("src");
     fs::create_dir(&start).expect("create start");
-    write(
-        root.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"omp\"\n[listen]\nwindow = \"2m\"\n",
-    );
+    write(root.join("spice-rust.toml"), b"[lane]\nvendor = \"omp\"\n");
     let container = absolute("container");
     let runner = absolute("runner");
     write(
@@ -296,13 +293,10 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     let common = origin.join(".git");
     let first = linked_worktree(&scratch, &common, "first");
     let second = linked_worktree(&scratch, &common, "second");
-    write(
-        first.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"omp\"\n[listen]\nwindow = \"2m\"\n",
-    );
+    write(first.join("spice-rust.toml"), b"[lane]\nvendor = \"omp\"\n");
     write(
         second.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"gemini\"\n[listen]\nwindow = \"3m\"\n",
+        b"[lane]\nvendor = \"gemini\"\n",
     );
     write(
         common.join(".spice-rs/config.toml"),
@@ -345,7 +339,7 @@ fn resolver_diagnostics_from_both_exact_documents_are_retained() {
     let root = repository(&scratch, "decode issues");
     write(
         root.join("spice-rust.toml"),
-        b"[lane]\nlease = \"soon\"\n[proof]\nimage = \"latest\"\n",
+        b"[lane]\nlease = \"soon\"\n[proof]\nimage = \"latest\"\n[rtk]\nexecutable = \"rtk\"\n",
     );
     write(
         local_path(&root),
@@ -358,6 +352,7 @@ fn resolver_diagnostics_from_both_exact_documents_are_retained() {
     for (source, path) in [
         (ConfigSource::Tracked, "lane.lease"),
         (ConfigSource::Tracked, "proof.image"),
+        (ConfigSource::Tracked, "rtk.executable"),
         (ConfigSource::Local, "lane.life"),
         (ConfigSource::Local, "listen.window"),
     ] {
@@ -466,7 +461,7 @@ fn equal_policy_bytes_from_another_file_are_another_capture_generation() {
     let scratch = Scratch::new();
     let root = repository(&scratch, "same bytes new generation");
     let tracked = root.join("spice-rust.toml");
-    let bytes = b"[listen]\nwindow = \"2m\"\n";
+    let bytes = b"[lane]\nvendor = \"omp\"\n";
     write(&tracked, bytes);
     let repository = spice::repository::Repository::discover(&root).expect("admit repository");
     let first = capture_repository(&repository, &[]).expect("capture first generation");
