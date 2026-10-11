@@ -48,7 +48,7 @@ fn snapshot(journal: &Journal) -> Snapshot {
 }
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
-        snapshot.entries(),
+        &board::satisfied_tasks(snapshot.entries()),
         &snapshot.entries()[0],
         &Actor::Lane(uuid(20)),
         snapshot.environment(),
@@ -593,7 +593,7 @@ fn lapsing_a_review_claim_releases_its_assignment_in_the_same_transaction() {
     );
     assert!(
         board::eligible_entry(
-            after.entries(),
+            &board::satisfied_tasks(after.entries()),
             entry,
             &Actor::Lane(uuid(24)),
             after.environment()

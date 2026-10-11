@@ -356,7 +356,7 @@ impl Standings {
         let standing = entries
             .iter()
             .map(|entry| {
-                let standing = standing(entries, entry, &board.principal, &environment, &satisfied);
+                let standing = standing(entry, &board.principal, &environment, &satisfied);
                 (entry.born().clone(), standing)
             })
             .collect();
@@ -401,7 +401,6 @@ impl Standings {
 }
 
 fn standing(
-    entries: &[Entry],
     entry: &Entry,
     principal: &Actor,
     environment: &wire::Environment,
@@ -428,7 +427,7 @@ fn standing(
         Standing::Blocked
     } else if workflow.phase.as_str() == "review" {
         Standing::Review
-    } else if board::eligible_entry(entries, entry, principal, environment) {
+    } else if board::eligible_entry(satisfied, entry, principal, environment) {
         Standing::Ready
     } else {
         Standing::Pending
@@ -503,7 +502,7 @@ fn posture(
     let mut counts = PostureCounts {
         visible: entries.len(),
         open: rows.len(),
-        oops: ParkedCounts::measure(entries, &rows).oops,
+        oops: ParkedCounts::oops(entries),
         ..PostureCounts::default()
     };
     let mut claim = None;

@@ -111,10 +111,11 @@ pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSe
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("scoped board has one team subscription");
     let environment = answer.environment();
+    let satisfied = board::satisfied_tasks(&entries);
     entries
         .iter()
         .filter(|entry| {
-            board::selectable_entry(&entries, entry, actor, &subscription, &environment)
+            board::selectable_entry(&satisfied, entry, actor, &subscription, &environment)
         })
         .map(|entry| entry.handle().to_string())
         .collect()

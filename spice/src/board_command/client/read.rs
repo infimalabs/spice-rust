@@ -1174,14 +1174,15 @@ pub(in crate::board_command) fn task_status(
         .count();
     // The parked split is shared with the empty-drain readout so the two
     // surfaces cannot disagree on a count.
-    let parked = ParkedCounts::measure(&entries, &rows);
+    let satisfied = board::satisfied_tasks(&entries);
+    let parked = ParkedCounts::measure(&entries, &satisfied, &rows);
     let status = environment_status(&rows, &environment);
     let ready = rows
         .iter()
         .copied()
         .filter(|entry| {
             entry.workflow().phase.as_str() != "review"
-                && board::eligible_entry(&entries, entry, &board.principal, &environment)
+                && board::eligible_entry(&satisfied, entry, &board.principal, &environment)
         })
         .count();
     Ok(format!(

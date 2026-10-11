@@ -102,7 +102,15 @@ fn allocator_continuation(
     // A drain lane asks the allocator even when this row is no longer
     // selectable; the typed allocator-empty response closes that drain pass.
     let selectable = current_instant().ok().is_some_and(|now| {
-        board::selectable_entry_at(entries, entry, principal, &subscription, environment, now)
+        let satisfied = board::satisfied_tasks(entries);
+        board::selectable_entry_at(
+            &satisfied,
+            entry,
+            principal,
+            &subscription,
+            environment,
+            now,
+        )
     });
     (subscription.policy == wire::intent::TeamLife::Drain || selectable)
         .then_some(NextTransition::Next)

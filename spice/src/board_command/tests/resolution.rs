@@ -320,7 +320,12 @@ fn assert_review_pending(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
         .find(|entry| entry.handle() == task)
         .expect("pending review remains on the board");
     assert!(
-        !board::eligible_entry(&entries, entry, &pending.principal, &pending.environment()),
+        !board::eligible_entry(
+            &board::satisfied_tasks(&entries),
+            entry,
+            &pending.principal,
+            &pending.environment()
+        ),
         "an unresolved correction must block another review claim",
     );
     let facts = bus.fact_snapshot().expect("workflow facts read");
@@ -771,7 +776,12 @@ fn assert_finding_blocks(
             .find(|entry| entry.handle() == task)
             .expect("blocked entry is visible");
         assert!(
-            !board::eligible_entry(&entries, entry, implementer, &blocked.environment()),
+            !board::eligible_entry(
+                &board::satisfied_tasks(&entries),
+                entry,
+                implementer,
+                &blocked.environment()
+            ),
             "{reason}"
         );
     }
@@ -799,7 +809,7 @@ fn complete_correction_and_clean(
         .find(|entry| entry.handle() == reviewed)
         .expect("reviewed entry remains visible");
     assert!(board::eligible_entry(
-        &entries,
+        &board::satisfied_tasks(&entries),
         reviewed_entry,
         reviewer,
         &reviewable.environment()
@@ -847,7 +857,7 @@ fn complete_correction_and_clean(
         .find(|entry| entry.handle() == downstream)
         .expect("downstream entry remains visible");
     assert!(board::eligible_entry(
-        &entries,
+        &board::satisfied_tasks(&entries),
         downstream_entry,
         implementer,
         &released.environment(),

@@ -440,7 +440,7 @@ fn finite_task_deferral_wakes_at_its_live_deadline() {
         .expect("woken task remains valid");
     assert!(
         board::eligible_entry(
-            std::slice::from_ref(&entry),
+            &board::satisfied_tasks(std::slice::from_ref(&entry)),
             &entry,
             &Actor::Lane(uuid(49)),
             &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),
@@ -1253,7 +1253,7 @@ fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
         .expect("lapsed task remains valid");
     assert!(
         board::eligible_entry(
-            std::slice::from_ref(&entry),
+            &board::satisfied_tasks(std::slice::from_ref(&entry)),
             &entry,
             &Actor::Lane(fixture.authority.lane),
             &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),

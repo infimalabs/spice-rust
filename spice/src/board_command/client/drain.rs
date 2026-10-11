@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 use wire::intent::TeamLife;
 
@@ -34,8 +36,11 @@ impl ParkedCounts {
     /// Blocked asks the board which prerequisites are satisfied so the same
     /// row cannot count ready and blocked at once; parked `.oops` rows are
     /// counted across the whole visible board, as task status does.
-    pub(in crate::board_command) fn measure(entries: &[Entry], rows: &[&Entry]) -> Self {
-        let satisfied = board::satisfied_tasks(entries);
+    pub(in crate::board_command) fn measure(
+        entries: &[Entry],
+        satisfied: &BTreeSet<TaskStamp>,
+        rows: &[&Entry],
+    ) -> Self {
         let disposition = |entry: &&&Entry, wanted: ClaimDisposition| {
             entry
                 .claim()
@@ -64,15 +69,20 @@ impl ParkedCounts {
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
                 .count(),
-            oops: entries
-                .iter()
-                .filter(|entry| {
-                    entry.project().visibility().hidden_stem() == Some("oops")
-                        && entry.workflow().status == "pending"
-                        && entry.workflow().completion.is_none()
-                })
-                .count(),
+            oops: Self::oops(entries),
         }
+    }
+
+    /// Pending parked `.oops` rows across the whole visible board.
+    pub(in crate::board_command) fn oops(entries: &[Entry]) -> usize {
+        entries
+            .iter()
+            .filter(|entry| {
+                entry.project().visibility().hidden_stem() == Some("oops")
+                    && entry.workflow().status == "pending"
+                    && entry.workflow().completion.is_none()
+            })
+            .count()
     }
 
     /// The `board:` line: every non-zero category with its reason, or the
