@@ -41,8 +41,8 @@ fn local_path(root: &Path) -> PathBuf {
     root.join(".git/.spice-rs/config.toml")
 }
 
-fn worktree_path(root: &Path) -> PathBuf {
-    root.join(".spice-rs/config.toml")
+fn worktree_path(git_dir: &Path) -> PathBuf {
+    git_dir.join(".spice-rs/worktree.toml")
 }
 
 fn write(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) {
@@ -205,7 +205,7 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     let container = absolute("container");
     let runner = absolute("runner");
     write(
-        worktree_path(&root),
+        worktree_path(&root.join(".git")),
         b"[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n",
     );
     write(
@@ -226,6 +226,7 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
         root.join(".git/.spice/config/spice-rust.toml"),
         root.join(".git/.spice-rs/local.toml"),
         root.join(".spice-rs/local.toml"),
+        root.join(".spice-rs/config.toml"),
         scratch.join("spice-rust.toml"),
     ] {
         write(ignored, b"[tasks]\nforbidden = true\n");
@@ -308,11 +309,11 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
         b"[listen]\nwindow = \"5m\"\n",
     );
     write(
-        worktree_path(&first),
+        worktree_path(&common.join("worktrees/first")),
         b"[vendor.omp]\nmodel = 'first-model'\n",
     );
     write(
-        worktree_path(&second),
+        worktree_path(&common.join("worktrees/second")),
         b"[vendor.omp]\nmodel = 'second-model'\n",
     );
     write(origin.join("spice-rust.toml"), b"[tasks]\nwrong = true\n");

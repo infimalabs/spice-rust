@@ -264,7 +264,6 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
             "[policy]\ntest_engines = [\"unknown-engine\"]\n",
             "policy.test_engines[0]",
         ),
-        ("[vendor.omp]\nmodel = \"\"\n", "vendor.omp.model"),
         ("[vendor.gemini]\nbinary = \"gemini\"\n", "vendor.gemini"),
     ] {
         let error = decode(document).expect_err("malformed policy must refuse");

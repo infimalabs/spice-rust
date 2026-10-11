@@ -26,7 +26,10 @@ use super::{
 use crate::repository::{Repository, ResolveError as RepositoryError};
 
 const TRACKED_FILE: &str = "spice-rust.toml";
-const WORKTREE_FILE: &str = ".spice-rs/config.toml";
+/// Per-worktree document under the worktree's own Git directory. Its name
+/// differs from [`LOCAL_FILE`] because the main worktree's Git directory is the
+/// Git-common directory itself.
+const WORKTREE_FILE: &str = ".spice-rs/worktree.toml";
 const LOCAL_FILE: &str = ".spice-rs/config.toml";
 
 /// Exact repository configuration locations.
@@ -223,7 +226,7 @@ impl Locations {
         &self.tracked
     }
 
-    /// Untracked override document scoped to this worktree.
+    /// Per-worktree document in this worktree's own Git directory.
     #[must_use]
     pub fn worktree(&self) -> &Path {
         &self.worktree
@@ -241,7 +244,7 @@ impl Locations {
 pub fn locations(repository: &Repository) -> Locations {
     Locations {
         tracked: repository.worktree_root().join(TRACKED_FILE),
-        worktree: repository.worktree_root().join(WORKTREE_FILE),
+        worktree: repository.git_dir().join(WORKTREE_FILE),
         local: repository.common_dir().join(LOCAL_FILE),
     }
 }
@@ -492,8 +495,8 @@ impl Error for LoadError {
 
 /// Load effective configuration for the repository containing `start`.
 ///
-/// Acquisition inspects exactly the tracked policy, worktree override, and
-/// Git-common machine-local documents. Missing documents are empty intent.
+/// Acquisition inspects exactly the tracked policy, Git-common machine-local,
+/// and per-worktree Git-directory documents. Missing documents are empty intent.
 ///
 /// # Errors
 ///
@@ -543,7 +546,7 @@ pub fn capture_repository(
     );
     let worktree = acquire(
         ConfigSource::Worktree,
-        repository.worktree_root(),
+        repository.git_dir(),
         Path::new(WORKTREE_FILE),
         &mut budget,
         &mut acquisition,

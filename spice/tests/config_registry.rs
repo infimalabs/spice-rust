@@ -672,6 +672,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "rtk.executable",
             "judge.enabled",
             "lane.wake_order",
+            "vendor.omp.model",
+            "vendor.omp.effort",
             "listen.window",
             "lock.busy",
             "lock.taken",
@@ -681,6 +683,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.<name>.shards",
             "serve.pack.rows",
             "say.backend",
+            "say.voices",
             "say.words_per_minute",
             "proof.container",
             "proof.runner",
@@ -700,20 +703,22 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     assert_eq!(flags[1].1.flag(), "--vendor");
 
     for entry in descriptors() {
-        let local_only = matches!(
-            entry.template().as_str(),
-            "proof.container" | "proof.runner"
-        );
+        let worktree_preference = entry.policy_class() == PolicyClass::WorktreeLocal;
+        let untracked = worktree_preference
+            || matches!(
+                entry.template().as_str(),
+                "proof.container" | "proof.runner"
+            );
         assert_eq!(
             entry.layers().contains(&ConfigSource::Tracked),
-            !local_only,
+            !untracked,
             "{}",
             entry.template().as_str()
         );
         assert!(!entry.layers().contains(&ConfigSource::Builtin));
         assert_eq!(
             entry.policy_class() == PolicyClass::MachineLocal,
-            entry.layers().contains(&ConfigSource::Local),
+            entry.layers().contains(&ConfigSource::Local) && !worktree_preference,
             "{}",
             entry.template().as_str()
         );

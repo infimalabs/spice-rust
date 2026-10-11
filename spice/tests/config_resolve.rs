@@ -32,18 +32,18 @@ fn worktree_documents<'a>(
 ) -> Inputs<'a> {
     Inputs::with_worktree(
         tracked.map(|text| Document::new("spice-rust.toml", text)),
-        worktree.map(|text| Document::new(".spice-rs/config.toml", text)),
+        worktree.map(|text| Document::new(".git/worktrees/lane/.spice-rs/worktree.toml", text)),
         local.map(|text| Document::new(".git/.spice-rs/config.toml", text)),
         &[],
     )
 }
 
 #[test]
-fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority() {
+fn worktree_vendor_model_and_effort_override_local_without_admitting_authority() {
     let resolved = resolve(worktree_documents(
-        Some("[vendor.omp]\nmodel = 'tracked-model'\neffort = 'low'\n"),
-        Some("[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n"),
         None,
+        Some("[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n"),
+        Some("[vendor.omp]\nmodel = 'shared-model'\neffort = 'low'\n"),
     ))
     .expect("worktree launch preferences resolve");
 
@@ -70,22 +70,16 @@ fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority
         "vendor.omp.binary",
         "vendor.omp.fast_mode",
     ] {
-        assert!(error.issues().iter().any(|issue| {
-            issue.kind() == IssueKind::Policy
-                && issue.source() == ConfigSource::Worktree
-                && issue
-                    .path()
-                    .is_some_and(|actual| actual.to_string() == path)
-        }));
+        assert_policy_issue(&error, ConfigSource::Worktree, path);
     }
 }
 
 #[test]
-fn worktree_voices_override_the_shared_tracked_voices() {
+fn worktree_voices_override_the_shared_local_voices() {
     let resolved = resolve(worktree_documents(
-        Some("[say]\nvoices = ['Zoe (Premium)']\n"),
-        Some("[say]\nvoices = ['Samantha', 'English (United States)']\n"),
         None,
+        Some("[say]\nvoices = ['Samantha', 'English (United States)']\n"),
+        Some("[say]\nvoices = ['Zoe (Premium)']\n"),
     ))
     .expect("worktree voices resolve");
 
@@ -94,6 +88,44 @@ fn worktree_voices_override_the_shared_tracked_voices() {
         ["Samantha", "English (United States)"]
     );
     assert_eq!(path_source(&resolved, "say.voices"), ConfigSource::Worktree);
+
+    let shared = resolve(worktree_documents(
+        None,
+        None,
+        Some("[say]\nvoices = ['Zoe (Premium)']\n"),
+    ))
+    .expect("shared local voices resolve");
+    assert_eq!(shared.root().say().voices(), ["Zoe (Premium)"]);
+    assert_eq!(path_source(&shared, "say.voices"), ConfigSource::Local);
+}
+
+#[test]
+fn tracked_policy_cannot_pin_worktree_preferences() {
+    let error = resolve(worktree_documents(
+        Some(concat!(
+            "[vendor.omp]\nmodel = 'tracked-model'\neffort = 'low'\n",
+            "[say]\nvoices = ['Zoe (Premium)']\n",
+        )),
+        None,
+        None,
+    ))
+    .expect_err("tracked policy never pins a worktree preference");
+    for path in ["vendor.omp.model", "vendor.omp.effort", "say.voices"] {
+        assert_policy_issue(&error, ConfigSource::Tracked, path);
+    }
+}
+
+fn assert_policy_issue(error: &spice::config::ResolveError, source: ConfigSource, path: &str) {
+    assert!(
+        error.issues().iter().any(|issue| {
+            issue.kind() == IssueKind::Policy
+                && issue.source() == source
+                && issue
+                    .path()
+                    .is_some_and(|actual| actual.to_string() == path)
+        }),
+        "expected a {source} policy issue at {path}"
+    );
 }
 
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
@@ -222,7 +254,7 @@ fn speech_configuration_refuses_retired_or_malformed_settings() {
         ("[say]\nvoices = ['Zoe', '']\n", "say.voices"),
         ("[say]\nwords_per_minute = 0\n", "say.words_per_minute"),
     ] {
-        let error = resolve(documents(Some(document), None))
+        let error = resolve(documents(None, Some(document)))
             .expect_err("malformed speech configuration must be refused");
         assert!(
             error.issues().iter().any(|issue| {
@@ -732,8 +764,6 @@ resend = ["2m", "4m", "6m"]
 
 [vendor.omp]
 binary = "/opt/omp"
-model = "omp-current"
-effort = "max"
 fast_mode = true
 lsp = true
 auto_compact_window_tokens = 250000
@@ -758,7 +788,6 @@ rows = 50
 
 [say]
 backend = "disabled"
-voices = ["Samantha"]
 words_per_minute = 190
 
 [proof]
@@ -766,9 +795,13 @@ image = "sha256:4444444444444444444444444444444444444444444444444444444444444444
 "#;
 
 #[test]
-fn tracked_document_can_address_every_registry_descriptor() {
+fn authored_documents_can_address_every_registry_descriptor() {
     let local = format!(
-        "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+        concat!(
+            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+            "[vendor.omp]\nmodel = \"omp-current\"\neffort = \"max\"\n",
+            "[say]\nvoices = [\"Samantha\"]\n",
+        ),
         absolute("container"),
         absolute("runner")
     );
@@ -780,7 +813,14 @@ fn tracked_document_can_address_every_registry_descriptor() {
 
     for row in resolved.provenance() {
         let path = row.path().to_string();
-        let expected = if matches!(path.as_str(), "proof.container" | "proof.runner") {
+        let expected = if matches!(
+            path.as_str(),
+            "proof.container"
+                | "proof.runner"
+                | "vendor.omp.model"
+                | "vendor.omp.effort"
+                | "say.voices"
+        ) {
             ConfigSource::Local
         } else {
             ConfigSource::Tracked

@@ -117,10 +117,11 @@ pub enum ConfigSource {
     Builtin,
     /// Intent read from tracked `spice-rust.toml`.
     Tracked,
-    /// Admitted override scoped to one Git worktree.
-    Worktree,
     /// Admitted machine-local override shared through Git common state.
     Local,
+    /// Admitted override scoped to one Git worktree, read from that worktree's
+    /// own Git directory.
+    Worktree,
     /// Explicit command-line intent.
     Flag,
 }
@@ -130,8 +131,8 @@ impl ConfigSource {
     pub const ALL: &[Self] = &[
         Self::Builtin,
         Self::Tracked,
-        Self::Worktree,
         Self::Local,
+        Self::Worktree,
         Self::Flag,
     ];
 
@@ -175,9 +176,9 @@ pub enum Provenance<T> {
         )]
         builtin: Option<T>,
     },
-    /// A worktree-scoped override won.
-    Worktree {
-        /// Compiled value hidden by the worktree value, when one exists.
+    /// A machine-local override won.
+    Local {
+        /// Compiled value hidden by the local value, when one exists.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -185,9 +186,9 @@ pub enum Provenance<T> {
         )]
         builtin: Option<T>,
     },
-    /// A machine-local override won.
-    Local {
-        /// Compiled value hidden by the local value, when one exists.
+    /// A worktree-scoped override won.
+    Worktree {
+        /// Compiled value hidden by the worktree value, when one exists.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
