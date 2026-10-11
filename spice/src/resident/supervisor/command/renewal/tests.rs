@@ -5,7 +5,7 @@ fn driver() -> Arc<Driver<Vec<u8>>> {
         Vec::new(),
         || None,
         || None,
-        |_| Err("no quotes here".to_owned()),
+        Box::new(|_, _| Err("no quotes here".to_owned())),
         steer::Key::for_identity(CanonicalUuid::new(uuid::Uuid::from_u128(7))),
         None,
     )

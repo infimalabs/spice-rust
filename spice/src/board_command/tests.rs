@@ -1088,6 +1088,9 @@ mod oops_destination;
 // this file stays inside the structural review bound as it grows.
 mod edit;
 use edit::*;
+// Whole-text replacement of a description or acceptance through the modify
+// intent, admitted only over the digest of the text its writer read.
+mod task_text;
 
 // Claimed dependency edits carry possession through one atomic statement-head
 // replacement and keep the complete graph acyclic.

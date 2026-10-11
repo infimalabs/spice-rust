@@ -105,8 +105,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::TaskArtifactPayload
         | Domain::TaskArtifactStore
         | Domain::GateBatteryManifest
-        | Domain::GateBatteryReport
-        | Domain::GateFocusedReport
+        | Domain::GateBatteryReport => late_position(domain),
+        Domain::GateFocusedReport
         | Domain::GateRepositoryAuthority
         | Domain::GateSelection
         | Domain::GatePassReceipt
@@ -119,7 +119,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::MediaContent
         | Domain::QuoteText
         | Domain::ReportCommandRecord
-        | Domain::CliExport => late_position(domain),
+        | Domain::CliExport
+        | Domain::TaskText => final_position(domain),
     }
 }
 
@@ -183,6 +184,12 @@ const fn late_position(domain: Domain) -> usize {
         Domain::TaskArtifactStore => 43,
         Domain::GateBatteryManifest => 44,
         Domain::GateBatteryReport => 45,
+        _ => panic!("domain position partition is closed"),
+    }
+}
+
+const fn final_position(domain: Domain) -> usize {
+    match domain {
         Domain::GateFocusedReport => 46,
         Domain::GateBatteryReceipt => 47,
         Domain::GateConfiguration => 48,
@@ -197,6 +204,7 @@ const fn late_position(domain: Domain) -> usize {
         Domain::QuoteText => 57,
         Domain::ReportCommandRecord => 58,
         Domain::CliExport => 59,
+        Domain::TaskText => 60,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -213,7 +221,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 60] = [
+const DOMAINS: [Domain; 61] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -274,6 +282,7 @@ const DOMAINS: [Domain; 60] = [
     Domain::QuoteText,
     Domain::ReportCommandRecord,
     Domain::CliExport,
+    Domain::TaskText,
 ];
 
 #[test]
@@ -385,6 +394,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.quote.text.v1",
             "spice.report.command-record.v1",
             "spice.cli.export.v1",
+            "spice.task.text.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );

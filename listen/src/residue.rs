@@ -130,6 +130,8 @@ pub enum Dialog {
         operation: String,
         /// The full URI the agent named.
         url: String,
+        /// The replacement text a write carries; absent from a read.
+        content: Option<String>,
     },
 }
 

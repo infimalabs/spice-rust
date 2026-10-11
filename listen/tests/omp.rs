@@ -439,6 +439,19 @@ fn a_host_uri_request_is_a_dialog_and_its_cancellation_withdraws_it() {
             id: "u1".to_owned(),
             operation: "read".to_owned(),
             url: "spice://quote/v1/steer/1kQnrzNZ/00".to_owned(),
+            content: None,
+        })
+    );
+    let write = decoded(
+        br#"{"type":"host_uri_request","id":"u3","operation":"write","url":"spice://task/X/description","content":"new text\n"}"#,
+    );
+    assert_eq!(
+        write.context().and_then(|context| context.dialog.clone()),
+        Some(Dialog::HostUri {
+            id: "u3".to_owned(),
+            operation: "write".to_owned(),
+            url: "spice://task/X/description".to_owned(),
+            content: Some("new text\n".to_owned()),
         })
     );
 

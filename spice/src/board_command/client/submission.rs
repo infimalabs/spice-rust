@@ -594,7 +594,7 @@ where
     })
 }
 
-pub(super) fn mutate_from_board<F>(
+pub(in crate::board_command) fn mutate_from_board<F>(
     repository: &Repository,
     contract: &Contract,
     read: BoardRead,

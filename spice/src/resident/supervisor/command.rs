@@ -17,7 +17,7 @@
 //! so far while the command keeps running as a job. The resident reaches the
 //! driver through a datagram signal; the payload remains in journal authority.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -48,7 +48,6 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Read once per compaction, off the decoding path, since a briefing
     /// scans the transcript and the journal.
     read_briefing: BriefingReader,
-    read_uri: uri::UriReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -86,9 +85,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     terminal: Option<Terminal>,
     /// The calls being answered now, by the host tool call each answers.
     calls: Mutex<HashMap<String, Handle>>,
-    /// Host URI requests being answered now. A withdrawn request leaves this
-    /// set, and only a request still in it is answered.
-    uris: Mutex<HashSet<String>>,
+    /// The `spice://` server and the host URI requests it is answering now.
+    uris: uri::Uris,
     /// Correlated live retunes awaiting an OMP response.
     retunes: Mutex<HashMap<String, PendingRetune>>,
 }
@@ -259,7 +257,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
-        let read_uri = uri::resident_reader(discovery.clone(), lane, worktree.clone());
+        let uri_server = uri::resident_server(discovery.clone(), lane, worktree.clone());
         let projector = media::Projector::new(steering_media, lane);
         let environment = crate::session_environment().rooted(worktree);
         Self::with_readers(
@@ -290,7 +288,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                     None,
                 ))
             },
-            read_uri,
+            uri_server,
             steer::Key::for_identity(lane),
             terminal,
         )
@@ -300,7 +298,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
-        read_uri: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+        uri_server: uri::UriServer,
         seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
@@ -308,7 +306,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             stdin: Mutex::new(Some(stdin)),
             read_inbox: Box::new(read_inbox),
             read_briefing: Box::new(read_briefing),
-            read_uri: Box::new(read_uri),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
@@ -324,7 +321,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
-            uris: Mutex::new(HashSet::new()),
+            uris: uri::Uris::new(uri_server),
             retunes: Mutex::new(HashMap::new()),
         })
     }
@@ -908,8 +905,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                 self.run(id, tool, arguments);
                 None
             }
-            Some(Dialog::HostUri { id, operation, url }) => {
-                self.serve_uri(id, operation, url);
+            Some(Dialog::HostUri {
+                id,
+                operation,
+                url,
+                content,
+            }) => {
+                self.serve_uri(id, operation, url, content.as_deref());
                 None
             }
             Some(dialog) => {

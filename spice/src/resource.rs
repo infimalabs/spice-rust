@@ -1,21 +1,28 @@
-//! The `spice://` resources a lane's omp reads board and task state through.
+//! The `spice://` resources a lane's omp reads board and task state through,
+//! and the task texts it replaces by writing.
 //!
-//! Every URL names one existing CLI read: [`Request::parse`] maps it onto
-//! that read's exact arguments, and [`read`] runs the read in process over
-//! the lane's own connection, so authority, scoping, refusals, and rendering
-//! are the CLI's. A withheld page names the URL that resumes it, and a
-//! collection ends with the child URLs omp has no way to enumerate. A
+//! Every read URL names one existing CLI read: [`Request::parse`] maps it
+//! onto that read's exact arguments, and [`serve`] runs the read in process
+//! over the lane's own connection, so authority, scoping, refusals, and
+//! rendering are the CLI's. A withheld page names the URL that resumes it,
+//! and a collection ends with the child URLs omp has no way to enumerate. A
 //! trailing line selector is honored or refused. Reading commits nothing, so
-//! omp may read as often as its tools ask; a URL naming a mutation is refused
-//! with the command that performs it.
+//! omp may read as often as its tools ask.
+//!
+//! A task's description and acceptance also take a write: the whole new text,
+//! to the URL its read names, which carries the digest of the text read. The
+//! write is the `task modify` intent under the lane's actor, and a stale or
+//! absent digest refuses rather than overwriting. Every other URL naming a
+//! mutation is refused with the command that performs it.
 
 use std::path::Path;
 
 use artifact::ArtifactAnswer;
 use spice::repository::Repository;
 use wire::intent::CommandAnswer;
-use wire::{CanonicalUuid, Outcome, TaskHandle};
+use wire::{CanonicalUuid, Digest, Outcome, TaskHandle};
 
+use crate::board_command::TaskText;
 use crate::render::{self, Form};
 
 #[cfg(test)]
@@ -26,13 +33,15 @@ pub(crate) const SCHEME: &str = "spice://";
 
 /// The root index: every resource shape and the CLI read it answers with.
 const INDEX: &str = "\
-spice:// resources: read-only views of spice CLI reads; acts on the board stay spice commands
+spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
 spice://board  task status
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
 spice://task/HANDLE  task show HANDLE
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://task/HANDLE/history  task show HANDLE --history [same paging]
 spice://task/HANDLE/detail  task show HANDLE --context --history [same paging]
+spice://task/HANDLE/description  the description; its first line names the write URL, ?digest=DIGEST, that replaces the text below it
+spice://task/HANDLE/acceptance  the acceptance as `- ` items, replaced the same way
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://quote/v1/...  a quoted message and its recorded author
@@ -40,6 +49,13 @@ Query values percent-encode reserved bytes, ':' as %3A. A trailing :N, :N-M, :N+
 resources:
   spice://board
   spice://task";
+
+/// How omp reaches a URL: a read, or a write of the whole new text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Access<'a> {
+    Read,
+    Write(&'a str),
+}
 
 /// What one `spice://` URL names: the resource and the lines selected of it.
 #[derive(Debug, PartialEq, Eq)]
@@ -54,6 +70,21 @@ enum Resource {
     /// A quote target, as the URL spelled it without its selector.
     Quote(String),
     Read(Query),
+    Text(Text),
+}
+
+/// One replaceable task text, and the digest a write of it named.
+#[derive(Debug, PartialEq, Eq)]
+struct Text {
+    handle: TaskHandle,
+    field: TaskText,
+    digest: Option<Digest>,
+}
+
+impl Text {
+    fn url(handle: &TaskHandle, field: TaskText) -> String {
+        format!("{SCHEME}task/{handle}/{}", field.name())
+    }
 }
 
 /// One CLI read: its resource shape and the options its query named.
@@ -318,6 +349,21 @@ impl Request {
                         handle,
                         detail: Detail::Both,
                     },
+                    [field @ ("description" | "acceptance")] => {
+                        let field = if *field == "description" {
+                            TaskText::Description
+                        } else {
+                            TaskText::Acceptance
+                        };
+                        return Ok(Self {
+                            resource: Resource::Text(Text {
+                                handle,
+                                field,
+                                digest: text_digest(query, url)?,
+                            }),
+                            selector,
+                        });
+                    }
                     ["artifact"] => Shape::Artifacts { handle },
                     ["artifact", id] => {
                         refuse_mutation(&["task", "artifact", id], url)?;
@@ -341,6 +387,20 @@ impl Request {
             selector,
         })
     }
+}
+
+/// The digest a text URL's query names: `digest=DIGEST` alone, or nothing.
+fn text_digest(query: &str, url: &str) -> Result<Option<Digest>, String> {
+    if query.is_empty() {
+        return Ok(None);
+    }
+    let Some(written) = query.strip_prefix("digest=") else {
+        return Err(format!("{url} takes only ?digest=DIGEST, from its read"));
+    };
+    decode(written)?
+        .parse::<Digest>()
+        .map(Some)
+        .map_err(|error| format!("{url} names no digest: {error}"))
 }
 
 fn unknown(url: &str) -> String {
@@ -530,29 +590,95 @@ impl Span {
     }
 }
 
-/// Answer one `spice://` read for `lane`, whose checkout is `worktree`:
-/// the document the URL names, or why there is none.
+/// Answer one `spice://` read or write for `lane`, whose checkout is
+/// `worktree`: the document the URL names or the write's reply, or why there
+/// is none.
 ///
 /// `read_quote` resolves quote targets.
-pub(crate) fn read(
+pub(crate) fn serve(
     worktree: &Path,
     lane: CanonicalUuid,
     url: &str,
+    access: Access<'_>,
     read_quote: impl FnOnce(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let request = Request::parse(url)?;
+    let repository = || {
+        Repository::discover(worktree)
+            .map_err(|error| format!("spice cannot resolve the lane's checkout: {error}"))
+    };
+    if let Access::Write(content) = access {
+        let Resource::Text(text) = &request.resource else {
+            return Err(format!(
+                "{url} takes no write; only a task's description and acceptance do, and other acts stay spice commands"
+            ));
+        };
+        if request.selector.is_some() {
+            return Err(format!(
+                "{url} names lines, but a write replaces the whole text; drop the selector"
+            ));
+        }
+        let repository = repository()?;
+        return crate::command_client::as_lane(lane, || replace(&repository, text, content));
+    }
     let document = match &request.resource {
         Resource::Index => INDEX.to_owned(),
         Resource::Quote(target) => read_quote(target)?,
         Resource::Read(query) => {
-            let repository = Repository::discover(worktree)
-                .map_err(|error| format!("spice cannot resolve the lane's checkout: {error}"))?;
+            let repository = repository()?;
             crate::command_client::as_lane(lane, || run(&repository, query))?
+        }
+        Resource::Text(text) => {
+            if text.digest.is_some() {
+                return Err(format!(
+                    "{url} names a digest, which only a write takes; read {} instead",
+                    Text::url(&text.handle, text.field)
+                ));
+            }
+            let repository = repository()?;
+            crate::command_client::as_lane(lane, || text_document(&repository, text))?
         }
     };
     match &request.selector {
         Some(selector) => selector.select(&document),
         None => Ok(document),
+    }
+}
+
+/// The current text under a first line naming the URL that replaces it.
+fn text_document(repository: &Repository, text: &Text) -> Result<String, String> {
+    let task = crate::board_command::current_task(repository, &text.handle)
+        .map_err(|outcome| command_rendering(&outcome))?;
+    let statement = &task.statement.body;
+    Ok(format!(
+        "write the whole new {} to {}?digest={}; it replaces every line below this one\n{}",
+        text.field.name(),
+        Text::url(&statement.handle, text.field),
+        text.field.digest(statement),
+        text.field.current(statement),
+    ))
+}
+
+/// Replace a task text through the `task modify` intent.
+fn replace(repository: &Repository, text: &Text, content: &str) -> Result<String, String> {
+    let outcome = crate::board_command::replace_text(
+        repository,
+        &text.handle,
+        text.field,
+        text.digest.as_ref(),
+        content,
+    );
+    match outcome {
+        Outcome::Reply(_) => Ok(command_rendering(&outcome)),
+        Outcome::Refusal(_) | Outcome::Fault(_) => Err(command_rendering(&outcome)),
+    }
+}
+
+/// What the CLI renders for one board command outcome.
+fn command_rendering(outcome: &Outcome<CommandAnswer>) -> String {
+    let rendering = render::render_with_reply_text(outcome, Form::Text, crate::command_answer_text);
+    match rendered(outcome, rendering) {
+        Ok(document) | Err(document) => document,
     }
 }
 
@@ -639,10 +765,17 @@ fn board_trailer(document: &mut String, shape: &Shape) {
         Shape::Task {
             handle,
             detail: Detail::Summary,
-        } => ["context", "history", "detail", "artifact"]
-            .iter()
-            .map(|child| format!("{SCHEME}task/{handle}/{child}"))
-            .collect(),
+        } => [
+            "context",
+            "history",
+            "detail",
+            "description",
+            "acceptance",
+            "artifact",
+        ]
+        .iter()
+        .map(|child| format!("{SCHEME}task/{handle}/{child}"))
+        .collect(),
         _ => Vec::new(),
     };
     push_resources(document, &children);

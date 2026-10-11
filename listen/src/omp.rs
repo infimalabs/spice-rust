@@ -239,6 +239,7 @@ pub(crate) fn dialog(record: &Object) -> Option<Dialog> {
             id,
             operation: field("operation")?.to_owned(),
             url: field("url")?.to_owned(),
+            content: field("content").map(str::to_owned),
         }),
         "extension_ui_request" => match field("method")? {
             "confirm" => Some(Dialog::Confirm {
