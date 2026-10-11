@@ -200,7 +200,7 @@ fn document_rationale_and_later_notes_recover_through_the_task_ledger() {
 }
 
 #[test]
-fn document_ledger_previews_with_a_bound_and_exports_the_exact_document() {
+fn document_ledger_pages_one_snapshot_and_exports_the_exact_document() {
     let (root, bus, epoch, _) = fixture("document-ledger-output", 0);
     let task = add_project(
         &bus,
@@ -211,19 +211,36 @@ fn document_ledger_previews_with_a_bound_and_exports_the_exact_document() {
         "task.document",
         Some("todo"),
     );
-    let document = format!("# Export one ledger\n\n{}\n", "x".repeat(9_000));
+    let document = format!("# Export one ledger\n\n{}\n", "é".repeat(4_500));
     let budget = wire::output::INTERACTIVE
         .budget(wire::output::Request::default())
         .expect("interactive defaults admit");
-    let preview = ledger_output(&task, &document, None, budget).expect("preview renders");
-    assert!(preview.contains("… [+"), "{preview}");
+    let digest = Digest::compute(Domain::CliExport, document.as_bytes());
+    let first = wire::output::clip(&document, budget.limits().bytes);
+    let offset = first.text.len();
+    let preview = ledger_output(&task, &document, None, budget, 0, None).expect("preview renders");
+    assert!(preview.starts_with(&first.text), "{preview}");
+    assert!(
+        preview.contains(&format!(
+            "continue: spice doc ledger {task} --max-bytes {} --offset {offset} --digest {digest}",
+            budget.limits().bytes
+        )),
+        "{preview}"
+    );
     assert!(
         preview.contains(&format!(
             "complete: spice doc ledger {task} --output {task}-ledger.md"
         )),
         "{preview}"
     );
-    assert!(!preview.contains(&document), "{preview}");
+    let remainder = ledger_output(&task, &document, None, budget, offset, Some(&digest))
+        .expect("continuation renders");
+    assert_eq!(format!("{}{remainder}", first.text), document);
+
+    let moved = format!("{document}later");
+    let refusal = ledger_output(&task, &moved, None, budget, offset, Some(&digest))
+        .expect_err("a continuation never splices another ledger snapshot");
+    assert_eq!(refusal.reason(), "doc::ledger-snapshot-moved");
 
     let destination = root.join("ledger.md");
     ledger_output(
@@ -231,6 +248,8 @@ fn document_ledger_previews_with_a_bound_and_exports_the_exact_document() {
         &document,
         Some(destination.to_str().expect("fixture path is UTF-8")),
         budget,
+        0,
+        None,
     )
     .expect("ledger exports");
     assert_eq!(

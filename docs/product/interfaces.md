@@ -40,9 +40,12 @@ dialect's `Flow:` field has its own closed vocabulary — `design`, `plan`,
 
 `spice doc ledger HANDLE` renders one task's current title, description,
 acceptance, flow, tags, priority, and notes interleaved with its workflow
-steps. It is a readable recovery view, not the inverse of apply: it exports no
-family or dependency graph, and a task the closed dialect cannot express
-refuses with `doc::ledger-unrepresentable`.
+steps. A bounded page names its next byte offset and the complete ledger's
+digest; a continuation refuses rather than joining bytes from a changed
+ledger. `--output` remains the complete export. The ledger is a readable
+recovery view, not the inverse of apply: it exports no family or dependency
+graph, and a task the closed dialect cannot express refuses with
+`doc::ledger-unrepresentable`.
 
 ## The JSON outcome
 
