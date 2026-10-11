@@ -509,7 +509,7 @@ impl Span {
             let first = number(first)?;
             return Some(Self::Lines {
                 first,
-                last: Some(first + number(count)? - 1),
+                last: Some(first.checked_add(number(count)? - 1)?),
             });
         }
         if let Some((first, last)) = written.split_once('-') {

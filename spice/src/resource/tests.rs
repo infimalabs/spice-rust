@@ -295,7 +295,15 @@ fn a_selector_selects_lines_or_is_refused() {
         );
     }
     assert!(select("spice://board:6").is_err(), "a start past the end");
-    for selector in ["img", "0", "3-2", "x", "2-3:img", ""] {
+    for selector in [
+        "img",
+        "0",
+        "3-2",
+        "x",
+        "2-3:img",
+        "",
+        "2+18446744073709551615",
+    ] {
         assert!(
             Request::parse(&format!("spice://board:{selector}")).is_err(),
             ":{selector}"
