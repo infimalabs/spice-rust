@@ -54,13 +54,22 @@ pub(crate) fn graph_view(matches: &ArgMatches, contract: &Contract) -> Outcome<G
     graph_view_in(matches, contract, discover_repository)
 }
 
-/// [`graph_view`] against `repository`.
-pub(crate) fn graph_view_at(
+/// Read the complete validated diagram for native resource paging.
+pub(crate) fn graph_snapshot_at(
     repository: &Repository,
     matches: &ArgMatches,
     contract: &Contract,
-) -> Outcome<GraphView> {
-    graph_view_in(matches, contract, || Ok(repository))
+) -> Outcome<CommandAnswer> {
+    crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardGraph,
+        Vec::new(),
+        &BoardGraph {
+            view: required(matches, "VIEW"),
+            at: matches.get_one::<String>("at").cloned(),
+        },
+    )
 }
 
 fn graph_view_in<R: std::borrow::Borrow<Repository>>(
@@ -98,17 +107,7 @@ fn graph_view_in<R: std::borrow::Borrow<Repository>>(
             &body,
         )
     } else {
-        let body = BoardGraph {
-            view: name.clone(),
-            at,
-        };
-        crate::command_client::execute_typed(
-            &repository,
-            contract,
-            CommandKind::BoardGraph,
-            Vec::new(),
-            &body,
-        )
+        graph_snapshot_at(repository, matches, contract)
     };
     let (position, text) = match reply {
         Outcome::Reply(Reply {

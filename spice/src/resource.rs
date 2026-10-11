@@ -1,12 +1,13 @@
 //! The `spice://` resources a lane's omp reads board, task, session, and
 //! steering state through, and the task texts it replaces by writing.
 //!
-//! Every read URL names one existing CLI read: [`Request::parse`] maps it
-//! onto that read's exact arguments, and [`Seat::serve`] runs the read in
-//! process as the lane, so authority, scoping, refusals, and rendering are the
-//! CLI's. A withheld page names the URL that resumes it, and a collection ends
-//! with the child URLs omp has no way to enumerate. A trailing line selector
-//! is honored or refused. Reading commits nothing and acknowledges nothing, so
+//! Every first read URL names one existing CLI read: [`Request::parse`] maps it
+//! onto that read's arguments, and [`Seat::serve`] runs the read in process as
+//! the lane, so authority, scoping, and refusals are the CLI's. Native graph
+//! continuations page retained validated text; other reads use the CLI's pages.
+//! Every withheld page names its continuation URL, and a collection ends with
+//! its child URLs. A trailing line selector is honored or refused. Reading
+//! commits nothing and acknowledges nothing, so
 //! omp may read as often as its tools ask.
 //!
 //! A task's description and acceptance also take a write: the whole new text,
@@ -25,6 +26,8 @@ use wire::{CanonicalUuid, Digest, Outcome, TaskHandle};
 use crate::board_command::TaskText;
 use crate::render::{self, Form};
 
+mod graph;
+
 #[cfg(test)]
 mod tests;
 
@@ -35,7 +38,7 @@ pub(crate) const SCHEME: &str = "spice://";
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
 spice://board  task status
-spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims) [?limit=N&max-bytes=N&max-text=N&at=BORN]
+spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims) [?limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; after resumes a snapshot held by this seat
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
 spice://task/HANDLE  task show HANDLE
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
@@ -228,6 +231,7 @@ const GRAPH: &[Key] = &[
     once("max-bytes"),
     once("max-text"),
     once("at"),
+    once("after"),
 ];
 const LEDGER: &[Key] = &[once("max-bytes"), once("offset"), once("digest")];
 const ARTIFACT_SHOW: &[Key] = &[once("offset"), once("bytes")];
@@ -386,6 +390,10 @@ impl Query {
             .partition(|(key, _)| self.shape.arity(key) == Some(Arity::Operand));
         arguments.extend(operands.into_iter().filter_map(|(_, value)| value.clone()));
         for (key, value) in options {
+            // Graph continuations resume this seat's retained text, not a new CLI read.
+            if matches!(self.shape, Shape::Graph { .. }) && key == "after" {
+                continue;
+            }
             arguments.push(format!("--{key}"));
             arguments.extend(value.iter().cloned());
         }
@@ -890,6 +898,7 @@ pub(crate) struct Seat {
     pub(crate) worktree: PathBuf,
     pub(crate) lane: CanonicalUuid,
     pub(crate) environment: crate::session_command::Environment,
+    pub(crate) graphs: graph::Pages,
 }
 
 impl Seat {
@@ -1000,17 +1009,20 @@ impl Seat {
                 let outcome = crate::lane_command::list_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
-            ["board", "graph"] => {
-                let outcome = crate::board_command::graph_view_at(repository, leaf, contract);
-                rendered(
-                    &outcome,
-                    render::render_with_reply_text(
-                        &outcome,
-                        Form::Text,
-                        crate::board_command::GraphView::text,
+            ["board", "graph"] => self.graphs.read(query, || {
+                let outcome = crate::board_command::graph_snapshot_at(repository, leaf, contract);
+                match outcome {
+                    Outcome::Reply(wire::Reply {
+                        position: wire::ReplyPosition::Snapshot(snapshot),
+                        body: CommandAnswer::Text(answer),
+                    }) => Ok((snapshot, answer.text)),
+                    Outcome::Reply(_) => Err(
+                        "board::answer-invalid: graph read returned no validated text snapshot"
+                            .to_owned(),
                     ),
-                )?
-            }
+                    _ => Err(command_rendering(&outcome)),
+                }
+            })?,
             _ => {
                 let outcome = crate::board_command::run_at(repository, leaf, contract);
                 let rendering = render::render_with_reply_text(
