@@ -52,8 +52,9 @@
 //!   sibling, so equal database, lane, task, or steering names still cannot
 //!   resolve to the same path.
 //! * **Config** is separate by name and anchor. This runtime reads tracked
-//!   `spice-rust.toml` plus common-root `.spice-rs/config.toml`; Python owns
-//!   tracked `spice.toml` and its own `.spice` configuration.
+//!   `spice-rust.toml`, common-root `.spice-rs/config.toml`, and each
+//!   worktree's Git-directory `.spice-rs/worktree.toml`; Python owns tracked
+//!   `spice.toml` and its own `.spice` configuration.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NAK dispositions are facts in the common-root journal. Hook media is
 //!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
