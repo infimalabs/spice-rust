@@ -29,6 +29,16 @@ pub(crate) fn run(
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
+    run_at(&repository, matches, contract, lane_environment)
+}
+
+/// Execute one steering leaf against `repository`.
+pub(crate) fn run_at(
+    repository: &Repository,
+    matches: &ArgMatches,
+    contract: &crate::cli::Contract,
+    lane_environment: Option<OsString>,
+) -> Outcome<CommandAnswer> {
     let serve = match repository.admit_resident_client() {
         Ok(serve) => serve,
         Err(error) => return crate::state_failure(&error).outcome(),

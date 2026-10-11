@@ -259,9 +259,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
-        let read_uri = uri::resident_reader(discovery.clone(), lane, worktree.clone());
+        let environment = crate::session_environment().rooted(worktree.clone());
+        let occupant = uri::occupant_environment(terminal.as_ref(), &environment);
+        let read_uri = uri::resident_reader(discovery.clone(), lane, worktree, occupant);
         let projector = media::Projector::new(steering_media, lane);
-        let environment = crate::session_environment().rooted(worktree);
         Self::with_readers(
             stdin,
             move || {

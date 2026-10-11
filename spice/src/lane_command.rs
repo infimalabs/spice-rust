@@ -24,11 +24,20 @@ pub(crate) fn list(matches: &ArgMatches, contract: &Contract) -> Outcome<list::L
         Err(error) => return environment_fault("lane::cwd-unavailable", &error.to_string()),
     };
     match Repository::discover(&current) {
-        Ok(repository) => list::run(&repository, matches, contract),
+        Ok(repository) => list_at(&repository, matches, contract),
         Err(error) => {
             environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
         }
     }
+}
+
+/// [`list`] against `repository`.
+pub(crate) fn list_at(
+    repository: &Repository,
+    matches: &ArgMatches,
+    contract: &Contract,
+) -> Outcome<list::LanePage> {
+    list::run(repository, matches, contract)
 }
 
 /// Execute one landed lane-family leaf.

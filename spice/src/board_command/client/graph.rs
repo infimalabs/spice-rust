@@ -51,6 +51,23 @@ pub(in crate::board_command) enum Destination {
 
 /// Execute one `board graph` or `board handout` invocation.
 pub(crate) fn graph_view(matches: &ArgMatches, contract: &Contract) -> Outcome<GraphView> {
+    graph_view_in(matches, contract, discover_repository)
+}
+
+/// [`graph_view`] against `repository`.
+pub(crate) fn graph_view_at(
+    repository: &Repository,
+    matches: &ArgMatches,
+    contract: &Contract,
+) -> Outcome<GraphView> {
+    graph_view_in(matches, contract, || Ok(repository))
+}
+
+fn graph_view_in<R: std::borrow::Borrow<Repository>>(
+    matches: &ArgMatches,
+    contract: &Contract,
+    repository: impl FnOnce() -> Result<R, Outcome<CommandAnswer>>,
+) -> Outcome<GraphView> {
     let at = matches.get_one::<String>("at").cloned();
     let handout = contract.path == ["board", "handout"];
     let name = required(matches, if handout { "OUTPUT" } else { "VIEW" });
@@ -63,10 +80,11 @@ pub(crate) fn graph_view(matches: &ArgMatches, contract: &Contract) -> Outcome<G
         Ok(destination) => destination,
         Err(outcome) => return retag(outcome),
     };
-    let repository = match discover_repository() {
+    let repository = match repository() {
         Ok(repository) => repository,
         Err(outcome) => return retag(outcome),
     };
+    let repository = repository.borrow();
     let reply = if handout {
         let body = BoardHandout {
             output: name.clone(),

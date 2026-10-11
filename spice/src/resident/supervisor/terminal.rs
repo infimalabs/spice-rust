@@ -111,6 +111,20 @@ impl Terminal {
         self
     }
 
+    /// The session state the occupant's own commands see.
+    pub(in crate::resident) fn session_environment(&self) -> crate::session_command::Environment {
+        let entries = self.environment.entries();
+        crate::session_environment_from(
+            |name| {
+                entries
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.clone())
+            },
+            Some(self.cwd.clone()),
+        )
+    }
+
     /// The foreground window for one command: the threshold, or the deadline
     /// less omp's buffer when that is shorter, exactly as omp bounds its own
     /// wait before backgrounding. A service never ends on its own, and a

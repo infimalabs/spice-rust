@@ -12,15 +12,32 @@ use super::Driver;
 /// Answers one `spice://` URL with what a read of it returns, or the refusal.
 pub(super) type UriReader = Box<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 
-/// Read `spice://` URLs as `lane`, whose checkout is `worktree`, resolving
-/// quote targets and CLI reads through the resident.
+/// The session state a read answers under: the identity and home the
+/// occupant's terminal carries, as its own command would see them, else the
+/// resident's.
+pub(super) fn occupant_environment(
+    terminal: Option<&super::Terminal>,
+    resident: &crate::session_command::Environment,
+) -> crate::session_command::Environment {
+    terminal.map_or_else(|| resident.clone(), super::Terminal::session_environment)
+}
+
+/// Read `spice://` URLs as `lane`, whose checkout is `worktree` and whose
+/// occupant's session state is `environment`, resolving quote targets and
+/// CLI reads through the resident.
 pub(super) fn resident_reader(
     discovery: PathBuf,
     lane: CanonicalUuid,
     worktree: PathBuf,
+    environment: crate::session_command::Environment,
 ) -> impl Fn(&str) -> Result<String, String> + Send + Sync + 'static {
+    let seat = crate::resource::Seat {
+        worktree,
+        lane,
+        environment,
+    };
     move |url| {
-        crate::resource::read(&worktree, lane, url, |target| {
+        seat.read(url, |target| {
             match crate::command_client::read_lane_quote(&discovery, lane, target) {
                 Ok(resolution) => spice::quote::render(&resolution),
                 Err(wire::Outcome::Refusal(refusal)) => Err(format!(

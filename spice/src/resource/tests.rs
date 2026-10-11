@@ -55,6 +55,29 @@ fn each_resource_runs_exactly_its_cli_read() {
             "spice://task/TASK-dVlFq9qKp/artifact/a1?offset=4096&bytes=10",
             "task artifact show TASK-dVlFq9qKp a1 --offset 4096 --bytes 10",
         ),
+        (
+            "spice://task/TASK-dVlFq9qKp/ledger?max-bytes=900",
+            "doc ledger TASK-dVlFq9qKp --max-bytes 900",
+        ),
+        (
+            "spice://board/graph/dependencies?limit=5&at=x",
+            "board graph dependencies --limit 5 --at x",
+        ),
+        ("spice://inbox?limit=2", "inbox --limit 2"),
+        ("spice://lane", "lane list"),
+        (
+            "spice://session/briefing?file=a.jsonl&deadline-seconds=5",
+            "session briefing a.jsonl --deadline-seconds 5",
+        ),
+        (
+            "spice://session/turns?tool=shell&file=a&tool=read&file=b&view=full",
+            "session turns a b --tool shell --tool read --view full",
+        ),
+        ("spice://session/sweep?limit=4", "session sweep --limit 4"),
+        (
+            "spice://session/context/S1?lane=L&after=c%3A2",
+            "session context S1 --lane L --after c:2",
+        ),
     ] {
         assert_eq!(arguments(url).join(" "), expected, "{url}");
     }
@@ -79,22 +102,22 @@ fn the_root_and_quote_targets_are_not_cli_reads() {
 #[test]
 fn unknown_paths_and_malformed_handles_are_refused() {
     for url in [
-        "spice://lane",
         "spice://?limit=3",
-        "spice://board/status",
+        "spice://board/graph",
+        "spice://session/turns/x",
         "spice://task/TASK-dVlFq9qKp/notes",
         "spice://task/TASK-dVlFq9qKp/artifact/a1/raw",
         "http://task",
     ] {
         let refused = refusal(url);
-        assert!(!refused.contains("acts on the board"), "{url}: {refused}");
+        assert!(!refused.contains("does not serve"), "{url}: {refused}");
     }
     assert!(refusal("spice://task/not-a-handle").contains("not-a-handle"));
     refusal("spice://task/TASK-dVlFq9qKp%ZZ");
 }
 
 #[test]
-fn mutation_shaped_urls_are_refused_naming_their_command() {
+fn urls_naming_unserved_commands_are_refused_naming_them() {
     for (url, command) in [
         ("spice://task/next", "spice task next"),
         ("spice://task/add", "spice task add"),
@@ -109,10 +132,14 @@ fn mutation_shaped_urls_are_refused_naming_their_command() {
             "spice://task/TASK-dVlFq9qKp/artifact/prune",
             "spice task artifact prune",
         ),
+        ("spice://lane/add/x", "spice lane add"),
+        ("spice://steer", "spice steer"),
+        ("spice://board/handout", "spice board handout"),
+        ("spice://doc", "spice doc"),
     ] {
         let refused = refusal(url);
         assert!(
-            refused.contains(command) && refused.contains("acts on the board"),
+            refused.contains(&format!("`{command}`")) && refused.contains("does not serve"),
             "{url}: {refused}"
         );
     }
@@ -129,6 +156,11 @@ fn query_keys_are_those_the_read_admits_each_once() {
         "spice://task?all=yes",
         "spice://task?limit=3&limit=4",
         "spice://task/TASK-dVlFq9qKp/artifact/a1?output=/tmp/x",
+        "spice://session/turns?export=x",
+        "spice://session/turns?view=full&view=dialogue",
+        "spice://session/briefing?file=",
+        "spice://board/graph/review?output=x",
+        "spice://inbox?all",
     ] {
         refusal(url);
     }
@@ -139,6 +171,13 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
     let root = std::env::temp_dir().join(format!("spice-resource-limits-{}", std::process::id()));
     fs::create_dir_all(root.join(".git")).expect("fixture Git directory exists");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let seat = super::Seat {
+        worktree: root.clone(),
+        lane: "ca38ffa1-2c8c-4ac2-87ae-64a413e15261"
+            .parse()
+            .expect("lane UUID"),
+        environment: crate::session_environment().rooted(root.clone()),
+    };
     for url in [
         "spice://task?limit=100000",
         "spice://task?max-bytes=0",
@@ -153,7 +192,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
         else {
             panic!("{url} parses");
         };
-        let refused = super::run(&repository, &query).expect_err(url);
+        let refused = seat.run(&repository, &query).expect_err(url);
         assert!(!refused.is_empty(), "{url}");
     }
     fs::remove_dir_all(&root).expect("fixture cleanup");
@@ -161,7 +200,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
 
 #[test]
 fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
-    let commands: [&[&str]; 4] = [
+    let commands: [&[&str]; 7] = [
         &[
             "task",
             "show",
@@ -208,6 +247,30 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
         &[
             "task", "artifact", "show", HANDLE, "a1", "--offset", "4096", "--bytes", "10",
         ],
+        &[
+            "session",
+            "turns",
+            "/tmp/a b.jsonl",
+            "/tmp/c.jsonl",
+            "--tool",
+            "shell",
+            "--tool",
+            "read",
+            "--limit",
+            "3",
+            "--after",
+            "turn:7",
+        ],
+        &[
+            "session",
+            "context",
+            "01a1276a-903c-7071-89d5-345c833e93c2",
+            "--lane",
+            "ca38ffa1-2c8c-4ac2-87ae-64a413e15261",
+            "--after",
+            "row:40",
+        ],
+        &["doc", "ledger", HANDLE, "--max-bytes", "4000"],
     ];
     for command in commands {
         let command = command

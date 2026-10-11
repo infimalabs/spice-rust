@@ -1045,4 +1045,6 @@ mod main_tail;
 pub(crate) use main_tail::terminate_code;
 pub use main_tail::{bootstrap_environment, terminate};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use main_tail::{deliver_task_migration, session_environment, working_directory};
+pub(crate) use main_tail::{
+    deliver_task_migration, session_environment, session_environment_from, working_directory,
+};

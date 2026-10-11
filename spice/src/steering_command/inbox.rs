@@ -90,11 +90,30 @@ pub(crate) fn run(
     contract: &crate::cli::Contract,
     lane_environment: Option<OsString>,
 ) -> Outcome<InboxView> {
+    paged(matches, || super::run(matches, contract, lane_environment))
+}
+
+/// [`run`] against `repository`.
+pub(crate) fn run_at(
+    repository: &spice::repository::Repository,
+    matches: &ArgMatches,
+    contract: &crate::cli::Contract,
+    lane_environment: Option<OsString>,
+) -> Outcome<InboxView> {
+    paged(matches, || {
+        super::run_at(repository, matches, contract, lane_environment)
+    })
+}
+
+fn paged(
+    matches: &ArgMatches,
+    read: impl FnOnce() -> Outcome<CommandAnswer>,
+) -> Outcome<InboxView> {
     let page = match Page::from_matches(matches, &["inbox"]) {
         Ok(page) => page,
         Err(refusal) => return Outcome::Refusal(refusal),
     };
-    match super::run(matches, contract, lane_environment) {
+    match read() {
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Inbox(inbox),
