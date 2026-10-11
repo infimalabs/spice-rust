@@ -375,7 +375,7 @@ impl Failure {
         }
         Self::refusal(
             "lock::configuration-refused",
-            "one admitted tracked lock topology and machine-local configuration",
+            "admitted tracked policy and machine-local lock configuration",
             diagnostics,
             "repair the named configuration values before running the lock command again",
         )
