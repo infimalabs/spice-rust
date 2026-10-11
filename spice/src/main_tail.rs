@@ -33,6 +33,19 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn session_environment() -> session_command::Environment {
+    session_environment_from(
+        |name| bootstrap_environment(name),
+        std::env::current_dir().ok(),
+    )
+}
+
+/// The session state a process whose variables `variable` reads would see
+/// from `cwd`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn session_environment_from(
+    variable: impl Fn(&str) -> Option<OsString>,
+    cwd: Option<PathBuf>,
+) -> session_command::Environment {
     let vendors = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate")
         .session_vendors()
@@ -41,16 +54,16 @@ pub(crate) fn session_environment() -> session_command::Environment {
             let layout = vendor.transcript_layout();
             session_command::VendorEnvironment::new(
                 vendor,
-                bootstrap_environment(vendor.thread_id_environment()),
-                bootstrap_environment(layout.home_environment),
+                variable(vendor.thread_id_environment()),
+                variable(layout.home_environment),
             )
         })
         .collect();
     session_command::Environment::new(
         vendors,
-        bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
-        bootstrap_environment("HOME"),
-        std::env::current_dir().ok(),
+        variable("SPICE_AGENT_VENDOR"), // env-policy: allow
+        variable("HOME"),
+        cwd,
         Some(std::env::temp_dir()),
     )
 }

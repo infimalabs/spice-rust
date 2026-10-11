@@ -1,15 +1,16 @@
-//! The `spice://` resources a lane's omp reads board and task state through.
+//! The `spice://` resources a lane's omp reads board, task, session, and
+//! steering state through.
 //!
 //! Every URL names one existing CLI read: [`Request::parse`] maps it onto
-//! that read's exact arguments, and [`read`] runs the read in process over
-//! the lane's own connection, so authority, scoping, refusals, and rendering
-//! are the CLI's. A withheld page names the URL that resumes it, and a
-//! collection ends with the child URLs omp has no way to enumerate. A
-//! trailing line selector is honored or refused. Reading commits nothing, so
-//! omp may read as often as its tools ask; a URL naming a mutation is refused
-//! with the command that performs it.
+//! that read's exact arguments, and [`Seat::read`] runs the read in process
+//! as the lane, so authority, scoping, refusals, and rendering are the CLI's.
+//! A withheld page names the URL that resumes it, and a collection ends with
+//! the child URLs omp has no way to enumerate. A trailing line selector is
+//! honored or refused. Reading commits nothing and acknowledges nothing, so
+//! omp may read as often as its tools ask; a URL naming any other command is
+//! refused with that command.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use artifact::ArtifactAnswer;
 use spice::repository::Repository;
@@ -26,20 +27,33 @@ pub(crate) const SCHEME: &str = "spice://";
 
 /// The root index: every resource shape and the CLI read it answers with.
 const INDEX: &str = "\
-spice:// resources: read-only views of spice CLI reads; acts on the board stay spice commands
+spice:// resources: read-only views of spice CLI reads; acts stay spice commands
 spice://board  task status
+spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims) [?limit=N&max-bytes=N&max-text=N&at=BORN]
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
 spice://task/HANDLE  task show HANDLE
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://task/HANDLE/history  task show HANDLE --history [same paging]
 spice://task/HANDLE/detail  task show HANDLE --context --history [same paging]
+spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N]
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
+spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
+spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
+spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
+spice://session/turns  session turns [?file=PATH...&start=TIME&end=TIME&contains=TEXT&turn-id=ID...&tool=NAME...&view=dialogue|full&limit=N&max-bytes=N&max-text=N&after=CURSOR]
+spice://session/sweep  session sweep [?file=PATH...&limit=N&max-bytes=N&max-text=N&after=CURSOR&deadline-seconds=N]
+spice://session/context/SESSION  session context SESSION [?lane=UUID&vendor=NAME&stream=NAME&source=UUID&member=N&offset=N&limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://quote/v1/...  a quoted message and its recorded author
-Query values percent-encode reserved bytes, ':' as %3A. A trailing :N, :N-M, :N+K, :-N, or comma list selects lines; :raw is the text itself.
+Query values percent-encode reserved bytes, ':' as %3A; a key marked ... repeats. A trailing :N, :N-M, :N+K, :-N, or comma list selects lines; :raw is the text itself.
 resources:
   spice://board
-  spice://task";
+  spice://task
+  spice://inbox
+  spice://lane
+  spice://session/briefing
+  spice://session/turns
+  spice://session/sweep";
 
 /// What one `spice://` URL names: the resource and the lines selected of it.
 #[derive(Debug, PartialEq, Eq)]
@@ -66,10 +80,16 @@ pub(crate) struct Query {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Shape {
     Board,
+    Graph { view: String },
     Tasks,
     Task { handle: TaskHandle, detail: Detail },
+    Ledger { handle: TaskHandle },
     Artifacts { handle: TaskHandle },
     Artifact { handle: TaskHandle, id: String },
+    Inbox,
+    Lanes,
+    Session(Session),
+    Context { session: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,61 +100,177 @@ enum Detail {
     Both,
 }
 
-/// One query key a shape admits: the CLI flag it spells, and whether it
-/// carries a value.
-struct Key {
-    name: &'static str,
-    valued: bool,
+/// A `session` read over the lane's own transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Session {
+    Briefing,
+    Turns,
+    Sweep,
 }
 
-const fn valued(name: &'static str) -> Key {
-    Key { name, valued: true }
+impl Session {
+    const fn leaf(self) -> &'static str {
+        match self {
+            Self::Briefing => "briefing",
+            Self::Turns => "turns",
+            Self::Sweep => "sweep",
+        }
+    }
+
+    fn named(leaf: &str) -> Option<Self> {
+        [Self::Briefing, Self::Turns, Self::Sweep]
+            .into_iter()
+            .find(|session| session.leaf() == leaf)
+    }
 }
+
+/// How one query key reaches the CLI read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arity {
+    /// `?all` spells `--all`.
+    Flag,
+    /// `?limit=N` spells `--limit N`, at most once.
+    Once,
+    /// `?tool=NAME` spells `--tool NAME`, as often as the query names it.
+    Repeated,
+    /// `?file=PATH` spells the operand `PATH`, as often as the query names it.
+    Operand,
+}
+
+/// One query key a shape admits: the CLI flag or operand it spells.
+struct Key {
+    name: &'static str,
+    arity: Arity,
+}
+
+const fn once(name: &'static str) -> Key {
+    Key {
+        name,
+        arity: Arity::Once,
+    }
+}
+
+const fn repeated(name: &'static str) -> Key {
+    Key {
+        name,
+        arity: Arity::Repeated,
+    }
+}
+
+const FILES: Key = Key {
+    name: "file",
+    arity: Arity::Operand,
+};
 
 const TASK_LIST: &[Key] = &[
     Key {
         name: "all",
-        valued: false,
+        arity: Arity::Flag,
     },
-    valued("project"),
-    valued("status"),
-    valued("limit"),
-    valued("max-bytes"),
-    valued("max-text"),
-    valued("after"),
+    once("project"),
+    once("status"),
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("after"),
 ];
-const TASK_DETAIL: &[Key] = &[
-    valued("limit"),
-    valued("max-bytes"),
-    valued("max-text"),
-    valued("after"),
+/// A page bounded by rows, bytes, and text, resumed after a cursor.
+const PAGE: &[Key] = &[
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("after"),
 ];
-const ARTIFACT_LIST: &[Key] = &[valued("limit"), valued("max-bytes"), valued("after")];
-const ARTIFACT_SHOW: &[Key] = &[valued("offset"), valued("bytes")];
+/// A page bounded by rows and bytes, resumed after a cursor.
+const ROWS: &[Key] = &[once("limit"), once("max-bytes"), once("after")];
+const GRAPH: &[Key] = &[
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("at"),
+];
+const LEDGER: &[Key] = &[once("max-bytes")];
+const ARTIFACT_SHOW: &[Key] = &[once("offset"), once("bytes")];
+const BRIEFING: &[Key] = &[FILES, once("deadline-seconds")];
+const TURNS: &[Key] = &[
+    FILES,
+    once("start"),
+    once("end"),
+    once("contains"),
+    repeated("turn-id"),
+    repeated("tool"),
+    once("view"),
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("after"),
+];
+const SWEEP: &[Key] = &[
+    FILES,
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("after"),
+    once("deadline-seconds"),
+];
+const CONTEXT: &[Key] = &[
+    once("lane"),
+    once("vendor"),
+    once("stream"),
+    once("source"),
+    once("member"),
+    once("offset"),
+    once("limit"),
+    once("max-bytes"),
+    once("max-text"),
+    once("after"),
+];
 
-/// The CLI reads resources serve; every other `task` leaf acts on the board.
+/// The CLI reads resources serve; a URL naming any other command is refused.
 const SERVED: &[&[&str]] = &[
     &["task", "status"],
     &["task", "list"],
     &["task", "show"],
     &["task", "artifact", "list"],
     &["task", "artifact", "show"],
+    &["board", "graph"],
+    &["doc", "ledger"],
+    &["inbox"],
+    &["lane", "list"],
+    &["session", "briefing"],
+    &["session", "turns"],
+    &["session", "sweep"],
+    &["session", "context"],
 ];
 
 impl Shape {
     fn admitted(&self) -> &'static [Key] {
         match self {
             Self::Board => &[],
+            Self::Graph { .. } => GRAPH,
             Self::Tasks => TASK_LIST,
-            Self::Task { .. } => TASK_DETAIL,
-            Self::Artifacts { .. } => ARTIFACT_LIST,
+            Self::Task { .. } | Self::Inbox => PAGE,
+            Self::Ledger { .. } => LEDGER,
+            Self::Artifacts { .. } | Self::Lanes => ROWS,
             Self::Artifact { .. } => ARTIFACT_SHOW,
+            Self::Session(Session::Briefing) => BRIEFING,
+            Self::Session(Session::Turns) => TURNS,
+            Self::Session(Session::Sweep) => SWEEP,
+            Self::Context { .. } => CONTEXT,
         }
+    }
+
+    fn arity(&self, key: &str) -> Option<Arity> {
+        self.admitted()
+            .iter()
+            .find(|admitted| admitted.name == key)
+            .map(|admitted| admitted.arity)
     }
 
     fn path(&self) -> String {
         match self {
             Self::Board => "board".to_owned(),
+            Self::Graph { view } => format!("board/graph/{}", encode(view)),
             Self::Tasks => "task".to_owned(),
             Self::Task { handle, detail } => match detail {
                 Detail::Summary => format!("task/{handle}"),
@@ -142,10 +278,15 @@ impl Shape {
                 Detail::History => format!("task/{handle}/history"),
                 Detail::Both => format!("task/{handle}/detail"),
             },
+            Self::Ledger { handle } => format!("task/{handle}/ledger"),
             Self::Artifacts { handle } => format!("task/{handle}/artifact"),
             Self::Artifact { handle, id } => {
                 format!("task/{handle}/artifact/{}", encode(id))
             }
+            Self::Inbox => "inbox".to_owned(),
+            Self::Lanes => "lane".to_owned(),
+            Self::Session(session) => format!("session/{}", session.leaf()),
+            Self::Context { session } => format!("session/context/{}", encode(session)),
         }
     }
 
@@ -153,6 +294,7 @@ impl Shape {
         let words = |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect();
         match self {
             Self::Board => words(&["task", "status"]),
+            Self::Graph { view } => words(&["board", "graph", view]),
             Self::Tasks => words(&["task", "list"]),
             Self::Task { handle, detail } => {
                 let mut command = words(&["task", "show", handle.as_str()]);
@@ -164,19 +306,30 @@ impl Shape {
                 }
                 command
             }
+            Self::Ledger { handle } => words(&["doc", "ledger", handle.as_str()]),
             Self::Artifacts { handle } => words(&["task", "artifact", "list", handle.as_str()]),
             Self::Artifact { handle, id } => {
                 words(&["task", "artifact", "show", handle.as_str(), id])
             }
+            Self::Inbox => words(&["inbox"]),
+            Self::Lanes => words(&["lane", "list"]),
+            Self::Session(session) => words(&["session", session.leaf()]),
+            Self::Context { session } => words(&["session", "context", session]),
         }
     }
 }
 
 impl Query {
-    /// The exact arguments after `spice` that run this read.
+    /// The exact arguments after `spice` that run this read: operands first,
+    /// then options in the order the query named them.
     pub(crate) fn arguments(&self) -> Vec<String> {
         let mut arguments = self.shape.command();
-        for (key, value) in &self.options {
+        let (operands, options): (Vec<_>, Vec<_>) = self
+            .options
+            .iter()
+            .partition(|(key, _)| self.shape.arity(key) == Some(Arity::Operand));
+        arguments.extend(operands.into_iter().filter_map(|(_, value)| value.clone()));
+        for (key, value) in options {
             arguments.push(format!("--{key}"));
             arguments.extend(value.iter().cloned());
         }
@@ -200,49 +353,27 @@ impl Query {
     /// The read a CLI command performs, when a resource serves it.
     pub(crate) fn from_arguments(arguments: &[String]) -> Option<Self> {
         let words = arguments.iter().map(String::as_str).collect::<Vec<_>>();
-        let handle = |word: &str| word.parse::<TaskHandle>().ok();
-        let (mut shape, rest) = match words.as_slice() {
-            ["task", "status", rest @ ..] => (Shape::Board, rest),
-            ["task", "list", rest @ ..] => (Shape::Tasks, rest),
-            ["task", "show", task, rest @ ..] => (
-                Shape::Task {
-                    handle: handle(task)?,
-                    detail: Detail::Summary,
-                },
-                rest,
-            ),
-            ["task", "artifact", "list", task, rest @ ..] => (
-                Shape::Artifacts {
-                    handle: handle(task)?,
-                },
-                rest,
-            ),
-            ["task", "artifact", "show", task, id, rest @ ..] => (
-                Shape::Artifact {
-                    handle: handle(task)?,
-                    id: (*id).to_owned(),
-                },
-                rest,
-            ),
-            _ => return None,
-        };
+        let (mut shape, rest) = Shape::from_command(&words)?;
         let (mut context, mut history) = (false, false);
         let mut options = Vec::new();
         let mut words = rest.iter();
         while let Some(word) = words.next() {
-            let key = word.strip_prefix("--")?;
+            let Some(key) = word.strip_prefix("--") else {
+                let operand = shape
+                    .admitted()
+                    .iter()
+                    .find(|admitted| admitted.arity == Arity::Operand)?;
+                options.push((operand.name.to_owned(), Some((*word).to_owned())));
+                continue;
+            };
             match (&shape, key) {
                 (Shape::Task { .. }, "context") => context = true,
                 (Shape::Task { .. }, "history") => history = true,
                 _ => {
-                    let admitted = shape
-                        .admitted()
-                        .iter()
-                        .find(|admitted| admitted.name == key)?;
-                    let value = if admitted.valued {
-                        Some((*words.next()?).to_owned())
-                    } else {
-                        None
+                    let value = match shape.arity(key)? {
+                        Arity::Flag => None,
+                        Arity::Once | Arity::Repeated => Some((*words.next()?).to_owned()),
+                        Arity::Operand => return None,
                     };
                     options.push((key.to_owned(), value));
                 }
@@ -257,6 +388,59 @@ impl Query {
             };
         }
         Some(Self { shape, options })
+    }
+}
+
+impl Shape {
+    /// The shape a CLI command's leading words name, and the words after them.
+    fn from_command<'a>(words: &'a [&'a str]) -> Option<(Self, &'a [&'a str])> {
+        let handle = |word: &str| word.parse::<TaskHandle>().ok();
+        Some(match words {
+            ["task", "status", rest @ ..] => (Self::Board, rest),
+            ["board", "graph", view, rest @ ..] => (
+                Self::Graph {
+                    view: (*view).to_owned(),
+                },
+                rest,
+            ),
+            ["task", "list", rest @ ..] => (Self::Tasks, rest),
+            ["task", "show", task, rest @ ..] => (
+                Self::Task {
+                    handle: handle(task)?,
+                    detail: Detail::Summary,
+                },
+                rest,
+            ),
+            ["doc", "ledger", task, rest @ ..] => (
+                Self::Ledger {
+                    handle: handle(task)?,
+                },
+                rest,
+            ),
+            ["task", "artifact", "list", task, rest @ ..] => (
+                Self::Artifacts {
+                    handle: handle(task)?,
+                },
+                rest,
+            ),
+            ["task", "artifact", "show", task, id, rest @ ..] => (
+                Self::Artifact {
+                    handle: handle(task)?,
+                    id: (*id).to_owned(),
+                },
+                rest,
+            ),
+            ["inbox", rest @ ..] => (Self::Inbox, rest),
+            ["lane", "list", rest @ ..] => (Self::Lanes, rest),
+            ["session", "context", session, rest @ ..] => (
+                Self::Context {
+                    session: (*session).to_owned(),
+                },
+                rest,
+            ),
+            ["session", leaf, rest @ ..] => (Self::Session(Session::named(leaf)?), rest),
+            _ => return None,
+        })
     }
 }
 
@@ -295,45 +479,29 @@ impl Request {
                 });
             }
             ["board"] => Shape::Board,
+            ["board", "graph", view] => Shape::Graph {
+                view: (*view).to_owned(),
+            },
             ["task"] => Shape::Tasks,
-            ["task", task, rest @ ..] => {
-                refuse_mutation(&["task", task], url)?;
-                let handle = task
-                    .parse::<TaskHandle>()
-                    .map_err(|error| format!("{url} names no task handle {task}: {error}"))?;
-                match rest {
-                    [] => Shape::Task {
-                        handle,
-                        detail: Detail::Summary,
-                    },
-                    ["context"] => Shape::Task {
-                        handle,
-                        detail: Detail::Context,
-                    },
-                    ["history"] => Shape::Task {
-                        handle,
-                        detail: Detail::History,
-                    },
-                    ["detail"] => Shape::Task {
-                        handle,
-                        detail: Detail::Both,
-                    },
-                    ["artifact"] => Shape::Artifacts { handle },
-                    ["artifact", id] => {
-                        refuse_mutation(&["task", "artifact", id], url)?;
-                        Shape::Artifact {
-                            handle,
-                            id: (*id).to_owned(),
-                        }
-                    }
-                    [verb] => {
-                        refuse_mutation(&["task", verb], url)?;
-                        return Err(unknown(url));
-                    }
-                    _ => return Err(unknown(url)),
-                }
+            ["task", task, rest @ ..] => task_shape(task, rest, url)?,
+            ["inbox"] => Shape::Inbox,
+            ["lane"] => Shape::Lanes,
+            ["session", "context", session] => Shape::Context {
+                session: (*session).to_owned(),
+            },
+            ["session", leaf] if let Some(session) = Session::named(leaf) => {
+                Shape::Session(session)
             }
-            _ => return Err(unknown(url)),
+            _ => {
+                // A path that spells a command names that command.
+                if let Some(end) = (1..=words.len())
+                    .rev()
+                    .find(|&end| crate::cli::contract(&words[..end]).is_some())
+                {
+                    refuse_unserved(&words[..end], url)?;
+                }
+                return Err(unknown(url));
+            }
         };
         let options = options(&shape, query, url)?;
         Ok(Self {
@@ -343,17 +511,57 @@ impl Request {
     }
 }
 
+/// The shape beneath `spice://task/TASK`.
+fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
+    refuse_unserved(&["task", task], url)?;
+    let handle = task
+        .parse::<TaskHandle>()
+        .map_err(|error| format!("{url} names no task handle {task}: {error}"))?;
+    Ok(match rest {
+        [] => Shape::Task {
+            handle,
+            detail: Detail::Summary,
+        },
+        ["context"] => Shape::Task {
+            handle,
+            detail: Detail::Context,
+        },
+        ["history"] => Shape::Task {
+            handle,
+            detail: Detail::History,
+        },
+        ["detail"] => Shape::Task {
+            handle,
+            detail: Detail::Both,
+        },
+        ["ledger"] => Shape::Ledger { handle },
+        ["artifact"] => Shape::Artifacts { handle },
+        ["artifact", id] => {
+            refuse_unserved(&["task", "artifact", id], url)?;
+            Shape::Artifact {
+                handle,
+                id: (*id).to_owned(),
+            }
+        }
+        [verb] => {
+            refuse_unserved(&["task", verb], url)?;
+            return Err(unknown(url));
+        }
+        _ => return Err(unknown(url)),
+    })
+}
+
 fn unknown(url: &str) -> String {
     format!("{url} names no spice:// resource; read {SCHEME} for the index")
 }
 
-/// Refuse a URL whose path spells a CLI leaf that acts rather than reads.
-fn refuse_mutation(path: &[&str], url: &str) -> Result<(), String> {
+/// Refuse a URL whose path spells a CLI command no resource serves.
+fn refuse_unserved(path: &[&str], url: &str) -> Result<(), String> {
     if SERVED.contains(&path) || crate::cli::contract(path).is_none() {
         return Ok(());
     }
     Err(format!(
-        "{url} names `spice {}`, which acts on the board; spice:// only reads, so run the command",
+        "{url} names `spice {}`, which spice:// does not serve; run the command",
         path.join(" ")
     ))
 }
@@ -365,9 +573,9 @@ fn options(shape: &Shape, query: &str, url: &str) -> Result<Vec<(String, Option<
             Some((key, value)) => (decode(key)?, Some(decode(value)?)),
             None => (decode(pair)?, None),
         };
-        let admitted = shape.admitted();
-        let Some(admitted_key) = admitted.iter().find(|admitted| admitted.name == key) else {
-            let names = admitted
+        let Some(arity) = shape.arity(&key) else {
+            let names = shape
+                .admitted()
                 .iter()
                 .map(|admitted| admitted.name)
                 .collect::<Vec<_>>();
@@ -380,19 +588,21 @@ fn options(shape: &Shape, query: &str, url: &str) -> Result<Vec<(String, Option<
                 )
             });
         };
-        match (&value, admitted_key.valued) {
-            (Some(value), true) if !value.is_empty() => {}
-            (None, false) => {}
-            (_, true) => {
+        match (&value, arity) {
+            (Some(value), Arity::Once | Arity::Repeated | Arity::Operand) if !value.is_empty() => {}
+            (None, Arity::Flag) => {}
+            (_, Arity::Once | Arity::Repeated | Arity::Operand) => {
                 return Err(format!(
                     "{url} names {key} without a value; write {key}=VALUE"
                 ));
             }
-            (Some(_), false) => {
+            (Some(_), Arity::Flag) => {
                 return Err(format!("{url} gives {key} a value; write {key} alone"));
             }
         }
-        if options.iter().any(|(named, _)| *named == key) {
+        if matches!(arity, Arity::Flag | Arity::Once)
+            && options.iter().any(|(named, _)| *named == key)
+        {
             return Err(format!("{url} names {key} twice"));
         }
         options.push((key, value));
@@ -530,58 +740,116 @@ impl Span {
     }
 }
 
-/// Answer one `spice://` read for `lane`, whose checkout is `worktree`:
-/// the document the URL names, or why there is none.
-///
-/// `read_quote` resolves quote targets.
-pub(crate) fn read(
-    worktree: &Path,
-    lane: CanonicalUuid,
-    url: &str,
-    read_quote: impl FnOnce(&str) -> Result<String, String>,
-) -> Result<String, String> {
-    let request = Request::parse(url)?;
-    let document = match &request.resource {
-        Resource::Index => INDEX.to_owned(),
-        Resource::Quote(target) => read_quote(target)?,
-        Resource::Read(query) => {
-            let repository = Repository::discover(worktree)
-                .map_err(|error| format!("spice cannot resolve the lane's checkout: {error}"))?;
-            crate::command_client::as_lane(lane, || run(&repository, query))?
-        }
-    };
-    match &request.selector {
-        Some(selector) => selector.select(&document),
-        None => Ok(document),
-    }
+/// Who reads: the lane, its checkout, and the session state its occupant's
+/// own commands see.
+pub(crate) struct Seat {
+    pub(crate) worktree: PathBuf,
+    pub(crate) lane: CanonicalUuid,
+    pub(crate) environment: crate::session_command::Environment,
 }
 
-/// Run one read through the CLI's own parser and dispatch.
-fn run(repository: &Repository, query: &Query) -> Result<String, String> {
-    let matches = crate::cli::command()
-        .try_get_matches_from(std::iter::once("spice".to_owned()).chain(query.arguments()))
-        .map_err(|error| error.to_string().trim_end().to_owned())?;
-    let contract = crate::cli::selected_contract(&matches)
-        .expect("the generated parser selects only registered contracts");
-    let leaf = crate::cli::selected_matches(&matches);
-    if let ["task", "artifact", ..] = contract.path {
-        let outcome = crate::task_artifact_command::run_at(repository, leaf, contract);
-        let mut document = rendered(&outcome, render::render(&outcome, Form::Text))?;
-        if let Outcome::Reply(reply) = &outcome {
-            artifact_trailer(&mut document, &reply.body);
+impl Seat {
+    /// Answer one `spice://` read: the document the URL names, or why there
+    /// is none.
+    ///
+    /// `read_quote` resolves quote targets.
+    pub(crate) fn read(
+        &self,
+        url: &str,
+        read_quote: impl FnOnce(&str) -> Result<String, String>,
+    ) -> Result<String, String> {
+        let request = Request::parse(url)?;
+        let document = match &request.resource {
+            Resource::Index => INDEX.to_owned(),
+            Resource::Quote(target) => read_quote(target)?,
+            Resource::Read(query) => {
+                let repository = Repository::discover(&self.worktree).map_err(|error| {
+                    format!("spice cannot resolve the lane's checkout: {error}")
+                })?;
+                crate::command_client::as_lane(self.lane, || self.run(&repository, query))?
+            }
+        };
+        match &request.selector {
+            Some(selector) => selector.select(&document),
+            None => Ok(document),
         }
-        return Ok(document);
     }
-    let outcome = crate::board_command::run_at(repository, leaf, contract);
-    let rendering =
-        render::render_with_reply_text(&outcome, Form::Text, crate::command_answer_text);
-    let mut document = rewrite_continuations(&rendered(&outcome, rendering)?);
-    if let Outcome::Reply(reply) = &outcome
-        && let CommandAnswer::Text(_) = &reply.body
-    {
-        board_trailer(&mut document, &query.shape);
+
+    /// Run one read through the CLI's own parser and dispatch.
+    fn run(&self, repository: &Repository, query: &Query) -> Result<String, String> {
+        let matches = crate::cli::command()
+            .try_get_matches_from(std::iter::once("spice".to_owned()).chain(query.arguments()))
+            .map_err(|error| error.to_string().trim_end().to_owned())?;
+        let contract = crate::cli::selected_contract(&matches)
+            .expect("the generated parser selects only registered contracts");
+        let leaf = crate::cli::selected_matches(&matches);
+        let document = match contract.path {
+            ["task", "artifact", ..] => {
+                let outcome = crate::task_artifact_command::run_at(repository, leaf, contract);
+                let mut document = rendered(&outcome, render::render(&outcome, Form::Text))?;
+                if let Outcome::Reply(reply) = &outcome {
+                    artifact_trailer(&mut document, &reply.body);
+                }
+                return Ok(document);
+            }
+            ["session", ..] => {
+                let outcome =
+                    crate::session_command::run(leaf, contract.path, &self.environment, None);
+                let mut document = rendered(
+                    &outcome,
+                    render::render_with_reply_text(
+                        &outcome,
+                        Form::Text,
+                        crate::session_command::Report::text,
+                    ),
+                )?;
+                if let Outcome::Reply(reply) = &outcome {
+                    session_trailer(&mut document, &reply.body);
+                }
+                document
+            }
+            ["inbox"] => {
+                let outcome = crate::steering_command::inbox::run_at(
+                    repository,
+                    leaf,
+                    contract,
+                    Some(self.lane.to_string().into()),
+                );
+                rendered(&outcome, render::render_display(&outcome, Form::Text))?
+            }
+            ["lane", "list"] => {
+                let outcome = crate::lane_command::list_at(repository, leaf, contract);
+                rendered(&outcome, render::render_display(&outcome, Form::Text))?
+            }
+            ["board", "graph"] => {
+                let outcome = crate::board_command::graph_view_at(repository, leaf, contract);
+                rendered(
+                    &outcome,
+                    render::render_with_reply_text(
+                        &outcome,
+                        Form::Text,
+                        crate::board_command::GraphView::text,
+                    ),
+                )?
+            }
+            _ => {
+                let outcome = crate::board_command::run_at(repository, leaf, contract);
+                let rendering = render::render_with_reply_text(
+                    &outcome,
+                    Form::Text,
+                    crate::command_answer_text,
+                );
+                let mut document = rendered(&outcome, rendering)?;
+                if let Outcome::Reply(reply) = &outcome
+                    && let CommandAnswer::Text(_) = &reply.body
+                {
+                    board_trailer(&mut document, &query.shape);
+                }
+                document
+            }
+        };
+        Ok(rewrite_continuations(&document))
     }
-    Ok(document)
 }
 
 /// The rendered document of a reply, or of a refusal or fault as the error.
@@ -639,7 +907,7 @@ fn board_trailer(document: &mut String, shape: &Shape) {
         Shape::Task {
             handle,
             detail: Detail::Summary,
-        } => ["context", "history", "detail", "artifact"]
+        } => ["context", "history", "detail", "ledger", "artifact"]
             .iter()
             .map(|child| format!("{SCHEME}task/{handle}/{child}"))
             .collect(),
@@ -674,12 +942,32 @@ fn artifact_trailer(document: &mut String, answer: &ArtifactAnswer) {
         ArtifactAnswer::Shown { next, .. } => (next.as_ref(), Vec::new()),
         _ => (None, Vec::new()),
     };
+    push_continuation(document, continuation);
+    push_resources(document, &children);
+}
+
+/// Name a typed session page's continuation as a URL: its document carries
+/// the command as JSON, not as a `continue:` line.
+fn session_trailer(document: &mut String, report: &crate::session_command::Report) {
+    use crate::session_command::Report;
+    let continuation = match report {
+        Report::Turns { page, .. } => page.omission.as_ref(),
+        Report::Sweep { page, .. } => page.omission.as_ref(),
+        Report::Context { page, .. } => page.omission.as_ref(),
+        _ => None,
+    };
+    push_continuation(
+        document,
+        continuation.map(|omission| &omission.continuation),
+    );
+}
+
+fn push_continuation(document: &mut String, continuation: Option<&wire::SpiceCommand>) {
     if let Some(query) = continuation.and_then(|command| Query::from_arguments(command.arguments()))
     {
         document.push_str("\ncontinue: ");
         document.push_str(&query.url());
     }
-    push_resources(document, &children);
 }
 
 fn push_resources(document: &mut String, children: &[String]) {
