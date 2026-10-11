@@ -24,7 +24,6 @@ pub(super) struct ValidatedSnapshot {
     pub(super) facts: bus::TaskFacts,
     pub(super) answer: BoardAnswer,
     pub(super) entries: Vec<Entry>,
-    pub(super) review_history: Result<Vec<board::graph::ReviewEdge>, String>,
 }
 
 struct PreparedTask {

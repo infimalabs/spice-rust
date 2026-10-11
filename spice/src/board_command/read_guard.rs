@@ -103,7 +103,18 @@ fn validated_snapshot_from_with_occupant(
         .product
         .clone();
     let (entries, tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
-    let (recent_cell, review_history) = snapshot_history(observed, &entries, &principal, selected);
+    // The allocation history is a global projection: a scoped preflight
+    // neither consumes nor synthesizes a partial one.
+    let recent_cell = selected
+        .is_none()
+        .then(|| {
+            board::recent_claim_cell(
+                &entries,
+                observed.facts().latest_claim(&principal),
+                &principal,
+            )
+        })
+        .flatten();
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -145,7 +156,6 @@ fn validated_snapshot_from_with_occupant(
             residency,
         },
         entries,
-        review_history,
     })
 }
 
@@ -189,27 +199,6 @@ fn project_task_rows(
         tasks.push(task);
     }
     Ok((entries, tasks))
-}
-
-/// Allocation history and graph history are global projections. Scoped
-/// preflights neither consume nor synthesize a partial version of either.
-fn snapshot_history(
-    observed: &bus::TaskSnapshot,
-    entries: &[Entry],
-    principal: &wire::Actor,
-    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
-) -> (
-    Option<wire::ClaimCell>,
-    Result<Vec<board::graph::ReviewEdge>, String>,
-) {
-    if selected.is_some() {
-        return (None, Ok(Vec::new()));
-    }
-    (
-        board::recent_claim_cell(entries, observed.facts().latest_claim(principal), principal),
-        board::graph::review_history(observed.facts().iter(), entries)
-            .map_err(|error| error.to_string()),
-    )
 }
 
 /// Everything one task row needs beyond its own authoritative heads.
@@ -896,19 +885,17 @@ pub(super) fn read_graph(
         Err(outcome) => return outcome,
     };
     let reviews = if view == View::Review {
-        match &snapshot.review_history {
-            Ok(reviews) => reviews.as_slice(),
-            Err(error) => {
-                return store_fault("board::review-history-invalid", error);
-            }
+        match review_history(&snapshot) {
+            Ok(reviews) => reviews,
+            Err(outcome) => return outcome,
         }
     } else {
-        &[]
+        Vec::new()
     };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &entries, reviews)
+            text: board::graph::render(view, &entries, &reviews)
                 .text()
                 .to_owned(),
         }),
@@ -944,16 +931,26 @@ pub(super) fn read_handout(
         Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
-    let reviews = match &snapshot.review_history {
+    let reviews = match review_history(&snapshot) {
         Ok(reviews) => reviews,
-        Err(error) => return store_fault("board::review-history-invalid", error),
+        Err(outcome) => return outcome,
     };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::handout::compose(&entries, reviews),
+            text: board::handout::compose(&entries, &reviews),
         }),
     )
+}
+
+/// Join every completed review the snapshot's visible tasks carry to the
+/// phase author it followed. This scans the whole fact log, so only the reads
+/// that render reviews pay for it.
+fn review_history(
+    snapshot: &ValidatedSnapshot,
+) -> Result<Vec<board::graph::ReviewEdge>, Outcome<CommandAnswer>> {
+    board::graph::review_history(snapshot.facts.iter(), &snapshot.entries)
+        .map_err(|error| store_fault("board::review-history-invalid", &error.to_string()))
 }
 
 pub(super) fn read_ledger(
