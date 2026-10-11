@@ -752,6 +752,11 @@ impl TeamSubscription {
     }
 }
 
+/// Maximum membership admitted when forming or growing an app team.
+///
+/// Existing larger teams may be restated or reduced, but never enlarged.
+pub const TEAM_MEMBER_LIMIT: usize = 6;
+
 /// Whether one app team is a formation rather than a lone seat.
 ///
 /// A fresh seat sits in a team carrying its own lane identity, so a team whose

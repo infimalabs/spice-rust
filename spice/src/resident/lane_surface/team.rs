@@ -266,6 +266,8 @@ fn move_member(
         }
         return split_host_member(head, member, source, &source_members);
     }
+    let current_members = head.team_members(target).count();
+    admit_team_size(current_members, current_members + 1)?;
     let source_subscription = match subscription_row(head, source) {
         Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
@@ -542,6 +544,7 @@ fn admit_arrangement(
                 "omit an emptied team entirely rather than arranging it with no lanes",
             ));
         }
+        admit_team_size(head.team_members(team.team).count(), team.lanes.len())?;
         for lane in &team.lanes {
             if !head.lanes.iter().any(|row| row.lane == *lane) {
                 return Err(lane_refusal(

@@ -54,8 +54,12 @@ presence, name, worktree, model, pending steering, liveness, held task, kept
 jobs, and provider emblem. A teamed agent opens its composer in Chat. When team
 configuration is admitted, agents drag onto another team, onto **New Team**, or
 onto **Unassigned Agents**; every drop carries the topology revision shown, and
-unavailable configuration disables dragging without disabling Chat links. A
-mouse drags the whole slot; a finger or pen drags the agent's name, so the rest
+unavailable configuration disables dragging without disabling Chat links. Teams
+stop at six agents: a full team disables its mouse and touch drop target, while
+its members can still leave for another team or Unassigned Agents. The resident
+also refuses membership commands that would exceed six; stale clients cannot
+bypass the limit. A mouse drags the whole slot; a finger or pen drags the agent's
+name, so the rest
 of the slot still scrolls the sheet and a tap still opens Chat, and holding a
 lifted agent near the sheet's edge scrolls it toward an off-screen target.
 

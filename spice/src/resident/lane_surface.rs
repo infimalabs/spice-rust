@@ -486,6 +486,19 @@ struct Arrangement {
     team: CanonicalUuid,
 }
 
+/// Admit growth only within the team capacity; legacy larger teams can shrink.
+fn admit_team_size(current_members: usize, members: usize) -> Result<(), Outcome<CommandAnswer>> {
+    if members > wire::head::TEAM_MEMBER_LIMIT && members > current_members {
+        return Err(lane_refusal(
+            "team::member-limit",
+            Some(format!("at most {} agents", wire::head::TEAM_MEMBER_LIMIT)),
+            Some(members.to_string()),
+            "move an agent out of the target team or choose another team",
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve one arrangement against the observed order, or refuse it.
 ///
 /// Every way the request can fail to name a move is decided here, against one
@@ -524,6 +537,10 @@ fn rearrange(
     };
     let team = target.team;
     let from_team = observed.lanes[source_index].team;
+    if from_team != team {
+        let current_members = observed.team_members(team).count();
+        admit_team_size(current_members, current_members + 1)?;
+    }
     let mut next = observed.clone();
     let mut source = next.lanes.remove(source_index);
     let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
@@ -620,6 +637,8 @@ fn admit_seat(
             "retry lane add so the client mints a fresh lane identity",
         ));
     }
+    let current_members = observed.body().team_members(request.team).count();
+    admit_team_size(current_members, current_members + 1)?;
     if observed
         .body()
         .lanes

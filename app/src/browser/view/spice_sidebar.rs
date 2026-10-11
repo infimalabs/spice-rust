@@ -429,20 +429,16 @@ fn render_team(
         .iter()
         .map(|member| member.lane)
         .collect::<Vec<_>>();
-    let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_team(
-        sender.clone(),
-        target,
-        current,
-        can_configure,
-        topology_revision,
-    );
+    let can_drop = can_configure && current.len() < wire::head::TEAM_MEMBER_LIMIT;
+    let ondragover = allow_drop(can_drop);
+    let ondrop = drop_into_team(sender.clone(), target, current, can_drop, topology_revision);
     html! {
         <article
             class="app-team"
             data-team={team.lane.to_string()}
             data-topology-drop={team.lane.to_string()}
-            data-drop-enabled={can_configure.to_string()}
+            data-drop-enabled={can_drop.to_string()}
+            title={(!can_drop && can_configure).then_some("Teams are limited to six agents")}
             {ondragover}
             {ondrop}
         >
@@ -833,6 +829,9 @@ fn touch_drop_at(
             let rect = element.get_bounding_client_rect();
             x >= rect.left() && x <= rect.right() && y >= rect.top() && y <= rect.bottom()
         })?;
+    if target.get_attribute("data-drop-enabled").as_deref() != Some("true") {
+        return None;
+    }
     let value = target.get_attribute("data-topology-drop")?;
     let team = if value == UNASSIGNED_DROP {
         lane

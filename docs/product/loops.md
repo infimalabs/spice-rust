@@ -298,7 +298,10 @@ flowchart LR
 - `Leave all teams` removes a member through the resident, making it
   independent in every browser; a team whose last member leaves leaves the lane
   table. No browser hides a team locally.
-- Membership is not bounded by the finite accent palette.
+- Forming or growing a team stops at six agents, enforced by the resident on
+  member moves, complete arrangements, and new seats. A full team can still
+  shed members or change policy. Pre-existing larger teams can be restated,
+  reordered, or reduced, never enlarged.
 
 ---
 
