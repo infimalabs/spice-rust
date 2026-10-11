@@ -45,7 +45,8 @@ pub(in crate::board_command) fn claim_plan(
     allocation: &board::NextConfig,
 ) -> Result<ClaimPlan, Outcome<CommandAnswer>> {
     let possession = possession_rule(win)?;
-    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
+    let snapshot =
+        validated_working_snapshot(bus, command.actor().clone(), &[], projects, allocation)?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;

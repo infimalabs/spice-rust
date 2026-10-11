@@ -263,6 +263,64 @@ fn active_review_claim_survives_a_dependency_edit_and_restart() {
 }
 
 #[test]
+fn claim_eligibility_ignores_unrelated_history_but_keeps_a_settled_prerequisite() {
+    let (root, bus, epoch, seats) = fixture("claim-scoped-history", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let prerequisite = todo_task(&bus, epoch, "SCOPE-prereq1", "Completed prerequisite");
+    claim_and_complete_task(&bus, epoch, &seats[0], &lane, &prerequisite);
+    let target = todo_task(&bus, epoch, "SCOPE-target01", "Ready dependent");
+    connect_child(&bus, epoch, &target, &prerequisite);
+    super::read_scope::append_terminal_tasks(&bus, 64);
+
+    let projects = guard_projects();
+    let allocation = board::NextConfig::default();
+    let complete = validated_snapshot(&bus, lane.clone(), &projects, &allocation)
+        .expect("complete projection");
+    let scoped = validated_working_snapshot(
+        &bus,
+        lane.clone(),
+        std::slice::from_ref(&target),
+        &projects,
+        &allocation,
+    )
+    .expect("working projection");
+    assert_eq!(at(&scoped.answer, &target), at(&complete.answer, &target));
+    assert_eq!(
+        at(&scoped.answer, &prerequisite),
+        at(&complete.answer, &prerequisite),
+    );
+    let complete_target = task_entry(&complete.entries, &target).expect("complete target");
+    let scoped_target = task_entry(&scoped.entries, &target).expect("scoped target");
+    let complete_decision = board::eligible_entry(
+        &complete.entries,
+        complete_target,
+        &lane,
+        &complete.answer.environment(),
+    );
+    let scoped_decision = board::eligible_entry(
+        &scoped.entries,
+        scoped_target,
+        &lane,
+        &scoped.answer.environment(),
+    );
+    assert_eq!(scoped_decision, complete_decision);
+    assert!(
+        scoped_decision,
+        "the settled prerequisite satisfies the edge"
+    );
+
+    claim_task(&bus, epoch, &seats[0], &lane, &target);
+    assert_eq!(
+        at(&board(&bus, epoch, lane), &target)
+            .claim
+            .as_ref()
+            .map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Active),
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn dependency_cycle_refuses_the_whole_requested_edit() {
     let (root, bus, epoch, _) = fixture("dependency-cycle", 1);
     let first = todo_task(&bus, epoch, "CYCLE-first01", "First");

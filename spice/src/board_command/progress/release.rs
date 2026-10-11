@@ -138,7 +138,13 @@ pub(in crate::board_command) fn claim_free(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(&task.task),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

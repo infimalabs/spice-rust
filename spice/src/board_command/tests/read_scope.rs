@@ -20,7 +20,10 @@ fn read(bus: &Bus, epoch: CanonicalUuid, read: &BoardRead) -> Outcome<CommandAns
     )
 }
 
-fn append_terminal_tasks(bus: &Bus, count: usize) -> std::collections::BTreeSet<TaskStamp> {
+pub(super) fn append_terminal_tasks(
+    bus: &Bus,
+    count: usize,
+) -> std::collections::BTreeSet<TaskStamp> {
     let origin: wire::Origin = "fixture:paged-history"
         .parse()
         .expect("history fixture origin");

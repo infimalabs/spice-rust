@@ -7,7 +7,13 @@ pub(in crate::board_command) fn task_defer(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(&defer.task),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -34,7 +40,13 @@ pub(in crate::board_command) fn task_wake(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(&wake.task),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

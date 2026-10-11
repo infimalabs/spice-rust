@@ -199,7 +199,14 @@ fn create_task<B: serde::Serialize>(
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let roots = task_add_roots(add);
+    let snapshot = match validated_working_snapshot_for_tasks(
+        bus,
+        command.actor().clone(),
+        &roots,
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -283,6 +290,50 @@ fn create_task<B: serde::Serialize>(
         |_| {},
         added_claim,
     )
+}
+
+pub(super) fn task_add_roots(add: &TaskAdd) -> Vec<wire::TaskStamp> {
+    let mut roots = add
+        .depends
+        .iter()
+        .map(|handle| {
+            handle
+                .born()
+                .expect("an admitted task handle carries a canonical task stamp")
+        })
+        .collect::<Vec<_>>();
+    if let Some(identity) = add
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.as_str().strip_prefix("task:"))
+    {
+        let born = identity.parse::<wire::TaskStamp>().ok().or_else(|| {
+            identity
+                .parse::<wire::TaskHandle>()
+                .ok()
+                .and_then(|handle| handle.born().ok())
+        });
+        roots.extend(born);
+    }
+    roots
+}
+
+pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
+    let mut roots = std::iter::once(&review.task)
+        .chain(review.followup.iter())
+        .map(|handle| {
+            handle
+                .born()
+                .expect("an admitted task handle carries a canonical task stamp")
+        })
+        .collect::<Vec<_>>();
+    roots.extend(
+        review
+            .then
+            .iter()
+            .flat_map(|followup| task_add_roots(&followup.add)),
+    );
+    roots
 }
 
 /// Only direct `task add` gates its child behind the lane's ambient plan, and
@@ -688,7 +739,13 @@ pub(super) fn task_note(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(&note.task),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -757,7 +814,16 @@ pub(super) fn task_depends_with(
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let roots = std::iter::once(depends.task.clone())
+        .chain(depends.after.iter().cloned())
+        .collect::<Vec<_>>();
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        &roots,
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
