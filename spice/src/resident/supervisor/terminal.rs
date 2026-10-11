@@ -20,10 +20,12 @@ use std::time::Duration;
 
 use sill::{Environment, Spec};
 use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
-use wire::intent::{LaneJob, LaneJobStanding};
+use wire::intent::{LaneJob, LaneJobKind, LaneJobStanding};
 use wire::output::{Admission, Budget, ClippedText, Resume};
 
 pub(super) mod job;
+#[cfg(test)]
+mod tests;
 
 pub(in crate::resident) use job::{
     Control, Event, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
@@ -403,6 +405,13 @@ pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
         .map(|job| LaneJob {
             id: job.id().to_owned(),
             command: job.command().to_owned(),
+            kind: if job.events() {
+                LaneJobKind::Watch
+            } else if job.timeout().is_none() {
+                LaneJobKind::Service
+            } else {
+                LaneJobKind::Command
+            },
             standing: if job.ended().is_some() {
                 LaneJobStanding::Unheard
             } else {

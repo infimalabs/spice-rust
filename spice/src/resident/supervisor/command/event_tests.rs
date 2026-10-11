@@ -113,7 +113,7 @@ fn ending_purpose(job: &Job) -> String {
 fn a_successor_hears_what_its_vacated_predecessor_did_not_then_the_ending() {
     let scratch = Scratch::new("catch-up");
     let (jobs, terminal) = terminal(&scratch);
-    let job = jobs.record_for_tests("tail -f build.log", true);
+    let job = jobs.record_for_tests("tail -f build.log", true, Some(60_000));
     let first = lines(&["compiling"]);
     let second = lines(&["warning: unused", "finished"]);
 
@@ -159,7 +159,7 @@ fn a_successor_hears_what_its_vacated_predecessor_did_not_then_the_ending() {
 fn a_seated_lane_hears_each_event_once_in_order_while_the_job_runs() {
     let scratch = Scratch::new("seated");
     let (jobs, terminal) = terminal(&scratch);
-    let job = jobs.record_for_tests("watch the build", true);
+    let job = jobs.record_for_tests("watch the build", true, Some(60_000));
     let printed = [lines(&["one"]), lines(&["two", "three"]), lines(&["four"])];
 
     let sink = Sink::default();

@@ -453,6 +453,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     owed.jobs.push(wire::intent::LaneJob {
         id: "6ZbQk3mPx".to_owned(),
         command: "cargo test".to_owned(),
+        kind: wire::intent::LaneJobKind::Command,
         standing: wire::intent::LaneJobStanding::Unheard,
     });
     assert_eq!(

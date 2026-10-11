@@ -1300,10 +1300,15 @@ impl Job {
 /// keeper, so a test says what the command printed and how it ended.
 #[cfg(test)]
 impl Jobs {
-    pub(in crate::resident) fn record_for_tests(&self, command: &str, events: bool) -> Job {
+    /// Record one job as its call declared it; `None` timeout is a service.
+    pub(in crate::resident) fn record_for_tests(
+        &self,
+        command: &str,
+        events: bool,
+        timeout_millis: Option<u64>,
+    ) -> Job {
         fs::create_dir_all(&self.root).expect("job root");
         let (id, directory) = self.claim().expect("job directory");
-        let timeout_millis = Some(60_000);
         publish_json(
             &directory.join(REQUEST),
             &Request {
