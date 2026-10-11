@@ -30,17 +30,14 @@ pub(super) fn selected_tasks(
             history: None,
         }),
         BoardRead::Open => {
-            let open = observed
-                .tasks()
-                .iter()
-                .filter(|heads| !terminal_task(heads));
-            let mut tasks: std::collections::BTreeSet<_> = open
-                .clone()
+            let mut tasks: std::collections::BTreeSet<_> = observed
+                .allocation_frontier()
                 .map(|heads| heads.statement().body().born.clone())
                 .collect();
             // Readiness reads each open row's direct prerequisites: a settled
             // one is terminal, so it is carried only as allocation evidence.
-            let evidence = open
+            let evidence = observed
+                .allocation_frontier()
                 .flat_map(|heads| &heads.statement().body().dependencies)
                 .filter(|dependency| !tasks.contains(*dependency))
                 .cloned()

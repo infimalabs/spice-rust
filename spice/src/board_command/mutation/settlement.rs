@@ -176,7 +176,13 @@ fn settle(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(settlement.handle()),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

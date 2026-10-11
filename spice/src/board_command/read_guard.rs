@@ -14,11 +14,19 @@ mod task_timeline;
 pub(super) use task_timeline::read_task_timeline;
 mod next_work;
 mod task_selection;
-use context::{route_actor_identity, task_contexts, task_creator_teams, task_origin_threads};
+mod working;
+use context::{
+    route_actor_identity, selected_task_contexts, selected_task_creator_teams,
+    selected_task_origin_threads, task_contexts, task_creator_teams, task_origin_threads,
+};
 #[cfg(test)]
 pub(in crate::board_command) use task_selection::history_cursor_order;
 use task_selection::{TaskSelection, retain_family, selected_tasks};
 pub(in crate::board_command) use task_selection::{in_family, validate_family};
+pub(super) use working::{
+    command_task_snapshot, validated_snapshot_for_automatic, validated_working_snapshot,
+    validated_working_snapshot_for_tasks,
+};
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()
@@ -55,24 +63,6 @@ pub(super) fn validated_snapshot_from(
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     validated_snapshot_from_with_occupant(
         observed, principal, projects, allocation, None, None, true,
-    )
-}
-
-pub(super) fn validated_snapshot_for_automatic(
-    observed: &bus::TaskSnapshot,
-    principal: wire::Actor,
-    occupant: wire::CanonicalUuid,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(
-        observed,
-        principal,
-        projects,
-        allocation,
-        Some(occupant),
-        None,
-        true,
     )
 }
 
@@ -169,16 +159,21 @@ fn project_task_rows(
     residency: &wire::ResidencyHead,
     selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> Result<(Vec<Entry>, Vec<BoardTask>), Outcome<CommandAnswer>> {
-    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) =
-        if selected.is_some_and(std::collections::BTreeSet::is_empty) {
+    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) = match selected {
+        Some(selected) if selected.is_empty() => {
             (Default::default(), Default::default(), Default::default())
-        } else {
-            (
-                task_origin_threads(observed.facts().iter(), residency, selected)?,
-                task_creator_teams(observed.facts().iter(), selected)?,
-                task_contexts(observed.facts(), selected),
-            )
-        };
+        }
+        Some(selected) => (
+            selected_task_origin_threads(observed, residency, selected)?,
+            selected_task_creator_teams(observed, selected)?,
+            selected_task_contexts(observed, selected),
+        ),
+        None => (
+            task_origin_threads(observed.facts().iter(), residency, None)?,
+            task_creator_teams(observed.facts().iter(), None)?,
+            task_contexts(observed.facts(), None),
+        ),
+    };
     let projection = TaskProjection {
         projects,
         facts: observed.facts(),
@@ -190,13 +185,22 @@ fn project_task_rows(
     let capacity = selected.map_or(observed.tasks().len(), std::collections::BTreeSet::len);
     let mut tasks = Vec::with_capacity(capacity);
     let mut entries = Vec::with_capacity(capacity);
-    for heads in observed.tasks() {
-        if selected.is_some_and(|tasks| !tasks.contains(&heads.statement().body().born)) {
-            continue;
-        }
+    let mut project = |heads: &journal::TaskHeads| -> Result<(), Outcome<CommandAnswer>> {
         let (entry, task) = projection.project(heads)?;
         entries.push(entry);
         tasks.push(task);
+        Ok(())
+    };
+    if let Some(selected) = selected {
+        for task in selected {
+            if let Some(heads) = observed.task_heads(task) {
+                project(heads)?;
+            }
+        }
+    } else {
+        for heads in observed.tasks() {
+            project(heads)?;
+        }
     }
     Ok((entries, tasks))
 }
@@ -876,7 +880,11 @@ pub(super) fn read_graph(
             );
         }
     };
-    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let snapshot = match if graph.all {
+        validated_snapshot(bus, principal, projects, allocation)
+    } else {
+        validated_working_snapshot(bus, principal, &[], projects, allocation)
+    } {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -965,7 +973,13 @@ pub(super) fn read_ledger(
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let lane_reader = matches!(principal, Actor::Lane(_));
-    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        principal,
+        std::slice::from_ref(&ledger.task),
+        projects,
+        allocation,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

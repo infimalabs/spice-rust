@@ -23,7 +23,7 @@ pub(super) fn claim_reclaim_with_clock(
     allocation: &board::NextConfig,
     clock: impl FnOnce() -> Result<Instant, Outcome<CommandAnswer>>,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match command_task_snapshot(bus, command, &renew.task, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -81,7 +81,7 @@ pub(super) fn task_done(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match command_task_snapshot(bus, command, &done.task, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -674,7 +674,14 @@ fn prepare_review(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<PreparedReview, Outcome<CommandAnswer>> {
-    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
+    let roots = task_review_roots(review);
+    let snapshot = validated_working_snapshot_for_tasks(
+        bus,
+        command.actor().clone(),
+        &roots,
+        projects,
+        allocation,
+    )?;
     let (entry, transition, at, lane) = admit_review(&snapshot, command, review)?;
     let source = bus
         .source_boundary(&lane)
