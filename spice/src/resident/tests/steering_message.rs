@@ -245,6 +245,39 @@ impl Lanes {
         commit(&self.bus, ending).expect("vacancy commits");
     }
 
+    /// Start another occupant on a vacated lane, born there now.
+    fn renew(&self, lane: u8, occupant: CanonicalUuid) {
+        let lane = test_uuid(lane);
+        let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
+        let mut renewed = observed.body().clone();
+        let row = renewed
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == lane)
+            .expect("fixture lane exists");
+        assert!(row.occupant.is_none(), "the lane is vacant");
+        row.occupant = Some(occupant);
+        row.lineage.push(occupant);
+        row.disposition = "occupied".to_owned();
+        let mut starting = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("starting write starts");
+        crate::resident::shutdown::guard_residency(&mut starting, &observed);
+        let started = starting
+            .fact(
+                wire::body::LaneStarted {
+                    lane,
+                    occupant,
+                    epoch: self.epoch,
+                    group: 123,
+                    fresh_session: None,
+                },
+                FactCause::Existing(observed.position()),
+            )
+            .expect("start fact is valid");
+        starting.residency_head(started, move |_| renewed);
+        commit(&self.bus, starting).expect("renewal commits");
+    }
+
     /// Declare the lane occupant's session at the tape's current end.
     fn declare(&self, lane: u8) -> listen::Locus {
         let declaration = self
@@ -492,10 +525,15 @@ fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
     assert_eq!(
         outcomes[..2],
         [
-            Ok(sent(&[FIRST], &[&format!("{second} address::expired")])),
+            Ok(sent(
+                &[FIRST],
+                &[&format!("{second} address::expired (its lane is vacant)")]
+            )),
             refused(
                 "msg::recipient-unavailable",
-                &format!("{second} address::expired; {unrecorded} address::unrecorded"),
+                &format!(
+                    "{second} address::expired (its lane is vacant); {unrecorded} address::unrecorded"
+                ),
             ),
         ],
         "{diagnostics}"
@@ -561,9 +599,74 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
     let resolved = steering::publish_packet(&lanes.bus, lanes.epoch, &config, &packet, &current);
     assert_eq!(
         resolved,
-        Ok(sent(&[FIRST], &[&format!("{second} address::expired")]))
+        Ok(sent(
+            &[FIRST],
+            &[&format!("{second} address::expired (its lane is vacant)")]
+        ))
     );
     assert_eq!(lanes.messages().len(), 1);
+    lanes.finish();
+}
+
+/// An expired address receives nothing, and its author learns what its birth
+/// lane seats in the view the packet resolved against: the renewed occupant's
+/// own address, or a vacancy.
+#[test]
+fn an_expired_address_names_what_its_lane_seats_now() {
+    let lanes = Lanes::new("msg-renewed");
+    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
+    lanes.vacate(SECOND);
+    lanes.vacate(FIRST);
+    let renewed = test_uuid(40);
+    lanes.renew(SECOND, renewed);
+    let current = lanes
+        .bus
+        .task_snapshot()
+        .expect("snapshot reads")
+        .facts()
+        .occupant_address(test_uuid(SECOND), renewed)
+        .expect("the renewed occupant has one birth");
+    assert_ne!(current, second);
+    let packet = steering::Packet {
+        lane: test_uuid(SENDER),
+        author: test_uuid(SENDER + 1),
+        locus: wire::body::TranscriptLocus {
+            source: Some(test_uuid(30)),
+            member: 1,
+            offset: 0,
+            length: 10,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        recipients: vec![first, second, current],
+        body: "renewed",
+    };
+    let view = lanes.bus.task_snapshot().expect("snapshot reads");
+    let resolved = steering::publish_packet(
+        &lanes.bus,
+        lanes.epoch,
+        &steer::Config::default(),
+        &packet,
+        &view,
+    );
+
+    assert_eq!(
+        resolved,
+        Ok(sent(
+            &[SECOND],
+            &[
+                &format!("{first} address::expired (its lane is vacant)"),
+                &format!("{second} address::expired (its lane seats {current})"),
+            ]
+        ))
+    );
+    let messages = lanes.messages();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].1.occupant, renewed,
+        "only the address naming the renewed occupant reaches it"
+    );
     lanes.finish();
 }
 
