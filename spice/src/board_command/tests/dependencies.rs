@@ -292,13 +292,13 @@ fn claim_eligibility_ignores_unrelated_history_but_keeps_a_settled_prerequisite(
     let complete_target = task_entry(&complete.entries, &target).expect("complete target");
     let scoped_target = task_entry(&scoped.entries, &target).expect("scoped target");
     let complete_decision = board::eligible_entry(
-        &complete.entries,
+        &board::satisfied_tasks(&complete.entries),
         complete_target,
         &lane,
         &complete.answer.environment(),
     );
     let scoped_decision = board::eligible_entry(
-        &scoped.entries,
+        &board::satisfied_tasks(&scoped.entries),
         scoped_target,
         &lane,
         &scoped.answer.environment(),
@@ -767,6 +767,44 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
     assert_eq!(
         at(&current, &reverse).statement.body.dependencies,
         [at(&current, &plan).statement.body.born.clone()],
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn named_capture_of_a_settled_task_is_refused_as_ineligible_not_unknown() {
+    let (root, bus, epoch, seats) = fixture("capture-settled", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = todo_task(&bus, epoch, "SCOPE-settled1", "Settled");
+    claim_and_complete_task(&bus, epoch, &seats[0], &lane, &task);
+    super::read_scope::append_terminal_tasks(&bus, 8);
+    let available = board(&bus, epoch, lane.clone());
+    let heads = at(&available, &task);
+    let rule: Name = "capture".parse().expect("capture rule");
+    let outcome = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
+    );
+    assert!(
+        matches!(
+            &outcome,
+            Outcome::Refusal(Refusal::Bare { diagnostic })
+                if diagnostic.reason() == "claim::capture-ineligible"
+        ),
+        "{outcome:?}"
     );
     clean(&root, bus);
 }
