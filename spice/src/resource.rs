@@ -43,7 +43,7 @@ spice://task/HANDLE/history  task show HANDLE --history [same paging]
 spice://task/HANDLE/detail  task show HANDLE --context --history [same paging]
 spice://task/HANDLE/description  the description; its first line names the write URL, ?digest=DIGEST, that replaces the text below it
 spice://task/HANDLE/acceptance  the acceptance as `- ` items, replaced the same way
-spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N]
+spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGEST]
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
@@ -219,7 +219,7 @@ const GRAPH: &[Key] = &[
     once("max-text"),
     once("at"),
 ];
-const LEDGER: &[Key] = &[once("max-bytes")];
+const LEDGER: &[Key] = &[once("max-bytes"), once("offset"), once("digest")];
 const ARTIFACT_SHOW: &[Key] = &[once("offset"), once("bytes")];
 const BRIEFING: &[Key] = &[FILES, once("deadline-seconds")];
 const TURNS: &[Key] = &[

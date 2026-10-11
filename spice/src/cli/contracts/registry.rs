@@ -726,7 +726,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["doc", "ledger"],
-        "doc ledger HANDLE [--max-bytes N] [--output FILE]",
+        "doc ledger HANDLE [--max-bytes N] [--offset N] [--digest DIGEST] [--output FILE]",
         OperatorOrLane,
         Read,
         [],

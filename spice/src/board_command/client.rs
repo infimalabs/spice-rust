@@ -175,11 +175,44 @@ fn client_ledger(
         },
         None => None,
     };
-    if output.is_some() && requested_bytes.is_some() {
+    let offset = match matches.get_one::<String>("offset") {
+        Some(written) => match written.parse::<usize>() {
+            Ok(value) => value,
+            Err(_) => {
+                return refusal(
+                    "doc::ledger-offset-invalid",
+                    Some(written.clone()),
+                    "name a non-negative byte offset printed by the preceding page",
+                );
+            }
+        },
+        None => 0,
+    };
+    let digest = match matches.get_one::<String>("digest") {
+        Some(written) => match written.parse::<Digest>() {
+            Ok(value) => Some(value),
+            Err(error) => {
+                return refusal(
+                    "doc::ledger-digest-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                );
+            }
+        },
+        None => None,
+    };
+    if output.is_some() && (requested_bytes.is_some() || offset != 0 || digest.is_some()) {
         return refusal(
             "doc::ledger-destination",
             None,
-            "choose a bounded terminal preview or --output FILE",
+            "choose a bounded terminal page or --output FILE",
+        );
+    }
+    if offset != 0 && digest.is_none() {
+        return refusal(
+            "doc::ledger-digest-missing",
+            Some(offset.to_string()),
+            "continue with the digest printed by the preceding page",
         );
     }
     let budget = match wire::output::INTERACTIVE.budget(wire::output::Request {
@@ -206,7 +239,14 @@ fn client_ledger(
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Text(answer),
-        }) => match ledger_output(&task, &answer.text, output.map(String::as_str), budget) {
+        }) => match ledger_output(
+            &task,
+            &answer.text,
+            output.map(String::as_str),
+            budget,
+            offset,
+            digest.as_ref(),
+        ) {
             Ok(text) => Outcome::Reply(Reply {
                 position,
                 body: CommandAnswer::Text(TextAnswer { text }),
@@ -222,22 +262,66 @@ fn client_ledger(
     }
 }
 
-pub(in crate::board_command) fn ledger_output(
+pub(crate) fn ledger_output(
     task: &TaskHandle,
     document: &str,
     output: Option<&str>,
     budget: wire::output::Budget,
+    offset: usize,
+    expected: Option<&Digest>,
 ) -> Result<String, Refusal> {
     if let Some(path) = output {
         return spice::export::export(std::path::Path::new(path), document.as_bytes())
             .map(|receipt| receipt.to_string());
     }
-    let preview = wire::output::clip(document, budget.limits().bytes);
+    let digest = Digest::compute(Domain::CliExport, document.as_bytes());
+    if let Some(expected) = expected
+        && expected != &digest
+    {
+        return Err(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "doc::ledger-snapshot-moved",
+                Some("ledger-document".to_owned()),
+                Some(expected.to_string()),
+                Some(digest.to_string()),
+            )
+            .with_detail("restart at offset 0 to read the current ledger"),
+        ));
+    }
+    let Some(tail) = document.get(offset..) else {
+        return Err(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "doc::ledger-offset-invalid",
+                Some("ledger-document".to_owned()),
+                Some(format!("a UTF-8 byte boundary at most {}", document.len())),
+                Some(offset.to_string()),
+            )
+            .with_detail("use the exact offset printed by the preceding page"),
+        ));
+    };
+    let preview = wire::output::clip(tail, budget.limits().bytes);
     Ok(match preview.withheld_bytes {
-        Some(withheld) => format!(
-            "{}\n… [+{withheld} bytes]\ncomplete: spice doc ledger {} --output {}-ledger.md",
-            preview.text, task, task
-        ),
+        Some(withheld) => {
+            let next = offset + preview.text.len();
+            let continuation = wire::SpiceCommand::new(
+                "doc",
+                [
+                    "ledger".to_owned(),
+                    task.to_string(),
+                    "--max-bytes".to_owned(),
+                    budget.limits().bytes.to_string(),
+                    "--offset".to_owned(),
+                    next.to_string(),
+                    "--digest".to_owned(),
+                    digest.to_string(),
+                ],
+            )
+            .expect("a ledger continuation has structural arguments");
+            format!(
+                "{}\n… [+{withheld} bytes]; continue: {continuation}\ncomplete: spice doc ledger {} --output {}-ledger.md",
+                preview.text, task, task
+            )
+        }
         None => preview.text,
     })
 }

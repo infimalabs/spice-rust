@@ -3,7 +3,7 @@ use std::fs;
 use spice::repository::Repository;
 
 use super::{Access, Query, Request, Resource, Text, rewrite_continuations, served_reads};
-use crate::board_command::TaskText;
+use crate::board_command::{TaskText, ledger_output};
 
 const HANDLE: &str = "TASK-dVlFq9qKp";
 
@@ -59,6 +59,16 @@ fn each_resource_runs_exactly_its_cli_read() {
         (
             "spice://task/TASK-dVlFq9qKp/ledger?max-bytes=900",
             "doc ledger TASK-dVlFq9qKp --max-bytes 900",
+        ),
+        (
+            concat!(
+                "spice://task/TASK-dVlFq9qKp/ledger?max-bytes=900&offset=64&digest=",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            concat!(
+                "doc ledger TASK-dVlFq9qKp --max-bytes 900 --offset 64 --digest ",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
         ),
         (
             "spice://board/graph/dependencies?limit=5&at=x",
@@ -375,7 +385,17 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
             "--after",
             "row:40",
         ],
-        &["doc", "ledger", HANDLE, "--max-bytes", "4000"],
+        &[
+            "doc",
+            "ledger",
+            HANDLE,
+            "--max-bytes",
+            "4000",
+            "--offset",
+            "64",
+            "--digest",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
     ];
     for command in commands {
         let command = command
@@ -435,6 +455,50 @@ fn a_page_names_its_continuation_as_a_url() {
         arguments(&url),
         command.arguments().to_vec(),
         "the URL resumes the same read"
+    );
+}
+
+#[test]
+fn a_bounded_ledger_page_names_its_native_continuation() {
+    let task = HANDLE.parse().expect("fixture handle");
+    let document = format!("# Ledger\n\n{}\n", "é".repeat(40));
+    let budget = wire::output::INTERACTIVE
+        .budget(wire::output::Request {
+            rows: None,
+            bytes: Some(17),
+            text: None,
+        })
+        .expect("small ledger page is admitted");
+    let page = ledger_output(&task, &document, None, budget, 0, None).expect("ledger page renders");
+    let page = rewrite_continuations(&page);
+    let url = page
+        .lines()
+        .find_map(|line| line.split_once("; continue: ").map(|(_, url)| url))
+        .expect("ledger page carries a continuation URL");
+    let offset = wire::output::clip(&document, budget.limits().bytes)
+        .text
+        .len();
+    let digest = wire::Digest::compute(wire::Domain::CliExport, document.as_bytes());
+    assert_eq!(
+        url,
+        format!(
+            "spice://task/{HANDLE}/ledger?max-bytes={}&offset={offset}&digest={digest}",
+            budget.limits().bytes
+        )
+    );
+    assert_eq!(
+        arguments(url),
+        vec![
+            "doc".to_owned(),
+            "ledger".to_owned(),
+            HANDLE.to_owned(),
+            "--max-bytes".to_owned(),
+            budget.limits().bytes.to_string(),
+            "--offset".to_owned(),
+            offset.to_string(),
+            "--digest".to_owned(),
+            digest.to_string(),
+        ],
     );
 }
 
