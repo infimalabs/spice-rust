@@ -71,8 +71,9 @@ teammates' addresses under Peers, and `spice lane list` shows every lane's
 receive one now.
 Then write a line `MSG ADDRESS [ADDRESS ...]: BODY` in visible assistant text;
 a tool call's intent, reasoning, code and quotes never send. The body runs to
-the next placed ACK, NAK or MSG header or the end of that text block. A packet
-naming any unavailable address reaches nobody, and a private notice says why.
+the next placed ACK, NAK or MSG header or the end of that text block. Each
+seated address you name receives the packet; one private notice names every
+address that received nothing and why, and those alone need another packet.
 Send a peer only what it needs for its own work.
 
 A delivery headed `[PEER sender ADDRESS lane ID]` is that occupant's MSG:
