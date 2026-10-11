@@ -1,7 +1,7 @@
-//! Native graph continuations retain the validated diagram for the seat's lifetime.
-//! The cursor names that immutable snapshot and the first unseen UTF-8 byte.
+//! Native graph continuations retain validated diagrams in a bounded seat cache.
+//! A cursor names one immutable snapshot and the first unseen UTF-8 byte.
 
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,9 +15,40 @@ use super::{Query, Shape};
 #[cfg(test)]
 mod tests;
 
-/// Incomplete diagrams remain readable even when the board or another read changes.
+/// Maximum incomplete diagrams retained by one seat.
+const MAX_RETAINED_SNAPSHOTS: usize = 16;
+/// Maximum graph snapshot payload retained by one seat.
+const MAX_RETAINED_BYTES: usize = 8 * 1024 * 1024;
+
+/// Incomplete diagrams remain readable across board changes until deterministic eviction.
+pub(crate) struct Pages {
+    cache: Mutex<Cache>,
+    retention: Retention,
+}
+
 #[derive(Default)]
-pub(crate) struct Pages(Mutex<BTreeMap<String, Arc<Snapshot>>>);
+struct Cache {
+    snapshots: VecDeque<Arc<Snapshot>>,
+    bytes: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Retention {
+    snapshots: usize,
+    bytes: usize,
+}
+
+impl Default for Pages {
+    fn default() -> Self {
+        Self {
+            cache: Mutex::default(),
+            retention: Retention {
+                snapshots: MAX_RETAINED_SNAPSHOTS,
+                bytes: MAX_RETAINED_BYTES,
+            },
+        }
+    }
+}
 
 struct Snapshot {
     key: String,
@@ -60,6 +91,46 @@ impl Snapshot {
 
     fn line(&self, line: usize) -> &str {
         &self.text[self.lines[line].clone()]
+    }
+
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.key.capacity()
+            + self.view.capacity()
+            + self.at.as_ref().map_or(0, String::capacity)
+            + self.text.capacity()
+            + self.lines.capacity() * std::mem::size_of::<Range<usize>>()
+    }
+}
+
+impl Cache {
+    fn retain(&mut self, snapshot: Arc<Snapshot>, retention: Retention) -> Result<(), String> {
+        if self
+            .snapshots
+            .iter()
+            .any(|retained| retained.key == snapshot.key)
+        {
+            return Ok(());
+        }
+        let bytes = snapshot.retained_bytes();
+        if bytes > retention.bytes {
+            return Err(format!(
+                "board::graph-snapshot-too-large: diagram needs {bytes} retained bytes, above this seat's {}-byte native continuation limit; use `spice board graph {} --output board-graph-{}.txt`",
+                retention.bytes, snapshot.view, snapshot.view
+            ));
+        }
+        while self.snapshots.len() >= retention.snapshots
+            || self.bytes.saturating_add(bytes) > retention.bytes
+        {
+            let evicted = self
+                .snapshots
+                .pop_front()
+                .expect("a cache over its bound is non-empty");
+            self.bytes -= evicted.retained_bytes();
+        }
+        self.bytes += bytes;
+        self.snapshots.push_back(snapshot);
+        Ok(())
     }
 }
 
@@ -105,6 +176,15 @@ struct Page {
 }
 
 impl Pages {
+    #[cfg(test)]
+    fn with_retention(snapshots: usize, bytes: usize) -> Self {
+        assert!(snapshots > 0 && bytes > 0);
+        Self {
+            cache: Mutex::default(),
+            retention: Retention { snapshots, bytes },
+        }
+    }
+
     pub(super) fn read(
         &self,
         query: &Query,
@@ -133,9 +213,18 @@ impl Pages {
         let (snapshot, cursor, fresh) = match option(query, "after") {
             Some(after) => {
                 let cursor = Cursor::parse(after)?;
-                let snapshot = self.0.lock().unwrap_or_else(PoisonError::into_inner)
-                    .get(&cursor.key).cloned()
-                    .ok_or_else(|| "board::cursor-invalid: graph snapshot is not held by this seat; read the graph without after".to_owned())?;
+                let snapshot = self
+                    .cache
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.key == cursor.key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        "board::cursor-expired: graph snapshot is no longer retained by this seat; read the graph without after"
+                            .to_owned()
+                    })?;
                 if snapshot.view != *view || snapshot.at.as_deref() != at {
                     return Err(
                         "board::cursor-invalid: continuation names another graph read".to_owned(),
@@ -156,11 +245,10 @@ impl Pages {
         };
         let page = page(&snapshot, cursor, budget)?;
         if fresh && page.next.is_some() {
-            self.0
+            self.cache
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .entry(snapshot.key.clone())
-                .or_insert_with(|| Arc::clone(&snapshot));
+                .retain(Arc::clone(&snapshot), self.retention)?;
         }
         let mut document = format!(
             "graph {} snapshot {}; {} lines",
