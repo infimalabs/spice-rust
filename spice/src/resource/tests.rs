@@ -76,8 +76,8 @@ fn each_resource_runs_exactly_its_cli_read() {
         ),
         ("spice://session/sweep?limit=4", "session sweep --limit 4"),
         (
-            "spice://session/context/S1?lane=L&after=c%3A2",
-            "session context S1 --lane L --after c:2",
+            "spice://session/context/S1?lane=L&vendor=omp&stream=session&source=U&member=1&offset=0&after=c%3A2",
+            "session context S1 --lane L --vendor omp --stream session --source U --member 1 --offset 0 --after c:2",
         ),
     ] {
         assert_eq!(arguments(url).join(" "), expected, "{url}");
@@ -208,6 +208,45 @@ fn query_keys_are_those_the_read_admits_each_once() {
     ] {
         refusal(url);
     }
+}
+
+#[test]
+fn a_context_url_without_every_coordinate_names_each_absent_one() {
+    let url = "spice://session/context/S1?vendor=omp&stream=session&member=1&offset=0&limit=3";
+    let refused = refusal(url);
+    let told = refused
+        .strip_prefix(url)
+        .expect("the refusal names its URL");
+    for absent in ["lane", "source"] {
+        assert!(told.contains(absent), "{absent} unnamed: {refused}");
+    }
+    for present in ["vendor", "stream", "member", "offset", "limit"] {
+        assert!(!told.contains(present), "{present} named absent: {refused}");
+    }
+    let command = ["session", "context", "S1", "--lane", "L", "--limit", "3"];
+    assert_eq!(
+        Query::from_arguments(&command.map(str::to_owned)),
+        None,
+        "a command missing coordinates is no served read"
+    );
+}
+
+#[test]
+fn a_task_view_names_its_context_read_as_the_url_that_runs_it() {
+    let command = "spice session context 'S 1' --lane L --vendor omp --stream session --source U --member 1 --offset 40";
+    let view = format!(
+        "creation_context session=S\n{command}\n  spice session context quoted in a description\nspice session context S2 --lane L"
+    );
+    let rewritten = super::context_urls(&view);
+    let lines = rewritten.lines().collect::<Vec<_>>();
+    assert_eq!(lines[0], "creation_context session=S");
+    assert_eq!(
+        arguments(lines[1]),
+        shell_words::split(command.strip_prefix("spice ").expect("command"))
+            .expect("rendered command is shell words"),
+        "the URL runs exactly the rendered read"
+    );
+    assert_eq!(&lines[2..], &view.lines().collect::<Vec<_>>()[2..]);
 }
 
 #[test]
@@ -372,6 +411,16 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
             "01a1276a-903c-7071-89d5-345c833e93c2",
             "--lane",
             "ca38ffa1-2c8c-4ac2-87ae-64a413e15261",
+            "--vendor",
+            "omp",
+            "--stream",
+            "session",
+            "--source",
+            "4df45d2d-b61a-4fe0-a041-6e65e1403cfd",
+            "--member",
+            "1",
+            "--offset",
+            "40",
             "--after",
             "row:40",
         ],
