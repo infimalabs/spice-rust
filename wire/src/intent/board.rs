@@ -120,6 +120,9 @@ pub enum BoardRead {
 pub struct BoardGraph {
     /// Closed board graph view name.
     pub view: String,
+    /// Include settled tasks and their durable historical relations.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
     /// Historical barrier requested by the caller, when present.
     #[serde(
         default,

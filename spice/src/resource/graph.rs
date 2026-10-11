@@ -54,15 +54,17 @@ struct Snapshot {
     key: String,
     view: String,
     at: Option<String>,
+    all: bool,
     barrier: Seq,
     text: String,
     lines: Vec<Range<usize>>,
 }
 
 impl Snapshot {
-    fn new(view: &str, at: Option<String>, barrier: Seq, text: String) -> Self {
+    fn new(view: &str, at: Option<String>, all: bool, barrier: Seq, text: String) -> Self {
+        let scope = if all { "all" } else { "live" };
         let key = format!(
-            "{barrier}:{}",
+            "{barrier}:{scope}:{}",
             Digest::compute(Domain::CliExport, text.as_bytes())
         );
         let mut offset = 0;
@@ -83,6 +85,7 @@ impl Snapshot {
             key,
             view: view.to_owned(),
             at,
+            all,
             barrier,
             text,
             lines,
@@ -210,6 +213,7 @@ impl Pages {
             })
             .map_err(|error| format!("board::limit-invalid: {error}"))?;
         let at = option(query, "at");
+        let all = query.options.iter().any(|(name, _)| name == "all");
         let (snapshot, cursor, fresh) = match option(query, "after") {
             Some(after) => {
                 let cursor = Cursor::parse(after)?;
@@ -225,7 +229,7 @@ impl Pages {
                         "board::cursor-expired: graph snapshot is no longer retained by this seat; read the graph without after"
                             .to_owned()
                     })?;
-                if snapshot.view != *view || snapshot.at.as_deref() != at {
+                if snapshot.view != *view || snapshot.at.as_deref() != at || snapshot.all != all {
                     return Err(
                         "board::cursor-invalid: continuation names another graph read".to_owned(),
                     );
@@ -234,7 +238,13 @@ impl Pages {
             }
             None => {
                 let (barrier, text) = load()?;
-                let snapshot = Arc::new(Snapshot::new(view, at.map(str::to_owned), barrier, text));
+                let snapshot = Arc::new(Snapshot::new(
+                    view,
+                    at.map(str::to_owned),
+                    all,
+                    barrier,
+                    text,
+                ));
                 let cursor = Cursor {
                     key: snapshot.key.clone(),
                     line: 0,

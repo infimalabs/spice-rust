@@ -67,6 +67,7 @@ pub(crate) fn graph_snapshot_at(
         Vec::new(),
         &BoardGraph {
             view: required(matches, "VIEW"),
+            all: matches.get_flag("all"),
             at: matches.get_one::<String>("at").cloned(),
         },
     )
@@ -79,6 +80,7 @@ fn graph_view_in<R: std::borrow::Borrow<Repository>>(
 ) -> Outcome<GraphView> {
     let at = matches.get_one::<String>("at").cloned();
     let handout = contract.path == ["board", "handout"];
+    let all = !handout && matches.get_flag("all");
     let name = required(matches, if handout { "OUTPUT" } else { "VIEW" });
     let destination = if handout {
         handout_destination(&name)
@@ -126,7 +128,7 @@ fn graph_view_in<R: std::borrow::Borrow<Repository>>(
     let answer = match destination {
         Destination::File(output) => export_file(&output, text.as_bytes()).map(GraphView::Export),
         Destination::Page(budget) => {
-            graph_page(&name, &text, budget).map(|page| GraphView::Page(Box::new(page)))
+            graph_page(&name, &text, budget, all).map(|page| GraphView::Page(Box::new(page)))
         }
     };
     match answer {
@@ -160,7 +162,12 @@ pub(in crate::board_command) fn graph_destination(
         bytes: number("max-bytes")?,
         text: number("max-text")?,
     };
-    page_or_file(view, request, matches.get_one::<String>("output").cloned())
+    page_or_file(
+        view,
+        request,
+        matches.get_one::<String>("output").cloned(),
+        matches.get_flag("all"),
+    )
 }
 
 /// The destination for one parsed graph request.
@@ -168,9 +175,10 @@ pub(in crate::board_command) fn page_or_file(
     view: &str,
     request: Request,
     output: Option<String>,
+    all: bool,
 ) -> Result<Destination, Outcome<CommandAnswer>> {
     match output {
-        Some(output) if output == "-" => Err(stdout_refused(&graph_export(view))),
+        Some(output) if output == "-" => Err(stdout_refused(&graph_export(view, all))),
         Some(_) if request != Request::default() => Err(refusal(
             "board::export-bounded",
             None,
@@ -199,18 +207,14 @@ pub(in crate::board_command) fn handout_destination(
 /// The file a complete handout export names by default.
 const HANDOUT_FILE: &str = "board-handout.md";
 
-/// The command that writes this view's complete diagram to a file.
-fn graph_export(view: &str) -> SpiceCommand {
-    SpiceCommand::new(
-        "board",
-        [
-            "graph".to_owned(),
-            view.to_owned(),
-            "--output".to_owned(),
-            format!("board-graph-{view}.txt"),
-        ],
-    )
-    .expect("board is a command token")
+/// The command that writes this view and scope's complete diagram to a file.
+fn graph_export(view: &str, all: bool) -> SpiceCommand {
+    let mut arguments = vec!["graph".to_owned(), view.to_owned()];
+    if all {
+        arguments.push("--all".to_owned());
+    }
+    arguments.extend(["--output".to_owned(), format!("board-graph-{view}.txt")]);
+    SpiceCommand::new("board", arguments).expect("board is a command token")
 }
 
 fn stdout_refused(command: &SpiceCommand) -> Outcome<CommandAnswer> {
@@ -227,6 +231,7 @@ pub(in crate::board_command) fn graph_page(
     view: &str,
     text: &str,
     budget: wire::output::Budget,
+    all: bool,
 ) -> Result<GraphPage, Outcome<CommandAnswer>> {
     let mut lines = text.lines();
     let header = lines.next().unwrap_or_default();
@@ -241,7 +246,7 @@ pub(in crate::board_command) fn graph_page(
             .offer(budget.clip(line))
             .map_err(|error| protocol_fault("board::row-unencodable", &error.to_string()))?;
     }
-    let lines_page = admission.finish(|_| graph_export(view));
+    let lines_page = admission.finish(|_| graph_export(view, all));
     let mut rendered = format!("{header}: {} lines", lines.len());
     for line in &lines_page.rows {
         rendered.push('\n');

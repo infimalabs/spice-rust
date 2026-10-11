@@ -300,6 +300,7 @@ fn graph_and_handout_reads_carry_hidden_rows_beside_public_ones() {
             Vec::new(),
             &BoardGraph {
                 view: "workflow".to_owned(),
+                all: false,
                 at: None,
             },
         );
@@ -723,6 +724,7 @@ fn graph(bus: &Bus, epoch: CanonicalUuid) -> Outcome<CommandAnswer> {
         Vec::new(),
         &BoardGraph {
             view: "dependencies".to_owned(),
+            all: false,
             at: None,
         },
     )

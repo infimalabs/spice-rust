@@ -71,8 +71,8 @@ fn each_resource_runs_exactly_its_cli_read() {
             ),
         ),
         (
-            "spice://board/graph/dependencies?limit=5&at=x",
-            "board graph dependencies --limit 5 --at x",
+            "spice://board/graph/dependencies?all&limit=5&at=x",
+            "board graph dependencies --all --limit 5 --at x",
         ),
         ("spice://inbox?limit=2", "inbox --limit 2"),
         ("spice://lane", "lane list"),

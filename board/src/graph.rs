@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{self, Write};
 
@@ -196,21 +196,42 @@ impl Diagram {
     }
 }
 
-/// Render one named view from current heads and durable review history.
+/// Render one named view from every current head and durable review relation.
 #[must_use]
 pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram {
+    render_scope(view, entries, reviews, false)
+}
+
+/// Render one named view from live task heads and their direct relations.
+///
+/// Dependency names still resolve through settled entries, but those entries
+/// contribute no unrelated rows of their own.
+#[must_use]
+pub fn render_live(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram {
+    render_scope(view, entries, reviews, true)
+}
+
+fn render_scope(view: View, entries: &[Entry], reviews: &[ReviewEdge], live_only: bool) -> Diagram {
     let mut ordered: Vec<&Entry> = entries.iter().collect();
     ordered.sort_by(|left, right| left.handle().cmp(right.handle()));
     let handles = entries
         .iter()
         .map(|entry| (entry.born(), entry.handle()))
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
+    let live_handles = live_only.then(|| {
+        entries
+            .iter()
+            .filter(|entry| live(entry))
+            .map(|entry| entry.handle().clone())
+            .collect::<BTreeSet<_>>()
+    });
+    let visible = |entry: &&Entry| !live_only || live(entry);
 
     let mut text = String::new();
     writeln!(text, "graph {}", view.as_str()).expect("String writes are infallible");
     match view {
         View::Origin => {
-            for entry in ordered {
+            for entry in ordered.into_iter().filter(visible) {
                 writeln!(
                     text,
                     "{} -> {}",
@@ -221,7 +242,7 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
             }
         }
         View::Dependencies => {
-            for entry in ordered {
+            for entry in ordered.into_iter().filter(visible) {
                 for edge in entry.dependencies() {
                     let task = handles.get(&edge.task).copied();
                     let after = handles.get(&edge.after).copied();
@@ -239,6 +260,12 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
             let mut reviews = reviews.to_vec();
             reviews.sort();
             for edge in reviews {
+                if live_handles
+                    .as_ref()
+                    .is_some_and(|handles| !handles.contains(&edge.task))
+                {
+                    continue;
+                }
                 let verdict = verdict(edge.verdict);
                 match &edge.implemented {
                     Some((phase, author)) => writeln!(
@@ -256,7 +283,7 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
             }
         }
         View::Workflow => {
-            for entry in ordered {
+            for entry in ordered.into_iter().filter(visible) {
                 writeln!(
                     text,
                     "{}: {} [{}]",
@@ -268,7 +295,7 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
             }
         }
         View::Claims => {
-            for entry in ordered {
+            for entry in ordered.into_iter().filter(visible) {
                 if let Some(claim) = entry.claim() {
                     writeln!(
                         text,
@@ -284,6 +311,10 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
     }
 
     Diagram { view, text }
+}
+
+fn live(entry: &Entry) -> bool {
+    entry.workflow().status == "pending" && entry.workflow().completion.is_none()
 }
 
 const fn verdict(verdict: body::Verdict) -> &'static str {
