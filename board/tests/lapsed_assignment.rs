@@ -123,7 +123,8 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
 }
 
 fn eligible_for(entry: &Entry, actor: &Actor) -> bool {
-    board::eligible_entry(std::slice::from_ref(entry), entry, actor, &environment())
+    let satisfied = board::satisfied_tasks(std::slice::from_ref(entry));
+    board::eligible_entry(&satisfied, entry, actor, &environment())
 }
 
 fn selected_for(entry: &Entry, actor: &Actor) -> bool {

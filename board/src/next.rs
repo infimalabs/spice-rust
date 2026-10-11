@@ -637,14 +637,12 @@ pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> 
 /// Whether one named entry satisfies the same eligibility law as allocation.
 #[must_use]
 pub fn eligible_entry(
-    entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     entry: &Entry,
     actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    workable(entry, actor, &satisfied_tasks(entries))
-        && environment_satisfied(entry, environment)
-        && unheld(entry)
+    workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
 /// Whether one exact task may be captured, including parked `.oops` triage.
@@ -654,48 +652,42 @@ pub fn eligible_entry(
 /// but promotion is still required before dependencies or completion move.
 #[must_use]
 pub fn capturable_entry(
-    entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     entry: &Entry,
     actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    let completed = satisfied_tasks(entries);
-    let public = workable(entry, actor, &completed);
+    let public = workable(entry, actor, satisfied);
     let oops = entry.project().visibility().hidden_stem() == Some("oops")
-        && operational(entry, actor, &completed);
+        && operational(entry, actor, satisfied);
     (public || oops) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the team's current task scope.
 #[must_use]
 pub fn selectable_entry(
-    entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     entry: &Entry,
     actor: &Actor,
     subscription: &TeamSubscription,
     environment: &wire::Environment,
 ) -> bool {
-    selectable(entry, actor, subscription, &satisfied_tasks(entries), None)
+    selectable(entry, actor, subscription, satisfied, None)
         && environment_satisfied(entry, environment)
 }
 
 /// [`selectable_entry`] at an explicit allocation instant.
 #[must_use]
 pub fn selectable_entry_at(
-    entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     entry: &Entry,
     actor: &Actor,
     subscription: &TeamSubscription,
     environment: &wire::Environment,
     now: Instant,
 ) -> bool {
-    selectable(
-        entry,
-        actor,
-        subscription,
-        &satisfied_tasks(entries),
-        Some(now),
-    ) && environment_satisfied(entry, environment)
+    selectable(entry, actor, subscription, satisfied, Some(now))
+        && environment_satisfied(entry, environment)
 }
 
 /// Earliest future phase-handoff instant that currently blocks `actor`.
@@ -706,15 +698,15 @@ pub fn selectable_entry_at(
 #[must_use]
 pub fn blocked_handoff_until(
     entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     actor: &Actor,
     subscription: &TeamSubscription,
     environment: &wire::Environment,
     now: Instant,
 ) -> Option<Instant> {
-    let completed = satisfied_tasks(entries);
     entries
         .iter()
-        .filter(|entry| selectable(entry, actor, subscription, &completed, None))
+        .filter(|entry| selectable(entry, actor, subscription, satisfied, None))
         .filter(|entry| environment_satisfied(entry, environment))
         .filter(|entry| !handoff_admits(entry, actor, Some(now)))
         .filter_map(|entry| entry.phase_handoff().map(|handoff| handoff.until()))
@@ -733,13 +725,13 @@ pub fn blocked_handoff_until(
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
 pub fn stealable_entry(
-    entries: &[Entry],
+    satisfied: &BTreeSet<TaskStamp>,
     entry: &Entry,
     _actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
     !entry.project().visibility().is_hidden()
-        && operational_without_assignment(entry, &satisfied_tasks(entries))
+        && operational_without_assignment(entry, satisfied)
         && environment_satisfied(entry, environment)
 }
 

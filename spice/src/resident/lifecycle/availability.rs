@@ -17,34 +17,40 @@ pub(super) fn selected_ready(
     let environment = snapshot
         .environment()
         .with_appliance(appliance.product.clone());
-    let selected = board::select_at(
+    let satisfied = board::satisfied_tasks(entries);
+    let selected = board::select_with_satisfied_at(
         entries,
         actor,
         subscription,
         allocation.band(),
         recent_cell.as_ref(),
         &environment,
+        &satisfied,
         now,
     );
     let Some(selected) = selected else {
-        return Ok(
-            board::blocked_handoff_until(entries, actor, subscription, &environment, now).map(
-                |at| SelectedReady {
-                    at,
-                    eligible: 0,
-                    handoff: false,
-                    handoff_wait: true,
-                    last_resort: false,
-                },
-            ),
-        );
+        return Ok(board::blocked_handoff_until(
+            entries,
+            &satisfied,
+            actor,
+            subscription,
+            &environment,
+            now,
+        )
+        .map(|at| SelectedReady {
+            at,
+            eligible: 0,
+            handoff: false,
+            handoff_wait: true,
+            last_resort: false,
+        }));
     };
     let at = ready_instant(selected.entry(), ready_at)?;
     let handoff = selected.entry().phase_handoff().is_some();
     let eligible = entries
         .iter()
         .filter(|entry| {
-            board::selectable_entry_at(entries, entry, actor, subscription, &environment, now)
+            board::selectable_entry_at(&satisfied, entry, actor, subscription, &environment, now)
         })
         .count();
     Ok(Some(SelectedReady {

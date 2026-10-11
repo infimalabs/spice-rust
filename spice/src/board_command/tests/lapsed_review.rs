@@ -184,7 +184,12 @@ fn a_review_still_pinned_by_a_lapsed_reviewer_is_taken_over_without_repair() {
         .find(|entry| entry.handle() == &task)
         .expect("the pinned review is on the board");
     assert!(
-        board::eligible_entry(&entries, entry, &successor, &pinned.environment()),
+        board::eligible_entry(
+            &board::satisfied_tasks(&entries),
+            entry,
+            &successor,
+            &pinned.environment()
+        ),
         "a stale pin from a lapsed reviewer no longer hides the review",
     );
 

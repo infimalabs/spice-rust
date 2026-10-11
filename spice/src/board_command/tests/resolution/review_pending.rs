@@ -253,7 +253,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
         .find(|entry| entry.handle() == &review.reviewed)
         .expect("reviewed task remains visible");
     assert!(!board::eligible_entry(
-        &entries,
+        &board::satisfied_tasks(&entries),
         reviewed,
         &review.implementer,
         &available.environment(),
@@ -439,7 +439,12 @@ fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
         .find(|entry| entry.handle() == &review.reviewed)
         .expect("reviewed task remains visible");
     assert!(
-        board::eligible_entry(&entries, entry, &review.reviewer, &pending.environment()),
+        board::eligible_entry(
+            &board::satisfied_tasks(&entries),
+            entry,
+            &review.reviewer,
+            &pending.environment()
+        ),
         "a finding whose already-related correction is complete is reviewable again",
     );
     review.finish();

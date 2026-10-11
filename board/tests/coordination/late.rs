@@ -243,6 +243,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
     assert_eq!(
         board::blocked_handoff_until(
             std::slice::from_ref(&independent),
+            &board::satisfied_tasks(std::slice::from_ref(&independent)),
             &prior,
             &all_projects(),
             &environment(),
@@ -295,6 +296,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
     assert_eq!(
         board::blocked_handoff_until(
             std::slice::from_ref(&independent),
+            &board::satisfied_tasks(std::slice::from_ref(&independent)),
             &prior,
             &all_projects(),
             &environment(),
@@ -643,11 +645,12 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
     let same = entries[0].handle().to_string();
     let cross = entries[1].handle().to_string();
     let unknown = entries[2].handle().to_string();
+    let satisfied = board::satisfied_tasks(&entries);
     let handles = |subscription: &wire::TeamSubscription| {
         entries
             .iter()
             .filter(|entry| {
-                board::selectable_entry(&entries, entry, &actor, subscription, &environment())
+                board::selectable_entry(&satisfied, entry, &actor, subscription, &environment())
             })
             .map(|entry| entry.handle().to_string())
             .collect::<BTreeSet<_>>()
