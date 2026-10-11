@@ -31,6 +31,7 @@ impl MappedCommand {
             SelectedCommand::LaneEffortRetune { body } => Self::lane_effort_retune(contract, body),
             SelectedCommand::LaneFastRetune { body } => Self::lane_fast_retune(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
+            SelectedCommand::QuoteRead { body } => Self::quote_read(contract, body),
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
             SelectedCommand::SteerResend { directive } => Self::steer_resend(contract, directive),
             SelectedCommand::SteerRecover { directive } => Self::steer_recover(contract, directive),
@@ -228,6 +229,16 @@ impl MappedCommand {
             contract,
             &["recall"],
             CommandKind::LaneRecall,
+            Vec::new(),
+            body,
+        )
+    }
+
+    fn quote_read(contract: &Contract, body: &wire::intent::QuoteRead) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["quote"],
+            CommandKind::QuoteRead,
             Vec::new(),
             body,
         )

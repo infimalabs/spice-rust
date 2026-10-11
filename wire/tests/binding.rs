@@ -161,6 +161,10 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
+        CommandKind::QuoteRead,
+        r#"{ "target": "spice://quote/v1/steer/1kQnrzNZ/6ac2a419aad5b1cb8a9b632aed2429f5f7bd479de18dd1bb1bb031643450b335" }"#,
+    ),
+    (
         CommandKind::SteerHistory,
         r#"{
   "window": { "kind": "anchor", "identity": "018f82d4-6f59-7d06-92e3-bce9131163c4" },

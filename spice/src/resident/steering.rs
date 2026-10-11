@@ -642,6 +642,38 @@ pub(super) fn inbox(
     })
 }
 
+/// Resolve one quote target exactly as delivery and the app do.
+///
+/// Resolution reads tape and journal authority and commits nothing, so a
+/// reader may ask as often as it reads.
+pub(super) fn quote(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    request: &wire::intent::QuoteRead,
+) -> Outcome<CommandAnswer> {
+    let cursor = match bus.read(|read| read.cursor()) {
+        Ok(Some(cursor)) => cursor,
+        Ok(None) => {
+            return typed_store_fault(
+                "quote::journal-empty",
+                "a running resident has no startup authority fact",
+            );
+        }
+        Err(error) => return typed_store_fault("quote::journal-unreadable", &error.to_string()),
+    };
+    let reader = bus.reader();
+    let resolution = spice::quote::Resolver::from_tape_with_agent_presenter(
+        &paths.tape,
+        &reader,
+        super::quote_agent_prose,
+    )
+    .resolve(&request.target, 0);
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(cursor),
+        body: CommandAnswer::Quote(resolution),
+    })
+}
+
 struct SteeringSnapshot {
     ledger: steer::Ledger,
     /// Pending directives an operator send opened, which alone wake a lane.

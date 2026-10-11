@@ -870,6 +870,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::inbox"
     ),
     row!(
+        ["quote"],
+        "quote TARGET",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "quote::read"
+    ),
+    row!(
         ["recall"],
         "recall [LANE]",
         OperatorOrLane,

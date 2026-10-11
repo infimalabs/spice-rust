@@ -199,6 +199,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::DocApply
         | CommandKind::SteerSend
         | CommandKind::SteerInbox
+        | CommandKind::QuoteRead
         | CommandKind::SteerHistory
         | CommandKind::SteerResend
         | CommandKind::SteerRecover
@@ -371,6 +372,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["steer", "resend"]
             | ["steer", "recover"]
             | ["inbox"]
+            | ["quote"]
             | ["consent"]
             | ["consent", "allow"]
             | ["consent", "deny"]

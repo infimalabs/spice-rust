@@ -93,6 +93,17 @@ pub struct SteerInbox {
     pub retired: bool,
 }
 
+/// Resolve one quote target against the resident's durable authority.
+///
+/// The spelling crosses unparsed: a malformed target is a typed
+/// [`crate::QuoteUnavailable::Malformed`] answer, not a refused command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuoteRead {
+    /// Target spelling, normally `spice://quote/v1/...`.
+    pub target: String,
+}
+
 /// Name one directive and nothing else.
 ///
 /// Resending and cancelling both identify a directive without adding to it.

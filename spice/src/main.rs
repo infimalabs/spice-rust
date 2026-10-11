@@ -52,6 +52,8 @@ mod lock_command;
 mod message_shape;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod quote_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod read_page;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
@@ -545,6 +547,7 @@ impl NativeInvocation<'_> {
                 ),
                 form,
             ),
+            ["quote"] => deliver_display(&quote_command::run(leaf, contract), form),
             ["trust"] => {
                 deliver_display(&trust_command::report(leaf, contract, configuration), form)
             }

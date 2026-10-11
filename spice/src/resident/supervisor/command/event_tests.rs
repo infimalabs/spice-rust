@@ -84,6 +84,7 @@ fn seat(sink: &Sink, terminal: &Terminal) -> Arc<Driver<Sink>> {
         sink.clone(),
         || None,
         || None,
+        |_| Err("no quotes here".to_owned()),
         steer::Key::for_identity(crate::resident::new_uuid()),
         Some(terminal.clone()),
     )

@@ -255,6 +255,22 @@ fn only_a_live_retune_refusal_is_left_to_its_driver() {
     }
 }
 
+/// An omp without host-owned schemes refuses the `spice://` registration;
+/// the lane runs on without the scheme rather than failing.
+#[test]
+fn a_refused_uri_scheme_registration_is_no_failure() {
+    let refused = format!(
+        r#"{{"id":"{}","type":"response","command":"set_host_uri_schemes","success":false,"error":"Unknown command: set_host_uri_schemes"}}"#,
+        listen::OMP_URI_SCHEMES_REQUEST_ID
+    );
+    assert!(decoded(refused.as_bytes()).events().is_empty());
+    let other = br#"{"id":"spice-tools","type":"response","command":"set_host_uri_schemes","success":false,"error":"reserved"}"#;
+    assert!(
+        matches!(decoded(other).events(), [Event::Failure(_)]),
+        "only the registration's own identity is exempt"
+    );
+}
+
 #[test]
 fn prompt_results_preserve_identity_lifecycle_and_structured_provider_failure() {
     let completed = decoded(PROMPT_COMPLETED);
@@ -408,6 +424,29 @@ fn a_host_tool_call_is_a_dialog_and_its_cancellation_withdraws_it() {
             .and_then(|context| context.withdrawn.clone()),
         None
     );
+}
+
+#[test]
+fn a_host_uri_request_is_a_dialog_and_its_cancellation_withdraws_it() {
+    let request = decoded(
+        br#"{"type":"host_uri_request","id":"u1","operation":"read","url":"spice://quote/v1/steer/1kQnrzNZ/00"}"#,
+    );
+    assert!(request.events().is_empty(), "a host URI request is silent");
+    let context = request.context().expect("a frame has context");
+    assert_eq!(
+        context.dialog,
+        Some(Dialog::HostUri {
+            id: "u1".to_owned(),
+            operation: "read".to_owned(),
+            url: "spice://quote/v1/steer/1kQnrzNZ/00".to_owned(),
+        })
+    );
+
+    let cancel = decoded(br#"{"type":"host_uri_cancel","id":"u2","targetId":"u1"}"#);
+    assert!(cancel.events().is_empty(), "a withdrawal is silent");
+    let context = cancel.context().expect("a frame has context");
+    assert_eq!(context.dialog, None);
+    assert_eq!(context.withdrawn, Some("u1".to_owned()));
 }
 
 #[test]

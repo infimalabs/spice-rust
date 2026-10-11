@@ -26,6 +26,7 @@ pub use event::{
 pub use omp::{
     PROTOCOL_VERSION as OMP_PROTOCOL_VERSION,
     RETUNE_REQUEST_ID_PREFIX as OMP_RETUNE_REQUEST_ID_PREFIX,
+    URI_SCHEMES_REQUEST_ID as OMP_URI_SCHEMES_REQUEST_ID,
 };
 pub use residue::{
     CommandResponse, Decoded, Dialog, LocusLengthError, MessageContext, PromptOutcome,

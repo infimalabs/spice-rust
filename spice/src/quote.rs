@@ -208,6 +208,32 @@ pub fn presenter(
     })
 }
 
+/// One resolution as a reader receives it: the recorded author, then the
+/// exact authenticated text.
+///
+/// # Errors
+///
+/// Returns the in-place refusal steering delivery renders when the target
+/// names no quotable source.
+pub fn render(resolution: &QuoteResolution) -> Result<String, String> {
+    match resolution {
+        QuoteResolution::Resolved(quote) => {
+            let author = match &quote.author {
+                QuoteAuthor::Agent { lane, occupant } => {
+                    format!("agent occupant {occupant} of lane {lane}")
+                }
+                QuoteAuthor::Directive { actor } => actor.to_string(),
+            };
+            Ok(format!("Quoted from {author}:\n\n{}", quote.text))
+        }
+        QuoteResolution::Unavailable { target, reason } => {
+            let mut refusal = String::new();
+            render_unavailable(&mut refusal, target, *reason);
+            Err(refusal)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQuote {
     identity: Option<String>,

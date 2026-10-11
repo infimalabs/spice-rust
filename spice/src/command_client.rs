@@ -97,6 +97,8 @@ pub(crate) enum SelectedCommand<'a> {
     },
     /// Read one bounded continuity account.
     LaneRecall { body: &'a wire::intent::LaneRecall },
+    /// Resolve one quote target against durable authority.
+    QuoteRead { body: &'a wire::intent::QuoteRead },
     /// The operator appends one durable directive to a seated lane.
     SteerSend {
         lane: CanonicalUuid,
@@ -380,6 +382,32 @@ pub(crate) fn read_lane_inbox(
     lane: CanonicalUuid,
 ) -> Result<InboxAnswer, Outcome<CommandAnswer>> {
     read_inbox(operator_discovery, Connection::Lane(lane), None).map(|snapshot| snapshot.answer)
+}
+
+/// Resolve one quote target over the lane's own authenticated connection.
+pub(crate) fn read_lane_quote(
+    operator_discovery: &Path,
+    lane: CanonicalUuid,
+    target: &str,
+) -> Result<wire::QuoteResolution, Outcome<CommandAnswer>> {
+    let contract = crate::cli::contract(&["quote"])
+        .expect("the generated CLI registry carries the quote contract");
+    let body = wire::intent::QuoteRead {
+        target: target.to_owned(),
+    };
+    let mapped = MappedCommand::selected(contract, SelectedCommand::QuoteRead { body: &body });
+    match execute_mapped(operator_discovery, contract, Connection::Lane(lane), mapped) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Quote(resolution),
+            ..
+        }) => Ok(resolution),
+        Outcome::Reply(_) => Err(protocol_fault(
+            "quote::answer-invalid",
+            "resident quote reply did not carry a quote resolution",
+        )),
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
 }
 
 /// Acquire one authenticated session across a resident publication handoff.

@@ -33,6 +33,12 @@ pub const PROTOCOL_VERSION: u8 = 2;
 /// other refused command, a launch's opening effort included, is a failure.
 pub const RETUNE_REQUEST_ID_PREFIX: &str = "spice-retune-";
 
+/// Request identity of the launch's `spice://` host-URI registration.
+///
+/// The registration is feature detection: an omp that refuses it runs on
+/// without the scheme, so its refusal is no failure of the lane.
+pub const URI_SCHEMES_REQUEST_ID: &str = "spice-uri-schemes";
+
 /// RPC frames and session entries that carry no listening moment of their own.
 ///
 /// Every partial, lifecycle, and transport frame is named here rather than
@@ -213,8 +219,9 @@ pub(crate) fn session_turn(message: Option<&Object>) -> Option<TurnMoment> {
 }
 
 /// The dialog one RPC frame opens that waits on an answer: a select, confirm,
-/// input, or editor request, or a call on a tool the host registered.
-/// Notices, status, widgets, titles, and URL openings expect no reply.
+/// input, or editor request, a call on a tool the host registered, or a read
+/// or write of a URI scheme the host owns. Notices, status, widgets, titles,
+/// and URL openings expect no reply.
 pub(crate) fn dialog(record: &Object) -> Option<Dialog> {
     let field = |key: &str| record.get(key).and_then(Value::as_str);
     let id = field("id")?.to_owned();
@@ -227,6 +234,11 @@ pub(crate) fn dialog(record: &Object) -> Option<Dialog> {
                 .and_then(Value::as_object)
                 .cloned()
                 .unwrap_or_default(),
+        }),
+        "host_uri_request" => Some(Dialog::HostUri {
+            id,
+            operation: field("operation")?.to_owned(),
+            url: field("url")?.to_owned(),
         }),
         "extension_ui_request" => match field("method")? {
             "confirm" => Some(Dialog::Confirm {
@@ -241,11 +253,12 @@ pub(crate) fn dialog(record: &Object) -> Option<Dialog> {
     }
 }
 
-/// The host tool call one RPC frame withdraws: omp stopped waiting on it,
-/// so the host stops running it.
+/// The host call one RPC frame withdraws: omp stopped waiting on a host tool
+/// call or a host URI request, so the host stops answering it.
 pub(crate) fn withdrawn(record: &Object) -> Option<String> {
     let field = |key: &str| record.get(key).and_then(Value::as_str);
-    (field("type")? == "host_tool_cancel").then(|| field("targetId").map(str::to_owned))?
+    matches!(field("type")?, "host_tool_cancel" | "host_uri_cancel")
+        .then(|| field("targetId").map(str::to_owned))?
 }
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -545,17 +558,16 @@ pub(crate) fn command_response(
 
 /// A command reply. Only `get_state` carries content: the exact session
 /// identity a resumed launch names again. A refused command is a failure the
-/// lane must see, except a live retune its own driver answers.
+/// lane must see, except a live retune its own driver answers and the
+/// host-URI registration a lane runs on without.
 fn response(record: &Object, locus: Locus) -> Events {
     let response = command_response(record)?.expect("response records carry response context");
     let command = response.command.as_str();
     if !response.success {
         let reason = response.error.as_deref().unwrap_or("no reason given");
-        if response
-            .id
-            .as_deref()
-            .is_some_and(|id| id.starts_with(RETUNE_REQUEST_ID_PREFIX))
-        {
+        if response.id.as_deref().is_some_and(|id| {
+            id.starts_with(RETUNE_REQUEST_ID_PREFIX) || id == URI_SCHEMES_REQUEST_ID
+        }) {
             return Ok(Vec::new());
         }
         let mut message = format!("{command} refused: {reason}");

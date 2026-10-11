@@ -63,6 +63,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::SteerRecover
         | CommandKind::SteerDispose
         | CommandKind::SteerCancel
+        | CommandKind::QuoteRead
         | CommandKind::ConsentRead
         | CommandKind::ConsentPolicy
         | CommandKind::ConsentDecide

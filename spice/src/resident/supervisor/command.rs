@@ -8,16 +8,17 @@
 //! settled so the child drains and exits on its own. A drain interrupts the
 //! turn over the same pipe before any signal is sent. A confirm dialog becomes one
 //! consent request the resident decides; a call on the lane's shell runs in
-//! the lane's own terminal and answers with what the command said; every other
-//! dialog is declined, since nobody at the lane can compose a choice or text
-//! for it.
+//! the lane's own terminal and answers with what the command said; a read of
+//! a `spice://quote/v1` target answers with the resident's resolution of it;
+//! every other dialog is declined, since nobody at the lane can compose a
+//! choice or text for it.
 //!
 //! Steering never waits on a command: unheard direction arriving while a
 //! command runs interrupts the call, which answers with what the command said
 //! so far while the command keeps running as a job. The resident reaches the
 //! driver through a datagram signal; the payload remains in journal authority.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,7 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Read once per compaction, off the decoding path, since a briefing
     /// scans the transcript and the journal.
     read_briefing: BriefingReader,
+    read_quote: uri::QuoteReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -85,6 +87,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     terminal: Option<Terminal>,
     /// The calls being answered now, by the host tool call each answers.
     calls: Mutex<HashMap<String, Handle>>,
+    /// Host URI requests being answered now. A withdrawn request leaves this
+    /// set, and only a request still in it is answered.
+    uris: Mutex<HashSet<String>>,
     /// Correlated live retunes awaiting an OMP response.
     retunes: Mutex<HashMap<String, PendingRetune>>,
 }
@@ -255,6 +260,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
+        let read_quote = uri::resident_reader(discovery.clone(), lane);
         let projector = media::Projector::new(steering_media, lane);
         let environment = crate::session_environment().rooted(worktree);
         Self::with_readers(
@@ -285,6 +291,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                     None,
                 ))
             },
+            read_quote,
             steer::Key::for_identity(lane),
             terminal,
         )
@@ -294,6 +301,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
+        read_quote: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
         seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
@@ -301,6 +309,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             stdin: Mutex::new(Some(stdin)),
             read_inbox: Box::new(read_inbox),
             read_briefing: Box::new(read_briefing),
+            read_quote: Box::new(read_quote),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
@@ -316,6 +325,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
+            uris: Mutex::new(HashSet::new()),
             retunes: Mutex::new(HashMap::new()),
         })
     }
@@ -899,6 +909,10 @@ impl<W: Write + Send + 'static> Driver<W> {
                 self.run(id, tool, arguments);
                 None
             }
+            Some(Dialog::HostUri { id, operation, url }) => {
+                self.serve_uri(id, operation, url);
+                None
+            }
             Some(dialog) => {
                 let _declined = self.write(&vendor::omp::dialog_declined(dialog.id()));
                 None
@@ -1146,8 +1160,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// End the work one withdrawn call is being answered with, if it still runs.
+    /// End the work one withdrawn call is being answered with, if it still
+    /// runs, and silence the answer to a withdrawn host URI request.
     fn cancel(&self, id: &str) {
+        self.withdraw_uri(id);
         let handle = self
             .calls
             .lock()
@@ -1479,3 +1495,4 @@ impl Drop for KickDoor {
 mod event_tests;
 mod media;
 pub(in crate::resident) mod renewal;
+mod uri;

@@ -105,6 +105,8 @@ pub enum CommandKind {
     SteerDispose,
     /// Withdraw a live directive as operator intent.
     SteerCancel,
+    /// Resolve one quote target against durable tape and journal authority.
+    QuoteRead,
 
     /// Read the pending consent queue.
     ConsentRead,
@@ -630,6 +632,7 @@ impl CommandKind {
         Self::SteerRecover,
         Self::SteerDispose,
         Self::SteerCancel,
+        Self::QuoteRead,
         Self::ConsentRead,
         Self::ConsentPolicy,
         Self::ConsentDecide,
@@ -699,6 +702,7 @@ impl CommandKind {
             | Self::SteerRecover
             | Self::SteerDispose
             | Self::SteerCancel
+            | Self::QuoteRead
             | Self::ConsentRead
             | Self::ConsentPolicy
             | Self::ConsentDecide => self.coordination_spelling(),
@@ -772,6 +776,7 @@ impl CommandKind {
             Self::SteerRecover => "steer::recover",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
+            Self::QuoteRead => "quote::read",
             Self::ConsentRead => "consent::read",
             Self::ConsentPolicy => "consent::policy",
             Self::ConsentDecide => "consent::decide",
@@ -956,7 +961,7 @@ impl CommandKind {
         match self {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
-            Self::SteerInbox => Law::READ,
+            Self::SteerInbox | Self::QuoteRead => Law::READ,
             Self::SteerHistory => Law::OPERATOR_READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,
@@ -1004,6 +1009,7 @@ impl CommandKind {
                 | Self::GlobalSettingsRead
                 | Self::VendorCatalog
                 | Self::SteerInbox
+                | Self::QuoteRead
                 | Self::SteerHistory
                 | Self::ConsentRead
                 | Self::ConsentPolicy
