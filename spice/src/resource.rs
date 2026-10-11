@@ -51,7 +51,7 @@ spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
 spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
 spice://session/turns  session turns [?file=PATH...&start=TIME&end=TIME&contains=TEXT&turn-id=ID...&tool=NAME...&view=dialogue|full&limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://session/sweep  session sweep [?file=PATH...&limit=N&max-bytes=N&max-text=N&after=CURSOR&deadline-seconds=N]
-spice://session/context/SESSION  session context SESSION [?lane=UUID&vendor=NAME&stream=NAME&source=UUID&member=N&offset=N&limit=N&max-bytes=N&max-text=N&after=CURSOR]
+spice://session/context/SESSION?lane=UUID&vendor=NAME&stream=NAME&source=UUID&member=N&offset=N  session context SESSION; all six coordinates are required, so copy the whole URL a task view names [&limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://quote/v1/...  a quoted message and its recorded author
 Query values percent-encode reserved bytes, ':' as %3A; a key marked ... repeats. A trailing :N, :N-M, :N+K, :-N, or comma list selects lines; :raw is the text itself.
 resources:
@@ -161,6 +161,9 @@ enum Arity {
     Flag,
     /// `?limit=N` spells `--limit N`, at most once.
     Once,
+    /// `?lane=UUID` spells `--lane UUID`, exactly once: a read without it
+    /// names no record.
+    Required,
     /// `?tool=NAME` spells `--tool NAME`, as often as the query names it.
     Repeated,
     /// `?file=PATH` spells the operand `PATH`, as often as the query names it.
@@ -184,6 +187,13 @@ const fn repeated(name: &'static str) -> Key {
     Key {
         name,
         arity: Arity::Repeated,
+    }
+}
+
+const fn required(name: &'static str) -> Key {
+    Key {
+        name,
+        arity: Arity::Required,
     }
 }
 
@@ -243,13 +253,14 @@ const SWEEP: &[Key] = &[
     once("after"),
     once("deadline-seconds"),
 ];
+/// A prior session's boundary coordinates, then the page over its records.
 const CONTEXT: &[Key] = &[
-    once("lane"),
-    once("vendor"),
-    once("stream"),
-    once("source"),
-    once("member"),
-    once("offset"),
+    required("lane"),
+    required("vendor"),
+    required("stream"),
+    required("source"),
+    required("member"),
+    required("offset"),
     once("limit"),
     once("max-bytes"),
     once("max-text"),
@@ -295,6 +306,21 @@ impl Shape {
             .iter()
             .find(|admitted| admitted.name == key)
             .map(|admitted| admitted.arity)
+    }
+
+    /// The keys a read of this shape cannot run without.
+    fn required(&self) -> impl Iterator<Item = &'static str> {
+        self.admitted()
+            .iter()
+            .filter(|admitted| admitted.arity == Arity::Required)
+            .map(|admitted| admitted.name)
+    }
+
+    /// The required keys `options` does not name, in admitted order.
+    fn missing(&self, options: &[(String, Option<String>)]) -> Vec<&'static str> {
+        self.required()
+            .filter(|name| !options.iter().any(|(named, _)| named == name))
+            .collect()
     }
 
     fn path(&self) -> String {
@@ -402,7 +428,9 @@ impl Query {
                 _ => {
                     let value = match shape.arity(key)? {
                         Arity::Flag => None,
-                        Arity::Once | Arity::Repeated => Some((*words.next()?).to_owned()),
+                        Arity::Once | Arity::Required | Arity::Repeated => {
+                            Some((*words.next()?).to_owned())
+                        }
                         Arity::Operand => return None,
                     };
                     options.push((key.to_owned(), value));
@@ -417,7 +445,10 @@ impl Query {
                 (true, true) => Detail::Both,
             };
         }
-        Some(Self { shape, options })
+        shape
+            .missing(&options)
+            .is_empty()
+            .then_some(Self { shape, options })
     }
 }
 
@@ -657,9 +688,10 @@ fn options(shape: &Shape, query: &str, url: &str) -> Result<Vec<(String, Option<
             });
         };
         match (&value, arity) {
-            (Some(value), Arity::Once | Arity::Repeated | Arity::Operand) if !value.is_empty() => {}
+            (Some(value), Arity::Once | Arity::Required | Arity::Repeated | Arity::Operand)
+                if !value.is_empty() => {}
             (None, Arity::Flag) => {}
-            (_, Arity::Once | Arity::Repeated | Arity::Operand) => {
+            (_, Arity::Once | Arity::Required | Arity::Repeated | Arity::Operand) => {
                 return Err(format!(
                     "{url} names {key} without a value; write {key}=VALUE"
                 ));
@@ -668,12 +700,19 @@ fn options(shape: &Shape, query: &str, url: &str) -> Result<Vec<(String, Option<
                 return Err(format!("{url} gives {key} a value; write {key} alone"));
             }
         }
-        if matches!(arity, Arity::Flag | Arity::Once)
+        if matches!(arity, Arity::Flag | Arity::Once | Arity::Required)
             && options.iter().any(|(named, _)| *named == key)
         {
             return Err(format!("{url} names {key} twice"));
         }
         options.push((key, value));
+    }
+    let missing = shape.missing(&options);
+    if !missing.is_empty() {
+        return Err(format!(
+            "{url} lacks the required coordinates {}; copy the whole spice://session/context URL the owning task view names (spice://task/HANDLE/context)",
+            missing.join(", "),
+        ));
     }
     Ok(options)
 }
@@ -983,6 +1022,9 @@ impl Seat {
                 if let Outcome::Reply(reply) = &outcome
                     && let CommandAnswer::Text(_) = &reply.body
                 {
+                    if matches!(query.shape, Shape::Task { .. }) {
+                        document = context_urls(&document);
+                    }
                     board_trailer(&mut document, &query.shape);
                 }
                 document
@@ -1073,6 +1115,22 @@ fn rewrite_continuations(document: &str) -> String {
                 Some(url) => format!("{head}{CONTINUE}{url}"),
                 None => line.to_owned(),
             }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Replace each whole line a task view renders as a complete `spice session
+/// context` read with the URL that reads it, so a seat recovers a prior
+/// session's records without leaving `spice://`.
+fn context_urls(document: &str) -> String {
+    document
+        .lines()
+        .map(|line| {
+            line.starts_with("spice session context ")
+                .then(|| read_url(line))
+                .flatten()
+                .unwrap_or_else(|| line.to_owned())
         })
         .collect::<Vec<_>>()
         .join("\n")
