@@ -211,3 +211,46 @@ fn malformed_or_foreign_snapshot_cursors_refuse_instead_of_reading_new_state() {
     assert_eq!(restored, "équipe");
     assert!(next(&document).is_none());
 }
+
+#[test]
+fn retained_graph_snapshots_evict_oldest_at_count_and_byte_bounds() {
+    let text = "graph workflow\nfirst row\nsecond row".to_owned();
+    let retained = Snapshot::new(
+        "workflow",
+        None,
+        Seq::new(1).expect("sequence"),
+        text.clone(),
+    )
+    .retained_bytes();
+    for (snapshots, bytes) in [(2, usize::MAX), (8, retained * 2)] {
+        let pages = Pages::with_retention(snapshots, bytes);
+        let initial = query("spice://board/graph/workflow?limit=1");
+        let mut continuations = Vec::new();
+        for sequence in 1..=3 {
+            let document = pages
+                .read(&initial, || {
+                    Ok((Seq::new(sequence).expect("sequence"), text.clone()))
+                })
+                .expect("first page");
+            continuations.push(next(&document).expect("continuation"));
+        }
+        let expired = pages
+            .read(&continuations[0], || unreachable!())
+            .expect_err("oldest snapshot is evicted");
+        assert!(expired.starts_with("board::cursor-expired:"), "{expired}");
+        pages
+            .read(&continuations[1], || unreachable!())
+            .expect("newer snapshot remains readable");
+    }
+
+    let pages = Pages::with_retention(1, retained - 1);
+    let oversized = pages
+        .read(&query("spice://board/graph/workflow?limit=1"), || {
+            Ok((Seq::new(1).expect("sequence"), text))
+        })
+        .expect_err("one snapshot cannot exceed the byte bound");
+    assert!(
+        oversized.starts_with("board::graph-snapshot-too-large:"),
+        "{oversized}"
+    );
+}
