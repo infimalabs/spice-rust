@@ -286,8 +286,10 @@ fn create_task<B: serde::Serialize>(
     )
 }
 
-/// Only direct `task add` gates its child behind the lane's ambient plan;
-/// oops filing shares creation but records friction, not a planned child.
+/// Only direct `task add` gates its child behind the lane's ambient plan, and
+/// only a child the plan caused: one whose origin is the plan itself or the
+/// plan's own origin. Unrelated work boarded mid-planning stays unlinked; oops
+/// filing shares creation but records friction, not a planned child.
 fn gate_ambient_plan_child(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
@@ -307,6 +309,18 @@ fn gate_ambient_plan_child(
         }
         _ => return Ok(()),
     };
+    let Some(parent) = task_entry(&snapshot.entries, &task) else {
+        return Err(refusal(
+            "task::unknown",
+            Some(task.to_string()),
+            "read the current ambient plan task before creating its child",
+        ));
+    };
+    if child.provenance != task_origin(parent.born())?
+        && child.provenance != parent.statement().provenance
+    {
+        return Ok(());
+    }
     let heads = named_task_heads(&snapshot.answer, &task)?;
     for witness in [
         statement_witness(heads),
@@ -321,13 +335,6 @@ fn gate_ambient_plan_child(
             ));
         }
     }
-    let Some(parent) = task_entry(&snapshot.entries, &task) else {
-        return Err(refusal(
-            "task::unknown",
-            Some(task.to_string()),
-            "read the current ambient plan task before creating its child",
-        ));
-    };
     if parent.workflow().status != "pending" || parent.workflow().phase.as_str() != "plan" {
         return Err(refusal(
             "task::plan-link-parent-moved",

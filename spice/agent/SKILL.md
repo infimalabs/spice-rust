@@ -143,7 +143,10 @@ command for more.
   opening that transcript. If the description no longer matches repository or
   operator state, update, split, or release the task rather than force it.
 - A task added while this lane holds a plan claim automatically depends on
-  that plan, so it cannot start until planning completes. Explicit
+  that plan, so it cannot start until planning completes, when its origin is
+  the plan (the default with no `--origin`) or the plan's own origin. Any
+  other origin, such as an operator interjection's `ack:` key, boards
+  unrelated work with no edge to the plan. Explicit
   `task add --depends` supplies the new task's complete prerequisite list
   and suppresses the implicit gate; include the plan to retain that gate.
   Connect an acceptance-bearing child with

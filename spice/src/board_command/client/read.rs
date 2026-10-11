@@ -1035,7 +1035,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "phase_guidance:".to_owned(),
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
-            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; the child automatically depends on this plan and cannot start until the plan completes."
+            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; a child whose origin is this plan (the default) or this plan's own origin automatically depends on this plan and cannot start until the plan completes. Any other --origin creates unrelated work with no edge to this plan."
                 .to_owned(),
             format!(
                 "  Explicit --depends replaces the child's prerequisite list; include {handle} to retain the plan gate. Do not add a reciprocal plan-to-child edge."
@@ -1052,7 +1052,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
         format!(
-            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which automatically depends on this plan and waits for its completion."
+            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which automatically depends on this plan and waits for its completion when its origin is this plan (the default) or this plan's own origin. Any other --origin creates unrelated work with no edge to this plan."
         ),
         format!(
             "  Explicit --depends names the child's complete prerequisite list and suppresses the implicit gate; include {handle} to retain that gate. Do not add a reciprocal plan-to-child edge."

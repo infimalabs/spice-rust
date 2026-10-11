@@ -316,7 +316,12 @@ fn implicit_plan_children_wait_for_planning_before_allocation() {
     let held = board(&bus, epoch, lane.clone());
     let child_born = stamp("PLAN-child0001");
     let child = TaskHandle::for_project("task.workflow", &child_born);
-    let add = accepted_child();
+    let mut add = accepted_child();
+    add.origin = Some(
+        format!("task:{}", plan.born().expect("fixture plan birth"))
+            .parse()
+            .expect("plan origin"),
+    );
 
     assert_committed(issue(
         &bus,
@@ -375,6 +380,72 @@ fn implicit_plan_children_wait_for_planning_before_allocation() {
             .actor,
         worker
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn only_children_the_plan_caused_wait_on_the_ambient_plan() {
+    let (root, bus, epoch, seats) = fixture("ambient-plan-origin", 2);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let plan = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-origin001",
+        "Plan with its own origin",
+        Some("plan"),
+    );
+    claim_task(&bus, epoch, seat, &lane, &plan);
+    let mut created = Vec::new();
+    for (born, origin) in [
+        ("PLAN-sibling01", "fixture:board-command"),
+        ("PLAN-unrelate1", "fixture:operator-interjection"),
+    ] {
+        let held = board(&bus, epoch, lane.clone());
+        let child_born = stamp(born);
+        let mut child_add = accepted_child();
+        child_add.origin = Some(origin.parse().expect("fixture origin"));
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::TaskAdd,
+            public_task_add_expected(&held, &child_add, child_born.clone()),
+            &child_add,
+        ));
+        created.push(TaskHandle::for_project("task.workflow", &child_born));
+    }
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&current, &created[0]).statement.body.dependencies,
+        [plan.born().expect("fixture plan birth")],
+        "a child sharing the plan's origin waits on the plan"
+    );
+    assert!(
+        at(&current, &created[1])
+            .statement
+            .body
+            .dependencies
+            .is_empty(),
+        "a child of unrelated origin stays off the plan"
+    );
+    let worker = Actor::Lane(seats[1].lane);
+    let available = board(&bus, epoch, worker.clone());
+    let entries = actor_entries(&available).expect("board entries");
+    let subscription =
+        allocation_subscription(&available.residency.body, &worker).expect("worker subscription");
+    let selected = board::select(
+        &entries,
+        &worker,
+        &subscription,
+        available.allocation_band,
+        available.recent_cell.as_ref(),
+        &available.environment(),
+    )
+    .expect("the unrelated child is allocatable while planning continues");
+    assert_eq!(selected.entry().handle(), &created[1]);
     clean(&root, bus);
 }
 
