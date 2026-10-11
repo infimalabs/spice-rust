@@ -10,7 +10,6 @@ use crate::input::ParsedContract;
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
-const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
 
@@ -43,12 +42,12 @@ impl ConfigKeyDeclaration {
 pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("commands.<name>", TRACKED),
     ConfigKeyDeclaration::new("wrappers.spice", TRACKED),
-    ConfigKeyDeclaration::new("rtk.executable", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("rtk.executable", LOCAL),
     ConfigKeyDeclaration::new("tasks.stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.hidden_stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_min_depth", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_max_depth", TRACKED),
-    ConfigKeyDeclaration::new("judge.enabled", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("judge.enabled", TRACKED),
     ConfigKeyDeclaration::new("policy.env_names", TRACKED),
     ConfigKeyDeclaration::new("policy.pre_commit_builtins", TRACKED),
     ConfigKeyDeclaration::new("policy.pre_commit[].label", TRACKED),
@@ -91,7 +90,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("lane.young", TRACKED),
     ConfigKeyDeclaration::new("lane.hold", TRACKED),
     ConfigKeyDeclaration::new("lane.narration", TRACKED),
-    ConfigKeyDeclaration::new("lane.wake_order", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("lane.wake_order", LOCAL),
     ConfigKeyDeclaration::new("steer.expiry", TRACKED),
     ConfigKeyDeclaration::new("steer.resend", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.binary", TRACKED),
@@ -100,17 +99,17 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("vendor.omp.fast_mode", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.lsp", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.auto_compact_window_tokens", TRACKED),
-    ConfigKeyDeclaration::new("listen.window", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.busy", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.taken", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.full", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.<name>.path", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.<name>.directory", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("lock.<name>.shards", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("serve.pack.rows", TRACKED_LOCAL),
-    ConfigKeyDeclaration::new("say.backend", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("listen.window", LOCAL),
+    ConfigKeyDeclaration::new("lock.busy", LOCAL),
+    ConfigKeyDeclaration::new("lock.taken", LOCAL),
+    ConfigKeyDeclaration::new("lock.full", LOCAL),
+    ConfigKeyDeclaration::new("lock.<name>.path", LOCAL),
+    ConfigKeyDeclaration::new("lock.<name>.directory", LOCAL),
+    ConfigKeyDeclaration::new("lock.<name>.shards", LOCAL),
+    ConfigKeyDeclaration::new("serve.pack.rows", LOCAL),
+    ConfigKeyDeclaration::new("say.backend", LOCAL),
     ConfigKeyDeclaration::new("say.voices", LOCAL_WORKTREE),
-    ConfigKeyDeclaration::new("say.words_per_minute", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("say.words_per_minute", LOCAL),
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
     ConfigKeyDeclaration::new("proof.runner", LOCAL),

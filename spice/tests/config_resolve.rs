@@ -191,12 +191,10 @@ fn missing_and_empty_documents_are_empty_intent() {
 }
 
 #[test]
-fn local_rtk_executable_overrides_tracked_identity_with_provenance() {
-    let tracked = "[rtk]\nexecutable = 'tracked-rtk'\n";
+fn local_rtk_executable_overrides_its_builtin_with_provenance() {
     let local_path = absolute("local-rtk");
     let local = format!("[rtk]\nexecutable = {local_path:?}\n");
-    let resolved =
-        resolve(documents(Some(tracked), Some(&local))).expect("layered RTK executable resolves");
+    let resolved = resolve(documents(None, Some(&local))).expect("local RTK executable resolves");
 
     assert_eq!(resolved.root().rtk().executable(), local_path);
     assert_eq!(
@@ -228,21 +226,21 @@ fn disabling_builtins_without_a_command_refuses_at_the_authored_field() {
 }
 
 #[test]
-fn speech_resolves_from_tracked_settings_with_device_default_voice() {
-    let disabled = resolve(documents(Some("[say]\nbackend = 'disabled'\n"), None))
-        .expect("tracked disabled speech resolves");
+fn speech_resolves_from_local_settings_with_device_default_voice() {
+    let disabled = resolve(documents(None, Some("[say]\nbackend = 'disabled'\n")))
+        .expect("local disabled speech resolves");
     assert_eq!(
         disabled.root().say().backend(),
         serve::SpeechBackend::Disabled
     );
-    assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Tracked);
+    assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Local);
 
     let unset = resolve(documents(None, None)).expect("unset speech resolves");
     assert_eq!(unset.root().say().backend(), serve::SpeechBackend::System);
     assert!(unset.root().say().voices().is_empty());
 
-    let system = resolve(documents(Some("[say]\nwords_per_minute = 205\n"), None))
-        .expect("tracked system speech resolves");
+    let system = resolve(documents(None, Some("[say]\nwords_per_minute = 205\n")))
+        .expect("local system speech resolves");
     assert_eq!(system.root().say().words_per_minute(), 205);
 }
 
@@ -350,20 +348,6 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     assert_eq!(
         path_builtin(&only_flag, "lane.vendor"),
         Some(Builtin::String("omp"))
-    );
-
-    let tracked_local = resolve(documents(
-        Some("[listen]\nwindow = \"2m\"\n"),
-        Some("[listen]\nwindow = \"3m\"\n"),
-    ))
-    .expect("local shadows tracked");
-    assert_eq!(
-        tracked_local.root().listen().window_word().to_string(),
-        "3m"
-    );
-    assert_eq!(
-        path_source(&tracked_local, "listen.window"),
-        ConfigSource::Local
     );
 
     let tracked_flag = resolve(Inputs::new(
@@ -684,9 +668,6 @@ release = ["tool", "release"]
 [wrappers]
 spice = "appliance"
 
-[rtk]
-executable = "tracked-rtk"
-
 [taste.alpha]
 words = ["done"]
 message = "Done."
@@ -756,7 +737,6 @@ deaths = 4
 young = "40s"
 hold = "40m"
 narration = 40
-wake_order = "most-recently-claimed"
 
 [steer]
 expiry = "12h"
@@ -767,6 +747,18 @@ binary = "/opt/omp"
 fast_mode = true
 lsp = true
 auto_compact_window_tokens = 250000
+
+[proof]
+image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+"#;
+
+/// Every machine-local leaf, which only Git-common local config admits.
+const LOCAL_MACHINE_DOCUMENT: &str = r#"
+[rtk]
+executable = "local-rtk"
+
+[lane]
+wake_order = "most-recently-claimed"
 
 [listen]
 window = "2m"
@@ -789,19 +781,18 @@ rows = 50
 [say]
 backend = "disabled"
 words_per_minute = 190
-
-[proof]
-image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+voices = ["Samantha"]
 "#;
 
 #[test]
 fn authored_documents_can_address_every_registry_descriptor() {
     let local = format!(
         concat!(
+            "{}",
             "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
             "[vendor.omp]\nmodel = \"omp-current\"\neffort = \"max\"\n",
-            "[say]\nvoices = [\"Samantha\"]\n",
         ),
+        LOCAL_MACHINE_DOCUMENT,
         absolute("container"),
         absolute("runner")
     );
@@ -812,20 +803,17 @@ fn authored_documents_can_address_every_registry_descriptor() {
     .expect("tracked and local descriptors resolve together");
 
     for row in resolved.provenance() {
-        let path = row.path().to_string();
-        let expected = if matches!(
-            path.as_str(),
-            "proof.container"
-                | "proof.runner"
-                | "vendor.omp.model"
-                | "vendor.omp.effort"
-                | "say.voices"
-        ) {
-            ConfigSource::Local
-        } else {
+        let segments = row.path().segments().collect::<Vec<_>>();
+        let tracked = spice::config::descriptors()
+            .iter()
+            .find(|entry| entry.template().matches(&segments))
+            .is_some_and(|entry| entry.layers().contains(&ConfigSource::Tracked));
+        let expected = if tracked {
             ConfigSource::Tracked
+        } else {
+            ConfigSource::Local
         };
-        assert_eq!(row.source(), expected, "{path}");
+        assert_eq!(row.source(), expected, "{}", row.path());
     }
     for template in spice::config::descriptors() {
         assert!(
@@ -853,10 +841,7 @@ fn all_four_layers_use_one_leaf_order() {
     let resolved = resolve(Inputs::new(
         Some(Document::new(
             "spice-rust.toml",
-            concat!(
-                "[lane]\nlife = \"Steer\"\nvendor = \"omp\"\n",
-                "[listen]\nwindow = \"2m\"\n[lock]\nbusy = 70\n",
-            ),
+            "[lane]\nlife = \"Steer\"\nvendor = \"omp\"\n",
         )),
         Some(Document::new(
             ".spice-rs/local.toml",
@@ -880,15 +865,27 @@ fn all_four_layers_use_one_leaf_order() {
 #[test]
 fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     let resolved = resolve(documents(
+        Some("[vendor.omp]\nlsp = true\n"),
         Some(concat!(
+            "[vendor.omp]\nmodel = \"omp-current\"\n",
             "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
-            "[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
+            "[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 4\n",
             "[lock.\"a.b\"]\ndirectory = 'locks/a.b'\nshards = 3\n",
+            "[lock.zeta]\ndirectory = 'locks/zeta'\nshards = 5\n",
         )),
-        Some("[lock.alpha]\nshards = 4\n[lock.zeta]\ndirectory = 'locks/zeta'\nshards = 5\n"),
     ))
-    .expect("dynamic lock tables merge");
+    .expect("tables merge across layers");
 
+    assert!(resolved.root().vendor().omp().lsp());
+    assert_eq!(resolved.root().vendor().omp().model(), "omp-current");
+    assert_eq!(
+        path_source(&resolved, "vendor.omp.lsp"),
+        ConfigSource::Tracked
+    );
+    assert_eq!(
+        path_source(&resolved, "vendor.omp.model"),
+        ConfigSource::Local
+    );
     assert_eq!(resolved.root().lock().exits().busy().get(), 70);
     assert_eq!(
         resolved
@@ -901,35 +898,9 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     );
     assert_eq!(
         path_source(&resolved, "lock.\"a.b\".shards"),
-        ConfigSource::Tracked
-    );
-    assert_eq!(
-        path_source(&resolved, "lock.alpha.shards"),
-        ConfigSource::Local
-    );
-    assert_eq!(
-        path_source(&resolved, "lock.zeta.shards"),
         ConfigSource::Local
     );
     assert_eq!(path_builtin(&resolved, "lock.alpha.shards"), None);
-}
-
-#[test]
-fn one_layer_can_atomically_swap_cross_validated_lock_values() {
-    let resolved = resolve(documents(
-        Some("[lock]\nbusy = 70\ntaken = 71\nfull = 72\n"),
-        Some("[lock]\nbusy = 71\ntaken = 70\nfull = 73\n"),
-    ))
-    .expect("the complete local lock subtree validates as one layer");
-
-    let exits = resolved.root().lock().exits();
-    assert_eq!(
-        (exits.busy().get(), exits.taken().get(), exits.full().get()),
-        (71, 70, 73)
-    );
-    for path in ["lock.busy", "lock.taken", "lock.full"] {
-        assert_eq!(path_source(&resolved, path), ConfigSource::Local);
-    }
 }
 
 #[test]

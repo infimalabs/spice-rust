@@ -72,11 +72,7 @@ value = 1
             IssueKind::Malformed,
         ),
         ("bogus", ConfigSource::Local, IssueKind::Unknown),
-        (
-            "serve.pack.rows",
-            ConfigSource::Tracked,
-            IssueKind::Malformed,
-        ),
+        ("serve.pack.rows", ConfigSource::Tracked, IssueKind::Policy),
         ("serve.pack.rows", ConfigSource::Local, IssueKind::Malformed),
         ("lane.deaths", ConfigSource::Tracked, IssueKind::Malformed),
         ("lane.lease", ConfigSource::Tracked, IssueKind::Malformed),
@@ -95,16 +91,25 @@ value = 1
             "missing {source:?} {kind:?} issue at {path}: {rows:#?}"
         );
     }
-    let local_policy = error
-        .issues()
-        .iter()
-        .find(|issue| {
-            issue
-                .path()
-                .is_some_and(|path| path.to_string() == "lane.life")
-        })
-        .expect("local policy issue");
-    assert!(local_policy.message().contains("tracked spice-rust.toml"));
+    for (path, source, home) in [
+        ("lane.life", ConfigSource::Local, "tracked spice-rust.toml"),
+        (
+            "serve.pack.rows",
+            ConfigSource::Tracked,
+            ".spice-rs/config.toml",
+        ),
+    ] {
+        let refusal = error
+            .issues()
+            .iter()
+            .find(|issue| {
+                issue.kind() == IssueKind::Policy
+                    && issue.source() == source
+                    && issue.path().is_some_and(|found| found.to_string() == path)
+            })
+            .unwrap_or_else(|| panic!("{path} refuses in the wrong layer"));
+        assert!(refusal.message().contains(home), "{path} names its home");
+    }
     assert!(error.issues().windows(2).all(|pair| {
         pair[0].path().map(ToString::to_string) <= pair[1].path().map(ToString::to_string)
     }));
@@ -173,9 +178,8 @@ fn flag_values_cannot_cross_descriptor_types_or_duplicate_mappings() {
 
 #[test]
 fn equivalent_repeated_resolutions_are_identical() {
-    let tracked =
-        "[listen]\nwindow = \"2m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n";
-    let local = "[listen]\nwindow = \"3m\"\n";
+    let tracked = "[lane]\nvendor = \"omp\"\n";
+    let local = "[listen]\nwindow = \"3m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n";
     let first = resolve(documents(Some(tracked), Some(local))).expect("first resolution");
     let second = resolve(documents(Some(tracked), Some(local))).expect("second resolution");
     assert_eq!(first, second);

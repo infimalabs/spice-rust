@@ -71,9 +71,11 @@ Precedence increases through compiled `builtin`, repository `tracked`,
 Git-common machine-local `local`, and per-worktree `worktree` intent. Local and
 worktree intent live in Git-directory state, never in the checkout:
 `<git-common>/.spice-rs/config.toml` and each worktree's own
-`<git-dir>/.spice-rs/worktree.toml`. Per-worktree preferences (model, effort,
-voices) are never tracked. Command flags apply at the command boundary, not as
-repository-configuration provenance.
+`<git-dir>/.spice-rs/worktree.toml`. Tracked `spice-rust.toml` carries
+repository policy only; machine-local settings live only in local config, and
+per-worktree preferences (model, effort, voices) in local or worktree config.
+Command flags apply at the command boundary, not as repository-configuration
+provenance.
 
 [Provenance](../invariants/session.md#extension-every-effective-configuration-value-carries-its-source-provenance)
 and [invalid configuration](../invariants/checks.md#checks-configuration-fails-loudly)

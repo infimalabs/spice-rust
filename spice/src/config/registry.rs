@@ -65,7 +65,7 @@ pub enum Builtin {
     Boolean(bool),
 }
 
-/// Whether a leaf is tracked policy or an admitted machine-local setting.
+/// Which authored layer owns a leaf. Only tracked policy is ever tracked.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyClass {
     /// Behavior that is owned by tracked policy except for an explicit flag.
@@ -73,7 +73,7 @@ pub enum PolicyClass {
     /// Per-worktree launch preference that never carries executable authority
     /// and is never tracked: a Git-common default with a per-worktree override.
     WorktreeLocal,
-    /// Machine-specific operation that admits a local value.
+    /// Machine-specific operation, set only in Git-common local config.
     MachineLocal,
 }
 
@@ -254,7 +254,7 @@ impl Descriptor {
         self.layers
     }
 
-    /// Tracked-policy or machine-local classification.
+    /// Tracked-policy, worktree-local, or machine-local classification.
     #[must_use]
     pub const fn policy_class(self) -> PolicyClass {
         self.class
@@ -269,9 +269,8 @@ impl Descriptor {
 
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
-const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
-const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
+const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 
 macro_rules! configuration_registry {
     ($(
@@ -314,7 +313,7 @@ configuration_registry! {
     fixed "rtk.executable" {
         kind: String,
         builtin: Some(Builtin::String("rtk")),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
@@ -349,8 +348,8 @@ configuration_registry! {
     fixed "judge.enabled" {
         kind: Boolean,
         builtin: Some(Builtin::Absent),
-        layers: TRACKED_LOCAL,
-        class: MachineLocal,
+        layers: TRACKED,
+        class: Policy,
         flag: None,
     }
     fixed "policy.env_names" {
@@ -650,7 +649,7 @@ configuration_registry! {
     fixed "lane.wake_order" {
         kind: String,
         builtin: Some(Builtin::String("most-recently-claimed")),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
@@ -713,63 +712,63 @@ configuration_registry! {
     fixed "listen.window" {
         kind: Duration,
         builtin: Some(Builtin::String("90s")),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     fixed "lock.busy" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(75)),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     fixed "lock.taken" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(76)),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     fixed "lock.full" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(77)),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     named "lock.<name>.path" {
         kind: String,
         builtin: None,
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     named "lock.<name>.directory" {
         kind: String,
         builtin: None,
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     named "lock.<name>.shards" {
         kind: UnsignedInteger,
         builtin: None,
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     fixed "serve.pack.rows" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(40)),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
     fixed "say.backend" {
         kind: String,
         builtin: Some(Builtin::String("system")),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }
@@ -785,7 +784,7 @@ configuration_registry! {
         builtin: Some(Builtin::UnsignedInteger(
             serve::speech::DEFAULT_WORDS_PER_MINUTE as u64,
         )),
-        layers: TRACKED_LOCAL,
+        layers: LOCAL,
         class: MachineLocal,
         flag: None,
     }

@@ -506,12 +506,6 @@ fn sanitize(
                 format!(
                     "{leaf} is a per-worktree preference, never tracked; set it in Git-common .spice-rs/config.toml or in this worktree's Git-directory .spice-rs/worktree.toml"
                 )
-            } else if layers.contains(&ConfigSource::Local)
-                && layers.contains(&ConfigSource::Tracked)
-            {
-                format!(
-                    "{leaf} is machine-local; set it in Git-common .spice-rs/config.toml, or set a repository default in tracked spice-rust.toml"
-                )
             } else if layers.contains(&ConfigSource::Tracked) {
                 format!("{leaf} is tracked policy; set it in tracked spice-rust.toml")
             } else {
