@@ -1,14 +1,15 @@
 use app::Session;
 use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT, TeamDrop,
-    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, elapsed_label,
-    elapsed_label_deadline_millis, first_nonquoted_prose, history_frontier_request_due, jobs_kept,
-    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
-    remaining_label_deadline_millis, reported_tasks, short, split_member, standing_title,
-    standings, task_mentions, team_jobs, teams, ticker_chunks, ticker_line, topology, truncate,
+    ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, UNKNOWN_AGENT_LABEL,
+    accent, arrangement, badge, can_leave_all_teams, elapsed_label, elapsed_label_deadline_millis,
+    first_nonquoted_prose, history_frontier_request_due, jobs_kept, latest_lane_prose, leaf,
+    member_presence, one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
+    short, split_member, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks,
+    ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
+use wire::head::TEAM_MEMBER_LIMIT;
 use wire::intent::{BoardTask, LaneInbox};
 
 const LANE_A: &str = "11111111-1111-4111-8111-111111111111";

@@ -84,6 +84,109 @@ fn a_member_moves_between_orgs_and_an_empty_source_subscription_disappears() {
 }
 
 #[test]
+fn membership_admission_stops_at_six_without_changing_a_refused_head() {
+    let mut state = head(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 6), (7, 7)]);
+    move_member(&mut state, uuid(6), uuid(1)).expect("sixth member joins");
+    assert_eq!(
+        state.team_members(uuid(1)).collect::<Vec<_>>(),
+        (1..=6).map(uuid).collect::<Vec<_>>(),
+    );
+    let full = state.clone();
+    let Err(Outcome::Refusal(refusal)) = move_member(&mut state, uuid(7), uuid(1)) else {
+        panic!("seventh member must be refused");
+    };
+    assert_eq!(refusal.reason(), "team::member-limit");
+    assert_eq!(state, full);
+
+    let reorder = wire::intent::LaneArrange {
+        topology_revision: state.topology_revision,
+        lane: uuid(7),
+        before: uuid(1),
+    };
+    let Err(Outcome::Refusal(refusal)) = rearrange(&state, &reorder) else {
+        panic!("moving before a member cannot bypass capacity");
+    };
+    assert_eq!(refusal.reason(), "team::member-limit");
+
+    move_member(&mut state, uuid(6), uuid(6)).expect("member leaves a full team");
+    move_member(&mut state, uuid(7), uuid(1)).expect("vacated capacity admits another member");
+    assert_eq!(
+        state.team_members(uuid(1)).collect::<Vec<_>>(),
+        vec![uuid(1), uuid(2), uuid(3), uuid(4), uuid(5), uuid(7)],
+    );
+}
+
+#[test]
+fn complete_arrangements_cannot_grow_a_team_past_six() {
+    let state = head(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 6), (7, 7)]);
+    let request = |count: u8| TeamArrange {
+        topology_revision: state.topology_revision,
+        teams: std::iter::once(wire::intent::TeamArrangement {
+            team: uuid(1),
+            lanes: (1..=count).map(uuid).collect(),
+        })
+        .chain(
+            ((count + 1)..=7).map(|member| wire::intent::TeamArrangement {
+                team: uuid(member),
+                lanes: vec![uuid(member)],
+            }),
+        )
+        .collect(),
+    };
+    admit_arrangement(&state, &request(6)).expect("six-member arrangement admitted");
+    let Err(Outcome::Refusal(refusal)) = admit_arrangement(&state, &request(7)) else {
+        panic!("seven-member arrangement must be refused");
+    };
+    assert_eq!(refusal.reason(), "team::member-limit");
+}
+
+#[test]
+fn legacy_oversized_teams_can_be_restated_reordered_and_reduced_but_not_grown() {
+    let mut state = head(&[
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (4, 1),
+        (5, 1),
+        (6, 1),
+        (7, 1),
+        (8, 8),
+    ]);
+    let restated = TeamArrange {
+        topology_revision: state.topology_revision,
+        teams: vec![
+            wire::intent::TeamArrangement {
+                team: uuid(1),
+                lanes: (1..=7).rev().map(uuid).collect(),
+            },
+            wire::intent::TeamArrangement {
+                team: uuid(8),
+                lanes: vec![uuid(8)],
+            },
+        ],
+    };
+    admit_arrangement(&state, &restated).expect("legacy team can be restated");
+    let reorder = wire::intent::LaneArrange {
+        topology_revision: state.topology_revision,
+        lane: uuid(7),
+        before: uuid(1),
+    };
+    let reordered = rearrange(&state, &reorder).expect("legacy team can reorder");
+    assert_eq!(reordered.next.lanes[0].lane, uuid(7));
+    let full = state.clone();
+    let Err(Outcome::Refusal(refusal)) = move_member(&mut state, uuid(8), uuid(1)) else {
+        panic!("legacy oversized teams cannot grow");
+    };
+    assert_eq!(refusal.reason(), "team::member-limit");
+    assert_eq!(state, full);
+    move_member(&mut state, uuid(7), uuid(7)).expect("legacy team can shed a member");
+    assert_eq!(
+        state.team_members(uuid(1)).collect::<Vec<_>>(),
+        (1..=6).map(uuid).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
 fn a_member_joining_an_existing_team_lands_after_its_current_members() {
     let mut state = head(&[(1, 1), (2, 1), (3, 1), (4, 4)]);
     move_member(&mut state, uuid(1), uuid(1)).expect("host leaves team");

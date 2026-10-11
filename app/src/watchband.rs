@@ -14,7 +14,7 @@
 //! a task. A field the reference design shows and the wire does not carry is
 //! therefore absent here rather than approximated.
 
-use wire::head::ClaimDisposition;
+use wire::head::{ClaimDisposition, TEAM_MEMBER_LIMIT};
 use wire::intent::{BoardTask, LaneInbox};
 use wire::{CanonicalUuid, TaskHandle};
 
@@ -247,13 +247,6 @@ pub fn team_jobs(members: &[Standing]) -> Vec<TeamJob<'_>> {
 /// memory.
 pub const TEAM_JOIN_GUTTER: f64 = 0.2;
 
-/// Largest team the interactive arrangement surface will form.
-///
-/// Six positions have distinct accents. Existing authoritative topology may
-/// exceed this presentation bound, but the app never offers a drag or menu join
-/// that would create another over-cap team.
-pub const TEAM_MEMBER_LIMIT: usize = ACCENTS;
-
 /// What a drop on a team states, decided by where in that team it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamDrop {
@@ -345,8 +338,8 @@ pub fn swap_members(
 /// Appending keeps the destination's first agent, its primary composer, in
 /// place, exactly as a join does. The source team keeps its identity and the
 /// order of its remaining agents; a team the move empties leaves the topology,
-/// as a joined team does. A drop on the agent's own team, or on a team no longer
-/// on the surface, states nothing.
+/// as a joined team does. A drop on the agent's own team, on a team no longer
+/// on the surface, or on a full team states nothing.
 #[must_use]
 pub fn transfer_member(
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
@@ -357,7 +350,7 @@ pub fn transfer_member(
         .iter()
         .position(|(_, lanes)| lanes.contains(&member))?;
     let target_at = teams.iter().position(|(team, _)| *team == target)?;
-    if source_at == target_at {
+    if source_at == target_at || teams[target_at].1.len() >= TEAM_MEMBER_LIMIT {
         return None;
     }
     let mut arranged = teams.to_vec();
@@ -1252,6 +1245,28 @@ mod tests {
         );
         assert_eq!(transfer_member(&topology, id(2), id(10)), None);
         assert_eq!(transfer_member(&topology, id(2), id(99)), None);
+    }
+
+    #[test]
+    fn composer_transfer_admits_the_sixth_member_but_not_the_seventh() {
+        let topology = vec![
+            (id(10), (1..=5).map(id).collect()),
+            (id(20), vec![id(6)]),
+            (id(30), vec![id(7)]),
+        ];
+        let full = transfer_member(&topology, id(6), id(10)).expect("sixth member joins");
+        assert_eq!(
+            full,
+            vec![(id(10), (1..=6).map(id).collect()), (id(30), vec![id(7)]),],
+        );
+        assert_eq!(transfer_member(&full, id(7), id(10)), None);
+        assert_eq!(
+            transfer_member(&full, id(6), id(30)),
+            Some(vec![
+                (id(10), (1..=5).map(id).collect()),
+                (id(30), vec![id(7), id(6)]),
+            ]),
+        );
     }
 
     #[test]
