@@ -318,9 +318,8 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     let stable_entries = vec![alpha.clone(), beta.clone()];
     let reviews = vec![graph::ReviewEdge::new(
         alpha.handle().clone(),
-        phase("todo"),
+        Some((phase("todo"), author.clone())),
         reviewer.clone(),
-        author.clone(),
         body::Verdict::Clean,
         seq(50),
     )];

@@ -18,8 +18,8 @@ struct Candidate {
 struct ReviewRecord {
     task: TaskStamp,
     position: Seq,
-    phase: wire::Phase,
-    author: Actor,
+    /// The most recent completed phase before the review and its author.
+    implemented: Option<(wire::Phase, Actor)>,
     reviewer: Actor,
     verdict: body::Verdict,
 }
@@ -371,11 +371,12 @@ fn candidates(
     }
     if relations.contains(&TaskRelationKind::Review) {
         for review in reviews.get(task).into_iter().flatten() {
+            let (phase, author) = review.implemented.clone().unzip();
             let target = TaskRelationNode::Review {
                 task: review.task.clone(),
                 position: review.position,
-                phase: review.phase.clone(),
-                author: review.author.clone(),
+                phase,
+                author,
                 reviewer: review.reviewer.clone(),
                 verdict: review.verdict,
             };
@@ -590,20 +591,14 @@ fn review_records<'a>(
                         reviewed.task, envelope.seq, reviewed.reviewer, envelope.actor
                     ));
                 }
-                let Some((phase, author)) = authors.get(&reviewed.task) else {
-                    return Err(format!(
-                        "task {} review at {} has no preceding phase author",
-                        reviewed.task, envelope.seq
-                    ));
-                };
+                let implemented = authors.get(&reviewed.task).cloned();
                 records
                     .entry(reviewed.task.clone())
                     .or_default()
                     .push(ReviewRecord {
                         task: reviewed.task,
                         position: envelope.seq,
-                        phase: phase.clone(),
-                        author: author.clone(),
+                        implemented,
                         reviewer: reviewed.reviewer,
                         verdict: reviewed.verdict,
                     });

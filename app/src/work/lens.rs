@@ -318,25 +318,13 @@ fn present_remote_node(
             reviewer,
             verdict,
             ..
-        } => {
-            let author_label = compact_actor(author);
-            let reviewer_label = compact_actor(reviewer);
-            let verdict = verdict_label(*verdict);
-            Node {
-                id,
-                kind: "Completed review",
-                label: format!("{phase} · {author_label} → {reviewer_label} · {verdict}"),
-                detail: format!(
-                    "Phase {phase}: author {author} → reviewer {reviewer} → verdict {verdict} · fact {position}"
-                ),
-                diagram: format!(
-                    "{phase} review\n{author_label} → {reviewer_label}\n{verdict}\nfact {position}"
-                ),
-                task: None,
-                status: None,
-                selected: false,
-            }
-        }
+        } => present_review_node(
+            id,
+            *position,
+            phase.as_ref().zip(author.as_ref()),
+            reviewer,
+            *verdict,
+        ),
         TaskRelationNode::Lifecycle {
             position,
             at,
@@ -391,6 +379,50 @@ fn present_remote_node(
                 selected: false,
             }
         }
+    }
+}
+
+/// A completed review, naming the phase it followed and that phase's author
+/// only when the journal records one.
+fn present_review_node(
+    id: String,
+    position: wire::Seq,
+    implemented: Option<(&wire::Phase, &Actor)>,
+    reviewer: &Actor,
+    verdict: Verdict,
+) -> Node {
+    let reviewer_label = compact_actor(reviewer);
+    let verdict = verdict_label(verdict);
+    let (label, detail, diagram) = match implemented {
+        Some((phase, author)) => {
+            let author_label = compact_actor(author);
+            (
+                format!("{phase} · {author_label} → {reviewer_label} · {verdict}"),
+                format!(
+                    "Phase {phase}: author {author} → reviewer {reviewer} → verdict {verdict} · fact {position}"
+                ),
+                format!(
+                    "{phase} review\n{author_label} → {reviewer_label}\n{verdict}\nfact {position}"
+                ),
+            )
+        }
+        None => (
+            format!("review · {reviewer_label} · {verdict}"),
+            format!(
+                "No completed phase before this review: reviewer {reviewer} → verdict {verdict} · fact {position}"
+            ),
+            format!("review\n{reviewer_label}\n{verdict}\nfact {position}"),
+        ),
+    };
+    Node {
+        id,
+        kind: "Completed review",
+        label,
+        detail,
+        diagram,
+        task: None,
+        status: None,
+        selected: false,
     }
 }
 

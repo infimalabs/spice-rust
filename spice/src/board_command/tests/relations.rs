@@ -368,10 +368,93 @@ fn completed_review_preserves_phase_author_and_reviewer_identity() {
         .collect::<Vec<_>>();
     assert_eq!(reviews.len(), 1);
     assert_eq!(reviews[0].0, &task);
-    assert_eq!(reviews[0].1.as_str(), "todo");
-    assert_eq!(reviews[0].2, &author);
+    assert_eq!(reviews[0].1.as_ref().map(wire::Phase::as_str), Some("todo"));
+    assert_eq!(reviews[0].2.as_ref(), Some(&author));
     assert_eq!(reviews[0].3, &reviewer);
     assert_eq!(*reviews[0].4, body::Verdict::Finding);
+
+    clean(&root, bus);
+}
+
+#[test]
+fn a_review_no_completed_phase_precedes_projects_without_phase_or_author() {
+    let (root, bus, epoch, seats) = fixture("relations-review-first", 2);
+    let reviewer = Actor::Lane(seats[1].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "REL-review002",
+        "Review an operator-staged change",
+        Some("review"),
+    );
+    let reviewable = board(&bus, epoch, reviewer.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&reviewable, &task, &seats[1]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let assigned = board(&bus, epoch, reviewer.clone());
+    let expected = progress_witnesses(
+        &assigned,
+        at(&assigned, &task),
+        seats[1].lane,
+        seats[1].occupant,
+        true,
+    )
+    .expect("assigned review has exact witnesses");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: task.clone(),
+            finding: "clean".to_owned(),
+            note: None,
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+    let task = task.born().expect("fixture task stamp");
+    let (_, projected) = answer(read_relations(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskRelations {
+            roots: vec![task.clone()],
+            relations: vec![TaskRelationKind::Review],
+            depth: 1,
+            node_limit: 8,
+        },
+    ));
+
+    let reviews = projected
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            TaskRelationNode::Review {
+                task: reviewed,
+                phase,
+                author,
+                reviewer,
+                verdict,
+                ..
+            } => Some((reviewed, phase, author, reviewer, verdict)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reviews,
+        [(&task, &None, &None, &reviewer, &body::Verdict::Clean)]
+    );
 
     clean(&root, bus);
 }
