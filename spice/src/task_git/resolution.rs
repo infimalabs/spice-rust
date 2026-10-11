@@ -3,9 +3,11 @@
 use std::fs;
 use std::path::Path;
 
-use super::landing::require_tree_within_footprint;
-use super::transaction::{git_state_path, materialize_resolution};
+use super::landing::{Drift, drift, integration_refusal};
+use super::transaction::{git_state_path, materialize_integration, materialize_resolution};
 use super::*;
+
+const INTEGRATION_INDEX: &str = "spice-integration-index";
 
 #[derive(Debug, Eq, PartialEq)]
 struct Seal {
@@ -44,6 +46,11 @@ pub(super) fn has_state(root: &Path) -> Result<bool, Error> {
     Ok(false)
 }
 
+/// Commit an admitted resolution, publishing only one inside the footprint.
+///
+/// A resolved tree that drifts still becomes the lane's integration, with every
+/// drifted path held as the baseline has it, and the refusal that follows
+/// leaves its resolved content staged for the claimant to own or drop.
 pub(super) fn complete(
     root: &Path,
     meta: Metadata<'_>,
@@ -58,10 +65,14 @@ pub(super) fn complete(
     } = parents;
     require_claim(meta, active)?;
     let seal = preflight.complete(root, agent, upstream, message)?;
-    require_tree_within_footprint(root, meta.label, upstream, &seal.tree, agent)?;
+    let drifted = drift(root, upstream, &seal.tree, agent)?;
     seal.verify(root)?;
-    let created =
-        create_merge_commit(root, &seal.tree, &seal.upstream, &seal.agent, &seal.message)?;
+    let tree = if drifted.is_empty() {
+        seal.tree.clone()
+    } else {
+        integration_tree(root, &seal.tree, upstream, &drifted)?
+    };
+    let created = create_merge_commit(root, &tree, &seal.upstream, &seal.agent, &seal.message)?;
     if !created.success() || created.stdout.trim().is_empty() {
         return Err(Error::fault(
             "git::resolution-commit-failed",
@@ -70,8 +81,102 @@ pub(super) fn complete(
     }
     let commit = created.stdout.trim().to_owned();
     seal.verify(root)?;
-    materialize_resolution(root, &commit, &seal.agent, &seal.tree, meta.label)?;
-    Ok(commit)
+    if drifted.is_empty() {
+        materialize_resolution(root, &commit, &seal.agent, &seal.tree, meta.label)?;
+        return Ok(commit);
+    }
+    materialize_integration(root, &commit, &seal.agent, meta.label)?;
+    Err(integration_refusal(meta.label, upstream, &commit, &drifted))
+}
+
+/// The sealed tree with every drifted path held as the baseline has it.
+///
+/// Built in a private index so the lane's own index keeps the sealed
+/// resolution, which is what leaves the drifted content staged afterwards.
+fn integration_tree(
+    root: &Path,
+    tree: &str,
+    upstream: &str,
+    drifted: &[(String, Drift)],
+) -> Result<String, Error> {
+    let index = git_state_path(root, INTEGRATION_INDEX)?;
+    let built = index
+        .to_str()
+        .ok_or_else(|| {
+            Error::fault(
+                "git::integration-index-path",
+                format!("{} is not UTF-8", index.display()),
+            )
+        })
+        .and_then(|path| build_integration_tree(root, path, tree, upstream, drifted));
+    match fs::remove_file(&index) {
+        Ok(()) => built,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => built,
+        Err(error) => built.and(Err(Error::fault(
+            "git::integration-index-cleanup",
+            format!("{}: {error}", index.display()),
+        ))),
+    }
+}
+
+fn build_integration_tree(
+    root: &Path,
+    index: &str,
+    tree: &str,
+    upstream: &str,
+    drifted: &[(String, Drift)],
+) -> Result<String, Error> {
+    indexed(root, index, &["read-tree", tree], "read sealed resolution")?;
+    let adds = drifted
+        .iter()
+        .filter(|(_, drift)| *drift == Drift::AddsToBaseline)
+        .map(|(path, _)| path.as_str())
+        .collect::<Vec<_>>();
+    if !adds.is_empty() {
+        let mut args = vec!["update-index", "--force-remove", "--"];
+        args.extend(adds);
+        indexed(root, index, &args, "drop paths the baseline lacks")?;
+    }
+    let mut entries = Vec::new();
+    for (path, _) in drifted
+        .iter()
+        .filter(|(_, drift)| *drift == Drift::RewritesBaseline)
+    {
+        let listed = required_read(
+            root,
+            &["ls-tree", upstream, "--", path],
+            "read baseline entry",
+        )?;
+        let mut fields = listed.split_whitespace();
+        let (Some(mode), Some(_), Some(object)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(Error::fault(
+                "git::integration-entry-invalid",
+                format!("baseline {upstream} lists {path:?} as {listed:?}"),
+            ));
+        };
+        entries.push(format!("{mode},{object},{path}"));
+    }
+    if !entries.is_empty() {
+        let mut args = vec!["update-index", "--add"];
+        for entry in &entries {
+            args.extend(["--cacheinfo", entry.as_str()]);
+        }
+        indexed(root, index, &args, "hold paths at the baseline")?;
+    }
+    indexed(root, index, &["write-tree"], "write integration tree")
+}
+
+fn indexed(root: &Path, index: &str, args: &[&str], action: &str) -> Result<String, Error> {
+    let output = run_with_environment(root, args, &[("GIT_INDEX_FILE", index)])?;
+    if output.success() {
+        Ok(output.stdout.trim().to_owned())
+    } else {
+        Err(Error::fault(
+            "git::integration-index-failed",
+            output.detail(action),
+        ))
+    }
 }
 
 impl Preflight {

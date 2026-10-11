@@ -154,6 +154,45 @@ pub(super) fn materialize_resolution(
     ))
 }
 
+/// Advance the lane to an unpublished integration and retire its merge.
+///
+/// Only the branch and the merge controls move. The index and worktree keep the
+/// sealed resolution, so whatever the integration held at the baseline stays
+/// staged against it.
+pub(super) fn materialize_integration(
+    root: &Path,
+    target: &str,
+    expected: &str,
+    label: &str,
+) -> Result<(), Error> {
+    let marker = transaction_path(root)?;
+    write_pending(
+        &marker,
+        &Pending::Integration {
+            expected: expected.to_owned(),
+            target: target.to_owned(),
+        },
+    )?;
+    let reference = required_read(
+        root,
+        &["symbolic-ref", "--quiet", "HEAD"],
+        "resolve integration HEAD ref",
+    )?;
+    let updated = update_ref(root, &reference, target, expected, false)?;
+    let current = required_read(root, &["rev-parse", "HEAD"], "read integration HEAD")?;
+    if updated.success() || current == target {
+        clear_merge_state(root)?;
+        return remove_marker(&marker);
+    }
+    let detail = updated.detail("advance branch to unpublished task integration");
+    recover_pending(root)?;
+    Err(Error::refusal(
+        "git::resolution-ref-race",
+        detail,
+        format!("inspect the retained resolution, then retry task completion for {label}"),
+    ))
+}
+
 fn update_ref(
     root: &Path,
     reference: &str,
@@ -509,6 +548,9 @@ pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
             target,
             tree,
         } => recover_resolution(root, &expected, &target, &tree)?,
+        Pending::Integration { expected, target } => {
+            recover_integration(root, &expected, &target)?;
+        }
         Pending::Snapshot { commit } => return snapshot::resume(root, &commit, &marker),
     }
     remove_marker(&marker)
@@ -542,6 +584,21 @@ fn recover_resolution(root: &Path, expected: &str, target: &str, tree: &str) -> 
             restored.detail("restore staged task resolution"),
         ))
     }
+}
+
+fn recover_integration(root: &Path, expected: &str, target: &str) -> Result<(), Error> {
+    let current = required_read(root, &["rev-parse", "HEAD"], "recover task integration")?;
+    if current == target {
+        return clear_merge_state(root);
+    }
+    if current == expected {
+        return Ok(());
+    }
+    Err(Error::refusal(
+        "git::transaction-head-moved",
+        format!("task integration expected {expected} or {target}, but HEAD is {current}"),
+        "inspect HEAD and the retained merge state before retrying task completion",
+    ))
 }
 
 fn recover_move(

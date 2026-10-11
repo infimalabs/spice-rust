@@ -28,6 +28,14 @@
 //! back by restoring its content, and a path the baseline never had is put back
 //! by removing it. A recipe that offered only one of those would be wrong half
 //! the time.
+//!
+//! A resolution can need to adapt a baseline path no task commit names, such
+//! as a caller of a function the task changed, and Git admits no non-merge
+//! commit while the merge stays open. So a drifted resolution still lands
+//! nothing, but it does commit the integration to the lane: the resolved tree
+//! with every drifted path held as the baseline has it, unpublished, with the
+//! resolved content of those paths left staged. A non-merge commit then owns
+//! that content inside the footprint, or a restore from `HEAD` drops it.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -37,7 +45,7 @@ use super::{Error, required_read, run};
 
 /// Where a drifted path stood at the baseline, which decides how it is put back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Drift {
+pub(super) enum Drift {
     /// The baseline holds this path, so the landing rewrote a peer's content.
     RewritesBaseline,
     /// The baseline never held it, so the landing invented it outside the task.
@@ -55,76 +63,76 @@ impl fmt::Display for Drift {
 
 /// Refuse a landing whose first-parent diff leaves the task's own footprint.
 ///
-/// `merge_head` is the landing being judged and `agent_head` the lane work it
-/// claims to carry; both are compared against `upstream_head`, the baseline the
-/// merge takes as its first parent.
+/// `landing` is the merge or tree being judged and `agent_head` the lane work
+/// it claims to carry; both are compared against `upstream_head`, the baseline
+/// the landing takes as its first parent.
 pub(super) fn require_landing_within_footprint(
     root: &Path,
     label: &str,
     upstream_head: &str,
-    merge_head: &str,
+    landing: &str,
     agent_head: &str,
 ) -> Result<(), Error> {
-    require_tree_within_footprint(root, label, upstream_head, merge_head, agent_head)
-}
-
-/// Refuse a sealed resolved tree before any merge commit names it.
-pub(super) fn require_tree_within_footprint(
-    root: &Path,
-    label: &str,
-    upstream_head: &str,
-    tree: &str,
-    agent_head: &str,
-) -> Result<(), Error> {
-    let landed = read_paths(
-        root,
-        &["diff", "--no-renames", "--name-only", upstream_head, tree],
-        "read the landing diff",
-    )?;
-    let footprint = footprint_paths(root, upstream_head, agent_head)?;
-    let drifted = landed.difference(&footprint).cloned().collect::<Vec<_>>();
+    let drifted = drift(root, upstream_head, landing, agent_head)?;
     if drifted.is_empty() {
         return Ok(());
     }
-    Err(drift_refusal(
-        label,
-        upstream_head,
-        &classify(root, upstream_head, &drifted)?,
-    ))
+    Err(drift_refusal(label, upstream_head, &drifted))
 }
 
-/// The paths of the task's own non-merge commits since the baseline.
-///
-/// A resolution merge must not count towards the footprint it is being measured
-/// against, or the landing would authorize itself: the paths the resolution
-/// touched are exactly the set this boundary exists to question.
-///
-/// `--no-merges` states that, but does not by itself achieve it, and no fixture
-/// here can tell the flag apart from its absence. `git log --name-only` already
-/// prints a merge with an empty file list, so the paths are excluded whether or
-/// not the commit is. The flag is kept because the predecessor names it at
-/// `spice/tasks/git/merging.py:336` and because the exclusion is a decision
-/// rather than a default worth inheriting silently -- if this listing ever
-/// grows `-m` or `--first-parent`, the default reverses and the flag is what
-/// holds the meaning still. Measured, not assumed: dropping it leaves all six
-/// fixtures green.
-fn footprint_paths(
+/// Every path `landing` changes against the baseline that no non-merge task
+/// commit names, classified by where it stood at the baseline.
+pub(super) fn drift(
     root: &Path,
     upstream_head: &str,
+    landing: &str,
     agent_head: &str,
-) -> Result<BTreeSet<String>, Error> {
-    read_paths(
+) -> Result<Vec<(String, Drift)>, Error> {
+    let landed = read_paths(
+        root,
+        &[
+            "diff",
+            "--no-renames",
+            "--name-only",
+            upstream_head,
+            landing,
+        ],
+        "read the landing diff",
+    )?;
+    let footprint = footprint(&required_read(
         root,
         &[
             "log",
             "--no-renames",
-            "--no-merges",
-            "--format=",
+            "--format=%x00%P",
             "--name-only",
             &format!("{upstream_head}..{agent_head}"),
         ],
         "read the task footprint",
-    )
+    )?);
+    let drifted = landed.difference(&footprint).cloned().collect::<Vec<_>>();
+    classify(root, upstream_head, &drifted)
+}
+
+/// The paths of the task's own non-merge commits since the baseline.
+///
+/// `log` holds one record per commit, each opening with a NUL and its parent
+/// list and followed by the paths that commit names. A merge's record never
+/// counts, whatever paths it lists: an integration or resolution merge must not
+/// authorize the landing measured against it, since the paths it touched are
+/// exactly the set this boundary exists to question. A path a non-merge commit
+/// names after such a merge counts like any other task commit's path.
+fn footprint(log: &str) -> BTreeSet<String> {
+    log.split('\0')
+        .filter_map(|record| {
+            let mut lines = record.lines();
+            let parents = lines.next()?.split_whitespace().count();
+            (parents <= 1).then_some(lines)
+        })
+        .flatten()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn read_paths(root: &Path, args: &[&str], action: &str) -> Result<BTreeSet<String>, Error> {
@@ -158,19 +166,48 @@ fn classify(
 }
 
 fn drift_refusal(label: &str, upstream_head: &str, classified: &[(String, Drift)]) -> Error {
-    let named = classified
-        .iter()
-        .map(|(path, drift)| format!("\n  {drift} {path}"))
-        .collect::<String>();
     Error::refusal(
         "git::landing-out-of-scope",
         format!(
-            "landing {label} changes baseline paths outside its own commits:{named}\nthose \
+            "landing {label} changes baseline paths outside its own commits:{}\nthose \
              paths carry work already on the shared branch, and publishing would overwrite \
-             it without recording that it was there"
+             it without recording that it was there",
+            listing(classified),
         ),
         remedy(label, upstream_head, classified),
     )
+}
+
+/// Refuse a drifted resolution after its integration moved the lane unpublished.
+///
+/// `integration` is the resolution committed with every drifted path held as
+/// the baseline has it. The lane holds it unpublished while the resolved
+/// content of those paths stays staged, so either recovery is one ordinary step
+/// on a lane that no longer carries an open merge.
+pub(super) fn integration_refusal(
+    label: &str,
+    upstream_head: &str,
+    integration: &str,
+    classified: &[(String, Drift)],
+) -> Error {
+    Error::refusal(
+        "git::landing-out-of-scope",
+        format!(
+            "the resolution of {label} changes baseline paths outside its own commits:{}\n\
+             nothing was published: the lane holds baseline {upstream_head} integrated as \
+             {integration}, which keeps those paths as the shared branch has them, and the \
+             resolved content of each stays staged",
+            listing(classified),
+        ),
+        integration_remedy(label, upstream_head, integration, classified),
+    )
+}
+
+fn listing(classified: &[(String, Drift)]) -> String {
+    classified
+        .iter()
+        .map(|(path, drift)| format!("\n  {drift} {path}"))
+        .collect()
 }
 
 /// Quote a path the way the predecessor's `shlex.join` does.
@@ -199,6 +236,14 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
+fn quoted(classified: &[(String, Drift)], wanted: Drift) -> String {
+    classified
+        .iter()
+        .filter(|(_, drift)| *drift == wanted)
+        .map(|(path, _)| format!(" {}", shell_quote(path)))
+        .collect()
+}
+
 /// Both recoveries, because the boundary cannot tell which one is meant.
 ///
 /// Drift is equally consistent with a resolution that reached too far and with
@@ -206,15 +251,8 @@ fn shell_quote(value: &str) -> String {
 /// Naming a single recovery would make the refusal decide the question it exists
 /// to raise, so it states the branch each recipe belongs to and stops there.
 fn remedy(label: &str, upstream_head: &str, classified: &[(String, Drift)]) -> String {
-    let restore = |wanted: Drift| {
-        classified
-            .iter()
-            .filter(|(_, drift)| *drift == wanted)
-            .map(|(path, _)| format!(" {}", shell_quote(path)))
-            .collect::<String>()
-    };
-    let rewrites = restore(Drift::RewritesBaseline);
-    let adds = restore(Drift::AddsToBaseline);
+    let rewrites = quoted(classified, Drift::RewritesBaseline);
+    let adds = quoted(classified, Drift::AddsToBaseline);
     let mut lines = vec![
         "choose one branch before editing anything".to_owned(),
         "unintended drift, drop the changes: put every path above back as the shared branch \
@@ -234,4 +272,92 @@ fn remedy(label: &str, upstream_head: &str, classified: &[(String, Drift)]) -> S
     ));
     lines.push("then retry task completion".to_owned());
     lines.join("; ")
+}
+
+/// The same two branches, from a lane whose integration holds the baseline.
+///
+/// The recovery opens with the lane's movement, because it is the line every
+/// surface prints: `HEAD` already keeps every drifted path as the shared branch
+/// has it, so dropping restores from `HEAD`, and owning commits what is staged.
+fn integration_remedy(
+    label: &str,
+    upstream_head: &str,
+    integration: &str,
+    classified: &[(String, Drift)],
+) -> String {
+    let rewrites = quoted(classified, Drift::RewritesBaseline);
+    let adds = quoted(classified, Drift::AddsToBaseline);
+    let mut lines = vec![
+        format!(
+            "nothing was published; the lane holds baseline {upstream_head} integrated as \
+             {integration}, which keeps{rewrites}{adds} as the shared branch has them while \
+             the resolved content stays staged"
+        ),
+        "choose one branch before editing anything".to_owned(),
+        format!(
+            "deliberate ownership, keep the changes: adapt them as needed and git commit the \
+             staged paths through the pre-commit gate, a non-merge commit that puts them \
+             inside the footprint of {label}"
+        ),
+        "unintended drift, drop the changes: put them back as HEAD has them".to_owned(),
+    ];
+    if !rewrites.is_empty() {
+        lines.push(format!("git checkout HEAD --{rewrites}"));
+    }
+    if !adds.is_empty() {
+        lines.push(format!("git rm -f --{adds}"));
+    }
+    lines.push("then retry task completion".to_owned());
+    lines.join("; ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::footprint;
+
+    const BASE: &str = "1111111111111111111111111111111111111111";
+    const TASK: &str = "2222222222222222222222222222222222222222";
+    const INTEGRATION: &str = "3333333333333333333333333333333333333333";
+
+    /// `git log --format=%x00%P --name-only`, newest first; a merge lists
+    /// paths only under `-m` or `--cc`, which this record shows it doing.
+    fn log(records: &[(&[&str], &[&str])]) -> String {
+        records
+            .iter()
+            .map(|(parents, paths)| {
+                let names = paths
+                    .iter()
+                    .map(|path| format!("{path}\n"))
+                    .collect::<String>();
+                let body = if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{names}")
+                };
+                format!("\0{}\n{body}", parents.join(" "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_path_a_non_merge_commit_names_after_the_integration_counts() {
+        let footprint = footprint(&log(&[
+            (&[INTEGRATION], &["tests/caller.rs"]),
+            (&[BASE, TASK], &["tests/caller.rs", "src/peer.rs"]),
+            (&[BASE], &["src/lib.rs"]),
+        ]));
+        assert_eq!(
+            footprint,
+            ["src/lib.rs", "tests/caller.rs"].map(str::to_owned).into()
+        );
+    }
+
+    #[test]
+    fn a_path_only_an_integration_merge_changes_stays_outside() {
+        let footprint = footprint(&log(&[
+            (&[BASE, TASK], &["tests/caller.rs", "src/lib.rs"]),
+            (&[BASE], &["src/lib.rs"]),
+        ]));
+        assert_eq!(footprint, ["src/lib.rs"].map(str::to_owned).into());
+    }
 }
