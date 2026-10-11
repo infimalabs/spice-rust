@@ -372,11 +372,16 @@ pub enum TaskRelationNode {
     Origin {
         origin: crate::Origin,
     },
+    /// One completed review. `phase` and `author` name the most recent
+    /// completed phase before it and that phase's author; both are absent when
+    /// no phase completed first, as in a flow that begins with review.
     Review {
         task: crate::TaskStamp,
         position: crate::Seq,
-        phase: crate::Phase,
-        author: Actor,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<crate::Phase>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author: Option<Actor>,
         reviewer: Actor,
         verdict: crate::body::Verdict,
     },

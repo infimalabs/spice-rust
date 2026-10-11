@@ -45,13 +45,14 @@ pub struct Diagram {
     text: String,
 }
 
-/// One completed durable review joined to the author of the reviewed phase.
+/// One completed durable review, joined to the phase it followed and that
+/// phase's author when the journal records one. A flow that begins with review
+/// has no completed phase before its first review, so that edge names none.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ReviewEdge {
     task: TaskHandle,
-    phase: Phase,
+    implemented: Option<(Phase, Actor)>,
     reviewer: Actor,
-    author: Actor,
     verdict: body::Verdict,
     reviewed: Seq,
 }
@@ -61,60 +62,49 @@ impl ReviewEdge {
     #[must_use]
     pub const fn new(
         task: TaskHandle,
-        phase: Phase,
+        implemented: Option<(Phase, Actor)>,
         reviewer: Actor,
-        author: Actor,
         verdict: body::Verdict,
         reviewed: Seq,
     ) -> Self {
         Self {
             task,
-            phase,
+            implemented,
             reviewer,
-            author,
             verdict,
             reviewed,
         }
     }
 }
 
-/// A completed review could not be joined to durable phase-author evidence.
+/// A completed review contradicts its authenticated fact actor.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ReviewHistoryError {
-    /// A visible task review has no preceding completed phase author.
-    AuthorMissing { task: TaskStamp, reviewed: Seq },
-    /// The review body contradicts the authenticated fact actor.
-    ReviewerMismatch {
-        task: TaskStamp,
-        body: Actor,
-        fact: Actor,
-        reviewed: Seq,
-    },
+pub struct ReviewHistoryError {
+    task: TaskStamp,
+    body: Actor,
+    fact: Actor,
+    reviewed: Seq,
 }
 
 impl fmt::Display for ReviewHistoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AuthorMissing { task, reviewed } => write!(
-                formatter,
-                "task {task} review at {reviewed} has no preceding phase author"
-            ),
-            Self::ReviewerMismatch {
-                task,
-                body,
-                fact,
-                reviewed,
-            } => write!(
-                formatter,
-                "task {task} review at {reviewed} names reviewer {body} under fact actor {fact}"
-            ),
-        }
+        let Self {
+            task,
+            body,
+            fact,
+            reviewed,
+        } = self;
+        write!(
+            formatter,
+            "task {task} review at {reviewed} names reviewer {body} under fact actor {fact}"
+        )
     }
 }
 
 impl Error for ReviewHistoryError {}
 
-/// Join completed review facts to the most recent completed phase author.
+/// Join completed review facts to the most recent completed phase author, when
+/// one precedes the review.
 ///
 /// Only tasks present in `entries` contribute edges, preserving the board's
 /// actor-filtered visibility boundary. Input is sorted by durable position so
@@ -170,24 +160,17 @@ pub fn review_history<'a>(
                     continue;
                 };
                 if reviewed.reviewer != envelope.actor {
-                    return Err(ReviewHistoryError::ReviewerMismatch {
+                    return Err(ReviewHistoryError {
                         task: reviewed.task,
                         body: reviewed.reviewer,
                         fact: envelope.actor.clone(),
                         reviewed: envelope.seq,
                     });
                 }
-                let Some((phase, author)) = authors.get(&reviewed.task) else {
-                    return Err(ReviewHistoryError::AuthorMissing {
-                        task: reviewed.task,
-                        reviewed: envelope.seq,
-                    });
-                };
                 reviews.push(ReviewEdge::new(
                     task.clone(),
-                    phase.clone(),
+                    authors.get(&reviewed.task).cloned(),
                     reviewed.reviewer,
-                    author.clone(),
                     reviewed.verdict,
                     envelope.seq,
                 ));
@@ -256,15 +239,19 @@ pub fn render(view: View, entries: &[Entry], reviews: &[ReviewEdge]) -> Diagram 
             let mut reviews = reviews.to_vec();
             reviews.sort();
             for edge in reviews {
-                writeln!(
-                    text,
-                    "{} -> {} [{} {} {}]",
-                    edge.reviewer,
-                    edge.author,
-                    edge.task,
-                    edge.phase,
-                    verdict(edge.verdict),
-                )
+                let verdict = verdict(edge.verdict);
+                match &edge.implemented {
+                    Some((phase, author)) => writeln!(
+                        text,
+                        "{} -> {author} [{} {phase} {verdict}]",
+                        edge.reviewer, edge.task,
+                    ),
+                    None => writeln!(
+                        text,
+                        "{} -> {} [no completed phase {verdict}]",
+                        edge.reviewer, edge.task,
+                    ),
+                }
                 .expect("String writes are infallible");
             }
         }

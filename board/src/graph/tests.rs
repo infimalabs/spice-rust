@@ -74,6 +74,11 @@ fn envelope<T: Body>(position: u64, actor: Actor, body: T) -> Envelope<AnyFact> 
 }
 
 fn added(position: u64, task: TaskStamp) -> Envelope<AnyFact> {
+    added_with_flow(position, task, &["todo", "review"])
+}
+
+fn added_with_flow(position: u64, task: TaskStamp, flow: &[&str]) -> Envelope<AnyFact> {
+    let flow = flow.iter().copied().map(phase).collect::<Vec<_>>();
     envelope(
         position,
         Actor::Spice,
@@ -86,8 +91,8 @@ fn added(position: u64, task: TaskStamp) -> Envelope<AnyFact> {
             project: "board.graph".to_owned(),
             tags: Vec::new(),
             depends: Vec::new(),
-            flow: vec![phase("todo"), phase("review")],
-            phase: phase("todo"),
+            phase: flow[0].clone(),
+            flow,
             revision: 1,
             creation: body::TaskCreationContext::unavailable(
                 body::TaskCreationUnavailable::SpiceActor,
@@ -207,5 +212,47 @@ fn completed_reviews_join_phase_authors_and_render_stably_from_reversed_facts() 
     assert_eq!(
         rendered,
         render(View::Review, &entries, &reversed_edges).text()
+    );
+}
+
+#[test]
+fn a_review_no_completed_phase_precedes_names_no_author_beside_joined_reviews() {
+    let review_only = stamp(1_800_000_000_003);
+    let ordinary = stamp(1_800_000_000_004);
+    let author = lane("019fe57c-a453-7ec1-a400-26e6901aaeb5");
+    let first_reviewer = lane("019fe57c-a453-7ec1-a400-26e6901aaeb6");
+    let second_reviewer = lane("019fe57c-a453-7ec1-a400-26e6901aaeb7");
+    let entries = vec![
+        entry(review_only.clone(), None),
+        entry(ordinary.clone(), None),
+    ];
+    let handles = entries
+        .iter()
+        .map(|entry| entry.handle().to_string())
+        .collect::<Vec<_>>();
+    let facts = vec![
+        added_with_flow(1, review_only.clone(), &["review"]),
+        added(2, ordinary.clone()),
+        reviewed(3, review_only, first_reviewer.clone(), body::Verdict::Clean),
+        completed(4, ordinary.clone(), author.clone()),
+        phased(5, ordinary.clone(), author.clone()),
+        reviewed(6, ordinary, second_reviewer.clone(), body::Verdict::Finding),
+    ];
+    let forward = review_history(&facts, &entries).expect("a review-first flow is valid history");
+    let mut reversed_facts = facts;
+    reversed_facts.reverse();
+
+    assert_eq!(
+        forward,
+        review_history(&reversed_facts, &entries).expect("input order is irrelevant")
+    );
+    assert_eq!(
+        render(View::Review, &entries, &forward).text(),
+        format!(
+            "graph review\n\
+             {first_reviewer} -> {} [no completed phase clean]\n\
+             {second_reviewer} -> {author} [{} todo finding]\n",
+            handles[0], handles[1],
+        )
     );
 }
