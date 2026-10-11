@@ -11,6 +11,15 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
     }
 }
 
+/// Execute one generated board-family CLI leaf against `repository`.
+pub(crate) fn run_at(
+    repository: &Repository,
+    matches: &ArgMatches,
+    contract: &Contract,
+) -> Outcome<CommandAnswer> {
+    dispatch_client(repository, contract, matches)
+}
+
 /// Execute `task next`, keeping the empty-drain readout beside the outcome.
 pub(crate) fn run_task_next(contract: &Contract) -> TaskNext {
     match discover_repository() {

@@ -70,6 +70,8 @@ mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
 #[cfg(not(target_arch = "wasm32"))]
+mod resource;
+#[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod retro_command;

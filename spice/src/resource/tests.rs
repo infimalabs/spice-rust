@@ -1,0 +1,318 @@
+use std::fs;
+
+use spice::repository::Repository;
+
+use super::{Query, Request, Resource, rewrite_continuations};
+
+const HANDLE: &str = "TASK-dVlFq9qKp";
+
+fn arguments(url: &str) -> Vec<String> {
+    match Request::parse(url) {
+        Ok(Request {
+            resource: Resource::Read(query),
+            ..
+        }) => query.arguments(),
+        other => panic!("{url} names no CLI read: {other:?}"),
+    }
+}
+
+fn refusal(url: &str) -> String {
+    Request::parse(url).expect_err(url)
+}
+
+#[test]
+fn each_resource_runs_exactly_its_cli_read() {
+    for (url, expected) in [
+        ("spice://board", "task status"),
+        ("spice://task", "task list"),
+        (
+            "spice://task?all&status=completed&limit=5&after=TASK-dVlFq9qKp",
+            "task list --all --status completed --limit 5 --after TASK-dVlFq9qKp",
+        ),
+        (
+            "spice://task?project=spice.task",
+            "task list --project spice.task",
+        ),
+        ("spice://task/TASK-dVlFq9qKp", "task show TASK-dVlFq9qKp"),
+        ("spice://task/TASK-dVlFq9qKp/", "task show TASK-dVlFq9qKp"),
+        (
+            "spice://task/TASK-dVlFq9qKp/context",
+            "task show TASK-dVlFq9qKp --context",
+        ),
+        (
+            "spice://task/TASK-dVlFq9qKp/history",
+            "task show TASK-dVlFq9qKp --history",
+        ),
+        (
+            "spice://task/TASK-dVlFq9qKp/detail?limit=3&after=context%3A2",
+            "task show TASK-dVlFq9qKp --context --history --limit 3 --after context:2",
+        ),
+        (
+            "spice://task/TASK-dVlFq9qKp/artifact?max-bytes=900",
+            "task artifact list TASK-dVlFq9qKp --max-bytes 900",
+        ),
+        (
+            "spice://task/TASK-dVlFq9qKp/artifact/a1?offset=4096&bytes=10",
+            "task artifact show TASK-dVlFq9qKp a1 --offset 4096 --bytes 10",
+        ),
+    ] {
+        assert_eq!(arguments(url).join(" "), expected, "{url}");
+    }
+}
+
+#[test]
+fn the_root_and_quote_targets_are_not_cli_reads() {
+    assert_eq!(
+        Request::parse("spice://")
+            .expect("the root is the index")
+            .resource,
+        Resource::Index
+    );
+    assert_eq!(
+        Request::parse("spice://quote/v1/steer/1kQnrzNZ/00:2-3")
+            .expect("a quote target with a selector")
+            .resource,
+        Resource::Quote("spice://quote/v1/steer/1kQnrzNZ/00".to_owned())
+    );
+}
+
+#[test]
+fn unknown_paths_and_malformed_handles_are_refused() {
+    for url in [
+        "spice://lane",
+        "spice://?limit=3",
+        "spice://board/status",
+        "spice://task/TASK-dVlFq9qKp/notes",
+        "spice://task/TASK-dVlFq9qKp/artifact/a1/raw",
+        "http://task",
+    ] {
+        let refused = refusal(url);
+        assert!(!refused.contains("acts on the board"), "{url}: {refused}");
+    }
+    assert!(refusal("spice://task/not-a-handle").contains("not-a-handle"));
+    refusal("spice://task/TASK-dVlFq9qKp%ZZ");
+}
+
+#[test]
+fn mutation_shaped_urls_are_refused_naming_their_command() {
+    for (url, command) in [
+        ("spice://task/next", "spice task next"),
+        ("spice://task/add", "spice task add"),
+        ("spice://task/TASK-dVlFq9qKp/done", "spice task done"),
+        ("spice://task/TASK-dVlFq9qKp/review", "spice task review"),
+        ("spice://task/TASK-dVlFq9qKp/modify", "spice task modify"),
+        (
+            "spice://task/TASK-dVlFq9qKp/artifact/add",
+            "spice task artifact add",
+        ),
+        (
+            "spice://task/TASK-dVlFq9qKp/artifact/prune",
+            "spice task artifact prune",
+        ),
+    ] {
+        let refused = refusal(url);
+        assert!(
+            refused.contains(command) && refused.contains("acts on the board"),
+            "{url}: {refused}"
+        );
+    }
+}
+
+#[test]
+fn query_keys_are_those_the_read_admits_each_once() {
+    for url in [
+        "spice://board?limit=3",
+        "spice://task/TASK-dVlFq9qKp?offset=3",
+        "spice://task?output=x",
+        "spice://task?limit",
+        "spice://task?limit=",
+        "spice://task?all=yes",
+        "spice://task?limit=3&limit=4",
+        "spice://task/TASK-dVlFq9qKp/artifact/a1?output=/tmp/x",
+    ] {
+        refusal(url);
+    }
+}
+
+#[test]
+fn out_of_range_limits_are_refused_by_the_cli_read() {
+    let root = std::env::temp_dir().join(format!("spice-resource-limits-{}", std::process::id()));
+    fs::create_dir_all(root.join(".git")).expect("fixture Git directory exists");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    for url in [
+        "spice://task?limit=100000",
+        "spice://task?max-bytes=0",
+        "spice://task/TASK-dVlFq9qKp/detail?max-text=1000000",
+        "spice://task/TASK-dVlFq9qKp/history?limit=-1",
+        "spice://task/TASK-dVlFq9qKp?limit=3",
+    ] {
+        let Ok(Request {
+            resource: Resource::Read(query),
+            ..
+        }) = Request::parse(url)
+        else {
+            panic!("{url} parses");
+        };
+        let refused = super::run(&repository, &query).expect_err(url);
+        assert!(!refused.is_empty(), "{url}");
+    }
+    fs::remove_dir_all(&root).expect("fixture cleanup");
+}
+
+#[test]
+fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
+    let commands: [&[&str]; 4] = [
+        &[
+            "task",
+            "show",
+            HANDLE,
+            "--context",
+            "--history",
+            "--limit",
+            "20",
+            "--max-bytes",
+            "16000",
+            "--max-text",
+            "4096",
+            "--after",
+            "context:20",
+        ],
+        &[
+            "task",
+            "list",
+            "--project",
+            "spice.task",
+            "--status",
+            "pending",
+            "--limit",
+            "3",
+            "--max-bytes",
+            "8192",
+            "--max-text",
+            "240",
+            "--after",
+            HANDLE,
+        ],
+        &[
+            "task",
+            "artifact",
+            "list",
+            HANDLE,
+            "--after",
+            "a 1/x",
+            "--limit",
+            "20",
+            "--max-bytes",
+            "8192",
+        ],
+        &[
+            "task", "artifact", "show", HANDLE, "a1", "--offset", "4096", "--bytes", "10",
+        ],
+    ];
+    for command in commands {
+        let command = command
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>();
+        let url = Query::from_arguments(&command)
+            .expect("a served read has a URL")
+            .url();
+        assert_eq!(arguments(&url), command, "{url}");
+    }
+    let mutation = ["task", "done", HANDLE].map(str::to_owned);
+    assert_eq!(Query::from_arguments(&mutation), None);
+}
+
+#[test]
+fn a_page_names_its_continuation_as_a_url() {
+    let command = wire::SpiceCommand::new(
+        "task",
+        [
+            "show",
+            HANDLE,
+            "--history",
+            "--limit",
+            "2",
+            "--after",
+            "step:9",
+        ],
+    )
+    .expect("continuation command");
+    let rows = [1_u8, 2, 3];
+    let mut admission = wire::output::Admission::new(
+        wire::output::INTERACTIVE
+            .budget(wire::output::Request {
+                rows: Some(2),
+                bytes: None,
+                text: None,
+            })
+            .expect("budget"),
+    );
+    for row in rows {
+        admission.offer(row).expect("row encodes");
+    }
+    let omission = admission
+        .finish(|_| command.clone())
+        .omission
+        .expect("a row is withheld");
+    let page = format!("handle {HANDLE}\n{omission}\nnext: spice task done {HANDLE}");
+    let rewritten = rewrite_continuations(&page);
+    let url = format!("spice://task/{HANDLE}/history?limit=2&after=step%3A9");
+    assert_eq!(
+        rewritten,
+        page.replace(&command.to_string(), &url),
+        "only the continuation changes"
+    );
+    assert_eq!(
+        arguments(&url),
+        command.arguments().to_vec(),
+        "the URL resumes the same read"
+    );
+}
+
+#[test]
+fn a_selector_selects_lines_or_is_refused() {
+    let text = "one\ntwo\nthree\nfour\nfive";
+    let select = |url: &str| {
+        let request = Request::parse(url)?;
+        request.selector.expect("a selector is named").select(text)
+    };
+    for (selector, expected) in [
+        ("2-3", "two\nthree"),
+        ("4", "four\nfive"),
+        ("4-", "four\nfive"),
+        ("2+2", "two\nthree"),
+        ("-2", "four\nfive"),
+        ("1,5", "one\ntwo\nthree\nfour\nfive\nfive"),
+        ("3-9", "three\nfour\nfive"),
+        ("raw", text),
+        ("2-3:raw", "two\nthree"),
+    ] {
+        assert_eq!(
+            select(&format!("spice://board:{selector}")).as_deref(),
+            Ok(expected),
+            ":{selector}"
+        );
+    }
+    assert!(select("spice://board:6").is_err(), "a start past the end");
+    for selector in ["img", "0", "3-2", "x", "2-3:img", ""] {
+        assert!(
+            Request::parse(&format!("spice://board:{selector}")).is_err(),
+            ":{selector}"
+        );
+    }
+}
+
+#[test]
+fn a_task_list_ends_with_each_shown_task_url() {
+    let mut page = format!(
+        "scope global --all\n{HANDLE} [todo] spice.task Resolve reads\nAPP-dVlMW4bKm [todo] spice.app Show jobs\nwithheld 1 of 3 rows"
+    );
+    super::board_trailer(&mut page, &super::Shape::Tasks);
+    assert!(
+        page.ends_with(&format!(
+            "\nresources:\n  spice://task/{HANDLE}\n  spice://task/APP-dVlMW4bKm"
+        )),
+        "{page}"
+    );
+}

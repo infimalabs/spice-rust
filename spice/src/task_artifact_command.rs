@@ -23,18 +23,50 @@ pub(crate) fn run(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<ArtifactAnswer> {
-    match run_inner(matches, contract, configuration) {
+    match working_repository()
+        .and_then(|repository| run_inner(&repository, matches, contract, configuration))
+    {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
 }
 
+/// Execute one artifact read or change against `repository`.
+pub(crate) fn run_at(
+    repository: &Repository,
+    matches: &clap::ArgMatches,
+    contract: &Contract,
+) -> Outcome<ArtifactAnswer> {
+    match run_inner(repository, matches, contract, None) {
+        Ok((position, body)) => Outcome::Reply(Reply { position, body }),
+        Err(failure) => failure.outcome(),
+    }
+}
+
+fn working_repository() -> Result<Repository, Failure> {
+    let working = std::env::current_dir().map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            "artifact::working-directory-unavailable",
+            error.to_string(),
+        )
+    })?;
+    Repository::discover(&working).map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            spice::repository::ResolveError::REASON,
+            error.to_string(),
+        )
+    })
+}
+
 fn run_inner(
+    repository: &Repository,
     matches: &clap::ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<(ReplyPosition, ArtifactAnswer), Failure> {
-    let snapshot = snapshot(configuration)?;
+    let snapshot = snapshot(repository, configuration)?;
     let store = Store::new(
         snapshot.state.artifacts(),
         snapshot.state.locks().join("task-artifacts.lock"),
@@ -126,22 +158,11 @@ struct Snapshot {
     statuses: BTreeMap<TaskStamp, (TaskHandle, String)>,
 }
 
-fn snapshot(configuration: Option<&spice::config::RepositoryCapture>) -> Result<Snapshot, Failure> {
-    let working = std::env::current_dir().map_err(|error| {
-        Failure::fault(
-            FaultClass::Environment,
-            "artifact::working-directory-unavailable",
-            error.to_string(),
-        )
-    })?;
-    let repository = Repository::discover(&working).map_err(|error| {
-        Failure::fault(
-            FaultClass::Environment,
-            spice::repository::ResolveError::REASON,
-            error.to_string(),
-        )
-    })?;
-    let projects = task_project_policy(&repository, configuration)?;
+fn snapshot(
+    repository: &Repository,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<Snapshot, Failure> {
+    let projects = task_project_policy(repository, configuration)?;
     let state = repository.admit_state().map_err(state_failure)?;
     let journal = journal::JournalReader::open(state.journal()).map_err(|error| {
         Failure::fault(

@@ -596,7 +596,29 @@ pub(crate) fn answer_bound(kind: CommandKind, _discovery_path: &Path) -> Duratio
     crate::cli::answer_bound(kind)
 }
 
+thread_local! {
+    /// The lane this thread's commands authenticate as, set by [`as_lane`].
+    static SEATED_LANE: std::cell::Cell<Option<CanonicalUuid>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `commands` with every command this thread submits authenticated over
+/// `lane`'s own connection, exactly as a CLI run in that lane's shell would,
+/// whatever the process environment names.
+pub(crate) fn as_lane<T>(lane: CanonicalUuid, commands: impl FnOnce() -> T) -> T {
+    struct Restore(Option<CanonicalUuid>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SEATED_LANE.set(self.0);
+        }
+    }
+    let _restore = Restore(SEATED_LANE.replace(Some(lane)));
+    commands()
+}
+
 fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
+    if let Some(lane) = SEATED_LANE.get() {
+        return Ok(Some(lane));
+    }
     let Some(value) = crate::bootstrap_environment(steer::hook::LANE) else {
         return Ok(None);
     };
