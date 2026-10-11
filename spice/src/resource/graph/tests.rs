@@ -69,6 +69,7 @@ fn native_graph_pages_cover_every_byte_of_each_view_under_each_bound() {
         let original = board::graph::render(view, &entries, &[]).text().to_owned();
         let expected = original.lines().collect::<Vec<_>>();
         for bounds in [
+            "limit=0",
             "limit=1",
             "max-bytes=80",
             "max-text=7",

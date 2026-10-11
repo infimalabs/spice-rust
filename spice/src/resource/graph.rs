@@ -179,6 +179,9 @@ impl Pages {
         if let Some(next) = page.next {
             let mut continuation = query.clone();
             set(&mut continuation, "after", next.written());
+            if let Some(rows) = page.widened.rows {
+                set(&mut continuation, "limit", rows.to_string());
+            }
             if let Some(bytes) = page.widened.bytes {
                 set(&mut continuation, "max-bytes", bytes.to_string());
             }
@@ -234,6 +237,9 @@ fn page(snapshot: &Snapshot, mut cursor: Cursor, budget: Budget) -> Result<Page,
     let mut bytes = 0;
     while cursor.line < snapshot.lines.len() {
         if result.rows.len() == limits.rows {
+            if result.rows.is_empty() {
+                result.widened.rows = Some(1);
+            }
             break;
         }
         let remaining = &snapshot.line(cursor.line)[cursor.byte..];
