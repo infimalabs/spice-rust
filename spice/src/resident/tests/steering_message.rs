@@ -278,7 +278,7 @@ impl Lanes {
         commit(&self.bus, starting).expect("renewal commits");
     }
 
-    /// Declare the lane occupant's session at the tape's current end.
+    /// Declare the lane's seated occupant's session at the tape's current end.
     fn declare(&self, lane: u8) -> listen::Locus {
         let declaration = self
             .tape(lane)
@@ -294,7 +294,7 @@ impl Lanes {
             .expect("declared lane exists");
         let session = wire::LaneSession {
             lane: row.lane,
-            occupant: test_uuid(lane + 1),
+            occupant: row.occupant.expect("the declaring lane is seated"),
             worktree: row.worktree.clone(),
             vendor: row.vendor.clone(),
             launch: None,
@@ -311,9 +311,10 @@ impl Lanes {
         let mut write = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
             .expect("declaration write starts");
         crate::resident::shutdown::guard_residency(&mut write, &observed);
+        let (source, _) = self.records(lane);
         let fact = write
             .fact(
-                crate::resident::lane_surface::session_fact(&session, test_uuid(30)),
+                crate::resident::lane_surface::session_fact(&session, source),
                 FactCause::Existing(observed.position()),
             )
             .expect("declaration fact is valid");
@@ -362,9 +363,39 @@ impl Lanes {
         );
     }
 
-    fn dead_letter_departed(&self) {
-        steering::dead_letter_departed(&self.bus, &self.paths, self.epoch, &mut Vec::new())
-            .expect("departed recipients read");
+    fn dead_letter_removed_lanes(&self) {
+        steering::dead_letter_removed_lanes(&self.bus, &mut Vec::new())
+            .expect("removed lanes read");
+    }
+
+    /// Remove one vacant lane from the residency.
+    fn remove(&self, lane: u8) {
+        let lane = test_uuid(lane);
+        let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
+        let mut remaining = observed.body().clone();
+        let row = remaining
+            .lanes
+            .iter()
+            .find(|row| row.lane == lane)
+            .cloned()
+            .expect("fixture lane exists");
+        assert!(row.occupant.is_none(), "only a vacant lane is removed");
+        remaining.lanes.retain(|row| row.lane != lane);
+        let mut removal = write(Actor::Operator, self.epoch, Producer::ResidentRecognition)
+            .expect("removal write starts");
+        crate::resident::shutdown::guard_residency(&mut removal, &observed);
+        let removed = removal
+            .fact(
+                wire::body::LaneRemoved {
+                    lane,
+                    team: row.team,
+                    worktree: row.worktree,
+                },
+                FactCause::Existing(observed.position()),
+            )
+            .expect("removal fact is valid");
+        removal.residency_head(removed, move |_| remaining);
+        commit(&self.bus, removal).expect("removal commits");
     }
 
     /// Ask, as the operator, to recover one parked directive.
@@ -860,6 +891,8 @@ fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lan
     let (to_first, to_second) = (delivered(&lanes, FIRST), delivered(&lanes, SECOND));
     assert_eq!(to_first.text, "rebase onto main");
     assert_ne!(to_first.key, to_second.key);
+    lanes.declare(FIRST);
+    lanes.declare(SECOND);
 
     lanes.answer(
         FIRST,
@@ -973,12 +1006,14 @@ fn a_reply_to_a_departed_sender_waits_on_its_lane_across_a_restart() {
     lanes.finish();
 }
 
-/// An MSG belongs to the occupant it addressed: once that occupant leaves,
-/// its lane no longer delivers it, it dead-letters, and recovery refuses it,
-/// while the sender's own departure relabels nothing.
+/// An MSG is bound to its recipient's logical lane: it keeps its one key,
+/// body, and deadline through that lane's vacancy and renewal, the successor
+/// answers it, the reply names the occupant that answered, and an answered
+/// MSG never returns at a later renewal. Its quote still names the occupant
+/// that wrote it after that sender leaves.
 #[test]
-fn an_msg_to_a_departed_occupant_dead_letters_instead_of_reaching_its_lane() {
-    let lanes = Lanes::new("msg-departed");
+fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
+    let lanes = Lanes::new("msg-lane-bound");
     let first = lanes.address(FIRST);
     lanes.author(SENDER, &format!("MSG {first}: hold the merge"));
     lanes.hear(SENDER, test_uuid(SENDER + 1));
@@ -1003,25 +1038,90 @@ fn an_msg_to_a_departed_occupant_dead_letters_instead_of_reaching_its_lane() {
     drop(resolver);
     drop(resolver_source);
 
-    lanes.dead_letter_departed();
+    lanes.vacate(FIRST);
     assert_eq!(
         lanes.pending(FIRST),
         [message.clone()],
-        "a seated recipient keeps its MSG"
+        "a vacant lane keeps its MSG"
     );
-    lanes.vacate(FIRST);
+    let successor = test_uuid(41);
+    lanes.renew(FIRST, successor);
+    let before = lanes.cursor();
+    lanes.dead_letter_removed_lanes();
+    assert_eq!(
+        lanes.cursor(),
+        before,
+        "a lane still resident parks nothing"
+    );
+    assert_eq!(
+        lanes.pending(FIRST),
+        [message.clone()],
+        "the successor inherits the same key, body, and deadline"
+    );
+
+    lanes.declare(FIRST);
+    lanes.answer(
+        FIRST,
+        &[&message.key],
+        &format!("ACK {}: Holding.", message.key),
+    );
     assert!(
         lanes.pending(FIRST).is_empty(),
-        "the lane holds nothing addressed to its departed occupant"
+        "the successor's answer retires the inherited key"
     );
+    let [reply] = lanes
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("one reply reaches the sending lane: {pending:?}"));
+    let answerer = lanes
+        .bus
+        .task_snapshot()
+        .expect("snapshot reads")
+        .facts()
+        .occupant_address(test_uuid(FIRST), successor)
+        .expect("the successor has one birth");
+    assert_ne!(answerer, first);
+    assert_eq!(
+        reply.sender,
+        Some(wire::intent::PeerSender {
+            occupant: successor,
+            address: Some(answerer),
+        }),
+        "the reply names the occupant that answered, not the one first addressed"
+    );
+
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, test_uuid(43));
+    assert!(
+        lanes.pending(FIRST).is_empty(),
+        "an answered MSG never returns to the lane"
+    );
+    lanes.finish();
+}
+
+/// Removing a lane ends its peer duties' destination: each live one parks
+/// once with the lane-removed reason, a lane that takes its place inherits
+/// nothing, and recovery refuses to revive the duty.
+#[test]
+fn a_removed_lane_parks_its_msg_and_a_replacement_lane_inherits_nothing() {
+    let lanes = Lanes::new("msg-lane-removed");
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}: hold the merge"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let message = delivered(&lanes, FIRST);
+
+    lanes.vacate(FIRST);
+    lanes.remove(FIRST);
+    lanes.seat(THIRD);
     let before = lanes.cursor();
-    lanes.dead_letter_departed();
+    lanes.dead_letter_removed_lanes();
     let head = lanes
         .bus
         .read(move |read| read.steering_head(message.directive))
         .expect("steering reads")
         .expect("the MSG stays durable");
     assert_eq!(head.body().disposition, wire::Disposition::DeadLettered);
+    assert_eq!(head.body().key, message.key, "parking never re-keys");
     let reasons = lanes
         .bus
         .fact_snapshot()
@@ -1033,16 +1133,20 @@ fn an_msg_to_a_departed_occupant_dead_letters_instead_of_reaching_its_lane() {
         .collect::<Vec<_>>();
     assert_eq!(
         reasons,
-        [(message.directive, "steer::recipient-departed".to_owned())]
+        [(message.directive, steering::LANE_REMOVED.to_owned())]
     );
     let parked = lanes.cursor();
     assert!(parked > before);
-    lanes.dead_letter_departed();
+    lanes.dead_letter_removed_lanes();
     assert_eq!(lanes.cursor(), parked, "a parked MSG parks once");
+    assert!(
+        lanes.pending(THIRD).is_empty(),
+        "a replacement lane inherits nothing"
+    );
 
     let refused = lanes.recover_directive(message.directive);
     assert!(
-        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == "steer::recipient-departed"),
+        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == steering::LANE_REMOVED),
         "{refused:?}"
     );
     lanes.finish();

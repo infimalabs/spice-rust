@@ -39,6 +39,9 @@ const PUBLISH_ATTEMPTS: usize = 3;
 /// The refusal a packet's author hears for each address that received nothing.
 const UNAVAILABLE: &str = "msg::recipient-unavailable";
 
+/// Why a peer directive whose lane left the residency was parked.
+pub(in crate::resident) const LANE_REMOVED: &str = "steer::recipient-lane-removed";
+
 /// The recent tail startup recovery rereads for packets a crash left behind.
 const RECOVERY_WINDOW_BYTES: u64 = 64 * 1024 * 1024;
 const RECOVERY_SOURCE_BYTES: u64 = RECOVERY_WINDOW_BYTES + 64 * 1024 * 1024;
@@ -842,19 +845,20 @@ fn bounded(text: &str) -> String {
     format!("{}…", &text[..end])
 }
 
-/// Dead-letter every live MSG whose exact recipient no longer sits in its lane.
+/// Dead-letter every live peer directive whose lane left the residency.
 ///
-/// An MSG addresses one occupant, never its lane, so a successor neither hears
-/// it nor inherits it: once its recipient departs, the message moves to the
-/// existing `deadlettered` disposition with `steer::recipient-departed`.
-/// Exit and startup run this after the departed occupant's own transcript
-/// answers are journaled, so an answer it gave still retires and replies. An
-/// occupant never returns to a lane, so the departure needs no residency
-/// guard; each parked head is guarded unchanged.
-pub(in crate::resident) fn dead_letter_departed(
+/// A peer message or reply is bound to its logical lane, not to the occupant
+/// seated when it published: it stays live through vacancy, resume, and
+/// renewal for whichever occupant sits there next, with its key and expiry
+/// unchanged. Only removing the lane ends that destination, and a lane that
+/// later takes its place is another destination that inherits nothing, so
+/// each such directive moves to the existing `deadlettered` disposition with
+/// `steer::recipient-lane-removed`. Lane removal and startup run this; a lane
+/// never returns to the residency, so the removal needs no residency guard,
+/// and each parked head is guarded unchanged. A write carries one origin, so
+/// directives are parked in one write per origin they were published under.
+pub(in crate::resident) fn dead_letter_removed_lanes(
     bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let view = bus
@@ -866,68 +870,63 @@ pub(in crate::resident) fn dead_letter_departed(
     let heads = bus
         .read(move |read| crate::steering_read::pending(read, None))
         .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
-    let departed = heads
-        .into_iter()
-        .filter(|head| {
-            let Some(message) = view
-                .facts()
-                .at(head.body().created)
-                .and_then(|envelope| envelope.fact.read::<wire::body::SteerMessaged>())
-            else {
-                return false;
-            };
-            let seated = residency
-                .body()
-                .lanes
-                .iter()
-                .find(|row| row.lane == message.lane)
-                .and_then(|row| row.occupant);
-            message.directive == head.body().directive && seated != Some(message.occupant)
-        })
-        .collect::<Vec<_>>();
-    if departed.is_empty() {
-        return Ok(());
-    }
-    let at = current_instant().map_err(unit_outcome)?;
-    let mut proposal = write_at(Actor::Spice, epoch, at, Producer::ResidentRecognition)?;
-    let standing = departed.clone();
-    proposal.guard(JournalGuard::new(move |read| {
-        for head in standing {
-            if read.steering_head(head.body().directive)? != Some(head) {
-                return Err(GuardError::refused("steer::dead-letter-standing-moved"));
-            }
+    let mut removed = BTreeMap::<wire::Origin, Vec<_>>::new();
+    for head in heads {
+        let seated = residency
+            .body()
+            .lanes
+            .iter()
+            .any(|row| row.lane == head.body().lane);
+        if head.body().from.is_some() && !seated {
+            removed
+                .entry(head.body().origin.clone())
+                .or_default()
+                .push(head);
         }
-        Ok(())
-    }));
-    let mut lanes = BTreeSet::new();
-    for head in &departed {
-        let body = wire::steering::SteerDeadLettered {
-            directive: head.body().directive,
-            key: head.body().key.clone(),
-            lane: head.body().lane,
-            reason: "steer::recipient-departed".to_owned(),
-            requeue: format!("spice steer recover {}", head.body().directive),
-        };
-        let pending = proposal
-            .fact(body.clone(), FactCause::Existing(head.body().created))
-            .map_err(|error| store_fault("steer::dead-letter-fact-invalid", &error.to_string()))?;
-        let next =
-            steer::Ledger::transition_head(head.body(), steer::Steering::DeadLettered(&body), at)
-                .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
-        proposal.steering_head(pending, move |_| next);
-        lanes.insert(head.body().lane);
     }
-    commit(bus, proposal)?;
-    for head in &departed {
-        let _ = writeln!(
-            diagnostic,
-            "lane {} MSG {} dead-lettered: steer::recipient-departed",
-            head.body().lane,
-            head.body().key,
-        );
-    }
-    for lane in lanes {
-        notify_inbox(paths, lane);
+    for (origin, heads) in removed {
+        let at = current_instant().map_err(unit_outcome)?;
+        let mut proposal =
+            JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+        let standing = heads.clone();
+        proposal.guard(JournalGuard::new(move |read| {
+            for head in standing {
+                if read.steering_head(head.body().directive)? != Some(head) {
+                    return Err(GuardError::refused("steer::dead-letter-standing-moved"));
+                }
+            }
+            Ok(())
+        }));
+        for head in &heads {
+            let body = wire::steering::SteerDeadLettered {
+                directive: head.body().directive,
+                key: head.body().key.clone(),
+                lane: head.body().lane,
+                reason: LANE_REMOVED.to_owned(),
+                requeue: format!("spice steer recover {}", head.body().directive),
+            };
+            let pending = proposal
+                .fact(body.clone(), FactCause::Existing(head.body().created))
+                .map_err(|error| {
+                    store_fault("steer::dead-letter-fact-invalid", &error.to_string())
+                })?;
+            let next = steer::Ledger::transition_head(
+                head.body(),
+                steer::Steering::DeadLettered(&body),
+                at,
+            )
+            .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+            proposal.steering_head(pending, move |_| next);
+        }
+        commit(bus, proposal)?;
+        for head in &heads {
+            let _ = writeln!(
+                diagnostic,
+                "lane {} peer directive {} dead-lettered: {LANE_REMOVED}",
+                head.body().lane,
+                head.body().key,
+            );
+        }
     }
     Ok(())
 }

@@ -437,7 +437,7 @@ pub(in crate::resident) fn recover(
             "recover only a durable directive that lapsed or was deadlettered",
         );
     }
-    if let Some(refused) = departed_recipient(bus, directive.body().created) {
+    if let Some(refused) = removed_destination(bus, directive.body()) {
         return refused;
     }
     // The caller binds identity; the journal guard below binds the failed disposition.
@@ -512,10 +512,14 @@ pub(in crate::resident) fn recover(
     finish(bus, lane, proposal, answer, effects)
 }
 
-/// Refuse recovering an MSG whose addressed occupant has left its lane: an
-/// MSG reaches only that occupant, so recovery would hand it to nobody, or to
-/// a successor.
-fn departed_recipient(bus: &Bus, created: Seq) -> Option<Outcome<CommandAnswer>> {
+/// Refuse recovering a peer directive whose lane left the residency: a peer
+/// duty is bound to its logical lane, and a lane that replaces it is another
+/// destination, so recovery would hand it to nobody.
+fn removed_destination(
+    bus: &Bus,
+    directive: &wire::SteeringHead,
+) -> Option<Outcome<CommandAnswer>> {
+    directive.from?;
     let view = match bus.task_snapshot() {
         Ok(view) => view,
         Err(error) => {
@@ -525,25 +529,19 @@ fn departed_recipient(bus: &Bus, created: Seq) -> Option<Outcome<CommandAnswer>>
             ));
         }
     };
-    let message = view
-        .facts()
-        .at(created)?
-        .fact
-        .read::<wire::body::SteerMessaged>()?;
-    let seated = view.residency().and_then(|residency| {
+    let resident = view.residency().is_some_and(|residency| {
         residency
             .body()
             .lanes
             .iter()
-            .find(|row| row.lane == message.lane)
-            .and_then(|row| row.occupant)
+            .any(|row| row.lane == directive.lane)
     });
-    (seated != Some(message.occupant)).then(|| {
+    (!resident).then(|| {
         refusal(
-            "steer::recipient-departed",
-            Some(message.occupant.to_string()),
-            seated.map(|occupant| occupant.to_string()),
-            "an MSG reaches only the occupant it addressed; author a new MSG to the lane's current occupant",
+            super::LANE_REMOVED,
+            Some("a lane in the residency".to_owned()),
+            Some(directive.lane.to_string()),
+            "a peer duty belongs to its lane alone; author a new MSG to the lane that replaced it",
         )
     })
 }

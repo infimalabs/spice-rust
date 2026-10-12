@@ -35,8 +35,8 @@ mod transitions;
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 pub(super) use history::history;
 pub(super) use message::{
-    AuthoredRecord, MessageRefusalNotice, Refusals, dead_letter_departed, publish_at_startup,
-    publish_authored,
+    AuthoredRecord, LANE_REMOVED, MessageRefusalNotice, Refusals, dead_letter_removed_lanes,
+    publish_at_startup, publish_authored,
 };
 #[cfg(test)]
 pub(super) use message::{Packet, Published, Unpublished, publish_packet};
@@ -595,21 +595,8 @@ pub(super) fn inbox(
             None => None,
         };
         let mut pending = pending_presentations(&snapshot.ledger, &snapshot.waking, lane.lane);
-        pending.retain_mut(|directive| {
-            let Some(origin) = snapshot.peers.get(&directive.directive) else {
-                return true;
-            };
-            // An MSG addresses one exact occupant; no successor hears it.
-            if origin
-                .recipient
-                .is_some_and(|recipient| lane.occupant != Some(recipient))
-            {
-                return false;
-            }
-            directive.sender = Some(origin.sender);
-            true
-        });
         for directive in &mut pending {
+            directive.sender = snapshot.peers.get(&directive.directive).copied();
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
         }
@@ -679,48 +666,61 @@ struct SteeringSnapshot {
     ledger: steer::Ledger,
     /// Pending directives an operator send opened, which alone wake a lane.
     waking: BTreeSet<CanonicalUuid>,
-    /// Pending peer directives whose sending occupant the journal records.
-    peers: BTreeMap<CanonicalUuid, PeerOrigin>,
+    /// Pending peer directives whose sending occupant the journal proves.
+    peers: BTreeMap<CanonicalUuid, wire::intent::PeerSender>,
     retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
 }
 
-/// Who sent one pending peer directive, and who alone may hear it.
-struct PeerOrigin {
-    /// The exact occupant an MSG addresses; a reply follows its lane.
-    recipient: Option<CanonicalUuid>,
-    sender: wire::intent::PeerSender,
-}
-
-impl PeerOrigin {
-    /// The origin of the peer directive `head`'s creating fact opened.
-    ///
-    /// An MSG names its sending occupant. A reply to an MSG is spoken by the
-    /// occupant that MSG addressed, read back through the reply's cause, the
-    /// retirement, to the MSG it retired. Other peer direction records no
-    /// sending occupant.
-    fn of(authority: &bus::TaskSnapshot, head: &wire::SteeringHead) -> Option<Self> {
-        let facts = authority.facts();
-        let created = facts.at(head.created)?;
-        if let Some(message) = created.fact.read::<wire::body::SteerMessaged>() {
-            return (message.directive == head.directive).then(|| Self {
-                recipient: Some(message.occupant),
-                sender: peer_sender(authority, message.from, message.sender),
-            });
-        }
-        created.fact.read::<wire::body::SteerReplied>()?;
-        let retirement = facts.at(created.cause?)?;
-        let answered = facts
-            .at(retirement.cause?)?
-            .fact
-            .read::<wire::body::SteerMessaged>()?;
-        Some(Self {
-            recipient: None,
-            sender: peer_sender(authority, answered.lane, answered.occupant),
-        })
+/// The exact occupant that sent the pending peer directive `head`'s creating
+/// fact opened, when the journal proves one.
+///
+/// An MSG names its authoring occupant. A reply is spoken by whichever
+/// occupant of the answered lane retired the MSG: the reply's cause is that
+/// retirement, whose transcript locus names the session that wrote it. A
+/// locus no source-qualified session declares proves no one. Other direction
+/// records no sending occupant.
+fn peer_origin(
+    authority: &bus::TaskSnapshot,
+    reader: &bus::BusReader,
+    head: &wire::SteeringHead,
+) -> Result<Option<wire::intent::PeerSender>, String> {
+    let facts = authority.facts();
+    let Some(created) = facts.at(head.created) else {
+        return Ok(None);
+    };
+    if let Some(message) = created.fact.read::<wire::body::SteerMessaged>() {
+        return Ok((message.directive == head.directive)
+            .then(|| peer_sender(authority, message.from, message.sender)));
     }
+    if created.fact.read::<wire::body::SteerReplied>().is_none() {
+        return Ok(None);
+    }
+    let Some(retirement) = created.cause.and_then(|cause| facts.at(cause)) else {
+        return Ok(None);
+    };
+    let answer = retirement
+        .fact
+        .read::<wire::body::SteerAcked>()
+        .map(|body| (body.lane, body.locus))
+        .or_else(|| {
+            retirement
+                .fact
+                .read::<wire::body::SteerDeclined>()
+                .map(|body| (body.lane, body.locus))
+        });
+    let Some((lane, locus)) = answer else {
+        return Ok(None);
+    };
+    let Some(source) = locus.source else {
+        return Ok(None);
+    };
+    let session = reader
+        .transcript_session(lane, source, locus.member, locus.offset)
+        .map_err(|error| format!("{error:?}"))?;
+    Ok(session.map(|session| peer_sender(authority, lane, session.occupant)))
 }
 
 /// One exact sending occupant, with the address its birth on `lane` proves.
@@ -801,11 +801,15 @@ fn pending_snapshot(
             })
             .map(|head| head.directive)
             .collect();
-        let peers = heads
-            .iter()
-            .map(journal::JournalHead::body)
-            .filter_map(|head| Some((head.directive, PeerOrigin::of(&authority, head)?)))
-            .collect();
+        let reader = bus.reader();
+        let mut peers = BTreeMap::new();
+        for head in heads.iter().map(journal::JournalHead::body) {
+            let sender = peer_origin(&authority, &reader, head)
+                .map_err(|error| typed_store_fault("steer::answer-author-unreadable", &error))?;
+            if let Some(sender) = sender {
+                peers.insert(head.directive, sender);
+            }
+        }
         return Ok(SteeringSnapshot {
             ledger,
             waking,
