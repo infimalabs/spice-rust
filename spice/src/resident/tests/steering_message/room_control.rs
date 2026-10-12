@@ -385,7 +385,7 @@ fn operator_items_page_and_settle_exactly() {
     let declined = lanes.dispose(
         75,
         RoomReceiptDisposition::Nak,
-        &[item_of(&first), item_of(&second)],
+        &[item_of(&second), item_of(&first)],
         "no",
     );
     let Outcome::Reply(Reply {
@@ -401,8 +401,8 @@ fn operator_items_page_and_settle_exactly() {
             .iter()
             .map(|moved| (&moved.result, moved.state.as_str()))
             .collect::<Vec<_>>(),
-        [(&first, "declined"), (&second, "declined")],
-        "the reply reports every result in input-item order"
+        [(&second, "declined"), (&first, "declined")],
+        "the reply reports every result in input-item order, not key order"
     );
     for question in [&first, &second] {
         assert!(matches!(
