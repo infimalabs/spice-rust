@@ -51,6 +51,8 @@ spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&af
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?limit=N&max-bytes=N&after=PUBLICATION]; reading joins and acknowledges nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
+spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items, each with its receipt and result; reading settles nothing
+spice://room/result/RESULT  room result RESULT; one question's result, its parties, closure attribution, and answer return receipt
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
 spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
 spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
@@ -63,6 +65,7 @@ resources:
   spice://board
   spice://task
   spice://inbox
+  spice://room/inbox
   spice://lane
   spice://session/briefing
   spice://session/turns
@@ -124,6 +127,8 @@ enum Shape {
     Room { handle: TaskHandle },
     Preparation { handle: TaskHandle },
     Inbox,
+    RoomInbox,
+    RoomResult { result: String },
     Lanes,
     Session(Session),
     Context { session: String },
@@ -287,6 +292,8 @@ const SERVED: &[&[&str]] = &[
     &["task", "artifact", "list"],
     &["task", "artifact", "show"],
     &["room", "history"],
+    &["room", "inbox"],
+    &["room", "result"],
     &["preparation", "show"],
     &["board", "graph"],
     &["doc", "ledger"],
@@ -309,10 +316,13 @@ impl Shape {
             Self::Graph { .. } => GRAPH,
             Self::Tasks => TASK_LIST,
             Self::Task { .. } | Self::Inbox => PAGE,
+            Self::RoomResult { .. } => &[],
             Self::Ledger { .. } => LEDGER,
-            Self::Artifacts { .. } | Self::Room { .. } | Self::Preparation { .. } | Self::Lanes => {
-                ROWS
-            }
+            Self::Artifacts { .. }
+            | Self::Room { .. }
+            | Self::Preparation { .. }
+            | Self::Lanes
+            | Self::RoomInbox => ROWS,
             Self::Artifact { .. } => ARTIFACT_SHOW,
             Self::Session(Session::Briefing) => BRIEFING,
             Self::Session(Session::Turns) => TURNS,
@@ -362,6 +372,8 @@ impl Shape {
             Self::Room { handle } => format!("task/{handle}/room"),
             Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
+            Self::RoomInbox => "room/inbox".to_owned(),
+            Self::RoomResult { result } => format!("room/result/{}", encode(result)),
             Self::Lanes => "lane".to_owned(),
             Self::Session(session) => format!("session/{}", session.leaf()),
             Self::Context { session } => format!("session/context/{}", encode(session)),
@@ -392,6 +404,8 @@ impl Shape {
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
             Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
+            Self::RoomInbox => words(&["room", "inbox"]),
+            Self::RoomResult { result } => words(&["room", "result", result]),
             Self::Lanes => words(&["lane", "list"]),
             Self::Session(session) => words(&["session", session.leaf()]),
             Self::Context { session } => words(&["session", "context", session]),
@@ -531,6 +545,13 @@ impl Shape {
                 rest,
             ),
             ["inbox", rest @ ..] => (Self::Inbox, rest),
+            ["room", "inbox", rest @ ..] => (Self::RoomInbox, rest),
+            ["room", "result", result, rest @ ..] => (
+                Self::RoomResult {
+                    result: (*result).to_owned(),
+                },
+                rest,
+            ),
             ["lane", "list", rest @ ..] => (Self::Lanes, rest),
             ["session", "context", session, rest @ ..] => (
                 Self::Context {
@@ -591,6 +612,10 @@ impl Request {
             }
             ["task", task, rest @ ..] => task_shape(task, rest, url)?,
             ["inbox"] => Shape::Inbox,
+            ["room", "inbox"] => Shape::RoomInbox,
+            ["room", "result", result] => Shape::RoomResult {
+                result: (*result).to_owned(),
+            },
             ["lane"] => Shape::Lanes,
             ["session", "context", session] => Shape::Context {
                 session: (*session).to_owned(),
@@ -1052,6 +1077,14 @@ impl Seat {
                 let outcome = crate::room_command::run_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
+            ["room", "inbox"] => {
+                let outcome = crate::room_command::inbox::run_at(repository, leaf, contract);
+                rendered(&outcome, render::render_display(&outcome, Form::Text))?
+            }
+            ["room", "result"] => {
+                let outcome = crate::room_command::result::run_at(repository, leaf, contract);
+                rendered(&outcome, render::render_display(&outcome, Form::Text))?
+            }
             ["preparation", "show"] => {
                 let outcome = crate::preparation_command::run_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
@@ -1119,7 +1152,7 @@ fn rendered<B>(
 const SEAT_GUIDE: &str = "\
 <system-notice>
 # spice:// reads
-This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, preparation authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
+This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, room inbox and results, preparation authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
 - A collection ends with `resources:`, the URLs of what it contains.
 - Query parameters are the read's own flags; a withheld page ends with `continue:` and the URL that resumes it; a trailing `:N-M` selects lines.
 - Reading changes nothing: it acknowledges no steering, claims nothing, and may repeat freely.

@@ -17,14 +17,14 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneJobAnswer,
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, ReportAnswer, ReportRead, RoomCoordinate, RoomCoordinationRead,
-    RoomCoordinationView, RoomPutAside, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
-    SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends,
-    TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
-    TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
-    TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
-    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupChange,
-    WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove,
+    ReleasePublish, ReportAnswer, ReportRead, RoomClose, RoomControl, RoomControlAnswer,
+    RoomCoordinate, RoomCoordinationRead, RoomCoordinationView, RoomPutAside, StateAnswer,
+    SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose,
+    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
+    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
+    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    WorkingGroupChange, WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -54,6 +54,10 @@ pub enum BodyShape {
     RoomCoordinate,
     /// [`RoomPutAside`]
     RoomPutAside,
+    /// [`RoomControl`]
+    RoomControl,
+    /// [`RoomClose`]
+    RoomClose,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
     /// [`WorkingGroupPut`]
@@ -195,6 +199,8 @@ pub enum AnswerShape {
     RoomPost,
     /// [`RoomCoordinationView`]
     RoomCoordination,
+    /// [`RoomControlAnswer`]
+    RoomControl,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -265,6 +271,8 @@ pub enum CommandAnswer {
     RoomPost(RoomPostAnswer),
     /// [`AnswerShape::RoomCoordination`]
     RoomCoordination(RoomCoordinationView),
+    /// [`AnswerShape::RoomControl`]
+    RoomControl(RoomControlAnswer),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -325,6 +333,7 @@ impl CommandAnswer {
             | Self::Text(_)
             | Self::RoomPost(_)
             | Self::RoomCoordination(_)
+            | Self::RoomControl(_)
             | Self::Task(_)
             | Self::Claim(_)
             | Self::Doc(_) => self.board_answer_shape(),
@@ -359,6 +368,7 @@ impl CommandAnswer {
             Self::Text(_) => AnswerShape::Text,
             Self::RoomPost(_) => AnswerShape::RoomPost,
             Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
+            Self::RoomControl(_) => AnswerShape::RoomControl,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
@@ -417,7 +427,7 @@ impl AnswerShape {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
-            Self::RoomPost | Self::RoomCoordination => self.decode_room(source),
+            Self::RoomPost | Self::RoomCoordination | Self::RoomControl => self.decode_room(source),
             Self::Board
             | Self::Report
             | Self::TaskDetail
@@ -470,6 +480,7 @@ impl AnswerShape {
         Ok(match self {
             Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
             Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
+            Self::RoomControl => CommandAnswer::RoomControl(body.read()?),
             _ => unreachable!("room answer decode partition is closed"),
         })
     }
@@ -559,7 +570,9 @@ impl CommandKind {
             Self::RoomPost
             | Self::RoomCoordinationRead
             | Self::RoomCoordinate
-            | Self::RoomPutAside => self.room_binding(),
+            | Self::RoomPutAside
+            | Self::RoomControl
+            | Self::RoomClose => self.room_binding(),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -683,6 +696,8 @@ impl CommandKind {
             Self::RoomCoordinationRead => Binding::of(B::RoomCoordinationRead, A::RoomCoordination),
             Self::RoomCoordinate => Binding::of(B::RoomCoordinate, A::RoomCoordination),
             Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
+            Self::RoomControl => Binding::of(B::RoomControl, A::RoomControl),
+            Self::RoomClose => Binding::of(B::RoomClose, A::RoomControl),
             _ => panic!("room command binding partition is closed"),
         }
     }
@@ -809,6 +824,10 @@ pub enum Intent {
     RoomCoordinate(RoomCoordinate),
     /// [`BodyShape::RoomPutAside`]
     RoomPutAside(RoomPutAside),
+    /// [`BodyShape::RoomControl`]
+    RoomControl(RoomControl),
+    /// [`BodyShape::RoomClose`]
+    RoomClose(RoomClose),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupPut`]
@@ -940,7 +959,9 @@ impl Intent {
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
             | Self::RoomCoordinate(_)
-            | Self::RoomPutAside(_) => self.room_shape(),
+            | Self::RoomPutAside(_)
+            | Self::RoomControl(_)
+            | Self::RoomClose(_) => self.room_shape(),
             Self::CandidateRetain(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
@@ -1047,6 +1068,8 @@ impl Intent {
             Self::RoomCoordinationRead(_) => BodyShape::RoomCoordinationRead,
             Self::RoomCoordinate(_) => BodyShape::RoomCoordinate,
             Self::RoomPutAside(_) => BodyShape::RoomPutAside,
+            Self::RoomControl(_) => BodyShape::RoomControl,
+            Self::RoomClose(_) => BodyShape::RoomClose,
             _ => panic!("room intent shape partition is closed"),
         }
     }
@@ -1147,6 +1170,8 @@ impl BodyShape {
                 | Self::RoomCoordinationRead
                 | Self::RoomCoordinate
                 | Self::RoomPutAside
+                | Self::RoomControl
+                | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1193,6 +1218,8 @@ impl BodyShape {
                 | Self::RoomCoordinationRead
                 | Self::RoomCoordinate
                 | Self::RoomPutAside
+                | Self::RoomControl
+                | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1226,10 +1253,12 @@ impl BodyShape {
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
-            Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
-            Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
-            Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
-            Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
+            Self::RoomPost
+            | Self::RoomCoordinationRead
+            | Self::RoomCoordinate
+            | Self::RoomPutAside
+            | Self::RoomControl
+            | Self::RoomClose => return self.decode_room_body(bytes),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
@@ -1240,6 +1269,19 @@ impl BodyShape {
             _ => return self.decode_task_statement_body(bytes),
         })
     }
+
+    fn decode_room_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
+            Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
+            Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
+            Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
+            Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
+            Self::RoomControl => Intent::RoomControl(crate::decode(bytes)?),
+            Self::RoomClose => Intent::RoomClose(crate::decode(bytes)?),
+            _ => unreachable!("only room shapes decode as room bodies"),
+        })
+    }
+
     fn decode_preparation_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::CandidateRetain => Intent::CandidateRetain(crate::decode(bytes)?),

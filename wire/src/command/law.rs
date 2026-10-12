@@ -105,6 +105,22 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
+    /// Operator ACK, NAK, answer, or recovery of exact room authority. The
+    /// resident guards each item and result head it reads, so the operator
+    /// proposes no board predicate.
+    pub const ROOM_CONTROL: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Decline or cancel of one pending question. Any connection may submit;
+    /// the journal admits only the stored party or an operator override, and
+    /// the resident guards the result head it read.
+    pub const ROOM_CLOSE: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// A scoped room request binds the exact anchor heads and destination
     /// residency observed by the operator.
     pub const ROOM_COORDINATE: Self = Self {
@@ -519,6 +535,8 @@ impl CommandKind {
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
+            Self::RoomControl => Law::ROOM_CONTROL,
+            Self::RoomClose => Law::ROOM_CLOSE,
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord => Law::PROPOSAL_RECORD,
@@ -735,6 +753,8 @@ impl CommandKind {
             Self::RoomCoordinationRead => Law::OPERATOR_READ,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
+            Self::RoomControl => Law::ROOM_CONTROL,
+            Self::RoomClose => Law::ROOM_CLOSE,
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox | Self::QuoteRead => Law::READ,

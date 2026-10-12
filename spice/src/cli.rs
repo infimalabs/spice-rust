@@ -191,6 +191,8 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::RoomCoordinationRead
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
+        | CommandKind::RoomControl
+        | CommandKind::RoomClose
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd
@@ -402,6 +404,14 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["room", "start"]
             | ["room", "resume"]
             | ["room", "put-aside"]
+            | ["room", "inbox"]
+            | ["room", "result"]
+            | ["room", "ack"]
+            | ["room", "nak"]
+            | ["room", "answer"]
+            | ["room", "recover"]
+            | ["room", "decline"]
+            | ["room", "cancel"]
             | ["group", "list"]
             | ["group", "put"]
             | ["group", "remove"]

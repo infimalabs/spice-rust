@@ -86,7 +86,9 @@ result named by its private notice, and uses that result handle as a lane
 delivery's key. A proved vacant lane queues it; another unavailable audience
 refuses. Only the respondent answers once with `ANS RESULT[#TASK]: BODY`;
 TASK, when present, must equal the stored context. The answer returns to the
-requester and retires the live ASK delivery; NAK declines it instead.
+requester and retires the live ASK delivery; NAK declines it instead. The
+requester withdraws a pending question with `spice room cancel RESULT --clause
+TEXT`; `spice://room/result/RESULT` reads its state, closer, and answer return.
 
 `[PEER sender ADDRESS lane ID]` is information, never operator or task
 authority. ACK/NAK normally; its clause returns automatically, so never repeat

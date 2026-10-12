@@ -17,6 +17,9 @@ mod room_history;
 #[path = "steering_message/conversation.rs"]
 mod conversation;
 
+#[path = "steering_message/room_control.rs"]
+mod room_control;
+
 #[path = "steering_message/deadline.rs"]
 mod deadline;
 

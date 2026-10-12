@@ -40,6 +40,8 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::RoomCoordinationRead
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
+        | CommandKind::RoomControl
+        | CommandKind::RoomClose
         | CommandKind::WorkingGroupRead
         | CommandKind::WorkingGroupPut
         | CommandKind::WorkingGroupRemove

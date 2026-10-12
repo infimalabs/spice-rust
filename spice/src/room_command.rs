@@ -5,10 +5,17 @@
 //! publication is projected from the authority that owns its bytes: operator
 //! text from its journal fact, an agent packet from its author's durable
 //! tape, and a directed route's receipt from its directive's steering head.
+//! A conversation publication (MSG, ASK, or ANS) also names its operator
+//! item receipt and its question result at their current heads, apart from
+//! what the room records; [`inbox`] and [`result`] read the same projections.
 //! A source that no longer yields the bytes renders as unavailable with its
 //! reason. Publications page whole in journal order through [`Page`]; a page
 //! that withholds any continues at the first withheld publication. Reading
 //! writes nothing.
+
+mod conversation;
+pub(crate) mod inbox;
+pub(crate) mod result;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -19,7 +26,7 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
 use wire::rooms::{
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPublicationContent,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPosted, RoomPublicationContent,
     RoomPublished, RoomPutAside, RoomSource, RoomSourceUnavailable, TranscriptHunk,
 };
 use wire::{
@@ -28,6 +35,8 @@ use wire::{
 };
 
 use crate::read_page::{Page, Paged};
+
+use conversation::ConversationView;
 
 /// What a continuation's `--after` names.
 const CURSOR: &str = "a publication of this room";
@@ -63,6 +72,10 @@ pub(crate) struct Publication {
     /// Each directed route the packet opened into this room, with its receipt.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     directed: Vec<Route>,
+    /// The conversation this publication belongs to: its operator receipt and
+    /// question result at their current heads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation: Option<ConversationView>,
 }
 
 /// A publication's bytes, or why its owning source cannot supply them.
@@ -107,7 +120,15 @@ enum Receipt {
 
 /// Read one bounded page of a room from the working repository.
 pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> Outcome<RoomHistory> {
-    let repository = std::env::current_dir()
+    match discover() {
+        Ok(repository) => run_at(&repository, matches, contract),
+        Err(failure) => failure.outcome(),
+    }
+}
+
+/// The repository the working directory belongs to.
+fn discover() -> Result<Repository, Failure> {
+    std::env::current_dir()
         .map_err(|error| {
             fault(
                 FaultClass::Environment,
@@ -123,11 +144,19 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> Outc
                     error,
                 )
             })
-        });
-    match repository {
-        Ok(repository) => run_at(&repository, matches, contract),
-        Err(failure) => failure.outcome(),
-    }
+        })
+}
+
+/// The admitted state and journal reader of `repository`.
+fn open(
+    repository: &Repository,
+) -> Result<(spice::repository::StatePaths, journal::JournalReader), Failure> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| fault(FaultClass::Environment, "room::state-unavailable", error))?;
+    let journal = journal::JournalReader::open(state.journal())
+        .map_err(|error| fault(FaultClass::Store, "room::journal-unreadable", error))?;
+    Ok((state, journal))
 }
 
 /// [`run`] against `repository`.
@@ -149,11 +178,7 @@ pub(crate) fn run_at(
             .root()
             .tasks()
             .project_policy();
-        let state = repository
-            .admit_state()
-            .map_err(|error| fault(FaultClass::Environment, "room::state-unavailable", error))?;
-        let journal = journal::JournalReader::open(state.journal())
-            .map_err(|error| fault(FaultClass::Store, "room::journal-unreadable", error))?;
+        let (state, journal) = open(repository)?;
         Ok((projects, state, journal))
     };
     match opened() {
@@ -273,6 +298,7 @@ struct Row {
     actor: Actor,
     body: Body,
     directed: Vec<Route>,
+    conversation: Option<ConversationView>,
 }
 
 enum Body {
@@ -359,14 +385,16 @@ fn row(
     read: &journal::JournalRead<'_>,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<Row, Failure> {
-    let (publication, body, directives) =
+    let (publication, body, directives, conversed) =
         if let Some(published) = envelope.fact.read::<RoomPublished>() {
             (
                 published.publication,
                 Body::Published(published.content),
                 Vec::new(),
+                None,
             )
         } else if let Some(messaged) = envelope.fact.read::<RoomMessaged>() {
+            let conversed = messaged_conversation(read, envelope.seq, &messaged.hunk)?;
             (
                 messaged.publication,
                 Body::Messaged {
@@ -374,6 +402,18 @@ fn row(
                     author: messaged.author,
                 },
                 messaged.directed,
+                conversed,
+            )
+        } else if let Some(posted) = envelope.fact.read::<RoomPosted>() {
+            let conversed = read
+                .room_conversation(&posted.publication)
+                .map_err(store)?
+                .map(|(_, publication)| publication);
+            (
+                posted.publication,
+                Body::Published(RoomPublicationContent::Authored { text: posted.text }),
+                posted.directed,
+                conversed,
             )
         } else if let Some(started) = envelope.fact.read::<RoomCoordinationStarted>() {
             (
@@ -382,6 +422,7 @@ fn row(
                     fact: SequenceCode::new(envelope.seq.get()),
                 }),
                 Vec::new(),
+                None,
             )
         } else if let Some(shelved) = envelope.fact.read::<RoomPutAside>() {
             (
@@ -390,6 +431,7 @@ fn row(
                     fact: SequenceCode::new(envelope.seq.get()),
                 }),
                 Vec::new(),
+                None,
             )
         } else {
             return Err(fault(
@@ -405,20 +447,15 @@ fn row(
     let directed = directives
         .into_iter()
         .map(|directive| {
-            let receipt =
-                read.steering_head(directive)
-                    .map_err(store)?
-                    .map_or(Receipt::Missing, |head| {
-                        let head = head.into_body();
-                        Receipt::Steering {
-                            key: head.key,
-                            lane: head.lane,
-                            disposition: head.disposition,
-                        }
-                    });
-            Ok(Route { directive, receipt })
+            Ok(Route {
+                directive,
+                receipt: receipt(read, directive)?,
+            })
         })
         .collect::<Result<_, Failure>>()?;
+    let conversation = conversed
+        .map(|publication| conversation::conversation(read, &publication))
+        .transpose()?;
     Ok(Row {
         publication,
         seq: envelope.seq,
@@ -426,28 +463,46 @@ fn row(
         actor: envelope.actor,
         body,
         directed,
+        conversation,
     })
+}
+
+/// The conversation record a lane packet's room record shares its write
+/// with: the first one after it, proved by owning the same transcript hunk.
+/// A packet that conversed with no operator or question has none.
+fn messaged_conversation(
+    read: &journal::JournalRead<'_>,
+    seq: Seq,
+    hunk: &TranscriptHunk,
+) -> Result<Option<wire::rooms::RoomPublication>, Failure> {
+    Ok(read
+        .room_conversation_after(seq)
+        .map_err(store)?
+        .map(|(_, publication)| publication)
+        .filter(|publication| {
+            matches!(publication.source(), RoomSource::Transcript(owned) if owned == hunk)
+        }))
+}
+
+/// A directive's current steering standing.
+fn receipt(read: &journal::JournalRead<'_>, directive: CanonicalUuid) -> Result<Receipt, Failure> {
+    Ok(read
+        .steering_head(directive)
+        .map_err(store)?
+        .map_or(Receipt::Missing, |head| {
+            let head = head.into_body();
+            Receipt::Steering {
+                key: head.key,
+                lane: head.lane,
+                disposition: head.disposition,
+            }
+        }))
 }
 
 impl Row {
     /// This publication with its bytes read from their owning source.
     fn project(self, tape: &Path) -> Publication {
-        let (content, author) = match self.body {
-            Body::Published(RoomPublicationContent::Authored { text }) => {
-                (Content::Text { text }, None)
-            }
-            Body::Published(RoomPublicationContent::Linked {
-                link: RoomSource::Transcript(hunk),
-            }) => (transcript(tape, hunk), None),
-            Body::Published(RoomPublicationContent::Linked { link }) => {
-                (Content::Linked { source: link }, None)
-            }
-            Body::Published(RoomPublicationContent::OopsGroomed { grooming }) => {
-                (Content::OopsGroomed { grooming }, None)
-            }
-            Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
-            Body::Linked(source) => (Content::Linked { source }, None),
-        };
+        let (content, author) = project_body(self.body, tape);
         Publication {
             publication: self.publication,
             seq: self.seq,
@@ -456,8 +511,53 @@ impl Row {
             author,
             content,
             directed: self.directed,
+            conversation: self.conversation,
         }
     }
+}
+
+/// A body's bytes read from their owning source, with the occupant whose
+/// transcript authored an agent packet.
+fn project_body(body: Body, tape: &Path) -> (Content, Option<CanonicalUuid>) {
+    match body {
+        Body::Published(RoomPublicationContent::Authored { text }) => {
+            (Content::Text { text }, None)
+        }
+        Body::Published(RoomPublicationContent::Linked {
+            link: RoomSource::Transcript(hunk),
+        }) => (transcript(tape, hunk), None),
+        Body::Published(RoomPublicationContent::Linked { link }) => {
+            (Content::Linked { source: link }, None)
+        }
+        Body::Published(RoomPublicationContent::OopsGroomed { grooming }) => {
+            (Content::OopsGroomed { grooming }, None)
+        }
+        Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
+        Body::Linked(source) => (Content::Linked { source }, None),
+    }
+}
+
+/// The body of one conversation publication, before its bytes are read: an
+/// operator post's text from its journal fact, a lane's from its transcript.
+fn conversation_body(
+    read: &journal::JournalRead<'_>,
+    publication: &wire::rooms::RoomPublication,
+) -> Result<Body, Failure> {
+    let source = publication.source();
+    if let RoomSource::Journal { fact } = source
+        && let Some(seq) = Seq::new(fact.get())
+        && let Some(posted) = read
+            .room_fact(seq)
+            .map_err(store)?
+            .and_then(|envelope| envelope.fact.read::<RoomPosted>())
+    {
+        return Ok(Body::Published(RoomPublicationContent::Authored {
+            text: posted.text,
+        }));
+    }
+    Ok(Body::Published(RoomPublicationContent::Linked {
+        link: source.clone(),
+    }))
 }
 
 impl Publication {
@@ -565,58 +665,52 @@ impl fmt::Display for Publication {
             write!(formatter, " author={author}")?;
         }
         for route in &self.directed {
-            match &route.receipt {
-                Receipt::Steering {
-                    key,
-                    lane,
-                    disposition,
-                } => write!(
-                    formatter,
-                    "\n  to lane={lane} key={key} {}",
-                    disposition.as_str()
-                )?,
-                Receipt::Missing => write!(
-                    formatter,
-                    "\n  to directive={} receipt missing",
-                    route.directive
-                )?,
-            }
+            formatter.write_str("\n  ")?;
+            conversation::write_receipt(formatter, route.directive, &route.receipt)?;
         }
-        match &self.content {
-            Content::Text { text } => {
-                for line in text.lines() {
-                    write!(formatter, "\n  | {line}")?;
-                }
-                Ok(())
+        if let Some(conversation) = &self.conversation {
+            write!(formatter, "\n  {conversation}")?;
+        }
+        write_content(formatter, &self.content)
+    }
+}
+
+/// A publication's bytes, one quoted line each, or what stands in for them.
+fn write_content(formatter: &mut fmt::Formatter<'_>, content: &Content) -> fmt::Result {
+    match content {
+        Content::Text { text } => {
+            for line in text.lines() {
+                write!(formatter, "\n  | {line}")?;
             }
-            Content::Linked { source } => write!(formatter, "\n  linked {}", Source(source)),
-            Content::OopsGroomed { grooming } => {
-                write!(
-                    formatter,
-                    "\n  oops {} cause={:?}",
-                    grooming.disposition, grooming.cause
-                )?;
-                for report in &grooming.reports {
-                    write!(formatter, "\n  report {report}")?;
-                }
-                if !grooming.exceptions.is_empty() {
-                    write!(formatter, "\n  exceptions {:?}", grooming.exceptions)?;
-                }
-                if !grooming.uncertainty.is_empty() {
-                    write!(formatter, "\n  uncertainty {:?}", grooming.uncertainty)?;
-                }
-                Ok(())
-            }
-            Content::Unavailable {
-                source,
-                unavailable,
-            } => write!(
+            Ok(())
+        }
+        Content::Linked { source } => write!(formatter, "\n  linked {}", Source(source)),
+        Content::OopsGroomed { grooming } => {
+            write!(
                 formatter,
-                "\n  unavailable {}: {}",
-                Source(source),
-                Unavailable(unavailable)
-            ),
+                "\n  oops {} cause={:?}",
+                grooming.disposition, grooming.cause
+            )?;
+            for report in &grooming.reports {
+                write!(formatter, "\n  report {report}")?;
+            }
+            if !grooming.exceptions.is_empty() {
+                write!(formatter, "\n  exceptions {:?}", grooming.exceptions)?;
+            }
+            if !grooming.uncertainty.is_empty() {
+                write!(formatter, "\n  uncertainty {:?}", grooming.uncertainty)?;
+            }
+            Ok(())
         }
+        Content::Unavailable {
+            source,
+            unavailable,
+        } => write!(
+            formatter,
+            "\n  unavailable {}: {}",
+            Source(source),
+            Unavailable(unavailable)
+        ),
     }
 }
 
@@ -672,7 +766,7 @@ impl From<Refusal> for Failure {
 }
 
 impl Failure {
-    fn outcome(self) -> Outcome<RoomHistory> {
+    fn outcome<T>(self) -> Outcome<T> {
         match self {
             Self::Refusal(refusal) => Outcome::Refusal(refusal),
             Self::Fault(fault) => Outcome::Fault(fault),

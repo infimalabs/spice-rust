@@ -15,7 +15,7 @@ use super::*;
 use crate::resident::timers::{Fired, RoomDue, Runtime};
 
 impl Lanes {
-    fn timers(&self) -> Runtime {
+    pub(super) fn timers(&self) -> Runtime {
         let mut timers = Runtime::start(
             ProjectPolicy::new(
                 ["timer".to_owned()],
@@ -42,7 +42,7 @@ impl Lanes {
         (head.position(), head.body().state().clone())
     }
 
-    fn item_state(&self, item: &RoomReceiptRef) -> RoomReceiptState {
+    pub(super) fn item_state(&self, item: &RoomReceiptRef) -> RoomReceiptState {
         let item = item.clone();
         let (_, head) = self
             .bus

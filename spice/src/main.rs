@@ -398,6 +398,8 @@ impl NativeInvocation<'_> {
         let &Self(leaf, form, _) = self;
         match contract.path {
             ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
+            ["room", "inbox"] => deliver_display(&room_command::inbox::run(leaf, contract), form),
+            ["room", "result"] => deliver_display(&room_command::result::run(leaf, contract), form),
             ["preparation", "show"] => {
                 deliver_display(&preparation_command::run(leaf, contract), form)
             }
@@ -449,7 +451,10 @@ impl NativeInvocation<'_> {
                 &task_artifact_command::run(leaf, contract, configuration),
                 form,
             ),
-            ["room", "history"] | ["preparation", "show"] => {
+            ["room", "history"]
+            | ["room", "inbox"]
+            | ["room", "result"]
+            | ["preparation", "show"] => {
                 self.dispatch_retained_read(contract);
             }
             ["backup"] => deliver(&journal_command::backup(leaf), form),
@@ -512,6 +517,12 @@ impl NativeInvocation<'_> {
             | ["room", "start"]
             | ["room", "resume"]
             | ["room", "put-aside"]
+            | ["room", "ack"]
+            | ["room", "nak"]
+            | ["room", "answer"]
+            | ["room", "recover"]
+            | ["room", "decline"]
+            | ["room", "cancel"]
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]

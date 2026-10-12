@@ -23,6 +23,8 @@ impl CommandKind {
         Self::RoomCoordinationRead,
         Self::RoomCoordinate,
         Self::RoomPutAside,
+        Self::RoomControl,
+        Self::RoomClose,
         Self::WorkingGroupRead,
         Self::WorkingGroupPut,
         Self::WorkingGroupRemove,
@@ -112,6 +114,8 @@ impl CommandKind {
             | Self::RoomCoordinationRead
             | Self::RoomCoordinate
             | Self::RoomPutAside
+            | Self::RoomControl
+            | Self::RoomClose
             | Self::WorkingGroupRead
             | Self::WorkingGroupPut
             | Self::WorkingGroupRemove
@@ -196,6 +200,8 @@ impl CommandKind {
             | Self::RoomCoordinationRead
             | Self::RoomCoordinate
             | Self::RoomPutAside
+            | Self::RoomControl
+            | Self::RoomClose
             | Self::WorkingGroupRead
             | Self::WorkingGroupPut
             | Self::WorkingGroupRemove => self.room_spelling(),
@@ -228,6 +234,8 @@ impl CommandKind {
             Self::RoomCoordinationRead => "room::coordination-read",
             Self::RoomCoordinate => "room::coordinate",
             Self::RoomPutAside => "room::put-aside",
+            Self::RoomControl => "room::control",
+            Self::RoomClose => "room::close",
             Self::WorkingGroupRead => "group::read",
             Self::WorkingGroupPut => "group::put",
             Self::WorkingGroupRemove => "group::remove",

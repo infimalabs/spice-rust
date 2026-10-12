@@ -348,17 +348,7 @@ pub(super) fn fold(
     let edits = if let Some(body) = fact.read::<RoomConversed>() {
         conversed(authority, seq, at, actor, &body)
     } else if let Some(body) = fact.read::<RoomPosted>() {
-        require_operator(actor, "an operator room post").and_then(|()| {
-            let publication = body.publication(code(seq)).or_else(unsound)?;
-            admit(
-                authority,
-                seq,
-                at,
-                &publication,
-                &body.directed,
-                body.expires,
-            )
-        })
+        return Some(posted(authority, seq, at, actor, &body));
     } else if let Some(body) = fact.read::<SteerDeclined>() {
         directive_declined(authority, seq, &body)
     } else if let Some(body) = fact.read::<RoomDisposed>() {
@@ -381,6 +371,71 @@ pub(super) fn fold(
         }
         Ok(())
     }))
+}
+
+/// Admit one operator MSG, ASK, or ANS, then record it in the one room it
+/// speaks in, so the room's history and catch-up carry the operator's own
+/// text.
+fn posted(
+    authority: &mut impl Authority,
+    seq: Seq,
+    at: Instant,
+    actor: &Actor,
+    body: &RoomPosted,
+) -> Result<(), Refusal> {
+    require_operator(actor, "an operator room post")?;
+    let publication = body.publication(code(seq)).or_else(unsound)?;
+    let room = posted_room(authority, &publication)?;
+    let edits = admit(
+        authority,
+        seq,
+        at,
+        &publication,
+        &body.directed,
+        body.expires,
+    )?;
+    for edit in edits {
+        authority.change(Change::Conversation(edit))?;
+    }
+    match room {
+        Some(room) => super::publish(authority, seq, &room, publication.publication()),
+        None => Ok(()),
+    }
+}
+
+/// The one room an operator post speaks in: its routes' contexts and room
+/// destinations, or an answer's stored question context. A post spanning
+/// more than one room refuses, because one journal position records in at
+/// most one room.
+fn posted_room(
+    authority: &impl Authority,
+    publication: &RoomPublication,
+) -> Result<Option<RoomAnchor>, Refusal> {
+    let mut rooms = match publication.kind() {
+        RoomPublicationKind::Ans { result, .. } => Question::load(authority, result)?
+            .record
+            .context()
+            .cloned()
+            .into_iter()
+            .collect(),
+        RoomPublicationKind::Msg {} | RoomPublicationKind::Ask { .. } => publication
+            .routes()
+            .iter()
+            .filter_map(|route| match &route.destination {
+                RoomDestination::Task { task } => Some(task.clone()),
+                _ => route.context.clone(),
+            })
+            .collect::<Vec<_>>(),
+    };
+    rooms.sort();
+    rooms.dedup();
+    match rooms.len() {
+        0 | 1 => Ok(rooms.pop()),
+        _ => unsound(format!(
+            "operator post {} speaks in more than one room",
+            publication.publication()
+        )),
+    }
 }
 
 fn conversed(
