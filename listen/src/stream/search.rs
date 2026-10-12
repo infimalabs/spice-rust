@@ -1,4 +1,4 @@
-//! Newest-first search for the complete records that carry one byte needle.
+//! Newest-first search for the complete records that carry any byte needle.
 
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -30,10 +30,10 @@ pub struct TailSearch {
     pub work: TailWork,
 }
 
-/// Visit, newest first, each complete record whose bytes contain `needle`.
+/// Visit, newest first, each complete record whose bytes contain any needle.
 ///
 /// Raw bytes are searched backward, so only matching records are decoded and
-/// records that never mention the needle cost a byte comparison, not a parse.
+/// records that never mention a needle cost a byte comparison, not a parse.
 /// The budget's window is how many tape bytes the search reaches back from
 /// the end; a matching record the window enters is still completed. Its source
 /// allowance also pays for decoding matches, its record allowance counts only
@@ -47,17 +47,21 @@ pub struct TailSearch {
 ///
 /// # Panics
 ///
-/// Panics when `needle` is empty or spans a record delimiter.
+/// Panics when `needles` is empty, or any needle is empty or spans a record
+/// delimiter.
 pub fn search_tail(
     root: impl AsRef<Path>,
     dialect: Dialect,
-    needle: &[u8],
+    needles: &[&[u8]],
     budget: TailBudget,
     mut visit: impl FnMut(Record) -> ControlFlow<()>,
 ) -> Result<TailSearch, ScanError> {
     assert!(
-        !needle.is_empty() && !needle.contains(&b'\n'),
-        "a search needle lies within one record"
+        !needles.is_empty()
+            && needles
+                .iter()
+                .all(|needle| !needle.is_empty() && !needle.contains(&b'\n')),
+        "every search needle lies within one record"
     );
     let root = root.as_ref();
     let tape = Tape::open_existing(root).map_err(|source| tape_error(root, source))?;
@@ -71,7 +75,7 @@ pub fn search_tail(
         dialect,
         source: &source,
         extents: &extents,
-        finder: memmem::Finder::new(needle),
+        finders: needles.iter().map(memmem::Finder::new).collect(),
         overlap: Vec::new(),
         record_end: None,
         matched: false,
@@ -101,7 +105,7 @@ struct Search<'a> {
     dialect: Dialect,
     source: &'a SourceId,
     extents: &'a [Extent],
-    finder: memmem::Finder<'a>,
+    finders: Vec<memmem::Finder<'a>>,
     /// Leading bytes of the newer chunk a needle may continue into.
     overlap: Vec<u8>,
     /// End of the complete record the walk is inside; `None` in the
@@ -169,14 +173,20 @@ impl Search<'_> {
         visit: &mut impl FnMut(Record) -> ControlFlow<()>,
     ) -> Result<ControlFlow<Position>, ScanError> {
         let length = bytes.len();
-        let carried = self.finder.needle().len() - 1;
+        let carried = self
+            .finders
+            .iter()
+            .map(|finder| finder.needle().len() - 1)
+            .max()
+            .unwrap_or_default();
         let overlap = bytes[..length.min(carried)].to_vec();
         bytes.extend_from_slice(&self.overlap);
         let mut matches = self
-            .finder
-            .find_iter(&bytes)
-            .take_while(|at| *at < length)
+            .finders
+            .iter()
+            .flat_map(|finder| finder.find_iter(&bytes).take_while(|at| *at < length))
             .collect::<Vec<_>>();
+        matches.sort_unstable();
         bytes.truncate(length);
         self.overlap = overlap;
         for newline in memrchr_iter(b'\n', &bytes) {

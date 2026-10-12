@@ -183,7 +183,7 @@ fn ingest_lane_transcript(
         origin,
         at,
     };
-    match lane::ingest::ingest_bounded(journal, ingestion, coalescing, bound) {
+    match lane::ingest::ingest_bounded(journal, ingestion.clone(), coalescing, bound) {
         Ok(lane::ingest::Ingested::Accounted {
             applied,
             batch,
@@ -192,6 +192,18 @@ fn ingest_lane_transcript(
             Some(applied),
             TranscriptObservation { batch, at, records },
         ))),
+        // A packet cites its accounted hunk, so a pass that hands one over
+        // accounts its hold at once rather than leaving the packet unpublished.
+        Ok(lane::ingest::Ingested::Deferred { batch, records })
+            if records.iter().any(super::steering::carries_packet) =>
+        {
+            let applied = lane::ingest::settle_held(journal, &ingestion, coalescing)
+                .map_err(|error| format!("lane {} transcript not accounted: {error}", row.lane))?;
+            Ok(Some((
+                applied,
+                TranscriptObservation { batch, at, records },
+            )))
+        }
         Ok(lane::ingest::Ingested::Deferred { batch, records }) => {
             Ok(Some((None, TranscriptObservation { batch, at, records })))
         }

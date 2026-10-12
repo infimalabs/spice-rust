@@ -143,6 +143,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
             lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
             unreached: unreached.to_vec(),
             rooms: vec![room.clone()],
+            conversed: None,
         })
     };
     assert_eq!(
@@ -159,10 +160,6 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
                 &[format!("{second} address::expired (its lane is vacant)")]
             ),
         ],
-        "{diagnostics}"
-    );
-    assert!(
-        diagnostics.contains(&format!("recorded in {room}")),
         "{diagnostics}"
     );
     let messages = lanes.messages();

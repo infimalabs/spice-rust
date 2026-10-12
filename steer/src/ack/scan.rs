@@ -8,10 +8,11 @@
 //! by name, because a silent non-recognition and a refusal look identical to an
 //! operator waiting on an answer.
 //!
-//! The same authored-context grammar reads [`message`] packets: `MSG` headers
-//! that name peer recipients and own a body hunk but never retire anything.
-//! Both packet kinds are found by one visitor, so a placed header of either
-//! kind bounds the body of the MSG before it.
+//! The same authored-context grammar reads [`message`] packets: `MSG`, `ASK`,
+//! and `ANS` headers that name their routes or answered question and own a
+//! body hunk but never retire anything. Every packet kind is found by one
+//! visitor, so a placed header of any kind bounds the body of the publication
+//! before it.
 //!
 //! The scanner performs no I/O. Standing arrives from the caller's reduced
 //! facts, so the same prose read against the same standing always recognizes
@@ -26,7 +27,7 @@ use crate::ack::keys::{Key, MARKERS, Marker};
 
 pub mod message;
 
-pub use message::{Message, MessageRefusal, Publication, Route};
+pub use message::{Audience, Message, MessageRefusal, Publication, Request, Route, Verb};
 
 /// Where in the scanned prose a recognition sits.
 ///
@@ -204,7 +205,8 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
 
 /// The response prose the placed header that retires `token` gives it: the
 /// rest of that header's line after its key list and separator, trimmed, and
-/// ending before any placed MSG header on that line, which is its own packet.
+/// ending before any placed MSG, ASK, or ANS header on that line, which is its
+/// own packet.
 ///
 /// Between placed headers retiring the same token the later one speaks, as
 /// [`decisive`] rules. `None` when no placed header retires the token or the
@@ -259,12 +261,13 @@ pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Ackno
     acknowledgements
 }
 
-/// Reads every placed MSG packet, each bounded by the next placed packet.
+/// Reads every placed MSG, ASK, and ANS packet, each bounded by the next
+/// placed packet.
 ///
 /// Quoted, code, rendered-source, negated, hypothetical, and narrated markers
-/// publish nothing and bound nothing. The scan needs no standing: a MSG
-/// retires no key, and whether an ACK or NAK header is placed does not depend
-/// on which keys are live.
+/// publish nothing and bound nothing. The scan needs no standing: a
+/// publication retires no key, and whether an ACK or NAK header is placed does
+/// not depend on which keys are live.
 #[must_use]
 pub fn scan_messages(prose: &str) -> Vec<Message> {
     let mut placed = Vec::new();
@@ -316,7 +319,7 @@ pub fn has_acknowledgement(prose: &str) -> bool {
 enum Packet {
     /// An ACK or NAK clause.
     Retirement(Clause),
-    /// A MSG header whose body is bounded once every packet is known.
+    /// A publication header whose body is bounded once every packet is known.
     Message {
         position: Position,
         start: usize,
@@ -338,38 +341,39 @@ fn visit_packets(
         if !quoted && guarded_context(prose, start) {
             continue;
         }
-        let packet =
-            match lead {
-                Lead::Retirement(marker) => {
-                    let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
-                        continue;
-                    };
-                    if !header.tokens.iter().any(|&(token_start, token_end)| {
-                        intended_token(&prose[token_start..token_end])
-                    }) {
-                        continue;
-                    }
-                    Packet::Retirement(Clause {
-                        marker,
-                        position: position(quoted, &header.tokens, &lines),
-                        start: decorated_start,
-                        end: header.end,
-                        separator: header.separator,
-                        tokens: header.tokens,
-                    })
+        let packet = match lead {
+            Lead::Retirement(marker) => {
+                let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
+                    continue;
+                };
+                if !header
+                    .tokens
+                    .iter()
+                    .any(|&(token_start, token_end)| intended_token(&prose[token_start..token_end]))
+                {
+                    continue;
                 }
-                Lead::Message => {
-                    let Some(header) = message::header_after(prose, start + message::MARKER.len())
-                    else {
-                        continue;
-                    };
-                    Packet::Message {
-                        position: position(quoted, &header.tokens, &lines),
-                        start: decorated_start,
-                        header,
-                    }
+                Packet::Retirement(Clause {
+                    marker,
+                    position: position(quoted, &header.tokens, &lines),
+                    start: decorated_start,
+                    end: header.end,
+                    separator: header.separator,
+                    tokens: header.tokens,
+                })
+            }
+            Lead::Message(verb) => {
+                let Some(header) = message::header_after(prose, verb, start + verb.marker().len())
+                else {
+                    continue;
+                };
+                Packet::Message {
+                    position: position(quoted, &header.tokens, &lines),
+                    start: decorated_start,
+                    header,
                 }
-            };
+            }
+        };
         visit(&lines, packet)?;
     }
     ControlFlow::Continue(())
@@ -575,7 +579,7 @@ impl Clause {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lead {
     Retirement(Marker),
-    Message,
+    Message(message::Verb),
 }
 
 /// The protocol word beginning at this offset, if a whole word begins there.
@@ -589,8 +593,8 @@ fn lead_at(prose: &str, start: usize) -> Option<Lead> {
         return None;
     }
     let rest = prose.get(start..)?;
-    if rest.starts_with(message::MARKER) {
-        return Some(Lead::Message);
+    if let Some(verb) = message::Verb::leading(rest) {
+        return Some(Lead::Message(verb));
     }
     MARKERS
         .into_iter()

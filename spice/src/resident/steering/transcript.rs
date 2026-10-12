@@ -224,7 +224,7 @@ impl TranscriptEvidence {
         let search = listen::search_tail(
             &self.path,
             self.dialect,
-            token.as_bytes(),
+            &[token.as_bytes()],
             budget,
             |record| match scan_record(&record, token, standing) {
                 Err(outcome) => {

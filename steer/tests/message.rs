@@ -1,13 +1,15 @@
-//! Reading authored MSG packets out of assistant prose.
+//! Reading authored MSG, ASK, and ANS packets out of assistant prose.
 //!
-//! MSG shares the acknowledgment header grammar's authored-context rules but
-//! publishes rather than retires: each placed packet names its routes, each an
-//! occupant address, a task context, or an address in a context, and owns
-//! exactly the body hunk up to the next placed packet.
+//! Publication packets share the acknowledgment header grammar's
+//! authored-context rules but publish rather than retire: each placed packet
+//! names its routes, each an audience, a task context, or an audience in a
+//! context, or the question it answers, and owns exactly the body hunk up to
+//! the next placed packet.
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Message, MessageRefusal, Outcome, Standing, answer, scan, scan_acknowledgements, scan_messages,
+    Audience, Message, MessageRefusal, Outcome, Request, Standing, Verb, answer, scan,
+    scan_acknowledgements, scan_messages,
 };
 use wire::{Disposition, OccupantAddress, OccupantAddressError, TaskHandle};
 
@@ -31,14 +33,17 @@ fn sent<'prose>(prose: &'prose str, message: &Message) -> (Vec<&'prose str>, &'p
         .as_ref()
         .unwrap_or_else(|refusal| panic!("refused {refusal:?} in {prose:?}"));
     let selectors = publication
-        .routes
+        .routes()
         .iter()
         .map(|route| {
             let written = &prose[route.span.clone()];
             let (audience, context) = written.split_once('#').unwrap_or((written, ""));
             assert_eq!(
-                route.address,
-                (!audience.is_empty()).then(|| address(audience))
+                route.audience,
+                (!audience.is_empty()).then(|| match audience {
+                    "operator" => Audience::Operator,
+                    address_text => Audience::Occupant(address(address_text)),
+                })
             );
             assert_eq!(
                 route.context,
@@ -115,7 +120,7 @@ fn malformed_or_repeated_contexts_refuse_the_packet() {
     assert_eq!(
         refusal("MSG 6HmS#ROOMS-dVrD244Jd 6HmS#DESIGN-dVrD1Kz1l: one audience."),
         MessageRefusal::Repeated {
-            address: address("6HmS"),
+            audience: Audience::Occupant(address("6HmS")),
             span: 25..29,
         }
     );
@@ -201,7 +206,7 @@ fn defective_packets_refuse_whole_without_guessing() {
     assert_eq!(
         refusal("MSG 6HmS 7Bc 6HmS: twice."),
         MessageRefusal::Repeated {
-            address: address("6HmS"),
+            audience: Audience::Occupant(address("6HmS")),
             span: 13..17,
         }
     );
@@ -298,4 +303,115 @@ fn a_reply_clause_never_carries_a_placed_message() {
             "reply for {prose:?}"
         );
     }
+}
+
+fn result(text: &str) -> wire::rooms::QuestionResultRef {
+    wire::rooms::QuestionResultRef::new(text.parse().expect("fixture result handle"))
+}
+
+/// ASK names one audience in its own context, ANS names the answered result
+/// and only asserts a context, and the operator is an audience like any lane;
+/// every placed header of either verb bounds the body before it.
+#[test]
+fn questions_and_answers_route_by_verb() {
+    let prose = "MSG operator 6HmS#ROOMS-dVrD244Jd: Heads up.\n\
+                 ASK 6HmS#ROOMS-dVrD244Jd: Does caching explain it?\n\
+                 ASK operator: May I widen scope?\n\
+                 ANS dVtYchNJW#ROOMS-dVrD244Jd: It does not.\n\
+                 ANS dVtYcnvty: Yes.";
+    let messages = scan_messages(prose);
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.verb)
+            .collect::<Vec<_>>(),
+        [Verb::Msg, Verb::Ask, Verb::Ask, Verb::Ans, Verb::Ans]
+    );
+    assert_eq!(
+        sent(prose, &messages[0]),
+        (vec!["operator", "6HmS#ROOMS-dVrD244Jd"], "Heads up.")
+    );
+    assert_eq!(
+        sent(prose, &messages[1]),
+        (vec!["6HmS#ROOMS-dVrD244Jd"], "Does caching explain it?")
+    );
+    assert_eq!(
+        sent(prose, &messages[2]),
+        (vec!["operator"], "May I widen scope?")
+    );
+    for (message, (handle_text, context, body)) in messages[3..].iter().zip([
+        ("dVtYchNJW", Some(handle("ROOMS-dVrD244Jd")), "It does not."),
+        ("dVtYcnvty", None, "Yes."),
+    ]) {
+        let publication = message.publication.as_ref().expect("answer admits");
+        assert!(matches!(
+            &publication.request,
+            Request::Ans { result: answered, context: asserted, .. }
+                if *answered == result(handle_text) && *asserted == context
+        ));
+        assert!(publication.routes().is_empty());
+        assert_eq!(&prose[publication.body.clone()], body);
+    }
+}
+
+/// ASK and ANS refuse whole on their own arity, audience, and handle defects,
+/// and the operator cannot be named twice in one MSG.
+#[test]
+fn question_and_answer_defects_refuse_whole() {
+    assert_eq!(
+        refusal("ASK 6HmS 7Bc: two respondents?"),
+        MessageRefusal::Selectors {
+            verb: Verb::Ask,
+            count: 2
+        }
+    );
+    assert_eq!(
+        refusal("ASK #ROOMS-dVrD244Jd: anyone?"),
+        MessageRefusal::Audience { span: 4..20 }
+    );
+    assert_eq!(
+        refusal("ANS dVtYchNJW dVtYcnvty: both."),
+        MessageRefusal::Selectors {
+            verb: Verb::Ans,
+            count: 2
+        }
+    );
+    assert!(matches!(
+        refusal("ANS dVtYchNJWx#ROOMS-dVrD244Jd: long handle."),
+        MessageRefusal::Result { span, .. } if span == (4..14)
+    ));
+    assert!(matches!(
+        refusal("ANS dVtYchNJW#rooms: lowercase room."),
+        MessageRefusal::Context { span, .. } if span == (14..19)
+    ));
+    assert_eq!(
+        refusal("MSG operator 6HmS operator: twice."),
+        MessageRefusal::Repeated {
+            audience: Audience::Operator,
+            span: 18..26,
+        }
+    );
+    assert_eq!(refusal("ASK operator:   "), MessageRefusal::EmptyBody);
+}
+
+/// Quoted, coded, and narrated question and answer markers publish nothing and
+/// leave the preceding body whole.
+#[test]
+fn unauthored_questions_and_answers_neither_publish_nor_bound() {
+    for prose in [
+        "> ASK 6HmS: quoted",
+        "`ANS dVtYchNJW: inline code`",
+        "```\nASK operator: fenced\n```",
+        "Never write ASK 6HmS: like this",
+        "ASKED 6HmS: not a marker",
+    ] {
+        assert_eq!(scan_messages(prose), [], "published {prose:?}");
+    }
+    let prose = "MSG 6HmS: see `ANS dVtYchNJW: example` here";
+    let messages = scan_messages(prose);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        sent(prose, &messages[0]).1,
+        "see `ANS dVtYchNJW: example` here"
+    );
 }

@@ -583,13 +583,18 @@ pub(super) fn steering_ledger(
     Ok(Some(ledger))
 }
 
-/// Every address a placed, well-formed MSG packet in `texts` names.
+/// Every address a placed, well-formed MSG, ASK, or ANS packet in `texts`
+/// names.
 fn message_addresses<'a>(
     texts: impl IntoIterator<Item = &'a str>,
 ) -> BTreeSet<wire::OccupantAddress> {
     texts
         .into_iter()
-        .filter(|text| text.contains(steer::ack::scan::message::MARKER))
+        .filter(|text| {
+            steer::ack::scan::message::MARKERS
+                .iter()
+                .any(|marker| text.contains(marker))
+        })
         .flat_map(steer::ack::scan::scan_messages)
         .filter_map(|message| message.publication.ok())
         .flat_map(|publication| publication.addresses().collect::<Vec<_>>())
