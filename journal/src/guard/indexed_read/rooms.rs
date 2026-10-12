@@ -530,6 +530,96 @@ impl JournalRead<'_> {
             .map_err(|_| GuardError::Invalid(format!("room publication count {count} is invalid")))
     }
 
+    /// One page of the facts behind current room authority through
+    /// `horizon`, in journal order: every room publication, the current head
+    /// of each working group, proposal, and authorization, and for each room
+    /// coordination the direction it follows and that direction's current
+    /// steering head.
+    ///
+    /// A head that moves past `horizon` leaves this set, so the facts after
+    /// `horizon` complete the authority it describes without overlap.
+    pub fn room_authority_page(
+        &self,
+        start: crate::FactPageStart,
+        horizon: wire::Seq,
+        budget: FactReadBudget,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, GuardError> {
+        if self.cursor.is_none_or(|cursor| horizon > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "room authority horizon {horizon} is beyond cursor {:?}",
+                self.cursor
+            )));
+        }
+        let first = match start {
+            crate::FactPageStart::After(after) => after.map_or(1, |after| after.get() + 1),
+            crate::FactPageStart::At(position) => position.get(),
+        };
+        let sql = |value: u64| {
+            i64::try_from(value)
+                .map_err(|_| GuardError::Invalid("room authority position exceeds SQLite".into()))
+        };
+        let (first, last) = (sql(first)?, sql(horizon.get())?);
+        let directed = wire::FactKind::RoomCoordinationStarted.as_str();
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(ROOM_AUTHORITY_PAGE)
+            .map_err(GuardError::Store)?;
+        let mut rows = statement
+            .query(params![directed, first, last, probe_limit(budget)?])
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::with_capacity(budget.rows());
+        let mut decoded = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if facts.len() == budget.rows()
+                || (!facts.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes())
+            {
+                continuation = Some(seq);
+                break;
+            }
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            decoded = decoded.saturating_add(length);
+            facts.push(fact);
+        }
+        drop(rows);
+        let overflow = continuation
+            .map(|continuation| {
+                read_metrics::observe_query();
+                let omitted = self
+                    .connection
+                    .query_row(
+                        ROOM_AUTHORITY_REMAINING,
+                        params![directed, continuation, last],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(GuardError::Store)?;
+                Ok(wire::Overflow {
+                    omitted: u64::try_from(omitted).map_err(|_| {
+                        GuardError::Invalid(format!("room authority count {omitted} is invalid"))
+                    })?,
+                    continuation: u64::try_from(continuation)
+                        .ok()
+                        .and_then(wire::Seq::new)
+                        .ok_or_else(|| {
+                            GuardError::Invalid(format!(
+                                "room authority position {continuation} is invalid"
+                            ))
+                        })?,
+                })
+            })
+            .transpose()?;
+        Ok(wire::Packed {
+            rows: facts,
+            overflow,
+            horizon,
+        })
+    }
+
     /// The read's horizon as SQLite spells it, absent on an empty journal.
     fn room_horizon(&self) -> Result<Option<i64>, GuardError> {
         self.cursor
@@ -541,6 +631,37 @@ impl JournalRead<'_> {
             .transpose()
     }
 }
+
+/// Positions of the facts behind current room authority; `?1` spells the
+/// room-coordination kind, whose direction always sits one position earlier.
+macro_rules! room_authority {
+    () => {
+        "WITH directed(seq) AS ( \
+             SELECT p.seq FROM room_publications p \
+             JOIN fact_envelopes f ON f.seq = p.seq WHERE f.kind = ?1 \
+         ), authority(seq) AS ( \
+             SELECT seq FROM room_publications \
+             UNION SELECT head_seq FROM group_heads \
+             UNION SELECT head_seq FROM proposal_heads \
+             UNION SELECT head_seq FROM authorization_heads \
+             UNION SELECT seq - 1 FROM directed \
+             UNION SELECT h.head_seq FROM directed d \
+             JOIN steering_heads h ON h.created_seq = d.seq - 1 \
+         ) "
+    };
+}
+
+const ROOM_AUTHORITY_PAGE: &str = concat!(
+    room_authority!(),
+    "SELECT f.seq, f.kind, length(f.envelope), f.envelope FROM authority a \
+     JOIN fact_envelopes f ON f.seq = a.seq \
+     WHERE a.seq >= ?2 AND a.seq <= ?3 ORDER BY a.seq LIMIT ?4"
+);
+
+const ROOM_AUTHORITY_REMAINING: &str = concat!(
+    room_authority!(),
+    "SELECT count(*) FROM authority WHERE seq >= ?2 AND seq <= ?3"
+);
 
 fn probe_limit(budget: FactReadBudget) -> Result<i64, GuardError> {
     let limit = budget

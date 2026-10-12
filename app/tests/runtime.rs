@@ -583,6 +583,7 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
         operator.subjects(),
         vec![
             ViewSubject::Facts,
+            ViewSubject::Rooms,
             ViewSubject::Messages,
             ViewSubject::Quota,
         ]
@@ -592,7 +593,10 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     let lane_session = session(LANE_CAPABILITY, EPOCH);
     let lane = acceptance(&lane_session, &format!("lane:{LANE}"), EPOCH);
     let lane = AppRuntime::new(&lane);
-    assert_eq!(lane.subjects(), vec![ViewSubject::Facts]);
+    assert_eq!(
+        lane.subjects(),
+        vec![ViewSubject::Facts, ViewSubject::Rooms]
+    );
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
 }

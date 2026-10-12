@@ -845,6 +845,9 @@ pub enum ViewSubject {
     Messages,
     /// Redacted provider quota sampled by the resident.
     Quota,
+    /// Current room, working-group, and preparation authority facts at the
+    /// subscription horizon; later authority arrives as live facts.
+    Rooms,
 }
 
 /// One strict client-to-resident stream request.
@@ -1295,6 +1298,14 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         packed: Packed<TrustView>,
+    },
+    /// Initial or continued page of the facts behind current room authority,
+    /// in journal order through the subscription horizon.
+    Rooms {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        packed: Packed<StreamFact>,
     },
     /// Current bounded transcript-activity snapshot.
     Messages {

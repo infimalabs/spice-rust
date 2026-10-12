@@ -7,8 +7,6 @@ pub mod timer;
 #[cfg(not(target_arch = "wasm32"))]
 mod runtime {
     use std::collections::VecDeque;
-    use std::error::Error;
-    use std::fmt;
     use std::sync::Arc;
     use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
     use std::thread::{self, JoinHandle};
@@ -40,6 +38,8 @@ mod runtime {
     mod transcript_sessions;
     use transcript_sessions::TranscriptSessionState;
     pub use transcript_sessions::{TranscriptSession, TranscriptSessions};
+    mod error;
+    pub use error::{BusError, BusReadError, BusVerifyError};
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -642,6 +642,29 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read one bounded page of current room-authority facts through a
+        /// captured horizon.
+        pub fn app_rooms(
+            &self,
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            budget: journal::FactReadBudget,
+        ) -> Result<FactPage, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Read(JournalRead::AppRooms {
+                    start,
+                    horizon,
+                    budget,
+                    answer,
+                }))
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read one bounded causal page directly through the thread index.
         pub fn app_thread(
             &self,
@@ -842,6 +865,17 @@ mod runtime {
             self.reader().app_facts(start, horizon, budget)
         }
 
+        /// Read one bounded page of current room-authority facts through a
+        /// captured horizon.
+        pub fn app_rooms(
+            &self,
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            budget: journal::FactReadBudget,
+        ) -> Result<FactPage, BusReadError> {
+            self.reader().app_rooms(start, horizon, budget)
+        }
+
         /// Read one bounded causal page directly through the thread index.
         pub fn app_thread(
             &self,
@@ -1035,6 +1069,12 @@ mod runtime {
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<FactPage, GuardError>>,
         },
+        AppRooms {
+            start: journal::FactPageStart,
+            horizon: journal::crossing::Seq,
+            budget: journal::FactReadBudget,
+            answer: SyncSender<Result<FactPage, GuardError>>,
+        },
         AppThread {
             position: journal::crossing::Seq,
             budget: journal::FactReadBudget,
@@ -1175,6 +1215,15 @@ mod runtime {
                 answer,
             } => {
                 let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
+            }
+            JournalRead::AppRooms {
+                start,
+                horizon,
+                budget,
+                answer,
+            } => {
+                let _ = answer
+                    .send(journal.read(|read| read.room_authority_page(start, horizon, budget)));
             }
             JournalRead::AppThread {
                 position,
@@ -1384,74 +1433,6 @@ mod runtime {
         commit: Option<JournalCommit>,
         respond: Box<dyn FnOnce() + Send>,
     }
-
-    /// The dedicated writer could not be reached or did not end normally.
-    #[derive(Debug)]
-    pub enum BusError {
-        /// The operating system refused the writer thread.
-        Start(std::io::Error),
-        /// The writer queue is closed.
-        Closed,
-        /// The writer thread panicked while owning authority.
-        WriterPanicked,
-    }
-
-    impl fmt::Display for BusError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self {
-                Self::Start(error) => write!(formatter, "bus writer did not start: {error}"),
-                Self::Closed => formatter.write_str("bus writer is closed"),
-                Self::WriterPanicked => formatter.write_str("bus writer panicked"),
-            }
-        }
-    }
-
-    impl Error for BusError {
-        fn source(&self) -> Option<&(dyn Error + 'static)> {
-            match self {
-                Self::Start(error) => Some(error),
-                Self::Closed | Self::WriterPanicked => None,
-            }
-        }
-    }
-
-    /// A queued fact snapshot could not be returned.
-    #[derive(Debug)]
-    pub enum BusReadError {
-        Bus(BusError),
-        Snapshot(SnapshotError),
-        Head(GuardError),
-    }
-
-    impl fmt::Display for BusReadError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self {
-                Self::Bus(error) => error.fmt(formatter),
-                Self::Snapshot(error) => error.fmt(formatter),
-                Self::Head(error) => error.fmt(formatter),
-            }
-        }
-    }
-
-    impl Error for BusReadError {}
-
-    /// A queued authority verification could not be returned.
-    #[derive(Debug)]
-    pub enum BusVerifyError {
-        Bus(BusError),
-        Journal(VerifyError),
-    }
-
-    impl fmt::Display for BusVerifyError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self {
-                Self::Bus(error) => error.fmt(formatter),
-                Self::Journal(error) => error.fmt(formatter),
-            }
-        }
-    }
-
-    impl Error for BusVerifyError {}
 }
 
 #[cfg(not(target_arch = "wasm32"))]

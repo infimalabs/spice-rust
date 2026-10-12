@@ -294,6 +294,9 @@ impl Session {
             StreamFrame::Facts {
                 v, epoch, packed, ..
             }
+            | StreamFrame::Rooms {
+                v, epoch, packed, ..
+            }
             | StreamFrame::Thread {
                 v, epoch, packed, ..
             } => {

@@ -337,6 +337,20 @@ impl Subscription {
                     packed,
                 }
             }
+            ViewSubject::Rooms => {
+                let start = continuation.map_or(
+                    journal::FactPageStart::After(None),
+                    journal::FactPageStart::At,
+                );
+                let packed = present_facts(source.rooms(start, horizon)?);
+                self.record_page(subject, &packed, StreamFact::seq);
+                StreamFrame::Rooms {
+                    v: WireVersion::CURRENT,
+                    id: request_id,
+                    epoch: self.epoch,
+                    packed,
+                }
+            }
             ViewSubject::Trust => {
                 let rows = trust_rows(heads)
                     .into_iter()

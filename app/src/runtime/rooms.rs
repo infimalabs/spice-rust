@@ -3,20 +3,18 @@
 use std::collections::BTreeMap;
 
 use wire::rooms::{self as authority, RoomAuthorityStamp};
-use wire::{
-    CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskPreparation, TaskStamp,
-};
+use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
 
 use super::BoardView;
 
-/// Whether the durable fact snapshot can be rendered as current authority.
+/// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoomProjectionStatus {
-    /// The initial or continued fact snapshot has not reached its horizon.
+    /// This subscription's room snapshot has not reached its horizon.
     Loading,
-    /// One complete fact snapshot and every later accepted fact were folded.
+    /// One complete room snapshot and every later live fact were folded.
     Available,
-    /// Stream retention or pagination continuity was lost; only a fresh snapshot can recover.
+    /// Snapshot continuity was lost; only a fresh subscription can recover.
     RequiresSnapshot,
 }
 
@@ -115,6 +113,8 @@ pub struct RoomParticipant {
 }
 
 /// Preparation authority retained under stable native identities.
+///
+/// An output's current control is its board statement's preparation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreparationProjection {
     /// Retained candidates by stable candidate identity.
@@ -128,28 +128,39 @@ pub struct PreparationProjection {
     /// Positive authorizations by their accepted decision identity.
     pub authorizations:
         BTreeMap<authority::DecisionRef, RoomPositioned<authority::ExecutionAuthorization>>,
-    /// Current explicit preparation association for each controlled output.
-    pub controls: BTreeMap<TaskStamp, RoomPositioned<TaskPreparation>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CoordinationState {
     room: TaskStamp,
-    target: wire::OccupantAddress,
+    lane: CanonicalUuid,
     live: bool,
 }
 
-/// Capability-local fold of authenticated, credential-free durable facts.
+/// The direction a room coordination record follows, one position earlier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Direction {
+    position: Seq,
+    key: String,
+    lane: CanonicalUuid,
+}
+
+/// Capability-local fold of one subscription's room snapshot and the live
+/// facts strictly after its horizon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoomProjection {
     status: RoomProjectionStatus,
+    /// Horizon the snapshot pages declare, fixed by the first page.
+    horizon: Option<Seq>,
     continuation: Option<Seq>,
+    /// Last folded position; the horizon once the snapshot completes.
     last_fact: Option<Seq>,
+    /// Greatest live position seen before the snapshot completed.
+    early: Option<Seq>,
+    direction: Option<Direction>,
     groups: BTreeMap<RoomAuthorityStamp, RoomPositioned<authority::WorkingGroup>>,
     rooms: BTreeMap<TaskStamp, RoomState>,
     preparation: PreparationProjection,
-    address_lanes: BTreeMap<wire::OccupantAddress, CanonicalUuid>,
-    active_claims: BTreeMap<TaskStamp, (Seq, CanonicalUuid)>,
     coordination: BTreeMap<String, CoordinationState>,
     stops: BTreeMap<TaskStamp, RoomPositioned<authority::RoomStopRequest>>,
 }
@@ -158,13 +169,14 @@ impl Default for RoomProjection {
     fn default() -> Self {
         Self {
             status: RoomProjectionStatus::Loading,
+            horizon: None,
             continuation: None,
             last_fact: None,
+            early: None,
+            direction: None,
             groups: BTreeMap::new(),
             rooms: BTreeMap::new(),
             preparation: PreparationProjection::default(),
-            address_lanes: BTreeMap::new(),
-            active_claims: BTreeMap::new(),
             coordination: BTreeMap::new(),
             stops: BTreeMap::new(),
         }
@@ -187,7 +199,7 @@ impl RoomProjection {
         self.rooms.get(room)
     }
 
-    /// Preparation, decision, control, and authorization authority.
+    /// Preparation, decision, and authorization authority.
     pub const fn preparation(&self) -> &PreparationProjection {
         &self.preparation
     }
@@ -210,16 +222,33 @@ impl RoomProjection {
             })
     }
 
-    /// A stop remains current only while the exact claim win it names is active.
+    /// A stop remains current only while the board shows the exact claim win
+    /// it names still active.
     pub fn current_stop(
         &self,
         room: &TaskStamp,
+        board: Option<&BoardView>,
     ) -> Option<&RoomPositioned<authority::RoomStopRequest>> {
+        self.stop_holder(room, board).map(|(stop, _)| stop)
+    }
+
+    fn stop_holder(
+        &self,
+        room: &TaskStamp,
+        board: Option<&BoardView>,
+    ) -> Option<(&RoomPositioned<authority::RoomStopRequest>, CanonicalUuid)> {
         let stop = self.stops.get(room)?;
-        self.active_claims
-            .get(room)
-            .is_some_and(|(claim, _)| claim.get() == stop.value.claim.get())
-            .then_some(stop)
+        let claim = board?
+            .tasks
+            .iter()
+            .find(|task| task.statement.body.born == *room)?
+            .claim
+            .as_ref()
+            .filter(|claim| {
+                claim.body.disposition == wire::ClaimDisposition::Active
+                    && claim.body.claimed.get() == stop.value.claim.get()
+            })?;
+        Some((stop, claim.body.lane))
     }
 
     /// Current logical-lane participants and the exact reasons for their presence.
@@ -262,21 +291,16 @@ impl RoomProjection {
             }
         }
         for (key, request) in &self.coordination {
-            if request.live
-                && request.room == *room
-                && let Some(lane) = self.address_lanes.get(&request.target)
-            {
+            if request.live && request.room == *room {
                 reasons
-                    .entry(*lane)
+                    .entry(request.lane)
                     .or_default()
                     .push(ParticipantReason::Coordination(key.clone()));
             }
         }
-        if let Some(stop) = self.current_stop(room)
-            && let Some(lane) = self.address_lanes.get(&stop.value.target)
-        {
+        if let Some((stop, lane)) = self.stop_holder(room, board) {
             reasons
-                .entry(*lane)
+                .entry(lane)
                 .or_default()
                 .push(ParticipantReason::Stop(stop.value.key.clone()));
         }
@@ -299,76 +323,80 @@ impl RoomProjection {
         self.continuation = None;
     }
 
-    /// Fold a packed snapshot page. A continuation may skip hidden facts but
-    /// can never move backward or precede the requested producer position.
+    /// Fold one room snapshot page. Every page declares the same horizon,
+    /// rows rise strictly through it, and a continuation never moves back.
+    /// Completion makes the horizon the live boundary.
     pub(super) fn apply_page(&mut self, packed: &Packed<StreamFact>) -> Result<bool, ()> {
-        if self.requires_snapshot() {
+        if self.status != RoomProjectionStatus::Loading {
+            self.lose_continuity();
             return Err(());
         }
         let first = packed.rows.first().map(StreamFact::seq);
         let last = packed.rows.last().map(StreamFact::seq);
-        let expected_regressed = self.continuation.is_some_and(|expected| {
-            packed.horizon < expected || first.is_some_and(|first| first < expected)
-        });
-        let history_regressed = self
-            .last_fact
-            .is_some_and(|previous| first.is_some_and(|first| first <= previous));
+        let horizon_moved = self
+            .horizon
+            .is_some_and(|horizon| horizon != packed.horizon);
+        let continuation_regressed = self
+            .continuation
+            .is_some_and(|expected| first.is_some_and(|first| first < expected))
+            || self
+                .last_fact
+                .is_some_and(|previous| first.is_some_and(|first| first <= previous));
         let rows_regressed = packed
             .rows
             .windows(2)
-            .any(|rows| rows[0].seq() >= rows[1].seq());
-        let continuation_regressed = packed
-            .overflow
-            .is_some_and(|overflow| last.is_some_and(|last| overflow.continuation <= last));
-        if expected_regressed || history_regressed || rows_regressed || continuation_regressed {
+            .any(|rows| rows[0].seq() >= rows[1].seq())
+            || last.is_some_and(|last| last > packed.horizon);
+        let overflow_regressed = packed.overflow.is_some_and(|overflow| {
+            last.is_some_and(|last| overflow.continuation <= last)
+                || overflow.continuation > packed.horizon
+        });
+        if horizon_moved || continuation_regressed || rows_regressed || overflow_regressed {
             self.lose_continuity();
             return Err(());
         }
-        let mut changed = false;
+        self.horizon = Some(packed.horizon);
         for fact in &packed.rows {
-            changed |= self.apply_fact(fact);
+            self.apply_fact(fact);
         }
-        if let Some(last) = last {
-            self.last_fact = Some(last);
+        if last.is_some() {
+            self.last_fact = last;
         }
         self.continuation = packed.overflow.map(|overflow| overflow.continuation);
-        let status = if self.continuation.is_some() {
-            RoomProjectionStatus::Loading
-        } else {
-            RoomProjectionStatus::Available
-        };
-        changed |= self.status != status;
-        self.status = status;
-        Ok(changed)
+        if self.continuation.is_none() {
+            if self.early.is_some_and(|early| early > packed.horizon) {
+                self.lose_continuity();
+                return Err(());
+            }
+            self.last_fact = Some(packed.horizon);
+            self.status = RoomProjectionStatus::Available;
+        }
+        Ok(true)
     }
 
-    /// Fold one later accepted fact after a complete snapshot.
+    /// Fold one live fact strictly after the completed snapshot's horizon.
     pub(super) fn apply_live_fact(&mut self, fact: &StreamFact) -> Result<bool, ()> {
-        if self.status == RoomProjectionStatus::Loading
-            && self.continuation.is_none()
-            && self.last_fact.is_none()
-        {
-            // Other runtime surfaces accept standalone live frames in tests and
-            // during connection setup. Room authority remains explicitly
-            // loading until its own complete fact snapshot arrives.
-            return Ok(false);
+        match self.status {
+            RoomProjectionStatus::Loading => {
+                self.early = self.early.max(Some(fact.seq()));
+                Ok(false)
+            }
+            RoomProjectionStatus::RequiresSnapshot => Ok(false),
+            RoomProjectionStatus::Available => {
+                if self.last_fact.is_some_and(|last| fact.seq() <= last) {
+                    self.lose_continuity();
+                    return Err(());
+                }
+                self.last_fact = Some(fact.seq());
+                Ok(self.apply_fact(fact))
+            }
         }
-        if self.status != RoomProjectionStatus::Available
-            || self
-                .last_fact
-                .is_some_and(|previous| fact.seq() <= previous)
-        {
-            self.lose_continuity();
-            return Err(());
-        }
-        self.last_fact = Some(fact.seq());
-        Ok(self.apply_fact(fact))
     }
 
     fn apply_fact(&mut self, fact: &StreamFact) -> bool {
         self.apply_room_fact(fact)
             .or_else(|| self.apply_preparation_fact(fact))
-            .or_else(|| self.apply_participation_fact(fact))
+            .or_else(|| self.apply_steering_fact(fact))
             .unwrap_or(false)
     }
 
@@ -419,25 +447,7 @@ impl RoomProjection {
             }
             FactKind::RoomCoordinationStarted => Some(
                 fact.read::<authority::RoomCoordinationStarted>()
-                    .is_some_and(|body| {
-                        let changed = self.insert_event(
-                            body.room.clone(),
-                            body.publication,
-                            RoomEvent {
-                                position: fact.seq(),
-                                kind: RoomEventKind::Coordination {
-                                    key: body.key.clone(),
-                                    target: body.target,
-                                },
-                            },
-                        );
-                        let current = CoordinationState {
-                            room: body.room,
-                            target: body.target,
-                            live: true,
-                        };
-                        changed | replace_plain(&mut self.coordination, body.key, current)
-                    }),
+                    .is_some_and(|body| self.apply_coordination(fact.seq(), body)),
             ),
             FactKind::RoomPutAside => Some(
                 fact.read::<authority::RoomPutAside>()
@@ -445,6 +455,38 @@ impl RoomProjection {
             ),
             _ => None,
         }
+    }
+
+    /// A coordination record directly follows the direction it links, which
+    /// names the asked lane.
+    fn apply_coordination(
+        &mut self,
+        position: Seq,
+        body: authority::RoomCoordinationStarted,
+    ) -> bool {
+        let changed = self.insert_event(
+            body.room.clone(),
+            body.publication,
+            RoomEvent {
+                position,
+                kind: RoomEventKind::Coordination {
+                    key: body.key.clone(),
+                    target: body.target,
+                },
+            },
+        );
+        let Some(direction) = self.direction.take().filter(|direction| {
+            direction.position.get().checked_add(1) == Some(position.get())
+                && direction.key == body.key
+        }) else {
+            return changed;
+        };
+        let current = CoordinationState {
+            room: body.room,
+            lane: direction.lane,
+            live: true,
+        };
+        changed | replace_plain(&mut self.coordination, body.key, current)
     }
 
     fn apply_put_aside(&mut self, position: Seq, body: authority::RoomPutAside) -> bool {
@@ -461,12 +503,7 @@ impl RoomProjection {
         );
         let mut authority_changed = false;
         for key in body.canceled {
-            if let Some(request) = self.coordination.get_mut(&key)
-                && request.live
-            {
-                request.live = false;
-                authority_changed = true;
-            }
+            authority_changed |= self.retire_coordination(&key);
         }
         authority_changed |= match body.stop {
             Some(stop) => replace(&mut self.stops, body.room, position, stop),
@@ -532,43 +569,20 @@ impl RoomProjection {
                         )
                     }),
             ),
-            FactKind::OutputControlled => Some(
-                fact.read::<authority::OutputControlled>()
-                    .is_some_and(|body| {
-                        replace(
-                            &mut self.preparation.controls,
-                            body.output,
-                            fact.seq(),
-                            body.preparation,
-                        )
-                    }),
-            ),
             _ => None,
         }
     }
 
-    fn apply_participation_fact(&mut self, fact: &StreamFact) -> Option<bool> {
+    fn apply_steering_fact(&mut self, fact: &StreamFact) -> Option<bool> {
         match fact.kind() {
-            FactKind::LaneStarted => {
-                Some(fact.read::<wire::body::LaneStarted>().is_some_and(|body| {
-                    let address = wire::OccupantAddress::new(fact.seq());
-                    self.address_lanes.insert(address, body.lane) != Some(body.lane)
-                }))
+            FactKind::SteerSent => {
+                self.direction = fact.read::<wire::body::SteerSent>().map(|body| Direction {
+                    position: fact.seq(),
+                    key: body.key,
+                    lane: body.lane,
+                });
+                Some(false)
             }
-            FactKind::ClaimWon => Some(fact.read::<wire::body::ClaimWon>().is_some_and(|body| {
-                self.active_claims
-                    .insert(body.task, (fact.seq(), body.lane))
-                    != Some((fact.seq(), body.lane))
-            })),
-            FactKind::ClaimFreed
-            | FactKind::ClaimLapsed
-            | FactKind::TaskDone
-            | FactKind::TaskReviewed
-            | FactKind::TaskDeleted
-            | FactKind::TaskClosed => Some(
-                fact.task()
-                    .is_some_and(|task| self.active_claims.remove(&task).is_some()),
-            ),
             FactKind::SteerAcked => Some(
                 fact.read::<wire::body::SteerAcked>()
                     .is_some_and(|body| self.retire_coordination(&body.key)),
