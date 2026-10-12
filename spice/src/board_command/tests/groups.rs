@@ -1,7 +1,10 @@
 use super::*;
 
 use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead, WorkingGroupView};
-use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupPut, WorkingGroupRemove};
+use wire::rooms::{
+    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupPut,
+    WorkingGroupRemove,
+};
 
 fn group_stamp(offset: i64) -> RoomAuthorityStamp {
     RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + offset).expect("fixture group stamp")
@@ -195,7 +198,7 @@ fn assert_anchor_resolution_and_group_removal(
 #[test]
 fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
     let (root, bus, epoch, _seats) = fixture("grouped-terminal-open", 0);
-    let terminal = super::read_scope::append_terminal_tasks(&bus, 2)
+    let terminal = super::read_scope::append_terminal_designs(&bus, 2)
         .into_iter()
         .collect::<Vec<_>>();
     let open_stamps = |bus: &Bus| {
@@ -248,8 +251,8 @@ fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
 #[test]
 fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
     let (root, bus, epoch, _) = fixture("working-groups", 0);
-    let first = add_born(&bus, epoch, stamp("group-first"), "First room");
-    let second = add_born(&bus, epoch, stamp("group-second"), "Second room");
+    let first = add_design_room(&bus, epoch, stamp("group-first"), "First room");
+    let second = add_design_room(&bus, epoch, stamp("group-second"), "Second room");
     let first_born = first.born().expect("first room identity");
     let second_born = second.born().expect("second room identity");
     let primary = group_stamp(111);
@@ -325,5 +328,102 @@ fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
         &primary,
         &secondary,
     );
+    clean(&root, bus);
+}
+
+fn add_design_room(bus: &Bus, epoch: CanonicalUuid, born: TaskStamp, title: &str) -> TaskHandle {
+    let task = TaskHandle::for_project("board.identity", &born);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born.clone() }],
+        &TaskAdd {
+            preparation: None,
+            intent: Some(wire::TaskIntent::Design),
+            title: title.to_owned(),
+            project: Some("board.identity".to_owned()),
+            description: None,
+            acceptance: vec!["The design records its disposition".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:identity".parse().expect("fixture origin")),
+            flow: Some("design,review".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    task
+}
+
+fn refused_as(outcome: Outcome<CommandAnswer>, reason: &str) -> bool {
+    matches!(outcome, Outcome::Refusal(refusal) if refusal.reason() == reason)
+}
+
+#[test]
+fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
+    let (root, bus, epoch, _) = fixture("group-design-limit", 0);
+    let designs = (0..=WORKING_GROUP_DESIGN_LIMIT)
+        .map(|index| {
+            add_design_room(&bus, epoch, stamp(&format!("design-{index}")), "Design")
+                .born()
+                .expect("design identity")
+        })
+        .collect::<Vec<_>>();
+    let plain = add_born(&bus, epoch, stamp("plain-room"), "Plain task")
+        .born()
+        .expect("plain identity");
+    let six = &designs[..WORKING_GROUP_DESIGN_LIMIT];
+
+    let group = group_stamp(333);
+    assert_committed(put_group(
+        &bus,
+        epoch,
+        group.clone(),
+        None,
+        "Six",
+        six.to_vec(),
+    ));
+    let full = read_group(&bus, epoch, &group);
+    assert!(refused_as(
+        put_group(
+            &bus,
+            epoch,
+            group.clone(),
+            Some(full.head),
+            "Seven",
+            designs.clone()
+        ),
+        "group::design-limit",
+    ));
+    let mut swapped = designs[..WORKING_GROUP_DESIGN_LIMIT - 1].to_vec();
+    swapped.push(plain.clone());
+    assert!(refused_as(
+        put_group(
+            &bus,
+            epoch,
+            group.clone(),
+            Some(full.head),
+            "Swapped",
+            swapped
+        ),
+        "group::design-only",
+    ));
+    assert_eq!(read_group(&bus, epoch, &group), full);
+    assert!(refused_as(
+        put_group(
+            &bus,
+            epoch,
+            group_stamp(444),
+            None,
+            "Seven at birth",
+            designs.clone()
+        ),
+        "group::design-limit",
+    ));
+    assert!(refused_as(
+        put_group(&bus, epoch, group_stamp(555), None, "Plain", vec![plain]),
+        "group::design-only",
+    ));
     clean(&root, bus);
 }

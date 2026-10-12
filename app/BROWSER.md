@@ -66,34 +66,53 @@ its horizon, live fact at or before it, or stream overflow invalidates the
 projection and reconnects for a fresh snapshot. It is never merged
 speculatively.
 
-Working groups are shared catalog organization only. Open room views, view
-order and layout, composer drafts, reader and scroll positions, and focus
-anchors remain browser preferences. Those preferences cannot grant task, room,
-group, team, or lane authority, and a group edit never mounts, reorders, or
-closes a browser view.
+Working groups are shared catalog organization only. Opened group consoles,
+their order and layout, composer drafts, reader and scroll positions, and focus
+remain browser preferences. Those preferences cannot grant task, room, group,
+team, or lane authority, and a group edit never mounts, reorders, or closes a
+browser view.
 
 The Spice sidebar is the working-group catalog. **Create** stores an empty or
-task-associated group without mounting it; **Create & open** and **Open in
-group** are the explicit foreground actions. **Add to group**, association
-order controls, and **Remove group** replace shared organization through the
-guarded group commands. Removing shared organization leaves any already-open
-local console as an unavailable placeholder once a completed room snapshot
-lacks the group; while room authority loads or reconnects, the console keeps
-its last name and geometry.
+Design-associated group without mounting it; **Create & open**, **Open**,
+**Open in group**, and a design's own button are the explicit foreground
+actions, the last two also focusing that design's composer. Its pickers offer
+only Design tasks, and **Add to group** disables once a group holds six
+designs; a
+`group::design-only` or `group::design-limit` refusal shows in the catalog
+notice. **Add to group**, association order controls, and **Remove group**
+replace shared organization through the guarded group commands. Removing
+shared organization leaves any already-open local console as an unavailable
+placeholder once a completed room snapshot lacks the group; while room
+authority loads or reconnects, the console keeps its last name and geometry.
 
-Each mounted group is a peer console beside team consoles, not a team and not a
-roster. Only explicitly opened task rooms occupy it. Their durable task and
-publication stamps key room panels and cards; linked bytes that are not present
-stay labeled source placeholders. **Close view** and **Close group** change
-only this browser. Group/room order, drafts, reader offsets, and the last
-focused composer use `spice:room-views:v1` local storage, and every change
-applies to the current local state whenever it lands. Room composers send the
-guarded native room-post command; its admitted reply clears the draft only
-while the draft still holds the posted text, and a refusal retains it. An
-explicit open focuses that room's composer; otherwise the saved composer focus
-is restored only while nothing else holds focus. Incoming cards, receipts,
-conclusions, participant changes, and late hydration never mount, close,
-reorder, or focus a console.
+Each opened group is a console in the team fleet, after the teams, read exactly
+as a team console with tasks and agents swapped. A team's composers target its
+lanes and its tabs are tasks; a group's composers target its designs and its
+tabs are lanes. The group's designs, in their shared order, each take the
+accent a lane in that position takes in a team: the design's composer, its
+light in the status band, and every one of its room cards carry it. All
+designs' publications interleave newest first in one packed plane, so no room
+is paged or opened separately; durable task and publication stamps key the
+cards, and linked bytes that are not present stay labeled source
+placeholders.
+
+The tab rail lists each lane that holds an active claim on an open task
+associated with any of the group's designs: the design itself, or a task
+whose preparation parent, controller, or construction is that design. A lane
+enters and leaves the rail exactly as a task enters and leaves a team's rail,
+as board facts change, and its task handles follow it in the accent of the
+design each serves. Activating a lane opens its composer in Chat, whose team
+plane holds its history; a lane with no Chat seat stays a plain label.
+
+A design's composer posts the guarded native room-post command to exactly that
+design's room on **Post** or Control/Command+Enter. Quoting an operator-authored
+card drafts a `spice://quote/v1/room/ROOM/PUBLICATION/DIGEST` shard above that
+design's composer, the same shard a team composer drafts, and steering delivery
+expands it from the room's journal record. Room posts carry no images. An
+admitted reply clears the composer only while it still holds exactly the
+posted text and shards; a refusal keeps everything and shows in the composer
+toast. The design's menu carries its preparation authority and, for an open
+OOPS batch, the grooming form below.
 
 Operator posts and lane MSG, ASK, and ANS publications share one card family:
 sender → destinations, verb, and text. A lane's own bytes come from its
@@ -111,10 +130,19 @@ lane party's question is an explicit override. The catalog keeps an
 operator-targeted ASK in immutable admission order while either its receipt or
 its answer duty remains open, so ACK cannot hide the still-pending result.
 Receipt and result rows keep one geometry in every state. Acting moves keyboard
-focus to the acting card, and its outcome or refusal is reported in that room
-pane.
+focus to the acting card, and its outcome or refusal is reported in the
+composer toast for a console card and in the catalog for an inbox item.
 
-An open, pending Design room also exposes bounded OOPS grooming. Each record
+**Close group** and the group order controls change only this browser.
+Opened groups, their order, each design composer's draft, and the last focused
+design composer use `spice:room-views:v2` local storage, and every change
+applies to the current local state whenever it lands. An explicit open
+focuses the named design's composer; otherwise the saved composer focus is
+restored only while nothing else holds focus. Incoming cards, receipts,
+conclusions, lane changes, and late hydration never mount, close, reorder, or
+focus a console.
+
+An open, pending Design also exposes bounded OOPS grooming. Each record
 names the exact parked reports it considered, one of `duplicate`, `no-work`,
 `deferred-for-later`, `covered`, or `proposed-work`, its evidenced cause, and
 any exceptions or uncertainty. Recording changes no report workflow;

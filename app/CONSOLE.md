@@ -14,19 +14,29 @@ header, composer, and stream without a nested vertical scroller.
 ## Working groups and teams
 
 A team is resident lane topology and policy. A working group is only a
-repository-shared identity, name, and ordered list of room-anchor task birth
-stamps. It owns no lanes, roster, agent limit, claims, wake behavior, read
-permission, task lifecycle, open view, draft, focus, order, or geometry. The
-same room may appear in several groups.
+repository-shared identity, name, and ordered list of at most six Design-task
+birth stamps, matching the six lanes a team admits. It owns no lanes, roster,
+claims, wake behavior, read permission, task lifecycle, open view, draft,
+focus, order, or geometry. The same Design may appear in several groups.
 
 `spice group list` pages saved groups; `spice group put NAME [ANCHOR...]`
 creates one, while `--group GROUP` completely replaces that group's name and
 anchor order; `spice group remove GROUP` removes only the saved organization.
-Anchors resolve by immutable task birth stamp and display the task's current
-handle. An unavailable anchor remains explicit. Saved edits are visible to
-other repository clients, but never mount, reorder, or close a browser's
-foreground views. **New Team** therefore remains lane creation; **New working
-group** is repository organization.
+A put naming a task without Design intent refuses as `group::design-only`, and
+one naming a seventh design refuses as `group::design-limit`; the journal folds
+no group past six designs, and a predecessor journal holding one refuses to
+cross, naming the last release that admitted it. Anchors resolve by immutable
+task birth stamp and display the task's current handle. An anchor whose task
+is deleted or no longer declares Design intent remains explicit as
+unavailable. Saved edits are visible to other repository clients, but never
+mount, reorder, or close a browser's foreground views. **New Team** therefore
+remains lane creation; **New working group** is repository organization.
+
+The browser reads an opened group as a team console with tasks and agents
+swapped: one composer per design, posting to that design's room, and one tab
+per lane currently claiming an open task associated with any of its designs.
+That lane list is derived from board claims on every read; the group stores
+and grants none of it.
 
 ## Preparation authority
 

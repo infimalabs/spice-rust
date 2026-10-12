@@ -5,7 +5,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Actor, CanonicalUuid, Digest, Disposition, MessageLocus};
+use crate::rooms::RoomAuthorityStamp;
+use crate::{Actor, CanonicalUuid, Digest, Disposition, MessageLocus, TaskStamp};
 
 const PREFIX: &str = "spice://quote/v1/";
 const MARKDOWN_PREFIX: &str = "[quote](";
@@ -33,6 +34,15 @@ pub enum QuoteTarget {
         /// Human-sized durable directive key.
         key: String,
         /// Digest of the directive's original UTF-8 text.
+        digest: Digest,
+    },
+    /// One conversation publication in a task room.
+    Room {
+        /// Task whose room owns the publication.
+        room: TaskStamp,
+        /// The publication's room-authority identity.
+        publication: RoomAuthorityStamp,
+        /// Digest of the publication's UTF-8 text.
         digest: Digest,
     },
 }
@@ -169,7 +179,7 @@ impl QuoteTarget {
     pub const fn tape_source(&self) -> Option<CanonicalUuid> {
         match self {
             Self::Tape { source, .. } => Some(*source),
-            Self::Steering { .. } => None,
+            Self::Steering { .. } | Self::Room { .. } => None,
         }
     }
 
@@ -188,11 +198,13 @@ impl QuoteTarget {
         target.parse()
     }
 
-    /// Digest carried by either target kind.
+    /// Digest carried by every target kind.
     #[must_use]
     pub const fn digest(&self) -> &Digest {
         match self {
-            Self::Tape { digest, .. } | Self::Steering { digest, .. } => digest,
+            Self::Tape { digest, .. }
+            | Self::Steering { digest, .. }
+            | Self::Room { digest, .. } => digest,
         }
     }
 }
@@ -214,6 +226,11 @@ impl fmt::Display for QuoteTarget {
             Self::Steering { key, digest } => {
                 write!(formatter, "steer/{key}/{digest}")
             }
+            Self::Room {
+                room,
+                publication,
+                digest,
+            } => write!(formatter, "room/{room}/{publication}/{digest}"),
         }
     }
 }
@@ -241,6 +258,11 @@ impl FromStr for QuoteTarget {
                 digest: coordinate("digest", digest)?,
             }),
             ["steer", key, _] => Err(QuoteTargetError::SteeringKey((*key).to_owned())),
+            ["room", room, publication, digest] => Ok(Self::Room {
+                room: coordinate("room", room)?,
+                publication: coordinate("publication", publication)?,
+                digest: coordinate("digest", digest)?,
+            }),
             _ => Err(QuoteTargetError::Shape),
         }
     }
@@ -289,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn both_targets_round_trip_through_canonical_markdown() {
+    fn every_target_round_trips_through_canonical_markdown() {
         let text = "the quoted words";
         let targets = [
             QuoteTarget::Tape {
@@ -305,6 +327,11 @@ mod tests {
             },
             QuoteTarget::Steering {
                 key: "dTVLR0qL0".to_owned(),
+                digest: QuoteTarget::text_digest(text),
+            },
+            QuoteTarget::Room {
+                room: "dVrD59Y8N".parse().expect("fixture room"),
+                publication: "dVsYdDj7d".parse().expect("fixture publication"),
                 digest: QuoteTarget::text_digest(text),
             },
         ];
@@ -324,6 +351,8 @@ mod tests {
             format!("spice://quote/v2/tape/{lane}/{source}/3/5/8/13/{digest}"),
             format!("spice://other/v1/tape/{lane}/{source}/3/5/8/13/{digest}"),
             format!("spice://quote/v1/steer/not-a-key/{digest}"),
+            format!("spice://quote/v1/room/not-a-stamp/dVsYdDj7d/{digest}"),
+            format!("spice://quote/v1/room/dVrD59Y8N/dVsYdDj7d"),
         ] {
             assert!(target.parse::<QuoteTarget>().is_err(), "{target}");
         }

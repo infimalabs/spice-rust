@@ -242,3 +242,106 @@ fn task_home_is_the_active_claimant_team_then_creator_then_last_claimant() {
          unteamed claimant; otherwise the roster creator team, then the last claimant's",
     );
 }
+
+#[test]
+fn group_lanes_are_exactly_the_active_claimants_of_associated_tasks() {
+    let first = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let second = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let outsider = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let design = stamp(1);
+    let claimed_by = |mut task: wire::intent::BoardTask, lane, disposition| {
+        let mut head = claim(&task, disposition);
+        head.body.lane = lane;
+        head.body.actor = wire::Actor::Lane(lane);
+        task.claim = Some(head);
+        task
+    };
+    let prepared = |value, relation: fn(&mut wire::TaskPreparation, wire::TaskStamp)| {
+        let mut task = task(value, "rooms.prepared");
+        let mut preparation = wire::TaskPreparation {
+            parent: stamp(90),
+            controller: stamp(91),
+            construction: stamp(92),
+        };
+        relation(&mut preparation, design.clone());
+        task.statement.body.preparation = Some(preparation);
+        task
+    };
+
+    let anchor = claimed_by(task(1, "rooms.design"), second, ClaimDisposition::Active);
+    let child = claimed_by(
+        prepared(2, |preparation, design| preparation.parent = design),
+        first,
+        ClaimDisposition::Active,
+    );
+    let controlled = claimed_by(
+        prepared(3, |preparation, design| preparation.controller = design),
+        first,
+        ClaimDisposition::Active,
+    );
+    let constructed = claimed_by(
+        prepared(4, |preparation, design| preparation.construction = design),
+        second,
+        ClaimDisposition::Active,
+    );
+    let released = claimed_by(
+        prepared(5, |preparation, design| preparation.parent = design),
+        outsider,
+        ClaimDisposition::Freed,
+    );
+    let unrelated = claimed_by(task(6, "rooms.other"), outsider, ClaimDisposition::Active);
+    let mut board = board(vec![
+        anchor,
+        child,
+        controlled,
+        constructed,
+        released,
+        unrelated,
+    ]);
+    board.offer = vec![stamp(2), stamp(1), stamp(3), stamp(4)];
+
+    let lanes = |board: &crate::runtime::BoardView| {
+        WorkProjection::from_board(board)
+            .group_lanes(std::slice::from_ref(&design))
+            .iter()
+            .map(|lane| {
+                (
+                    lane.lane(),
+                    lane.tasks()
+                        .iter()
+                        .map(|task| task.row().statement.body.born.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        lanes(&board),
+        [
+            (first, vec![stamp(2), stamp(3)]),
+            (second, vec![stamp(1), stamp(4)]),
+        ],
+        "a lane enters with its first associated in-flight claim in offer order; a freed \
+         claim or unassociated work admits no lane",
+    );
+
+    for task in &mut board.tasks {
+        if task.statement.body.born != stamp(1) && task.statement.body.born != stamp(4) {
+            continue;
+        }
+        if let Some(claim) = &mut task.claim {
+            claim.body.disposition = ClaimDisposition::Freed;
+        }
+    }
+    assert_eq!(
+        lanes(&board),
+        [(first, vec![stamp(2), stamp(3)])],
+        "a lane leaves once it actively claims no associated task",
+    );
+    assert!(
+        WorkProjection::from_board(&board)
+            .group_lanes(&[])
+            .is_empty(),
+        "a group without designs has no lanes",
+    );
+}

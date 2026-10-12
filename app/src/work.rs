@@ -174,6 +174,29 @@ impl<'p, 'a> TeamTaskGroup<'p, 'a> {
     }
 }
 
+/// One lane working a working group, with the group's associated in-flight
+/// tasks it actively claims.
+///
+/// Lanes follow their first task in offer order, the team rail's order, and
+/// tasks inside a lane retain that same order.
+#[derive(Debug)]
+pub struct GroupLane<'p, 'a> {
+    lane: wire::CanonicalUuid,
+    tasks: Vec<&'p WorkTask<'a>>,
+}
+
+impl<'p, 'a> GroupLane<'p, 'a> {
+    #[must_use]
+    pub const fn lane(&self) -> wire::CanonicalUuid {
+        self.lane
+    }
+
+    #[must_use]
+    pub fn tasks(&self) -> &[&'p WorkTask<'a>] {
+        &self.tasks
+    }
+}
+
 /// Exclusive lifecycle totals for one scope.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorkCounts {
@@ -564,6 +587,34 @@ impl<'a> WorkProjection<'a> {
             }
         }
         groups
+    }
+
+    /// The lanes currently working one working group: exactly the lanes
+    /// actively claiming an in-flight task associated with any of its designs.
+    #[must_use]
+    pub fn group_lanes<'p>(&'p self, designs: &[wire::TaskStamp]) -> Vec<GroupLane<'p, 'a>> {
+        let mut lanes = Vec::<GroupLane<'p, 'a>>::new();
+        for task in self.offered.iter().map(|&index| &self.tasks[index]) {
+            let Some(Actor::Lane(lane)) = task.working_claimant() else {
+                continue;
+            };
+            let statement = &task.row.statement.body;
+            if !designs
+                .iter()
+                .any(|design| crate::runtime::associated(statement, design))
+            {
+                continue;
+            }
+            if let Some(group) = lanes.iter_mut().find(|group| group.lane == *lane) {
+                group.tasks.push(task);
+            } else {
+                lanes.push(GroupLane {
+                    lane: *lane,
+                    tasks: vec![task],
+                });
+            }
+        }
+        lanes
     }
 
     pub fn from_board(board: &'a BoardView) -> Self {
