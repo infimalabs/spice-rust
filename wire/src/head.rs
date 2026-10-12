@@ -451,6 +451,15 @@ pub struct SteeringHead {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
+    /// Anchor task whose room context a peer route froze at publication.
+    ///
+    /// Absent on non-message direction and direct peer routes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room: Option<crate::rooms::RoomAnchor>,
     /// Optional steering control driven by the directive.
     #[serde(
         default,

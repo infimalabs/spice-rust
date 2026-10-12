@@ -112,6 +112,16 @@ pub struct SteerSent {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
+    /// Anchor task whose room context a peer route froze at publication.
+    ///
+    /// Absent on operator direction, peer replies, direct peer routes, and
+    /// every message older than room routes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room: Option<crate::rooms::RoomAnchor>,
     /// Steering control the directive drives; absent on plain prose.
     #[serde(
         default,
@@ -162,6 +172,7 @@ impl SteerReplied {
             lane: self.lane,
             text: self.text.clone(),
             from: Some(self.from),
+            room: None,
             control: Some(crate::peer_reply_control(&self.answered, self.answer)),
             attachments: Vec::new(),
             expires: self.expires,
@@ -222,6 +233,7 @@ impl SteerMessaged {
             lane: self.lane,
             text: self.text.clone(),
             from: Some(self.from),
+            room: self.room.clone(),
             control: None,
             attachments: Vec::new(),
             expires: self.expires,

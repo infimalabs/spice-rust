@@ -61,6 +61,7 @@ impl Directive {
             lane: self.lane,
             text: self.text.clone(),
             from: self.from,
+            room: self.room.clone(),
             control: self.control.clone(),
             attachments: self.attachments.clone(),
             published: self

@@ -48,6 +48,8 @@ struct InboxRow {
     key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     from: Option<CanonicalUuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    room: Option<wire::TaskHandle>,
     stage: SteeringStage,
     authored: Instant,
     expires: Instant,
@@ -73,6 +75,7 @@ impl InboxRow {
             directive: pending.directive,
             key: pending.key,
             from: pending.from,
+            room: pending.room,
             stage: pending.stage,
             authored: pending.authored,
             expires: pending.expires,
@@ -199,6 +202,9 @@ impl fmt::Display for InboxView {
             )?;
             if let Some(from) = row.from {
                 write!(formatter, " from={from}")?;
+            }
+            if let Some(room) = &row.room {
+                write!(formatter, " room={room}")?;
             }
             if row.attachments > 0 {
                 write!(formatter, " attachments={}", row.attachments)?;

@@ -957,6 +957,7 @@ fn seed_steering(
         .expect("steering origin");
     let body = wire::body::SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: key.to_owned(),

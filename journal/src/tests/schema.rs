@@ -56,7 +56,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -112,6 +112,100 @@ fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_row
         let reopened = Journal::open(&path).expect("current authority reopens");
         assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
     }
+}
+
+#[test]
+fn schema_39_projects_frozen_peer_rooms_into_steering_heads_once() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("peer-room.sqlite3");
+    let mut journal = authority_file_fixture(&path);
+    let room: TaskStamp = "1kKRRsDP".parse().expect("fixture room");
+    let directive = uuid("018f82d4-6f59-7d06-92e3-bce913116399");
+    let lane = uuid(FIXTURE_LANE);
+    let sender = uuid("018f82d4-6f59-7d06-92e3-bce913116304");
+    let at = instant();
+    let expires: Instant = "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry");
+    let origin: Origin = "resident:018f82d4-6f59-7d06-92e3-bce913116305"
+        .parse()
+        .expect("fixture origin");
+    let message = wire::body::SteerMessaged {
+        directive,
+        key: "1kJK6N3R".to_owned(),
+        lane,
+        occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116306"),
+        from: lane,
+        sender,
+        text: "room-bound message".to_owned(),
+        locus: wire::body::TranscriptLocus {
+            source: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116307")),
+            member: 1,
+            offset: 32,
+            length: 64,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        room: Some(room.clone()),
+        expires,
+    };
+    let mut write = crate::JournalWrite::new(
+        Actor::Lane(lane),
+        origin.clone(),
+        at,
+        wire::Producer::AckScanner,
+    );
+    let created = write
+        .fact(message.clone(), crate::FactCause::Root)
+        .expect("message fact builds");
+    write.steering_head(created, move |created| wire::SteeringHead {
+        directive,
+        fanout: None,
+        key: message.key,
+        lane,
+        text: message.text,
+        from: Some(message.from),
+        room: message.room,
+        control: None,
+        attachments: Vec::new(),
+        published: at,
+        expires,
+        stage: wire::body::SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: wire::Disposition::Live,
+        origin,
+        created,
+        minted_micros: None,
+    });
+    journal.apply(write).expect("peer message commits");
+    journal
+        .connection
+        .execute(
+            "UPDATE steering_heads SET body = CAST(json_remove(CAST(body AS TEXT), '$.room') AS BLOB) \
+             WHERE directive = ?1",
+            [directive.to_string()],
+        )
+        .expect("restore schema-39 steering head");
+    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    drop(journal);
+
+    let crossed = Journal::open(&path).expect("schema-39 peer room crosses");
+    assert_eq!(
+        crossed
+            .read(|read| read.steering_head(directive))
+            .expect("steering head reads")
+            .expect("peer message head exists")
+            .body()
+            .room
+            .as_ref(),
+        Some(&room)
+    );
+    crossed
+        .verify()
+        .expect("crossed peer-room authority verifies");
+    drop(crossed);
+
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None, "the room crosses exactly once");
 }
 
 #[test]

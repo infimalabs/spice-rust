@@ -390,6 +390,7 @@ fn operator_direction_write() -> JournalWrite {
         .expect("fixture resident origin");
     let direction = body::SteerSent {
         from: None,
+        room: None,
         directive: uuid(11),
         fanout: Some(uuid(12)),
         key: "1kKRRsDS".to_owned(),
@@ -417,6 +418,7 @@ fn peer_message_write() -> JournalWrite {
         .expect("fixture resident origin");
     let told = body::SteerSent {
         from: Some(sender),
+        room: None,
         directive: uuid(41),
         fanout: None,
         key: "1kKRRsDT".to_owned(),
@@ -824,6 +826,7 @@ fn invalid_late_suffix() -> JournalWrite {
     );
     let steering = body::SteerSent {
         from: None,
+        room: None,
         directive: uuid(4),
         fanout: None,
         key: "1kJK6N3R".to_owned(),

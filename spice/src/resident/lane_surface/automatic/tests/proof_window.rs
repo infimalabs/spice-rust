@@ -433,6 +433,7 @@ fn send_steering(window: &Window, directive: u64, key: &str) {
     let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
         from: None,
+        room: None,
         directive: uuid(directive),
         fanout: None,
         key: key.to_owned(),

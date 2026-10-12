@@ -109,6 +109,7 @@ pub(super) fn append_internal_directive(
     let expires = expiry(at, internal.lifetime).map_err(unit_outcome)?;
     let sent = wire::body::SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: key.to_string(),
@@ -594,7 +595,15 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let mut pending = pending_presentations(&snapshot.ledger, &snapshot.waking, lane.lane);
+        let mut pending = match pending_presentations(
+            &snapshot.ledger,
+            &snapshot.waking,
+            &snapshot.authority,
+            lane.lane,
+        ) {
+            Ok(pending) => pending,
+            Err(outcome) => return outcome,
+        };
         for directive in &mut pending {
             directive.sender = snapshot.peers.get(&directive.directive).copied();
             directive.text = resolver.expand(&directive.text);
@@ -882,14 +891,33 @@ fn keyspace(
     .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
 }
 
-fn pending_directive(directive: &steer::Directive, wakes: bool) -> PendingDirective {
-    PendingDirective {
+fn pending_directive(
+    directive: &steer::Directive,
+    wakes: bool,
+    authority: &bus::TaskSnapshot,
+) -> Result<PendingDirective, Outcome<CommandAnswer>> {
+    let room = directive
+        .room()
+        .map(|room| {
+            authority
+                .task_heads(room)
+                .map(|heads| wire::TaskHandle::for_project(&heads.statement().body().project, room))
+                .ok_or_else(|| {
+                    typed_store_fault(
+                        "steer::room-head-missing",
+                        &format!("frozen room anchor {room} has no task head"),
+                    )
+                })
+        })
+        .transpose()?;
+    Ok(PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
         fanout: directive.fanout(),
         text: directive.text().to_owned(),
         from: directive.from(),
         sender: None,
+        room,
         wakes,
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
@@ -900,7 +928,7 @@ fn pending_directive(directive: &steer::Directive, wakes: bool) -> PendingDirect
         stage: directive.stage(),
         escalations: directive.escalations().to_vec(),
         expires: directive.expires(),
-    }
+    })
 }
 
 fn retired_directive(
@@ -928,12 +956,19 @@ fn retired_directive(
 pub(super) fn pending_presentations(
     ledger: &steer::Ledger,
     waking: &BTreeSet<CanonicalUuid>,
+    authority: &bus::TaskSnapshot,
     lane: CanonicalUuid,
-) -> Vec<PendingDirective> {
+) -> Result<Vec<PendingDirective>, Outcome<CommandAnswer>> {
     ledger
         .pending(lane)
         .into_iter()
-        .map(|directive| pending_directive(directive, waking.contains(&directive.directive())))
+        .map(|directive| {
+            pending_directive(
+                directive,
+                waking.contains(&directive.directive()),
+                authority,
+            )
+        })
         .collect()
 }
 

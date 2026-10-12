@@ -554,6 +554,7 @@ fn cover_steering_heads() {
         &[
             SteeringHead {
                 from: None,
+                room: None,
                 directive,
                 fanout: None,
                 key: "amber-fern".to_owned(),
@@ -572,6 +573,7 @@ fn cover_steering_heads() {
             },
             SteeringHead {
                 from: None,
+                room: None,
                 directive,
                 fanout: Some(uuid("018f82d4-6f59-7d06-92e3-bce9131163c4")),
                 key: "amber-fern".to_owned(),

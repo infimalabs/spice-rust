@@ -27,6 +27,8 @@ const SESSION_SOURCE_RELEASE: &str = "a4abe071f";
 const SESSION_LAUNCH_RELEASE: &str = "9f2487d5a";
 /// Release from which steering transcript evidence names its tape generation.
 const STEERING_SOURCE_RELEASE: &str = "cb609bd56";
+/// Release from which peer-message steering heads retain their frozen room.
+const STEERING_ROOM_HEAD_RELEASE: &str = "400b421de";
 
 /// Refuse every retained shape without a current spelling before mutation.
 pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
@@ -153,6 +155,84 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             Ok(())
         },
     )
+}
+
+/// Project the exact room anchor frozen by each retained peer message into its
+/// steering head. Schema 39 stored the anchor only on the immutable creating
+/// fact; crossing copies that evidence once so current inbox reads use one
+/// bounded authority row.
+pub(super) fn cross_steering_rooms(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+    let rows = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT heads.directive, heads.body, facts.envelope \
+                 FROM steering_heads AS heads \
+                 JOIN fact_envelopes AS facts ON facts.seq = heads.created_seq \
+                 WHERE facts.kind = ?1 \
+                 AND json_type(CAST(heads.body AS TEXT), '$.room') IS NULL \
+                 AND json_type(CAST(facts.envelope AS TEXT), '$.fact.room') IS NOT NULL \
+                 ORDER BY heads.directive",
+            )
+            .map_err(OpenError::Sqlite)?;
+        let rows = statement
+            .query_map([wire::FactKind::SteerMessaged.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(OpenError::Sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(OpenError::Sqlite)?
+    };
+    for (directive, head_bytes, fact_bytes) in rows {
+        let refuse = |detail: String| {
+            retained(
+                "steering_heads",
+                directive.clone(),
+                STEERING_ROOM_HEAD_RELEASE,
+                detail,
+            )
+        };
+        let envelope = wire::decode::<wire::Envelope<wire::AnyFact>>(&fact_bytes)
+            .map_err(|error| refuse(format!("the creating fact does not decode: {error}")))?;
+        let message = envelope
+            .fact
+            .read::<wire::body::SteerMessaged>()
+            .ok_or_else(|| refuse("the indexed creating fact is not a peer message".to_owned()))?;
+        let room = message.room.ok_or_else(|| {
+            refuse("the selected peer message carries no frozen room anchor".to_owned())
+        })?;
+        let mut head: Value = serde_json::from_slice(&head_bytes)
+            .map_err(|error| refuse(format!("the steering head does not decode: {error}")))?;
+        let object = head
+            .as_object_mut()
+            .ok_or_else(|| refuse("the steering head is not an object".to_owned()))?;
+        object.insert(
+            "room".to_owned(),
+            serde_json::to_value(room)
+                .map_err(|error| refuse(format!("the room anchor cannot encode: {error}")))?,
+        );
+        let crossed = serde_json::to_vec(&head)
+            .map_err(|error| refuse(format!("the crossed head cannot encode: {error}")))?;
+        let current = wire::decode::<wire::SteeringHead>(&crossed)
+            .map_err(|error| refuse(format!("the crossed head is not current: {error}")))?;
+        let bytes = wire::encode(&current)
+            .map_err(|error| refuse(format!("the crossed head cannot encode: {error}")))?;
+        let changed = transaction
+            .execute(
+                "UPDATE steering_heads SET body = ?1 WHERE directive = ?2",
+                params![bytes, directive],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(refuse(
+                "the row changed under the exclusive crossing".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Refuse naming the first row `sql` selects, if any.

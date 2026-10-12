@@ -828,6 +828,7 @@ fn steering_fixture_with_age(age_seconds: i64) -> (Bus, CanonicalUuid, steer::Ke
     );
     let body = body::SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: key.to_string(),

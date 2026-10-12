@@ -1032,6 +1032,7 @@ mod tests {
         PendingDirective {
             from: None,
             sender: None,
+            room: None,
             wakes: true,
             fanout: None,
             directive: uuid(id),

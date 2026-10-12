@@ -112,6 +112,7 @@ fn publish<B: serde::Serialize>(
         lane: publication.lane,
         text: publication.text.to_owned(),
         from: None,
+        room: None,
         control: None,
         attachments: publication.attachments.to_vec(),
         expires,

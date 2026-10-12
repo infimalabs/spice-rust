@@ -687,6 +687,7 @@ fn image_attachment() -> wire::Media {
 fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
     SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: key.to_owned(),
@@ -701,6 +702,7 @@ fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
 fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
     SteeringHead {
         from: None,
+        room: body.room.clone(),
         directive: body.directive,
         fanout: body.fanout,
         key,

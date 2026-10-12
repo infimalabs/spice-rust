@@ -925,6 +925,7 @@ fn delivered(lanes: &Lanes, lane: u8) -> wire::intent::PendingDirective {
             address: Some(lanes.address(SENDER)),
         })
     );
+    assert_eq!(message.room, None, "a direct route freezes no room");
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
     let rendered = steer::inbox::render_pending(&seal, &[message.clone()], |_, _| None);
     for part in [
@@ -934,6 +935,14 @@ fn delivered(lanes: &Lanes, lane: u8) -> wire::intent::PendingDirective {
     ] {
         assert!(rendered.contains(part), "{part} is delivered: {rendered}");
     }
+    assert!(
+        rendered.contains(&format!(
+            "[PEER sender {} lane {}]",
+            lanes.address(SENDER),
+            test_uuid(SENDER)
+        )),
+        "a roomless peer header is unchanged: {rendered}"
+    );
     message
 }
 
