@@ -61,6 +61,8 @@ impl Journal {
         fold_rooms(&transaction, &write.actor, &write.facts, &assigned)?;
         let proposed = || write.facts.iter().map(|proposed| &proposed.fact);
         crate::rooms::require_packet_routes(proposed()).map_err(room_refusal)?;
+        crate::rooms::require_coordination_writes(&transaction, proposed())
+            .map_err(room_refusal)?;
         crate::rooms::require_open_controllers(&transaction, proposed()).map_err(room_refusal)?;
         apply_heads(
             &transaction,

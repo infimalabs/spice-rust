@@ -6,9 +6,6 @@ use crate::rooms::RoomAuthorityStamp;
 pub use crate::rooms::{WorkingGroupPut, WorkingGroupRemove};
 use crate::{OccupantAddress, Seq, SequenceCode, TaskHandle, TaskStamp};
 
-/// Maximum number of live coordination requests one room projection returns.
-pub const ROOM_COORDINATION_LIMIT: usize = 32;
-
 /// Start or resume one bounded preparation contribution in an anchor room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

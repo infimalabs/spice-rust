@@ -18,14 +18,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomMessaged,
-    RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource, TranscriptHunk,
-    WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomMessaged, RoomPublicationContent,
+    RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
+mod coordination;
 mod sql;
 
+pub(crate) use coordination::{
+    Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
+    require_writes as require_coordination_writes,
+};
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
@@ -142,6 +146,10 @@ pub(crate) struct Projection {
     pub(crate) authorizations: BTreeMap<String, AuthorizationRow>,
     /// Logical lane to its catch-up cursor head position and canonical body.
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
+    /// Room to its latest `room::directed` head position and canonical body.
+    pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
+    /// Room to its latest `room::shelved` head position and canonical body.
+    pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
 }
 
 /// Authority one fold step reads and changes.
@@ -178,6 +186,10 @@ pub(crate) trait Authority {
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
     fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal>;
+    /// The room-coordination direction one steering key names, if any.
+    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
+    /// Record a room-coordination direction's current state.
+    fn set_direction(&mut self, key: &str, direction: Direction);
     /// Apply one projection change.
     fn change(&mut self, change: Change) -> Result<(), Refusal>;
 }
@@ -208,6 +220,12 @@ pub(crate) enum Change {
     },
     Cursor {
         lane: String,
+        seq: u64,
+        body: Vec<u8>,
+    },
+    Coordination {
+        record: CoordinationRecord,
+        room: String,
         seq: u64,
         body: Vec<u8>,
     },
@@ -250,12 +268,24 @@ impl Projection {
             Change::Cursor { lane, seq, body } => {
                 self.cursors.insert(lane, (seq, body));
             }
+            Change::Coordination {
+                record,
+                room,
+                seq,
+                body,
+            } => {
+                let heads = match record {
+                    CoordinationRecord::Directed => &mut self.directed,
+                    CoordinationRecord::Shelved => &mut self.shelved,
+                };
+                heads.insert(room, (seq, body));
+            }
         }
     }
 }
 
-/// Every task, transcript generation, and proposal author the history has
-/// introduced, beside the projection the history derives.
+/// Every task, transcript generation, proposal author, and room-coordination
+/// direction the history has introduced, beside the projection it derives.
 #[derive(Default)]
 pub(crate) struct History {
     projection: Projection,
@@ -263,6 +293,8 @@ pub(crate) struct History {
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     /// Proposal head position to the actor that recorded it.
     authors: BTreeMap<u64, Actor>,
+    /// Steering key to the room-coordination direction it names.
+    directions: BTreeMap<String, Direction>,
 }
 
 impl History {
@@ -363,6 +395,14 @@ impl Authority for History {
             .any(|row| row.decision == decision))
     }
 
+    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
+        Ok(self.directions.get(key).cloned())
+    }
+
+    fn set_direction(&mut self, key: &str, direction: Direction) {
+        self.directions.insert(key.to_owned(), direction);
+    }
+
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         self.projection.apply(change);
         Ok(())
@@ -428,7 +468,7 @@ pub(crate) fn fold(
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
     }
-    if let Some(result) = fold_coordination(authority, seq, fact) {
+    if let Some(result) = fold_coordination(authority, seq, actor, fact) {
         return result;
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
@@ -482,13 +522,11 @@ pub(crate) fn fold(
 fn fold_coordination(
     authority: &mut impl Authority,
     seq: Seq,
+    actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
-    if let Some(body) = fact.read::<RoomCoordinationStarted>() {
-        return Some(publish(authority, seq, &body.room, &body.publication));
-    }
-    if let Some(body) = fact.read::<RoomPutAside>() {
-        return Some(publish(authority, seq, &body.room, &body.publication));
+    if let Some(result) = coordination::fold(authority, seq, actor, fact) {
+        return Some(result);
     }
     fact.read::<RoomDelivered>()
         .map(|body| deliver(authority, seq, &body))

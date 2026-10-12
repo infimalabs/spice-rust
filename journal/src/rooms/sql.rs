@@ -5,14 +5,19 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension, params};
 use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
-use super::{Authority, AuthorizationRow, Change, Projection, ProposalRow, Refusal, unsound};
+use super::{
+    Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
+    Refusal, unsound,
+};
 
 /// Stored authority as one commit transaction sees it, overlaid with the
-/// tasks and transcript generations earlier facts of the same write introduce.
+/// tasks, transcript generations, and coordination directions earlier facts
+/// of the same write introduce.
 pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
+    directions: BTreeMap<String, Direction>,
 }
 
 impl<'a> Stored<'a> {
@@ -21,6 +26,7 @@ impl<'a> Stored<'a> {
             connection,
             tasks: BTreeMap::new(),
             transcripts: BTreeMap::new(),
+            directions: BTreeMap::new(),
         }
     }
 
@@ -163,6 +169,36 @@ impl Authority for Stored<'_> {
         )
     }
 
+    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
+        if let Some(direction) = self.directions.get(key) {
+            return Ok(Some(direction.clone()));
+        }
+        let row = self
+            .connection
+            .query_row(
+                "SELECT steering.head_seq, steering.body, fact.actor FROM steering_heads AS steering \
+                 JOIN fact_envelopes AS fact ON fact.seq = steering.created_seq \
+                 WHERE steering.steer_key = ?1",
+                [key],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((head_seq, body, creator)) = row else {
+            return Ok(None);
+        };
+        let head = wire::decode::<wire::SteeringHead>(&body)?;
+        Ok(Direction::stored(&head, &creator, unsql(head_seq)))
+    }
+
+    fn set_direction(&mut self, key: &str, direction: Direction) {
+        self.directions.insert(key.to_owned(), direction);
+    }
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         apply(self.connection, change)?;
         Ok(())
@@ -221,6 +257,21 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 params![lane, sql(seq), body],
             )?;
         }
+        Change::Coordination {
+            record,
+            room,
+            seq,
+            body,
+        } => {
+            connection.execute(
+                &format!(
+                    "INSERT INTO {}(room, head_seq, body) VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(room) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
+                    record.table()
+                ),
+                params![room, sql(seq), body],
+            )?;
+        }
     }
     Ok(())
 }
@@ -272,10 +323,9 @@ impl Projection {
                 "SELECT room, publication, seq FROM room_publications",
                 |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
             )?,
-            groups: table(
+            groups: heads(
                 connection,
                 "SELECT working_group, head_seq, body FROM group_heads",
-                |row| Ok((row.get(0)?, (unsql(row.get(1)?), row.get(2)?))),
             )?,
             anchors: table(
                 connection,
@@ -310,10 +360,14 @@ impl Projection {
                     ))
                 },
             )?,
-            cursors: table(
+            cursors: heads(connection, "SELECT lane, head_seq, body FROM room_cursors")?,
+            directed: heads(
                 connection,
-                "SELECT lane, head_seq, body FROM room_cursors",
-                |row| Ok((row.get(0)?, (unsql(row.get(1)?), row.get(2)?))),
+                "SELECT room, head_seq, body FROM room_directions",
+            )?,
+            shelved: heads(
+                connection,
+                "SELECT room, head_seq, body FROM room_shelvings",
             )?,
         })
     }
@@ -328,6 +382,16 @@ fn table<K: Ord, V>(
     statement.query_map([], decode)?.collect()
 }
 
+/// Read one keyed head table whose rows are `(key, head_seq, body)`.
+fn heads(
+    connection: &Connection,
+    query: &str,
+) -> Result<BTreeMap<String, (u64, Vec<u8>)>, rusqlite::Error> {
+    table(connection, query, |row| {
+        Ok((row.get(0)?, (unsql(row.get(1)?), row.get(2)?)))
+    })
+}
+
 /// Replace every stored projection row with `projection`.
 pub(crate) fn write_projection(
     connection: &Connection,
@@ -335,7 +399,8 @@ pub(crate) fn write_projection(
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM group_anchors; DELETE FROM group_heads; \
-         DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors;",
+         DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
+         DELETE FROM room_directions; DELETE FROM room_shelvings;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -363,6 +428,20 @@ pub(crate) fn write_projection(
             "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3)",
             params![lane, sql(*seq), body],
         )?;
+    }
+    for (record, heads) in [
+        (CoordinationRecord::Directed, &projection.directed),
+        (CoordinationRecord::Shelved, &projection.shelved),
+    ] {
+        for (room, (seq, body)) in heads {
+            connection.execute(
+                &format!(
+                    "INSERT INTO {}(room, head_seq, body) VALUES (?1, ?2, ?3)",
+                    record.table()
+                ),
+                params![room, sql(*seq), body],
+            )?;
+        }
     }
     Ok(())
 }

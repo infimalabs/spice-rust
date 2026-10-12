@@ -1,8 +1,12 @@
 use super::*;
 
+use journal::JournalHead;
 use wire::{
     CanonicalUuid, OccupantAddress,
-    rooms::{RoomCoordinationStarted, RoomPutAside as RoomPutAsideFact, RoomStopRequest},
+    rooms::{
+        CoordinationControl, RoomCoordinationStarted, RoomPutAside as RoomPutAsideFact,
+        RoomStopRequest,
+    },
 };
 
 pub(crate) fn coordination_lane(bus: &Bus, target: OccupantAddress) -> Option<CanonicalUuid> {
@@ -15,7 +19,52 @@ pub(crate) fn coordination_lane(bus: &Bus, target: OccupantAddress) -> Option<Ca
         .find_map(|(lane, address)| (address.address() == Some(target)).then_some(lane))
 }
 
-use super::room::{mint_publication, room_publications};
+use super::room::mint_publication;
+
+/// A room's latest coordination records, read beside the board snapshot.
+struct Coordination {
+    directed: Option<JournalHead<RoomCoordinationStarted>>,
+    shelved: Option<JournalHead<RoomPutAsideFact>>,
+}
+
+impl Coordination {
+    fn read(bus: &Bus, room: &wire::TaskStamp) -> Result<Self, Outcome<CommandAnswer>> {
+        let room = room.clone();
+        bus.read(move |read| {
+            Ok(Self {
+                directed: read.room_direction(&room)?,
+                shelved: read.room_shelving(&room)?,
+            })
+        })
+        .map_err(|error| store_fault("room::coordination-unreadable", &error.to_string()))
+    }
+
+    /// Admit `write` only while the room's coordination records are the ones
+    /// this command read, so concurrent coordination commands serialize and
+    /// at most one coordination request is live.
+    fn guard(&self, room: &wire::TaskStamp, write: &mut JournalWrite) {
+        let room = room.clone();
+        let directed = self.directed.as_ref().map(JournalHead::position);
+        let shelved = self.shelved.as_ref().map(JournalHead::position);
+        write.guard(journal::JournalGuard::new(move |read| {
+            if read
+                .room_direction(&room)?
+                .as_ref()
+                .map(JournalHead::position)
+                == directed
+                && read
+                    .room_shelving(&room)?
+                    .as_ref()
+                    .map(JournalHead::position)
+                    == shelved
+            {
+                Ok(())
+            } else {
+                Err(journal::GuardError::refused("room::coordination-moved"))
+            }
+        }));
+    }
+}
 
 const REQUEST_FIELD_BYTES: usize = 2_048;
 
@@ -25,12 +74,12 @@ pub(crate) fn room_coordination_read(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let (snapshot, anchor, heads, publications) =
+    let (snapshot, anchor, heads, coordination) =
         match context(bus, &request.room, projects, allocation) {
             Ok(context) => context,
             Err(outcome) => return outcome,
         };
-    let view = match project(bus, anchor.handle(), &heads, &publications, false) {
+    let view = match project(bus, anchor.handle(), &heads, &coordination, false) {
         Ok(view) => view,
         Err(outcome) => return outcome,
     };
@@ -51,7 +100,7 @@ pub(crate) fn room_coordinate(
     if let Err(outcome) = admit_request(request) {
         return outcome;
     }
-    let (snapshot, anchor, heads, publications) =
+    let (snapshot, anchor, heads, coordination) =
         match context(bus, &request.room, projects, allocation) {
             Ok(context) => context,
             Err(outcome) => return outcome,
@@ -63,7 +112,7 @@ pub(crate) fn room_coordinate(
             "coordinate only an unresolved anchor task",
         );
     }
-    let current = match project(bus, anchor.handle(), &heads, &publications, false) {
+    let current = match project(bus, anchor.handle(), &heads, &coordination, false) {
         Ok(view) => view,
         Err(outcome) => return outcome,
     };
@@ -90,7 +139,7 @@ pub(crate) fn room_coordinate(
         Ok(at) => at,
         Err(error) => return environment_fault("room::clock-invalid", &error.to_string()),
     };
-    let publication = match mint_publication(now.as_microsecond(), &publications) {
+    let publication = match mint_publication(bus, anchor.born(), now.as_microsecond()) {
         Ok(publication) => publication,
         Err(outcome) => return outcome,
     };
@@ -100,9 +149,10 @@ pub(crate) fn room_coordinate(
         Err(outcome) => return outcome,
     };
     let message = direction(anchor.handle(), &heads, lane, request);
-    let control = start_control(&room);
+    let control = CoordinationControl::Coordinate(room.clone()).to_string();
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
+    coordination.guard(&room, &mut write);
     let (key, _) = match crate::resident::append_operator_directive(
         bus,
         origin,
@@ -162,12 +212,12 @@ pub(crate) fn room_put_aside(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let (snapshot, anchor, heads, publications) =
+    let (snapshot, anchor, heads, coordination) =
         match context(bus, &request.room, projects, allocation) {
             Ok(context) => context,
             Err(outcome) => return outcome,
         };
-    let current = match project(bus, anchor.handle(), &heads, &publications, false) {
+    let current = match project(bus, anchor.handle(), &heads, &coordination, false) {
         Ok(view) => view,
         Err(outcome) => return outcome,
     };
@@ -187,7 +237,7 @@ pub(crate) fn room_put_aside(
         Ok(at) => at,
         Err(error) => return environment_fault("room::clock-invalid", &error.to_string()),
     };
-    let publication = match mint_publication(now.as_microsecond(), &publications) {
+    let publication = match mint_publication(bus, anchor.born(), now.as_microsecond()) {
         Ok(publication) => publication,
         Err(outcome) => return outcome,
     };
@@ -199,6 +249,7 @@ pub(crate) fn room_put_aside(
     let existing_stop = current.stop.clone();
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
+    coordination.guard(&room, &mut write);
     let canceled = match cancel_requests(bus, &mut write, at, current.requests) {
         Ok(canceled) => canceled,
         Err(outcome) => return outcome,
@@ -291,8 +342,12 @@ fn stage_stop_request(
         return Ok(None);
     };
     let target = target_for_lane(snapshot, lane)?;
-    let claim_code = wire::SequenceCode::new(claim.position.get());
-    let control = stop_control(room, claim_code);
+    let claim_code = wire::SequenceCode::new(claim.body.claimed.get());
+    let control = CoordinationControl::Stop {
+        room: room.clone(),
+        claim: claim_code,
+    }
+    .to_string();
     let message = format!(
         "Put aside task room {}. Checkpoint the anchor's current work and run `spice task free {}` at the next safe boundary. Do not release child-plan claims or unrelated steering/ASK duties.",
         anchor.handle(),
@@ -311,7 +366,7 @@ fn stage_stop_request(
             control: &control,
         },
         at,
-        FactCause::Existing(claim.position),
+        FactCause::Existing(claim.body.claimed),
     )?;
     Ok(Some(RoomStopRequest {
         key,
@@ -320,7 +375,7 @@ fn stage_stop_request(
     }))
 }
 
-fn context<'a>(
+fn context(
     bus: &Bus,
     room: &TaskHandle,
     projects: &ProjectPolicy,
@@ -330,7 +385,7 @@ fn context<'a>(
         ValidatedSnapshot,
         Entry,
         wire::intent::BoardTask,
-        Vec<wire::Envelope<wire::AnyFact>>,
+        Coordination,
     ),
     Outcome<CommandAnswer>,
 > {
@@ -351,8 +406,8 @@ fn context<'a>(
             )
         })?;
     let heads = task_heads(&snapshot.answer, room)?.clone();
-    let publications = room_publications(bus, anchor.born())?;
-    Ok((snapshot, anchor, heads, publications))
+    let coordination = Coordination::read(bus, anchor.born())?;
+    Ok((snapshot, anchor, heads, coordination))
 }
 
 fn admit_request(request: &wire::intent::RoomCoordinate) -> Result<(), Outcome<CommandAnswer>> {
@@ -465,57 +520,46 @@ fn direction(
     )
 }
 
+/// The room's coordination state: the latest request while its steering is
+/// still live, and the latest stop while the claim win it names stays active.
+/// Starting refuses while a request is live and every coordination write
+/// guards the records it read, so no earlier request can still be live.
 fn project(
     bus: &Bus,
     handle: &TaskHandle,
     heads: &wire::intent::BoardTask,
-    publications: &[wire::Envelope<wire::AnyFact>],
+    coordination: &Coordination,
     hide: bool,
 ) -> Result<wire::intent::RoomCoordinationView, Outcome<CommandAnswer>> {
     let mut requests = Vec::new();
-    for started in publications
-        .iter()
-        .filter_map(|envelope| envelope.fact.read::<RoomCoordinationStarted>())
-    {
+    if let Some(directed) = &coordination.directed {
+        let started = directed.body();
         let Some(head) = steering_key(bus, &started.key)? else {
             return Err(store_fault(
                 "room::coordination-steering-missing",
                 &format!("room marker names absent steering key {}", started.key),
             ));
         };
-        if head.body().control.as_deref() != Some(&start_control(&started.room)) {
-            return Err(store_fault(
-                "room::coordination-steering-mismatched",
-                &format!("room marker names unrelated steering key {}", started.key),
-            ));
-        }
         if head.body().disposition == wire::Disposition::Live {
             requests.push(wire::intent::RoomCoordinationRequest {
-                key: started.key,
+                key: started.key.clone(),
                 target: started.target,
             });
         }
     }
-    if requests.len() > wire::intent::ROOM_COORDINATION_LIMIT {
-        return Err(refusal(
-            "room::coordination-budget",
-            Some(format!("{} live coordination requests", requests.len())),
-            "put aside unanswered room coordination before issuing more requests",
-        ));
-    }
     let active = active_lane_claim(heads);
-    let stop = publications.iter().rev().find_map(|envelope| {
-        let put_aside = envelope.fact.read::<RoomPutAsideFact>()?;
-        let stop = put_aside.stop?;
-        active
-            .as_ref()
-            .filter(|(_, claim)| claim.position.get() == stop.claim.get())
-            .map(|_| wire::intent::RoomCoordinationStop {
-                key: stop.key,
-                target: stop.target,
-                claim: stop.claim,
-            })
-    });
+    let stop = coordination
+        .shelved
+        .as_ref()
+        .and_then(|shelved| shelved.body().stop.clone())
+        .filter(|stop| {
+            active.is_some_and(|(_, claim)| claim.body.claimed.get() == stop.claim.get())
+        })
+        .map(|stop| wire::intent::RoomCoordinationStop {
+            key: stop.key,
+            target: stop.target,
+            claim: stop.claim,
+        });
     Ok(wire::intent::RoomCoordinationView {
         room: handle.clone(),
         requests,
@@ -544,14 +588,6 @@ fn active_lane_claim(
         return None;
     };
     Some((lane, claim))
-}
-
-fn start_control(room: &wire::TaskStamp) -> String {
-    format!("room-coordinate:{room}")
-}
-
-fn stop_control(room: &wire::TaskStamp, claim: wire::SequenceCode) -> String {
-    format!("room-stop:{room}:{claim}")
 }
 
 fn request_command<B: serde::Serialize + Clone>(

@@ -61,7 +61,7 @@ pub(super) fn room_post(
         Ok(attention) => attention,
         Err(outcome) => return outcome,
     };
-    let publication = match mint_publication(now.as_microsecond(), &publications) {
+    let publication = match mint_publication(bus, &room, now.as_microsecond()) {
         Ok(publication) => publication,
         Err(outcome) => return outcome,
     };
@@ -173,42 +173,24 @@ fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {
     )
 }
 
+/// The first unused publication identity in `room` at or after `micros`.
+///
+/// Each occupied candidate is a distinct earlier publication, so the probe
+/// ends within the room's size; the clock range is the only other limit.
 pub(super) fn mint_publication(
+    bus: &Bus,
+    room: &wire::TaskStamp,
     mut micros: i64,
-    publications: &[wire::Envelope<wire::AnyFact>],
 ) -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
-    for _ in 0..=publications.len() {
+    loop {
         let candidate = RoomAuthorityStamp::for_micros(micros).map_err(|error| {
             environment_fault("room::publication-clock-invalid", &error.to_string())
         })?;
-        let occupied = publications
-            .iter()
-            .filter_map(|envelope| {
-                envelope
-                    .fact
-                    .read::<RoomPublished>()
-                    .map(|body| body.publication)
-                    .or_else(|| {
-                        envelope
-                            .fact
-                            .read::<wire::rooms::RoomMessaged>()
-                            .map(|body| body.publication)
-                    })
-                    .or_else(|| {
-                        envelope
-                            .fact
-                            .read::<wire::rooms::RoomCoordinationStarted>()
-                            .map(|body| body.publication)
-                    })
-                    .or_else(|| {
-                        envelope
-                            .fact
-                            .read::<wire::rooms::RoomPutAside>()
-                            .map(|body| body.publication)
-                    })
-            })
-            .any(|publication| publication == candidate);
-        if !occupied {
+        let (probe_room, probe) = (room.clone(), candidate.clone());
+        let occupied = bus
+            .read(move |read| read.room_publication_seq(&probe_room, &probe))
+            .map_err(|error| store_fault("room::publication-unreadable", &error.to_string()))?;
+        if occupied.is_none() {
             return Ok(candidate);
         }
         micros = micros.checked_add(1).ok_or_else(|| {
@@ -218,10 +200,6 @@ pub(super) fn mint_publication(
             )
         })?;
     }
-    Err(environment_fault(
-        "room::publication-identity-exhausted",
-        "room publication identities collided beyond the bounded room page",
-    ))
 }
 
 fn post_outcome(attention: spice::rooms::RoomAttention) -> RoomPostOutcome {

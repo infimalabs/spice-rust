@@ -326,6 +326,7 @@ impl CommandKind {
                 | Self::LaneJobsRead
                 | Self::LaneJobRead
                 | Self::WorkingGroupRead
+                | Self::RoomCoordinationRead
                 | Self::LaneRecall
         )
     }

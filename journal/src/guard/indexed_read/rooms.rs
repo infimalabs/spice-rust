@@ -3,7 +3,8 @@
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, ExecutionAuthorization, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, WorkingGroup,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomPutAside,
+    WorkingGroup,
 };
 
 use super::{
@@ -299,6 +300,25 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
+    /// A room's latest `room::directed` record, absent before its first one.
+    pub fn room_direction(
+        &self,
+        room: &wire::TaskStamp,
+    ) -> Result<Option<JournalHead<RoomCoordinationStarted>>, GuardError> {
+        let head =
+            self.text_head::<RoomCoordinationStarted>("room_directions", "room", room.as_str())?;
+        require_room(head, room, |body| &body.room)
+    }
+
+    /// A room's latest `room::shelved` record, absent before its first one.
+    pub fn room_shelving(
+        &self,
+        room: &wire::TaskStamp,
+    ) -> Result<Option<JournalHead<RoomPutAside>>, GuardError> {
+        let head = self.text_head::<RoomPutAside>("room_shelvings", "room", room.as_str())?;
+        require_room(head, room, |body| &body.room)
+    }
+
     /// One bounded page of a room's publications strictly after `after`, in
     /// journal order, through the current horizon.
     pub fn room_publications(
@@ -463,4 +483,18 @@ fn indexed_length(
     let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
     usize::try_from(length)
         .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
+}
+
+fn require_room<T>(
+    head: Option<JournalHead<T>>,
+    room: &wire::TaskStamp,
+    named: impl Fn(&T) -> &wire::TaskStamp,
+) -> Result<Option<JournalHead<T>>, GuardError> {
+    match head {
+        Some(head) if named(&head.body) != room => Err(GuardError::Invalid(format!(
+            "room coordination head indexed as {room} names room {}",
+            named(&head.body)
+        ))),
+        head => Ok(head),
+    }
 }
