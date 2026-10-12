@@ -709,6 +709,17 @@ pub(in crate::resident) struct Job {
     keeper: Option<u32>,
 }
 
+/// What one job start records before its keeper launches.
+struct Launch<'a> {
+    command: &'a str,
+    argv: Vec<OsString>,
+    cwd: &'a Path,
+    environment: &'a Environment,
+    timeout: Option<Duration>,
+    notices: &'a [String],
+    events: bool,
+}
+
 impl Jobs {
     /// This lane's jobs, beneath the lane's own supervisor records.
     pub(in crate::resident) fn for_lane(paths: &RuntimePaths, lane: CanonicalUuid) -> Self {
@@ -728,7 +739,8 @@ impl Jobs {
     /// # Errors
     ///
     /// Returns the failure of recording the request, revalidating a service's
-    /// claim after publication, or launching the keeper.
+    /// claim after publication, or launching the keeper. A launch that fails
+    /// leaves no record, so no job without a keeper is ever kept.
     pub(in crate::resident) fn start(
         &self,
         command: &str,
@@ -740,6 +752,28 @@ impl Jobs {
         notices: &[String],
         events: bool,
     ) -> io::Result<Job> {
+        self.start_with(
+            Launch {
+                command,
+                argv,
+                cwd,
+                environment,
+                timeout,
+                notices,
+                events,
+            },
+            service,
+            launch_detached,
+        )
+    }
+
+    /// Record one job and launch its keeper with `launch`.
+    fn start_with(
+        &self,
+        job: Launch<'_>,
+        service: Option<ServiceAdmission<'_>>,
+        launch: impl FnOnce(&Path, &Path, &Path, &Environment) -> io::Result<Option<u32>>,
+    ) -> io::Result<Job> {
         let service_claim = service.as_ref().map(|service| service.claim.clone());
         fs::create_dir_all(&self.root)?;
         let (id, directory) = self.claim()?;
@@ -749,18 +783,19 @@ impl Jobs {
             &Request {
                 version: VERSION,
                 id: id.clone(),
-                command: command.to_owned(),
-                argv,
-                cwd: cwd.to_path_buf(),
-                environment: environment.clone(),
-                timeout_millis: timeout
+                command: job.command.to_owned(),
+                argv: job.argv,
+                cwd: job.cwd.to_path_buf(),
+                environment: job.environment.clone(),
+                timeout_millis: job
+                    .timeout
                     .map(|timeout| u64::try_from(timeout.as_millis()))
                     .transpose()
                     .map_err(io::Error::other)?,
-                notices: notices.to_vec(),
+                notices: job.notices.to_vec(),
                 service_claim: service_claim.clone(),
                 lane: self.lane,
-                events,
+                events: job.events,
             },
         )?;
         if let Some(service) = service {
@@ -779,16 +814,22 @@ impl Jobs {
                 return Err(error);
             }
         }
-        let keeper = launch_detached(&directory, &request_path, cwd, environment)?;
+        let keeper = match launch(&directory, &request_path, job.cwd, job.environment) {
+            Ok(keeper) => keeper,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&directory);
+                return Err(error);
+            }
+        };
         Ok(Job {
             directory,
             id,
-            command: command.to_owned(),
-            cwd: cwd.to_path_buf(),
-            timeout,
+            command: job.command.to_owned(),
+            cwd: job.cwd.to_path_buf(),
+            timeout: job.timeout,
             service_claim,
-            notices: notices.to_vec(),
-            events,
+            notices: job.notices.to_vec(),
+            events: job.events,
             keeper,
         })
     }
@@ -1388,6 +1429,26 @@ impl Job {
 /// keeper, so a test says what the command printed and how it ended.
 #[cfg(test)]
 impl Jobs {
+    /// Start one job whose keeper cannot launch, as a missing executable
+    /// refuses, and answer the failure the start reported.
+    pub(in crate::resident) fn start_unlaunchable_for_tests(&self, command: &str) -> io::Error {
+        let cwd = self.root.clone();
+        self.start_with(
+            Launch {
+                command,
+                argv: Vec::new(),
+                cwd: &cwd,
+                environment: &Environment::empty(),
+                timeout: Some(Duration::from_secs(60)),
+                notices: &[],
+                events: false,
+            },
+            None,
+            |_, _, _, _| Err(io::Error::from(ErrorKind::NotFound)),
+        )
+        .expect_err("an unlaunchable keeper fails the start")
+    }
+
     /// Record one job as its call declared it; `None` timeout is a service.
     pub(in crate::resident) fn record_for_tests(
         &self,
