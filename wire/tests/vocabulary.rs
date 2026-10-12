@@ -79,15 +79,6 @@ const GATE_FOUND: &str = r#"{
   "receipt": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 }"#;
 
-/// A fact the retired gate-findings filing path minted; nothing writes it now.
-const GATE_FILED: &str = r#"{
-  "kind": "gate::filed",
-  "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "findings": 3,
-  "created": 2,
-  "reused": 1
-}"#;
-
 const TASTE_CONFIRMED: &str = r#"{
   "kind": "taste::confirmed",
   "taste": "polling",
@@ -202,18 +193,6 @@ fn the_resident_recognition_body_matches_the_specified_fields() {
     assert_eq!(fact.producer(), Producer::ResidentRecognition);
     assert_eq!(fact.body.severity, body::Severity::High);
     assert_eq!(fact.body.identity, "wire::untyped-body");
-}
-
-#[test]
-fn a_historical_gate_filed_fact_still_decodes_after_the_filing_path_retired() {
-    let fact: Fact<body::GateFindingsFiled> = round_trip(GATE_FILED);
-
-    assert_eq!(fact.kind(), FactKind::GateFindingsFiled);
-    assert_eq!(fact.producer(), Producer::CommandDoor);
-    assert_eq!(fact.body.findings, 3);
-    assert_eq!(fact.body.created, 2);
-    assert_eq!(fact.body.reused, 1);
-    assert_eq!(fact.body.report.to_string(), "a".repeat(64));
 }
 
 #[test]
@@ -536,21 +515,8 @@ fn producer_assignment_follows_the_specified_enumeration() {
         );
     }
 
-    let command_gate = [FactKind::GateFindingsFiled];
-    for kind in command_gate {
-        assert_eq!(
-            kind.producer(),
-            Producer::CommandDoor,
-            "{kind} is minted by the command door"
-        );
-    }
-
     for kind in FactKind::ALL {
-        if bus_timers.contains(kind)
-            || scanned.contains(kind)
-            || recognized.contains(kind)
-            || command_gate.contains(kind)
-        {
+        if bus_timers.contains(kind) || scanned.contains(kind) || recognized.contains(kind) {
             continue;
         }
         let spelling = kind.as_str();

@@ -16,11 +16,40 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-/// Schemas whose optional task fields decode without inferred relationships.
+/// Schemas admitted through the one current writable-open crossing.
 ///
-/// Writable admission advances only the schema identity; retained facts and
-/// heads remain byte-for-byte intact. Older writers refuse the new boundary.
-const PREDECESSOR_SCHEMAS: [u32; 2] = [33, 34];
+/// Task fields already have their current semantics. Retired fact kinds are
+/// replaced with inert current-schema evidence before the schema identity
+/// advances, so no current reader needs their DTO or decode arm.
+const PREDECESSOR_SCHEMAS: [u32; 3] = [33, 34, 35];
+const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
+const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetiredGateFiled {
+    kind: RetiredGateFiledKind,
+    report: wire::Digest,
+    findings: u32,
+    created: u32,
+    reused: u32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum RetiredGateFiledKind {
+    #[serde(rename = "gate::filed")]
+    GateFiled,
+}
+
+struct RetiredGateFiledRow {
+    seq: i64,
+    wire_version: i64,
+    instant: String,
+    actor: String,
+    origin: String,
+    cause: Option<i64>,
+    envelope: Vec<u8>,
+}
 
 /// Admit exact-current authority, cross the predecessor once, or initialize
 /// one truly empty database.
@@ -190,6 +219,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    cross_retired_gate_filed(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -204,6 +234,124 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn cross_retired_gate_filed(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    let rows = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT seq, wire_version, instant, actor, origin, cause, envelope \
+                 FROM fact_envelopes WHERE kind = ?1 ORDER BY seq",
+            )
+            .map_err(OpenError::Sqlite)?;
+        let found = statement
+            .query_map([RETIRED_GATE_FILED_KIND], |row| {
+                Ok(RetiredGateFiledRow {
+                    seq: row.get(0)?,
+                    wire_version: row.get(1)?,
+                    instant: row.get(2)?,
+                    actor: row.get(3)?,
+                    origin: row.get(4)?,
+                    cause: row.get(5)?,
+                    envelope: row.get(6)?,
+                })
+            })
+            .map_err(OpenError::Sqlite)?;
+        found
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(OpenError::Sqlite)?
+    };
+
+    for row in rows {
+        let envelope: wire::Envelope<RetiredGateFiled> = serde_json::from_slice(&row.envelope)
+            .map_err(|error| {
+                retained_fact_error(
+                    row.seq,
+                    format!("the stored envelope does not decode: {error}"),
+                )
+            })?;
+        let indexed_cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
+        let indexed_seq = u64::try_from(row.seq).ok();
+        if !envelope.v.is_current()
+            || Some(envelope.seq.get()) != indexed_seq
+            || i64::from(envelope.v.0) != row.wire_version
+            || envelope.at.to_string() != row.instant
+            || envelope.actor.to_string() != row.actor
+            || envelope.origin.as_str() != row.origin
+            || envelope.cause.map(wire::Seq::get) != indexed_cause
+        {
+            return Err(retained_fact_error(
+                row.seq,
+                "the stored envelope does not agree with its indexed columns",
+            ));
+        }
+        let fact = serde_json::to_value(envelope.fact).map_err(|error| {
+            retained_fact_error(
+                row.seq,
+                format!("the retired body cannot become inert evidence: {error}"),
+            )
+        })?;
+        let encoded_fact = wire::encode(&wire::Fact::new(wire::body::JournalRetained {
+            release: RETIRED_GATE_FILED_RELEASE.to_owned(),
+            fact,
+        }))
+        .map_err(|error| {
+            retained_fact_error(
+                row.seq,
+                format!("the current evidence marker cannot encode: {error}"),
+            )
+        })?;
+        let current_fact: wire::AnyFact = wire::decode(&encoded_fact).map_err(|error| {
+            retained_fact_error(
+                row.seq,
+                format!("the current evidence marker cannot decode: {error}"),
+            )
+        })?;
+        let replacement = wire::Envelope {
+            v: envelope.v,
+            seq: envelope.seq,
+            at: envelope.at,
+            actor: envelope.actor,
+            origin: envelope.origin,
+            cause: envelope.cause,
+            fact: current_fact,
+        };
+        let bytes = wire::encode(&replacement).map_err(|error| {
+            retained_fact_error(
+                row.seq,
+                format!("the current evidence envelope cannot encode: {error}"),
+            )
+        })?;
+        let changed = transaction
+            .execute(
+                "UPDATE fact_envelopes SET kind = ?1, envelope = ?2 \
+                 WHERE seq = ?3 AND kind = ?4",
+                params![
+                    wire::FactKind::JournalRetained.as_str(),
+                    bytes,
+                    row.seq,
+                    RETIRED_GATE_FILED_KIND,
+                ],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(retained_fact_error(
+                row.seq,
+                "the retained row changed while its exclusive migration held the authority",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn retained_fact_error(seq: i64, detail: impl Into<String>) -> OpenError {
+    MigrationError::RetiredFact {
+        seq,
+        kind: RETIRED_GATE_FILED_KIND,
+        release: RETIRED_GATE_FILED_RELEASE,
+        detail: detail.into(),
+    }
+    .into()
 }
 
 /// Validate a finalized schema identity before applying the current cutoff.
@@ -417,6 +565,13 @@ pub enum MigrationError {
     PendingCrossing {
         found: u32,
     },
+    /// Retained data that cannot cross without its last owning release.
+    RetiredFact {
+        seq: i64,
+        kind: &'static str,
+        release: &'static str,
+        detail: String,
+    },
     VersionDisagreement {
         row: u32,
         pragma: u32,
@@ -474,6 +629,16 @@ impl fmt::Display for MigrationError {
                     )
                 }
             }
+            Self::RetiredFact {
+                seq,
+                kind,
+                release,
+                detail,
+            } => write!(
+                formatter,
+                "journal fact {seq} kind {kind} was last owned by release {release} and cannot \
+                 cross to schema {SCHEMA_VERSION}: {detail}"
+            ),
             Self::VersionDisagreement { row, pragma } => write!(
                 formatter,
                 "journal schema row names version {row}, but SQLite user_version names {pragma}"
@@ -681,8 +846,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 35, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 36, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 35;
+PRAGMA user_version = 36;
 "#;

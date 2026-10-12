@@ -18,6 +18,13 @@ distinguish operator direction from transcript evidence. Durable authority and
 [rebuildable projections](../invariants/identity.md#identity-durable-facts-and-heads-remain-distinct-from-rebuildable-index-rows)
 are separate contracts, even when they share a store.
 
+Writable journal admission has one current crossing. A fact kind whose producer
+has retired does not remain in the executable wire vocabulary: admission
+crosses its prior rows once into inert `journal::retained` evidence that names
+the last owning release and preserves the retired payload, or refuses the
+authority while naming that release. Current readers never carry
+release-specific decode arms.
+
 ## Independent task graphs
 
 One board exposes separate rendered views:

@@ -37,8 +37,8 @@ fn current_schema_is_the_only_executable_journal_shape() {
 }
 
 #[test]
-fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34] {
+fn predecessor_authority_crosses_once_without_rewriting_current_rows() {
+    for predecessor in [33, 34, 35] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -91,6 +91,106 @@ fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_row
         let reopened = Journal::open(&path).expect("current authority reopens");
         assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
     }
+}
+
+#[test]
+fn writable_open_crosses_retired_gate_facts_into_inert_current_evidence_once() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retained-gate.sqlite3");
+    let journal = authority_file_fixture(&path);
+    let retired = json!({
+        "kind": "gate::filed",
+        "report": "a".repeat(64),
+        "findings": 3,
+        "created": 2,
+        "reused": 1,
+    });
+    let envelope = Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(3),
+        at: instant(),
+        actor: Actor::Spice,
+        origin: "task:1kKRRsDP".parse::<Origin>().expect("fixture origin"),
+        cause: Some(seq(2)),
+        fact: retired.clone(),
+    };
+    let bytes = wire::encode(&envelope).expect("retired envelope encodes");
+    journal
+        .connection
+        .execute(
+            "INSERT INTO fact_envelopes(
+                seq, wire_version, instant, actor, origin, cause, kind, envelope
+             ) VALUES (3, 1, ?1, 'spice', 'task:1kKRRsDP', 2, 'gate::filed', ?2)",
+            params![envelope.at.to_string(), bytes],
+        )
+        .expect("retired fact is planted");
+    journal
+        .connection
+        .execute(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth)
+             VALUES (3, 'task:1kKRRsDP', 2, 1, 2)",
+            [],
+        )
+        .expect("retired fact thread is planted");
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE cursor_head SET seq = 3, wake = 3 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;
+             UPDATE journal_schema SET version = 35 WHERE singleton = 1;
+             PRAGMA user_version = 35;",
+        )
+        .expect("predecessor identity is restored");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("retained gate fact crosses on writable open");
+    assert_eq!(
+        journal
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((35, SCHEMA_VERSION)),
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row("SELECT kind FROM fact_envelopes WHERE seq = 3", [], |row| {
+                row.get::<_, String>(0)
+            },)
+            .expect("crossed kind reads"),
+        "journal::retained",
+    );
+    let snapshot = journal.fact_snapshot().expect("crossed facts read");
+    let retained = snapshot.facts()[2]
+        .fact
+        .read::<wire::body::JournalRetained>()
+        .expect("retired payload became current inert evidence");
+    assert_eq!(retained.release, "595da8d81");
+    assert_eq!(retained.fact, retired);
+    journal.verify().expect("crossed authority verifies");
+    let crossed = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 3",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("crossed envelope reads");
+    drop(journal);
+
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None);
+    assert_eq!(
+        reopened
+            .connection
+            .query_row(
+                "SELECT envelope FROM fact_envelopes WHERE seq = 3",
+                [],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .expect("reopened envelope reads"),
+        crossed,
+        "the retained crossing runs exactly once",
+    );
 }
 #[test]
 fn schema_admission_requires_trusted_schema_to_be_disabled_before_inspection() {

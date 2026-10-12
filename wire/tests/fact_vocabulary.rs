@@ -102,7 +102,7 @@ const PINNED: &[(&str, &str)] = &[
     ("CommitLanded", "commit::landed"),
     ("GateFound", "gate::found"),
     ("GateCleared", "gate::cleared"),
-    ("GateFindingsFiled", "gate::filed"),
+    ("JournalRetained", "journal::retained"),
     ("JournalMigrated", "journal::migrated"),
     ("JournalBacked", "journal::backed"),
     ("JournalRestored", "journal::restored"),

@@ -342,12 +342,8 @@ vocabulary! {
     GateFound = "gate::found" by ResidentRecognition;
     /// A standing finding resolved at its evidence; the Finding head closed.
     GateCleared = "gate::cleared" by ResidentRecognition;
-    /// A gate finding dispatch completed under the retired filing path.
-    ///
-    /// No command mints this any more; the kind stays so ledgers written
-    /// before the retirement still decode.
-    GateFindingsFiled = "gate::filed" by CommandDoor;
-
+    /// A retired fact crossed once into inert current-schema evidence.
+    JournalRetained = "journal::retained" by ResidentRecognition;
     /// The one forward schema migration finalized before epoch mint.
     JournalMigrated = "journal::migrated" by ResidentRecognition;
     /// A quiesced backup bundle was produced with its enumerated tape manifest.
