@@ -13,6 +13,12 @@ use std::fmt;
 use wire::rooms::{RoomAuthorityStamp, RoomMessaged, RoomPublished};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
+mod catch_up;
+
+pub use catch_up::{
+    CatchUp, CatchUpBudget, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS, select_catch_up,
+};
+
 /// Most authority signals one projection may inspect.
 pub const MAX_ROOM_ATTENTION_SIGNALS: usize = 1_024;
 /// Most lane rows one projection may return.

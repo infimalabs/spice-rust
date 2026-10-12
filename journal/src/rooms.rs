@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomMessaged, RoomPublicationContent, RoomPublished,
-    RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomMessaged, RoomPublicationContent,
+    RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
@@ -62,6 +62,15 @@ CREATE TABLE authorization_heads (
     body BLOB NOT NULL
 ) STRICT;
 CREATE INDEX authorization_heads_decision ON authorization_heads(decision);
+"#;
+
+/// Per-lane room catch-up cursors, created with the current schema.
+pub(crate) const CURSOR_SCHEMA_SQL: &str = r#"
+CREATE TABLE room_cursors (
+    lane TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
 "#;
 
 /// Why the fold could not admit one fact.
@@ -130,6 +139,8 @@ pub(crate) struct Projection {
     pub(crate) proposals: BTreeMap<String, ProposalRow>,
     /// Selected output to its authorization head.
     pub(crate) authorizations: BTreeMap<String, AuthorizationRow>,
+    /// Logical lane to its catch-up cursor head position and canonical body.
+    pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
 }
 
 /// Authority one fold step reads and changes.
@@ -152,6 +163,10 @@ pub(crate) trait Authority {
     ) -> Result<Option<TranscriptSourceHead>, Refusal>;
     /// Whether this room publication already exists.
     fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal>;
+    /// Whether this position is an indexed room publication.
+    fn publication_at(&self, seq: u64) -> Result<bool, Refusal>;
+    /// The canonical body of one lane's current catch-up cursor.
+    fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// Whether this working group currently exists.
     fn grouped(&self, group: &str) -> Result<bool, Refusal>;
     /// The canonical body of one proposal head.
@@ -190,6 +205,11 @@ pub(crate) enum Change {
         outputs: Vec<String>,
         row: AuthorizationRow,
     },
+    Cursor {
+        lane: String,
+        seq: u64,
+        body: Vec<u8>,
+    },
 }
 
 impl Projection {
@@ -225,6 +245,9 @@ impl Projection {
                 for output in outputs {
                     self.authorizations.insert(output, row.clone());
                 }
+            }
+            Change::Cursor { lane, seq, body } => {
+                self.cursors.insert(lane, (seq, body));
             }
         }
     }
@@ -289,6 +312,21 @@ impl Authority for History {
             .projection
             .publications
             .contains_key(&(room.to_owned(), publication.to_owned())))
+    }
+    fn publication_at(&self, seq: u64) -> Result<bool, Refusal> {
+        Ok(self
+            .projection
+            .publications
+            .values()
+            .any(|published| *published == seq))
+    }
+
+    fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal> {
+        Ok(self
+            .projection
+            .cursors
+            .get(lane)
+            .map(|(_, body)| body.clone()))
     }
 
     fn grouped(&self, group: &str) -> Result<bool, Refusal> {
@@ -383,6 +421,9 @@ pub(crate) fn fold(
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
     }
+    if let Some(body) = fact.read::<RoomDelivered>() {
+        return deliver(authority, seq, &body);
+    }
     if let Some(WorkingGroupStored { group }) = fact.read() {
         for anchor in &group.anchors {
             require_task(authority, anchor, "working-group anchor")?;
@@ -436,6 +477,36 @@ fn require_operator(actor: &Actor, what: &str) -> Result<(), Refusal> {
         return Ok(());
     }
     unsound(format!("{what} is operator-owned, not written by {actor}"))
+}
+
+/// A delivery lands in its own lane's accounted transcript and strictly
+/// advances that lane's cursor to an earlier indexed room publication.
+fn deliver(
+    authority: &mut impl Authority,
+    seq: Seq,
+    delivered: &RoomDelivered,
+) -> Result<(), Refusal> {
+    require_hunk(authority, &delivered.hunk)?;
+    let through = delivered.through;
+    if through.get() >= seq.get() || !authority.publication_at(through.get())? {
+        return unsound(format!(
+            "delivery cursor {through} names no room publication earlier than {seq}"
+        ));
+    }
+    let lane = delivered.hunk.head.lane.to_string();
+    if let Some(previous) = authority.cursor(&lane)? {
+        let previous = wire::decode::<RoomDelivered>(&previous)?.through;
+        if through <= previous {
+            return unsound(format!(
+                "lane {lane} delivery cursor {through} does not advance past {previous}"
+            ));
+        }
+    }
+    authority.change(Change::Cursor {
+        lane,
+        seq: seq.get(),
+        body: wire::encode(delivered)?,
+    })
 }
 
 /// Coverage authority is the principal that wrote it: the operator, an

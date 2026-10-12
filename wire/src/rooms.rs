@@ -291,6 +291,21 @@ pub struct RoomMessaged {
     pub hunk: TranscriptHunk,
 }
 
+/// A lane's room catch-up landed in its own transcript, advancing that logical
+/// lane's delivery cursor.
+///
+/// The hunk's transcript head names the lane, so the cursor belongs to the
+/// logical lane rather than any one occupant: a renewed occupant continues
+/// from it. Each delivery strictly advances the cursor.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomDelivered {
+    /// Room publication position through which the lane has now been told.
+    pub through: SequenceCode,
+    /// The landed catch-up's exact bytes in the lane's transcript.
+    pub hunk: TranscriptHunk,
+}
+
 /// Native room-only publication command body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

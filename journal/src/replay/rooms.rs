@@ -59,7 +59,16 @@ pub(super) fn verify(
         &stored.authorizations,
         violations,
     );
-    Ok(stored.groups.len() + stored.proposals.len() + stored.authorizations.len())
+    compare(
+        "room_cursors",
+        &expected.cursors,
+        &stored.cursors,
+        violations,
+    );
+    Ok(stored.groups.len()
+        + stored.proposals.len()
+        + stored.authorizations.len()
+        + stored.cursors.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(

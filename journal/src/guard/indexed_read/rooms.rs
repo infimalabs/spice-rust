@@ -3,7 +3,7 @@
 use rusqlite::params;
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, ExecutionAuthorization, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, WorkingGroup,
+    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, WorkingGroup,
 };
 
 use super::{
@@ -246,6 +246,25 @@ impl JournalRead<'_> {
         {
             return Err(GuardError::Invalid(format!(
                 "authorization head indexed as {output} does not select it"
+            )));
+        }
+        Ok(head)
+    }
+
+    /// One logical lane's current room catch-up cursor, absent before its
+    /// first landed delivery.
+    pub fn room_cursor(
+        &self,
+        lane: wire::CanonicalUuid,
+    ) -> Result<Option<JournalHead<RoomDelivered>>, GuardError> {
+        let key = lane.to_string();
+        let head = self.text_head::<RoomDelivered>("room_cursors", "lane", &key)?;
+        if let Some(head) = &head
+            && head.body.hunk.head.lane != lane
+        {
+            return Err(GuardError::Invalid(format!(
+                "room cursor indexed as {key} lands in lane {}",
+                head.body.hunk.head.lane
             )));
         }
         Ok(head)
