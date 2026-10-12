@@ -95,6 +95,23 @@ is restored only while nothing else holds focus. Incoming cards, receipts,
 conclusions, participant changes, and late hydration never mount, close,
 reorder, or focus a console.
 
+Operator posts and lane MSG, ASK, and ANS publications share one card family:
+sender → destinations, verb, and text. A lane's own bytes come from its
+transcript echo; absent that, the text its native delivery carried stands in.
+Each card separates being recorded in the room, each route's receipt
+(pending, queued for a vacant lane and unheard, vacant, unavailable, acked,
+declined, expired, or cancelled), and a question's substantive result
+(pending against its deadline and the requester's pending-result capacity,
+answered, declined, cancelled, or timed out). ACK settles only a receipt; an
+answer is its own ANS card whose return carries a separate receipt. None of
+these is styled as review coverage or output authorization, which stay in the
+preparation section. Operator items carry explicit ACK/NAK with a clause,
+**Recover** once lapsed, and Answer/Decline/Cancel result controls. Closing a
+lane party's question is an explicit override. The catalog lists every open
+operator item. Receipt and result rows keep one geometry in every state.
+Acting moves keyboard focus to the acting card, and its outcome or refusal is
+reported in that room pane.
+
 An open, pending Design room also exposes bounded OOPS grooming. Each record
 names the exact parked reports it considered, one of `duplicate`, `no-work`,
 `deferred-for-later`, `covered`, or `proposed-work`, its evidenced cause, and

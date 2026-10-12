@@ -189,6 +189,58 @@ fn an_answer_committed_first_wins_over_the_timeout() {
     lanes.finish();
 }
 
+/// An item whose head another origin wrote, as an earlier epoch's resident
+/// recovering it, lapses again under the current resident.
+#[test]
+fn items_written_under_another_origin_still_lapse() {
+    let lanes = Lanes::new("deadline-origin");
+    let result = asked(&lanes.say(SENDER, "ASK operator: ship it?"));
+    let item = RoomReceiptRef::new(result.authority().clone());
+    let due = RoomDue::Item(item.clone());
+    let RoomReceiptState::Pending { expires } = lanes.item_state(&item) else {
+        panic!("the operator item opens pending");
+    };
+    let mut timers = lanes.timers();
+    assert_eq!(
+        timers.fire_room_at(&lanes.bus, &due, expires),
+        Ok(Fired::Room)
+    );
+    let renewed = shifted(expires, 60_000);
+    let mut recovery = JournalWrite::new(
+        Actor::Operator,
+        "resident:018f82d4-6f59-7d06-92e3-bce913116400"
+            .parse()
+            .expect("earlier epoch origin"),
+        shifted(expires, 1),
+        Producer::CommandDoor,
+    );
+    recovery
+        .fact(
+            RoomReceiptRecovered {
+                receipt: item.clone(),
+                expires: renewed,
+            },
+            FactCause::Root,
+        )
+        .expect("recovery stages");
+    assert!(matches!(
+        lanes.bus.commit(recovery).expect("recovery commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
+    timers.synchronize(&lanes.bus).expect("timers re-fold");
+    assert_eq!(timers.room_deadline(&due), Some(renewed));
+    assert_eq!(
+        timers.fire_room_at(&lanes.bus, &due, renewed),
+        Ok(Fired::Room)
+    );
+    assert_eq!(
+        lanes.item_state(&item),
+        RoomReceiptState::Expired { at: renewed }
+    );
+    drop(timers);
+    lanes.finish();
+}
+
 /// A resident started after a result was opened arms it from durable state
 /// alone, and of two residents holding the same captured head only one writes
 /// its timeout.

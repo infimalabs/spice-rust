@@ -2,11 +2,15 @@
 //! facts after its horizon, never from browser-local foreground state.
 
 use super::*;
+use app::RoomEventKind;
 use serde::Serialize;
 use wire::rooms::{
     CandidateRef, CoverageRef, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomStopRequest,
-    TextRange, WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
+    QuestionResultRef, QuestionResultState, RoomAuthorityStamp, RoomConversed,
+    RoomCoordinationStarted, RoomDelivery, RoomDestination, RoomMessaged, RoomPosted,
+    RoomPublicationKind, RoomPutAside, RoomReceiptLapsed, RoomReceiptRecovered, RoomReceiptRef,
+    RoomReceiptState, RoomRoute, RoomStopRequest, TextRange, WorkingGroup, WorkingGroupRemoved,
+    WorkingGroupStored,
 };
 
 const ROOM_EVENT: &str = "dVsYdDj7d";
@@ -611,5 +615,383 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert_eq!(
         runtime.room_projection().status(),
         app::RoomProjectionStatus::Available
+    );
+}
+
+const ASK_PACKET: &str = "dVsYdDj7m";
+const ASK: &str = "dVsYdDj7n";
+const RESULT: &str = "dVsYdDj7p";
+const ANS_PACKET: &str = "dVsYdDj7q";
+const ANS: &str = "dVsYdDj7r";
+const ASKED: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
+const RETURNED: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+
+fn instant(text: &str) -> wire::Instant {
+    text.parse().expect("fixture instant")
+}
+
+fn hunk(lane: &str, offset: u64) -> wire::rooms::TranscriptHunk {
+    wire::rooms::TranscriptHunk {
+        head: wire::TranscriptSourceHead {
+            lane: uuid(lane),
+            vendor: "omp".parse().expect("fixture vendor"),
+            stream: "session".to_owned(),
+            source: uuid(REQUEST),
+            next: wire::body::TranscriptPosition {
+                member: 1,
+                offset: 256,
+            },
+        },
+        locus: wire::MessageLocus {
+            member: 1,
+            offset,
+            length: 32,
+            event: 0,
+        },
+        text: TextRange { start: 0, end: 12 },
+    }
+}
+
+/// `from` tells `to` one room-scoped packet as `directive` under `key`.
+fn told(position: u64, directive: &str, key: &str, from: &str, to: &str) -> serde_json::Value {
+    let body = wire::body::SteerMessaged {
+        directive: uuid(directive),
+        key: key.to_owned(),
+        lane: uuid(to),
+        occupant: uuid(to),
+        from: uuid(from),
+        sender: uuid(from),
+        text: "Packet body".to_owned(),
+        locus: wire::body::TranscriptLocus {
+            source: Some(uuid(REQUEST)),
+            member: 1,
+            offset: 0,
+            length: 1,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        room: Some(room()),
+        expires: instant("2030-04-13T18:44:09.271Z"),
+    };
+    envelope(position, "steer::messaged", &body)
+}
+
+fn acked(position: u64, directive: &str, key: &str, lane: &str) -> serde_json::Value {
+    let body = wire::body::SteerAcked {
+        directive: uuid(directive),
+        key: key.to_owned(),
+        lane: uuid(lane),
+        epoch: uuid(EPOCH),
+        locus: wire::body::TranscriptLocus {
+            source: Some(uuid(REQUEST)),
+            member: 1,
+            offset: 0,
+            length: 1,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+    };
+    envelope(position, "steer::acked", &body)
+}
+
+/// One lane packet's room record and the conversation the same write admits.
+fn conversed(
+    position: u64,
+    (packet, publication): (&str, &str),
+    author: &str,
+    operation: RoomPublicationKind,
+    routes: Vec<RoomRoute>,
+    directed: &[&str],
+) -> [serde_json::Value; 2] {
+    let directed = directed
+        .iter()
+        .map(|directive| uuid(directive))
+        .collect::<Vec<_>>();
+    let source = hunk(author, position);
+    [
+        envelope(
+            position,
+            "room::messaged",
+            &RoomMessaged {
+                room: room(),
+                publication: authority(packet),
+                hunk: source.clone(),
+                author: uuid(author),
+                directed: directed.clone(),
+            },
+        ),
+        envelope(
+            position + 1,
+            "room::conversed",
+            &RoomConversed {
+                publication: authority(publication),
+                hunk: source,
+                operation,
+                routes,
+                directed,
+                expires: instant("2030-04-13T18:44:09.271Z"),
+            },
+        ),
+    ]
+}
+
+fn ask_of_second_lane(position: u64) -> [serde_json::Value; 2] {
+    conversed(
+        position,
+        (ASK_PACKET, ASK),
+        LANE,
+        RoomPublicationKind::Ask {
+            result: QuestionResultRef::new(authority(RESULT)),
+            deadline: instant("2030-04-12T19:44:09.271Z"),
+        },
+        vec![RoomRoute {
+            destination: RoomDestination::Lane {
+                lane: uuid(SECOND_LANE),
+            },
+            context: Some(room()),
+        }],
+        &[ASKED],
+    )
+}
+
+fn conversation_runtime(session: &Session, snapshot: &[serde_json::Value]) -> AppRuntime {
+    let accepted = acceptance(session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let horizon = snapshot.len() as u64;
+    runtime.apply_stream(&operator_facts(session, horizon));
+    runtime.apply_stream(&room_page(session, snapshot, None, horizon));
+    assert_eq!(
+        runtime.room_projection().status(),
+        app::RoomProjectionStatus::Available
+    );
+    runtime
+}
+
+fn live(runtime: &mut AppRuntime, session: &Session, fact: serde_json::Value) {
+    runtime.apply_stream(&admitted_stream(session, &live_fact(fact)));
+}
+
+fn delivery(runtime: &AppRuntime, directive: &str) -> (wire::Disposition, bool) {
+    let delivery = &runtime
+        .room_projection()
+        .conversation()
+        .delivery(&uuid(directive))
+        .expect("named delivery")
+        .value;
+    (delivery.disposition, delivery.queued)
+}
+
+fn result_state(runtime: &AppRuntime) -> QuestionResultState {
+    runtime
+        .room_projection()
+        .conversation()
+        .result(&QuestionResultRef::new(authority(RESULT)))
+        .expect("question result")
+        .value
+        .state
+        .clone()
+}
+
+/// The worked MSG/ASK/ACK/ANS/ACK sequence: a delivery receipt never settles
+/// the question, and the answer returns under its own receipt.
+#[test]
+fn delivery_receipts_and_question_results_move_separately() {
+    let session = session(OPERATOR, EPOCH);
+    let [packet, asked] = ask_of_second_lane(2);
+    let mut runtime = conversation_runtime(
+        &session,
+        &[told(1, ASKED, RESULT, LANE, SECOND_LANE), packet, asked],
+    );
+    let Some(RoomEventKind::Messaged { conversation, .. }) = runtime
+        .room_projection()
+        .room(&room())
+        .and_then(|state| state.events().get(&authority(ASK_PACKET)))
+        .map(|event| event.kind.clone())
+    else {
+        panic!("the ASK packet is a room event");
+    };
+    assert_eq!(
+        conversation,
+        Some(authority(ASK)),
+        "the room packet links the conversation its own write admitted"
+    );
+    assert_eq!(delivery(&runtime, ASKED), (wire::Disposition::Live, false));
+    assert_eq!(result_state(&runtime), QuestionResultState::Pending {});
+
+    live(&mut runtime, &session, acked(4, ASKED, RESULT, SECOND_LANE));
+    assert_eq!(delivery(&runtime, ASKED).0, wire::Disposition::Acked);
+    assert_eq!(
+        result_state(&runtime),
+        QuestionResultState::Pending {},
+        "ACK of the ASK delivery leaves its result pending"
+    );
+
+    live(
+        &mut runtime,
+        &session,
+        told(5, RETURNED, "dReturn1", SECOND_LANE, LANE),
+    );
+    let [packet, answered] = conversed(
+        6,
+        (ANS_PACKET, ANS),
+        SECOND_LANE,
+        RoomPublicationKind::Ans {
+            result: QuestionResultRef::new(authority(RESULT)),
+            context: None,
+        },
+        Vec::new(),
+        &[RETURNED],
+    );
+    live(&mut runtime, &session, packet);
+    live(&mut runtime, &session, answered);
+    let QuestionResultState::Answered {
+        answer,
+        return_delivery,
+    } = result_state(&runtime)
+    else {
+        panic!("the answer settles the result");
+    };
+    assert_eq!(answer, authority(ANS));
+    assert_eq!(
+        return_delivery.delivery(),
+        &RoomDelivery::Directive {
+            directive: uuid(RETURNED)
+        }
+    );
+    assert_eq!(
+        delivery(&runtime, RETURNED),
+        (wire::Disposition::Live, false),
+        "the return awaits its own receipt"
+    );
+
+    live(&mut runtime, &session, acked(8, RETURNED, "dReturn1", LANE));
+    assert_eq!(delivery(&runtime, RETURNED).0, wire::Disposition::Acked);
+    assert!(
+        matches!(result_state(&runtime), QuestionResultState::Answered { .. }),
+        "the return receipt never moves the answered result"
+    );
+}
+
+/// A lane's ASK of the operator opens an item the operator settles; its lapse
+/// and recovery keep the same key, and the operator's answer settles the result
+/// and records in the question's room.
+#[test]
+fn operator_items_lapse_recover_and_retire_with_the_answer() {
+    let session = session(OPERATOR, EPOCH);
+    let item = RoomReceiptRef::new(authority(RESULT));
+    let [packet, asked] = conversed(
+        1,
+        (ASK_PACKET, ASK),
+        LANE,
+        RoomPublicationKind::Ask {
+            result: QuestionResultRef::new(authority(RESULT)),
+            deadline: instant("2030-04-12T19:44:09.271Z"),
+        },
+        vec![RoomRoute {
+            destination: RoomDestination::Operator {},
+            context: Some(room()),
+        }],
+        &[],
+    );
+    let mut runtime = conversation_runtime(&session, &[packet, asked]);
+    let state = |runtime: &AppRuntime| {
+        runtime
+            .room_projection()
+            .conversation()
+            .item(&item)
+            .expect("operator item")
+            .value
+            .state
+            .clone()
+    };
+    let open = |runtime: &AppRuntime| runtime.room_projection().conversation().open_items().len();
+    assert!(matches!(state(&runtime), RoomReceiptState::Pending { .. }));
+    assert_eq!(open(&runtime), 1);
+
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            3,
+            "room::lapsed",
+            &RoomReceiptLapsed {
+                receipt: item.clone(),
+            },
+        ),
+    );
+    assert!(matches!(state(&runtime), RoomReceiptState::Expired { .. }));
+    assert_eq!(open(&runtime), 1, "a lapsed item still owes a disposition");
+    let expires = instant("2030-04-14T18:44:09.271Z");
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            4,
+            "room::recovered",
+            &RoomReceiptRecovered {
+                receipt: item.clone(),
+                expires,
+            },
+        ),
+    );
+    assert_eq!(state(&runtime), RoomReceiptState::Pending { expires });
+
+    // The operator's answer returns to the lane requester under the operator
+    // direction its own write opens.
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            5,
+            "steer::sent",
+            &serde_json::json!({
+                "directive": RETURNED,
+                "key": "dReturn1",
+                "lane": LANE,
+                "text": "Operator answer",
+                "room": room(),
+                "expires": "2030-04-13T18:44:09.271Z",
+            }),
+        ),
+    );
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            6,
+            "room::posted",
+            &RoomPosted {
+                publication: authority(ANS),
+                text: "Operator answer".to_owned(),
+                operation: RoomPublicationKind::Ans {
+                    result: QuestionResultRef::new(authority(RESULT)),
+                    context: None,
+                },
+                routes: Vec::new(),
+                directed: vec![uuid(RETURNED)],
+                expires,
+            },
+        ),
+    );
+    assert_eq!(
+        delivery(&runtime, RETURNED),
+        (wire::Disposition::Live, false)
+    );
+    assert!(matches!(
+        result_state(&runtime),
+        QuestionResultState::Answered { answer, .. } if answer == authority(ANS)
+    ));
+    assert!(matches!(state(&runtime), RoomReceiptState::Acked { .. }));
+    assert_eq!(open(&runtime), 0);
+    assert_eq!(
+        runtime
+            .room_projection()
+            .room(&room())
+            .and_then(|state| state.events().get(&authority(ANS)))
+            .map(|event| &event.kind),
+        Some(&RoomEventKind::Posted),
+        "the operator answer records in the question's room"
     );
 }

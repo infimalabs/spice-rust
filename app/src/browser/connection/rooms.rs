@@ -114,3 +114,43 @@ pub(super) async fn send_room_post(
     )
     .await
 }
+
+/// The resident guards every item and result head it reads, so a control
+/// proposes no witness.
+pub(super) async fn send_room_control(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::client_action::RoomControlRequest,
+    respond: &crate::client_action::RoomControlResponse,
+) -> Result<CanonicalUuid, String> {
+    let pending = PendingKind::RoomControl {
+        respond: respond.clone(),
+    };
+    match request {
+        crate::client_action::RoomControlRequest::Control(control) => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::RoomControl,
+                Vec::new(),
+                control.clone(),
+            )
+            .await
+        }
+        crate::client_action::RoomControlRequest::Close(close) => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::RoomClose,
+                Vec::new(),
+                close.clone(),
+            )
+            .await
+        }
+    }
+}

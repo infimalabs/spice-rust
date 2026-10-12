@@ -4,12 +4,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{HtmlElement, HtmlTextAreaElement};
 use wire::intent::WorkingGroupChangeStatus;
 use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
+
+mod conversation;
 
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
@@ -37,6 +39,9 @@ impl Reducible for RoomViews {
 pub(super) struct Controls {
     views: UseReducerHandle<RoomViews>,
     notice: UseStateHandle<Option<String>>,
+    /// The room pane that acted for the current notice, which it shows in
+    /// place of the catalog.
+    scope: UseStateHandle<Option<TaskStamp>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -53,6 +58,7 @@ pub(super) fn use_controls() -> Controls {
     Controls {
         views,
         notice: use_state(|| None),
+        scope: use_state(|| None),
         names,
         requested,
     }
@@ -101,7 +107,19 @@ impl Controls {
     }
 
     fn report(&self, notice: String) {
+        self.scope.set(None);
         self.notice.set(Some(notice));
+    }
+
+    fn report_in(&self, room: Option<TaskStamp>, notice: String) {
+        self.scope.set(room);
+        self.notice.set(Some(notice));
+    }
+
+    fn notice_in(&self, room: Option<&TaskStamp>) -> Option<String> {
+        (self.scope.as_ref() == room)
+            .then(|| (*self.notice).clone())
+            .flatten()
     }
 }
 
@@ -161,9 +179,10 @@ pub(super) fn render_catalog(
             let create_room = NodeRef::default();
             html! {
                 <>
-                    if let Some(notice) = &*controls.notice {
-                        <p class="room-notice" role="status">{notice.clone()}</p>
+                    if let Some(notice) = controls.notice_in(None) {
+                        <p class="room-notice" role="status">{notice}</p>
                     }
+                    {conversation::render_inbox(runtime, controls, sender)}
                     {render_new_group(
                         board,
                         can_put,
@@ -427,7 +446,7 @@ fn submit_group(
     group: WorkingGroup,
     head: Option<wire::Seq>,
 ) {
-    let notice = controls.notice.clone();
+    let controls = controls.clone();
     let respond = Rc::new(
         move |result: Result<wire::intent::WorkingGroupChange, String>| {
             let message = match result {
@@ -437,7 +456,7 @@ fn submit_group(
                 },
                 Err(error) => error,
             };
-            notice.set(Some(message));
+            controls.report(message);
         },
     );
     let _ = admit_action(
@@ -456,13 +475,13 @@ fn submit_group_remove(
     group: RoomAuthorityStamp,
     head: wire::Seq,
 ) {
-    let notice = controls.notice.clone();
+    let controls = controls.clone();
     let respond = Rc::new(
         move |result: Result<wire::intent::WorkingGroupChange, String>| {
-            notice.set(Some(match result {
+            controls.report(match result {
                 Ok(_) => "Working group removed; open local views were preserved.".to_owned(),
                 Err(error) => error,
-            }));
+            });
         },
     );
     let _ = admit_action(
@@ -486,6 +505,19 @@ fn task_options(board: Option<&crate::runtime::BoardView>) -> Vec<Html> {
             }
         })
         .collect()
+}
+
+/// The room pane an event arose in, so its notice lands where it acted.
+fn event_room(event: &Event) -> Option<TaskStamp> {
+    event
+        .target()?
+        .dyn_into::<web_sys::Element>()
+        .ok()?
+        .closest("[data-room]")
+        .ok()??
+        .get_attribute("data-room")?
+        .parse()
+        .ok()
 }
 
 fn input_value(node: &NodeRef) -> Option<String> {
@@ -610,7 +642,9 @@ fn render_room(
         .map(|(runtime, room)| {
             room.events()
                 .iter()
-                .map(|(publication, event)| render_event(runtime, publication, event))
+                .map(|(publication, event)| {
+                    render_event(runtime, controls, sender, publication, event)
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -648,6 +682,9 @@ fn render_room(
                 }
             </RoomReader>
             {grooming}
+            if let Some(notice) = controls.notice_in(Some(room)) {
+                <p class="room-notice room-pane-notice" role="status">{notice}</p>
+            }
             {post}
         </article>
     }
@@ -733,34 +770,28 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
 
 fn render_event(
     runtime: &AppRuntime,
+    controls: &Controls,
+    sender: &SenderHandle,
     publication: &RoomAuthorityStamp,
     event: &crate::runtime::RoomEvent,
 ) -> Html {
+    if let Some(card) = conversation::render_card(runtime, controls, sender, publication, event) {
+        return card;
+    }
     let (kind, body) = match &event.kind {
-        RoomEventKind::Published(wire::rooms::RoomPublicationContent::Authored { text }) => {
-            ("Operator", text.clone())
-        }
         RoomEventKind::Published(wire::rooms::RoomPublicationContent::Linked { link }) => {
             ("Source", format!("Linked source: {link:?}"))
         }
         RoomEventKind::Published(wire::rooms::RoomPublicationContent::OopsGroomed { grooming }) => {
             ("OOPS", grooming_summary(runtime, grooming))
         }
-        RoomEventKind::Messaged {
-            source, directed, ..
-        } => (
-            "Agent",
-            format!(
-                "Transcript source {}:{}–{}{}",
-                source.head.source,
-                source.text.start,
-                source.text.end,
-                if directed.is_empty() {
-                    ""
-                } else {
-                    " · directed"
-                }
-            ),
+        // Rendered by the conversation card family whenever its authority
+        // is loaded.
+        RoomEventKind::Published(wire::rooms::RoomPublicationContent::Authored { .. })
+        | RoomEventKind::Messaged { .. }
+        | RoomEventKind::Posted => (
+            "Conversation",
+            "Conversation authority is unavailable.".to_owned(),
         ),
         RoomEventKind::Coordination { key, target } => {
             ("Coordination", format!("{key} → {target}"))
@@ -928,10 +959,12 @@ fn oops_submit(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
+        let scope = event_room(&event);
+        let refuse = |notice: &str| controls.report_in(scope.clone(), notice.to_owned());
         let Some(selected) =
             input_value(&inputs.report).and_then(|value| value.parse::<TaskStamp>().ok())
         else {
-            controls.report("Choose one parked OOPS report.".into());
+            refuse("Choose one parked OOPS report.");
             return;
         };
         let Some((report, report_head, report_handle)) = reports
@@ -939,19 +972,19 @@ fn oops_submit(
             .find(|(report, _, _)| *report == selected)
             .cloned()
         else {
-            controls.report("The selected OOPS report is no longer parked.".into());
+            refuse("The selected OOPS report is no longer parked.");
             return;
         };
         let Some(disposition) = input_value(&inputs.disposition)
             .and_then(|value| value.parse::<wire::rooms::OopsDisposition>().ok())
         else {
-            controls.report("Choose an OOPS disposition.".into());
+            refuse("Choose an OOPS disposition.");
             return;
         };
         let cause = input_value(&inputs.cause).unwrap_or_default();
         let cause = cause.trim().to_owned();
         if cause.is_empty() {
-            controls.report("An evidenced cause or negative basis is required.".into());
+            refuse("An evidenced cause or negative basis is required.");
             return;
         }
         let grooming = wire::rooms::OopsGrooming {
@@ -973,12 +1006,15 @@ fn oops_submit(
         let respond =
             Rc::new(
                 move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
-                    Ok(answer) => success_controls.report(format!(
-                        "{}{}",
-                        room_post_notice(&answer.outcome),
-                        next.as_deref().unwrap_or_default()
-                    )),
-                    Err(error) => success_controls.report(error),
+                    Ok(answer) => success_controls.report_in(
+                        scope.clone(),
+                        format!(
+                            "{}{}",
+                            room_post_notice(&answer.outcome),
+                            next.as_deref().unwrap_or_default()
+                        ),
+                    ),
+                    Err(error) => success_controls.report_in(scope.clone(), error),
                 },
             );
         let _ = admit_action(
@@ -1099,8 +1135,10 @@ fn room_post_form(
         let textarea = textarea.clone();
         Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
+            let scope = Some(room_stamp.clone());
+            let refuse = |notice: &str| controls.report_in(scope.clone(), notice.to_owned());
             let Some((room, head)) = task.clone() else {
-                controls.report("This room source is unavailable.".into());
+                refuse("This room source is unavailable.");
                 return;
             };
             let Some(text) = textarea
@@ -1111,25 +1149,15 @@ fn room_post_form(
             };
             let text = text.trim().to_owned();
             if text.is_empty() {
-                controls.report("A room post cannot be empty.".into());
+                refuse("A room post cannot be empty.");
                 return;
             }
-            let success_controls = controls.clone();
             let posted = RoomViewAction::Posted {
                 group: group.clone(),
                 room: room_stamp.clone(),
                 text: text.clone(),
             };
-            let respond =
-                Rc::new(
-                    move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
-                        Ok(answer) => {
-                            success_controls.update(posted.clone());
-                            success_controls.report(room_post_notice(&answer.outcome));
-                        }
-                        Err(error) => success_controls.report(error),
-                    },
-                );
+            let respond = post_reply(controls.clone(), scope, posted);
             let _ = admit_action(
                 &sender,
                 ClientAction::RoomPost(RoomPostAction {
@@ -1158,6 +1186,21 @@ fn room_post_form(
             <button type="submit" disabled={disabled}>{"Post"}</button>
         </form>
     }
+}
+
+/// Clears the posted draft on admission; any outcome reports in the room pane.
+fn post_reply(
+    controls: Controls,
+    scope: Option<TaskStamp>,
+    posted: RoomViewAction,
+) -> crate::client_action::RoomPostResponse {
+    Rc::new(move |result| match result {
+        Ok(answer) => {
+            controls.update(posted.clone());
+            controls.report_in(scope.clone(), room_post_notice(&answer.outcome));
+        }
+        Err(error) => controls.report_in(scope.clone(), error),
+    })
 }
 
 fn room_post_notice(outcome: &RoomPostOutcome) -> String {

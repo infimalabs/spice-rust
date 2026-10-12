@@ -334,6 +334,9 @@ fn apply_command_response(
         PendingKind::RoomPost { respond } => {
             apply_callback_reply(session, bytes, "Room post failed", &respond)?
         }
+        PendingKind::RoomControl { respond } => {
+            apply_callback_reply(session, bytes, "Room control failed", &respond)?
+        }
         PendingKind::TaskDetail { task } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
                 admit_response(session, bytes)?;

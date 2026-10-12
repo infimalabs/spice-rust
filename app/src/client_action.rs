@@ -7,6 +7,8 @@ pub(crate) type JobsResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobsA
 pub(crate) type GroupResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::WorkingGroupChange, String>)>;
 pub(crate) type RoomPostResponse = std::rc::Rc<dyn Fn(Result<wire::rooms::RoomPostAnswer, String>)>;
+pub(crate) type RoomControlResponse =
+    std::rc::Rc<dyn Fn(Result<wire::intent::RoomControlAnswer, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -18,6 +20,13 @@ pub(crate) struct RoomPostAction {
     /// Current statement heads aligned with `grooming.reports`.
     pub(crate) report_heads: Vec<wire::Seq>,
     pub(crate) respond: RoomPostResponse,
+}
+
+/// One operator receipt, answer, or recovery, or one question closure.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum RoomControlRequest {
+    Control(wire::intent::RoomControl),
+    Close(wire::intent::RoomClose),
 }
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -44,6 +53,11 @@ pub(crate) enum ClientAction {
     },
     /// Publish operator-authored text or one typed OOPS disposition to a task room.
     RoomPost(RoomPostAction),
+    /// Settle the operator's own room receipts and results, or close a question.
+    RoomControl {
+        request: RoomControlRequest,
+        respond: RoomControlResponse,
+    },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     GlobalSettings(GlobalSettingsSet),
