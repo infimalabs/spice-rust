@@ -120,9 +120,10 @@ fn the_newest_placed_answer_wins_within_the_recent_window() {
 }
 
 #[test]
-fn an_answer_behind_records_wider_than_one_search_chunk_is_still_recognized() {
-    const SEARCH_CHUNK_BOUNDARY: usize = 1024 * 1024;
-    let mut oversized = vec![b' '; SEARCH_CHUNK_BOUNDARY];
+fn an_answer_behind_records_wider_than_one_boundary_chunk_is_still_recognized() {
+    let chunk =
+        usize::try_from(listen::BOUNDARY_CHUNK_BYTES).expect("boundary chunk fits in memory");
+    let mut oversized = vec![b' '; chunk];
     oversized.extend_from_slice(b"{}\n");
     let fixture = Fixture::new(&[
         TOOL_RESULT,
