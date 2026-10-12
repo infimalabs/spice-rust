@@ -105,6 +105,25 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
+    /// A scoped room request binds the exact anchor heads and destination
+    /// residency observed by the operator.
+    pub const ROOM_COORDINATE: Self = Self {
+        required: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Residency,
+        ],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Put-aside binds the exact anchor heads. It may additionally witness the
+    /// live room directives it retires and the current holder's residency.
+    pub const ROOM_PUT_ASIDE: Self = Self {
+        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
+        optional: &[WitnessKind::Directive, WitnessKind::Residency],
+        authority: Authority::Operator,
+    };
     /// Intended birth stamp is absent and every dependency exists at its
     /// named workflow head. Atomic create-and-claim additionally carries the
     /// caller's eligibility and occupied residency predicates.
@@ -488,12 +507,16 @@ impl CommandKind {
             | Self::TaskTimeline
             | Self::BoardGraph
             | Self::DocLedger => Law::READ,
-            Self::WorkingGroupRead => Law::OPERATOR_READ,
+            Self::WorkingGroupRead
+            | Self::GlobalSettingsRead
+            | Self::VendorCatalog
+            | Self::BoardHandout
+            | Self::RoomCoordinationRead => Law::OPERATOR_READ,
             Self::WorkingGroupPut | Self::WorkingGroupRemove => Law::GROUP,
-            Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
-            Self::BoardHandout => Law::OPERATOR_READ,
             Self::RoomPost => Law::ROOM_POST,
+            Self::RoomCoordinate => Law::ROOM_COORDINATE,
+            Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord => Law::PROPOSAL_RECORD,
@@ -595,22 +618,7 @@ impl CommandKind {
                 });
             }
         }
-        if let (Self::RoomPost, Intent::RoomPost(post)) = (self, body) {
-            let target = post.room.born().ok();
-            let target_is_witnessed = expected.iter().any(|witness| {
-                matches!(
-                    (witness, target.as_ref()),
-                    (Witness::Task { task, .. }, Some(target)) if task == target
-                )
-            });
-            if !target_is_witnessed {
-                return Err(LawError::SubjectMismatch {
-                    command: self,
-                    kind: WitnessKind::Task,
-                    target: post.room.to_string(),
-                });
-            }
-        }
+        self.witnessed_room(expected, body)?;
         // Requirement and intent edits are guarded authority changes, so the
         // statement witness they carry must name the edited task itself.
         if let (Self::TaskEdit, Intent::TaskEdit(edit)) = (self, body)
@@ -683,9 +691,49 @@ impl CommandKind {
         Ok(())
     }
 
+    fn witnessed_room(self, expected: &[Witness], body: &Intent) -> Result<(), LawError> {
+        let room = match (self, body) {
+            (Self::RoomPost, Intent::RoomPost(post)) => Some(&post.room),
+            (Self::RoomCoordinate, Intent::RoomCoordinate(request)) => Some(&request.room),
+            (Self::RoomPutAside, Intent::RoomPutAside(request)) => Some(&request.room),
+            _ => None,
+        };
+        let Some(room) = room else {
+            return Ok(());
+        };
+        let target = room.born().ok();
+        let kinds: &[WitnessKind] = if self == Self::RoomPost {
+            &[WitnessKind::Task]
+        } else {
+            &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim]
+        };
+        for &kind in kinds {
+            let matched = expected.iter().any(|witness| {
+                matches!(
+                    (kind, witness, target.as_ref()),
+                    (WitnessKind::Task, Witness::Task { task, .. }, Some(target))
+                        | (WitnessKind::Workflow, Witness::Workflow { task, .. }, Some(target))
+                        | (WitnessKind::Claim, Witness::Claim { task, .. }, Some(target))
+                        if task == target
+                )
+            });
+            if !matched {
+                return Err(LawError::SubjectMismatch {
+                    command: self,
+                    kind,
+                    target: room.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     const fn non_task_law(self) -> Law {
         match self {
             Self::RoomPost => Law::ROOM_POST,
+            Self::RoomCoordinationRead => Law::OPERATOR_READ,
+            Self::RoomCoordinate => Law::ROOM_COORDINATE,
+            Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox | Self::QuoteRead => Law::READ,
