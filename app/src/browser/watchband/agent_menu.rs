@@ -312,7 +312,7 @@ fn render_facts(member: &crate::runtime::LaneMember, standing: &Standing) -> Htm
     let occupant = member.occupant.map(|value| value.to_string());
     html! {
         <dl class="agent-menu-facts">
-            {render_fact("Channel", standing.lane.to_string(), Some("agent channel"))}
+            {render_fact("Lane", standing.lane.to_string(), Some("lane"))}
             {match occupant {
                 Some(occupant) => render_fact("Occupant", occupant, Some("occupant")),
                 None => render_fact("Occupant", "vacant".to_owned(), None),

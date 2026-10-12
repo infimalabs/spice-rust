@@ -834,7 +834,7 @@ fn a_refused_fact_leaves_standing_untouched() {
 
 /// A reminder stands as one ordinary live directive.
 ///
-/// It is prose addressed to a lane and nothing else: no control channel to
+/// It is prose addressed to a lane and nothing else: no steering control to
 /// drive, no attachments to open. Asserting the absent halves is the point,
 /// because a reminder that quietly carried a control string would steer a
 /// lane through a channel no operator opened.
@@ -1277,7 +1277,7 @@ fn resolve_error(
 /// The same directive an operator would send, raised by a taste instead.
 ///
 /// The absent halves are as deliberate as the present ones: a reminder is
-/// prose addressed to a lane, so it opens no control channel and carries no
+/// prose addressed to a lane, so it opens no steering control and carries no
 /// attachment. Everything downstream reads it as the plainest send.
 fn reminded(key: &str) -> TasteReminded {
     TasteReminded {

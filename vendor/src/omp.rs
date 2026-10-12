@@ -507,7 +507,7 @@ struct SessionHeader<'a> {
 }
 
 /// The appended system prompt: the skill in full, then this worktree's
-/// steering anchor, which names the interjection channel steering rides.
+/// steering anchor, which names the interjection delivery path steering rides.
 #[must_use]
 pub fn system_prompt(launch: &Launch) -> String {
     anchored(

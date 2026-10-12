@@ -50,7 +50,7 @@
 | <a id="session-one-statement-fires-a-bag-at-most-once-however-many-of-its-triggers-hit"></a>**One statement fires a bag at most once however many of its triggers hit** | Within one match, a statement selects a bag at most once however many triggers hit, and candidates order by declared bag order then trigger, so the same prose produces the same candidate sequence. |
 | <a id="session-at-most-one-maxim-reminder-per-content-derived-key-per-compaction-epoch"></a>**At most one maxim reminder per content-derived key per compaction epoch** | At most one maxim reminder per content-derived key per compaction epoch; self-echo is suppressed. |
 | <a id="session-adjudication-is-optional"></a>**Adjudication is optional** | With `judge.enabled` absent or false, a configured trigger hit publishes directly. When judging is enabled, equivalent framings are shuffled deterministically from the content-derived evidence key, then each is attempted sequentially through a fresh bounded judge child; a reply that does not collapse to yes or no, absence, timeout, process error, or exhausted ambiguity abandons the candidate and emits nothing. |
-| <a id="session-a-confirmed-maxim-reminder-returns-as-ordinary-steering"></a>**A confirmed maxim reminder returns as ordinary steering** | A confirmed maxim reminder returns as ordinary steering; the counsel has no private channel. |
+| <a id="session-a-confirmed-maxim-reminder-returns-as-ordinary-steering"></a>**A confirmed maxim reminder returns as ordinary steering** | A confirmed maxim reminder returns as ordinary steering; the counsel has no private delivery path. |
 
 ## Metrics
 

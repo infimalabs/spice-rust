@@ -452,7 +452,7 @@ impl Ledger {
     /// taste-only branch downstream is a second definition of "live", and two
     /// definitions are what let a reminder become unretirable.
     ///
-    /// A reminder drives no control channel and carries no attachments. It is
+    /// A reminder drives no steering control and carries no attachments. It is
     /// prose addressed to a lane, which is what an operator's plainest send is.
     fn remind(&mut self, body: &TasteReminded, published: Option<Instant>) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;

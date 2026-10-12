@@ -120,7 +120,7 @@ submits at once; Drain and Remove confirm first. Effort and fast mode show the
 running value beside the next launch, and the fast-mode status names which
 level enables it; fast mode follows [the lane
 loop](../docs/product/loops.md#l-lane--the-place). Presence, lease age, current task, latest
-activity, waiting direction, the agent channel, occupant, session, and worktree
+activity, waiting direction, the lane identity, occupant, session, and worktree
 follow, beside **Create new team** and **Leave all teams**. The button, Escape,
 or a click elsewhere in the team restores the composer.
 

@@ -114,7 +114,7 @@ pub struct SteerSent {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
-    /// Control channel the directive drives; absent on plain prose.
+    /// Steering control the directive drives; absent on plain prose.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

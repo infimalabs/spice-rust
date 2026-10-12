@@ -58,4 +58,5 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **maxim** | curated taste rule | a lint rule |
 | **counsel** | taste offered as answerable steering | enforcement |
 | **oops** | private admission of a mistake | a public bug report |
+| **filing filter** | a filing route that keeps hidden intake off the ordinary queue | a conversation or scheduling deferral |
 | **study** | repo-wide analysis that can refuse a commit | a linter |

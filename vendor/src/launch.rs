@@ -84,7 +84,7 @@ pub struct SteeringKey {
 }
 
 impl SteeringKey {
-    /// The system-prompt line naming this worktree's token and the channel
+    /// The system-prompt line naming this worktree's token and the delivery path
     /// steering arrives on: an interjected user message.
     #[must_use]
     pub fn interjection_line(&self) -> String {

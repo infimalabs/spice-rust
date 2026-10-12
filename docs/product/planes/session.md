@@ -49,7 +49,7 @@ recovered yields an explicit marker, distinct from an empty intent.
 
 ### The working-state meter
 
-The meter is one line on the agent's own command stderr, a channel it already
+The meter is one line on the agent's own command stderr, an output stream it already
 reads, and it [speaks only when a visible fact changed](../invariants/session.md#session-the-meter-announces-a-durable-state-key-change).
 A meter with nothing true to report emits nothing; constant encouragement
-would train the reader to skip the channel.
+would train the reader to skip the stream.

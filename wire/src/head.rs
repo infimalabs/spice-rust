@@ -325,7 +325,7 @@ pub struct SteeringHead {
         deserialize_with = "crate::optional::present"
     )]
     pub from: Option<CanonicalUuid>,
-    /// Optional control channel driven by the directive.
+    /// Optional steering control driven by the directive.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
