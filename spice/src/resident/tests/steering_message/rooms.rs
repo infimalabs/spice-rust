@@ -6,6 +6,15 @@ use super::*;
 impl Lanes {
     /// Seed one task an MSG context can name as its room.
     pub(super) fn room(&self, stamp: &str) -> wire::TaskHandle {
+        self.seed_room(stamp, None)
+    }
+
+    /// Seed one room task `holder`'s lane holds an active claim on.
+    fn held_room(&self, stamp: &str, holder: u8) -> wire::TaskHandle {
+        self.seed_room(stamp, Some(test_uuid(holder)))
+    }
+
+    fn seed_room(&self, stamp: &str, holder: Option<CanonicalUuid>) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
         let phase: wire::Phase = "todo".parse().expect("fixture phase");
         let creation = wire::body::TaskCreationContext::unavailable(
@@ -65,8 +74,65 @@ impl Lanes {
             completion: None,
             generation: 0,
         });
+        if let Some(lane) = holder {
+            self.claim(&mut seed, &task, added, lane);
+        }
         commit(&self.bus, seed).expect("task commits");
         format!("ROOMS-{task}").parse().expect("fixture handle")
+    }
+
+    /// Stage `lane`'s active claim, with its lease, on the task `added` adds.
+    fn claim(
+        &self,
+        seed: &mut JournalWrite,
+        task: &wire::TaskStamp,
+        added: journal::PendingFact,
+        lane: CanonicalUuid,
+    ) {
+        let cell = wire::ClaimCell {
+            project: "serve.rooms".to_owned(),
+            phase: "todo".parse().expect("fixture phase"),
+        };
+        let until: wire::Instant = "2030-08-01T07:00:00.000Z"
+            .parse()
+            .expect("fixture claim expiry");
+        let won = seed
+            .fact(
+                wire::body::ClaimWon {
+                    task: task.clone(),
+                    actor: Actor::Lane(lane),
+                    lane,
+                    occupant: lane,
+                    epoch: self.epoch,
+                    cell: cell.clone(),
+                    until,
+                    git: None,
+                    recovery: None,
+                    source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+                },
+                FactCause::Pending(added),
+            )
+            .expect("claim fact is valid");
+        let epoch = self.epoch;
+        seed.claim_head(task.clone(), won, move |fact| wire::ClaimHead {
+            actor: Actor::Lane(lane),
+            fact,
+            claimed: fact,
+            cell,
+            lane,
+            occupant: lane,
+            epoch,
+            recovery: None,
+            disposition: wire::ClaimDisposition::Active,
+            acknowledged: 0,
+        });
+        seed.lease_head(task.clone(), won, move |_| wire::LeaseHead {
+            start: until,
+            renewal: until,
+            expiry: until,
+            maximum: until,
+            epoch,
+        });
     }
 
     /// Account every record now on a lane's tape, as its sweep would.
@@ -146,6 +212,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
             unreached: unreached.to_vec(),
             rooms: vec![room.clone()],
             conversed: None,
+            held_room: false,
         })
     };
     assert_eq!(
@@ -488,5 +555,65 @@ fn an_unknown_context_refuses_every_route() {
     assert!(lanes.messages().is_empty());
     assert!(lanes.rooms().is_empty());
     assert!(lanes.pending(FIRST).is_empty());
+    lanes.finish();
+}
+
+/// A packet naming the task its author's lane holds, alone or qualifying an
+/// address, is marked for the no-header guidance and publishes exactly as
+/// any room packet does; a packet naming only a room the lane does not hold,
+/// or no room, keeps the plain notice.
+#[test]
+fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
+    let lanes = Lanes::new("msg-room-held");
+    let held = lanes.held_room("dVrD244Jd", SENDER);
+    let other = lanes.room("dVrD245Kc");
+    let first = lanes.address(FIRST);
+    for packet in [
+        format!("MSG #{held}: status"),
+        format!("MSG #{other}: status"),
+        format!("MSG {first}#{held}: status"),
+        format!("MSG #{held} #{other}: status"),
+        format!("MSG {first}: status"),
+    ] {
+        lanes.author(SENDER, &packet);
+    }
+    lanes.account(SENDER);
+
+    let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let marked = outcomes
+        .iter()
+        .map(|outcome| match outcome {
+            Ok(steering::Published::Sent { held_room, .. }) => *held_room,
+            refused => panic!("every packet publishes: {refused:?}\n{diagnostics}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(marked, [true, false, true, true, false], "{diagnostics}");
+    assert_eq!(
+        lanes.rooms().len(),
+        5,
+        "each named room records its packet regardless of guidance"
+    );
+    assert_eq!(
+        lanes.pending(FIRST).len(),
+        2,
+        "addressed routes still deliver"
+    );
+
+    let notice = |held_room| steering::MessageRecordedNotice {
+        occupant: test_uuid(SENDER + 1),
+        packet: "1:0:0:1:1".to_owned(),
+        header: format!("MSG #{held}:"),
+        line: 1,
+        column: 1,
+        rooms: vec![held.to_string()],
+        queued: Vec::new(),
+        operator: false,
+        asked: None,
+        answered: None,
+        reached: 0,
+        held_room,
+    };
+    assert!(notice(true).text().contains("`MSG ADDRESS:`"));
+    assert!(!notice(false).text().contains("`MSG ADDRESS:`"));
     lanes.finish();
 }

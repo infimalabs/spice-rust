@@ -1043,6 +1043,7 @@ fn sent_queued(
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
         rooms: Vec::new(),
         conversed: None,
+        held_room: false,
     }
 }
 

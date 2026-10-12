@@ -123,6 +123,7 @@ pub(super) fn publish_conversation(
             operator: opens_item,
             result,
         }),
+        held_room: false,
     })
 }
 

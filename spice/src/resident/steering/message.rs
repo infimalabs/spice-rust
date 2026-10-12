@@ -122,6 +122,9 @@ pub(in crate::resident) enum Published {
         rooms: Vec<TaskHandle>,
         /// The conversation record an ASK, ANS, or operator-routed MSG wrote.
         conversed: Option<Conversed>,
+        /// Some `#TASK` the packet names is the task its author's lane holds
+        /// an active claim on.
+        held_room: bool,
     },
     /// An earlier read of the same packet already published it.
     Already,
@@ -599,8 +602,21 @@ fn publish_message(
             .map(|target| target.recipient)
             .collect(),
         unreached,
+        held_room: names_held_task(&record.rooms, view, packet.lane),
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
         conversed: None,
+    })
+}
+
+/// Whether any of `rooms` is the task `lane` holds an active claim on.
+fn names_held_task(rooms: &Rooms, view: &bus::TaskSnapshot, lane: CanonicalUuid) -> bool {
+    rooms.iter().any(|(_, room)| {
+        view.task_heads(room)
+            .and_then(|heads| heads.claim())
+            .is_some_and(|claim| {
+                claim.body().disposition == wire::ClaimDisposition::Active
+                    && claim.body().lane == lane
+            })
     })
 }
 

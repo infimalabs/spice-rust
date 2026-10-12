@@ -93,6 +93,7 @@ fn an_answer_returns_and_retires_its_question_once() {
                 operator: false,
                 result: Some(result.clone()),
             }),
+            held_room: false,
         })
     );
     let [delivery] = lanes
@@ -130,6 +131,7 @@ fn an_answer_returns_and_retires_its_question_once() {
                 operator: false,
                 result: Some(result.clone()),
             }),
+            held_room: false,
         })
     );
     assert!(
