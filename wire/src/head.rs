@@ -464,7 +464,6 @@ pub struct SteeringHead {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    #[serde(alias = "minted_millis")]
     pub minted_micros: Option<i64>,
 }
 

@@ -289,7 +289,10 @@ fn claim_context_recovery_requires_one_exact_session_authority() {
         lane,
         occupant,
         epoch,
-        cell: None,
+        cell: wire::ClaimCell {
+            project: "board.context".to_owned(),
+            phase: "todo".parse().expect("fixture phase"),
+        },
         until: Instant::new(jiff::Timestamp::now()).expect("fixture instant"),
         git: None,
         recovery: None,

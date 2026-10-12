@@ -287,7 +287,6 @@ fn publish_correction(
             task: statement.born.clone(),
             revision,
             dependencies: None,
-            notice: None,
         },
         FactCause::Root,
     ) {

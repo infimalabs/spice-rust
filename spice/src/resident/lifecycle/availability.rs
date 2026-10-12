@@ -11,8 +11,7 @@ pub(super) fn selected_ready(
     allocation: &board::NextConfig,
     now: Instant,
 ) -> CommandResult<Option<SelectedReady>> {
-    let recent_cell =
-        board::recent_claim_cell(entries, snapshot.facts().latest_claim(actor), actor);
+    let recent_cell = snapshot.recent_claim_cell(actor);
     let appliance = spice::version::running().map_err(Outcome::Fault)?;
     let environment = snapshot
         .environment()

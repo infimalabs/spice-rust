@@ -171,10 +171,10 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
                 lane: fixture.lane,
                 occupant: fixture.ancestor,
                 epoch: fixture.old_epoch,
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "rim.recovery".into(),
                     phase: "todo".parse().expect("fixture phase"),
-                }),
+                },
                 until: fixture.expiry,
                 git: None,
                 recovery: None,

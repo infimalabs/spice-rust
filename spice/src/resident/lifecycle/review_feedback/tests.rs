@@ -350,10 +350,10 @@ fn claim_review(
                 lane,
                 occupant,
                 epoch,
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "canvas.message".to_owned(),
                     phase: "review".parse().expect("review phase"),
-                }),
+                },
                 until: expiry,
                 git: None,
                 recovery: None,

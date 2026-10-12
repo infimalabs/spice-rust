@@ -354,30 +354,6 @@ fn movement_cost(recent: &ClaimCell, candidate: &Entry) -> u8 {
         + u8::from(recent.phase != candidate.workflow().phase)
 }
 
-/// Principal's most recently claimed cell from durable claim history.
-///
-/// `latest_win` is the position and claim-time cell of the newest claim the
-/// principal won, which the snapshot indexes so no history is decoded here.
-/// Schema-4 facts carry the exact claim-time cell. For the one legacy latest
-/// win whose fact predates that field, the migrated current claim head
-/// supplies its cell when it still names the same win. Older superseded
-/// legacy wins have no invented locality and therefore remain neutral.
-#[must_use]
-pub fn recent_claim_cell(
-    entries: &[Entry],
-    latest_win: Option<(wire::Seq, Option<ClaimCell>)>,
-    actor: &Actor,
-) -> Option<ClaimCell> {
-    let (claimed, cell) = latest_win?;
-    cell.or_else(|| {
-        entries.iter().find_map(|entry| {
-            entry.claim().and_then(|claim| {
-                (&claim.actor == actor && claim.claimed == claimed).then(|| claim.cell.clone())
-            })
-        })
-    })
-}
-
 /// Whether `entry` is an independent handoff back to its prior claimant.
 ///
 /// The allocator ranks this class last so peer work wins, without coupling the

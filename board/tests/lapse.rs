@@ -778,10 +778,10 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 lane: uuid(20),
                 occupant: uuid(21),
                 epoch: uuid(22),
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "board.possession".to_owned(),
                     phase: "todo".parse().expect("phase"),
-                }),
+                },
                 until: instant(20),
                 git: None,
                 recovery: None,

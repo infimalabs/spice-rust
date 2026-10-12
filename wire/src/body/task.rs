@@ -402,40 +402,6 @@ pub struct TaskWoken {
 }
 
 /// An unsettled task statement changed.
-pub const TASK_EDIT_FIELD_SUMMARY_CHARS: usize = 160;
-
-/// One bounded changed field carried for claimant notification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskFieldEdit {
-    /// Contract field whose value changed.
-    pub field: String,
-    /// Bounded presentation of the value the claimant accepted.
-    pub before: String,
-    /// Bounded presentation of the replacement value.
-    pub after: String,
-}
-
-/// Claim-bound delivery authority an earlier build captured with a task edit.
-///
-/// Retained so journaled edits keep decoding. Claimants now learn of every
-/// task change through its generation, so no writer produces this.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskEditNotice {
-    /// Public handle produced by this exact statement revision.
-    pub handle: crate::TaskHandle,
-    /// Lane possessing the task when it changed.
-    pub lane: CanonicalUuid,
-    /// Fact that established the claim generation, stable across renewal carry.
-    pub claim: Seq,
-    /// Statement head the editor replaced.
-    pub previous: Seq,
-    /// Bounded changed fields in their stable presentation order.
-    pub changes: Vec<TaskFieldEdit>,
-}
-
-/// An unsettled task statement changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEdited {
     /// Edited task.
@@ -462,13 +428,6 @@ pub struct TaskEdited {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntentEdit>,
-    /// Claimant notice authority recorded by an earlier build; never written.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub notice: Option<TaskEditNotice>,
 }
 
 /// A task was withdrawn from the board with a recorded reason.
@@ -530,14 +489,7 @@ pub struct ClaimWon {
     /// Resident epoch that minted the claim.
     pub epoch: CanonicalUuid,
     /// Project and phase occupied when the claim was minted.
-    ///
-    /// Absence is admitted only for facts written before journal schema 4.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub cell: Option<crate::ClaimCell>,
+    pub cell: crate::ClaimCell,
     /// Lease expiry the possession runs to.
     pub until: Instant,
     /// Repository history fixed when possession was minted.

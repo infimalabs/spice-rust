@@ -80,7 +80,7 @@ fn prepare_release_publish(
     command: &wire::AdmittedCommand,
     publish: &ReleasePublish,
 ) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
-    let notes = current_notes(publish)?;
+    let notes = &publish.notes;
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
     let release = crate::release_command::admit_stage(&paths.stage, &app, notes)
@@ -124,17 +124,6 @@ fn prepare_release_publish(
         release,
         snapshot,
         state,
-    })
-}
-
-fn current_notes(publish: &ReleasePublish) -> Result<&wire::Digest, Outcome<CommandAnswer>> {
-    publish.notes.digest().ok_or_else(|| {
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-            "release::notes-identity-absent".to_owned(),
-            Some("publication-plan".to_owned()),
-            Some("the exact curated release-note digest".to_owned()),
-            Some("historical schema-4 absence".to_owned()),
-        )))
     })
 }
 
@@ -503,29 +492,5 @@ mod tests {
             panic!("a stop that did not reach dark is a protocol fault");
         };
         assert_eq!(fault.reason, "down::answer-shape");
-    }
-
-    #[test]
-    fn a_migrated_command_cannot_enter_the_current_publication_door() {
-        let publish = ReleasePublish {
-            key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .parse()
-                .expect("plan digest"),
-            manifest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                .parse()
-                .expect("manifest digest"),
-            notes: wire::ReleaseNotesIdentity::HistoricalAbsent,
-        };
-
-        let Err(Outcome::Refusal(refusal)) = current_notes(&publish) else {
-            panic!("historical note absence must refuse before stage admission")
-        };
-        assert_eq!(refusal.reason(), "release::notes-identity-absent");
-        assert_eq!(
-            refusal
-                .diagnostic()
-                .and_then(wire::RefusalDiagnostic::observed),
-            Some("historical schema-4 absence")
-        );
     }
 }

@@ -305,10 +305,10 @@ pub(super) fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor)
                 lane,
                 occupant,
                 epoch,
-                cell: Some(ClaimCell {
+                cell: ClaimCell {
                     project: "journal".to_owned(),
                     phase: phase("todo"),
-                }),
+                },
                 until: instant(),
                 git: None,
                 recovery: None,

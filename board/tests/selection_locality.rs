@@ -290,47 +290,6 @@ fn locality_is_neutral_outside_the_narrow_urgency_band() {
 }
 
 #[test]
-fn affinity_history_reads_the_indexed_newest_win_and_migrates_one_legacy_cell() {
-    let third = wire::ClaimCell {
-        project: "board.third".to_owned(),
-        phase: phase("todo"),
-    };
-    assert_eq!(board::recent_claim_cell(&[], None, &Actor::Spice), None);
-    assert_eq!(
-        board::recent_claim_cell(&[], Some((seq(3), Some(third.clone()))), &Actor::Spice),
-        Some(third),
-    );
-
-    // A legacy win without a claim-time cell borrows the migrated head's
-    // cell only while the head still names that same win.
-    let peer = peer_entry(
-        "BOARD-legacy",
-        Actor::Spice,
-        "board.beta",
-        "board.beta",
-        "todo",
-    );
-    let legacy = [peer];
-    assert_eq!(
-        board::recent_claim_cell(&legacy, Some((seq(2), None)), &Actor::Spice),
-        Some(wire::ClaimCell {
-            project: "board.beta".to_owned(),
-            phase: phase("todo"),
-        }),
-    );
-    assert_eq!(
-        board::recent_claim_cell(&legacy, Some((seq(1), None)), &Actor::Spice),
-        None,
-        "a superseded legacy win has no invented locality"
-    );
-    assert_eq!(
-        board::recent_claim_cell(&legacy, Some((seq(2), None)), &Actor::Operator),
-        None,
-        "another actor's head never supplies the cell"
-    );
-}
-
-#[test]
 fn offer_order_is_select_repeated_over_the_work_not_yet_offered() {
     let actor = Actor::Spice;
     let other = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e499"));

@@ -88,9 +88,7 @@ pub struct SteerSent {
     pub directive: CanonicalUuid,
     /// Operator submit action that may fan out into target-specific directives.
     ///
-    /// Facts written before fanout provenance omit this value. Current operator
-    /// sends always carry it; consumers must use their named compatibility rule
-    /// for an absent value rather than infer equality from transcript loci.
+    /// Every operator send carries it; peer and resident directives omit it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

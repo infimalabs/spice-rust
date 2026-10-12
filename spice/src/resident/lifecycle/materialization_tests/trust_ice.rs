@@ -222,7 +222,6 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
                 task: task.clone(),
                 revision: 2,
                 dependencies: None,
-                notice: None,
             },
             FactCause::Root,
         )
@@ -235,10 +234,10 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
                 lane: lane(),
                 occupant,
                 epoch: epoch(),
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: PROJECT.to_owned(),
                     phase: phase.clone(),
-                }),
+                },
                 until: horizon,
                 git: None,
                 recovery: None,

@@ -31,7 +31,7 @@ pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
     ResolvedTasks, Selection, blocked_handoff_until, capturable_entry, dependencies_satisfied,
     eligible_entry, environment_satisfied, is_independent_handoff, is_released_by, offer_order,
-    offer_order_at, recent_claim_cell, resolved_tasks, select, select_at, select_with_satisfied,
+    offer_order_at, resolved_tasks, select, select_at, select_with_satisfied,
     select_with_satisfied_at, selectable_entry, selectable_entry_at, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};

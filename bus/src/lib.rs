@@ -147,8 +147,6 @@ mod runtime {
         dependency_standing:
             Arc<std::collections::HashMap<journal::crossing::TaskStamp, DependencyStanding>>,
         dependency_references: Arc<std::collections::HashMap<journal::crossing::TaskStamp, usize>>,
-        legacy_recent_claim_cells:
-            Arc<std::collections::HashMap<journal::crossing::Actor, journal::crossing::ClaimCell>>,
         allocation_faults: Arc<[AllocationFault]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
@@ -309,17 +307,12 @@ mod runtime {
         }
 
         /// Principal's most recent claim-time cell without scanning task heads.
-        ///
-        /// Current facts carry the cell directly. For a legacy latest win that
-        /// omitted it, the matching current claim head supplies the migrated
-        /// cell exactly as the full-board allocator does.
         #[must_use]
         pub fn recent_claim_cell(
             &self,
             actor: &journal::crossing::Actor,
         ) -> Option<journal::crossing::ClaimCell> {
-            let (_claimed, cell) = self.facts.latest_claim(actor)?;
-            cell.or_else(|| self.legacy_recent_claim_cells.get(actor).cloned())
+            self.facts.latest_claim(actor).map(|(_claimed, cell)| cell)
         }
 
         /// Inconsistency detected while maintaining the live allocation index.

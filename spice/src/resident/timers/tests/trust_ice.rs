@@ -64,7 +64,6 @@ fn ice_claim(fixture: &Fixture) {
                 task: stamp.clone(),
                 revision: 2,
                 dependencies: None,
-                notice: None,
             },
             FactCause::Root,
         )
