@@ -279,7 +279,10 @@ fn plant_room_conversation(journal: &Journal) -> String {
             .expect("fixture publication"),
         text: "heads up".to_owned(),
         operation: wire::rooms::RoomPublicationKind::Msg {},
-        routes: Vec::new(),
+        routes: vec![wire::rooms::RoomRoute {
+            destination: wire::rooms::RoomDestination::Operator {},
+            context: None,
+        }],
         directed: Vec::new(),
         expires: "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry"),
     };
@@ -293,6 +296,88 @@ fn plant_room_conversation(journal: &Journal) -> String {
         ),
     );
     "3".to_owned()
+}
+
+#[test]
+fn current_conversations_cross_a_predecessor_schema_without_changing_authority() {
+    use wire::rooms::{
+        QuestionResultRef, RoomAuthorityStamp, RoomDestination, RoomPosted, RoomPublicationKind,
+        RoomRoute,
+    };
+
+    let mut journal = Journal::in_memory().expect("current journal opens");
+    let result = QuestionResultRef::new(
+        RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("result identity"),
+    );
+    for (micros, operation) in [
+        (1_760_000_000_000_001, RoomPublicationKind::Msg {}),
+        (
+            1_760_000_000_000_002,
+            RoomPublicationKind::Ask {
+                result,
+                deadline: "2030-04-12T19:44:09.271Z".parse().expect("deadline"),
+            },
+        ),
+    ] {
+        let mut write = crate::JournalWrite::new(
+            Actor::Operator,
+            "task:rooms".parse().expect("origin"),
+            instant(),
+            wire::Producer::CommandDoor,
+        );
+        write
+            .fact(
+                RoomPosted {
+                    publication: RoomAuthorityStamp::for_micros(micros).expect("publication"),
+                    text: "operator conversation".to_owned(),
+                    operation,
+                    routes: vec![RoomRoute {
+                        destination: RoomDestination::Operator {},
+                        context: None,
+                    }],
+                    directed: Vec::new(),
+                    expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),
+                },
+                crate::FactCause::Root,
+            )
+            .expect("publication builds");
+        journal.apply(write).expect("current publication commits");
+    }
+    let rows = |journal: &Journal| {
+        journal
+            .connection
+            .prepare(
+                "SELECT envelope AS bytes FROM fact_envelopes \
+                 UNION ALL SELECT body FROM room_conversations \
+                 UNION ALL SELECT record FROM room_items \
+                 UNION ALL SELECT head FROM room_items \
+                 UNION ALL SELECT record FROM room_results \
+                 UNION ALL SELECT head FROM room_results ORDER BY bytes",
+            )
+            .expect("conversation authority query prepares")
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .expect("conversation authority reads")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("conversation authority decodes")
+    };
+    let before = rows(&journal);
+    journal.verify().expect("current conversation verifies");
+    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+
+    let migration = crate::migrate::admit(&mut journal.connection)
+        .expect("current conversations cross")
+        .expect("predecessor crosses");
+    assert_eq!(
+        (migration.from(), migration.to()),
+        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+    );
+    assert_eq!(rows(&journal), before);
+    journal.verify().expect("crossed conversation replays");
+    assert_eq!(
+        crate::migrate::admit(&mut journal.connection).unwrap(),
+        None
+    );
+    assert_eq!(rows(&journal), before);
 }
 
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
@@ -413,7 +498,13 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
             plant_room_packet,
         ),
         ("fact_envelopes", "09d471040", "", plant_room_coordination),
-        ("fact_envelopes", "d4f4dba9d", "", plant_room_conversation),
+        (
+            "fact_envelopes",
+            "d4f4dba9d",
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
+             '$.fact.directed') AS BLOB) WHERE seq = 3",
+            plant_room_conversation,
+        ),
     ];
     assert_retained_refusals(&cases);
 }

@@ -30,8 +30,8 @@ const PREPARED: &str = "prepared";
 /// crosses or refuses the remaining retired fact, receipt,
 /// and head shapes, refuses room packet records that omit their author and
 /// directed routes, room coordination records written before the journal
-/// bound them, and room conversation records written before their lane
-/// deliveries bound to native steering directives, projects frozen
+/// bound them, and room conversation records without the current native
+/// steering delivery shape, projects frozen
 /// peer-message rooms from their creating facts into steering heads, and
 /// creates the room-authority projection, per-lane room catch-up cursors and
 /// horizons, room coordination heads, room conversation heads, operator items,

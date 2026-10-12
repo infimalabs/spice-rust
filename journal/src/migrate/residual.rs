@@ -189,16 +189,49 @@ fn refuse_unbound_provenance(transaction: &Transaction<'_>) -> Result<(), OpenEr
             "the room coordination record predates its binding to the directions it names",
         )?;
     }
+    refuse_retired_conversations(transaction)?;
+    Ok(())
+}
+
+/// Conversation facts may already carry the current delivery contract even
+/// while their journal still awaits another schema crossing. Refuse only
+/// records the current strict codec cannot admit; never infer their shape from
+/// their kind or the journal's predecessor version.
+fn refuse_retired_conversations(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+    let mut statement = transaction
+        .prepare("SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 ORDER BY seq")
+        .map_err(OpenError::Sqlite)?;
     for kind in ROOM_CONVERSATION_KINDS {
-        refuse_first(
-            transaction,
-            "fact_envelopes",
-            "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 ORDER BY seq",
-            [kind],
-            ROOM_CONVERSATION_RELEASE,
-            "the room conversation record predates binding its lane deliveries to native \
-             steering directives",
-        )?;
+        let rows = statement
+            .query_map([kind], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(OpenError::Sqlite)?;
+        for row in rows {
+            let (seq, bytes) = row.map_err(OpenError::Sqlite)?;
+            let envelope =
+                wire::decode::<wire::Envelope<wire::AnyFact>>(&bytes).map_err(|error| {
+                    retained(
+                        "fact_envelopes",
+                        seq.to_string(),
+                        ROOM_CONVERSATION_RELEASE,
+                        format!(
+                            "the room conversation record has no current delivery spelling: {error}"
+                        ),
+                    )
+                })?;
+            if !envelope.v.is_current()
+                || envelope.fact.kind().as_str() != kind
+                || Some(envelope.seq.get()) != u64::try_from(seq).ok()
+            {
+                return Err(retained(
+                    "fact_envelopes",
+                    seq.to_string(),
+                    ROOM_CONVERSATION_RELEASE,
+                    "the room conversation record disagrees with its indexed identity".to_owned(),
+                ));
+            }
+        }
     }
     Ok(())
 }
