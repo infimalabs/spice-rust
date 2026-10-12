@@ -371,7 +371,7 @@ fn render_control(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
     for moved in &answer.items {
         lines.push(format!("item {} {}", moved.item, moved.state));
     }
-    if let Some(moved) = &answer.result {
+    for moved in &answer.results {
         lines.push(format!("result {} {}", moved.result, moved.state));
     }
     if let Some(publication) = &answer.answer {
