@@ -1399,6 +1399,8 @@ impl Drop for KickDoor {
     }
 }
 
+#[cfg(test)]
+mod admission_tests;
 mod answered;
 #[cfg(test)]
 mod event_tests;
