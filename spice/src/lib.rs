@@ -38,6 +38,7 @@ pub mod placeholder;
 pub mod quote;
 pub mod repository;
 pub mod resident_lock;
+pub mod rooms;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rtk;
 #[cfg(not(target_arch = "wasm32"))]
