@@ -513,8 +513,7 @@ pub(in crate::resident) fn publish_packet(
             detail: format!("{sender} is the authoring occupant's own address"),
         });
     }
-    let Some((rooms, hunk)) = resolve_rooms(bus, packet, view, sender, identities.is_empty())?
-    else {
+    let Some((rooms, hunk)) = resolve_rooms(bus, packet, view, sender)? else {
         return Ok(Published::Already);
     };
     let (targets, unreached) =
@@ -601,21 +600,23 @@ struct Target {
 }
 
 /// Every room the packet names and, when it names any, the packet's exact
-/// transcript hunk; `None` when a packet with no directed route already
-/// recorded these bytes.
+/// transcript hunk; `None` when the packet already recorded these bytes.
+///
+/// Callers find a published directed route first; a packet whose directed
+/// routes all missed seated recipients leaves its room record as the only
+/// proof that it published.
 fn resolve_rooms(
     bus: &Bus,
     packet: &Packet<'_>,
     view: &bus::TaskSnapshot,
     sender: OccupantAddress,
-    room_only: bool,
 ) -> Result<Option<(Rooms, Option<TranscriptHunk>)>, Unpublished> {
     let rooms = packet_rooms(packet, view)?;
     let Some((_, room)) = rooms.first() else {
         return Ok(Some((rooms, None)));
     };
     let hunk = packet_hunk(bus, packet)?;
-    if room_only && recorded(bus, room, sender, &hunk)? {
+    if recorded(bus, room, sender, &hunk)? {
         return Ok(None);
     }
     Ok(Some((rooms, Some(hunk))))
