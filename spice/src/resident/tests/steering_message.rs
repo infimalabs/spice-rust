@@ -23,6 +23,9 @@ mod room_control;
 #[path = "steering_message/deadline.rs"]
 mod deadline;
 
+#[path = "steering_message/intent.rs"]
+mod intent;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
@@ -1314,11 +1317,11 @@ fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
     lanes.finish();
 }
 
-/// Tool-call intent is answer evidence, never authorship: a successor's
-/// intent header retires the MSG its lane inherited, while an MSG header in
-/// an intent publishes nothing.
+/// Tool-call intent is both answer evidence and, when it explicitly repeats a
+/// packet, packet authorship. A successor can publish one MSG and retire the
+/// MSG its lane inherited from the same settled assistant message.
 #[test]
-fn a_tool_intent_retires_an_inherited_msg_but_never_publishes_one() {
+fn a_tool_intent_publishes_an_explicit_msg_and_retires_an_inherited_one() {
     let lanes = Lanes::new("msg-tool-intent");
     let first = lanes.address(FIRST);
     let sender = lanes.address(SENDER);
@@ -1334,25 +1337,38 @@ fn a_tool_intent_retires_an_inherited_msg_but_never_publishes_one() {
         FIRST,
         &[&message.key],
         &[
-            &format!("MSG {sender}: a caption is not a packet"),
+            &format!("MSG {sender}: intent packet"),
             &format!("ACK {}: Holding.", message.key),
         ],
     );
     let (published, _) = lanes.hear(FIRST, successor);
 
-    assert!(
-        published.is_empty(),
-        "an intent publishes nothing: {published:?}"
+    assert_eq!(
+        published.len(),
+        1,
+        "the explicit intent packet publishes once"
     );
-    assert_eq!(lanes.messages().len(), 1, "only the authored MSG exists");
+    assert_eq!(lanes.messages().len(), 2, "both authored MSGs are durable");
     assert!(
         lanes.pending(FIRST).is_empty(),
-        "the intent's header retires the inherited key"
+        "the intent's ACK retires the inherited key"
     );
-    let [reply] = lanes
-        .pending(SENDER)
-        .try_into()
-        .unwrap_or_else(|pending| panic!("only the reply reaches the sender: {pending:?}"));
+    let pending = lanes.pending(SENDER);
+    assert_eq!(
+        pending.len(),
+        2,
+        "the new MSG and the reply both reach the sender lane"
+    );
+    let sent = pending
+        .iter()
+        .find(|item| item.text == "intent packet")
+        .unwrap_or_else(|| panic!("the explicit intent MSG is delivered: {pending:?}"));
+    assert_eq!(sent.from, Some(test_uuid(FIRST)));
+    assert_eq!(sent.sender.map(|sender| sender.occupant), Some(successor));
+    let reply = pending
+        .iter()
+        .find(|item| item.control.is_some())
+        .unwrap_or_else(|| panic!("the inherited MSG receives its reply: {pending:?}"));
     assert_eq!(reply.sender.map(|sender| sender.occupant), Some(successor));
     lanes.finish();
 }

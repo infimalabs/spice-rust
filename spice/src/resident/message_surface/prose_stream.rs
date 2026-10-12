@@ -36,7 +36,9 @@ pub(super) fn origin(
     let message = record.context.message.as_ref()?;
     let streamed = matches!(decoded, listen::Event::StreamedProse(_));
     let text = decoded.assistant_text()?;
-    if (streamed || matches!(decoded, listen::Event::Tool(_))) && !steer::has_acknowledgement(text)
+    if (streamed || matches!(decoded, listen::Event::Tool(_)))
+        && !steer::has_acknowledgement(text)
+        && !steer::ack::scan::has_message(text)
     {
         return None;
     }

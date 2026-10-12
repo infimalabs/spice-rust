@@ -1,11 +1,13 @@
 //! Authored MSG, ASK, and ANS packets published as peer messages and room
 //! conversation records.
 //!
-//! The only source is a complete assistant text block on the author's lane
-//! tape (`Event::StreamedProse`, OMP's `text_end`). Settled message prose
-//! repeats or paraphrases that same block, reasoning is not authored text,
-//! and a tool call's intent is a caption, so none of them is a second source.
-//! A block is complete before it is decoded, so a truncated body never sends.
+//! A complete streamed assistant text block is the ordinary source. When OMP
+//! settles an assistant message with no text block, the explicitly repeated
+//! packet in a tool call's intent is instead its only verbatim assistant text
+//! and is admitted through the same seam as ACK/NAK. Settled message prose
+//! repeats or paraphrases streamed text, reasoning is not authored text, and
+//! tool arguments are never a source. A block is complete before it is decoded,
+//! so a truncated body never sends.
 //!
 //! One packet resolves every recipient against one residency view and
 //! journals one `steer::messaged` fact per seated recipient in one guarded
@@ -1185,20 +1187,24 @@ fn authored_blocks(events: &[listen::Event]) -> impl Iterator<Item = (usize, &st
         .filter_map(|(index, event)| Some((index, packet_prose(event)?)))
 }
 
-/// The complete assistant text block `event` carries, when it could hold a
+/// The complete assistant text block `event` carries, when it holds a placed
 /// packet.
 fn packet_prose(event: &listen::Event) -> Option<&str> {
-    match event {
-        listen::Event::StreamedProse(prose)
-            if prose.role == listen::ProseRole::Assistant
-                && steer::ack::scan::message::MARKERS
-                    .iter()
-                    .any(|marker| prose.text.contains(marker)) =>
-        {
-            Some(prose.text.as_str())
+    let text = match event {
+        listen::Event::StreamedProse(prose) if prose.role == listen::ProseRole::Assistant => {
+            prose.text.as_str()
         }
-        _ => None,
-    }
+        listen::Event::Tool(listen::Tool {
+            moment:
+                listen::ToolMoment::Call {
+                    intent: Some(intent),
+                    ..
+                },
+            ..
+        }) => intent,
+        _ => return None,
+    };
+    steer::ack::scan::has_message(text).then_some(text)
 }
 
 /// Whether `record` carries an assistant text block that could hold a packet,

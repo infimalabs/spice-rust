@@ -2,9 +2,11 @@
 
 /// Assistant prose one transcript event presents as a quoteable message card.
 ///
-/// Ordinary assistant prose presents itself. Streamed prose and a tool-call
-/// intent present only when they carry an acknowledgement: those are the
-/// transcript shapes the resident message surface promotes into prose cards.
+/// Ordinary assistant prose presents itself. Streamed prose presents when it
+/// carries an acknowledgement. A tool-call intent presents when it carries an
+/// acknowledgement or an explicitly authored MSG, ASK, or ANS packet: OMP
+/// retains intent as the assistant message's only verbatim words when no text
+/// block survived settlement.
 #[must_use]
 pub fn quoteable(decoded: &listen::Event) -> Option<std::borrow::Cow<'_, listen::Prose>> {
     match decoded {
@@ -25,14 +27,16 @@ pub fn quoteable(decoded: &listen::Event) -> Option<std::borrow::Cow<'_, listen:
                 },
             locus,
             ..
-        }) if steer::has_acknowledgement(intent) => Some(std::borrow::Cow::Owned(listen::Prose {
-            role: listen::ProseRole::Assistant,
-            text: intent.clone(),
-            phase: None,
-            media: Vec::new(),
-            external_media: Vec::new(),
-            locus: *locus,
-        })),
+        }) if steer::has_acknowledgement(intent) || steer::ack::scan::has_message(intent) => {
+            Some(std::borrow::Cow::Owned(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: intent.clone(),
+                phase: None,
+                media: Vec::new(),
+                external_media: Vec::new(),
+                locus: *locus,
+            }))
+        }
         _ => None,
     }
 }

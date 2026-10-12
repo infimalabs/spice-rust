@@ -389,10 +389,22 @@ fn project_agent_event(
     }))
 }
 
-/// A tool call's intent is a caption and never sends, so only authored prose
-/// presents its MSG packets as outgoing quotes.
+/// Complete assistant prose and an explicit packet preserved as a no-prose
+/// tool intent present their MSG packets as outgoing quotes. Other tool intents
+/// remain captions and never send.
 fn presents_sends(decoded: &listen::Event) -> bool {
-    !matches!(decoded, listen::Event::Tool(_))
+    match decoded {
+        listen::Event::Tool(listen::Tool {
+            moment:
+                listen::ToolMoment::Call {
+                    intent: Some(intent),
+                    ..
+                },
+            ..
+        }) => steer::ack::scan::has_message(intent),
+        listen::Event::Tool(_) => false,
+        _ => true,
+    }
 }
 
 fn project_event_body(

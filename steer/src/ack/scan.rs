@@ -261,6 +261,27 @@ pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Ackno
     acknowledgements
 }
 
+/// Whether `prose` contains a placed MSG, ASK, or ANS header.
+///
+/// This is the allocation-free predicate for transcript surfaces that need to
+/// distinguish an explicitly authored packet from ordinary narration.
+#[must_use]
+pub fn has_message(prose: &str) -> bool {
+    if !message::MARKERS.iter().any(|marker| prose.contains(marker)) {
+        return false;
+    }
+    matches!(
+        visit_packets(prose, |_, packet| match packet {
+            Packet::Message {
+                position: Position::Placed,
+                ..
+            } => ControlFlow::Break(()),
+            Packet::Retirement(_) | Packet::Message { .. } => ControlFlow::Continue(()),
+        }),
+        ControlFlow::Break(())
+    )
+}
+
 /// Reads every placed MSG, ASK, and ANS packet, each bounded by the next
 /// placed packet.
 ///
