@@ -282,6 +282,16 @@ pub struct TaskWake {
         deserialize_with = "crate::optional::present"
     )]
     pub into: Option<String>,
+    /// Pending Plan or Design that controls a promoted `.oops` report.
+    ///
+    /// Admission records the relationship atomically with promotion and leaves
+    /// the output unauthorized.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation: Option<TaskHandle>,
     /// Wake or promote and atomically claim the resulting ready task.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,

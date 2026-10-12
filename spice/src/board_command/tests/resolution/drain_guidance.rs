@@ -249,6 +249,7 @@ fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
         &TaskWake {
             task: second,
             into: None,
+            preparation: None,
             claim: false,
         },
     ));

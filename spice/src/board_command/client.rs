@@ -656,9 +656,43 @@ fn client_wake(
     mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let into = matches.get_one::<String>("into").cloned();
         let claim = matches.get_flag("claim");
+        let preparation = matches
+            .get_one::<String>("preparation")
+            .map(|named| {
+                let handle = named.parse::<TaskHandle>().map_err(|error| {
+                    refusal(
+                        "preparation::controller-invalid",
+                        Some(named.clone()),
+                        &error.to_string(),
+                    )
+                })?;
+                let controller = named_task_heads(board, &handle)?;
+                Ok::<_, Outcome<CommandAnswer>>((
+                    controller.statement.body.handle.clone(),
+                    controller,
+                ))
+            })
+            .transpose()?;
+        if claim && preparation.is_some() {
+            return Err(refusal(
+                "task::promotion-claim-controlled",
+                Some(task.to_string()),
+                "promote controlled OOPS work without --claim; selected authorization must precede native capture",
+            ));
+        }
         let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
-        if into.is_some() || wire::is_oops_project(&heads.statement.body.project) {
+        if into.is_some()
+            || preparation.is_some()
+            || wire::is_oops_project(&heads.statement.body.project)
+        {
             expected.push(statement_witness(heads));
+        }
+        if let Some((_, controller)) = &preparation {
+            expected.extend([
+                statement_witness(controller),
+                workflow_witness(controller),
+                claim_witness(controller),
+            ]);
         }
         if claim {
             let (lane, occupant) = actor_seat(board)?;
@@ -670,6 +704,7 @@ fn client_wake(
         let body = TaskWake {
             task: task.clone(),
             into,
+            preparation: preparation.map(|(handle, _)| handle),
             claim,
         };
         Ok((

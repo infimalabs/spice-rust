@@ -912,12 +912,7 @@ async fn dispatch_action(
         } => rooms::send_group_remove(principal, writer, actions, group, *head, respond)
             .await
             .map(Some),
-        ClientAction::RoomPost {
-            room,
-            head,
-            text,
-            respond,
-        } => rooms::send_room_post(principal, writer, actions, room, *head, text, respond)
+        ClientAction::RoomPost(post) => rooms::send_room_post(principal, writer, actions, post)
             .await
             .map(Some),
         ClientAction::DrainSubmissions => {

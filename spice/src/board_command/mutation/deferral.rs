@@ -30,8 +30,8 @@ pub(in crate::board_command) fn task_defer(
     )
 }
 
-/// Wake deferred work, or promote a parked `.oops` row: into `--into` when
-/// named, otherwise into the destination its parked project resolves to.
+/// Wake deferred work, or promote a parked `.oops` row into an admitted
+/// project and, when named, under one preparation controller.
 pub(in crate::board_command) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -51,7 +51,7 @@ pub(in crate::board_command) fn task_wake(
         Err(outcome) => return outcome,
     };
     let parked = task_entry(&snapshot.entries, &wake.task).is_some_and(is_oops);
-    if wake.into.is_some() || parked {
+    if wake.into.is_some() || wake.preparation.is_some() || parked {
         return promote_oops(bus, command, &snapshot, wake, repository, projects);
     }
     change_deferral(
@@ -99,6 +99,113 @@ fn validate_promotion_entry(
     Ok(())
 }
 
+fn promotion_preparation(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    output: &Entry,
+    wake: &TaskWake,
+) -> Result<Option<wire::TaskPreparation>, Outcome<CommandAnswer>> {
+    let Some(named) = &wake.preparation else {
+        return Ok(None);
+    };
+    if wake.claim {
+        return Err(refusal(
+            "task::promotion-claim-controlled",
+            Some(output.handle().to_string()),
+            "promote controlled OOPS work without --claim; selected authorization must precede native capture",
+        ));
+    }
+    if output.statement().preparation.is_some()
+        || output.statement().authorization.is_some()
+        || output.statement().intent.is_some()
+    {
+        return Err(refusal(
+            "task::promotion-output-ineligible",
+            Some(output.handle().to_string()),
+            "control only an ordinary parked report that has no preparation or authorization authority",
+        ));
+    }
+    let controller_stamp = named.born().map_err(|error| {
+        refusal(
+            "preparation::controller-invalid",
+            Some(named.to_string()),
+            &error.to_string(),
+        )
+    })?;
+    if controller_stamp == *output.born() {
+        return Err(refusal(
+            "preparation::controller-cycle",
+            Some(named.to_string()),
+            "the promoted report cannot control itself",
+        ));
+    }
+    let Some(controller) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.born() == &controller_stamp)
+    else {
+        return Err(refusal(
+            "preparation::task-missing",
+            Some(named.to_string()),
+            "read the current board and name an existing preparation task",
+        ));
+    };
+    let controller_heads = snapshot
+        .answer
+        .tasks
+        .iter()
+        .find(|heads| heads.statement.body.born == controller_stamp)
+        .expect("validated snapshot entries and answer share task authority");
+    for witness in [
+        Witness::Task {
+            task: controller_stamp.clone(),
+            head: controller_heads.statement.position,
+        },
+        Witness::Workflow {
+            task: controller_stamp.clone(),
+            head: controller_heads.workflow.position,
+            phase: controller_heads.workflow.body.phase.clone(),
+        },
+        Witness::Claim {
+            task: controller_stamp.clone(),
+            head: controller_heads.claim.as_ref().map(|claim| claim.position),
+        },
+    ] {
+        if !command.expected().contains(&witness) {
+            return Err(refusal(
+                "preparation::witness-missing",
+                Some(format!("{witness:?}")),
+                "read the current controller authority and retry the exact promotion",
+            ));
+        }
+    }
+    if controller.workflow().status != "pending"
+        || controller.workflow().completion.is_some()
+        || controller
+            .claim()
+            .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
+        || !(controller.statement().intent == Some(wire::TaskIntent::Design)
+            || super::super::planning::requires_construction(
+                controller.statement().intent,
+                &controller.workflow().flow,
+            ))
+    {
+        return Err(refusal(
+            "preparation::controller-ineligible",
+            Some(controller.handle().to_string()),
+            "choose a pending, unclaimed Plan or Design as the grooming batch controller",
+        ));
+    }
+    Ok(Some(wire::TaskPreparation {
+        parent: controller_stamp.clone(),
+        controller: controller.statement().preparation.as_ref().map_or_else(
+            || controller_stamp.clone(),
+            |value| value.controller.clone(),
+        ),
+        construction: output.born().clone(),
+    }))
+}
+
 fn append_promotion(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
@@ -132,8 +239,21 @@ fn append_promotion(
             FactCause::Pending(woken),
         )
         .map_err(|error| store_fault("task::promotion-edit-build", &error.to_string()))?;
+    let statement_fact = if let Some(preparation) = statement.preparation.clone() {
+        write
+            .fact(
+                OutputControlled {
+                    output: entry.born().clone(),
+                    preparation,
+                },
+                FactCause::Pending(edited),
+            )
+            .map_err(|error| store_fault("task::promotion-control-build", &error.to_string()))?
+    } else {
+        edited
+    };
     write.workflow_head(entry.born().clone(), woken, move |_| workflow);
-    write.task_head(edited, move |position| TaskHead {
+    write.task_head(statement_fact, move |position| TaskHead {
         revision: position,
         ..statement
     });
@@ -181,12 +301,17 @@ fn promote_oops(
     if let Err(outcome) = validate_promotion_entry(entry, command) {
         return outcome;
     }
+    let preparation = match promotion_preparation(snapshot, command, entry, wake) {
+        Ok(preparation) => preparation,
+        Err(outcome) => return outcome,
+    };
     let project = match promotion_destination(entry, wake.into.as_deref(), projects) {
         Ok(project) => project,
         Err(outcome) => return outcome,
     };
     let mut statement = entry.statement().clone();
     statement.project = project.as_str().to_owned();
+    statement.preparation = preparation;
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
     let post = match Entry::new(

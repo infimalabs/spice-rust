@@ -29,6 +29,10 @@ const DEMO_STAMP: &str = "1kKRRsDP";
 const DEMO_TITLE: &str = "Add machine-readable status output";
 const DEMO_PROJECT: &str = "rim.spice.demo";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
+const DEMO_OOPS_BATCH_STAMP: &str = "1kKRRsDQ";
+const DEMO_OOPS_REPORT_STAMP: &str = "1kKRRsDR";
+const DEMO_OOPS_BATCH_TITLE: &str = "Groom retained OOPS reports";
+const DEMO_OOPS_REPORT_TITLE: &str = "Observed command friction";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";
 const DEMO_OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116414";
@@ -633,6 +637,7 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
     let task: wire::TaskHandle = DEMO_TASK.parse().expect("demo task handle is valid");
     let previous = seed_task(&mut journal, &task)?;
     seed_turns(&mut journal, &task, previous)?;
+    seed_oops_group(&mut journal)?;
     seed_lanes(&mut journal, root)?;
     journal
         .verify()
@@ -707,6 +712,138 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         generation: 0,
     });
     Ok(journal.apply(write).map_err(commit_failure)?.last())
+}
+
+fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
+    let batch: wire::TaskStamp = DEMO_OOPS_BATCH_STAMP
+        .parse()
+        .expect("demo OOPS batch stamp is valid");
+    let report: wire::TaskStamp = DEMO_OOPS_REPORT_STAMP
+        .parse()
+        .expect("demo OOPS report stamp is valid");
+    seed_grooming_task(
+        journal,
+        batch.clone(),
+        DEMO_OOPS_BATCH_TITLE,
+        DEMO_PROJECT,
+        Some(wire::TaskIntent::Design),
+        &["design", "review"],
+        "2026-07-11T05:04:00.000000Z",
+    )?;
+    seed_grooming_task(
+        journal,
+        report,
+        DEMO_OOPS_REPORT_TITLE,
+        ".oops",
+        None,
+        &["plan"],
+        "2026-07-11T05:05:00.000000Z",
+    )?;
+    let origin: wire::Origin = format!("task:{batch}")
+        .parse()
+        .expect("demo OOPS group origin is valid");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        origin,
+        instant("2026-07-11T05:06:00.000000Z"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::WorkingGroupStored {
+                group: wire::rooms::WorkingGroup {
+                    group: wire::rooms::RoomAuthorityStamp::for_micros(1_783_748_760_000_000)
+                        .expect("demo OOPS group stamp is valid"),
+                    name: "OOPS".to_owned(),
+                    anchors: vec![batch],
+                },
+            },
+            FactCause::Root,
+        )
+        .map_err(build_failure)?;
+    journal.apply(write).map_err(commit_failure)?;
+    Ok(())
+}
+
+fn seed_grooming_task(
+    journal: &mut journal::Journal,
+    born: wire::TaskStamp,
+    title: &str,
+    project: &str,
+    intent: Option<wire::TaskIntent>,
+    flow: &[&str],
+    at: &str,
+) -> DemoResult<()> {
+    let phases = flow
+        .iter()
+        .map(|phase| phase.parse().expect("demo grooming phase is valid"))
+        .collect::<Vec<wire::Phase>>();
+    let phase = phases[0].clone();
+    let origin: wire::Origin = format!("task:{born}")
+        .parse()
+        .expect("demo grooming task origin is valid");
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        instant(at),
+        Producer::CommandDoor,
+    );
+    let added = write
+        .fact(
+            body::TaskAdded {
+                preparation: None,
+                intent,
+                task: born.clone(),
+                title: title.to_owned(),
+                description: None,
+                acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
+                project: project.to_owned(),
+                tags: vec!["demo".to_owned()],
+                depends: Vec::new(),
+                flow: phases.clone(),
+                phase: phase.clone(),
+                revision: 1,
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
+            },
+            FactCause::Root,
+        )
+        .map_err(build_failure)?;
+    let statement_task = born.clone();
+    let workflow_task = born;
+    let statement_title = title.to_owned();
+    let statement_project = project.to_owned();
+    write.task_head(added, move |revision| TaskHead {
+        preparation: None,
+        authorization: None,
+        intent,
+        born: statement_task,
+        queue_origin: revision,
+        title: statement_title,
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        project: statement_project,
+        tags: vec!["demo".to_owned()],
+        dependencies: Vec::new(),
+        provenance: origin,
+        creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
+        revision,
+    });
+    write.workflow_head(workflow_task, added, move |_| WorkflowHead {
+        flow: phases,
+        phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+        generation: 0,
+    });
+    journal.apply(write).map_err(commit_failure)?;
+    Ok(())
 }
 
 fn seed_turns(

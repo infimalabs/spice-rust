@@ -469,7 +469,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["room", "post"],
-        "room post HANDLE TEXT",
+        "room post HANDLE [TEXT] [--report HANDLE...] [--disposition DISPOSITION] \
+         [--cause TEXT] [--exceptions TEXT] [--uncertainty TEXT]",
         Command,
         [RoomPublished],
         Reply,
@@ -758,10 +759,10 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "wake"],
-        "task wake HANDLE [--into PROJECT] [--claim]",
+        "task wake HANDLE [--into PROJECT] [--preparation HANDLE] [--claim]",
         OperatorOrLane,
         Command,
-        [TaskWoken, TaskEdited, ClaimWon],
+        [TaskWoken, TaskEdited, OutputControlled, ClaimWon],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
         Reply,

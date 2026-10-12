@@ -93,6 +93,17 @@ is restored only while nothing else holds focus. Incoming cards, receipts,
 conclusions, participant changes, and late hydration never mount, close,
 reorder, or focus a console.
 
+An open, pending Design room also exposes bounded OOPS grooming. Each record
+names the exact parked reports it considered, one of `duplicate`, `no-work`,
+`deferred-for-later`, `covered`, or `proposed-work`, its evidenced cause, and
+any exceptions or uncertainty. Recording changes no report workflow;
+`deferred-for-later` has no wake time. A proposed report is promoted through
+`spice task wake REPORT --preparation DESIGN`, which atomically makes it a
+controlled, unauthorized output. Its card continues to show authorization
+pending until an accepted candidate receives separate selected authorization.
+A concluded Design accepts no later grooming; start a new Design room for a
+later batch.
+
 ## Resident topology in the global menu
 
 The Spice view leads with connection state, the inspectable version stack, and

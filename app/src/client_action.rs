@@ -8,6 +8,18 @@ pub(crate) type GroupResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::WorkingGroupChange, String>)>;
 pub(crate) type RoomPostResponse = std::rc::Rc<dyn Fn(Result<wire::rooms::RoomPostAnswer, String>)>;
 
+/// One complete room publication request retained by the bounded action mailbox.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) struct RoomPostAction {
+    pub(crate) room: TaskHandle,
+    pub(crate) head: wire::Seq,
+    pub(crate) text: String,
+    pub(crate) grooming: Option<wire::rooms::OopsGrooming>,
+    /// Current statement heads aligned with `grooming.reports`.
+    pub(crate) report_heads: Vec<wire::Seq>,
+    pub(crate) respond: RoomPostResponse,
+}
+
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
     Jobs {
@@ -30,13 +42,8 @@ pub(crate) enum ClientAction {
         head: wire::Seq,
         respond: GroupResponse,
     },
-    /// Publish operator-authored text to one task room.
-    RoomPost {
-        room: TaskHandle,
-        head: wire::Seq,
-        text: String,
-        respond: RoomPostResponse,
-    },
+    /// Publish operator-authored text or one typed OOPS disposition to a task room.
+    RoomPost(RoomPostAction),
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     GlobalSettings(GlobalSettingsSet),

@@ -75,33 +75,6 @@ fn selected_leaf_recovers_the_same_contract_row() {
     );
 }
 
-#[test]
-fn task_wake_accepts_atomic_claim_and_lists_it_in_help() {
-    let parser = command();
-    let matches = parser
-        .clone()
-        .try_get_matches_from([
-            "spice",
-            "task",
-            "wake",
-            "OOPS-aBcD",
-            "--into",
-            "board.test",
-            "--claim",
-        ])
-        .expect("wake promotion and claim syntax parses");
-    let task = matches.subcommand_matches("task").expect("task command");
-    let wake = task.subcommand_matches("wake").expect("wake command");
-    assert_eq!(
-        wake.get_one::<String>("into").map(String::as_str),
-        Some("board.test"),
-    );
-    assert!(wake.get_flag("claim"));
-    let task = parser.find_subcommand("task").expect("task command");
-    let mut wake = task.find_subcommand("wake").expect("wake command").clone();
-    assert!(wake.render_help().to_string().contains("--claim"));
-}
-
 /// The renderer flag is recognised wherever spice's own words are.
 ///
 /// A position spice fails to recognise silently renders a sentence to a

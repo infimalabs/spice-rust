@@ -673,6 +673,7 @@
 
 .room-group-row button,
 .room-inline-actions button,
+.room-grooming button,
 .room-composer button {
   min-height: 30px;
   padding: 5px 8px;
@@ -682,6 +683,7 @@
 
 .room-group-row button:disabled,
 .room-inline-actions button:disabled,
+.room-grooming button:disabled,
 .room-composer button:disabled {
   cursor: not-allowed;
   opacity: .52;
@@ -782,6 +784,29 @@
 
 .room-card:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); }
 .room-card p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.room-grooming {
+  display: grid;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-height: 16rem;
+  padding: 8px;
+  overflow-y: auto;
+  border-block-start: var(--app-edge-soft);
+  background: var(--control-surface-soft);
+}
+
+.room-grooming label {
+  display: grid;
+  grid-template-columns: minmax(7rem, .45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.room-grooming input,
+.room-grooming select {
+  min-width: 0;
+}
 
 .room-composer {
   display: grid;

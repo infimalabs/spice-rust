@@ -76,6 +76,9 @@ enum Content {
     Linked {
         source: RoomSource,
     },
+    OopsGroomed {
+        grooming: wire::rooms::OopsGrooming,
+    },
     Unavailable {
         source: RoomSource,
         unavailable: RoomSourceUnavailable,
@@ -439,6 +442,9 @@ impl Row {
             Body::Published(RoomPublicationContent::Linked { link }) => {
                 (Content::Linked { source: link }, None)
             }
+            Body::Published(RoomPublicationContent::OopsGroomed { grooming }) => {
+                (Content::OopsGroomed { grooming }, None)
+            }
             Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
             Body::Linked(source) => (Content::Linked { source }, None),
         };
@@ -584,6 +590,23 @@ impl fmt::Display for Publication {
                 Ok(())
             }
             Content::Linked { source } => write!(formatter, "\n  linked {}", Source(source)),
+            Content::OopsGroomed { grooming } => {
+                write!(
+                    formatter,
+                    "\n  oops {} cause={:?}",
+                    grooming.disposition, grooming.cause
+                )?;
+                for report in &grooming.reports {
+                    write!(formatter, "\n  report {report}")?;
+                }
+                if !grooming.exceptions.is_empty() {
+                    write!(formatter, "\n  exceptions {:?}", grooming.exceptions)?;
+                }
+                if !grooming.uncertainty.is_empty() {
+                    write!(formatter, "\n  uncertainty {:?}", grooming.uncertainty)?;
+                }
+                Ok(())
+            }
             Content::Unavailable {
                 source,
                 unavailable,

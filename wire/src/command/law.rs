@@ -197,12 +197,14 @@ impl Law {
         authority: Authority::Connected,
     };
     /// Exact workflow and defer disposition, plus the statement head when a
-    /// parked wake also promotes the task into another project. Atomic claim
-    /// additionally carries capture eligibility and occupied residency.
+    /// parked wake promotes the task. A controlled promotion also witnesses
+    /// the pending controller's statement, workflow, and absent claim.
+    /// Atomic claim additionally carries capture eligibility and residency.
     pub const WAKE: Self = Self {
         required: &[WitnessKind::Workflow, WitnessKind::Deferral],
         optional: &[
             WitnessKind::Task,
+            WitnessKind::Claim,
             WitnessKind::Eligibility,
             WitnessKind::Residency,
         ],
@@ -598,10 +600,8 @@ impl CommandKind {
                 });
             }
         }
-        if let (
-            Self::TaskWake,
-            Intent::TaskWake(wake @ crate::intent::TaskWake { into: Some(_), .. }),
-        ) = (self, body)
+        if let (Self::TaskWake, Intent::TaskWake(wake)) = (self, body)
+            && (wake.into.is_some() || wake.preparation.is_some())
         {
             let target = wake.task.born().ok();
             let target_is_witnessed = expected.iter().any(|witness| {
