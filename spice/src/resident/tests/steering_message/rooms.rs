@@ -278,12 +278,17 @@ fn resident_catch_up_pages_two_listeners_without_waking_them() {
     assert!(first.text.contains("second joined"));
     assert!(!second.text.contains("second joined"));
     assert!(second.text.contains("first joined"));
-    land_delivery(&lanes, &mut seats, &first);
+    land_delivery(&lanes, &startup.config, &mut seats, &first);
     seats.release_all();
     lanes.finish();
 }
 
-fn land_delivery(lanes: &Lanes, seats: &mut Seats, notice: &room_catch_up::Notice) {
+fn land_delivery(
+    lanes: &Lanes,
+    config: &SurfaceConfig,
+    seats: &mut Seats,
+    notice: &room_catch_up::Notice,
+) {
     let source = serve::stream::Source::new(lanes.bus.reader(), lanes.epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let generation = publisher.batch().expect("message generation begins");
@@ -332,6 +337,13 @@ fn land_delivery(lanes: &Lanes, seats: &mut Seats, notice: &room_catch_up::Notic
             .is_none(),
         "live transcript coalescing leaves an unaccounted delivery pending"
     );
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seats, &mut diagnostics)
+        .expect("intervening commit reconciliation succeeds");
+    assert_eq!(
+        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane)).as_ref(),
+        Some(notice),
+        "an observed but unaccounted page remains the current delivery"
+    );
     let source_id = lanes
         .tape(FIRST)
         .source_id()
@@ -356,6 +368,13 @@ fn land_delivery(lanes: &Lanes, seats: &mut Seats, notice: &room_catch_up::Notic
         .expect("cursor rereads")
         .expect("exact delivery advances the cursor");
     assert_eq!(cursor.body().through.get(), notice.through.get());
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seats, &mut diagnostics)
+        .expect("recognized cursor reconciles");
+    let continuation =
+        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
+            .expect("the bounded continuation becomes current");
+    assert_ne!(continuation.text, notice.text);
+    assert!(continuation.through > notice.through);
     assert!(
         diagnostics.is_empty(),
         "{}",

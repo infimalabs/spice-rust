@@ -36,6 +36,7 @@ use steering::{InboxDelivery, ReasoningReminder};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 const KICK_BYTES: usize = 1024;
+const ROOM_CATCH_UP_PURPOSE: &str = "room-catch-up";
 const RETUNE_REPLY_BYTES: usize = 4096;
 const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -57,6 +58,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     background: Mutex<BTreeMap<String, String>>,
     /// Current resident-produced room delivery file and its exact occupant.
     room_catch_up: Mutex<Option<(PathBuf, CanonicalUuid)>>,
+    /// Exact catch-up prose observed for this occupant but not yet released by
+    /// a changed durable cursor.
+    room_catch_up_landed: Mutex<Option<String>>,
     /// Keys whose original was queued without replacement, or whose recovery
     /// was observed on the transcript. Reminders can point at that telling.
     /// Compaction drops the context and this set.
@@ -287,6 +291,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_briefing: Box::new(read_briefing),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
+            room_catch_up_landed: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
             room_catch_up: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
@@ -393,10 +398,18 @@ impl<W: Write + Send + 'static> Driver<W> {
             .room_catch_up
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some((path, occupant));
+        self.room_catch_up_landed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 
     /// Queue the current source-backed room delivery without interrupting work.
-    fn deliver_room_catch_up(&self) {
+    ///
+    /// A matching transcript record keeps its replacement slot until the
+    /// durable cursor changes. Before it lands, a compaction retries because
+    /// the provider may have discarded an unheard aside with the old context.
+    fn deliver_room_catch_up(&self, retry_unlanded: bool) {
         let configured = self
             .room_catch_up
             .lock()
@@ -405,11 +418,45 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Some((path, occupant)) = configured else {
             return;
         };
-        let Some(notice) = crate::resident::room_catch_up::read_notice(&path) else {
+        let desired = crate::resident::room_catch_up::read_notice(&path)
+            .filter(|notice| notice.occupant == occupant)
+            .map(|notice| notice.text);
+        let landed = self
+            .room_catch_up_landed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if desired.is_some() && desired == landed {
             return;
-        };
-        if notice.occupant == occupant {
-            let _ = self.background("room-catch-up", &notice.text);
+        }
+        if landed.is_some() {
+            self.room_catch_up_landed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+        }
+        if retry_unlanded && desired.is_some() {
+            self.background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(ROOM_CATCH_UP_PURPOSE);
+        }
+        let _ = self.background(ROOM_CATCH_UP_PURPOSE, desired.as_deref().unwrap_or(""));
+    }
+
+    fn observe_room_catch_up(&self, text: &str) {
+        let landed = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(ROOM_CATCH_UP_PURPOSE)
+            .filter(|message| message.as_str() == text)
+            .cloned();
+        if let Some(landed) = landed {
+            *self
+                .room_catch_up_landed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(landed);
         }
     }
 
@@ -565,8 +612,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
         self.observe_retune(decoded);
         self.observe_uri_registration(decoded);
-        // A telling seen on the transcript is now held verbatim. Background
-        // delivery also releases its replacement slot for a future notice.
+        // A telling seen on the transcript is now held verbatim. Ordinary
+        // background delivery releases its replacement slot; room catch-up
+        // holds that slot until the journal cursor proves durable recognition.
         for prose in decoded.events().iter().filter_map(|event| match event {
             Event::Prose(prose) if prose.role == ProseRole::Operator => Some(prose),
             _ => None,
@@ -581,10 +629,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .filter(|key| recognized.contains(*key))
                     .map(str::to_owned),
             );
+            self.observe_room_catch_up(&prose.text);
             self.background
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .retain(|_, message| !prose.text.contains(message.as_str()));
+                .retain(|purpose, message| {
+                    purpose == ROOM_CATCH_UP_PURPOSE || !prose.text.contains(message.as_str())
+                });
         }
         let context = decoded.context();
         let asked = match context.and_then(|context| context.dialog.as_ref()) {
@@ -649,7 +700,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             drop(delivered);
             self.interject(InboxDelivery::PostCompaction);
             self.deliver_briefing();
-            self.deliver_room_catch_up();
+            self.deliver_room_catch_up(true);
             self.reasoning_reminder
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -842,7 +893,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// to its end on a thread of its own.
     pub(in crate::resident) fn catch_up(self: &Arc<Self>) {
         self.deliver_inbox();
-        self.deliver_room_catch_up();
+        self.deliver_room_catch_up(true);
         let Some(terminal) = self.terminal.clone() else {
             return;
         };
@@ -1154,7 +1205,7 @@ pub(in crate::resident) fn listen_for_kicks(
                 while let Ok(length) = socket.recv(&mut kick) {
                     match serde_json::from_slice(&kick[..length]) {
                         Ok(Kick::Inbox) => driver.deliver_inbox(),
-                        Ok(Kick::RoomCatchUp) => driver.deliver_room_catch_up(),
+                        Ok(Kick::RoomCatchUp) => driver.deliver_room_catch_up(false),
                         Ok(Kick::Answer { request, confirmed }) => {
                             driver.answer(request, confirmed);
                         }

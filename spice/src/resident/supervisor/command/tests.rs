@@ -77,7 +77,7 @@ fn decoded(bytes: &[u8]) -> Decoded {
 }
 
 #[test]
-fn room_catch_up_retries_a_missing_delivery_and_stays_with_its_occupant() {
+fn room_catch_up_retries_only_until_its_exact_delivery_lands() {
     let sink = Sink::default();
     let driver = driver(&sink);
     let occupant = crate::resident::new_uuid();
@@ -87,12 +87,11 @@ fn room_catch_up_retries_a_missing_delivery_and_stays_with_its_occupant() {
     fs::create_dir_all(&root).expect("fixture directory");
     driver.configure_room_catch_up(path.clone(), occupant);
 
-    driver.deliver_room_catch_up();
+    driver.deliver_room_catch_up(false);
     assert!(
         sink.answered(0).is_empty(),
         "a missing delivery stays pending"
     );
-
     let write = |occupant, text: &str| {
         fs::write(
             &path,
@@ -106,27 +105,43 @@ fn room_catch_up_retries_a_missing_delivery_and_stays_with_its_occupant() {
         .expect("notice writes");
     };
     write(other, "wrong occupant");
-    driver.deliver_room_catch_up();
+    driver.deliver_room_catch_up(false);
     assert!(
         sink.answered(0).is_empty(),
         "renewal never inherits another occupant's delivery"
     );
 
     write(occupant, "retry landed");
-    driver.deliver_room_catch_up();
-    let frames = sink.answered(1);
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0]["type"], "aside");
-    assert_eq!(frames[0]["purpose"], "room-catch-up");
-    assert_eq!(frames[0]["message"], "retry landed");
-    let observed = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"retry landed"}]}}
-"#;
-    assert!(driver.observe(&decoded(observed)).is_none());
-    driver.deliver_room_catch_up();
+    driver.deliver_room_catch_up(false);
+    driver.deliver_room_catch_up(false);
+    assert_eq!(
+        sink.answered(1).len(),
+        1,
+        "ordinary kicks coalesce an aside still queued in the provider"
+    );
+    driver.deliver_room_catch_up(true);
     assert_eq!(
         sink.answered(2).len(),
         2,
-        "an observed but not yet accounted delivery releases its retry slot"
+        "compaction retries an aside with no transcript landing"
     );
+
+    let observed = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"retry landed"}]}}
+"#;
+    assert!(driver.observe(&decoded(observed)).is_none());
+    driver.deliver_room_catch_up(false);
+    driver.deliver_room_catch_up(true);
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "a landed aside remains coalesced until durable recognition"
+    );
+
+    fs::remove_file(&path).expect("durable cursor settles the notice");
+    driver.deliver_room_catch_up(false);
+    let frames = sink.answered(3);
+    assert_eq!(frames[2]["type"], "aside");
+    assert_eq!(frames[2]["purpose"], ROOM_CATCH_UP_PURPOSE);
+    assert_eq!(frames[2]["message"], "");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
