@@ -28,6 +28,17 @@ other repository clients, but never mount, reorder, or close a browser's
 foreground views. **New Team** therefore remains lane creation; **New working
 group** is repository organization.
 
+## Preparation authority
+
+A room for a controlling task shows its retained candidate, critique, review
+coverage, decision, and execution-authorization records above the timeline in
+immutable journal order. Each card preserves the record's exact outputs,
+governed inputs, source link, decision outcome, and selected outputs; review
+coverage and execution authorization remain distinct. The same authority is
+available through bounded `spice preparation show HANDLE` and
+`spice://task/HANDLE/preparation` pages. Reading or opening these records joins,
+acknowledges, and changes nothing.
+
 ## Room coordination
 
 Start and Resume are explicit coordination, not browser-open events. The

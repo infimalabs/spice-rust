@@ -2,9 +2,10 @@
 
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, ExecutionAuthorization, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon,
-    RoomMessaged, RoomPublished, RoomPutAside, WorkingGroup,
+    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
+    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
+    ProposalRef, RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered,
+    RoomHorizon, RoomMessaged, RoomPublished, RoomPutAside, WorkingGroup,
 };
 
 use super::{
@@ -279,6 +280,151 @@ impl JournalRead<'_> {
             )));
         }
         Ok(head)
+    }
+
+    /// One bounded journal-ordered page of retained preparation authority for
+    /// `controller`, strictly after `after`, through the current horizon.
+    pub fn preparation_authority_page(
+        &self,
+        controller: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(SelectedFactPage {
+                rows: Vec::new(),
+                continuation: None,
+                horizon: None,
+            });
+        };
+        let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
+        let horizon_sql = i64::try_from(horizon.get());
+        let (Ok(after), Ok(horizon_sql)) = (after, horizon_sql) else {
+            return Err(GuardError::Invalid(
+                "preparation authority cursor exceeds SQLite".to_owned(),
+            ));
+        };
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH authority(seq) AS (\
+                     SELECT head_seq FROM proposal_heads WHERE controller = ?1 \
+                     UNION \
+                     SELECT authorization.head_seq FROM authorization_heads AS authorization \
+                     JOIN proposal_heads AS decision ON decision.subject = authorization.decision \
+                     WHERE decision.controller = ?1\
+                 ) \
+                 SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
+                 FROM authority JOIN fact_envelopes AS facts ON facts.seq = authority.seq \
+                 WHERE facts.seq > ?2 AND facts.seq <= ?3 \
+                 ORDER BY facts.seq LIMIT ?4",
+            )
+            .map_err(GuardError::Store)?;
+        let probe = probe_limit(budget)?;
+        let mut rows = statement
+            .query(params![controller.as_str(), after, horizon_sql, probe])
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::new();
+        let mut decoded = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if facts.len() == budget.rows()
+                || (!facts.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes())
+            {
+                continuation = facts.last().map(|fact: &wire::Envelope<_>| fact.seq);
+                break;
+            }
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            if preparation_controller(&fact.fact).as_ref() != Some(controller) {
+                return Err(GuardError::Invalid(format!(
+                    "preparation authority index for {controller} names {} fact {seq}",
+                    fact.fact.kind()
+                )));
+            }
+            decoded = decoded.saturating_add(length);
+            facts.push(fact);
+        }
+        Ok(SelectedFactPage {
+            rows: facts,
+            continuation,
+            horizon: Some(horizon),
+        })
+    }
+
+    /// Number of retained preparation records for `controller` strictly after
+    /// `after`, through the current horizon.
+    pub fn preparation_authority_count(
+        &self,
+        controller: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(0);
+        };
+        let after = after
+            .map_or(Ok(0), |seq| i64::try_from(seq.get()))
+            .map_err(|_| {
+                GuardError::Invalid("preparation authority cursor exceeds SQLite".to_owned())
+            })?;
+        let horizon = i64::try_from(horizon.get()).map_err(|_| {
+            GuardError::Invalid("preparation authority horizon exceeds SQLite".to_owned())
+        })?;
+        read_metrics::observe_query();
+        let count = self
+            .connection
+            .query_row(
+                "WITH authority(seq) AS (\
+                     SELECT head_seq FROM proposal_heads WHERE controller = ?1 \
+                     UNION \
+                     SELECT authorization.head_seq FROM authorization_heads AS authorization \
+                     JOIN proposal_heads AS decision ON decision.subject = authorization.decision \
+                     WHERE decision.controller = ?1\
+                 ) \
+                 SELECT count(*) FROM authority WHERE seq > ?2 AND seq <= ?3",
+                params![controller.as_str(), after, horizon],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(GuardError::Store)?;
+        usize::try_from(count).map_err(|_| {
+            GuardError::Invalid(format!("preparation authority count {count} exceeds usize"))
+        })
+    }
+
+    /// Whether `position` is one retained preparation record for `controller`.
+    pub fn preparation_authority_contains(
+        &self,
+        controller: &wire::TaskStamp,
+        position: wire::Seq,
+    ) -> Result<bool, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(false);
+        };
+        let position = i64::try_from(position.get()).map_err(|_| {
+            GuardError::Invalid("preparation authority cursor exceeds SQLite".to_owned())
+        })?;
+        let horizon = i64::try_from(horizon.get()).map_err(|_| {
+            GuardError::Invalid("preparation authority horizon exceeds SQLite".to_owned())
+        })?;
+        read_metrics::observe_query();
+        self.connection
+            .query_row(
+                "WITH authority(seq) AS (\
+                     SELECT head_seq FROM proposal_heads WHERE controller = ?1 \
+                     UNION \
+                     SELECT authorization.head_seq FROM authorization_heads AS authorization \
+                     JOIN proposal_heads AS decision ON decision.subject = authorization.decision \
+                     WHERE decision.controller = ?1\
+                 ) \
+                 SELECT EXISTS(SELECT 1 FROM authority WHERE seq = ?2 AND seq <= ?3)",
+                params![controller.as_str(), position, horizon],
+                |row| row.get(0),
+            )
+            .map_err(GuardError::Store)
     }
 
     /// One logical lane's current room catch-up cursor, absent before its
@@ -680,6 +826,21 @@ fn indexed_length(
     let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
     usize::try_from(length)
         .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
+}
+
+fn preparation_controller(fact: &wire::AnyFact) -> Option<wire::TaskStamp> {
+    if let Some(body) = fact.read::<CandidateRetained>() {
+        Some(body.candidate.candidate.controller)
+    } else if let Some(body) = fact.read::<CandidateCritiqued>() {
+        Some(body.critique.critique.candidate.controller)
+    } else if let Some(body) = fact.read::<CandidateCovered>() {
+        Some(body.coverage.coverage.candidate.controller)
+    } else if let Some(body) = fact.read::<PreparationDecided>() {
+        Some(body.decision.decision.controller)
+    } else {
+        fact.read::<ExecutionAuthorized>()
+            .map(|body| body.authorization.decision.controller)
+    }
 }
 
 fn require_room<T>(

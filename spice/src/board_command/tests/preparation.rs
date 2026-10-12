@@ -38,6 +38,24 @@ fn add_controller(bus: &Bus, epoch: CanonicalUuid, name: &str, flow: Option<&str
     task
 }
 
+fn preparation_page(root: &FixtureRoot, words: &[&str]) -> serde_json::Value {
+    let matches = crate::cli::command()
+        .try_get_matches_from(["spice", "preparation", "show"].iter().chain(words))
+        .expect("preparation read parses");
+    let contract = crate::cli::selected_contract(&matches).expect("preparation read is registered");
+    let journal = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
+        .expect("fixture journal opens to read");
+    let outcome = crate::preparation_command::answer(
+        &journal,
+        crate::cli::selected_matches(&matches),
+        contract.path,
+    );
+    let Outcome::Reply(reply) = outcome else {
+        panic!("preparation read returned another outcome: {outcome:?}");
+    };
+    serde_json::to_value(reply.body).expect("preparation read encodes")
+}
+
 fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
     vec![
         statement_witness(task),
@@ -70,6 +88,67 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         &spare,
         candidate,
         &coverage_refs,
+    );
+    let first = preparation_page(&root, &[controller.as_str(), "--limit", "2"]);
+    assert_eq!(first["controller"], controller.as_str());
+    assert_eq!(first["page"]["rows"].as_array().map(Vec::len), Some(2));
+    assert_eq!(first["page"]["omission"]["shown"], 2);
+    let mut continuation: Vec<String> =
+        serde_json::from_value(first["page"]["omission"]["continuation"].clone())
+            .expect("preparation continuation is one command");
+    let limit = continuation
+        .iter()
+        .position(|word| word == "--limit")
+        .expect("continuation retains its row limit");
+    continuation[limit + 1] = "20".to_owned();
+    let words = continuation[2..]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let second = preparation_page(&root, &words);
+    assert!(second["page"]["omission"].is_null());
+    let rows = first["page"]["rows"]
+        .as_array()
+        .expect("first preparation rows")
+        .iter()
+        .chain(
+            second["page"]["rows"]
+                .as_array()
+                .expect("continued preparation rows"),
+        )
+        .collect::<Vec<_>>();
+    let record = |kind: &str| {
+        rows.iter()
+            .copied()
+            .find(|row| row["kind"] == kind)
+            .unwrap_or_else(|| panic!("preparation output names {kind}: {rows:?}"))
+    };
+    assert_eq!(
+        record("candidate")["candidate"]["outputs"],
+        serde_json::json!([
+            output.born().expect("selected output stamp"),
+            spare.born().expect("spare output stamp")
+        ])
+    );
+    assert_eq!(
+        record("critique")["critique"]["source"],
+        serde_json::to_value(&source).expect("source encodes")
+    );
+    assert!(
+        rows.iter()
+            .filter(|row| row["kind"] == "coverage")
+            .all(|row| row["coverage"]["source"] == serde_json::to_value(&source).unwrap())
+    );
+    let outcomes = rows
+        .iter()
+        .filter(|row| row["kind"] == "decision")
+        .map(|row| row["decision"]["outcome"]["kind"].as_str())
+        .collect::<Vec<_>>();
+    assert!(outcomes.contains(&Some("accepted")), "{outcomes:?}");
+    assert!(outcomes.contains(&Some("negative")), "{outcomes:?}");
+    assert_eq!(
+        record("authorization")["authorization"]["selected_outputs"],
+        serde_json::json!([output.born().expect("selected output stamp")])
     );
 
     clean(&root, bus);

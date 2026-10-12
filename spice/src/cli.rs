@@ -406,6 +406,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["group", "put"]
             | ["group", "remove"]
             | ["preparation", "retain"]
+            | ["preparation", "show"]
             | ["preparation", "critique"]
             | ["preparation", "cover"]
             | ["preparation", "decide"]

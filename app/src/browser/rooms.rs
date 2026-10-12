@@ -616,6 +616,8 @@ fn render_room(
         .unwrap_or_default();
     let post = room_post_form(runtime, controls, sender, view, room);
     let grooming = oops_grooming_form(runtime, controls, sender, room);
+    let preparation =
+        runtime.map_or_else(Html::default, |runtime| render_preparation(runtime, room));
     let reader = {
         let controls = controls.clone();
         let group = group.clone();
@@ -635,6 +637,7 @@ fn render_room(
                     <button type="button" onclick={close}>{"Close view"}</button>
                 </div>
             </header>
+            {preparation}
             <RoomReader offset={view.reader(room)} onscroll={reader}>
                 if !cards.is_empty() {
                     {for cards}
@@ -647,6 +650,84 @@ fn render_room(
             {grooming}
             {post}
         </article>
+    }
+}
+
+fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
+    let authority = runtime.room_projection().preparation();
+    let mut records = Vec::new();
+    for positioned in authority
+        .candidates
+        .values()
+        .filter(|positioned| positioned.value.candidate.controller == *controller)
+    {
+        records.push((
+            positioned.position,
+            "Retained candidate",
+            serde_json::to_string(&positioned.value).expect("candidate authority encodes"),
+        ));
+    }
+    for positioned in authority
+        .critiques
+        .values()
+        .filter(|positioned| positioned.value.critique.candidate.controller == *controller)
+    {
+        records.push((
+            positioned.position,
+            "Critique",
+            serde_json::to_string(&positioned.value).expect("critique authority encodes"),
+        ));
+    }
+    for positioned in authority
+        .coverage
+        .values()
+        .filter(|positioned| positioned.value.coverage.candidate.controller == *controller)
+    {
+        records.push((
+            positioned.position,
+            "Review coverage",
+            serde_json::to_string(&positioned.value).expect("coverage authority encodes"),
+        ));
+    }
+    for positioned in authority
+        .decisions
+        .values()
+        .filter(|positioned| positioned.value.decision.controller == *controller)
+    {
+        records.push((
+            positioned.position,
+            "Decision",
+            serde_json::to_string(&positioned.value).expect("decision authority encodes"),
+        ));
+    }
+    for positioned in authority
+        .authorizations
+        .values()
+        .filter(|positioned| positioned.value.decision.controller == *controller)
+    {
+        records.push((
+            positioned.position,
+            "Execution authorized",
+            serde_json::to_string(&positioned.value).expect("authorization authority encodes"),
+        ));
+    }
+    if records.is_empty() {
+        return Html::default();
+    }
+    records.sort_by_key(|record| record.0);
+    html! {
+        <section class="room-preparation" data-room-preparation="">
+            <header>
+                <strong>{"Preparation authority"}</strong>
+                <span>{records.len()}</span>
+            </header>
+            {for records.into_iter().map(|(position, kind, body)| html! {
+                <article class="room-card room-preparation-card" key={position.to_string()} tabindex="0">
+                    <header><strong>{kind}</strong><code>{position.to_string()}</code></header>
+                    <pre>{body}</pre>
+                </article>
+            })}
+        </section>
     }
 }
 

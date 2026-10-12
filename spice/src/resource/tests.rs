@@ -61,6 +61,10 @@ fn each_resource_runs_exactly_its_cli_read() {
             "room history TASK-dVlFq9qKp --limit 2",
         ),
         (
+            "spice://task/TASK-dVlFq9qKp/preparation?limit=2&after=Ab",
+            "preparation show TASK-dVlFq9qKp --limit 2 --after Ab",
+        ),
+        (
             "spice://task/TASK-dVlFq9qKp/ledger?max-bytes=900",
             "doc ledger TASK-dVlFq9qKp --max-bytes 900",
         ),
