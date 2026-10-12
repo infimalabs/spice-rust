@@ -229,6 +229,56 @@ fn query_keys_are_those_the_read_admits_each_once() {
 }
 
 #[test]
+fn a_task_summary_takes_no_query_and_names_the_detail_reads_that_do() {
+    for query in [
+        "limit=3",
+        "max-bytes=4000",
+        "max-text=4000",
+        "after=x",
+        "history",
+    ] {
+        let url = format!("spice://task/{HANDLE}?{query}");
+        let refused = refusal(&url);
+        let told = refused
+            .strip_prefix(url.as_str())
+            .expect("the refusal names its URL");
+        assert!(
+            told.contains(&format!("spice://task/{HANDLE}/context"))
+                && told.contains("/history")
+                && told.contains("/detail"),
+            "{url}: {refused}"
+        );
+        for key in ["limit", "max-bytes", "max-text", "after"] {
+            assert!(told.contains(key), "{url}: {refused}");
+        }
+    }
+    for (detail, flags) in [
+        ("context", &["--context"][..]),
+        ("history", &["--history"][..]),
+        ("detail", &["--context", "--history"][..]),
+    ] {
+        let url =
+            format!("spice://task/{HANDLE}/{detail}?limit=3&max-bytes=4000&max-text=4000&after=x");
+        let mut expected = vec!["task", "show", HANDLE];
+        expected.extend(flags);
+        expected.extend([
+            "--limit",
+            "3",
+            "--max-bytes",
+            "4000",
+            "--max-text",
+            "4000",
+            "--after",
+            "x",
+        ]);
+        assert_eq!(arguments(&url), expected, "{url}");
+    }
+    let summary = Query::from_arguments(&["task", "show", HANDLE].map(str::to_owned))
+        .expect("a task summary is a served read");
+    assert_eq!(summary.url(), format!("spice://task/{HANDLE}"));
+}
+
+#[test]
 fn a_context_url_without_every_coordinate_names_each_absent_one() {
     let url = "spice://session/context/S1?vendor=omp&stream=session&member=1&offset=0&limit=3";
     let refused = refusal(url);
@@ -347,7 +397,6 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
         "spice://task?max-bytes=0",
         "spice://task/TASK-dVlFq9qKp/detail?max-text=1000000",
         "spice://task/TASK-dVlFq9qKp/history?limit=-1",
-        "spice://task/TASK-dVlFq9qKp?limit=3",
     ] {
         let Ok(Request {
             resource: Resource::Read(query),
