@@ -235,9 +235,7 @@ pub(super) fn read_steering_provenance(
             at: current.at,
             context: answer_context(read, current.seq, lane, &locus)?,
         },
-        None => {
-            SteeringAnswer::Unanswered(disposition_word(presentation.head().body().disposition))
-        }
+        None => SteeringAnswer::Unanswered(presentation.head().body().disposition.as_str()),
     };
     Ok(Some(SteeringProvenance {
         presentation,
@@ -296,17 +294,6 @@ fn answer_context(
             return Ok(Err("session-undeclared"));
         };
         before = next;
-    }
-}
-
-const fn disposition_word(disposition: wire::Disposition) -> &'static str {
-    match disposition {
-        wire::Disposition::Live => "live",
-        wire::Disposition::Acked => "acked",
-        wire::Disposition::Declined => "declined",
-        wire::Disposition::Lapsed => "lapsed",
-        wire::Disposition::DeadLettered => "deadlettered",
-        wire::Disposition::Canceled => "canceled",
     }
 }
 

@@ -369,6 +369,78 @@ impl JournalRead<'_> {
             horizon: Some(horizon),
         })
     }
+
+    /// Journal position of one room publication through the current
+    /// horizon, absent when `publication` names none in `room`.
+    pub fn room_publication_seq(
+        &self,
+        room: &wire::TaskStamp,
+        publication: &RoomAuthorityStamp,
+    ) -> Result<Option<wire::Seq>, GuardError> {
+        let Some(horizon) = self.room_horizon()? else {
+            return Ok(None);
+        };
+        read_metrics::observe_query();
+        let seq = self
+            .connection
+            .query_row(
+                "SELECT seq FROM room_publications \
+                 WHERE room = ?1 AND publication = ?2 AND seq <= ?3",
+                params![room.as_str(), publication.as_str(), horizon],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        seq.map(|seq| {
+            u64::try_from(seq)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!("room publication seq {seq} is invalid"))
+                })
+        })
+        .transpose()
+    }
+
+    /// How many publications `room` holds strictly after `after`, through
+    /// the current horizon.
+    pub fn room_publication_count(
+        &self,
+        room: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
+        let Some(horizon) = self.room_horizon()? else {
+            return Ok(0);
+        };
+        let after = after
+            .map_or(Ok(0), |seq| i64::try_from(seq.get()))
+            .map_err(|_| {
+                GuardError::Invalid("room publication cursor exceeds SQLite".to_owned())
+            })?;
+        read_metrics::observe_query();
+        let count = self
+            .connection
+            .query_row(
+                "SELECT count(*) FROM room_publications \
+                 WHERE room = ?1 AND seq > ?2 AND seq <= ?3",
+                params![room.as_str(), after, horizon],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(GuardError::Store)?;
+        usize::try_from(count)
+            .map_err(|_| GuardError::Invalid(format!("room publication count {count} is invalid")))
+    }
+
+    /// The read's horizon as SQLite spells it, absent on an empty journal.
+    fn room_horizon(&self) -> Result<Option<i64>, GuardError> {
+        self.cursor
+            .map(|horizon| {
+                i64::try_from(horizon.get()).map_err(|_| {
+                    GuardError::Invalid("room publication horizon exceeds SQLite".to_owned())
+                })
+            })
+            .transpose()
+    }
 }
 
 fn probe_limit(budget: FactReadBudget) -> Result<i64, GuardError> {

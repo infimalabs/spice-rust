@@ -513,12 +513,12 @@ pub(in crate::resident) fn publish_packet(
             detail: format!("{sender} is the authoring occupant's own address"),
         });
     }
-    let Some((rooms, hunk)) = resolve_rooms(bus, packet, view, sender)? else {
+    let Some(record) = resolve_rooms(bus, packet, view, sender)? else {
         return Ok(Published::Already);
     };
     let (targets, unreached) =
         resolve_targets(bus, &residency.body().lanes, view, &directed, &identities)?;
-    if targets.is_empty() && rooms.is_empty() {
+    if targets.is_empty() && record.rooms.is_empty() {
         return Err(Unpublished::Refused {
             reason: UNAVAILABLE.to_owned(),
             detail: unreached.join("; "),
@@ -534,8 +534,7 @@ pub(in crate::resident) fn publish_packet(
         at,
         Producer::AckScanner,
     );
-    let mut lanes = Vec::with_capacity(targets.len());
-    for target in targets {
+    for target in &targets {
         let key = mint_key(minted_micros).map_err(Unpublished::Failed)?;
         minted_micros = key.minted_micros();
         proposal.guard(send_guard(
@@ -557,7 +556,7 @@ pub(in crate::resident) fn publish_packet(
             sender: packet.author,
             text: packet.body.to_owned(),
             locus: packet.locus.clone(),
-            room: target.room,
+            room: target.room.clone(),
             expires,
         };
         let pending = proposal
@@ -568,17 +567,14 @@ pub(in crate::resident) fn publish_packet(
             steer::Ledger::sent_head(&messaged.as_sent(), origin, at, seq)
                 .expect("the resolved message body builds its authority head")
         });
-        lanes.push(target.lane);
     }
-    if let Some(hunk) = hunk {
-        stage_rooms(&mut proposal, residency.position(), &rooms, &hunk)?;
-    }
+    stage_rooms(&mut proposal, residency.position(), &record, &targets)?;
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
     Ok(Published::Sent {
-        lanes,
+        lanes: targets.iter().map(|target| target.lane).collect(),
         unreached,
-        rooms: rooms.into_iter().map(|(handle, _)| handle).collect(),
+        rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
     })
 }
 
@@ -599,6 +595,14 @@ struct Target {
     room: Option<TaskStamp>,
 }
 
+/// What the rooms a packet names record of it: each room, and, when it names
+/// any, the packet's exact transcript hunk and authoring occupant.
+struct RoomRecord {
+    rooms: Rooms,
+    hunk: Option<TranscriptHunk>,
+    author: CanonicalUuid,
+}
+
 /// Every room the packet names and, when it names any, the packet's exact
 /// transcript hunk; `None` when the packet already recorded these bytes.
 ///
@@ -610,16 +614,23 @@ fn resolve_rooms(
     packet: &Packet<'_>,
     view: &bus::TaskSnapshot,
     sender: OccupantAddress,
-) -> Result<Option<(Rooms, Option<TranscriptHunk>)>, Unpublished> {
+) -> Result<Option<RoomRecord>, Unpublished> {
     let rooms = packet_rooms(packet, view)?;
-    let Some((_, room)) = rooms.first() else {
-        return Ok(Some((rooms, None)));
+    let hunk = match rooms.first() {
+        None => None,
+        Some((_, room)) => {
+            let hunk = packet_hunk(bus, packet)?;
+            if recorded(bus, room, sender, &hunk)? {
+                return Ok(None);
+            }
+            Some(hunk)
+        }
     };
-    let hunk = packet_hunk(bus, packet)?;
-    if recorded(bus, room, sender, &hunk)? {
-        return Ok(None);
-    }
-    Ok(Some((rooms, Some(hunk))))
+    Ok(Some(RoomRecord {
+        rooms,
+        hunk,
+        author: packet.author,
+    }))
 }
 
 /// Each directed route's seated target, in route order, and why each
@@ -655,15 +666,19 @@ fn resolve_targets(
     Ok((targets, unreached))
 }
 
-/// Stage one `room::messaged` record of `hunk` in each room.
+/// Stage one `room::messaged` record of the packet in each room, naming the
+/// directives its seated routes into that room opened.
 fn stage_rooms(
     proposal: &mut JournalWrite,
     residency: wire::Seq,
-    rooms: &Rooms,
-    hunk: &TranscriptHunk,
+    record: &RoomRecord,
+    targets: &[Target],
 ) -> Result<(), Unpublished> {
+    let Some(hunk) = &record.hunk else {
+        return Ok(());
+    };
     let moment = jiff::Timestamp::now().as_microsecond();
-    for ((_, room), offset) in rooms.iter().zip(0_i64..) {
+    for ((_, room), offset) in record.rooms.iter().zip(0_i64..) {
         let publication = RoomAuthorityStamp::for_micros(moment + offset).map_err(|error| {
             Unpublished::Failed(typed_store_fault(
                 "msg::room-stamp-invalid",
@@ -676,6 +691,12 @@ fn stage_rooms(
                     room: room.clone(),
                     publication,
                     hunk: hunk.clone(),
+                    author: record.author,
+                    directed: targets
+                        .iter()
+                        .filter(|target| target.room.as_ref() == Some(room))
+                        .map(|target| target.directive)
+                        .collect(),
                 },
                 FactCause::Existing(residency),
             )

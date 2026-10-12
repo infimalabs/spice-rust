@@ -429,6 +429,53 @@ fn unavailable(target: &str, reason: QuoteUnavailable) -> QuoteResolution {
     }
 }
 
+/// Why one durable vendor record cannot be decoded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordError {
+    /// No tape, source generation, member, or range holds the record.
+    Missing,
+    /// The record exists but cannot be read or decoded now.
+    Unreadable,
+}
+
+/// Decode the durable vendor record at `locus` of tape generation `source`
+/// under `root`, one lane and vendor's tape directory.
+///
+/// # Errors
+///
+/// Returns [`RecordError::Missing`] when the tape now holds another source
+/// generation or no record at `locus`, and [`RecordError::Unreadable`] when
+/// the bytes cannot be read or decoded.
+pub fn decode_record(
+    root: &Path,
+    source: CanonicalUuid,
+    locus: wire::MessageLocus,
+    dialect: listen::Dialect,
+) -> Result<listen::Decoded, RecordError> {
+    let tape = tape::Tape::open_existing(root).map_err(|error| match error {
+        tape::Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+            RecordError::Missing
+        }
+        _ => RecordError::Unreadable,
+    })?;
+    let actual_source = tape.source_id().map_err(|_| RecordError::Unreadable)?;
+    if actual_source.as_str() != source.to_string() {
+        return Err(RecordError::Missing);
+    }
+    let record_locus = tape::Locus::new(locus.member, locus.offset, locus.length);
+    let bytes = tape.read(record_locus).map_err(|error| {
+        if matches!(
+            error.refusal(),
+            Some(tape::Refusal::UnknownMember { .. } | tape::Refusal::OutOfRange { .. })
+        ) {
+            RecordError::Missing
+        } else {
+            RecordError::Unreadable
+        }
+    })?;
+    listen::decode(dialect, &bytes, record_locus).map_err(|_| RecordError::Unreadable)
+}
+
 fn resolve_tape(
     root: &Path,
     source: CanonicalUuid,
@@ -439,29 +486,10 @@ fn resolve_tape(
     reader: &BusReader,
     agent_presenter: Option<AgentProsePresenter>,
 ) -> Result<SourceQuote, SourceError> {
-    let tape = tape::Tape::open_existing(root).map_err(|error| match error {
-        tape::Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
-            SourceError::Unknown
-        }
-        _ => SourceError::Unreadable,
+    let decoded = decode_record(root, source, locus, dialect).map_err(|error| match error {
+        RecordError::Missing => SourceError::Unknown,
+        RecordError::Unreadable => SourceError::Unreadable,
     })?;
-    let actual_source = tape.source_id().map_err(|_| SourceError::Unreadable)?;
-    if actual_source.as_str() != source.to_string() {
-        return Err(SourceError::Unknown);
-    }
-    let record_locus = tape::Locus::new(locus.member, locus.offset, locus.length);
-    let bytes = tape.read(record_locus).map_err(|error| {
-        if matches!(
-            error.refusal(),
-            Some(tape::Refusal::UnknownMember { .. } | tape::Refusal::OutOfRange { .. })
-        ) {
-            SourceError::Unknown
-        } else {
-            SourceError::Unreadable
-        }
-    })?;
-    let decoded =
-        listen::decode(dialect, &bytes, record_locus).map_err(|_| SourceError::Unreadable)?;
     let event = usize::try_from(locus.event)
         .ok()
         .and_then(|event| decoded.events().get(event))
