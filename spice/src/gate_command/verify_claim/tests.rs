@@ -173,6 +173,7 @@ fn statement() -> TaskHead {
     let born = TaskStamp::for_micros(1).expect("fixture task stamp");
     TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born,
         queue_origin: seq(1),

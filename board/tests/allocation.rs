@@ -143,6 +143,7 @@ fn fixture() -> Journal {
         let statement_origin = origin.clone();
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
+            authorization: None,
             intent: None,
             born: statement_task,
             queue_origin: position,

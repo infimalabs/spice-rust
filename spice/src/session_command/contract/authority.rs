@@ -117,6 +117,7 @@ fn task_added(
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

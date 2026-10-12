@@ -16,15 +16,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::{
-    CandidateCovered, CandidateCritiqued, CandidateRetained, DecisionOutcome, ExecutionAuthorized,
-    PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
-    RoomPublicationContent, RoomPublished, RoomSource, WorkingGroupRemoved, WorkingGroupStored,
+    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
+    DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
+    RetainedCandidate, RoomPublicationContent, RoomPublished, RoomSource, WorkingGroupRemoved,
+    WorkingGroupStored,
 };
-use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
+use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
 mod sql;
 
-pub(crate) use sql::{Stored, settle_controls, write_projection};
+pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
 pub(crate) const SCHEMA_SQL: &str = r#"
@@ -155,6 +156,8 @@ pub(crate) trait Authority {
     fn grouped(&self, group: &str) -> Result<bool, Refusal>;
     /// The canonical body of one proposal head.
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal>;
+    /// The actor that recorded one proposal head.
+    fn proposal_author(&self, subject: &str) -> Result<Option<Actor>, Refusal>;
     /// Whether this output already carries an authorization.
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
@@ -227,25 +230,32 @@ impl Projection {
     }
 }
 
-/// Every task and transcript generation the history has introduced, beside
-/// the projection the history derives.
+/// Every task, transcript generation, and proposal author the history has
+/// introduced, beside the projection the history derives.
 #[derive(Default)]
 pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
+    /// Proposal head position to the actor that recorded it.
+    authors: BTreeMap<u64, Actor>,
 }
 
 impl History {
     /// Fold the complete canonical history, collecting every refusal by
     /// position instead of stopping at the first.
     pub(crate) fn rebuild<'a>(
-        facts: impl IntoIterator<Item = (Seq, &'a AnyFact)>,
+        facts: impl IntoIterator<Item = (Seq, &'a Actor, &'a AnyFact)>,
     ) -> (Projection, Vec<(Seq, Refusal)>) {
         let mut history = Self::default();
         let mut refusals = Vec::new();
-        for (seq, fact) in facts {
-            if let Err(refusal) = fold(&mut history, seq, fact) {
+        for (seq, actor, fact) in facts {
+            // A retained candidate's author decides whether later coverage is
+            // independent of it.
+            if fact.read::<CandidateRetained>().is_some() {
+                history.authors.insert(seq.get(), actor.clone());
+            }
+            if let Err(refusal) = fold(&mut history, seq, actor, fact) {
                 refusals.push((seq, refusal));
             }
         }
@@ -293,6 +303,15 @@ impl Authority for History {
             .map(|row| row.body.clone()))
     }
 
+    fn proposal_author(&self, subject: &str) -> Result<Option<Actor>, Refusal> {
+        Ok(self
+            .projection
+            .proposals
+            .get(subject)
+            .and_then(|row| self.authors.get(&row.seq))
+            .cloned())
+    }
+
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
         Ok(self.projection.authorizations.contains_key(output))
     }
@@ -317,10 +336,12 @@ pub(crate) fn subject(proposal: &ProposalRef) -> Result<String, Refusal> {
         .map_err(|_| Refusal::Unsound("proposal subject is not text".to_owned()))
 }
 
-/// Admit one fact against `authority` and apply its projection consequence.
+/// Admit one fact `actor` wrote against `authority` and apply its projection
+/// consequence.
 pub(crate) fn fold(
     authority: &mut impl Authority,
     seq: Seq,
+    actor: &Actor,
     fact: &AnyFact,
 ) -> Result<(), Refusal> {
     if let Some(body) = fact.read::<wire::rooms::OutputControlled>() {
@@ -378,24 +399,60 @@ pub(crate) fn fold(
         return record(authority, seq, &proposal, controller, &critique);
     }
     if let Some(CandidateCovered { coverage }) = fact.read() {
-        let assessed = ProposalRef::Candidate {
-            candidate: coverage.coverage.candidate.clone(),
-        };
-        require_proposal(authority, &assessed)?;
-        require_source(authority, seq, &coverage.source)?;
-        let controller = coverage.coverage.candidate.controller.to_string();
-        let proposal = ProposalRef::Coverage {
-            coverage: coverage.coverage.clone(),
-        };
-        return record(authority, seq, &proposal, controller, &coverage);
+        return cover(authority, seq, actor, coverage);
     }
     if let Some(PreparationDecided { decision }) = fact.read() {
+        require_operator(actor, "a preparation decision")?;
         return decide(authority, seq, decision);
     }
     if let Some(ExecutionAuthorized { authorization }) = fact.read() {
+        require_operator(actor, "execution authorization")?;
         return authorize(authority, seq, authorization);
     }
     Ok(())
+}
+
+fn require_operator(actor: &Actor, what: &str) -> Result<(), Refusal> {
+    if *actor == Actor::Operator {
+        return Ok(());
+    }
+    unsound(format!("{what} is operator-owned, not written by {actor}"))
+}
+
+/// Coverage authority is the principal that wrote it: the operator, an
+/// independent lane, or the candidate's own authoring lane labeled as
+/// self-review.
+fn cover(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    coverage: CandidateCoverage,
+) -> Result<(), Refusal> {
+    let assessed = ProposalRef::Candidate {
+        candidate: coverage.coverage.candidate.clone(),
+    };
+    require_proposal(authority, &assessed)?;
+    let author = authority.proposal_author(&subject(&assessed)?)?;
+    let admitted = match &coverage.authority {
+        CoverageAuthority::Operator {} => *actor == Actor::Operator,
+        CoverageAuthority::Independent { lane, .. } => {
+            *actor == Actor::Lane(*lane) && author.as_ref() != Some(actor)
+        }
+        CoverageAuthority::SelfReview { lane, .. } => {
+            *actor == Actor::Lane(*lane) && author.as_ref() == Some(actor)
+        }
+    };
+    if !admitted {
+        return unsound(format!(
+            "coverage authority disagrees with its writer {actor} and the candidate's author"
+        ));
+    }
+    require_source(authority, seq, &coverage.source)?;
+    let controller = coverage.coverage.candidate.controller.to_string();
+    let proposal = ProposalRef::Coverage {
+        coverage: coverage.coverage.clone(),
+    };
+    record(authority, seq, &proposal, controller, &coverage)
 }
 
 fn control(
@@ -541,13 +598,20 @@ fn authorize(
             "selected output {output} is not an output of the candidate"
         ));
     }
+    let mut certified = false;
     for coverage in &authorization.coverage {
-        require_proposal(
+        let coverage: CandidateCoverage = wire::decode(&require_proposal(
             authority,
             &ProposalRef::Coverage {
                 coverage: coverage.clone(),
             },
-        )?;
+        )?)?;
+        certified |= !matches!(coverage.authority, CoverageAuthority::SelfReview { .. });
+    }
+    if !certified {
+        return unsound(
+            "authorization requires independent or operator coverage; self-review alone certifies nothing",
+        );
     }
     let decision_key = subject(&decision_ref)?;
     if authority.decision_authorized(&decision_key)? {

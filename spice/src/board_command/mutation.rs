@@ -513,6 +513,7 @@ fn prepare_task(
     let at = current_instant()?;
     let statement = TaskHead {
         preparation: None,
+        authorization: None,
         intent: add.intent,
         born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),

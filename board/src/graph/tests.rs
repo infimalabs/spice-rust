@@ -27,6 +27,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         .expect("fixture origin");
     let statement = TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: task,
         queue_origin: Seq::new(1).expect("nonzero sequence"),

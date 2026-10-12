@@ -164,6 +164,17 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<TaskPreparation>,
+    /// Accepted operator decision whose execution authorization selected this
+    /// controlled output; omission leaves a controlled output gated.
+    ///
+    /// Only the controller's final positive completion admits it, in the same
+    /// fact that names this task among its exact selected outputs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub authorization: Option<crate::rooms::DecisionRef>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
@@ -215,6 +226,17 @@ pub struct WorkflowHead {
     /// a writer builds into a proposed head is not authority.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub generation: u64,
+}
+
+impl WorkflowHead {
+    /// Whether this workflow concluded positively.
+    ///
+    /// Completion counts; deletion and operator closure settle a task without
+    /// approving anything it controls.
+    #[must_use]
+    pub fn concluded_positively(&self) -> bool {
+        self.status == "completed" && self.review != "closed"
+    }
 }
 
 /// Current disposition of the most recent winning claim.

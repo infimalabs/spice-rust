@@ -304,7 +304,7 @@ fn accepted_child() -> TaskAdd {
 }
 
 #[test]
-fn implicit_plan_children_wait_for_planning_before_allocation() {
+fn implicit_plan_children_stay_gated_until_execution_authorization() {
     let (root, bus, epoch, seats) = fixture("ambient-plan-child", 2);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
@@ -338,22 +338,25 @@ fn implicit_plan_children_wait_for_planning_before_allocation() {
         [plan.born().expect("fixture plan birth")]
     );
     let worker = Actor::Lane(seats[1].lane);
-    let available = board(&bus, epoch, worker.clone());
-    let entries = actor_entries(&available).expect("board entries");
-    let subscription =
-        allocation_subscription(&available.residency.body, &worker).expect("worker subscription");
-    assert!(
-        board::select(
-            &entries,
-            &worker,
-            &subscription,
-            available.allocation_band,
-            available.recent_cell.as_ref(),
-            &available.environment(),
-        )
-        .is_none(),
-        "the held plan must keep its child out of allocation"
-    );
+    let offered = |reason: &str| {
+        let available = board(&bus, epoch, worker.clone());
+        let entries = actor_entries(&available).expect("board entries");
+        let subscription = allocation_subscription(&available.residency.body, &worker)
+            .expect("worker subscription");
+        assert!(
+            board::select(
+                &entries,
+                &worker,
+                &subscription,
+                available.allocation_band,
+                available.recent_cell.as_ref(),
+                &available.environment(),
+            )
+            .is_none(),
+            "{reason}"
+        );
+    };
+    offered("the held plan must keep its child out of allocation");
 
     let expected = progress_witnesses(&linked, at(&linked, &plan), seat.lane, seat.occupant, false)
         .expect("the linked accepted child admits plan completion");
@@ -369,17 +372,9 @@ fn implicit_plan_children_wait_for_planning_before_allocation() {
             operation: Some(completion_operation()),
         },
     ));
-    claim_task(&bus, epoch, &seats[1], &worker, &child);
-    let allocated = board(&bus, epoch, worker.clone());
-    assert_eq!(
-        at(&allocated, &child)
-            .claim
-            .as_ref()
-            .expect("child claim")
-            .body
-            .actor,
-        worker
-    );
+    offered("completion without execution authorization selects no output");
+    let settled = board(&bus, epoch, worker.clone());
+    assert_eq!(at(&settled, &child).workflow.body.status, "pending");
     clean(&root, bus);
 }
 

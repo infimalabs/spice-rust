@@ -272,6 +272,7 @@ pub(in crate::resident) fn seed_task_claim(
     let statement_phase = phase.clone();
     write.task_head(added, move |position| wire::TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

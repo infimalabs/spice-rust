@@ -741,7 +741,8 @@ fn verify_claim_index(
 
 /// Each statement head's declared intent is exactly the fold of its creation
 /// intent and the explicit intent changes its edits admitted, so no other
-/// statement publication can move it.
+/// statement publication can move it. Preparation and execution authorization
+/// likewise equal the facts that admitted them.
 fn verify_task_intents(
     connection: &Connection,
     facts: &BTreeMap<u64, FactRecord>,
@@ -749,12 +750,18 @@ fn verify_task_intents(
 ) -> Result<(), VerifyError> {
     let mut declared = BTreeMap::new();
     let mut preparations = BTreeMap::new();
+    let mut authorizations = BTreeMap::new();
     for envelope in facts.values().filter_map(|record| record.envelope.as_ref()) {
         if let Some((task, intent)) = envelope.fact.declared_intent() {
             declared.insert(task.as_str(), intent);
         }
         if let Some((task, preparation)) = envelope.fact.task_preparation() {
             preparations.insert(task.as_str(), preparation);
+        }
+        if let Some(wire::rooms::ExecutionAuthorized { authorization }) = envelope.fact.read() {
+            for output in authorization.selected_outputs {
+                authorizations.insert(output.as_str().to_owned(), authorization.decision.clone());
+            }
         }
     }
     let mut statement = connection
@@ -789,6 +796,19 @@ fn verify_task_intents(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
                 "preparation differs from its task birth and output control".to_owned(),
+            ));
+        }
+        let authorization = authorizations.get(stamp.as_str());
+        if head.authorization.as_ref() != authorization
+            || authorization.is_some_and(|decision| {
+                preparation.is_none_or(|preparation| preparation.controller != decision.controller)
+            })
+        {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                "authorization differs from the execution authorization its controller admitted"
+                    .to_owned(),
             ));
         }
         if let Some(preparation) = preparation {
@@ -907,8 +927,8 @@ fn verify_generation_positions(
             .is_some_and(|envelope| {
                 envelope
                     .fact
-                    .mutated_task()
-                    .is_some_and(|task| task.as_str() == stamp)
+                    .mutated_tasks()
+                    .any(|task| task.as_str() == stamp)
             });
         if !mutated {
             violations.push(Violation::new(

@@ -114,6 +114,26 @@ impl Authority for Stored<'_> {
             .optional()?)
     }
 
+    fn proposal_author(&self, subject: &str) -> Result<Option<wire::Actor>, Refusal> {
+        let actor = self
+            .connection
+            .query_row(
+                "SELECT fact.actor FROM proposal_heads AS proposal \
+                 JOIN fact_envelopes AS fact ON fact.seq = proposal.head_seq \
+                 WHERE proposal.subject = ?1",
+                [subject],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        actor
+            .map(|actor| {
+                actor.parse().map_err(|_| {
+                    Refusal::Unsound(format!("proposal {subject} author {actor} is not an actor"))
+                })
+            })
+            .transpose()
+    }
+
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
         self.exists(
             "SELECT 1 FROM authorization_heads WHERE output = ?1",
@@ -314,36 +334,132 @@ pub(crate) fn write_projection(
     Ok(())
 }
 
-/// Every output control in this write left its task head carrying exactly the
-/// admitted preparation at the controlling fact.
+/// Execution authorization is its controller's conclusion, so each controller
+/// it names must still be open as stored before this write's heads move; an
+/// already concluded controller can never authorize afterward.
+pub(crate) fn require_open_controllers<'a>(
+    connection: &Connection,
+    facts: impl IntoIterator<Item = &'a AnyFact>,
+) -> Result<(), Refusal> {
+    for fact in facts {
+        if let Some(wire::rooms::ExecutionAuthorized { authorization }) = fact.read() {
+            let controller = &authorization.candidate.controller;
+            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, controller)?;
+            if !workflow.is_some_and(|(_, head)| head.completion.is_none()) {
+                return unsound(format!(
+                    "controller {controller} already concluded and cannot authorize afterward"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every output control and execution authorization in this write left the
+/// task heads it names carrying exactly that authority at its fact, and no
+/// statement this write moved disagrees with the authorization projection.
+///
+/// Control writes the output's preparation. Authorization is its controller's
+/// positive completion and each selected output's statement authorization at
+/// once, so neither can land without the other, and no edit can grant,
+/// change, or drop an authorization.
 pub(crate) fn settle_controls<'a>(
     connection: &Connection,
     facts: impl IntoIterator<Item = (Seq, &'a AnyFact)>,
 ) -> Result<(), Refusal> {
+    let mut span: Option<(Seq, Seq)> = None;
     for (seq, fact) in facts {
-        let Some(control) = fact.read::<wire::rooms::OutputControlled>() else {
-            continue;
-        };
-        let body = connection
-            .query_row(
-                "SELECT body FROM task_heads WHERE stamp = ?1",
-                [control.output.as_str()],
-                |row| row.get::<_, Vec<u8>>(0),
-            )
-            .optional()?;
-        let head = body
-            .map(|body| wire::decode::<wire::TaskHead>(&body))
+        span = Some(span.map_or((seq, seq), |(first, _)| (first, seq)));
+        if let Some(control) = fact.read::<wire::rooms::OutputControlled>() {
+            let head = stored::<wire::TaskHead>(connection, STATEMENT, &control.output)?;
+            if !head.is_some_and(|(_, head)| {
+                head.revision == seq && head.preparation.as_ref() == Some(&control.preparation)
+            }) {
+                return unsound(format!(
+                    "output {} control at {seq} has no task head carrying its preparation",
+                    control.output
+                ));
+            }
+        } else if let Some(wire::rooms::ExecutionAuthorized { authorization }) = fact.read() {
+            for output in &authorization.selected_outputs {
+                let head = stored::<wire::TaskHead>(connection, STATEMENT, output)?;
+                if !head.is_some_and(|(_, head)| {
+                    head.revision == seq
+                        && head.authorization.as_ref() == Some(&authorization.decision)
+                }) {
+                    return unsound(format!(
+                        "selected output {output} authorization at {seq} has no task head \
+                         carrying its decision"
+                    ));
+                }
+            }
+            let controller = &authorization.candidate.controller;
+            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, controller)?;
+            if !workflow
+                .is_some_and(|(head_seq, head)| head_seq == seq && head.concluded_positively())
+            {
+                return unsound(format!(
+                    "authorization at {seq} is not controller {controller}'s positive completion"
+                ));
+            }
+        }
+    }
+    match span {
+        Some((first, last)) => settle_statements(connection, first, last),
+        None => Ok(()),
+    }
+}
+
+/// Each statement written in `first..=last` carries exactly the decision its
+/// output's authorization head names, or none when it has no such head.
+fn settle_statements(connection: &Connection, first: Seq, last: Seq) -> Result<(), Refusal> {
+    let mut statement = connection.prepare(
+        "SELECT statement.stamp, statement.body, authorization.decision \
+         FROM task_heads AS statement \
+         LEFT JOIN authorization_heads AS authorization ON authorization.output = statement.stamp \
+         WHERE statement.head_seq BETWEEN ?1 AND ?2",
+    )?;
+    let mut rows = statement.query(params![sql(first.get()), sql(last.get())])?;
+    while let Some(row) = rows.next()? {
+        let stamp: String = row.get(0)?;
+        let head: wire::TaskHead = wire::decode(&row.get::<_, Vec<u8>>(1)?)?;
+        let authorized: Option<String> = row.get(2)?;
+        let carried = head
+            .authorization
+            .map(|decision| super::subject(&wire::rooms::ProposalRef::Decision { decision }))
             .transpose()?;
-        if !head.is_some_and(|head| {
-            head.revision == seq && head.preparation.as_ref() == Some(&control.preparation)
-        }) {
+        if carried != authorized {
             return unsound(format!(
-                "output {} control at {seq} has no task head carrying its preparation",
-                control.output
+                "task {stamp} statement authorization disagrees with its execution authorization"
             ));
         }
     }
     Ok(())
+}
+
+const STATEMENT: &str = "task_heads";
+const WORKFLOW: &str = "workflow_heads";
+
+/// One stored task head and the position it was written at.
+fn stored<T: serde::de::DeserializeOwned>(
+    connection: &Connection,
+    table: &'static str,
+    task: &TaskStamp,
+) -> Result<Option<(Seq, T)>, Refusal> {
+    let row = connection
+        .query_row(
+            &format!("SELECT head_seq, body FROM {table} WHERE stamp = ?1"),
+            [task.as_str()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()?;
+    let Some((head_seq, body)) = row else {
+        return Ok(None);
+    };
+    let Some(head_seq) = u64::try_from(head_seq).ok().and_then(Seq::new) else {
+        return unsound(format!("{table} row {task} has no valid head position"));
+    };
+    Ok(Some((head_seq, wire::decode(&body)?)))
 }
 
 fn sql(seq: u64) -> i64 {

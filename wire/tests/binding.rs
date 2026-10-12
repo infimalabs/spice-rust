@@ -634,6 +634,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             position: seq(2),
             body: BoardStatement {
                 preparation: None,
+                authorization: None,
                 intent: None,
                 handle: handle("SPICE-1kKRRsDP"),
                 born: "1kKRRsDP".parse().expect("a task stamp"),

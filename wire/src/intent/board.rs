@@ -727,6 +727,13 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<crate::TaskPreparation>,
+    /// Accepted decision whose execution authorization selected this output.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub authorization: Option<crate::rooms::DecisionRef>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
@@ -749,6 +756,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
             preparation: statement.preparation.clone(),
+            authorization: statement.authorization.clone(),
             provenance: statement.provenance.clone(),
             creation: statement.creation.clone(),
             revision: statement.revision,
@@ -776,6 +784,7 @@ impl BoardStatement {
             dependencies: self.dependencies.clone(),
             intent: self.intent,
             preparation: self.preparation.clone(),
+            authorization: self.authorization.clone(),
             provenance: self.provenance.clone(),
             creation: self.creation.clone(),
             revision: self.revision,

@@ -475,6 +475,7 @@ fn create_followup(
     let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         preparation: planning::correction_preparation(context.reviewed_task),
+        authorization: None,
         intent: followup
             .add
             .intent

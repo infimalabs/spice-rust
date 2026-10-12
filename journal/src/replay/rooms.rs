@@ -14,7 +14,8 @@ pub(super) fn expected(
     violations: &mut Vec<Violation>,
 ) -> Projection {
     let (projection, refusals) = History::rebuild(facts.iter().filter_map(|(seq, record)| {
-        Some((wire::Seq::new(*seq)?, &record.envelope.as_ref()?.fact))
+        let envelope = record.envelope.as_ref()?;
+        Some((wire::Seq::new(*seq)?, &envelope.actor, &envelope.fact))
     }));
     for (seq, refusal) in refusals {
         violations.push(Violation::new(

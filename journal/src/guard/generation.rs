@@ -1,7 +1,7 @@
 //! The task generation, assigned where every task write commits.
 //!
 //! A transaction holding any fact that changes a task's content or workflow
-//! ([`wire::AnyFact::mutated_task`]) leaves that task's workflow generation
+//! ([`wire::AnyFact::mutated_tasks`]) leaves that task's workflow generation
 //! exactly one past where it stood, and a task created in the transaction
 //! opens at zero. Every other workflow write preserves the stored generation.
 //!
@@ -80,7 +80,7 @@ impl Ledger {
             written: BTreeSet::new(),
         };
         for (ProposedFact { fact, .. }, seq) in facts.iter().zip(assigned) {
-            if let Some(task) = fact.mutated_task() {
+            for task in fact.mutated_tasks() {
                 ledger.mutated.insert(task.to_string(), *seq);
             }
             if let Some(claim) = fact.read::<wire::body::ClaimWon>() {
