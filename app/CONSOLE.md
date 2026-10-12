@@ -11,6 +11,23 @@ restorable URL.
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
 header, composer, and stream without a nested vertical scroller.
 
+## Working groups and teams
+
+A team is resident lane topology and policy. A working group is only a
+repository-shared identity, name, and ordered list of room-anchor task birth
+stamps. It owns no lanes, roster, agent limit, claims, wake behavior, read
+permission, task lifecycle, open view, draft, focus, order, or geometry. The
+same room may appear in several groups.
+
+`spice group list` pages saved groups; `spice group put NAME [ANCHOR...]`
+creates one, while `--group GROUP` completely replaces that group's name and
+anchor order; `spice group remove GROUP` removes only the saved organization.
+Anchors resolve by immutable task birth stamp and display the task's current
+handle. An unavailable anchor remains explicit. Saved edits are visible to
+other repository clients, but never mount, reorder, or close a browser's
+foreground views. **New Team** therefore remains lane creation; **New working
+group** is repository organization.
+
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding

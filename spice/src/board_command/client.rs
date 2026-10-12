@@ -1,6 +1,8 @@
 use super::*;
 
+mod group;
 mod requirements;
+use group::{client_group_list, client_group_put, client_group_remove};
 use requirements::environment_requirements;
 
 /// Execute one generated board-family CLI leaf.
@@ -48,6 +50,9 @@ fn dispatch_client(
         ["dev", "report-page"] => client_report(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
+        ["group", "list"] => client_group_list(repository, contract, matches),
+        ["group", "put"] => client_group_put(repository, contract, matches),
+        ["group", "remove"] => client_group_remove(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
@@ -1350,6 +1355,11 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::DocLedger(ledger) => {
             read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
+        }
+        wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
+        wire::intent::Intent::WorkingGroupPut(put) => put_working_group(bus, command, put),
+        wire::intent::Intent::WorkingGroupRemove(remove) => {
+            remove_working_group(bus, command, remove)
         }
         wire::intent::Intent::TaskAdd(add) => {
             task_add(bus, command, add, repository, projects, allocation)

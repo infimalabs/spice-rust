@@ -42,6 +42,13 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
+    /// Read one exact working group or a bounded current catalog page.
+    WorkingGroupRead,
+    /// Store one complete working-group name and ordered room association.
+    WorkingGroupPut,
+    /// Remove one working group without changing any room.
+    WorkingGroupRemove,
+
     /// Read durable global app settings.
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.
@@ -454,6 +461,14 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
+    /// Exact saved-group head, or witnessed absence before creation. Task
+    /// existence witnesses are admitted for every proposed room anchor.
+    pub const GROUP: Self = Self {
+        required: &[WitnessKind::Group],
+        optional: &[WitnessKind::Existence],
+        authority: Authority::Operator,
+    };
+
     /// A new directive names the lane it lands on as it found it, occupied
     /// or vacant; there is no prior disposition to re-prove.
     pub const SEND: Self = Self {
@@ -615,6 +630,9 @@ impl CommandKind {
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
+        Self::WorkingGroupRead,
+        Self::WorkingGroupPut,
+        Self::WorkingGroupRemove,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
         Self::VendorCatalog,
@@ -691,6 +709,9 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
+            | Self::WorkingGroupRead
+            | Self::WorkingGroupPut
+            | Self::WorkingGroupRemove
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -762,6 +783,9 @@ impl CommandKind {
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
+            Self::WorkingGroupRead => "group::read",
+            Self::WorkingGroupPut => "group::put",
+            Self::WorkingGroupRemove => "group::remove",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TasteProposalAdd => "taste::proposal-add",
@@ -853,6 +877,8 @@ impl CommandKind {
             | Self::TaskTimeline
             | Self::BoardGraph
             | Self::DocLedger => Law::READ,
+            Self::WorkingGroupRead => Law::OPERATOR_READ,
+            Self::WorkingGroupPut | Self::WorkingGroupRemove => Law::GROUP,
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
@@ -976,6 +1002,46 @@ impl CommandKind {
                 }
             }
         }
+        let group = match (self, body) {
+            (Self::WorkingGroupPut, Intent::WorkingGroupPut(put)) => Some(&put.group.group),
+            (Self::WorkingGroupRemove, Intent::WorkingGroupRemove(remove)) => Some(&remove.group),
+            _ => None,
+        };
+        if let Some(group) = group {
+            let group_is_witnessed = expected.iter().any(
+                |witness| matches!(witness, Witness::Group { group: witnessed, .. } if witnessed == group),
+            );
+            if !group_is_witnessed {
+                return Err(LawError::SubjectMismatch {
+                    command: self,
+                    kind: WitnessKind::Group,
+                    target: group.to_string(),
+                });
+            }
+        }
+        if let (Self::WorkingGroupPut, Intent::WorkingGroupPut(put)) = (self, body) {
+            for anchor in &put.group.anchors {
+                let anchor_is_witnessed = expected.iter().any(
+                    |witness| matches!(witness, Witness::Existence { task } if task == anchor),
+                );
+                if !anchor_is_witnessed {
+                    return Err(LawError::SubjectMismatch {
+                        command: self,
+                        kind: WitnessKind::Existence,
+                        target: anchor.to_string(),
+                    });
+                }
+            }
+            if expected.iter().any(|witness| {
+                matches!(witness, Witness::Existence { task } if !put.group.anchors.contains(task))
+            }) {
+                return Err(LawError::SubjectMismatch {
+                    command: self,
+                    kind: WitnessKind::Existence,
+                    target: put.group.group.to_string(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -1040,6 +1106,7 @@ impl CommandKind {
                 | Self::LaneRead
                 | Self::LaneJobsRead
                 | Self::LaneJobRead
+                | Self::WorkingGroupRead
                 | Self::LaneRecall
         )
     }

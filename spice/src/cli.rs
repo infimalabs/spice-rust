@@ -175,6 +175,9 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
+        | CommandKind::WorkingGroupRead
+        | CommandKind::WorkingGroupPut
+        | CommandKind::WorkingGroupRemove
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
