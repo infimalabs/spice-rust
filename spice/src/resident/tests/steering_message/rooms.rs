@@ -121,8 +121,8 @@ impl Lanes {
 
 /// `#R` records the packet's exact bytes in R and tells only the author;
 /// `A#R` also delivers to A with R frozen; a vacant directed route stays
-/// named as unreached; equal text at another locus records again; a reread
-/// writes nothing.
+/// named as unreached, and a packet no route reaches still records in R;
+/// equal text at another locus records again; a reread writes nothing.
 #[test]
 fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     let lanes = Lanes::new("msg-room");
@@ -134,6 +134,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
         format!("MSG #{room}: for the room\n\nMSG {first}#{room} {second}#{room}: for first");
     lanes.author(SENDER, &block);
     lanes.author(SENDER, &format!("MSG #{room}: for the room"));
+    lanes.author(SENDER, &format!("MSG {second}#{room}: for no one seated"));
     lanes.account(SENDER);
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
@@ -153,6 +154,10 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
                 &[format!("{second} address::expired (its lane is vacant)")]
             ),
             recorded(&[], &[]),
+            recorded(
+                &[],
+                &[format!("{second} address::expired (its lane is vacant)")]
+            ),
         ],
         "{diagnostics}"
     );
@@ -168,7 +173,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     assert_eq!(message.room, Some(born.clone()));
     assert_eq!(lanes.pending(FIRST).len(), 1);
     let records = lanes.rooms();
-    assert_eq!(records.len(), 3, "each packet records once: {records:?}");
+    assert_eq!(records.len(), 4, "each packet records once: {records:?}");
     assert!(records.iter().all(|record| record.room == born));
     let bodies = records[..2]
         .iter()
@@ -186,8 +191,8 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     );
 
     let (reread, _) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    assert_eq!(reread, [const { Ok(steering::Published::Already) }; 3]);
-    assert_eq!(lanes.rooms().len(), 3, "a reread records nothing");
+    assert_eq!(reread, [const { Ok(steering::Published::Already) }; 4]);
+    assert_eq!(lanes.rooms().len(), 4, "a reread records nothing");
     assert_eq!(lanes.messages().len(), 1, "a reread sends nothing");
     lanes.finish();
 }
