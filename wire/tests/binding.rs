@@ -416,52 +416,6 @@ fn every_answer_decodes_alike_from_its_bytes_and_its_parsed_value() {
     }
 }
 
-#[test]
-fn task_learning_is_only_an_optional_retained_answer_shape() {
-    let retained = r#"{
-        "task": "SPICE-1kKRRsDP",
-        "status": "done",
-        "learning": {
-            "stored": 1,
-            "candidates": 2,
-            "skipped": ["rejected"]
-        }
-    }"#;
-    let answer = AnswerShape::Task
-        .decode(retained.as_bytes())
-        .expect("retained task learning decodes");
-    let CommandAnswer::Task(answer) = &answer else {
-        panic!("task answer decoded as another shape: {answer:?}");
-    };
-    let learning = answer
-        .learning
-        .as_ref()
-        .expect("retained answer carries its compatibility report");
-    assert_eq!(learning.stored, 1);
-    assert_eq!(learning.candidates, 2);
-    assert_eq!(learning.skipped, ["rejected"]);
-    assert_eq!(
-        serde_json::to_value(answer).expect("retained answer re-encodes"),
-        serde_json::from_str::<serde_json::Value>(retained).expect("retained fixture JSON")
-    );
-
-    let current = r#"{"task":"SPICE-1kKRRsDP","status":"done"}"#;
-    let current = AnswerShape::Task
-        .decode(current.as_bytes())
-        .expect("current task answer decodes");
-    let CommandAnswer::Task(current) = current else {
-        panic!("current task answer decoded as another shape: {current:?}");
-    };
-    assert!(current.learning.is_none());
-    assert!(
-        !serde_json::to_value(current)
-            .expect("current task answer encodes")
-            .as_object()
-            .expect("task answer encodes as an object")
-            .contains_key("learning")
-    );
-}
-
 /// The single board task row spelled in [`ANSWERS`], as parsed JSON.
 fn spelled_board_task() -> serde_json::Value {
     let (_, body) = ANSWERS

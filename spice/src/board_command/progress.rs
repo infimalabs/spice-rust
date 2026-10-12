@@ -228,7 +228,6 @@ fn replay_task_completion(
             status: terminal.status,
             guidance: terminal.guidance,
             completion: None,
-            learning: None,
             claim: None,
             next: terminal.next,
         }),
@@ -428,7 +427,6 @@ fn append_done(
         status,
         guidance,
         completion: None,
-        learning: None,
         claim: None,
         next,
     })
@@ -899,7 +897,6 @@ fn review_answer(
         status,
         guidance: None,
         completion: None,
-        learning: None,
         claim: None,
         next,
     }

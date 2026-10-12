@@ -440,15 +440,6 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub completion: Option<Box<TaskCompletionAnswer>>,
-    /// Compatibility-only learning report retained when decoding older answers.
-    ///
-    /// Current task completion does not produce this field.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub learning: Option<Box<TaskLearning>>,
     /// Active claim minted in the same transaction, when creation also boards the caller.
     #[serde(
         default,
@@ -481,36 +472,6 @@ pub struct TaskCompletionAnswer {
 pub enum TaskCompletionState {
     /// Mandatory evidence is executing outside the resident command loop.
     Running,
-}
-
-/// Compatibility shape for a learning report carried by an older task answer.
-///
-/// This DTO preserves retained answer decoding; it is not a current execution
-/// contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskLearning {
-    /// Records atomically retained after confirmation and eviction.
-    pub stored: u64,
-    /// Bounded candidates extracted from the exact claim-to-completion span.
-    pub candidates: u64,
-    /// One reason for each candidate the independent judge skipped.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skipped: Vec<String>,
-    /// Whole-operation skip reason when no record could be retained.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub reason: Option<String>,
-    /// Bounded diagnostic detail for the skip, when useful.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub detail: Option<String>,
 }
 
 /// The answer a claim command returns.

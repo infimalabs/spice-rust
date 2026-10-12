@@ -237,7 +237,6 @@ fn promote_oops(
         status: "promoted".to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: claim_answer,
         next,
     };
@@ -520,7 +519,6 @@ fn change_deferral<B: serde::Serialize + Clone>(
         },
         guidance: None,
         completion: None,
-        learning: None,
         claim: claim_answer,
         next,
     };

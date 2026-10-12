@@ -565,7 +565,6 @@ fn reconcile_client_recovery(
                             status: "pending".to_owned(),
                             guidance: None,
                             completion: None,
-                            learning: None,
                             claim: Some(Box::new(claim)),
                             next: None,
                         })
