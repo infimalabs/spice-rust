@@ -6,7 +6,8 @@ use wire::rooms::{
     ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
     ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
     RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomMessaged,
-    RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroup,
+    RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
+    RoomReceiptRef, WorkingGroup,
 };
 
 use super::{
@@ -661,6 +662,152 @@ impl JournalRead<'_> {
             .collect()
     }
 
+    /// At most `limit` operator items still owing a disposition, pending or
+    /// lapsed, at or after `from` in item order, with how many such items lie
+    /// at or after `from` in all.
+    pub fn open_room_items_page(
+        &self,
+        from: Option<&RoomReceiptRef>,
+        limit: usize,
+    ) -> Result<
+        (
+            Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>,
+            usize,
+        ),
+        GuardError,
+    > {
+        let from = from.map_or_else(String::new, ToString::to_string);
+        let limit = i64::try_from(limit)
+            .map_err(|_| GuardError::Invalid("operator item page exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let population = self
+            .connection
+            .query_row(
+                "SELECT count(*) FROM room_items WHERE open = 1 AND item >= ?1",
+                [&from],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(GuardError::Store)?;
+        let population = usize::try_from(population).map_err(|_| {
+            GuardError::Invalid(format!("operator item count {population} is invalid"))
+        })?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT item, head_seq, record, head FROM room_items \
+                 WHERE open = 1 AND item >= ?1 ORDER BY item LIMIT ?2",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params![from, limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut items = Vec::new();
+        for row in rows {
+            let (key, position, record, head) = row.map_err(GuardError::Store)?;
+            let (record, head) = self.conversation_row::<RoomReceiptRecord, RoomReceiptHead>(
+                "room_items",
+                "item",
+                &key,
+                position,
+                &record,
+                &head,
+            )?;
+            if record.receipt().to_string() != key || head.body.receipt().to_string() != key {
+                return Err(GuardError::Invalid(format!(
+                    "operator item indexed as {key} names another item"
+                )));
+            }
+            items.push((record, head));
+        }
+        Ok((items, population))
+    }
+
+    /// One admitted conversation publication and its journal position.
+    pub fn room_conversation(
+        &self,
+        publication: &RoomAuthorityStamp,
+    ) -> Result<Option<(wire::Seq, RoomPublication)>, GuardError> {
+        self.conversation_where("publication = ?1", publication.to_string())
+    }
+
+    /// The first conversation publication admitted strictly after `seq`.
+    ///
+    /// A lane packet's room records precede its conversation record in one
+    /// write, so this finds that record; the caller proves the match by source.
+    pub fn room_conversation_after(
+        &self,
+        seq: wire::Seq,
+    ) -> Result<Option<(wire::Seq, RoomPublication)>, GuardError> {
+        let seq = i64::try_from(seq.get())
+            .map_err(|_| GuardError::Invalid("conversation cursor exceeds SQLite".to_owned()))?;
+        self.conversation_where("head_seq > ?1 ORDER BY head_seq LIMIT 1", seq)
+    }
+
+    fn conversation_where(
+        &self,
+        condition: &'static str,
+        value: impl rusqlite::ToSql,
+    ) -> Result<Option<(wire::Seq, RoomPublication)>, GuardError> {
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(
+                &format!("SELECT head_seq, body FROM room_conversations WHERE {condition}"),
+                [value],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some((position, body)) = row else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        read_metrics::observe_decode(body.len());
+        let seq = u64::try_from(position)
+            .ok()
+            .and_then(wire::Seq::new)
+            .filter(|seq| self.cursor.is_some_and(|cursor| *seq <= cursor))
+            .ok_or_else(|| {
+                GuardError::Invalid(format!("conversation position {position} is invalid"))
+            })?;
+        let publication = wire::decode::<RoomPublication>(&body)
+            .map_err(|error| GuardError::Invalid(format!("conversation {position}: {error}")))?;
+        Ok(Some((seq, publication)))
+    }
+
+    /// The admitted envelope at `seq`, absent beyond the read cursor.
+    pub fn room_fact(
+        &self,
+        seq: wire::Seq,
+    ) -> Result<Option<wire::Envelope<wire::AnyFact>>, GuardError> {
+        if self.cursor.is_none_or(|cursor| seq > cursor) {
+            return Ok(None);
+        }
+        let seq = i64::try_from(seq.get())
+            .map_err(|_| GuardError::Invalid("fact position exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes WHERE seq = ?1",
+            )
+            .map_err(GuardError::Store)?;
+        let mut rows = statement.query([seq]).map_err(GuardError::Store)?;
+        let Some(row) = rows.next().map_err(GuardError::Store)? else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        Ok(Some(decode_bounded_fact(row, seq, 1, 2, 3)?.0))
+    }
+
     /// Every conversation head row of `table` meeting `condition`, keyed by
     /// its stored key, in key order.
     fn conversation_rows<R, H>(
@@ -792,6 +939,7 @@ impl JournalRead<'_> {
                 fact.fact.kind(),
                 wire::FactKind::RoomPublished
                     | wire::FactKind::RoomMessaged
+                    | wire::FactKind::RoomPosted
                     | wire::FactKind::RoomCoordinationStarted
                     | wire::FactKind::RoomPutAside
             ) {

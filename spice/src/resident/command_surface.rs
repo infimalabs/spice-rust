@@ -344,6 +344,18 @@ impl<'a> Surface<'a> {
                 };
                 (outcome, notify)
             }
+            (CommandKind::RoomControl, Intent::RoomControl(control)) => {
+                crate::board_command::room_control(
+                    self.bus,
+                    command,
+                    control,
+                    &self.config.steering,
+                )
+            }
+            (CommandKind::RoomClose, Intent::RoomClose(close)) => (
+                crate::board_command::room_close(self.bus, command, close),
+                None,
+            ),
             _ => return None,
         };
         let mut effects = CommandEffects::default();

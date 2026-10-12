@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::rooms::RoomAuthorityStamp;
+use crate::rooms::{
+    QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomReceiptDisposition, RoomReceiptRef,
+};
 pub use crate::rooms::{WorkingGroupPut, WorkingGroupRemove};
 use crate::{OccupantAddress, Seq, SequenceCode, TaskHandle, TaskStamp};
 
@@ -48,6 +50,83 @@ pub struct RoomPutAside {
 pub struct RoomCoordinationRead {
     /// Current rendered handle of the anchor task.
     pub room: TaskHandle,
+}
+
+/// One operator control over its own operator items or the questions it
+/// answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "control", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomControl {
+    /// ACK settles exact pending operator items; NAK settles them and declines
+    /// an operator ASK's pending result.
+    Dispose {
+        disposition: RoomReceiptDisposition,
+        keys: Vec<RoomReceiptRef>,
+        clause: String,
+    },
+    /// Answer one pending question whose stored respondent is the operator.
+    Answer {
+        result: QuestionResultRef,
+        /// Optional asserted context; it must equal the stored one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<TaskHandle>,
+        text: String,
+    },
+    /// Return one lapsed operator item to pending under the same key.
+    Recover { item: RoomReceiptRef },
+}
+
+/// Decline or cancel one pending question result.
+///
+/// The stored respondent declines and the stored requester cancels; the
+/// operator closes for the other party only when `override` says so.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomClose {
+    pub result: QuestionResultRef,
+    pub closure: QuestionClosure,
+    pub clause: String,
+    /// The operator acts for a stored lane party.
+    #[serde(rename = "override")]
+    pub override_party: bool,
+}
+
+/// What one room control or close moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomControlAnswer {
+    /// Each operator item moved, with the state it moved to.
+    pub items: Vec<RoomItemMove>,
+    /// The question result moved, with the state it moved to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<RoomResultMove>,
+    /// The answer publication an operator answer recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<RoomAuthorityStamp>,
+    /// Key of the answer's return directive to a lane requester.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returned: Option<String>,
+}
+
+/// One operator item a control moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomItemMove {
+    /// The item.
+    pub item: RoomReceiptRef,
+    /// Its state after the control: `acked`, `declined`, `cancelled`, or
+    /// `pending` after recovery.
+    pub state: String,
+}
+
+/// One question result a control moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomResultMove {
+    /// The result.
+    pub result: QuestionResultRef,
+    /// Its state after the control: `answered`, `declined`, or `cancelled`.
+    pub state: String,
 }
 
 /// One live scoped request projected from ordinary steering authority.

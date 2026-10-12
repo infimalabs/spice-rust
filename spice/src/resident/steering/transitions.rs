@@ -8,7 +8,10 @@ pub(crate) struct OperatorDirective<'a> {
     pub(crate) fanout: Option<CanonicalUuid>,
     pub(crate) lane: CanonicalUuid,
     pub(crate) text: &'a str,
-    pub(crate) control: &'a str,
+    /// Machine control marker, when the direction carries one.
+    pub(crate) control: Option<&'a str>,
+    /// The room this direction speaks in, when it has one.
+    pub(crate) room: Option<wire::rooms::RoomAnchor>,
 }
 
 /// Append ordinary steering authority without committing it separately.
@@ -43,8 +46,8 @@ pub(crate) fn append_operator_directive(
         lane: publication.lane,
         text: publication.text.to_owned(),
         from: None,
-        room: None,
-        control: Some(publication.control.to_owned()),
+        room: publication.room,
+        control: publication.control.map(str::to_owned),
         attachments: Vec::new(),
         expires,
     };

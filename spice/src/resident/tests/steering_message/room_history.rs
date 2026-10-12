@@ -33,7 +33,7 @@ impl Lanes {
     }
 
     /// One page as its JSON reply body.
-    fn room_page(&self, words: &[&str]) -> Value {
+    pub(super) fn room_page(&self, words: &[&str]) -> Value {
         match self.history(words) {
             Outcome::Reply(reply) => serde_json::to_value(&reply.body).expect("history encodes"),
             other => panic!("room history answered {other:?}"),
@@ -78,7 +78,12 @@ impl Lanes {
     }
 
     /// The operator publishes `text` in `room`.
-    fn post(&self, room: &wire::TaskHandle, micros: i64, text: &str) -> RoomAuthorityStamp {
+    pub(super) fn post(
+        &self,
+        room: &wire::TaskHandle,
+        micros: i64,
+        text: &str,
+    ) -> RoomAuthorityStamp {
         let publication = RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + micros)
             .expect("fixture publication stamp");
         let mut write =

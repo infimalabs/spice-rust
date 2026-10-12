@@ -518,6 +518,78 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "room::put-aside"
     ),
+    row!(
+        ["room", "inbox"],
+        "room inbox [--limit N] [--max-bytes N] [--after ITEM]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "room::inbox"
+    ),
+    row!(
+        ["room", "result"],
+        "room result RESULT",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "room::result"
+    ),
+    operator!(
+        ["room", "ack"],
+        "room ack ITEM... [--clause TEXT]",
+        Command,
+        [RoomDisposed],
+        Reply,
+        "room::control"
+    ),
+    operator!(
+        ["room", "nak"],
+        "room nak ITEM... [--clause TEXT]",
+        Command,
+        [RoomDisposed],
+        Reply,
+        "room::control"
+    ),
+    operator!(
+        ["room", "answer"],
+        "room answer RESULT TEXT [--context HANDLE]",
+        Command,
+        [SteerSent, RoomPosted],
+        Reply,
+        "room::control"
+    ),
+    operator!(
+        ["room", "recover"],
+        "room recover ITEM",
+        Command,
+        [RoomReceiptRecovered],
+        Reply,
+        "room::control"
+    ),
+    row!(
+        ["room", "decline"],
+        "room decline RESULT [--clause TEXT] [--override]",
+        OperatorOrLane,
+        Command,
+        [RoomQuestionClosed],
+        [Resident],
+        Reply,
+        "room::close"
+    ),
+    row!(
+        ["room", "cancel"],
+        "room cancel RESULT [--clause TEXT] [--override]",
+        OperatorOrLane,
+        Command,
+        [RoomQuestionClosed],
+        [Resident],
+        Reply,
+        "room::close"
+    ),
     operator!(
         ["group", "list"],
         "group list [--after GROUP] [--limit N]",

@@ -50,6 +50,10 @@ pub enum CommandKind {
     RoomCoordinate,
     /// Withdraw unanswered coordination and request native holder disposition.
     RoomPutAside,
+    /// Operator ACK, NAK, answer, or recovery of its own room authority.
+    RoomControl,
+    /// Decline or cancel one pending question by its party or operator override.
+    RoomClose,
     /// Read one exact working group or a bounded current catalog page.
     WorkingGroupRead,
     /// Store one complete working-group name and ordered room association.
