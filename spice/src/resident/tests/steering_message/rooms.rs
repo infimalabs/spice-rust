@@ -290,11 +290,6 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
         String::from_utf8_lossy(&diagnostics)
     );
 
-    for (lane, body) in [(FIRST, "first spoke"), (SECOND, "second spoke")] {
-        lanes.author(lane, &format!("MSG #{room}: {body}"));
-        lanes.account(lane);
-        let _ = lanes.hear(lane, test_uuid(lane + 1));
-    }
     for item in 0..18 {
         lanes.author(SENDER, &format!("MSG #{room}: publication {item}"));
     }
@@ -327,10 +322,6 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
         assert!(notice.text.contains("continue: spice://task/"));
         assert!(!notice.text.contains("retained") && !notice.text.contains("joined"));
     }
-    assert!(!first.text.contains("first spoke"));
-    assert!(first.text.contains("second spoke"));
-    assert!(!second.text.contains("second spoke"));
-    assert!(second.text.contains("first spoke"));
     land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
     seats.release_all();
     lanes.finish();

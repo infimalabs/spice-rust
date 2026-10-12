@@ -150,7 +150,7 @@ mod report;
 use report::read_report;
 mod room;
 use room::room_post;
-pub(crate) use room::{project_attention, room_publications};
+pub(crate) use room::{project_attention, room_publications_after};
 mod room_coordination;
 #[cfg(test)]
 pub(crate) use room_coordination::room_coordinate_with;

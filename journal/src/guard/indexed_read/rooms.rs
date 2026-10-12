@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, ExecutionAuthorization, PreparationDecision, ProposalRef,
     RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon,
-    RoomPutAside, WorkingGroup,
+    RoomMessaged, RoomPublished, RoomPutAside, WorkingGroup,
 };
 
 use super::{
@@ -319,6 +319,63 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
+    /// Latest room publication authored by one exact actor through the current
+    /// horizon. Catch-up uses this bounded row to retain the lane's current
+    /// activity without replaying the room's retained publication history.
+    pub fn latest_room_publication(
+        &self,
+        room: &wire::TaskStamp,
+        actor: &wire::Actor,
+    ) -> Result<Option<wire::Envelope<wire::AnyFact>>, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(None);
+        };
+        let horizon = i64::try_from(horizon.get()).map_err(|_| {
+            GuardError::Invalid("room publication horizon exceeds SQLite".to_owned())
+        })?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
+                 FROM room_publications AS published \
+                 JOIN fact_envelopes AS facts ON facts.seq = published.seq \
+                 WHERE published.room = ?1 AND facts.actor = ?2 AND published.seq <= ?3 \
+                 ORDER BY published.seq DESC LIMIT 1",
+            )
+            .map_err(GuardError::Store)?;
+        let mut rows = statement
+            .query(params![room.as_str(), actor.to_string(), horizon])
+            .map_err(GuardError::Store)?;
+        let Some(row) = rows.next().map_err(GuardError::Store)? else {
+            return Ok(None);
+        };
+        let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+        read_metrics::observe_row();
+        let publication = decode_bounded_fact(row, seq, 1, 2, 3)?.0;
+        if publication.actor != *actor {
+            return Err(GuardError::Invalid(format!(
+                "room publication actor index names {}, decoded {}",
+                actor, publication.actor
+            )));
+        }
+        let named = publication
+            .fact
+            .read::<RoomPublished>()
+            .map(|body| body.room)
+            .or_else(|| {
+                publication
+                    .fact
+                    .read::<RoomMessaged>()
+                    .map(|body| body.room)
+            });
+        if named.as_ref() != Some(room) {
+            return Err(GuardError::Invalid(format!(
+                "room publication index for {room} names {named:?}"
+            )));
+        }
+        Ok(Some(publication))
+    }
     /// A room's latest `room::directed` record, absent before its first one.
     pub fn room_direction(
         &self,

@@ -128,18 +128,21 @@ fn plan(
     let mut presented = BTreeMap::new();
     for entry in &entries {
         let room = entry.born().clone();
-        let publications =
-            crate::board_command::room_publications(bus, &room).map_err(unit_outcome)?;
+        let publications = crate::board_command::room_publications_after(bus, &room, after)
+            .map_err(unit_outcome)?;
         if publications.is_empty() {
             continue;
         }
-        let room_attention =
-            crate::board_command::project_attention(&entries, &residency, &room, &publications, at)
-                .map_err(unit_outcome)?;
-        let unseen = publications
-            .into_iter()
-            .filter(|publication| publication.seq > after)
-            .collect();
+        let latest_activity = latest_lane_activity(bus, &room, lane)?;
+        let room_attention = crate::board_command::project_attention(
+            &entries,
+            &residency,
+            &room,
+            latest_activity.as_slice(),
+            at,
+        )
+        .map_err(unit_outcome)?;
+        let unseen = publications;
         let projections = crate::room_command::project_publications(bus, &paths.tape, unseen)
             .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
         for publication in projections {
@@ -201,6 +204,17 @@ fn plan(
         through,
         text,
     }))
+}
+
+fn latest_lane_activity(
+    bus: &Bus,
+    room: &TaskStamp,
+    lane: CanonicalUuid,
+) -> CommandResult<Option<wire::Envelope<wire::AnyFact>>> {
+    let room = room.clone();
+    let actor = Actor::Lane(lane);
+    bus.read(move |read| read.latest_room_publication(&room, &actor))
+        .map_err(|error| store_fault("room::catch-up-activity-unreadable", &error.to_string()))
 }
 
 /// Where `lane`'s catch-up starts: its delivery cursor or, before any delivery,
