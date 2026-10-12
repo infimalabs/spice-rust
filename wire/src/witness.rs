@@ -447,6 +447,21 @@ pub enum Disposition {
     Canceled,
 }
 
+impl Disposition {
+    /// The canonical stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Acked => "acked",
+            Self::Declined => "declined",
+            Self::Lapsed => "lapsed",
+            Self::DeadLettered => "deadlettered",
+            Self::Canceled => "canceled",
+        }
+    }
+}
+
 /// The disposition a consent request currently sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

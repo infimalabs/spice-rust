@@ -11,6 +11,9 @@ use super::*;
 #[path = "steering_message/rooms.rs"]
 mod rooms;
 
+#[path = "steering_message/room_history.rs"]
+mod room_history;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
