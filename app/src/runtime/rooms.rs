@@ -34,8 +34,37 @@ pub enum RoomAnchorAuthority {
     Unavailable,
     /// The board snapshot proves that this durable anchor is absent.
     Missing,
-    /// Current rendered task handle for this durable anchor.
+    /// Current rendered task handle for this durable open anchor.
     Available(TaskHandle),
+    /// Current rendered task handle and terminal standing for a retained anchor.
+    Settled {
+        /// Last rendered handle retained by task authority.
+        handle: TaskHandle,
+        /// Terminal standing that concluded the room's anchor.
+        standing: RoomAnchorSettlement,
+    },
+}
+
+/// Consumer-visible terminal standing of a retained room anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoomAnchorSettlement {
+    /// The task completed through its declared workflow.
+    Completed,
+    /// The operator closed the task with recorded evidence or a negative conclusion.
+    Closed,
+    /// The operator withdrew the task.
+    Deleted,
+}
+
+impl RoomAnchorSettlement {
+    /// Stable browser label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Closed => "closed",
+            Self::Deleted => "deleted",
+        }
+    }
 }
 
 /// One stable room-timeline card.
@@ -216,9 +245,24 @@ impl RoomProjection {
         board
             .tasks
             .iter()
+            .chain(board.room_anchors.iter())
             .find(|task| task.statement.body.born == *room)
             .map_or(RoomAnchorAuthority::Missing, |task| {
-                RoomAnchorAuthority::Available(task.statement.body.handle.clone())
+                let workflow = &task.workflow.body;
+                let handle = task.statement.body.handle.clone();
+                let standing = if workflow.status == "deleted" {
+                    Some(RoomAnchorSettlement::Deleted)
+                } else if workflow.completion.is_some() && workflow.review == "closed" {
+                    Some(RoomAnchorSettlement::Closed)
+                } else if workflow.completion.is_some() {
+                    Some(RoomAnchorSettlement::Completed)
+                } else {
+                    None
+                };
+                match standing {
+                    Some(standing) => RoomAnchorAuthority::Settled { handle, standing },
+                    None => RoomAnchorAuthority::Available(handle),
+                }
             })
     }
 

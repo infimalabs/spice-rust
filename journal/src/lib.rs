@@ -69,6 +69,7 @@ pub use restore::{
 pub mod crossing {
     pub use wire::body;
     pub use wire::intent;
+    pub use wire::rooms;
     pub use wire::{
         Actor, AnyFact, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command,
         CommandKind, Digest, Envelope, Environment, EnvironmentRequirement,

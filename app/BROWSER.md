@@ -53,10 +53,12 @@ live-start fact stream neither repeats nor misses authority. The projection is
 unavailable until its snapshot completes.
 
 Durable task stamps and room publication stamps key cards across reloads and
-unavailable source bytes. The current board snapshot alone resolves an
-anchor's displayed handle, an output's control, and whether a stop's exact
-claim win is still active; absence is shown as unavailable or missing rather
-than reconstructed from an old handle.
+unavailable source bytes. The current board snapshot resolves an anchor's
+displayed handle and terminal standing, an output's control, and whether a
+stop's exact claim win is still active. Saved groups retain only their own
+settled anchor heads: completed, operator-closed, and deleted rooms remain
+named without admitting unrelated task history. A genuinely absent identity
+is `missing`; absent board authority is `unavailable`.
 
 Snapshot pages share one horizon, rise strictly, and never move backward. A
 moved horizon, regressed page, live fact before the snapshot completes beyond
