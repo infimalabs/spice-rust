@@ -451,7 +451,11 @@ fn render_agent_message_card(
             )}
             aria-label={card_label}
             tabindex="-1"
-            data-card-kind={if is_boundary { "compaction" } else { "agent-message" }}
+            data-card-kind={if is_boundary {
+                watchband::agent_activity_name(message.activity)
+            } else {
+                "agent-message"
+            }}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
             onclick={task_click}
@@ -651,6 +655,7 @@ fn agent_message_card_label(
         wire::AgentActivityKind::Compaction => {
             format!("Context compacted by {producer_label}")
         }
+        wire::AgentActivityKind::Session => format!("Fresh session started by {producer_label}"),
         wire::AgentActivityKind::SignOut => format!("Account signed out on {attribution}"),
         wire::AgentActivityKind::Tool => media_description.map_or_else(
             || format!("Tool result from {attribution}"),
@@ -799,7 +804,11 @@ fn render_agent_markdown<'m>(
 }
 
 fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
-    let link_label = format!("Link to compacted context from {attribution}");
+    let event = match message.activity {
+        wire::AgentActivityKind::Session => "started fresh session",
+        _ => "compacted context",
+    };
+    let link_label = format!("Link to {event} from {attribution}");
     let attribution = attribution.to_owned();
     let display_millis = crate::runtime::agent_message_display_millis(message);
     let href = crate::view::card_href(&agent_message_source_id(message));
@@ -815,7 +824,7 @@ fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Htm
                 />
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{"compacted context"}</span>
+                    <span class="message-key">{event}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>

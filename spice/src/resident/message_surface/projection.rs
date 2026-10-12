@@ -466,6 +466,14 @@ fn project_event_body(
             automatic_speech: None,
             media: Vec::new(),
         },
+        listen::Event::Session(session) if session.fresh => ProjectedEvent {
+            activity: AgentActivityKind::Session,
+            locus: session.locus,
+            presentation: serve::stream::MessagePresentation::plain("Fresh session".to_owned()),
+            provider_error: None,
+            automatic_speech: None,
+            media: Vec::new(),
+        },
         listen::Event::Failure(failure) => ProjectedEvent {
             activity: AgentActivityKind::Failure,
             locus: failure.locus,

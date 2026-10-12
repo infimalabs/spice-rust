@@ -221,6 +221,75 @@ fn replay_keeps_vendor_turn_boundaries_after_compaction() {
     ));
 }
 
+#[test]
+fn cold_replay_marks_only_a_session_opened_without_messages() {
+    const STATE: &str = "{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":";
+    let prose = |minute: u32, text: &str| {
+        format!(
+            "{{\"type\":\"message_end\",\"timestamp\":\"2026-08-09T01:{minute:02}:00.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n"
+        )
+    };
+    let records = [
+        prose(0, "before renewal"),
+        format!("{STATE}{{\"sessionId\":\"fresh\",\"messageCount\":0}}}}\n"),
+        prose(1, "first fresh answer"),
+        format!("{STATE}{{\"sessionId\":\"fresh\",\"messageCount\":2}}}}\n"),
+        prose(2, "after resume"),
+        format!("{STATE}{{\"sessionId\":\"fresh\"}}}}\n"),
+        prose(3, "after unclassified start"),
+    ];
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-fresh-session-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let tape = tape::Tape::open(&root).expect("fresh session tape opens");
+    tape.tee(records.concat().as_bytes())
+        .expect("fresh session sequence is durable");
+    let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("session sequence scans");
+    let messages = CollectedMessages::new(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
+    let mut reader = BacklogReader::default();
+    let mut diagnostic = Vec::new();
+    publish_scan(
+        scan,
+        "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("fixture lane"),
+        "018f82d4-6f59-7d06-92e3-bce9131163ef"
+            .parse()
+            .expect("fixture author"),
+        None,
+        &messages,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("session sequence materializes");
+
+    assert!(diagnostic.is_empty());
+    let collected = messages.inner.into_inner().expect("history lock").messages;
+    let sessions = collected
+        .iter()
+        .filter(|message| message.activity == wire::AgentActivityKind::Session)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sessions.len(),
+        1,
+        "a resumed session and a state without a message count mark nothing"
+    );
+    let fresh_offset = u64::try_from(records[0].len()).expect("fixture offset fits");
+    assert_eq!(
+        (sessions[0].locus.offset, sessions[0].locus.length),
+        (
+            fresh_offset,
+            u64::try_from(records[1].len()).expect("fixture length fits")
+        ),
+        "the divider is anchored at the state record that opened the session",
+    );
+    assert!(sessions[0].activity.is_boundary());
+    fs::remove_dir_all(root).expect("fresh session fixture cleanup");
+}
+
 fn assert_replay_boundary(contents: &str) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(

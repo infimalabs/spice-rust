@@ -25,6 +25,7 @@ enum MessageCardKind {
     Failure,
     ToolMedia,
     Compaction,
+    Session,
     SignOut,
 }
 
@@ -54,6 +55,7 @@ fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
         AgentActivityKind::Tool if !message.media.is_empty() => Some(MessageCardKind::ToolMedia),
         AgentActivityKind::Tool | AgentActivityKind::Reasoning | AgentActivityKind::Turn => None,
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
+        AgentActivityKind::Session => Some(MessageCardKind::Session),
         AgentActivityKind::SignOut => Some(MessageCardKind::SignOut),
     }
 }
