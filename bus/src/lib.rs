@@ -40,6 +40,7 @@ mod runtime {
     pub use transcript_sessions::{TranscriptSession, TranscriptSessions};
     mod error;
     pub use error::{BusError, BusReadError, BusVerifyError};
+    mod rooms;
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -649,29 +650,6 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
-        /// Read one bounded page of current room-authority facts through a
-        /// captured horizon.
-        pub fn app_rooms(
-            &self,
-            start: journal::FactPageStart,
-            horizon: journal::crossing::Seq,
-            budget: journal::FactReadBudget,
-        ) -> Result<FactPage, BusReadError> {
-            let (answer, receiver) = mpsc::sync_channel(1);
-            self.requests
-                .send(Request::Read(JournalRead::AppRooms {
-                    start,
-                    horizon,
-                    budget,
-                    answer,
-                }))
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
-            receiver
-                .recv()
-                .map_err(|_| BusReadError::Bus(BusError::Closed))?
-                .map_err(BusReadError::Head)
-        }
-
         /// Read one bounded causal page directly through the thread index.
         pub fn app_thread(
             &self,
@@ -1087,6 +1065,13 @@ mod runtime {
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<Option<FactPage>, GuardError>>,
         },
+        RoomPublication {
+            room: journal::crossing::TaskStamp,
+            publication: journal::crossing::rooms::RoomAuthorityStamp,
+            answer: SyncSender<
+                Result<Option<journal::crossing::Envelope<journal::crossing::AnyFact>>, GuardError>,
+            >,
+        },
         Residency {
             answer: SyncSender<
                 Result<Option<JournalHead<journal::crossing::ResidencyHead>>, GuardError>,
@@ -1238,6 +1223,16 @@ mod runtime {
                 answer,
             } => {
                 let _ = answer.send(journal.read(|read| read.causal_page(position, budget)));
+            }
+            JournalRead::RoomPublication {
+                room,
+                publication,
+                answer,
+            } => {
+                let _ = answer.send(journal.read(move |read| {
+                    read.room_publication_seq(&room, &publication)?
+                        .map_or(Ok(None), |seq| read.room_fact(seq))
+                }));
             }
             JournalRead::Residency { answer } => {
                 let _ = answer.send(journal.read(|read| read.residency_head()));

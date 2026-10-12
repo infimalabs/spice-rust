@@ -5,7 +5,7 @@ use wire::intent::{
     WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupChange, WorkingGroupChangeStatus,
     WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove, WorkingGroupView,
 };
-use wire::rooms::{WorkingGroupRemoved, WorkingGroupStored};
+use wire::rooms::{WORKING_GROUP_DESIGN_LIMIT, WorkingGroupRemoved, WorkingGroupStored};
 
 pub(super) fn read_working_groups(bus: &Bus, request: &WorkingGroupRead) -> Outcome<CommandAnswer> {
     if request.limit == 0 || request.limit > WORKING_GROUP_PAGE_LIMIT_MAX {
@@ -92,7 +92,10 @@ fn working_group_view(
             let task = read.task_head(born)?;
             let workflow = read.workflow_head(born)?;
             Ok(match (task, workflow) {
-                (Some(task), Some(workflow)) if workflow.body().status != "deleted" => {
+                (Some(task), Some(workflow))
+                    if workflow.body().status != "deleted"
+                        && task.body().intent == Some(wire::TaskIntent::Design) =>
+                {
                     WorkingGroupAnchor::Available {
                         born: born.clone(),
                         handle: TaskHandle::for_project(&task.body().project, born),
@@ -115,12 +118,28 @@ pub(super) fn put_working_group(
     command: &wire::AdmittedCommand,
     put: &WorkingGroupPut,
 ) -> Outcome<CommandAnswer> {
+    let designs = put.group.anchors.len();
+    if designs > WORKING_GROUP_DESIGN_LIMIT {
+        return refusal(
+            "group::design-limit",
+            Some(designs.to_string()),
+            &format!(
+                "a working group holds at most {WORKING_GROUP_DESIGN_LIMIT} designs; remove one \
+                 or use another group"
+            ),
+        );
+    }
+    let designs = match design_witnesses(bus, put) {
+        Ok(designs) => designs,
+        Err(outcome) => return outcome,
+    };
     let group = put.group.group.clone();
     change_working_group(
         bus,
         command,
         group,
         WorkingGroupChangeStatus::Stored,
+        designs,
         |write, cause| {
             write.fact(
                 WorkingGroupStored {
@@ -131,6 +150,43 @@ pub(super) fn put_working_group(
         },
         put,
     )
+}
+
+/// Admit only Design anchors, guarding each statement head so a concurrent
+/// intent edit cannot slip a withdrawn Design into the stored group.
+///
+/// A missing anchor is left to its existence witness.
+fn design_witnesses(
+    bus: &Bus,
+    put: &WorkingGroupPut,
+) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
+    let anchors = put.group.anchors.clone();
+    let heads = bus
+        .read(move |read| {
+            anchors
+                .iter()
+                .filter_map(|anchor| read.task_head(anchor).transpose())
+                .collect::<Result<Vec<_>, GuardError>>()
+        })
+        .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))?;
+    heads
+        .into_iter()
+        .map(|head| {
+            let task = head.body();
+            if task.intent != Some(wire::TaskIntent::Design) {
+                return Err(refusal(
+                    "group::design-only",
+                    Some(TaskHandle::for_project(&task.project, &task.born).to_string()),
+                    "a working group holds only Design tasks; choose a Design or declare this \
+                     task's Design intent",
+                ));
+            }
+            Ok(Witness::Task {
+                task: task.born.clone(),
+                head: head.position(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn remove_working_group(
@@ -144,6 +200,7 @@ pub(super) fn remove_working_group(
         command,
         group.clone(),
         WorkingGroupChangeStatus::Removed,
+        Vec::new(),
         |write, cause| write.fact(WorkingGroupRemoved { group }, cause),
         remove,
     )
@@ -154,6 +211,7 @@ fn change_working_group<B, F>(
     command: &wire::AdmittedCommand,
     group: wire::rooms::RoomAuthorityStamp,
     status: WorkingGroupChangeStatus,
+    designs: Vec<Witness>,
     append: F,
     body: &B,
 ) -> Outcome<CommandAnswer>
@@ -169,7 +227,9 @@ where
         .parse()
         .expect("a non-empty group stamp forms a structural origin");
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
+    let mut expected = command.expected().to_vec();
+    expected.extend(designs);
+    guard(&mut write, expected);
     let previous = command.expected().iter().find_map(|witness| match witness {
         Witness::Group {
             group: witnessed,

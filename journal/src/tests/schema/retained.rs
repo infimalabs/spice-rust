@@ -380,6 +380,29 @@ fn current_conversations_cross_a_predecessor_schema_without_changing_authority()
     assert_eq!(rows(&journal), before);
 }
 
+fn plant_overfull_group(journal: &Journal) -> String {
+    let stored = wire::rooms::WorkingGroupStored {
+        group: wire::rooms::WorkingGroup {
+            group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+                .expect("fixture group"),
+            name: "Overfull".to_owned(),
+            anchors: (0..=wire::rooms::WORKING_GROUP_DESIGN_LIMIT)
+                .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
+                .collect(),
+        },
+    };
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::WorkingGroupStored,
+            serde_json::to_value(stored).expect("group encodes"),
+        ),
+    );
+    "3".to_owned()
+}
+
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
     journal
         .connection
@@ -461,7 +484,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 7] = [
+    let cases: [RetainedCase; 8] = [
         (
             "fact_envelopes",
             "a4abe071f",
@@ -505,6 +528,7 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
              '$.fact.directed') AS BLOB) WHERE seq = 3",
             plant_room_conversation,
         ),
+        ("fact_envelopes", "35ce59743", "", plant_overfull_group),
     ];
     assert_retained_refusals(&cases);
 }

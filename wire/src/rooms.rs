@@ -23,8 +23,11 @@ use crate::{
 
 /// The identity of a room: exactly the anchor task's durable birth stamp.
 pub type RoomAnchor = TaskStamp;
-/// Most room anchors one saved working group may associate.
+/// Most room anchors one working group value may decode with; admission
+/// further caps a group at [`WORKING_GROUP_DESIGN_LIMIT`] designs.
 pub const WORKING_GROUP_ANCHOR_LIMIT: usize = 100;
+/// Most designs a working group holds, matching the lanes one team admits.
+pub const WORKING_GROUP_DESIGN_LIMIT: usize = crate::head::TEAM_MEMBER_LIMIT;
 /// Most parked reports one OOPS grooming record may cluster.
 pub const OOPS_GROOMING_REPORT_LIMIT: usize = 100;
 

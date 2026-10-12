@@ -1,13 +1,13 @@
-//! Working-group catalog and browser-local task-room consoles.
+//! Working-group catalog and browser-local working-group consoles.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{HtmlElement, HtmlTextAreaElement};
+use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
-use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup};
+use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
@@ -19,7 +19,10 @@ use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
-const STORAGE: &str = "spice:room-views:v1";
+mod console;
+pub(super) use console::{GroupRender, render_group_surfaces};
+
+const STORAGE: &str = "spice:room-views:v2";
 
 thread_local! {
     static LAST_GROUP_MICROS: Cell<i64> = const { Cell::new(0) };
@@ -39,14 +42,16 @@ impl Reducible for RoomViews {
 pub(super) struct Controls {
     views: UseReducerHandle<RoomViews>,
     notice: UseStateHandle<Option<String>>,
-    /// The room pane that acted for the current notice, which it shows in
-    /// place of the catalog.
-    scope: UseStateHandle<Option<TaskStamp>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
-    /// The room an explicit open asked to focus, honored once by its composer.
+    /// The design composer an explicit open asked to focus, honored once.
     requested: Rc<RefCell<Option<(RoomAuthorityStamp, TaskStamp)>>>,
+    /// The text each design composer was drawn with in this page. The live
+    /// text belongs to the textarea; redrawing it per keystroke would remount
+    /// the composer under the caret.
+    drawn: Rc<RefCell<BTreeMap<(RoomAuthorityStamp, TaskStamp), String>>>,
+    slots: super::watchband::ComposerSlots<RoomAuthorityStamp>,
 }
 
 #[hook]
@@ -54,13 +59,16 @@ pub(super) fn use_controls() -> Controls {
     let views = use_reducer(restore);
     let names = use_mut_ref(BTreeMap::new);
     let requested = use_mut_ref(|| None);
+    let drawn = use_mut_ref(BTreeMap::new);
+    let slots = super::watchband::ComposerSlots(use_mut_ref(std::collections::HashMap::new));
     use_effect_with((*views).clone(), store);
     Controls {
         views,
         notice: use_state(|| None),
-        scope: use_state(|| None),
         names,
         requested,
+        drawn,
+        slots,
     }
 }
 
@@ -69,13 +77,10 @@ impl Controls {
         self.views.dispatch(action);
     }
 
-    fn open(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        *self.requested.borrow_mut() = Some((group.clone(), room.clone()));
-        self.update(RoomViewAction::Open { group, room });
-    }
-
-    fn close_room(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        self.update(RoomViewAction::CloseRoom { group, room });
+    /// Mount a group console; naming a design also focuses its composer.
+    fn open(&self, group: RoomAuthorityStamp, design: Option<TaskStamp>) {
+        *self.requested.borrow_mut() = design.clone().map(|design| (group.clone(), design));
+        self.update(RoomViewAction::Open { group, design });
     }
 
     fn close_group(&self, group: RoomAuthorityStamp) {
@@ -86,40 +91,36 @@ impl Controls {
         self.update(RoomViewAction::MoveGroup { group, delta });
     }
 
-    fn move_room(&self, group: RoomAuthorityStamp, room: TaskStamp, delta: isize) {
-        self.update(RoomViewAction::MoveRoom { group, room, delta });
-    }
-
-    fn draft(&self, group: RoomAuthorityStamp, room: TaskStamp, draft: String) {
-        self.update(RoomViewAction::Draft { group, room, draft });
-    }
-
-    fn reader(&self, group: RoomAuthorityStamp, room: TaskStamp, offset: i32) {
-        self.update(RoomViewAction::Reader {
+    fn draft(&self, group: RoomAuthorityStamp, design: TaskStamp, draft: String) {
+        self.update(RoomViewAction::Draft {
             group,
-            room,
-            offset,
+            design,
+            draft,
         });
     }
 
-    fn focus(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        self.update(RoomViewAction::Focus { group, room });
+    fn focus(&self, group: RoomAuthorityStamp, design: TaskStamp) {
+        self.update(RoomViewAction::Focus { group, design });
     }
 
     fn report(&self, notice: String) {
-        self.scope.set(None);
         self.notice.set(Some(notice));
     }
 
-    fn report_in(&self, room: Option<TaskStamp>, notice: String) {
-        self.scope.set(room);
-        self.notice.set(Some(notice));
+    /// The catalog's notice as a callback for surfaces that report there.
+    fn reporter(&self) -> Callback<String> {
+        let controls = self.clone();
+        Callback::from(move |notice| controls.report(notice))
     }
 
-    fn notice_in(&self, room: Option<&TaskStamp>) -> Option<String> {
-        (self.scope.as_ref() == room)
-            .then(|| (*self.notice).clone())
-            .flatten()
+    /// The text a design composer draws with: its saved draft the first time
+    /// this page shows it, then whatever a landed post last cleared it to.
+    fn drawn(&self, view: &GroupView, design: &TaskStamp) -> String {
+        self.drawn
+            .borrow_mut()
+            .entry((view.group.clone(), design.clone()))
+            .or_insert_with(|| view.draft(design).to_owned())
+            .clone()
     }
 }
 
@@ -179,10 +180,10 @@ pub(super) fn render_catalog(
             let create_room = NodeRef::default();
             html! {
                 <>
-                    if let Some(notice) = controls.notice_in(None) {
+                    if let Some(notice) = (*controls.notice).clone() {
                         <p class="room-notice" role="status">{notice}</p>
                     }
-                    {conversation::render_inbox(runtime, controls, sender)}
+                    {conversation::render_inbox(runtime, &controls.reporter(), sender)}
                     {render_new_group(
                         board,
                         can_put,
@@ -244,9 +245,9 @@ fn render_new_group(
                 <input ref={name_ref} type="text" maxlength="120" placeholder="Group name" disabled={!enabled} />
             </label>
             <label>
-                <span>{"Room"}</span>
+                <span>{"Design"}</span>
                 <select ref={room_ref} disabled={!enabled}>
-                    <option value="">{"No room yet"}</option>
+                    <option value="">{"No design yet"}</option>
                     {for task_options(board)}
                 </select>
             </label>
@@ -292,7 +293,7 @@ fn new_group_callback(
             },
             None,
         );
-        if open && let Some(room) = room {
+        if open {
             controls.open(group, room);
         }
     })
@@ -308,6 +309,10 @@ fn render_catalog_group(
     controls: &Controls,
     sender: &SenderHandle,
 ) -> Html {
+    let full = group.anchors.len() >= WORKING_GROUP_DESIGN_LIMIT;
+    let can_add = can_put && !full;
+    let add_title =
+        full.then(|| format!("A working group holds at most {WORKING_GROUP_DESIGN_LIMIT} designs"));
     let select = NodeRef::default();
     let add = edit_group_callback(
         select.clone(),
@@ -331,11 +336,17 @@ fn render_catalog_group(
         let sender = sender.clone();
         Callback::from(move |_| submit_group_remove(&sender, &controls, group.clone(), head))
     };
+    let open_group = {
+        let group = group.group.clone();
+        let controls = controls.clone();
+        Callback::from(move |_| controls.open(group.clone(), None))
+    };
     html! {
         <article class="room-group-row" key={group.group.to_string()} data-group={group.group.to_string()}>
             <header>
                 <strong>{group.name.clone()}</strong>
                 <code>{group.group.to_string()}</code>
+                <button type="button" onclick={open_group}>{"Open"}</button>
             </header>
             <ol>
                 {for group.anchors.iter().enumerate().map(|(index, room)| {
@@ -343,11 +354,11 @@ fn render_catalog_group(
                 })}
             </ol>
             <div class="room-group-add">
-                <select ref={select} disabled={!can_put} aria-label={format!("Room for {}", group.name)}>
-                    <option value="">{"Choose task"}</option>
+                <select ref={select} disabled={!can_add} aria-label={format!("Design for {}", group.name)}>
+                    <option value="">{"Choose design"}</option>
                     {for task_options(runtime.board())}
                 </select>
-                <button type="button" disabled={!can_put} onclick={add}>{"Add to group"}</button>
+                <button type="button" disabled={!can_add} title={add_title.clone()} onclick={add}>{"Add to group"}</button>
                 <button type="button" disabled={!can_put} onclick={open}>{"Open in group"}</button>
             </div>
             <button class="room-danger" type="button" disabled={!can_remove} onclick={remove_group}>
@@ -373,7 +384,7 @@ fn render_catalog_anchor(
         let controls = controls.clone();
         let group = group.group.clone();
         let room = room.clone();
-        Callback::from(move |_| controls.open(group.clone(), room.clone()))
+        Callback::from(move |_| controls.open(group.clone(), Some(room.clone())))
     };
     let move_anchor = |delta: isize| {
         let mut replacement = group.clone();
@@ -393,9 +404,9 @@ fn render_catalog_anchor(
     html! {
         <li key={room.to_string()} data-room={room.to_string()}>
             <button type="button" onclick={open}>{label}</button>
-            <button type="button" disabled={!enabled || index == 0} onclick={move_anchor(-1)} aria-label="Move room left">{"←"}</button>
-            <button type="button" disabled={!enabled || index + 1 == group.anchors.len()} onclick={move_anchor(1)} aria-label="Move room right">{"→"}</button>
-            <button type="button" disabled={!enabled} onclick={remove} aria-label="Remove room from group">{"−"}</button>
+            <button type="button" disabled={!enabled || index == 0} onclick={move_anchor(-1)} aria-label="Move design left">{"←"}</button>
+            <button type="button" disabled={!enabled || index + 1 == group.anchors.len()} onclick={move_anchor(1)} aria-label="Move design right">{"→"}</button>
+            <button type="button" disabled={!enabled} onclick={remove} aria-label="Remove design from group">{"−"}</button>
         </li>
     }
 }
@@ -413,7 +424,7 @@ fn edit_group_callback(
             .filter(|value| !value.is_empty())
             .and_then(|value| value.parse::<TaskStamp>().ok())
         else {
-            controls.report("Choose a task room first.".into());
+            controls.report("Choose a design first.".into());
             return;
         };
         if !group.anchors.contains(&room) {
@@ -422,7 +433,7 @@ fn edit_group_callback(
             submit_group(&sender, &controls, replacement, Some(head));
         }
         if open {
-            controls.open(group.group.clone(), room);
+            controls.open(group.group.clone(), Some(room));
         }
     })
 }
@@ -494,10 +505,12 @@ fn submit_group_remove(
     );
 }
 
+/// Every Design task a working group could hold.
 fn task_options(board: Option<&crate::runtime::BoardView>) -> Vec<Html> {
     board
         .into_iter()
         .flat_map(|board| &board.tasks)
+        .filter(|task| task.statement.body.intent == Some(wire::TaskIntent::Design))
         .map(|task| {
             let statement = &task.statement.body;
             html! {
@@ -507,187 +520,11 @@ fn task_options(board: Option<&crate::runtime::BoardView>) -> Vec<Html> {
         .collect()
 }
 
-/// The room pane an event arose in, so its notice lands where it acted.
-fn event_room(event: &Event) -> Option<TaskStamp> {
-    event
-        .target()?
-        .dyn_into::<web_sys::Element>()
-        .ok()?
-        .closest("[data-room]")
-        .ok()??
-        .get_attribute("data-room")?
-        .parse()
-        .ok()
-}
-
 fn input_value(node: &NodeRef) -> Option<String> {
     let input = node.cast::<HtmlElement>()?;
     js_sys::Reflect::get(input.as_ref(), &JsValue::from_str("value"))
         .ok()?
         .as_string()
-}
-
-pub(super) fn render_consoles(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
-    sender: &SenderHandle,
-) -> Html {
-    if controls.views.groups().is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="room-console-fleet" data-room-console-fleet="">
-            {for controls.views.groups().iter().enumerate().map(|(index, view)| {
-                render_console(runtime, controls, sender, view, index)
-            })}
-        </div>
-    }
-}
-
-fn render_console(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
-    sender: &SenderHandle,
-    view: &GroupView,
-    index: usize,
-) -> Html {
-    let loaded = runtime.is_some_and(|runtime| {
-        runtime.room_projection().status() == RoomProjectionStatus::Available
-    });
-    let authoritative =
-        runtime.and_then(|runtime| runtime.room_projection().groups().get(&view.group));
-    // Absence is shown only once a completed snapshot lacks the group; while
-    // authority reloads, the console keeps its last name and its geometry.
-    let absent = loaded && authoritative.is_none();
-    let name = match authoritative {
-        Some(group) => {
-            controls
-                .names
-                .borrow_mut()
-                .insert(view.group.clone(), group.value.name.clone());
-            group.value.name.clone()
-        }
-        None if absent => "Unavailable working group".to_owned(),
-        None => controls
-            .names
-            .borrow()
-            .get(&view.group)
-            .cloned()
-            .unwrap_or_else(|| "Loading working group…".to_owned()),
-    };
-    let close = {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.close_group(group.clone()))
-    };
-    let move_group = |delta| {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.move_group(group.clone(), delta))
-    };
-    html! {
-        <section class="room-console" key={view.group.to_string()} data-group={view.group.to_string()}>
-            <header class="room-console-header">
-                <div>
-                    <span class="room-console-kicker">{"Working group"}</span>
-                    <h2 aria-busy={(!loaded).to_string()}>{name}</h2>
-                </div>
-                <div class="room-inline-actions">
-                    <button type="button" disabled={index == 0} onclick={move_group(-1)} aria-label="Move group left">{"←"}</button>
-                    <button type="button" disabled={index + 1 == controls.views.groups().len()} onclick={move_group(1)} aria-label="Move group right">{"→"}</button>
-                    <button type="button" onclick={close}>{"Close group"}</button>
-                </div>
-            </header>
-            if absent {
-                <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
-            }
-            <div class="room-console-rooms">
-                {for view.rooms().iter().enumerate().map(|(room_index, room)| {
-                    render_room(runtime, controls, sender, view, room, room_index)
-                })}
-            </div>
-        </section>
-    }
-}
-
-fn render_room(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
-    sender: &SenderHandle,
-    view: &GroupView,
-    room: &TaskStamp,
-    index: usize,
-) -> Html {
-    let group = view.group.clone();
-    let label = runtime.map_or_else(|| room.to_string(), |runtime| anchor_label(runtime, room));
-    let close = {
-        let controls = controls.clone();
-        let group = group.clone();
-        let room = room.clone();
-        Callback::from(move |_| controls.close_room(group.clone(), room.clone()))
-    };
-    let move_room = |delta| {
-        let controls = controls.clone();
-        let group = group.clone();
-        let room = room.clone();
-        Callback::from(move |_| controls.move_room(group.clone(), room.clone(), delta))
-    };
-    let cards = runtime
-        .and_then(|runtime| {
-            runtime
-                .room_projection()
-                .room(room)
-                .map(|state| (runtime, state))
-        })
-        .map(|(runtime, room)| {
-            room.events()
-                .iter()
-                .map(|(publication, event)| {
-                    render_event(runtime, controls, sender, publication, event)
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let post = room_post_form(runtime, controls, sender, view, room);
-    let grooming = oops_grooming_form(runtime, controls, sender, room);
-    let preparation =
-        runtime.map_or_else(Html::default, |runtime| render_preparation(runtime, room));
-    let reader = {
-        let controls = controls.clone();
-        let group = group.clone();
-        let room = room.clone();
-        Callback::from(move |offset| controls.reader(group.clone(), room.clone(), offset))
-    };
-    let loaded = runtime.is_some_and(|runtime| {
-        runtime.room_projection().status() == RoomProjectionStatus::Available
-    });
-    html! {
-        <article class="room-pane" key={room.to_string()} data-room={room.to_string()}>
-            <header class="room-pane-header">
-                <h3>{label}</h3>
-                <div class="room-inline-actions">
-                    <button type="button" disabled={index == 0} onclick={move_room(-1)} aria-label="Move room left">{"←"}</button>
-                    <button type="button" disabled={index + 1 == view.rooms().len()} onclick={move_room(1)} aria-label="Move room right">{"→"}</button>
-                    <button type="button" onclick={close}>{"Close view"}</button>
-                </div>
-            </header>
-            {preparation}
-            <RoomReader offset={view.reader(room)} onscroll={reader}>
-                if !cards.is_empty() {
-                    {for cards}
-                } else if loaded {
-                    <p class="room-empty">{"No room publications are available."}</p>
-                } else {
-                    <p class="room-empty" aria-busy="true">{"Loading room…"}</p>
-                }
-            </RoomReader>
-            {grooming}
-            if let Some(notice) = controls.notice_in(Some(room)) {
-                <p class="room-notice room-pane-notice" role="status">{notice}</p>
-            }
-            {post}
-        </article>
-    }
 }
 
 fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
@@ -770,12 +607,12 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
 
 fn render_event(
     runtime: &AppRuntime,
-    controls: &Controls,
+    report: &Callback<String>,
     sender: &SenderHandle,
     publication: &RoomAuthorityStamp,
     event: &crate::runtime::RoomEvent,
 ) -> Html {
-    if let Some(card) = conversation::render_card(runtime, controls, sender, publication, event) {
+    if let Some(card) = conversation::render_card(runtime, report, sender, publication, event) {
         return card;
     }
     let (kind, body) = match &event.kind {
@@ -869,15 +706,13 @@ struct OopsInputs {
     uncertainty: NodeRef,
 }
 
+/// An open, pending Design's OOPS grooming form; its outcomes go to `report`.
 fn oops_grooming_form(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
+    runtime: &AppRuntime,
+    report: &Callback<String>,
     sender: &SenderHandle,
     room: &TaskStamp,
 ) -> Html {
-    let Some(runtime) = runtime else {
-        return Html::default();
-    };
     let Some(board) = runtime.board() else {
         return Html::default();
     };
@@ -912,7 +747,7 @@ fn oops_grooming_form(
         uncertainty: NodeRef::default(),
     };
     let submit = oops_submit(
-        controls.clone(),
+        report.clone(),
         sender.clone(),
         reports.clone(),
         batch.statement.body.handle.clone(),
@@ -950,7 +785,7 @@ fn oops_grooming_form(
 }
 
 fn oops_submit(
-    controls: Controls,
+    notify: Callback<String>,
     sender: SenderHandle,
     reports: Vec<OopsReport>,
     batch_handle: wire::TaskHandle,
@@ -959,8 +794,7 @@ fn oops_submit(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        let scope = event_room(&event);
-        let refuse = |notice: &str| controls.report_in(scope.clone(), notice.to_owned());
+        let refuse = |notice: &str| notify.emit(notice.to_owned());
         let Some(selected) =
             input_value(&inputs.report).and_then(|value| value.parse::<TaskStamp>().ok())
         else {
@@ -996,7 +830,7 @@ fn oops_submit(
             uncertainty: input_value(&inputs.uncertainty)
                 .map_or_else(String::new, |value| value.trim().to_owned()),
         };
-        let success_controls = controls.clone();
+        let landed = notify.clone();
         let batch_for_next = batch_handle.clone();
         let next = (disposition == wire::rooms::OopsDisposition::ProposedWork).then(|| {
             format!(
@@ -1006,15 +840,12 @@ fn oops_submit(
         let respond =
             Rc::new(
                 move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
-                    Ok(answer) => success_controls.report_in(
-                        scope.clone(),
-                        format!(
-                            "{}{}",
-                            room_post_notice(&answer.outcome),
-                            next.as_deref().unwrap_or_default()
-                        ),
-                    ),
-                    Err(error) => success_controls.report_in(scope.clone(), error),
+                    Ok(answer) => landed.emit(format!(
+                        "{}{}",
+                        room_post_notice(&answer.outcome),
+                        next.as_deref().unwrap_or_default()
+                    )),
+                    Err(error) => landed.emit(error),
                 },
             );
         let _ = admit_action(
@@ -1033,27 +864,31 @@ fn oops_submit(
 
 #[derive(Properties, PartialEq)]
 struct ComposerFocusProps {
-    node: NodeRef,
+    /// The design composer's textarea.
+    id: String,
     active: bool,
-    disabled: bool,
-    /// An explicit open of this room asked for focus.
+    /// An explicit open of this design asked for focus.
     requested: bool,
     /// Retires that request once this composer has answered it.
     settle: Callback<()>,
 }
 
-/// Focuses a room composer when its explicit open asks, and otherwise
-/// restores its saved focus only while nothing else holds focus, however late
-/// the composer becomes enabled.
+/// Focuses a design composer when its explicit open asks, and otherwise
+/// restores its saved focus only while nothing else holds focus.
 #[function_component]
 fn ComposerFocus(props: &ComposerFocusProps) -> Html {
-    let node = props.node.clone();
+    let id = props.id.clone();
     let settle = props.settle.clone();
     use_effect_with(
-        (props.active, props.disabled, props.requested),
-        move |(active, disabled, requested)| {
-            let focus = !*disabled && (*requested || *active && unfocused_document());
-            if focus && let Some(target) = node.cast::<HtmlElement>() {
+        (props.active, props.requested),
+        move |(active, requested)| {
+            let focus = *requested || *active && unfocused_document();
+            if focus
+                && let Some(target) = web_sys::window()
+                    .and_then(|window| window.document())
+                    .and_then(|document| document.get_element_by_id(&id))
+                    .and_then(|element| element.dyn_into::<HtmlElement>().ok())
+            {
                 let _ = target.focus();
             }
             if *requested {
@@ -1074,133 +909,6 @@ fn unfocused_document() -> bool {
                 .active_element()
                 .is_none_or(|element| element.tag_name().eq_ignore_ascii_case("body"))
         })
-}
-
-fn room_post_form(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
-    sender: &SenderHandle,
-    view: &GroupView,
-    room: &TaskStamp,
-) -> Html {
-    let authority = runtime.map(|runtime| {
-        (
-            runtime
-                .room_projection()
-                .anchor_authority(room, runtime.board()),
-            runtime.offers(CommandKind::RoomPost),
-        )
-    });
-    let task = runtime.and_then(|runtime| {
-        runtime
-            .board()?
-            .tasks
-            .iter()
-            .find(|task| task.statement.body.born == *room)
-            .map(|task| (task.statement.body.handle.clone(), task.statement.position))
-    });
-    let disabled =
-        !matches!(authority, Some((RoomAnchorAuthority::Available(_), true))) || task.is_none();
-    let textarea = NodeRef::default();
-    let requested = controls
-        .requested
-        .borrow()
-        .as_ref()
-        .is_some_and(|(group, opened)| *group == view.group && opened == room);
-    let settle = {
-        let requested = controls.requested.clone();
-        Callback::from(move |()| *requested.borrow_mut() = None)
-    };
-    let oninput = {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        let room = room.clone();
-        Callback::from(move |event: InputEvent| {
-            let input: HtmlTextAreaElement = event.target_unchecked_into();
-            controls.draft(group.clone(), room.clone(), input.value());
-        })
-    };
-    let onfocus = {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        let room = room.clone();
-        Callback::from(move |_| controls.focus(group.clone(), room.clone()))
-    };
-    let onsubmit = {
-        let controls = controls.clone();
-        let sender = sender.clone();
-        let group = view.group.clone();
-        let room_stamp = room.clone();
-        let task = task.clone();
-        let textarea = textarea.clone();
-        Callback::from(move |event: SubmitEvent| {
-            event.prevent_default();
-            let scope = Some(room_stamp.clone());
-            let refuse = |notice: &str| controls.report_in(scope.clone(), notice.to_owned());
-            let Some((room, head)) = task.clone() else {
-                refuse("This room source is unavailable.");
-                return;
-            };
-            let Some(text) = textarea
-                .cast::<HtmlTextAreaElement>()
-                .map(|input| input.value())
-            else {
-                return;
-            };
-            let text = text.trim().to_owned();
-            if text.is_empty() {
-                refuse("A room post cannot be empty.");
-                return;
-            }
-            let posted = RoomViewAction::Posted {
-                group: group.clone(),
-                room: room_stamp.clone(),
-                text: text.clone(),
-            };
-            let respond = post_reply(controls.clone(), scope, posted);
-            let _ = admit_action(
-                &sender,
-                ClientAction::RoomPost(RoomPostAction {
-                    room,
-                    head,
-                    text,
-                    grooming: None,
-                    report_heads: Vec::new(),
-                    respond,
-                }),
-            );
-        })
-    };
-    html! {
-        <form class="room-composer" onsubmit={onsubmit}>
-            <textarea
-                ref={textarea.clone()}
-                value={view.draft(room).to_owned()}
-                placeholder="Post to this task room"
-                aria-label="Room message"
-                disabled={disabled}
-                {oninput}
-                {onfocus}
-            />
-            <ComposerFocus node={textarea} active={view.focused(room)} {disabled} {requested} {settle} />
-            <button type="submit" disabled={disabled}>{"Post"}</button>
-        </form>
-    }
-}
-
-/// Clears the posted draft on admission; any outcome reports in the room pane.
-fn post_reply(
-    controls: Controls,
-    scope: Option<TaskStamp>,
-    posted: RoomViewAction,
-) -> crate::client_action::RoomPostResponse {
-    Rc::new(move |result| match result {
-        Ok(answer) => {
-            controls.update(posted.clone());
-            controls.report_in(scope.clone(), room_post_notice(&answer.outcome));
-        }
-        Err(error) => controls.report_in(scope.clone(), error),
-    })
 }
 
 fn room_post_notice(outcome: &RoomPostOutcome) -> String {
@@ -1228,40 +936,5 @@ fn anchor_label(runtime: &AppRuntime, room: &TaskStamp) -> String {
         }
         RoomAnchorAuthority::Unavailable => format!("{room} · unavailable"),
         RoomAnchorAuthority::Missing => format!("{room} · missing"),
-    }
-}
-
-#[derive(Properties, PartialEq)]
-struct RoomReaderProps {
-    offset: i32,
-    onscroll: Callback<i32>,
-    children: Children,
-}
-
-#[function_component(RoomReader)]
-fn room_reader(properties: &RoomReaderProps) -> Html {
-    let node = use_node_ref();
-    {
-        let node = node.clone();
-        let offset = properties.offset;
-        use_effect_with((), move |()| {
-            if let Some(element) = node.cast::<web_sys::HtmlElement>() {
-                element.set_scroll_top(offset);
-            }
-        });
-    }
-    let onscroll = {
-        let node = node.clone();
-        let callback = properties.onscroll.clone();
-        Callback::from(move |_| {
-            if let Some(element) = node.cast::<web_sys::HtmlElement>() {
-                callback.emit(element.scroll_top());
-            }
-        })
-    };
-    html! {
-        <div ref={node} class="room-timeline" {onscroll}>
-            {properties.children.clone()}
-        </div>
     }
 }

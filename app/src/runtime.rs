@@ -39,7 +39,7 @@ pub use rooms::{
     Conversation, ConversationProjection, Delivery, OperatorItem, ParticipantReason,
     PreparationProjection, QuestionResult, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
     RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus,
-    RoomState,
+    RoomState, associated,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};

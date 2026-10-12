@@ -27,8 +27,11 @@ mod team_drag;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
-    AgentMessageCard, ComposerTextarea, drop_on_lane, keyboard_submit, paste_images,
-    primary_composer_dragging, render_image_indicators, render_quote_shards, team_quote_sources,
+    AgentMessageCard, drop_on_lane, keyboard_submit, paste_images, primary_composer_dragging,
+    render_image_indicators, team_quote_sources,
+};
+pub(in crate::browser) use composer::{
+    ComposerTextarea, focus_after_render, quote_textarea_id, render_quote_shards,
 };
 pub(super) use composer::{
     PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id,
@@ -39,9 +42,11 @@ use controls::{SendSlot, TeamLife, render_team_controls};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest, TeamSpeech};
 pub(in crate::browser) use fleet::use_team_arrangement_focus;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
-pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
+use mosaic_view::CardLayout;
 pub(crate) use mosaic_view::use_markdown_image_resolution_events;
-use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
+pub(in crate::browser) use mosaic_view::{
+    ActivityCard, HistorySender, LIFECYCLE_CARD_PREFIX, MosaicPlane, PlaneOwner, ROOM_CARD_PREFIX,
+};
 pub(super) use provider_emblem::render_provider_emblem;
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
@@ -85,6 +90,7 @@ pub(super) fn render_team(
         team_controls,
         composer_drag,
         composer_slots,
+        room_controls,
         team_drag,
         select_task,
         open_message_task,
@@ -149,9 +155,18 @@ pub(super) fn render_team(
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
-    composer_slots.retain(&teams);
+    composer_slots.retain(|lane| teams.iter().any(|team| team.lane == *lane));
+    let groups = super::rooms::render_group_surfaces(&super::rooms::GroupRender {
+        runtime,
+        work,
+        controls: room_controls,
+        sender,
+        drafts,
+        open_message_task,
+        select_task,
+    });
     if teams.is_empty() {
-        return render_empty_fleet(team_fleet);
+        return render_empty_fleet(team_fleet, groups);
     }
     let render = FleetRender {
         work,
@@ -176,7 +191,7 @@ pub(super) fn render_team(
         composer_slots,
         team_drag,
     };
-    render_populated_fleet(&teams, &standings, team_fleet, &render)
+    render_populated_fleet(&teams, &standings, team_fleet, &render, groups)
 }
 
 /// Each team's composer host in its Chat plane's scroll content, where the
@@ -185,18 +200,20 @@ pub(super) fn render_team(
 /// its own node, so a draft keystroke never re-renders the plane and the plane
 /// never re-renders the composer.
 #[derive(Clone)]
-pub(super) struct ComposerSlots(Rc<RefCell<HashMap<CanonicalUuid, web_sys::HtmlElement>>>);
+pub(in crate::browser) struct ComposerSlots<K = CanonicalUuid>(
+    pub(in crate::browser) Rc<RefCell<HashMap<K, web_sys::HtmlElement>>>,
+);
 
 #[hook]
 pub(super) fn use_composer_slots() -> ComposerSlots {
     ComposerSlots(use_mut_ref(HashMap::new))
 }
 
-impl ComposerSlots {
-    fn slot(&self, team: CanonicalUuid) -> web_sys::HtmlElement {
+impl<K: Eq + std::hash::Hash> ComposerSlots<K> {
+    pub(in crate::browser) fn slot(&self, owner: K) -> web_sys::HtmlElement {
         self.0
             .borrow_mut()
-            .entry(team)
+            .entry(owner)
             .or_insert_with(|| {
                 let slot = web_sys::window()
                     .and_then(|window| window.document())
@@ -212,10 +229,8 @@ impl ComposerSlots {
             .clone()
     }
 
-    fn retain(&self, teams: &[&crate::runtime::LaneRow]) {
-        self.0
-            .borrow_mut()
-            .retain(|lane, _| teams.iter().any(|team| team.lane == *lane));
+    pub(in crate::browser) fn retain(&self, live: impl Fn(&K) -> bool) {
+        self.0.borrow_mut().retain(|owner, _| live(owner));
     }
 }
 
@@ -555,8 +570,7 @@ fn render_activity(
             }
             <MosaicPlane
                 key={team.lane.to_string()}
-                lane={team.lane}
-                life={team_control.life}
+                owner={PlaneOwner::Team { lane: team.lane, life: team_control.life }}
                 members={team.members.len()}
                 cards={cards.to_vec()}
                 quote_dispatcher={drafts.dispatcher()}
@@ -860,8 +874,8 @@ fn render_agent_composer(
                 {render_quote_shards(
                     &lane_key,
                     &draft,
-                    standing,
-                    status,
+                    Some(standing),
+                    Some(status),
                     drafts,
                     onkeydown,
                     &composer_placeholder(standing, pending),
@@ -1044,6 +1058,27 @@ pub(in crate::browser) fn current_composer_draft(
     draft
 }
 
+/// One composer's live text and drafted quotes, composed into its message.
+pub(in crate::browser) fn prepare_composer(
+    lane_key: &str,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+) -> Option<crate::composer_drafts::PreparedSubmission> {
+    let mut current = drafts.0.clone();
+    *current.draft_mut(lane_key.to_owned()) = current_composer_draft(lane_key, drafts);
+    current.prepare(lane_key)
+}
+
+/// Empty one composer: its element's text and its drafted quotes and images.
+pub(in crate::browser) fn clear_composer(
+    lane_key: &str,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+) {
+    clear_primary_composer(lane_key);
+    drafts.dispatch(ComposerAction::Clear {
+        lane: lane_key.to_owned(),
+    });
+}
+
 fn clear_primary_composer(lane_key: &str) {
     if let Some(textarea) = web_sys::window()
         .and_then(|window| window.document())
@@ -1129,9 +1164,7 @@ fn submit_draft(
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
 ) -> bool {
-    let mut current = drafts.0.clone();
-    *current.draft_mut(lane_key.to_owned()) = current_composer_draft(lane_key, drafts);
-    let Some(prepared) = current.prepare(lane_key) else {
+    let Some(prepared) = prepare_composer(lane_key, drafts) else {
         return false;
     };
     let Ok(id) = random_uuid() else {
@@ -1162,10 +1195,7 @@ fn submit_draft(
     if !queue_submission(sender, submissions, submission) {
         return false;
     }
-    clear_primary_composer(lane_key);
-    drafts.dispatch(ComposerAction::Clear {
-        lane: lane_key.to_owned(),
-    });
+    clear_composer(lane_key, drafts);
     true
 }
 

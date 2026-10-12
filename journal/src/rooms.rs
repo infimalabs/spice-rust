@@ -582,16 +582,7 @@ pub(crate) fn fold(
         return result;
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
-        for anchor in &group.anchors {
-            require_task(authority, anchor, "working-group anchor")?;
-        }
-        let key = group.group.to_string();
-        return authority.change(Change::GroupStored {
-            group: key,
-            seq: seq.get(),
-            body: wire::encode(&group)?,
-            anchors: group.anchors.iter().map(ToString::to_string).collect(),
-        });
+        return store_group(authority, seq, &group);
     }
     if let Some(WorkingGroupRemoved { group }) = fact.read() {
         let key = group.to_string();
@@ -1036,6 +1027,31 @@ fn record<T: serde::Serialize>(
             seq: seq.get(),
             body: wire::encode(body)?,
         },
+    })
+}
+
+/// Fold one complete group state: at most the design cap, every anchor a task.
+fn store_group(
+    authority: &mut impl Authority,
+    seq: Seq,
+    group: &wire::rooms::WorkingGroup,
+) -> Result<(), Refusal> {
+    if group.anchors.len() > wire::rooms::WORKING_GROUP_DESIGN_LIMIT {
+        return unsound(format!(
+            "working group {} holds {} designs, more than {}",
+            group.group,
+            group.anchors.len(),
+            wire::rooms::WORKING_GROUP_DESIGN_LIMIT
+        ));
+    }
+    for anchor in &group.anchors {
+        require_task(authority, anchor, "working-group anchor")?;
+    }
+    authority.change(Change::GroupStored {
+        group: group.group.to_string(),
+        seq: seq.get(),
+        body: wire::encode(group)?,
+        anchors: group.anchors.iter().map(ToString::to_string).collect(),
     })
 }
 

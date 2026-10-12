@@ -593,43 +593,13 @@ impl Publication {
 /// The hunk's bytes from its lane's durable tape, or why the tape cannot
 /// supply them.
 fn transcript(tape: &Path, hunk: TranscriptHunk) -> Content {
-    match transcript_text(tape, &hunk) {
+    match spice::quote::room_hunk_text(tape, &hunk) {
         Ok(text) => Content::Text { text },
         Err(unavailable) => Content::Unavailable {
             source: RoomSource::Transcript(hunk),
             unavailable,
         },
     }
-}
-
-fn transcript_text(tape: &Path, hunk: &TranscriptHunk) -> Result<String, RoomSourceUnavailable> {
-    let dialect = spice::extension::registry()
-        .ok()
-        .and_then(|registry| registry.vendor(hunk.head.vendor.as_str()))
-        .map(|vendor| vendor.dialect())
-        .ok_or(RoomSourceUnavailable::Unreadable {})?;
-    let root = tape
-        .join(hunk.head.lane.to_string())
-        .join(hunk.head.vendor.as_str());
-    let decoded = spice::quote::decode_record(&root, hunk.head.source, hunk.locus, dialect)
-        .map_err(|error| match error {
-            spice::quote::RecordError::Missing => RoomSourceUnavailable::Missing {},
-            spice::quote::RecordError::Unreadable => RoomSourceUnavailable::Unreadable {},
-        })?;
-    let event = usize::try_from(hunk.locus.event)
-        .ok()
-        .and_then(|event| decoded.events().get(event));
-    let Some(listen::Event::StreamedProse(prose)) = event else {
-        return Err(RoomSourceUnavailable::Changed {});
-    };
-    let range = usize::try_from(hunk.text.start)
-        .ok()
-        .zip(usize::try_from(hunk.text.end).ok());
-    range
-        .filter(|_| prose.role == listen::ProseRole::Assistant)
-        .and_then(|(start, end)| prose.text.get(start..end))
-        .map(str::to_owned)
-        .ok_or(RoomSourceUnavailable::Changed {})
 }
 
 impl fmt::Display for RoomHistory {

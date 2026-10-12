@@ -17,7 +17,6 @@ use wire::rooms::{
 use wire::{CanonicalUuid, CommandKind, Disposition};
 use yew::prelude::*;
 
-use super::{Controls, event_room};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
@@ -29,21 +28,22 @@ use crate::runtime::{
 #[derive(Clone, Copy)]
 struct Act<'a> {
     runtime: &'a AppRuntime,
-    controls: &'a Controls,
+    report: &'a Callback<String>,
     sender: &'a SenderHandle,
 }
 
 /// One room publication card, or `None` for an event outside this family.
+/// Its controls' outcomes and refusals go to `report`.
 pub(super) fn render_card(
     runtime: &AppRuntime,
-    controls: &Controls,
+    report: &Callback<String>,
     sender: &SenderHandle,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> Option<Html> {
     let act = Act {
         runtime,
-        controls,
+        report,
         sender,
     };
     let projection = runtime.room_projection().conversation();
@@ -145,12 +145,12 @@ pub(super) fn render_card(
 /// catalog. An ACKed ASK remains here until its separate result terminates.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
-    controls: &Controls,
+    report: &Callback<String>,
     sender: &SenderHandle,
 ) -> Html {
     let act = Act {
         runtime,
-        controls,
+        report,
         sender,
     };
     let projection = runtime.room_projection().conversation();
@@ -565,37 +565,33 @@ fn result_controls(act: Act<'_>, result: &QuestionResultRef, question: &Question
 /// Control context a callback can own.
 #[derive(Clone)]
 struct Owned {
-    controls: Controls,
+    report: Callback<String>,
     sender: SenderHandle,
 }
 
 impl From<Act<'_>> for Owned {
     fn from(act: Act<'_>) -> Self {
         Self {
-            controls: act.controls.clone(),
+            report: act.report.clone(),
             sender: act.sender.clone(),
         }
     }
 }
 
 impl Owned {
-    /// Send one control and report its outcome in the pane that acted.
+    /// Send one control and report its outcome where its surface reports.
     /// Keyboard focus moves to the acting card first, so the control
     /// retiring never strands it.
     fn send(&self, event: &Event, request: RoomControlRequest) {
         if let Some(card) = acting_card(event) {
             let _ = card.focus();
         }
-        let controls = self.controls.clone();
-        let scope = event_room(event);
+        let report = self.report.clone();
         let respond = Rc::new(move |answer: Result<RoomControlAnswer, String>| {
-            controls.report_in(
-                scope.clone(),
-                match answer {
-                    Ok(answer) => control_notice(&answer),
-                    Err(error) => error,
-                },
-            );
+            report.emit(match answer {
+                Ok(answer) => control_notice(&answer),
+                Err(error) => error,
+            });
         });
         let _ = admit_action(&self.sender, ClientAction::RoomControl { request, respond });
     }

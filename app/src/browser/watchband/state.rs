@@ -262,7 +262,7 @@ impl ComposerDrafts {
     ) -> Option<&DraftImage> {
         self.0.image(lane, quote, id)
     }
-    pub(super) fn get(&self, lane: &str) -> Option<&ComposerDraft> {
+    pub(in crate::browser) fn get(&self, lane: &str) -> Option<&ComposerDraft> {
         self.0.get(lane)
     }
 

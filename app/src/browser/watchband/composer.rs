@@ -63,19 +63,19 @@ pub(super) fn keyboard_submit(
     })
 }
 #[derive(Properties, PartialEq)]
-pub(super) struct ComposerTextareaProps {
-    pub(super) id: String,
-    pub(super) lane: String,
-    pub(super) drafts: UseReducerDispatcher<ComposerDrafts>,
-    pub(super) label: String,
-    pub(super) body: String,
-    pub(super) placeholder: String,
-    pub(super) rows: &'static str,
-    pub(super) primary_target: Option<String>,
-    pub(super) quote_identity: Option<String>,
-    pub(super) broadcast_help: Option<String>,
-    pub(super) onkeydown: Callback<KeyboardEvent>,
-    pub(super) onpaste: Callback<Event>,
+pub(in crate::browser) struct ComposerTextareaProps {
+    pub(in crate::browser) id: String,
+    pub(in crate::browser) lane: String,
+    pub(in crate::browser) drafts: UseReducerDispatcher<ComposerDrafts>,
+    pub(in crate::browser) label: String,
+    pub(in crate::browser) body: String,
+    pub(in crate::browser) placeholder: String,
+    pub(in crate::browser) rows: &'static str,
+    pub(in crate::browser) primary_target: Option<String>,
+    pub(in crate::browser) quote_identity: Option<String>,
+    pub(in crate::browser) broadcast_help: Option<String>,
+    pub(in crate::browser) onkeydown: Callback<KeyboardEvent>,
+    pub(in crate::browser) onpaste: Callback<Event>,
 }
 
 #[hook]
@@ -163,7 +163,7 @@ fn use_composer_diagnostics(root: NodeRef, trace_instance: u64, trace_kind: &'st
 }
 
 #[function_component(ComposerTextarea)]
-pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
+pub(in crate::browser) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
     let root = use_node_ref();
     let trace_instance = *use_mut_ref(crate::browser::diagnostics::instance).borrow();
     let trace_kind = if properties.primary_target.is_some() {
@@ -274,7 +274,7 @@ pub(in crate::browser) fn primary_textarea_id(lane_key: &str) -> String {
     format!("{PRIMARY_TEXTAREA_PREFIX}{lane_key}")
 }
 
-fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
+pub(in crate::browser) fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
@@ -330,7 +330,7 @@ pub(super) fn team_quote_sources(
     sources
 }
 
-pub(super) fn focus_after_render(id: String) {
+pub(in crate::browser) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
@@ -1001,15 +1001,19 @@ fn render_message_controls(
     }
 }
 
-pub(super) fn render_quote_shards(
+/// The quote shards above one composer. A lane composer passes its standing
+/// and status; a design composer has neither, so its shards carry no provider
+/// emblem or lane status.
+pub(in crate::browser) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
-    standing: &Standing,
-    status: crate::runtime::LaneStatus,
+    standing: Option<&Standing>,
+    status: Option<crate::runtime::LaneStatus>,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
     placeholder: &str,
 ) -> Html {
+    let status_key = status.map(crate::runtime::LaneStatus::key);
     html! {
         <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
             {for draft.quotes.iter().enumerate().map(|(quote_index, quote)| {
@@ -1045,11 +1049,11 @@ pub(super) fn render_quote_shards(
                                 class={classes!(
                                     "composer-shard-link",
                                     "composer-shard-age",
-                                    status.key(),
+                                    status_key,
                                 )}
                                 {href}
                                 aria-label={format!("Jump to quoted source: {shown}")}
-                                data-lane-status={status.key()}
+                                data-lane-status={status_key}
                             >{lease_age(
                                 Some(quote.display_millis),
                                 "composer-shard-age-label",
@@ -1068,7 +1072,9 @@ pub(super) fn render_quote_shards(
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
-                        {render_provider_emblem(standing, "composer", Some(quote_index))}
+                        if let Some(standing) = standing {
+                            {render_provider_emblem(standing, "composer", Some(quote_index))}
+                        }
                         <ComposerTextarea
                             key={quote.body.clone()}
                             id={textarea_id}
