@@ -84,8 +84,9 @@ fn room_catch_up_retries_only_until_its_exact_delivery_lands() {
     let other = crate::resident::new_uuid();
     let root = std::env::temp_dir().join(format!("spice-room-catch-up-{}", occupant));
     let path = root.join("notice.json");
+    let landed_path = root.join("landed.json");
     fs::create_dir_all(&root).expect("fixture directory");
-    driver.configure_room_catch_up(path.clone(), occupant);
+    driver.configure_room_catch_up(path.clone(), landed_path.clone(), occupant);
 
     driver.deliver_room_catch_up(false);
     assert!(
@@ -136,12 +137,44 @@ fn room_catch_up_retries_only_until_its_exact_delivery_lands() {
         2,
         "a landed aside remains coalesced until durable recognition"
     );
+    fs::remove_file(&path).expect("changed attention removes the current plan");
+    driver.deliver_room_catch_up(false);
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "changed attention cannot discard a landed page before cursor progress"
+    );
+    write(occupant, "expanded retry landed");
+    driver.deliver_room_catch_up(false);
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "recomputed content cannot replace a landed page before cursor progress"
+    );
 
+    fs::remove_file(&landed_path).expect("durable cursor releases landed evidence");
     fs::remove_file(&path).expect("durable cursor settles the notice");
     driver.deliver_room_catch_up(false);
     let frames = sink.answered(3);
     assert_eq!(frames[2]["type"], "aside");
     assert_eq!(frames[2]["purpose"], ROOM_CATCH_UP_PURPOSE);
     assert_eq!(frames[2]["message"], "");
+    crate::resident::room_catch_up::publish_notice(
+        &landed_path,
+        &crate::resident::room_catch_up::Notice {
+            occupant,
+            through: wire::Seq::new(7).expect("fixture position"),
+            text: "former occupant delivery".to_owned(),
+        },
+    )
+    .expect("former occupant landed state writes");
+    driver.configure_room_catch_up(path.clone(), landed_path, other);
+    write(other, "successor delivery");
+    driver.deliver_room_catch_up(false);
+    assert_eq!(
+        sink.answered(4)[3]["message"],
+        "successor delivery",
+        "a successor occupant never inherits former occupant landed state"
+    );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
