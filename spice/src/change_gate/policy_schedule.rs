@@ -126,6 +126,10 @@ mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let maximum = Arc::new(AtomicUsize::new(0));
         let initial = Arc::new(Barrier::new(3));
+        // Input 0 holds its slot until every later input has finished, so
+        // completions arrive out of canonical order.
+        let (later_finished, later) = mpsc::channel();
+        let later = Mutex::new(later);
         let completions = run(
             (0_usize..8).map(|index| (index, index)).collect(),
             3,
@@ -140,8 +144,18 @@ mod tests {
                     if input < 3 {
                         initial.wait();
                     }
-                    thread::sleep(Duration::from_millis((8 - input) as u64));
+                    if input == 0 {
+                        let later = later.lock().expect("later fixture lock");
+                        for _ in 1..8 {
+                            later.recv().expect("every later input finishes");
+                        }
+                    }
                     active.fetch_sub(1, Ordering::SeqCst);
+                    if input != 0 {
+                        later_finished
+                            .send(())
+                            .expect("input 0 awaits later inputs");
+                    }
                     Ok(input)
                 }
             },
@@ -162,6 +176,11 @@ mod tests {
     #[test]
     fn failure_dispatches_only_earlier_canonical_work_and_returns_the_first() {
         let started = Arc::new(Mutex::new(Vec::new()));
+        // Input 0 holds its slot until input 1 starts. Input 1 can only start
+        // once input 2's failure frees the other slot, so that failure removes
+        // every later position while earlier input 1 still runs.
+        let (one_started, one) = mpsc::channel();
+        let one = Mutex::new(one);
         let completions = run(
             [2_usize, 0, 1, 3, 4, 5]
                 .into_iter()
@@ -174,18 +193,19 @@ mod tests {
                 move |input| {
                     started.lock().expect("started fixture lock").push(input);
                     match input {
-                        1 => {
-                            thread::sleep(Duration::from_millis(20));
-                            Err(input)
-                        }
-                        2 => {
-                            thread::sleep(Duration::from_millis(5));
-                            Err(input)
-                        }
-                        _ => {
-                            thread::sleep(Duration::from_millis(30));
+                        0 => {
+                            one.lock()
+                                .expect("input 1 fixture lock")
+                                .recv()
+                                .expect("input 1 starts");
                             Ok(input)
                         }
+                        1 => {
+                            one_started.send(()).expect("input 0 awaits input 1");
+                            Err(input)
+                        }
+                        2 => Err(input),
+                        _ => Ok(input),
                     }
                 }
             },

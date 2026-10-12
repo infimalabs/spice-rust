@@ -597,23 +597,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_running_step_beats_until_it_ends_and_never_after() {
+    /// A sink that also announces each write, so a test blocks on the
+    /// heartbeat it expects instead of re-reading the sink.
+    struct Announcing {
+        sink: Shared,
+        written: std::sync::mpsc::Sender<()>,
+    }
+
+    impl Write for Announcing {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let written = self.sink.write(bytes)?;
+            let _ = self.written.send(());
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A progress writer whose sink `shared` reads and whose writes `until`
+    /// awaits.
+    fn announcing(
+        label: &'static str,
+        interval: Duration,
+    ) -> (Progress, Shared, impl Fn(&dyn Fn(&str) -> bool)) {
         let shared = Shared::default();
+        let (written, writes) = std::sync::mpsc::channel();
         let progress = Progress::new(
-            "gate test",
-            Arc::new(Mutex::new(shared.clone())),
-            Duration::from_millis(1),
+            label,
+            Arc::new(Mutex::new(Announcing {
+                sink: shared.clone(),
+                written,
+            })),
+            interval,
         );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let (value, _) = progress.during("1/1 shard", || {
-            while shared.text().matches("running").count() < 3 {
-                assert!(Instant::now() < deadline, "heartbeats never arrived");
-                std::thread::sleep(Duration::from_millis(1));
+        let observed = shared.clone();
+        let until = move |reached: &dyn Fn(&str) -> bool| {
+            while !reached(&observed.text()) {
+                writes
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the heartbeat writes again");
             }
+        };
+        (progress, shared, until)
+    }
+
+    #[test]
+    fn a_running_step_beats_until_it_ends() {
+        let (progress, shared, until) = announcing("gate test", Duration::from_millis(1));
+        let (value, _) = progress.during("1/1 shard", || {
+            until(&|text| text.matches("running").count() >= 3);
             7
         });
         assert_eq!(value, 7);
+        // The heartbeat runs in a scope that joins before `during` returns.
         let ended = shared.text();
         assert!(
             ended
@@ -621,8 +659,6 @@ mod tests {
                 .all(|line| line.starts_with("[gate test] 1/1 shard running ")),
             "{ended}"
         );
-        std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(shared.text(), ended, "no heartbeat follows completion");
     }
 
     #[test]
@@ -808,26 +844,14 @@ mod tests {
 
     #[test]
     fn a_heartbeat_names_the_phase_the_work_has_reached() {
-        let shared = Shared::default();
-        let progress = Progress::new(
-            "gate selection",
-            Arc::new(Mutex::new(shared.clone())),
-            Duration::from_millis(1),
-        );
+        let (progress, shared, until) = announcing("gate selection", Duration::from_millis(1));
         let phase = Phase::new("capture");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let wait_for = |needle: &str| {
-            while !shared.text().contains(needle) {
-                assert!(Instant::now() < deadline, "no heartbeat named {needle}");
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        };
         let ((), elapsed) = progress.watching(
             || phase.get(),
             || {
-                wait_for("capture running ");
+                until(&|text| text.contains("capture running "));
                 phase.set("arm rust-typecheck".to_owned());
-                wait_for("arm rust-typecheck running ");
+                until(&|text| text.contains("arm rust-typecheck running "));
             },
         );
         assert!(progress.beat_during(elapsed));
@@ -839,8 +863,6 @@ mod tests {
             }),
             "{ended}"
         );
-        std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(shared.text(), ended, "no heartbeat follows completion");
     }
 
     #[test]

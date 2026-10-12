@@ -986,8 +986,27 @@ fn refusal(
     ))
 }
 
+#[cfg(test)]
+thread_local! {
+    static PINNED_AUTHORED: std::cell::Cell<Option<jiff::Timestamp>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Run `work` with every directive this thread authors stamped at `at`.
+#[cfg(test)]
+pub(super) fn authored_at<T>(at: jiff::Timestamp, work: impl FnOnce() -> T) -> T {
+    let previous = PINNED_AUTHORED.replace(Some(at));
+    let value = work();
+    PINNED_AUTHORED.set(previous);
+    value
+}
+
 fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
-    Instant::new(jiff::Timestamp::now())
+    #[cfg(test)]
+    let now = PINNED_AUTHORED.get().unwrap_or_else(jiff::Timestamp::now);
+    #[cfg(not(test))]
+    let now = jiff::Timestamp::now();
+    Instant::new(now)
         .map_err(|error| typed_environment_fault("resident::clock-invalid", &error.to_string()))
 }
 

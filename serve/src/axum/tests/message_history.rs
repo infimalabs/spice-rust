@@ -471,43 +471,30 @@ async fn history_reads_hold_their_slot_until_the_scan_returns() {
         "demand beyond the surface bound is refused",
     );
 
-    let (entered, observed) = std::sync::mpsc::channel();
+    let (entered, mut observed) = tokio::sync::mpsc::unbounded_channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
     let first_entered = entered.clone();
     let held = tokio::spawn(first.run(move || {
         first_entered.send(1).expect("entry reports");
         released.recv().expect("release arrives");
     }));
-    let waiting = tokio::spawn(second.run(move || entered.send(2).expect("entry reports")));
-    let entry = |expected, attempts| {
-        let observed = &observed;
-        async move {
-            for _ in 0..attempts {
-                if let Ok(lane) = observed.try_recv() {
-                    return Some(lane == expected);
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            None
-        }
+    let mut entry = async || {
+        tokio::time::timeout(Duration::from_secs(10), observed.recv())
+            .await
+            .expect("a scan starts")
+            .expect("a scan reports its entry")
     };
-    assert_eq!(entry(1, 400).await, Some(true), "the first scan starts");
+    assert_eq!(entry().await, 1, "the first scan starts");
 
-    // The closing socket drops its future, but the scan it started runs on.
+    // The closing socket drops its future, but the scan it started runs on
+    // and keeps the only slot, so a later read queues behind it.
     held.abort();
     assert!(held.await.expect_err("aborted").is_cancelled());
-    assert_eq!(
-        entry(2, 20).await,
-        None,
-        "no second scan while the first runs"
-    );
+    assert_eq!(limits.idle_reads(), 0, "the running scan keeps its slot");
+    let waiting = tokio::spawn(second.run(move || entered.send(2).expect("entry reports")));
 
     release.send(()).expect("scan released");
-    assert_eq!(
-        entry(2, 400).await,
-        Some(true),
-        "the queued scan starts next"
-    );
+    assert_eq!(entry().await, 2, "the queued scan starts next");
     waiting
         .await
         .expect("queued read joins")

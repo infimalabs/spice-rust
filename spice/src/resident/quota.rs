@@ -950,7 +950,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::*;
 
@@ -1364,10 +1364,11 @@ mod tests {
                 .expect("start lock")
                 .send(())
                 .expect("the test awaits the start");
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !cancellation.is_cancelled() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(1));
-            }
+            let (woken, wake) = std::sync::mpsc::channel();
+            let _registration = cancellation.register_waker(Arc::new(move || {
+                let _ = woken.send(());
+            }));
+            let _ = wake.recv_timeout(Duration::from_secs(5));
             observed.store(cancellation.is_cancelled(), Ordering::SeqCst);
             Err(SampleFailure::new(FailureKind::Supervisor))
         }));

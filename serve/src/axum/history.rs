@@ -42,6 +42,12 @@ impl HistoryLimits {
             _demand: demand,
         })
     }
+
+    /// Scan slots no running read holds.
+    #[cfg(test)]
+    pub(super) fn idle_reads(&self) -> usize {
+        self.reads.available_permits()
+    }
 }
 
 /// One admitted request's claim on the surface's history capacity.
