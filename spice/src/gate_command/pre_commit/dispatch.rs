@@ -22,6 +22,7 @@ pub(super) fn dispatch_captured(
     audit: Option<&mut ApplianceGenerationAudit>,
     profile: &mut profile::Profile,
 ) -> Result<Report, WorkerFailure> {
+    require_non_planning_claim(&claim)?;
     let source = dispatch.source().clone();
     let (packaged, admission, mut dispatch) = if dispatch.admission_enabled() {
         dispatch
@@ -81,6 +82,22 @@ pub(super) fn dispatch_captured(
         detail,
         fault: true,
     })
+}
+
+pub(super) fn require_non_planning_claim(claim: &gate::ClaimCapture) -> Result<(), WorkerFailure> {
+    if let gate::ClaimCapture::Active { task, phase } = claim
+        && matches!(phase.as_str(), "plan" | "design")
+    {
+        return Err(WorkerFailure {
+            reason: "gate::pre-commit-planning-implementation".to_owned(),
+            detail: format!(
+                "git commit refused: active claimed task {task} is in {} phase",
+                phase.as_str()
+            ),
+            fault: false,
+        });
+    }
+    Ok(())
 }
 
 type Builtins = (
