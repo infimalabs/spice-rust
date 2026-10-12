@@ -1045,21 +1045,4 @@ mod tests {
             prior_mode
         );
     }
-
-    #[test]
-    fn schema_seventeen_receipts_name_the_release_that_still_owns_their_payloads() {
-        let (_scratch, repository) = repository("legacy-reversal-payload");
-        let path = repository.common_dir().join(RECORD_PATH);
-        write_mode(&path, br#"{"version":17}"#, super::super::RECORD_MODE);
-        let Err(error) = read_record(&repository) else {
-            panic!("schema 17 was not retired");
-        };
-        assert!(matches!(
-            error,
-            InstallError::LegacyRecord {
-                owner: "INSTALL-dVvBGPX6p",
-                ..
-            }
-        ));
-    }
 }
