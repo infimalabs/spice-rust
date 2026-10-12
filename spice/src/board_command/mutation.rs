@@ -446,7 +446,6 @@ where
         status: "pending".to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: claim_answer,
         next,
     };
@@ -742,7 +741,6 @@ pub(super) fn task_note(
         status: "noted".to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: None,
         next,
     };
@@ -969,7 +967,6 @@ fn commit_dependency_edit(
         status: "edited".to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: None,
         next,
     };

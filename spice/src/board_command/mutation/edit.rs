@@ -320,7 +320,6 @@ fn publish_correction(
         status: "edited".to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: None,
         next,
     };

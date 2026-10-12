@@ -304,7 +304,6 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
             .to_owned(),
             guidance: None,
             completion: None,
-            learning: None,
             claim: None,
             next: next_action(snapshot, entry),
         }),

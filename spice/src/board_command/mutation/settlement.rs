@@ -227,7 +227,6 @@ fn settle(
         status: settlement.status().to_owned(),
         guidance: None,
         completion: None,
-        learning: None,
         claim: None,
         next,
     };
