@@ -13,10 +13,9 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, CommandAnswer, Intent, Positioned, ProjectVisibility,
-    TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskGuidance, TaskRelationEdge,
-    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
-    TaskTimelineEvent,
+    TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskRelationEdge, TaskRelationFrontier,
+    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation,
+    TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -965,19 +964,4 @@ fn fast_mode_is_on_when_any_of_lane_team_or_global_enables_it() {
             }
         }
     }
-}
-
-#[test]
-fn task_guidance_has_one_exact_actionable_spelling() {
-    let guidance = TaskGuidance::PlanAdvanceOwnership;
-    let encoded = wire::encode(&guidance).expect("task guidance encodes");
-    assert_eq!(encoded, format!("\"{}\"", guidance.as_str()).as_bytes());
-    assert_eq!(
-        wire::decode::<TaskGuidance>(&encoded).expect("task guidance decodes"),
-        guidance
-    );
-    assert!(
-        wire::decode::<TaskGuidance>(br#""same-task-next-phase""#).is_err(),
-        "task guidance must refuse promises outside its closed vocabulary"
-    );
 }

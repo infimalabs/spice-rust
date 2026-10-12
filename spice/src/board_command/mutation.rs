@@ -444,7 +444,6 @@ where
     let answer = wire::intent::TaskAnswer {
         task: prepared.task,
         status: "pending".to_owned(),
-        guidance: None,
         completion: None,
         claim: claim_answer,
         next,
@@ -739,7 +738,6 @@ pub(super) fn task_note(
     let answer = wire::intent::TaskAnswer {
         task: entry.handle().clone(),
         status: "noted".to_owned(),
-        guidance: None,
         completion: None,
         claim: None,
         next,
@@ -965,7 +963,6 @@ fn commit_dependency_edit(
     let answer = wire::intent::TaskAnswer {
         task: entry.handle().clone(),
         status: "edited".to_owned(),
-        guidance: None,
         completion: None,
         claim: None,
         next,

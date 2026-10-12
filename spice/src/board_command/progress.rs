@@ -226,7 +226,6 @@ fn replay_task_completion(
         body: CommandAnswer::Task(wire::intent::TaskAnswer {
             task: entry.handle().clone(),
             status: terminal.status,
-            guidance: terminal.guidance,
             completion: None,
             claim: None,
             next: terminal.next,
@@ -365,7 +364,6 @@ fn append_done(
     parked: Option<&body::TaskParkedCommits>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let status = transition.next().status.clone();
-    let guidance = None;
     let completed = write
         .fact(
             body::TaskDone {
@@ -376,7 +374,6 @@ fn append_done(
                         .operation
                         .expect("live task completion requires an operation"),
                     status: status.clone(),
-                    guidance,
                     next: next.clone(),
                 }),
                 git: published,
@@ -425,7 +422,6 @@ fn append_done(
     Ok(wire::intent::TaskAnswer {
         task: entry.handle().clone(),
         status,
-        guidance,
         completion: None,
         claim: None,
         next,
@@ -895,7 +891,6 @@ fn review_answer(
     wire::intent::TaskAnswer {
         task,
         status,
-        guidance: None,
         completion: None,
         claim: None,
         next,
