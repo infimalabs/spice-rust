@@ -241,6 +241,7 @@ fn board_task(
             position: seq(1),
             body: wire::intent::BoardStatement {
                 intent: None,
+                preparation: None,
                 handle: wire::TaskHandle::for_project(project, &born),
                 born: born.clone(),
                 queue_origin: seq(1),

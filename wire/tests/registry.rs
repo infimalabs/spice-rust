@@ -338,7 +338,7 @@ fn sample_witnesses() -> Vec<Witness> {
         |byte: char| Digest::from_str(&String::from(byte).repeat(64)).expect("a digest spelling");
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
 
-    vec![
+    let mut witnesses = vec![
         Witness::Task {
             task: task.clone(),
             head: seq(1),
@@ -374,7 +374,7 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Eligibility { rule: name("next") },
         Witness::Assignment {
-            task,
+            task: task.clone(),
             head: seq(6),
             reviewer: "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
                 .parse()
@@ -422,6 +422,38 @@ fn sample_witnesses() -> Vec<Witness> {
         Witness::Transition {
             from: ResidentState::Seated,
             to: ResidentState::Quiescing,
+        },
+    ];
+    witnesses.extend(sample_room_witnesses(&task));
+    witnesses
+}
+
+fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
+    let seq = |value: u64| wire::Seq(value.try_into().expect("a position"));
+    let digest =
+        |byte: char| Digest::from_str(&String::from(byte).repeat(64)).expect("a digest spelling");
+    let group = "1kKRRsDR1"
+        .parse::<wire::rooms::RoomAuthorityStamp>()
+        .expect("a group stamp");
+    let candidate = wire::rooms::CandidateRef {
+        controller: task.clone(),
+        candidate: "1kKRRsDR2".parse().expect("a candidate stamp"),
+    };
+    vec![
+        Witness::Source {
+            source: digest('1'),
+        },
+        Witness::Group {
+            group,
+            head: Some(seq(8)),
+        },
+        Witness::Proposal {
+            proposal: wire::rooms::ProposalRef::Candidate { candidate },
+            head: Some(seq(9)),
+        },
+        Witness::Authorization {
+            output: task.clone(),
+            head: None,
         },
     ]
 }
