@@ -129,6 +129,45 @@ fn acknowledgement_tool_intent_publishes_a_durable_quote_target() {
     );
 }
 
+#[test]
+fn packet_tool_intent_presents_as_the_authors_outgoing_quote() {
+    let recipient = wire::MessageRecipient {
+        address: "6Jv5".parse().expect("fixture address parses"),
+        lane: "018f82d4-6f59-7d06-92e3-bce9131163b1"
+            .parse()
+            .expect("fixture lane parses"),
+        occupant: "018f82d4-6f59-7d06-92e3-bce9131163b2"
+            .parse()
+            .expect("fixture occupant parses"),
+    };
+    let mut directives = PresentationDirectives::default();
+    directives.recipients.insert(recipient.address, recipient);
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let record = capture_record(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"toolCall","id":"call-1","name":"read","intent":"MSG 6Jv5: Check the parser.","arguments":{}}],"stopReason":"toolUse"}}"#,
+        0,
+    );
+
+    publish_agent_messages(&publisher, &record, &mut state, Some(&directives))
+        .expect("packet intent presents");
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages
+        .iter()
+        .find(|message| message.activity == wire::AgentActivityKind::Prose)
+        .expect("packet intent publishes as prose");
+    assert_eq!(prose.text, "> Check the parser.");
+    let [send] = prose.sends.as_slice() else {
+        panic!(
+            "packet intent presents one outgoing send: {:?}",
+            prose.sends
+        )
+    };
+    assert_eq!(send.from, lane());
+    assert_eq!(send.sender, lane());
+    assert_eq!(send.recipients, [recipient]);
+}
+
 mod acknowledgement;
 mod reasoning;
 mod sends;
