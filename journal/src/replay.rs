@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Journal, JournalReader};
 
+mod rooms;
 mod schema;
 mod steering;
 
@@ -168,7 +169,8 @@ impl Journal {
         verify_connection(&self.connection)
     }
 
-    /// Rebuilds only the derived origin/cause thread index in one transaction.
+    /// Rebuilds the derived thread index and room-authority projection in one
+    /// transaction; immutable facts and heads are never rewritten.
     pub fn reindex(&mut self) -> Result<ReindexReport, ReindexError> {
         let transaction = self
             .connection
@@ -190,9 +192,11 @@ impl Journal {
                 expected.insert(*seq, record);
             }
         }
+        let rooms = rooms::expected(&facts, &mut violations);
         if !violations.is_empty() {
             return Err(ReindexError::Violations(violations));
         }
+        crate::rooms::write_projection(&transaction, &rooms).map_err(ReindexError::Sqlite)?;
 
         transaction
             .execute("DELETE FROM thread_index", [])
@@ -257,6 +261,7 @@ pub(crate) fn verify_connection_after_facts(
     verify_task_intents(connection, &facts, &mut violations)?;
     verify_generations(connection, &facts, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
+    heads += rooms::verify(connection, &facts, &mut violations)?;
     let receipts = verify_receipts(connection, &mut violations)?
         + crate::historical_receipts::verify(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
@@ -783,7 +788,7 @@ fn verify_task_intents(
             violations.push(Violation::new(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
-                "preparation differs from its task birth".to_owned(),
+                "preparation differs from its task birth and output control".to_owned(),
             ));
         }
         if let Some(preparation) = preparation {

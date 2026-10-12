@@ -21,8 +21,10 @@ const PREPARED: &str = "prepared";
 /// Task fields already have their current semantics. The crossing first proves,
 /// before any mutation, that no retained task fact or head omits the creation
 /// context schema 35 was the last to default. It then replaces retired fact
-/// kinds with inert current-schema evidence before the schema identity
-/// advances, so no current reader needs their DTO or decode arm.
+/// kinds with inert current-schema evidence and creates the room-authority
+/// projection, which no predecessor could have populated, empty before the
+/// schema identity advances, so no current reader needs a retired DTO or
+/// decode arm.
 const PREDECESSOR_SCHEMAS: [u32; 3] = [33, 34, 35];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -99,6 +101,9 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
 
     transaction
         .execute_batch(BASELINE_SQL)
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .execute_batch(crate::rooms::SCHEMA_SQL)
         .map_err(OpenError::Sqlite)?;
     crate::historical_receipts::create_schema(&transaction)?;
     crate::historical_receipts::reserve_identities(&transaction)?;
@@ -225,6 +230,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     }
     refuse_creation_omission(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
+    transaction
+        .execute_batch(crate::rooms::SCHEMA_SQL)
+        .map_err(OpenError::Sqlite)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",

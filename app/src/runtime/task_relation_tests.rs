@@ -95,6 +95,10 @@ fn fact_vocabulary_owns_the_complete_task_relation_mapping() {
             FactKind::TaskClosed,
             &[Origin, Dependency, Review, Lifecycle],
         ),
+        (
+            FactKind::OutputControlled,
+            &[Origin, Dependency, Review, Lifecycle],
+        ),
     ];
     let task_kinds = FactKind::ALL
         .iter()

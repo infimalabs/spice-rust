@@ -31,6 +31,7 @@ mod historical_receipts;
 mod page_budget;
 mod read;
 mod renewal;
+mod rooms;
 mod schema;
 mod steering_index;
 mod steering_verification;
@@ -1107,17 +1108,22 @@ fn authority_tables(journal: &Journal) -> BTreeSet<String> {
 
 fn expected_tables() -> BTreeSet<String> {
     [
+        "authorization_heads",
         "claim_heads",
         "claim_index",
         "command_receipts",
         "cursor_head",
         "fact_envelopes",
         "finding_heads",
+        "group_anchors",
+        "group_heads",
         "historical_command_receipts",
         "journal_schema",
         "lane_seats",
         "lease_heads",
+        "proposal_heads",
         "residency_head",
+        "room_publications",
         "steering_heads",
         "steering_index",
         "steering_misses",
