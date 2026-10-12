@@ -219,7 +219,9 @@ fn placed_sends(
 ) -> Vec<PlacedSend> {
     if event.author.is_none()
         || directives.recipients.is_empty()
-        || !text.contains(steer::ack::scan::message::MARKER)
+        || !steer::ack::scan::message::MARKERS
+            .iter()
+            .any(|marker| text.contains(marker))
     {
         return Vec::new();
     }
@@ -227,11 +229,16 @@ fn placed_sends(
         .into_iter()
         .filter_map(|message| {
             let publication = message.publication.ok()?;
-            if publication
-                .routes
-                .iter()
-                .any(|route| route.context.is_some())
-            {
+            let steer::ack::scan::Request::Msg { routes } = &publication.request else {
+                return None;
+            };
+            if routes.iter().any(|route| {
+                route.context.is_some()
+                    || !matches!(
+                        route.audience,
+                        Some(steer::ack::scan::Audience::Occupant(_))
+                    )
+            }) {
                 return None;
             }
             let recipients = publication

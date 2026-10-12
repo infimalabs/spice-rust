@@ -378,6 +378,29 @@ fn account_held(
     })
 }
 
+/// Account one stream's held span now, reading nothing further.
+///
+/// A caller that must cite a record a deferred pass handed it, before the
+/// bound would account that record, settles the hold here. The records the
+/// span covers were already handed over, so none are returned; a stream that
+/// holds nothing writes nothing.
+///
+/// # Errors
+///
+/// Returns [`IngestError::Account`] when the batch is refused; the span is
+/// released either way, so the next pass reads it again from the stored head.
+pub fn settle_held(
+    journal: &mut Journal,
+    ingestion: &Ingestion,
+    coalescing: &mut Coalescing,
+) -> Result<Option<Applied>, IngestError> {
+    let key = TranscriptStreamKey::new(&ingestion.lane, &ingestion.vendor, &ingestion.stream);
+    match account_held(journal, ingestion, coalescing, &key, Vec::new())? {
+        Ingested::Accounted { applied, .. } => Ok(Some(applied)),
+        Ingested::Deferred { .. } | Ingested::Unchanged => Ok(None),
+    }
+}
+
 /// The generation the tape currently publishes.
 ///
 /// This is read before the scan rather than taken from it, because the stored
@@ -542,7 +565,7 @@ mod tests {
 
     use super::{
         Bound, Coalescing, IngestError, Ingested, Ingestion, Journal, TranscriptStreamKey,
-        ingest_bounded,
+        ingest_bounded, settle_held,
     };
 
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
@@ -859,6 +882,55 @@ mod tests {
             "a drained stream still had something to account",
         );
         assert_eq!(batches(journal).len(), 1);
+        scratch.remove();
+    }
+
+    /// Settling accounts exactly the held span and reads nothing past it.
+    ///
+    /// A caller that must cite a held record settles the hold without taking
+    /// records it was never handed: a record that landed after the span stays
+    /// for the next pass, which resumes where the settled batch ended, and a
+    /// stream holding nothing writes nothing.
+    #[test]
+    fn settling_a_hold_accounts_its_span_and_leaves_later_records_unread() {
+        let scratch = Scratch::new("settling");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(PROSE)).expect("prose is durable");
+        let journal = &mut authority();
+        let coalescing = &mut Coalescing::new();
+        let held = ingest_bounded(journal, ingestion(scratch.path()), coalescing, Bound::LIVE);
+        assert!(matches!(held, Ok(Ingested::Deferred { .. })), "{held:?}");
+        tape.tee(&line(RESIDUE)).expect("a later record is durable");
+
+        let settled = settle_held(journal, &ingestion(scratch.path()), coalescing);
+        assert!(matches!(settled, Ok(Some(_))), "{settled:?}");
+        let prose = line(PROSE).len() as u64;
+        assert_eq!(
+            head(journal).expect("a head stands").next,
+            position(1, prose)
+        );
+        assert!(
+            matches!(
+                settle_held(journal, &ingestion(scratch.path()), coalescing),
+                Ok(None)
+            ),
+            "a settled stream still held something",
+        );
+
+        match ingest_bounded(
+            journal,
+            ingestion(scratch.path()),
+            coalescing,
+            Bound::IMMEDIATE,
+        ) {
+            Ok(Ingested::Accounted { batch, records, .. }) => {
+                assert_eq!(records.len(), 1, "the later record was lost or replayed");
+                assert_eq!(batch.from, position(1, prose));
+                assert_eq!(batch.residue_records, 1);
+            }
+            other => panic!("the next pass did not resume after the settled span: {other:?}"),
+        }
+        assert_eq!(batches(journal).len(), 2);
         scratch.remove();
     }
 

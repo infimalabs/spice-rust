@@ -981,7 +981,7 @@ fn search_decodes_only_needle_records_newest_first_across_chunks_and_seals() {
     let search = search_tail(
         scratch.path(),
         Dialect::Omp,
-        NEEDLE.as_bytes(),
+        &[NEEDLE.as_bytes()],
         search_budget(16 * 1024 * 1024),
         |record| {
             visited.push(prose_text(&record));
@@ -1015,7 +1015,7 @@ fn search_window_stops_before_older_history() {
     let search = search_tail(
         scratch.path(),
         Dialect::Omp,
-        NEEDLE.as_bytes(),
+        &[NEEDLE.as_bytes()],
         search_budget(4 * 1024),
         |_| panic!("a match beyond the window is visited"),
     )

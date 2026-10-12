@@ -1,4 +1,5 @@
-//! Authored MSG packets published as peer messages.
+//! Authored MSG, ASK, and ANS packets published as peer messages and room
+//! conversation records.
 //!
 //! The only source is a complete assistant text block on the author's lane
 //! tape (`Event::StreamedProse`, OMP's `text_end`). Settled message prose
@@ -21,18 +22,34 @@
 //! judgment: a later reread finds it and leaves the packet unpublished even
 //! when the refusal's cause has since changed. A packet the grammar refuses
 //! needs no record, since its text refuses identically on every read.
+//!
+//! ASK, ANS, and an MSG naming `operator` also write one `room::conversed`
+//! record in that same write; its identity is the packet's exact transcript
+//! hunk, so a reread finds it instead of publishing again.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io;
 use std::ops::{ControlFlow, Range};
 use std::time::{Duration, Instant as Clock};
 
-use steer::ack::scan::Route;
-use wire::rooms::{RoomAuthorityStamp, RoomMessaged, TextRange, TranscriptHunk};
+use steer::ack::scan::{Audience, Request, Route, Verb};
+use wire::rooms::{
+    QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState,
+    RoomAuthorityStamp, RoomConversed, RoomDestination, RoomMessaged, RoomPublicationKind,
+    RoomRoute, TextRange, TranscriptHunk,
+};
 use wire::{OccupantAddress, TaskHandle, TaskStamp};
 
 use super::transitions::admit_send_envelope;
 use super::*;
+
+mod conversation;
+mod notice;
+
+use conversation::{conversation_stamp, publish_conversation};
+pub(in crate::resident) use notice::{MessageRecordedNotice, MessageRefusalNotice};
+use notice::{refusal_detail, report};
 
 /// Residency views one packet may resolve against before it gives up on a
 /// residency that keeps moving under it.
@@ -82,8 +99,8 @@ pub(in crate::resident) struct Packet<'a> {
     pub(in crate::resident) lane: CanonicalUuid,
     pub(in crate::resident) author: CanonicalUuid,
     pub(in crate::resident) locus: TranscriptLocus,
-    /// Every route in source order, as its header wrote it.
-    pub(in crate::resident) routes: Vec<Route>,
+    /// What the header requests, as it wrote it.
+    pub(in crate::resident) request: Request,
     pub(in crate::resident) body: &'a str,
     /// The body's byte range within its decoded event's text.
     pub(in crate::resident) text: Range<usize>,
@@ -99,9 +116,21 @@ pub(in crate::resident) enum Published {
         lanes: Vec<CanonicalUuid>,
         unreached: Vec<String>,
         rooms: Vec<TaskHandle>,
+        /// The conversation record an ASK, ANS, or operator-routed MSG wrote.
+        conversed: Option<Conversed>,
     },
     /// An earlier read of the same packet already published it.
     Already,
+}
+
+/// What one packet's conversation record opened or settled.
+#[derive(Debug, Eq, PartialEq)]
+pub(in crate::resident) struct Conversed {
+    pub(in crate::resident) verb: Verb,
+    /// Whether it opened one operator item.
+    pub(in crate::resident) operator: bool,
+    /// The question result an ASK opened or an ANS answered.
+    pub(in crate::resident) result: Option<QuestionResultRef>,
 }
 
 /// Why one packet published nothing.
@@ -182,7 +211,7 @@ fn publish_record(
                                     lane: record.lane,
                                     author: record.author,
                                     locus: locus.clone(),
-                                    routes: publication.routes.clone(),
+                                    request: publication.request.clone(),
                                     body: &text[publication.body.clone()],
                                     text: publication.body.clone(),
                                 },
@@ -308,7 +337,7 @@ fn recover_lane(
     let search = listen::search_tail(
         &path,
         vendor.dialect(),
-        steer::ack::scan::message::MARKER.as_bytes(),
+        &steer::ack::scan::message::MARKERS.map(str::as_bytes),
         budget,
         |record| {
             if (record.locus.member, record.locus.offset) <= declared {
@@ -448,15 +477,28 @@ fn publish_resolved(
     }
 }
 
+/// Why an answer's question moved between its read and its commit.
+const RESULT_MOVED: &str = "ans::result-moved";
+
 /// Whether a commit refusal means the view went stale rather than the packet
 /// being wrong.
 fn moved(reason: &str) -> bool {
-    matches!(reason, "steer::residency-moved" | "steer::identity-taken")
+    matches!(
+        reason,
+        "steer::residency-moved" | "steer::identity-taken" | "steer::directive-moved"
+    ) || reason == RESULT_MOVED
 }
 
-/// Resolve one packet against one residency view and journal a message to
-/// every seated recipient and a record in every named room in one guarded
-/// write.
+/// One directed lane route: the address it names and the context it carries.
+type Directed = (OccupantAddress, Option<TaskHandle>);
+
+/// Resolve one packet against one residency view and publish it in one
+/// guarded write.
+///
+/// A plain MSG, one naming no operator, is native peer messaging plus room
+/// records. ASK, ANS, and an operator-routed MSG also write the conversation
+/// record that owns their result and operator item; see
+/// [`publish_conversation`].
 ///
 /// The guard re-proves at commit that the residency is the one the view
 /// read and that every recipient lane it publishes to still seats the
@@ -474,15 +516,30 @@ pub(in crate::resident) fn publish_packet(
     packet: &Packet<'_>,
     view: &bus::TaskSnapshot,
 ) -> Result<Published, Unpublished> {
-    let directed = packet
-        .routes
-        .iter()
-        .filter_map(|route| Some((route.address?, route.context.as_ref())))
-        .collect::<Vec<_>>();
-    let identities = directed
-        .iter()
-        .map(|(recipient, _)| message_identity(&packet.locus, *recipient))
-        .collect::<Vec<_>>();
+    match &packet.request {
+        Request::Msg { routes }
+            if routes
+                .iter()
+                .all(|route| route.audience != Some(Audience::Operator)) =>
+        {
+            publish_message(bus, epoch, config, packet, routes, view)
+        }
+        Request::Msg { .. } | Request::Ask { .. } | Request::Ans { .. } => {
+            publish_conversation(bus, epoch, config, packet, view)
+        }
+    }
+}
+
+fn publish_message(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    packet: &Packet<'_>,
+    routes: &[Route],
+    view: &bus::TaskSnapshot,
+) -> Result<Published, Unpublished> {
+    let directed = occupant_routes(routes);
+    let identities = identities(packet, &directed);
     let mut minted_micros = None;
     for directive in &identities {
         let (existing, minted) = keyspace(bus, *directive).map_err(Unpublished::Failed)?;
@@ -491,28 +548,9 @@ pub(in crate::resident) fn publish_packet(
         }
         minted_micros = minted;
     }
-    let Some(residency) = view
-        .residency()
-        .filter(|residency| residency.body().epoch == epoch)
-    else {
-        return Err(Unpublished::Failed(typed_store_fault(
-            "steer::residency-missing",
-            "no current residency names this resident generation",
-        )));
-    };
-    let sender = view
-        .facts()
-        .occupant_address(packet.lane, packet.author)
-        .map_err(|refusal| Unpublished::Refused {
-            reason: "msg::sender-unproved".to_owned(),
-            detail: refusal.to_string(),
-        })?;
-    if directed.iter().any(|(recipient, _)| *recipient == sender) {
-        return Err(Unpublished::Refused {
-            reason: "msg::recipient-self".to_owned(),
-            detail: format!("{sender} is the authoring occupant's own address"),
-        });
-    }
+    let residency = current(view, epoch)?;
+    let sender = proved_sender(view, packet)?;
+    refuse_self(&directed, sender)?;
     let Some(record) = resolve_rooms(bus, packet, view, sender)? else {
         return Ok(Published::Already);
     };
@@ -526,56 +564,200 @@ pub(in crate::resident) fn publish_packet(
     }
     let at = current_instant().map_err(Unpublished::Failed)?;
     let expires = expiry(at, config.expiry().get()).map_err(Unpublished::Failed)?;
-    let origin =
-        resident_origin(epoch).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
-    let mut proposal = JournalWrite::new(
-        Actor::Lane(packet.lane),
-        origin.clone(),
+    let mut proposal = lane_write(epoch, packet, at)?;
+    let keys = mint_keys(&mut minted_micros, targets.len())?;
+    let sending = Sending {
+        epoch,
+        residency: residency.position(),
+        packet,
         at,
-        Producer::AckScanner,
-    );
-    for target in &targets {
-        let key = mint_key(minted_micros).map_err(Unpublished::Failed)?;
-        minted_micros = key.minted_micros();
-        proposal.guard(send_guard(
-            residency.position(),
-            Witness::Residency {
-                lane: target.lane,
-                occupant: Some(target.occupant),
-                epoch,
-            },
-            target.directive,
-            key.clone(),
-        ));
-        let messaged = wire::body::SteerMessaged {
-            directive: target.directive,
-            key: key.to_string(),
-            lane: target.lane,
-            occupant: target.occupant,
-            from: packet.lane,
-            sender: packet.author,
-            text: packet.body.to_owned(),
-            locus: packet.locus.clone(),
-            room: target.room.clone(),
-            expires,
-        };
-        let pending = proposal
-            .fact(messaged.clone(), FactCause::Existing(residency.position()))
-            .map_err(fact_invalid)?;
-        let origin = origin.clone();
-        proposal.steering_head(pending, move |seq| {
-            steer::Ledger::sent_head(&messaged.as_sent(), origin, at, seq)
-                .expect("the resolved message body builds its authority head")
-        });
-    }
-    stage_rooms(&mut proposal, residency.position(), &record, &targets)?;
+        expires,
+    };
+    sending.stage(&mut proposal, &targets, keys)?;
+    stage_rooms(
+        &mut proposal,
+        residency.position(),
+        &record,
+        &targets,
+        moment(minted_micros),
+    )?;
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
     Ok(Published::Sent {
         lanes: targets.iter().map(|target| target.lane).collect(),
         unreached,
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
+        conversed: None,
     })
+}
+
+impl Packet<'_> {
+    /// The routes the header spelled; ANS spells none.
+    fn request_routes(&self) -> &[Route] {
+        match &self.request {
+            Request::Msg { routes } => routes,
+            Request::Ask { route } => std::slice::from_ref(route),
+            Request::Ans { .. } => &[],
+        }
+    }
+}
+
+/// Each occupant-addressed route, in route order, with its own context.
+fn occupant_routes(routes: &[Route]) -> Vec<Directed> {
+    routes
+        .iter()
+        .filter_map(|route| match route.audience {
+            Some(Audience::Occupant(address)) => Some((address, route.context.clone())),
+            Some(Audience::Operator) | None => None,
+        })
+        .collect()
+}
+
+/// The one directive identity each directed route can own.
+fn identities(packet: &Packet<'_>, directed: &[Directed]) -> Vec<CanonicalUuid> {
+    directed
+        .iter()
+        .map(|(recipient, _)| message_identity(&packet.locus, *recipient))
+        .collect()
+}
+
+/// The residency head this resident generation publishes against.
+fn current(
+    view: &bus::TaskSnapshot,
+    epoch: CanonicalUuid,
+) -> Result<&journal::JournalHead<journal::crossing::ResidencyHead>, Unpublished> {
+    view.residency()
+        .filter(|residency| residency.body().epoch == epoch)
+        .ok_or_else(|| {
+            Unpublished::Failed(typed_store_fault(
+                "steer::residency-missing",
+                "no current residency names this resident generation",
+            ))
+        })
+}
+
+fn proved_sender(
+    view: &bus::TaskSnapshot,
+    packet: &Packet<'_>,
+) -> Result<OccupantAddress, Unpublished> {
+    view.facts()
+        .occupant_address(packet.lane, packet.author)
+        .map_err(|refusal| Unpublished::Refused {
+            reason: "msg::sender-unproved".to_owned(),
+            detail: refusal.to_string(),
+        })
+}
+
+fn refuse_self(directed: &[Directed], sender: OccupantAddress) -> Result<(), Unpublished> {
+    if directed.iter().any(|(recipient, _)| *recipient == sender) {
+        return Err(Unpublished::Refused {
+            reason: "msg::recipient-self".to_owned(),
+            detail: format!("{sender} is the authoring occupant's own address"),
+        });
+    }
+    Ok(())
+}
+
+fn lane_write(
+    epoch: CanonicalUuid,
+    packet: &Packet<'_>,
+    at: Instant,
+) -> Result<JournalWrite, Unpublished> {
+    let origin =
+        resident_origin(epoch).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
+    Ok(JournalWrite::new(
+        Actor::Lane(packet.lane),
+        origin,
+        at,
+        Producer::AckScanner,
+    ))
+}
+
+/// The durable key clock's high-water, which every minted key follows.
+fn minted(bus: &Bus) -> Result<Option<i64>, Unpublished> {
+    bus.read(|read| read.steering_minted_micros())
+        .map_err(|error| {
+            Unpublished::Failed(typed_store_fault(
+                "steer::index-unreadable",
+                &error.to_string(),
+            ))
+        })
+}
+
+/// `count` fresh steering keys, each after the last.
+fn mint_keys(
+    minted_micros: &mut Option<i64>,
+    count: usize,
+) -> Result<Vec<steer::Key>, Unpublished> {
+    (0..count)
+        .map(|_| {
+            let key = mint_key(*minted_micros).map_err(Unpublished::Failed)?;
+            *minted_micros = key.minted_micros();
+            Ok(key)
+        })
+        .collect()
+}
+
+/// The first microsecond a packet's room-authority stamps may use: now, or
+/// past every key this write minted, so no stamp spells one of its keys.
+fn moment(minted_micros: Option<i64>) -> i64 {
+    let now = jiff::Timestamp::now().as_microsecond();
+    minted_micros.map_or(now, |minted| now.max(minted.saturating_add(1)))
+}
+
+/// What every peer message one packet opens shares.
+struct Sending<'a, 'p> {
+    epoch: CanonicalUuid,
+    residency: wire::Seq,
+    packet: &'a Packet<'p>,
+    at: Instant,
+    expires: Instant,
+}
+
+impl Sending<'_, '_> {
+    /// Stage one guarded peer message to each target under its key.
+    fn stage(
+        &self,
+        proposal: &mut JournalWrite,
+        targets: &[Target],
+        keys: Vec<steer::Key>,
+    ) -> Result<(), Unpublished> {
+        let origin = resident_origin(self.epoch)
+            .map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
+        for (target, key) in targets.iter().zip(keys) {
+            proposal.guard(send_guard(
+                self.residency,
+                Witness::Residency {
+                    lane: target.lane,
+                    occupant: Some(target.occupant),
+                    epoch: self.epoch,
+                },
+                target.directive,
+                key.clone(),
+            ));
+            let messaged = wire::body::SteerMessaged {
+                directive: target.directive,
+                key: key.to_string(),
+                lane: target.lane,
+                occupant: target.occupant,
+                from: self.packet.lane,
+                sender: self.packet.author,
+                text: self.packet.body.to_owned(),
+                locus: self.packet.locus.clone(),
+                room: target.room.clone(),
+                expires: self.expires,
+            };
+            let pending = proposal
+                .fact(messaged.clone(), FactCause::Existing(self.residency))
+                .map_err(fact_invalid)?;
+            let (origin, at) = (origin.clone(), self.at);
+            proposal.steering_head(pending, move |seq| {
+                steer::Ledger::sent_head(&messaged.as_sent(), origin, at, seq)
+                    .expect("the resolved message body builds its authority head")
+            });
+        }
+        Ok(())
+    }
 }
 
 fn fact_invalid(error: impl std::fmt::Display) -> Unpublished {
@@ -615,7 +797,12 @@ fn resolve_rooms(
     view: &bus::TaskSnapshot,
     sender: OccupantAddress,
 ) -> Result<Option<RoomRecord>, Unpublished> {
-    let rooms = packet_rooms(packet, view)?;
+    let contexts = packet
+        .request_routes()
+        .iter()
+        .filter_map(|route| route.context.as_ref())
+        .collect();
+    let rooms = packet_rooms(contexts, view)?;
     let hunk = match rooms.first() {
         None => None,
         Some((_, room)) => {
@@ -639,7 +826,7 @@ fn resolve_targets(
     bus: &Bus,
     residency: &[wire::LaneResidency],
     view: &bus::TaskSnapshot,
-    directed: &[(OccupantAddress, Option<&TaskHandle>)],
+    directed: &[Directed],
     identities: &[CanonicalUuid],
 ) -> Result<(Vec<Target>, Vec<String>), Unpublished> {
     let lanes = seats(residency, view);
@@ -658,7 +845,7 @@ fn resolve_targets(
                 lane: *lane,
                 occupant: *occupant,
                 directive: *directive,
-                room: context_room(*context),
+                room: context_room(context.as_ref()),
             }),
             None => unreached.push(unavailable(bus, &lanes, *recipient)?),
         }
@@ -673,18 +860,13 @@ fn stage_rooms(
     residency: wire::Seq,
     record: &RoomRecord,
     targets: &[Target],
+    moment: i64,
 ) -> Result<(), Unpublished> {
     let Some(hunk) = &record.hunk else {
         return Ok(());
     };
-    let moment = jiff::Timestamp::now().as_microsecond();
-    for ((_, room), offset) in record.rooms.iter().zip(0_i64..) {
-        let publication = RoomAuthorityStamp::for_micros(moment + offset).map_err(|error| {
-            Unpublished::Failed(typed_store_fault(
-                "msg::room-stamp-invalid",
-                &error.to_string(),
-            ))
-        })?;
+    for ((_, room), offset) in record.rooms.iter().zip(0_usize..) {
+        let publication = conversation_stamp(moment, offset)?;
         proposal
             .fact(
                 RoomMessaged {
@@ -710,16 +892,15 @@ fn context_room(context: Option<&TaskHandle>) -> Option<TaskStamp> {
     context.and_then(|handle| handle.born().ok())
 }
 
-/// Every distinct room the packet's routes name, in source order, each
-/// resolved by birth stamp against `view`; a context naming no task refuses
-/// the whole packet.
-fn packet_rooms(packet: &Packet<'_>, view: &bus::TaskSnapshot) -> Result<Rooms, Unpublished> {
+/// Every distinct room `contexts` name, in source order, each resolved by
+/// birth stamp against `view`; a context naming no task refuses the whole
+/// packet.
+fn packet_rooms(
+    contexts: Vec<&TaskHandle>,
+    view: &bus::TaskSnapshot,
+) -> Result<Rooms, Unpublished> {
     let mut rooms = Rooms::new();
-    for handle in packet
-        .routes
-        .iter()
-        .filter_map(|route| route.context.as_ref())
-    {
+    for handle in contexts {
         let born = handle
             .born()
             .ok()
@@ -924,15 +1105,34 @@ fn authored_blocks(events: &[listen::Event]) -> impl Iterator<Item = (usize, &st
     events
         .iter()
         .enumerate()
-        .filter_map(|(index, event)| match event {
-            listen::Event::StreamedProse(prose)
-                if prose.role == listen::ProseRole::Assistant
-                    && prose.text.contains(steer::ack::scan::message::MARKER) =>
-            {
-                Some((index, prose.text.as_str()))
-            }
-            _ => None,
-        })
+        .filter_map(|(index, event)| Some((index, packet_prose(event)?)))
+}
+
+/// The complete assistant text block `event` carries, when it could hold a
+/// packet.
+fn packet_prose(event: &listen::Event) -> Option<&str> {
+    match event {
+        listen::Event::StreamedProse(prose)
+            if prose.role == listen::ProseRole::Assistant
+                && steer::ack::scan::message::MARKERS
+                    .iter()
+                    .any(|marker| prose.text.contains(marker)) =>
+        {
+            Some(prose.text.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Whether `record` carries an assistant text block that could hold a packet,
+/// whose publication must cite the record's accounted bytes.
+pub(in crate::resident) fn carries_packet(record: &listen::Record) -> bool {
+    match &record.payload {
+        listen::RecordPayload::Events(events) => events
+            .iter()
+            .any(|sourced| packet_prose(&sourced.event).is_some()),
+        listen::RecordPayload::Residue(_) => false,
+    }
 }
 
 fn packet_locus(
@@ -954,245 +1154,6 @@ fn packet_locus(
         line: part(place.line)?,
         column: part(place.column)?,
     })
-}
-
-fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefusal) -> String {
-    use steer::ack::scan::MessageRefusal;
-    match refusal {
-        MessageRefusal::Unterminated => "the selector list is not closed by a colon".to_owned(),
-        MessageRefusal::Recipient { span, error } => {
-            format!(
-                "`{}` is not an occupant address: {error}",
-                &text[span.clone()]
-            )
-        }
-        MessageRefusal::Context { span, .. } => {
-            format!("`#{}` is not a task handle", &text[span.clone()])
-        }
-        MessageRefusal::Repeated { address, .. } => format!("{address} is named more than once"),
-        MessageRefusal::RepeatedContext { context, .. } => {
-            format!("#{context} names a room another room-only route already names")
-        }
-        MessageRefusal::EmptyBody => "the packet has no body".to_owned(),
-    }
-}
-
-/// Tell the recipients, or the author and the diagnostic, what one packet did.
-fn report(
-    paths: &RuntimePaths,
-    record: &AuthoredRecord<'_>,
-    locus: &TranscriptLocus,
-    header: &str,
-    outcome: &Result<Published, Unpublished>,
-    refusals: Refusals,
-    diagnostic: &mut dyn io::Write,
-) {
-    let teller = Teller {
-        paths,
-        record,
-        locus,
-        header,
-        refusals,
-    };
-    match outcome {
-        Ok(Published::Sent {
-            lanes,
-            unreached,
-            rooms,
-        }) => {
-            for lane in lanes {
-                notify_inbox(paths, *lane);
-            }
-            if !rooms.is_empty() {
-                teller.recorded(rooms, lanes.len(), diagnostic);
-            }
-            if !unreached.is_empty() {
-                teller.tell(UNAVAILABLE, &unreached.join("; "), lanes.len(), diagnostic);
-            }
-        }
-        Ok(Published::Already) | Err(Unpublished::Withheld | Unpublished::Failed(_)) => {}
-        Err(Unpublished::Refused { reason, detail }) => {
-            teller.tell(reason, detail, 0, diagnostic);
-        }
-    }
-}
-
-/// Where one packet's outcome is told.
-struct Teller<'a> {
-    paths: &'a RuntimePaths,
-    record: &'a AuthoredRecord<'a>,
-    locus: &'a TranscriptLocus,
-    header: &'a str,
-    refusals: Refusals,
-}
-
-impl Teller<'_> {
-    /// Stable identity of the packet's source locus.
-    fn packet(&self) -> String {
-        let locus = self.locus;
-        format!(
-            "{}:{}:{}:{}:{}",
-            locus.member, locus.offset, locus.event, locus.line, locus.column
-        )
-    }
-
-    /// Record the refusal and, under [`Refusals::Notify`], tell the author
-    /// privately, with how many recipients the packet did reach.
-    fn tell(&self, reason: &str, detail: &str, reached: usize, diagnostic: &mut dyn io::Write) {
-        let (record, locus) = (self.record, self.locus);
-        let _ = writeln!(
-            diagnostic,
-            "lane {} MSG at record {}:{} event {} line {}:{} reached {reached} and refused: \
-             {reason}: {detail}",
-            record.lane, locus.member, locus.offset, locus.event, locus.line, locus.column,
-        );
-        if self.refusals == Refusals::Notify {
-            crate::resident::supervisor::command::message_refused(
-                self.paths,
-                record.lane,
-                MessageRefusalNotice {
-                    occupant: record.author,
-                    packet: self.packet(),
-                    header: bounded(self.header),
-                    line: locus.line,
-                    column: locus.column,
-                    reached,
-                    reason: reason.to_owned(),
-                    detail: bounded(detail),
-                },
-            );
-        }
-    }
-
-    /// Record which rooms the packet recorded in and, under
-    /// [`Refusals::Notify`], tell the author privately; no participant
-    /// receipt is implied.
-    fn recorded(&self, rooms: &[TaskHandle], reached: usize, diagnostic: &mut dyn io::Write) {
-        let (record, locus) = (self.record, self.locus);
-        let rooms = rooms.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let _ = writeln!(
-            diagnostic,
-            "lane {} MSG at record {}:{} event {} line {}:{} recorded in {}",
-            record.lane,
-            locus.member,
-            locus.offset,
-            locus.event,
-            locus.line,
-            locus.column,
-            rooms.join(", "),
-        );
-        if self.refusals == Refusals::Notify {
-            crate::resident::supervisor::command::message_recorded(
-                self.paths,
-                record.lane,
-                MessageRecordedNotice {
-                    occupant: record.author,
-                    packet: self.packet(),
-                    header: bounded(self.header),
-                    line: locus.line,
-                    column: locus.column,
-                    rooms,
-                    reached,
-                },
-            );
-        }
-    }
-}
-
-/// One private record of the rooms an MSG packet recorded in, scoped to the
-/// packet's authoring occupant.
-#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct MessageRecordedNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    /// Stable identity of the recorded packet's source locus.
-    pub(in crate::resident) packet: String,
-    /// The packet header as authored, bounded.
-    pub(in crate::resident) header: String,
-    pub(in crate::resident) line: u32,
-    pub(in crate::resident) column: u32,
-    /// Each room the packet recorded in, as its header spelled the task.
-    pub(in crate::resident) rooms: Vec<String>,
-    /// How many named recipients the packet reached.
-    pub(in crate::resident) reached: usize,
-}
-
-impl MessageRecordedNotice {
-    /// The notice its author hears.
-    pub(in crate::resident) fn text(&self) -> String {
-        let reached = match self.reached {
-            0 => String::new(),
-            1 => " and reached 1 recipient".to_owned(),
-            reached => format!(" and reached {reached} recipients"),
-        };
-        format!(
-            "<system-notice>\nYour MSG packet `{}` at line {}, column {} of its assistant \
-             text block was recorded in room {}{reached}. Recorded means the room holds it; \
-             no participant has received or acknowledged it, and nothing woke anyone. This \
-             is a private notice; no acknowledgment key or visible ACK/NAK is \
-             required.\n</system-notice>",
-            self.header,
-            self.line,
-            self.column,
-            self.rooms.join(", "),
-        )
-    }
-}
-
-/// One private MSG refusal, scoped to the packet's authoring occupant.
-#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct MessageRefusalNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    /// Stable identity of the refused packet's source locus.
-    pub(in crate::resident) packet: String,
-    /// The packet header as authored, bounded.
-    pub(in crate::resident) header: String,
-    pub(in crate::resident) line: u32,
-    pub(in crate::resident) column: u32,
-    /// How many named recipients the packet did reach.
-    pub(in crate::resident) reached: usize,
-    pub(in crate::resident) reason: String,
-    /// Which addresses the packet missed, or why it was refused, bounded.
-    pub(in crate::resident) detail: String,
-}
-
-impl MessageRefusalNotice {
-    /// The notice its author hears.
-    pub(in crate::resident) fn text(&self) -> String {
-        let (outcome, missed) = match self.reached {
-            0 => ("published nothing".to_owned(), "No recipient received it"),
-            reached => (
-                format!(
-                    "reached {reached} recipient{}, but not every address it named",
-                    if reached == 1 { "" } else { "s" }
-                ),
-                "Only the addresses named here did not receive it",
-            ),
-        };
-        format!(
-            "<system-notice>\nYour MSG packet `{}` at line {}, column {} of its assistant \
-             text block {outcome}: {}: {}. {missed}. Name only exact addresses of other \
-             seated occupants (`spice lane list` shows each lane's), each once, qualify a \
-             route with `#TASK` only for an existing task's handle, close the list with a \
-             colon, and author a packet to the routes that still need it in new visible \
-             text. This is a private refusal notice; no acknowledgment key or visible \
-             ACK/NAK is required.\n</system-notice>",
-            self.header, self.line, self.column, self.reason, self.detail,
-        )
-    }
-}
-
-/// At most [`NOTICE_TEXT_BYTES`] of `text`, cut at a character boundary.
-fn bounded(text: &str) -> String {
-    if text.len() <= NOTICE_TEXT_BYTES {
-        return text.to_owned();
-    }
-    let mut end = NOTICE_TEXT_BYTES;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
 }
 
 /// Dead-letter every live peer directive whose lane left the residency.

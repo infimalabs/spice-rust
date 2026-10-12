@@ -36,10 +36,10 @@ pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 pub(super) use history::history;
 pub(super) use message::{
     AuthoredRecord, LANE_REMOVED, MessageRecordedNotice, MessageRefusalNotice, Refusals,
-    dead_letter_removed_lanes, publish_at_startup, publish_authored,
+    carries_packet, dead_letter_removed_lanes, publish_at_startup, publish_authored,
 };
 #[cfg(test)]
-pub(super) use message::{Packet, Published, Unpublished, publish_packet};
+pub(super) use message::{Conversed, Packet, Published, Unpublished, publish_packet};
 use preview::directive_preview;
 use transitions::evidence_refusal;
 pub(crate) use transitions::{

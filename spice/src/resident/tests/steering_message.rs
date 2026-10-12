@@ -14,6 +14,9 @@ mod rooms;
 #[path = "steering_message/room_history.rs"]
 mod room_history;
 
+#[path = "steering_message/conversation.rs"]
+mod conversation;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
@@ -685,7 +688,9 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
             line: 1,
             column: 1,
         },
-        routes: direct(&[first, second]),
+        request: steer::ack::scan::Request::Msg {
+            routes: direct(&[first, second]),
+        },
         body: "raced",
         text: 0..5,
     };
@@ -745,7 +750,9 @@ fn an_expired_address_names_what_its_lane_seats_now() {
             line: 1,
             column: 1,
         },
-        routes: direct(&[first, second, current]),
+        request: steer::ack::scan::Request::Msg {
+            routes: direct(&[first, second, current]),
+        },
         body: "renewed",
         text: 0..7,
     };
@@ -926,6 +933,7 @@ fn sent(lanes: &[u8], unreached: &[&str]) -> steering::Published {
         lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
         rooms: Vec::new(),
+        conversed: None,
     }
 }
 
@@ -934,7 +942,7 @@ fn direct(addresses: &[wire::OccupantAddress]) -> Vec<steer::ack::scan::Route> {
     addresses
         .iter()
         .map(|address| steer::ack::scan::Route {
-            address: Some(*address),
+            audience: Some(steer::ack::scan::Audience::Occupant(*address)),
             context: None,
             span: 0..0,
         })
