@@ -112,10 +112,12 @@ fn inbox(
                     "the admitted journal names no read position",
                 )
             })?;
-            let (items, population) = read
+            let open = read
                 .open_room_items_page(from.as_ref(), retain)
                 .map_err(store)?;
-            let recorded = items
+            let population = open.population;
+            let recorded = open
+                .rows
                 .into_iter()
                 .map(|(record, head)| {
                     let publication = read

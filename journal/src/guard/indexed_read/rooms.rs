@@ -50,6 +50,15 @@ pub struct AnchorGroupPage {
     pub witness: CurrentHeadWitness,
 }
 
+/// One ordered page of operator items still owing a disposition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenRoomItemPage {
+    /// Open item records and their current guarded heads, in item order.
+    pub rows: Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>,
+    /// Number of open items at or after the requested cursor.
+    pub population: usize,
+}
+
 impl JournalRead<'_> {
     /// Current working-group head, absent before creation or after removal.
     pub fn group_head(
@@ -669,13 +678,7 @@ impl JournalRead<'_> {
         &self,
         from: Option<&RoomReceiptRef>,
         limit: usize,
-    ) -> Result<
-        (
-            Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>,
-            usize,
-        ),
-        GuardError,
-    > {
+    ) -> Result<OpenRoomItemPage, GuardError> {
         let from = from.map_or_else(String::new, ToString::to_string);
         let limit = i64::try_from(limit)
             .map_err(|_| GuardError::Invalid("operator item page exceeds SQLite".to_owned()))?;
@@ -727,7 +730,10 @@ impl JournalRead<'_> {
             }
             items.push((record, head));
         }
-        Ok((items, population))
+        Ok(OpenRoomItemPage {
+            rows: items,
+            population,
+        })
     }
 
     /// One admitted conversation publication and its journal position.
