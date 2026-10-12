@@ -5,6 +5,29 @@ use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt as _;
 
 #[test]
+fn commit_dispatch_refuses_only_active_planning_claims() {
+    let task: TaskHandle = "PHASE-1kRKw9Qj".parse().expect("task handle");
+    for phase in ["plan", "design", "todo", "review", "verify", "research"] {
+        let claim = ClaimCapture::Active {
+            task: task.clone(),
+            phase: phase.parse().expect("phase"),
+        };
+        let result = dispatch::require_non_planning_claim(&claim);
+        if matches!(phase, "plan" | "design") {
+            let error = result.expect_err("planning claim must refuse commit dispatch");
+            assert_eq!(error.reason, "gate::pre-commit-planning-implementation");
+            assert!(!error.fault);
+        } else {
+            assert!(
+                result.is_ok(),
+                "non-planning phase {phase} must preserve native permission"
+            );
+        }
+    }
+    assert!(dispatch::require_non_planning_claim(&ClaimCapture::Idle).is_ok());
+}
+
+#[test]
 fn fixed_envelope_reserves_cleanup_inside_ten_minutes() {
     let bounds = ProcessBounds::production();
     let envelope = bounds.runtime + bounds.grace + bounds.reap + bounds.output_drain;
