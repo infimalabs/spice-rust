@@ -104,6 +104,7 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         schema: 1,
         cursor: seq(100),
         tasks,
+        room_anchors: Vec::new(),
         offer: Vec::new(),
         quote_tasks: std::rc::Rc::default(),
         resident: wire::ResidentState::Seated,

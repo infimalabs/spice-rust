@@ -1099,6 +1099,9 @@ fn anchor_label(runtime: &AppRuntime, room: &TaskStamp) -> String {
         .anchor_authority(room, runtime.board())
     {
         RoomAnchorAuthority::Available(handle) => handle.to_string(),
+        RoomAnchorAuthority::Settled { handle, standing } => {
+            format!("{handle} · {}", standing.as_str())
+        }
         RoomAnchorAuthority::Unavailable => format!("{room} · unavailable"),
         RoomAnchorAuthority::Missing => format!("{room} · missing"),
     }

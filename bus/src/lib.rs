@@ -296,6 +296,13 @@ mod runtime {
                 .ok()
                 .map(|index| &self.tasks()[index])
         }
+        /// Current task identities retained by at least one saved working group.
+        pub fn room_anchor_tasks(
+            &self,
+        ) -> impl Iterator<Item = &journal::crossing::TaskStamp> + ExactSizeIterator {
+            self.facts.room_anchor_tasks()
+        }
+
         /// Known standing for one dependency identity. `None` means the stamp
         /// is missing from authoritative task heads, not settled.
         #[must_use]

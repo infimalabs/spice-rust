@@ -34,6 +34,11 @@ pub(super) fn selected_tasks(
                 .allocation_frontier()
                 .map(|heads| heads.statement().body().born.clone())
                 .collect();
+            // Saved group anchors stay present after settlement so the app can
+            // distinguish a concluded room from an identity absent from task
+            // authority. This compact current-head index does not admit any
+            // unrelated terminal history.
+            tasks.extend(observed.room_anchor_tasks().cloned());
             // Readiness reads each open row's direct prerequisites: a settled
             // one is terminal, so it is carried only as allocation evidence.
             let evidence = observed

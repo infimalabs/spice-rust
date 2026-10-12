@@ -183,12 +183,14 @@ fn room_page(
     admitted_stream(session, &packed_frame("rooms", rows, overflow, horizon))
 }
 
-/// The fixture board with the room anchor under `project`, or absent, and
-/// optionally held by `LANE` under the claim won at `claimed`.
+/// The fixture board with the room anchor under `project`, or absent,
+/// optionally held by `LANE` under the claim won at `claimed`, and optionally
+/// settled with `(status, review)`.
 fn room_board(
     session: &Session,
     project: Option<&str>,
     claimed: Option<u64>,
+    settlement: Option<(&str, &str)>,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let original = board_response(session, "hidden");
     let Outcome::Reply(reply) = &original.get().outcome else {
@@ -220,6 +222,12 @@ fn room_board(
             }))
             .expect("fixture claim head")
         });
+        if let Some((status, review)) = settlement {
+            task.workflow.body.status = status.to_owned();
+            task.workflow.body.review = review.to_owned();
+            task.workflow.body.completion =
+                Some("2025-01-01T00:00:00.000Z".parse().expect("fixture instant"));
+        }
     } else {
         body.tasks.retain(|task| task.statement.body.born != room);
     }
@@ -353,7 +361,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
     for frame in opening(&session) {
         runtime.apply_stream(&frame);
     }
-    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(3)));
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(3), None));
     assert_eq!(
         runtime
             .room_projection()
@@ -393,7 +401,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
         2
     );
 
-    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(5)));
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(5), None));
     assert!(
         runtime
             .room_projection()
@@ -488,20 +496,41 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
             .anchor_authority(&room(), runtime.board()),
         app::RoomAnchorAuthority::Unavailable
     );
-    runtime.apply_board(&room_board(&session, None, None));
+    runtime.apply_board(&room_board(&session, None, None, None));
     assert_eq!(
         runtime
             .room_projection()
             .anchor_authority(&room(), runtime.board()),
         app::RoomAnchorAuthority::Missing
     );
-    runtime.apply_board(&room_board(&session, Some("app.rooms"), None));
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), None, None));
     assert_eq!(
         runtime
             .room_projection()
             .anchor_authority(&room(), runtime.board()),
         app::RoomAnchorAuthority::Available(wire::TaskHandle::for_project("app.rooms", &room()))
     );
+    for (status, review, standing) in [
+        ("completed", "clean", app::RoomAnchorSettlement::Completed),
+        ("completed", "closed", app::RoomAnchorSettlement::Closed),
+        ("deleted", "closed", app::RoomAnchorSettlement::Deleted),
+    ] {
+        runtime.apply_board(&room_board(
+            &session,
+            Some("app.rooms"),
+            None,
+            Some((status, review)),
+        ));
+        assert_eq!(
+            runtime
+                .room_projection()
+                .anchor_authority(&room(), runtime.board()),
+            app::RoomAnchorAuthority::Settled {
+                handle: wire::TaskHandle::for_project("app.rooms", &room()),
+                standing,
+            }
+        );
+    }
     assert!(
         runtime
             .room_projection()

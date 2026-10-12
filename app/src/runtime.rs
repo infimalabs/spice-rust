@@ -36,8 +36,9 @@ pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    ParticipantReason, PreparationProjection, RoomAnchorAuthority, RoomEvent, RoomEventKind,
-    RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState,
+    ParticipantReason, PreparationProjection, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
+    RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus,
+    RoomState,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
@@ -61,8 +62,10 @@ pub struct BoardView {
     pub schema: u32,
     /// Greatest durable position covered by every task head.
     pub cursor: Seq,
-    /// Current task evidence bundles.
+    /// Current task evidence bundles rendered by the work surface.
     pub tasks: Vec<BoardTask>,
+    /// Settled task evidence retained only because a saved group still anchors it.
+    pub(crate) room_anchors: Vec<BoardTask>,
     /// Resident allocation order: the task offered next comes first.
     pub offer: Vec<wire::TaskStamp>,
     /// Resident steering-key origin index: the Work each quoted direction caused.
@@ -75,13 +78,16 @@ pub struct BoardView {
 
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
-        let tasks = answer.tasks.clone();
+        let (room_anchors, tasks) = answer.tasks.iter().cloned().partition(|task| {
+            task.workflow.body.status != "pending" || task.workflow.body.completion.is_some()
+        });
         let offer = answer.offer.clone();
         let environment = answer.environment();
         Self {
             schema: answer.schema,
             cursor: answer.cursor,
             tasks,
+            room_anchors,
             offer,
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,

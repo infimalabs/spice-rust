@@ -192,6 +192,59 @@ fn assert_anchor_resolution_and_group_removal(
 }
 
 #[test]
+fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
+    let (root, bus, epoch, _seats) = fixture("grouped-terminal-open", 0);
+    let terminal = super::read_scope::append_terminal_tasks(&bus, 2)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let open_stamps = |bus: &Bus| {
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) = issue(
+            bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::BoardRead,
+            Vec::new(),
+            &BoardRead::Open,
+        )
+        else {
+            panic!("open board fixture answers");
+        };
+        answer
+            .tasks
+            .iter()
+            .map(|task| task.statement.body.born.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert!(open_stamps(&bus).is_empty());
+
+    let group = group_stamp(9);
+    assert_committed(put_group(
+        &bus,
+        epoch,
+        group.clone(),
+        None,
+        "Settled rooms",
+        vec![terminal[0].clone()],
+    ));
+    assert_eq!(open_stamps(&bus), [terminal[0].clone()].into());
+
+    let head = read_group(&bus, epoch, &group).head;
+    assert_committed(put_group(
+        &bus,
+        epoch,
+        group,
+        Some(head),
+        "Settled rooms",
+        vec![terminal[1].clone()],
+    ));
+    assert_eq!(open_stamps(&bus), [terminal[1].clone()].into());
+    clean(&root, bus);
+}
+
+#[test]
 fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
     let (root, bus, epoch, _) = fixture("working-groups", 0);
     let first = add_born(&bus, epoch, stamp("group-first"), "First room");
