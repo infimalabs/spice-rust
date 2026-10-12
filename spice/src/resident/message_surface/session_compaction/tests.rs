@@ -32,6 +32,34 @@ impl Drop for Scratch {
     }
 }
 
+/// Two byte windows with four boundaries: one in the older window and three
+/// in the newest. Sixty wider records reach the exact paging contract without
+/// constructing hundreds of duplicate messages.
+const RETAINED_HORIZON_WINDOWS: usize = 2;
+const RETAINED_HORIZON_MESSAGES: usize = 60;
+const RETAINED_HORIZON_BOUNDARIES: [usize; 4] = [10, 31, 33, 57];
+
+fn write_retained_horizon(transcript: &PathBuf) -> (u64, HistoryCheckpoint) {
+    let minimum_bytes = RETAINED_HORIZON_WINDOWS * HISTORY_BYTE_BUDGET;
+    let filler = "x".repeat(minimum_bytes.div_ceil(RETAINED_HORIZON_MESSAGES));
+    let mut contents = String::with_capacity(minimum_bytes + 16 * 1024);
+    for index in 0..RETAINED_HORIZON_MESSAGES {
+        contents.push_str(&assistant_record(index, &filler));
+        if RETAINED_HORIZON_BOUNDARIES.contains(&index) {
+            contents
+                .push_str("{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n");
+        }
+    }
+    assert!(
+        contents.len() > minimum_bytes,
+        "the retained horizon outgrows two history windows",
+    );
+    let bytes = u64::try_from(contents.len()).expect("fixture length fits u64");
+    fs::write(transcript, contents).expect("retained transcript is written");
+    let end = history_checkpoint(transcript).expect("retained transcript checkpoint reads");
+    (bytes, end)
+}
+
 #[derive(Default)]
 struct Messages(Mutex<Vec<wire::AgentMessage>>);
 
@@ -134,18 +162,19 @@ fn startup_read_volume_depends_on_the_tail_not_older_epochs() {
     const BOUNDARY: &str = "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T19:44:09.271Z\"}\n";
     let scratch = Scratch::new("bounded-startup");
     let transcript = scratch.transcript();
-    let filler = "x".repeat(1_800);
-    let mut older = String::new();
+    let filler = "x".repeat(4 * 1024);
+    let record = assistant_record(0, &filler);
+    let tail = record.repeat(wire::MESSAGE_FLOOR * 2);
     let mut expected_decoded = None;
-    for epochs in [1, 40] {
-        for _ in 0..epochs * 100 {
-            older.push_str(&assistant_record(0, &filler));
+    for older_records in [16, 128] {
+        let mut contents =
+            String::with_capacity(record.len() * (older_records + wire::MESSAGE_FLOOR * 2));
+        for _ in 0..older_records {
+            contents.push_str(&record);
         }
-        let mut contents = older.clone();
         contents.push_str(BOUNDARY);
-        for index in 0..40 {
-            contents.push_str(&assistant_record(index, &filler));
-        }
+        contents.push_str(&tail);
+        assert!(contents.len() > HISTORY_BYTE_BUDGET);
         fs::write(&transcript, &contents).expect("growing session is written");
         let mut cursor = cursor(&transcript, listen::Dialect::Omp);
         cursor.initialized = false;

@@ -29,16 +29,7 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
 fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
     let scratch = Scratch::new("retained-tail-bootstrap");
     let transcript = scratch.transcript();
-    let filler = "x".repeat(1_800);
-    let mut contents = String::new();
-    for index in 0..300 {
-        contents.push_str(&assistant_record(index, &filler));
-        if matches!(index, 80 | 180 | 260 | 285) {
-            contents
-                .push_str("{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n");
-        }
-    }
-    fs::write(&transcript, &contents).expect("long preserved transcript is written");
+    let (bytes, _) = write_retained_horizon(&transcript);
     let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     cursor.initialized = false;
 
@@ -51,8 +42,7 @@ fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
     );
     assert!(cursor.initialized);
     assert_eq!(
-        cursor.next,
-        u64::try_from(contents.len()).expect("fixture length fits u64"),
+        cursor.next, bytes,
         "bootstrap continues at the complete durable tail",
     );
     assert_eq!(cursor.prefix_start, cursor.next);
@@ -117,36 +107,16 @@ fn retained_history_request<'a>(
     }
 }
 
-/// Windows the retained horizon fixture outgrows.
-const RETAINED_HORIZON_WINDOWS: usize = 2;
 /// One preserved record wider than a history window.
 const OVERSIZED_RECORD_BYTES: usize = 300 * 1024;
 /// One preserved record wider than two history windows.
 const WIDE_RECORD_BYTES: usize = 600 * 1024;
 
-fn write_retained_horizon(transcript: &PathBuf) -> HistoryCheckpoint {
-    let filler = "x".repeat(1_800);
-    let mut contents = String::new();
-    for index in 0..300 {
-        contents.push_str(&assistant_record(index, &filler));
-        if matches!(index, 80 | 180 | 260 | 285) {
-            contents
-                .push_str("{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n");
-        }
-    }
-    assert!(
-        contents.len() > RETAINED_HORIZON_WINDOWS * HISTORY_BYTE_BUDGET,
-        "the retained horizon outgrows two history windows",
-    );
-    fs::write(transcript, contents).expect("long preserved transcript is written");
-    history_checkpoint(transcript).expect("preserved transcript checkpoint reads")
-}
-
 #[test]
 fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
     let scratch = Scratch::new("retained-history");
     let transcript = scratch.transcript();
-    let end = write_retained_horizon(&transcript);
+    let (_, end) = write_retained_horizon(&transcript);
     let before = page_boundary_marker();
 
     let messages = (0..8)
@@ -186,7 +156,7 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
 fn consumers_at_different_anchors_share_one_decoded_suffix() {
     let scratch = Scratch::new("retained-history-shared");
     let transcript = scratch.transcript();
-    let end = write_retained_horizon(&transcript);
+    let (_, end) = write_retained_horizon(&transcript);
     let marker = page_boundary_marker();
     let mut cards = SessionCards::default();
     let newest = (0..8)
@@ -230,7 +200,7 @@ fn consumers_at_different_anchors_share_one_decoded_suffix() {
 fn each_history_window_stays_inside_its_fixed_allowances() {
     let scratch = Scratch::new("retained-history-window");
     let transcript = scratch.transcript();
-    let end = write_retained_horizon(&transcript);
+    let (_, end) = write_retained_horizon(&transcript);
     let before = page_boundary_marker();
     let request = retained_history_request(&transcript, &before, &end);
     let mut cursor = Cursor::new(

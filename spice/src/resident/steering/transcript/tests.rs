@@ -120,8 +120,9 @@ fn the_newest_placed_answer_wins_within_the_recent_window() {
 }
 
 #[test]
-fn an_answer_behind_multi_megabyte_records_is_still_recognized() {
-    let mut oversized = vec![b' '; 3 * 1024 * 1024];
+fn an_answer_behind_records_wider_than_one_search_chunk_is_still_recognized() {
+    const SEARCH_CHUNK_BOUNDARY: usize = 1024 * 1024;
+    let mut oversized = vec![b' '; SEARCH_CHUNK_BOUNDARY];
     oversized.extend_from_slice(b"{}\n");
     let fixture = Fixture::new(&[
         TOOL_RESULT,

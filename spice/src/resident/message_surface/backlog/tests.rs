@@ -931,27 +931,23 @@ fn a_tape_continuation_resumes_from_physical_progress_not_the_anchor() {
     assert_eq!(tape_continuation(&unserved, &anchor), at(1, 10));
 }
 
-/// Season a preserved omp session whose newest `groups` compactions each sit
-/// behind five near 1.9 KiB assistant records, so a page of compaction cards
-/// spans more source bytes than one history window.
-fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, CanonicalUuid) {
+/// Season one more compaction than a page can hold. One wide assistant record
+/// per compaction makes the newest page cross a history byte window without
+/// constructing redundant records.
+fn season_session_horizon(root: &Path) -> (DurableHistory, CanonicalUuid) {
+    const GROUPS: usize = serve::stream::MESSAGE_HISTORY_PAGE_LIMIT + 1;
     let session_path = root.join("session.jsonl");
     fs::create_dir_all(root).expect("session horizon fixture root exists");
-    let filler = "x".repeat(1_800);
-    let mut group_contents = Vec::new();
-    for group in 0..groups {
-        let mut contents = String::new();
-        for slot in 0..5 {
-            let timestamp = timestamp(group * 6 + slot);
-            contents.push_str(&format!(
-                "{{\"type\":\"message\",\"timestamp\":\"{timestamp}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {group} {slot} {filler}\"}}]}}}}\n"
-            ));
-        }
-        let timestamp = timestamp(group * 6 + 5);
-        contents.push_str(&format!(
-            "{{\"type\":\"compaction\",\"timestamp\":\"{timestamp}\"}}\n"
+    let filler = "x".repeat(
+        session_compaction::HISTORY_BYTE_BUDGET.div_ceil(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT),
+    );
+    let mut group_contents = Vec::with_capacity(GROUPS);
+    for group in 0..GROUPS {
+        let message_timestamp = timestamp(group * 2);
+        let compaction_timestamp = timestamp(group * 2 + 1);
+        group_contents.push(format!(
+            "{{\"type\":\"message\",\"timestamp\":\"{message_timestamp}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {group} {filler}\"}}]}}}}\n{{\"type\":\"compaction\",\"timestamp\":\"{compaction_timestamp}\"}}\n"
         ));
-        group_contents.push(contents);
     }
     let newest_page: usize = group_contents
         .iter()
@@ -1006,7 +1002,7 @@ fn session_history_chains_windows_until_one_request_fills_its_page() {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
-    let (history, lane) = season_session_horizon(&root, 60);
+    let (history, lane) = season_session_horizon(&root);
 
     let page = (0..128)
         .find_map(|_| {
@@ -1044,7 +1040,7 @@ fn session_history_chains_windows_until_one_request_fills_its_page() {
             .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
         "chained windows keep strict source chronology",
     );
-    let newest = timestamp(59 * 6 + 5)
+    let newest = timestamp(serve::stream::MESSAGE_HISTORY_PAGE_LIMIT * 2 + 1)
         .parse()
         .expect("newest fixture instant");
     assert!(
