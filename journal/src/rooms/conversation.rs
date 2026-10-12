@@ -22,7 +22,7 @@
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wire::body::{SteerAcked, SteerDeclined, SteerMessaged, SteerSent};
+use wire::body::{SteerAcked, SteerDeclined, SteerMessaged, SteerQueued, SteerSent};
 use wire::rooms::{
     QuestionClosure, QuestionParties, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
     QuestionResultState, RoomAnchor, RoomConversed, RoomDelivery, RoomDestination, RoomDisposed,
@@ -851,8 +851,10 @@ struct Opened {
     key: String,
     lane: CanonicalUuid,
     room: Option<RoomAnchor>,
-    /// The packet that told it, for a peer message; absent for operator direction.
+    /// The packet that told it, for a seated peer message.
     told: Option<SteerMessaged>,
+    /// The packet that queued it, for a vacant logical lane.
+    queued: Option<SteerQueued>,
     from: Option<CanonicalUuid>,
 }
 
@@ -866,6 +868,18 @@ impl Opened {
                 room: message.room.clone(),
                 from: Some(message.from),
                 told: Some(message),
+                queued: None,
+            });
+        }
+        if let Some(message) = fact.read::<SteerQueued>() {
+            return Some(Self {
+                directive: message.directive,
+                key: message.key.clone(),
+                lane: message.lane,
+                room: message.room.clone(),
+                from: Some(message.from),
+                told: None,
+                queued: Some(message),
             });
         }
         fact.read::<SteerSent>().map(|sent| Self {
@@ -874,15 +888,15 @@ impl Opened {
             lane: sent.lane,
             room: sent.room,
             told: None,
+            queued: None,
             from: sent.from,
         })
     }
 
     /// Whether a lane author's packet at `hunk` told this peer message.
     fn told_by(&self, hunk: &TranscriptHunk) -> bool {
-        self.told.as_ref().is_some_and(|message| {
-            let locus = &message.locus;
-            message.from == hunk.head.lane
+        let matches = |from: CanonicalUuid, locus: &wire::body::TranscriptLocus| {
+            from == hunk.head.lane
                 && locus.source == Some(hunk.head.source)
                 && (locus.member, locus.offset, locus.length, locus.event)
                     == (
@@ -891,7 +905,14 @@ impl Opened {
                         hunk.locus.length,
                         hunk.locus.event,
                     )
-        })
+        };
+        self.told
+            .as_ref()
+            .is_some_and(|message| matches(message.from, &message.locus))
+            || self
+                .queued
+                .as_ref()
+                .is_some_and(|message| matches(message.from, &message.locus))
     }
 }
 
@@ -982,7 +1003,7 @@ pub(crate) fn require_deliveries<'a>(
             };
             let authored = match &hunk {
                 Some(hunk) => open.told_by(hunk),
-                None => open.told.is_none() && open.from.is_none(),
+                None => open.told.is_none() && open.queued.is_none() && open.from.is_none(),
             };
             if !authored
                 || open.lane != lane

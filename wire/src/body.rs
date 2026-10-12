@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::OccupantAddress;
 use crate::envelope::{Actor, Seq};
 use crate::head::TranscriptSourceHead;
 use crate::ident::{CanonicalUuid, Digest, Instant};
@@ -224,6 +225,62 @@ pub struct SteerMessaged {
 
 impl SteerMessaged {
     /// The directive this message opens, as the publication steering folds.
+    #[must_use]
+    pub fn as_sent(&self) -> SteerSent {
+        SteerSent {
+            directive: self.directive,
+            fanout: None,
+            key: self.key.clone(),
+            lane: self.lane,
+            text: self.text.clone(),
+            from: Some(self.from),
+            room: self.room.clone(),
+            control: None,
+            attachments: Vec::new(),
+            expires: self.expires,
+        }
+    }
+}
+
+/// An authored MSG or ASK opened one peer directive while its proved
+/// destination lane was vacant.
+///
+/// The original occupant address proves the logical lane but is not a seated
+/// recipient. The directive stays live for that lane's next occupant without
+/// changing its key or expiry, and peer traffic grants no wake authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerQueued {
+    /// Durable message identity, derived from the source packet and address.
+    pub directive: CanonicalUuid,
+    /// Message key.
+    pub key: String,
+    /// Vacant logical lane that inherits this directive at its next seat.
+    pub lane: CanonicalUuid,
+    /// Exact historical address whose unique birth proved `lane`.
+    pub recipient: OccupantAddress,
+    /// Lane whose occupant authored the packet.
+    pub from: CanonicalUuid,
+    /// Occupant whose captured transcript authored the packet.
+    pub sender: CanonicalUuid,
+    /// The packet's exact body.
+    pub text: String,
+    /// Assistant transcript locus of the packet's MSG or ASK header.
+    #[serde(with = "sourced_transcript_locus")]
+    pub locus: TranscriptLocus,
+    /// Frozen room context, when the route named one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room: Option<crate::rooms::RoomAnchor>,
+    /// Instant the queued directive expires without a disposition.
+    pub expires: Instant,
+}
+
+impl SteerQueued {
+    /// The lane-scoped directive this queued route opens.
     #[must_use]
     pub fn as_sent(&self) -> SteerSent {
         SteerSent {

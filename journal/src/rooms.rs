@@ -18,11 +18,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
+    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
     RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved,
     WorkingGroupStored,
 };
-use wire::{Actor, AnyFact, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
+use wire::{
+    Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
+};
 
 mod conversation;
 mod coordination;
@@ -606,6 +608,35 @@ fn fold_traffic(
         .map(|body| begin(authority, seq, actor, &body))
 }
 
+struct OpenedPacketRoute {
+    directive: CanonicalUuid,
+    room: Option<RoomAnchor>,
+    from: CanonicalUuid,
+    sender: CanonicalUuid,
+    locus: wire::body::TranscriptLocus,
+}
+
+impl OpenedPacketRoute {
+    fn read(fact: &AnyFact) -> Option<Self> {
+        if let Some(message) = fact.read::<wire::body::SteerMessaged>() {
+            return Some(Self {
+                directive: message.directive,
+                room: message.room,
+                from: message.from,
+                sender: message.sender,
+                locus: message.locus,
+            });
+        }
+        fact.read::<wire::body::SteerQueued>().map(|message| Self {
+            directive: message.directive,
+            room: message.room,
+            from: message.from,
+            sender: message.sender,
+            locus: message.locus,
+        })
+    }
+}
+
 /// Each room record of a packet names exactly the directives the same write's
 /// peer messages opened into that room, in write order, and each of those
 /// messages was sent from the packet's lane by its author at its hunk's tape
@@ -616,7 +647,7 @@ pub(crate) fn require_packet_routes<'a>(
     let mut messages = Vec::new();
     let mut packets = Vec::new();
     for fact in facts {
-        if let Some(message) = fact.read::<wire::body::SteerMessaged>() {
+        if let Some(message) = OpenedPacketRoute::read(fact) {
             messages.push(message);
         } else if let Some(packet) = fact.read::<RoomMessaged>() {
             packets.push(packet);

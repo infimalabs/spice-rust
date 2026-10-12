@@ -560,6 +560,16 @@ impl TaskFacts {
         self.indexes.invalid_creator_teams.contains(task)
     }
 
+    /// Most recently born occupant recorded for one logical lane, whether or
+    /// not the current residency still seats that occupant.
+    #[must_use]
+    pub fn latest_lane_occupant(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+    ) -> Option<journal::crossing::CanonicalUuid> {
+        self.indexes.lane_occupants.get(&lane).copied()
+    }
+
     /// Vendor session identity declared for one lane occupant, if any.
     #[must_use]
     pub fn lane_session_identity(

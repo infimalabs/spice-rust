@@ -463,6 +463,7 @@ fn producer_assignment_follows_the_specified_enumeration() {
         FactKind::SteerDeclined,
         FactKind::SteerReplied,
         FactKind::SteerMessaged,
+        FactKind::SteerQueued,
         FactKind::SteerWithheld,
         FactKind::SteerMissed,
     ];

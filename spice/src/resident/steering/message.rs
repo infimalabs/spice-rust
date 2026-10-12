@@ -109,11 +109,13 @@ pub(in crate::resident) struct Packet<'a> {
 /// What publishing one packet did.
 #[derive(Debug, Eq, PartialEq)]
 pub(in crate::resident) enum Published {
-    /// The packet committed now: messages to these recipient lanes and one
-    /// record in each named room. Each `unreached` entry names one address
-    /// that received nothing, and why.
+    /// The packet committed now: immediate messages to these recipient lanes,
+    /// queued routes to these exact historical addresses, and one record in
+    /// each named room. Each `unreached` entry names one address that received
+    /// or queued nothing, and why.
     Sent {
         lanes: Vec<CanonicalUuid>,
+        queued: Vec<OccupantAddress>,
         unreached: Vec<String>,
         rooms: Vec<TaskHandle>,
         /// The conversation record an ASK, ANS, or operator-routed MSG wrote.
@@ -501,14 +503,14 @@ type Directed = (OccupantAddress, Option<TaskHandle>);
 /// [`publish_conversation`].
 ///
 /// The guard re-proves at commit that the residency is the one the view
-/// read and that every recipient lane it publishes to still seats the
-/// resolved occupant, so a seat change between read and commit refuses the
-/// whole write instead of redirecting any message. A recipient the view does
-/// not seat receives nothing and is named in the outcome. Every `#` context
+/// read and that every route still names either its resolved occupant or its
+/// proved vacant lane. A seat change between read and commit refuses the whole
+/// write instead of redirecting a message. A valid address for a lane whose
+/// latest occupant has departed queues one lane-scoped directive; an older
+/// address stays expired even after its successor departs. Every `#` context
 /// must name a task the view holds, or the whole packet refuses; each room a
-/// packet names records the packet's exact transcript bytes once, whether or
-/// not a recipient hears it. A packet that reaches no recipient and names no
-/// room publishes nothing.
+/// packet names records the packet's exact transcript bytes once. A packet
+/// that can neither deliver nor queue and names no room publishes nothing.
 pub(in crate::resident) fn publish_packet(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -584,7 +586,16 @@ fn publish_message(
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
     Ok(Published::Sent {
-        lanes: targets.iter().map(|target| target.lane).collect(),
+        lanes: targets
+            .iter()
+            .filter(|target| target.occupant.is_some())
+            .map(|target| target.lane)
+            .collect(),
+        queued: targets
+            .iter()
+            .filter(|target| target.occupant.is_none())
+            .map(|target| target.recipient)
+            .collect(),
         unreached,
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
         conversed: None,
@@ -715,7 +726,7 @@ struct Sending<'a, 'p> {
 }
 
 impl Sending<'_, '_> {
-    /// Stage one guarded peer message to each target under its key.
+    /// Stage one guarded peer directive to each seated or vacant-lane target.
     fn stage(
         &self,
         proposal: &mut JournalWrite,
@@ -729,32 +740,58 @@ impl Sending<'_, '_> {
                 self.residency,
                 Witness::Residency {
                     lane: target.lane,
-                    occupant: Some(target.occupant),
+                    occupant: target.occupant,
                     epoch: self.epoch,
                 },
                 target.directive,
                 key.clone(),
             ));
-            let messaged = wire::body::SteerMessaged {
-                directive: target.directive,
-                key: key.to_string(),
-                lane: target.lane,
-                occupant: target.occupant,
-                from: self.packet.lane,
-                sender: self.packet.author,
-                text: self.packet.body.to_owned(),
-                locus: self.packet.locus.clone(),
-                room: target.room.clone(),
-                expires: self.expires,
-            };
-            let pending = proposal
-                .fact(messaged.clone(), FactCause::Existing(self.residency))
-                .map_err(fact_invalid)?;
-            let (origin, at) = (origin.clone(), self.at);
-            proposal.steering_head(pending, move |seq| {
-                steer::Ledger::sent_head(&messaged.as_sent(), origin, at, seq)
-                    .expect("the resolved message body builds its authority head")
-            });
+            match target.occupant {
+                Some(occupant) => {
+                    let messaged = wire::body::SteerMessaged {
+                        directive: target.directive,
+                        key: key.to_string(),
+                        lane: target.lane,
+                        occupant,
+                        from: self.packet.lane,
+                        sender: self.packet.author,
+                        text: self.packet.body.to_owned(),
+                        locus: self.packet.locus.clone(),
+                        room: target.room.clone(),
+                        expires: self.expires,
+                    };
+                    let pending = proposal
+                        .fact(messaged.clone(), FactCause::Existing(self.residency))
+                        .map_err(fact_invalid)?;
+                    let (origin, at) = (origin.clone(), self.at);
+                    proposal.steering_head(pending, move |seq| {
+                        steer::Ledger::sent_head(&messaged.as_sent(), origin, at, seq)
+                            .expect("the resolved message body builds its authority head")
+                    });
+                }
+                None => {
+                    let queued = wire::body::SteerQueued {
+                        directive: target.directive,
+                        key: key.to_string(),
+                        lane: target.lane,
+                        recipient: target.recipient,
+                        from: self.packet.lane,
+                        sender: self.packet.author,
+                        text: self.packet.body.to_owned(),
+                        locus: self.packet.locus.clone(),
+                        room: target.room.clone(),
+                        expires: self.expires,
+                    };
+                    let pending = proposal
+                        .fact(queued.clone(), FactCause::Existing(self.residency))
+                        .map_err(fact_invalid)?;
+                    let (origin, at) = (origin.clone(), self.at);
+                    proposal.steering_head(pending, move |seq| {
+                        steer::Ledger::sent_head(&queued.as_sent(), origin, at, seq)
+                            .expect("the queued message body builds its authority head")
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -768,10 +805,14 @@ fn fact_invalid(error: impl std::fmt::Display) -> Unpublished {
 /// the task's birth stamp, in source order.
 type Rooms = Vec<(TaskHandle, TaskStamp)>;
 
-/// One seated recipient a directed route reaches.
+/// One seated or vacant-lane target a directed route reaches.
 struct Target {
     lane: CanonicalUuid,
-    occupant: CanonicalUuid,
+    /// Occupant whose current seat admits immediate delivery; absent while the
+    /// proved logical lane is vacant.
+    occupant: Option<CanonicalUuid>,
+    /// Exact historical address that proved the destination lane.
+    recipient: OccupantAddress,
     directive: CanonicalUuid,
     /// The room the route's context freezes into its message.
     room: Option<TaskStamp>,
@@ -788,9 +829,8 @@ struct RoomRecord {
 /// Every room the packet names and, when it names any, the packet's exact
 /// transcript hunk; `None` when the packet already recorded these bytes.
 ///
-/// Callers find a published directed route first; a packet whose directed
-/// routes all missed seated recipients leaves its room record as the only
-/// proof that it published.
+/// Callers resolve directed routes separately; a packet with only room routes
+/// still uses its room record as the proof that it published.
 fn resolve_rooms(
     bus: &Bus,
     packet: &Packet<'_>,
@@ -820,8 +860,9 @@ fn resolve_rooms(
     }))
 }
 
-/// Each directed route's seated target, in route order, and why each
-/// unseated address receives nothing.
+/// Each directed route's target, in route order, and why each unproved,
+/// removed, or expired address receives nothing. A proved address whose birth
+/// lane is currently vacant opens a lane-scoped queued directive.
 fn resolve_targets(
     bus: &Bus,
     residency: &[wire::LaneResidency],
@@ -840,21 +881,45 @@ fn resolve_targets(
     let mut targets = Vec::with_capacity(directed.len());
     let mut unreached = Vec::new();
     for ((recipient, context), directive) in directed.iter().zip(identities) {
-        match seated.get(recipient) {
-            Some((lane, occupant)) => targets.push(Target {
+        if let Some((lane, occupant)) = seated.get(recipient) {
+            targets.push(Target {
                 lane: *lane,
-                occupant: *occupant,
+                occupant: Some(*occupant),
+                recipient: *recipient,
                 directive: *directive,
                 room: context_room(context.as_ref()),
-            }),
-            None => unreached.push(unavailable(bus, &lanes, *recipient)?),
+            });
+            continue;
+        }
+        let birth = bus.occupant_birth(*recipient).map_err(|error| {
+            Unpublished::Failed(typed_store_fault(
+                "steer::address-unreadable",
+                &error.to_string(),
+            ))
+        })?;
+        match birth {
+            Ok(birth)
+                if lanes.get(&birth.lane).is_some_and(Option::is_none)
+                    && view.facts().latest_lane_occupant(birth.lane) == Some(birth.occupant) =>
+            {
+                targets.push(Target {
+                    lane: birth.lane,
+                    occupant: None,
+                    recipient: *recipient,
+                    directive: *directive,
+                    room: context_room(context.as_ref()),
+                });
+            }
+            Ok(_) | Err(_) => {
+                unreached.push(unavailable(bus, &lanes, view, *recipient)?);
+            }
         }
     }
     Ok((targets, unreached))
 }
 
 /// Stage one `room::messaged` record of the packet in each room, naming the
-/// directives its seated routes into that room opened.
+/// directives its delivered or queued routes into that room opened.
 fn stage_rooms(
     proposal: &mut JournalWrite,
     residency: wire::Seq,
@@ -1044,22 +1109,34 @@ fn seats(lanes: &[wire::LaneResidency], view: &bus::TaskSnapshot) -> Seats {
         .collect()
 }
 
-/// Why a recipient the view does not seat cannot hear the packet, led by its
-/// address so a bounded notice still names it. An expired address also names
-/// what its birth lane seats in the same view, so its author can address the
-/// lane's current occupant; the packet itself never follows the lane.
+/// Why a recipient the view neither seats nor admits onto a vacant proved
+/// lane cannot hear the packet, led by its address so a bounded notice still
+/// names it. An expired address names the current seat or the latest address
+/// whose successor birth expired it; the packet itself never follows the lane.
 fn unavailable(
     bus: &Bus,
     lanes: &Seats,
+    view: &bus::TaskSnapshot,
     recipient: OccupantAddress,
 ) -> Result<String, Unpublished> {
     match bus.resolve_occupant(recipient) {
         Ok(Err(refusal @ bus::AddressRefusal::Expired { birth })) => {
+            let latest = view
+                .facts()
+                .latest_lane_occupant(birth.lane)
+                .and_then(|occupant| view.facts().occupant_address(birth.lane, occupant).ok())
+                .filter(|address| *address != recipient);
             let now = match lanes.get(&birth.lane) {
                 Some(Some((_, Some(current)))) => format!("its lane seats {current}"),
                 Some(Some((_, None))) => "its lane seats an unproved occupant".to_owned(),
-                Some(None) => "its lane is vacant".to_owned(),
-                None => "its lane left the residency".to_owned(),
+                Some(None) => latest.map_or_else(
+                    || "its lane is vacant".to_owned(),
+                    |current| format!("its lane is vacant after {current}"),
+                ),
+                None => latest.map_or_else(
+                    || "its lane left the residency".to_owned(),
+                    |current| format!("its lane left the residency after {current}"),
+                ),
             };
             Ok(format!("{recipient} {} ({now})", refusal.reason()))
         }

@@ -225,6 +225,19 @@ impl Lanes {
             .collect()
     }
 
+    fn queued_messages(&self) -> Vec<(wire::Envelope<wire::AnyFact>, wire::body::SteerQueued)> {
+        self.bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .filter_map(|envelope| {
+                let body = envelope.fact.read::<wire::body::SteerQueued>()?;
+                Some((envelope.clone(), body))
+            })
+            .collect()
+    }
+
     fn pending(&self, lane: u8) -> Vec<wire::intent::PendingDirective> {
         let request = wire::intent::SteerInbox {
             lane: None,
@@ -608,9 +621,9 @@ fn a_packet_publishes_its_exact_body_once_to_every_named_seated_occupant() {
     lanes.finish();
 }
 
-/// Each seated recipient hears the packet and each unavailable address is
-/// named with why; a packet no recipient can hear, or one naming its own
-/// author or an address twice, publishes nothing.
+/// Each seated recipient hears the packet, a proved vacant lane queues it,
+/// and every other unavailable address is named with why. A packet naming its
+/// own author or an address twice still publishes nothing.
 #[test]
 fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
     let lanes = Lanes::new("msg-refuse");
@@ -627,25 +640,15 @@ fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
     lanes.author(SENDER, &format!("MSG {first} {first}: twice"));
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    let refused = |reason: &str, detail: &str| {
-        Err(steering::Unpublished::Refused {
-            reason: reason.to_owned(),
-            detail: detail.to_owned(),
-        })
-    };
     assert_eq!(
         outcomes[..2],
         [
-            Ok(sent(
-                &[FIRST],
-                &[&format!("{second} address::expired (its lane is vacant)")]
+            Ok(sent_queued(&[FIRST], &[second], &[])),
+            Ok(sent_queued(
+                &[],
+                &[second],
+                &[&format!("{unrecorded} address::unrecorded")]
             )),
-            refused(
-                "msg::recipient-unavailable",
-                &format!(
-                    "{second} address::expired (its lane is vacant); {unrecorded} address::unrecorded"
-                ),
-            ),
         ],
         "{diagnostics}"
     );
@@ -667,6 +670,54 @@ fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
         "a partly delivered packet is published"
     );
     assert_eq!(lanes.messages().len(), 1, "a reread sends nothing");
+    lanes.finish();
+}
+
+/// A valid historical address binds one queued directive to its vacant
+/// logical lane. Resident recovery, seating, session declaration, and later
+/// renewal expose that same live authority without minting another identity or
+/// deadline.
+#[test]
+fn a_vacant_lane_inherits_one_unchanged_peer_message_at_each_later_seat() {
+    let lanes = Lanes::new("msg-queued");
+    let first = lanes.address(FIRST);
+    lanes.vacate(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}: wait for the next occupant"));
+
+    let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
+    assert_eq!(
+        outcomes,
+        [Ok(sent_queued(&[], &[first], &[]))],
+        "{diagnostics}"
+    );
+    let queued_messages = lanes.queued_messages();
+    let [(_, queued)] = queued_messages.as_slice() else {
+        panic!("the vacant route opens exactly one queued fact")
+    };
+    assert_eq!(queued.recipient, first);
+    assert_eq!(queued.lane, test_uuid(FIRST));
+    assert!(
+        lanes.messages().is_empty(),
+        "no seated delivery was fabricated"
+    );
+
+    let pending = delivered(&lanes, FIRST);
+    lanes.restart();
+    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+
+    lanes.renew(FIRST, test_uuid(40));
+    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+    lanes.declare(FIRST);
+    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, test_uuid(41));
+    assert_eq!(lanes.pending(FIRST), [pending]);
+    assert_eq!(
+        lanes.queued_messages().len(),
+        1,
+        "recovery and seat changes mint no replacement"
+    );
     lanes.finish();
 }
 
@@ -711,20 +762,14 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
 
     let current = lanes.bus.task_snapshot().expect("snapshot reads");
     let resolved = steering::publish_packet(&lanes.bus, lanes.epoch, &config, &packet, &current);
-    assert_eq!(
-        resolved,
-        Ok(sent(
-            &[FIRST],
-            &[&format!("{second} address::expired (its lane is vacant)")]
-        ))
-    );
+    assert_eq!(resolved, Ok(sent_queued(&[FIRST], &[second], &[])));
     assert_eq!(lanes.messages().len(), 1);
     lanes.finish();
 }
 
 /// An expired address receives nothing, and its author learns what its birth
-/// lane seats in the view the packet resolved against: the renewed occupant's
-/// own address, or a vacancy.
+/// lane seats in the view the packet resolved against. A still-valid address
+/// whose lane is vacant queues instead of following any future occupant.
 #[test]
 fn an_expired_address_names_what_its_lane_seats_now() {
     let lanes = Lanes::new("msg-renewed");
@@ -770,12 +815,12 @@ fn an_expired_address_names_what_its_lane_seats_now() {
 
     assert_eq!(
         resolved,
-        Ok(sent(
+        Ok(sent_queued(
             &[SECOND],
-            &[
-                &format!("{first} address::expired (its lane is vacant)"),
-                &format!("{second} address::expired (its lane seats {current})"),
-            ]
+            &[first],
+            &[&format!(
+                "{second} address::expired (its lane seats {current})"
+            )]
         ))
     );
     let messages = lanes.messages();
@@ -783,6 +828,52 @@ fn an_expired_address_names_what_its_lane_seats_now() {
     assert_eq!(
         messages[0].1.occupant, renewed,
         "only the address naming the renewed occupant reaches it"
+    );
+
+    lanes.vacate(SECOND);
+    let after_departure = steering::Packet {
+        lane: test_uuid(SENDER),
+        author: test_uuid(SENDER + 1),
+        locus: wire::body::TranscriptLocus {
+            source: Some(test_uuid(30)),
+            member: 1,
+            offset: 11,
+            length: 19,
+            event: 1,
+            line: 2,
+            column: 1,
+        },
+        request: steer::ack::scan::Request::Msg {
+            routes: direct(&[second, current]),
+        },
+        body: "departed successor",
+        text: 0..19,
+    };
+    let view = lanes.bus.task_snapshot().expect("snapshot reads");
+    let resolved = steering::publish_packet(
+        &lanes.bus,
+        lanes.epoch,
+        &steer::Config::default(),
+        &after_departure,
+        &view,
+    );
+    assert_eq!(
+        resolved,
+        Ok(sent_queued(
+            &[],
+            &[current],
+            &[&format!(
+                "{second} address::expired (its lane is vacant after {current})"
+            )]
+        )),
+        "a successor's departure does not revive an older address"
+    );
+    assert!(
+        lanes
+            .queued_messages()
+            .iter()
+            .any(|(_, queued)| queued.recipient == current),
+        "only the latest address can queue against the vacant lane"
     );
     lanes.finish();
 }
@@ -932,8 +1023,17 @@ fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
 }
 
 fn sent(lanes: &[u8], unreached: &[&str]) -> steering::Published {
+    sent_queued(lanes, &[], unreached)
+}
+
+fn sent_queued(
+    lanes: &[u8],
+    queued: &[wire::OccupantAddress],
+    unreached: &[&str],
+) -> steering::Published {
     steering::Published::Sent {
         lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
+        queued: queued.to_vec(),
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
         rooms: Vec::new(),
         conversed: None,
