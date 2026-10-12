@@ -35,10 +35,12 @@ const PREPARED: &str = "prepared";
 /// peer-message rooms from their creating facts into steering heads, and
 /// creates the room-authority projection, per-lane room catch-up cursors and
 /// horizons, room coordination heads, room conversation heads, operator items,
-/// and required task evidence a predecessor lacks, replacing its per-route room
-/// receipts, before the schema identity advances. Current readers therefore
-/// need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 15] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47];
+/// required task evidence, and relevance shadow records a predecessor lacks,
+/// replacing its per-route room receipts before the schema identity advances.
+/// Current readers therefore need no execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 16] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -59,9 +61,11 @@ pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
 pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
 /// First schema whose baseline carries required task evidence.
 pub(crate) const TASK_EVIDENCE_SCHEMA: u32 = 48;
+/// First schema whose baseline carries room relevance shadow observations.
+pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 7] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 8] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -75,6 +79,7 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 7] = [
     ),
     (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
     (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
+    (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
@@ -1187,8 +1192,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 48, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 49, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 48;
+PRAGMA user_version = 49;
 "#;

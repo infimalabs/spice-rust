@@ -104,6 +104,12 @@ macro_rules! registered_body {
     (RoomHorizon) => {
         crate::rooms::RoomHorizon
     };
+    (RoomRelevanceObserved) => {
+        crate::rooms::RoomRelevanceObserved
+    };
+    (RoomRelevanceAssessed) => {
+        crate::rooms::RoomRelevanceAssessed
+    };
     (RoomConversed) => {
         crate::rooms::RoomConversed
     };
@@ -288,6 +294,10 @@ vocabulary! {
     RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A lane with no delivery cursor began owing room catch-up here.
     RoomHorizon = "room::horizon" by ResidentRecognition;
+    /// The resident recorded one source-backed shadow relevance observation.
+    RoomRelevanceObserved = "room::observed" by ResidentRecognition;
+    /// The operator assessed one shadow observation for quality measurement.
+    RoomRelevanceAssessed = "room::assessed" by CommandDoor;
     /// A lane's authored MSG, ASK, or ANS bound its native lane deliveries and
     /// opened its operator item and result.
     RoomConversed = "room::conversed" by AckScanner;
