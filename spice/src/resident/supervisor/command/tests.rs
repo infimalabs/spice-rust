@@ -178,3 +178,56 @@ fn room_catch_up_retries_only_until_its_exact_delivery_lands() {
     );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+fn failed_landed_evidence_write_preserves_and_retries_the_exact_page() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let occupant = crate::resident::new_uuid();
+    let root = std::env::temp_dir().join(format!("spice-room-landing-retry-{occupant}"));
+    let path = root.join("notice.json");
+    let blocked_parent = root.join("blocked");
+    let landed_path = blocked_parent.join("landed.json");
+    fs::create_dir_all(&root).expect("fixture directory");
+    fs::write(&blocked_parent, b"not a directory").expect("landing path is blocked");
+    driver.configure_room_catch_up(path.clone(), landed_path.clone(), occupant);
+    let landed = crate::resident::room_catch_up::Notice {
+        occupant,
+        through: wire::Seq::new(7).expect("fixture position"),
+        text: "observed page".to_owned(),
+    };
+    crate::resident::room_catch_up::publish_notice(&path, &landed).expect("current notice writes");
+    driver.deliver_room_catch_up(false);
+    let observed = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"observed page"}]}}
+"#;
+    assert!(driver.observe(&decoded(observed)).is_none());
+
+    let replacement = crate::resident::room_catch_up::Notice {
+        occupant,
+        through: wire::Seq::new(8).expect("fixture position"),
+        text: "recomputed page".to_owned(),
+    };
+    crate::resident::room_catch_up::publish_notice(&path, &replacement)
+        .expect("recomputed notice writes");
+    driver.deliver_room_catch_up(true);
+    assert_eq!(
+        sink.answered(1).len(),
+        1,
+        "failed landing persistence suppresses replacement and resend"
+    );
+
+    fs::remove_file(&blocked_parent).expect("landing path unblocks");
+    fs::create_dir(&blocked_parent).expect("landing directory exists");
+    driver.deliver_room_catch_up(false);
+    assert_eq!(
+        crate::resident::room_catch_up::read_notice(&landed_path),
+        Some(landed),
+        "the next resident event persists the exact observed page"
+    );
+    assert_eq!(sink.answered(1).len(), 1);
+
+    fs::remove_file(&landed_path).expect("cursor releases landed evidence");
+    driver.deliver_room_catch_up(false);
+    assert_eq!(sink.answered(2)[1]["message"], replacement.text);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
