@@ -19,6 +19,7 @@ mod conversation;
 mod coordination;
 mod groups;
 mod hunks;
+mod relevance;
 
 fn write() -> JournalWrite {
     write_as(Actor::Operator)

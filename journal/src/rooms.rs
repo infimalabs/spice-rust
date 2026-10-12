@@ -29,6 +29,7 @@ use wire::{
 mod conversation;
 mod coordination;
 mod evidence;
+mod relevance;
 mod sql;
 
 pub(crate) use conversation::{
@@ -40,6 +41,7 @@ pub(crate) use coordination::{
     require_writes as require_coordination_writes,
 };
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
+pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
@@ -175,6 +177,8 @@ pub(crate) struct Projection {
     pub(crate) conversation: conversation::Heads,
     /// `(task, result)` required evidence to the position that required it.
     pub(crate) evidence: BTreeMap<(String, String), u64>,
+    /// Append-only shadow relevance observations and operator assessments.
+    pub(crate) relevance: relevance::Heads,
 }
 
 /// Authority one fold step reads and changes.
@@ -229,6 +233,16 @@ pub(crate) trait Authority {
     fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal>;
     /// How many question results one requester holds pending.
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
+    /// One shadow relevance observation by stable identity.
+    fn relevance_observation(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::ObservationRow>, Refusal>;
+    /// One operator assessment by observation identity.
+    fn relevance_assessment(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::AssessmentRow>, Refusal>;
     /// Apply one projection change.
     fn change(&mut self, change: Change) -> Result<(), Refusal>;
 }
@@ -279,6 +293,7 @@ pub(crate) enum Change {
         released: Option<String>,
         required: Option<(String, u64)>,
     },
+    Relevance(relevance::Edit),
 }
 
 impl Projection {
@@ -346,6 +361,7 @@ impl Projection {
                     self.evidence.insert((task, result), seq);
                 }
             }
+            Change::Relevance(edit) => self.relevance.apply(edit),
         }
     }
 }
@@ -511,6 +527,29 @@ impl Authority for History {
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
         Ok(self.projection.conversation.pending_results(requester))
     }
+    fn relevance_observation(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::ObservationRow>, Refusal> {
+        Ok(self
+            .projection
+            .relevance
+            .observations
+            .get(observation)
+            .cloned())
+    }
+
+    fn relevance_assessment(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::AssessmentRow>, Refusal> {
+        Ok(self
+            .projection
+            .relevance
+            .assessments
+            .get(observation)
+            .cloned())
+    }
 
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         self.projection.apply(change);
@@ -638,6 +677,9 @@ fn fold_traffic(
     actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
+    if let Some(result) = relevance::fold(authority, seq, actor, fact) {
+        return Some(result);
+    }
     if let Some(result) = coordination::fold(authority, seq, actor, fact) {
         return Some(result);
     }
@@ -1039,7 +1081,11 @@ fn record<T: serde::Serialize>(
     })
 }
 
-fn require_task(authority: &impl Authority, task: &TaskStamp, role: &str) -> Result<(), Refusal> {
+pub(super) fn require_task(
+    authority: &impl Authority,
+    task: &TaskStamp,
+    role: &str,
+) -> Result<(), Refusal> {
     match authority.task(task)? {
         Some(_) => Ok(()),
         None => unsound(format!("{role} task {task} does not exist")),
@@ -1059,7 +1105,7 @@ fn require_proposal(
 
 /// A link must name authority that exists before the linking fact. Artifact
 /// bytes live outside the journal, so their digest is the whole link.
-fn require_source(
+pub(super) fn require_source(
     authority: &impl Authority,
     seq: Seq,
     source: &RoomSource,

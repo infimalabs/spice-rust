@@ -7,7 +7,7 @@ use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
 use super::{
     Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
-    Refusal, conversation, unsound,
+    Refusal, conversation, relevance, unsound,
 };
 
 /// Stored authority as one commit transaction sees it, overlaid with the
@@ -241,6 +241,19 @@ impl Authority for Stored<'_> {
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
         conversation::stored_pending_results(self.connection, requester)
     }
+    fn relevance_observation(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::ObservationRow>, Refusal> {
+        relevance::stored_observation(self.connection, observation)
+    }
+
+    fn relevance_assessment(
+        &self,
+        observation: &str,
+    ) -> Result<Option<relevance::AssessmentRow>, Refusal> {
+        relevance::stored_assessment(self.connection, observation)
+    }
 
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         apply(self.connection, change)?;
@@ -334,6 +347,7 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 .as_ref()
                 .map(|(result, seq)| (result.as_str(), *seq)),
         )?,
+        Change::Relevance(edit) => relevance::apply_sql(connection, edit)?,
     }
     Ok(())
 }
@@ -438,6 +452,7 @@ impl Projection {
                 "SELECT task, result, head_seq FROM task_evidence",
                 |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
             )?,
+            relevance: relevance::Heads::load(connection)?,
         })
     }
 }
@@ -522,7 +537,8 @@ pub(crate) fn write_projection(
     for ((task, result), seq) in &projection.evidence {
         super::evidence::insert(connection, task, result, *seq)?;
     }
-    projection.conversation.write(connection)
+    projection.conversation.write(connection)?;
+    projection.relevance.write(connection)
 }
 
 /// Execution authorization is its controller's conclusion, so each controller
