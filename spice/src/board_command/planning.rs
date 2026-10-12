@@ -168,6 +168,7 @@ pub(super) fn accepted_pending_child<'a>(
 
 pub(super) fn accepted_construction(task: &BoardTask) -> bool {
     matches!(task.workflow.body.status.as_str(), "pending" | "completed")
+        && task.workflow.body.review != "closed"
         && task.statement.body.intent.is_none()
         && !planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow)
         && substantive_acceptance(&task.statement.body.acceptance)
