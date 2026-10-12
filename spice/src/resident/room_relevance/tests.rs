@@ -1,6 +1,6 @@
-//! A settled result in a task room classifies by how it settled; only an
-//! answer declares progress, and every observation cites the ASK and the
-//! settling fact at or before its horizon.
+//! A settled result in a task room classifies by how it settled; no
+//! settlement declares progress, an answer included, and every observation
+//! cites the ASK and the settling fact at or before its horizon.
 
 use serde_json::json;
 use wire::rooms::{
@@ -48,8 +48,10 @@ fn journal(fact: u64) -> RoomSourceView {
     }
 }
 
+/// An answer is unknown, never progress: the settlement that classifies it is
+/// the same whether the answer carried evidence or only agreed.
 #[test]
-fn only_an_answer_declares_progress() {
+fn no_settlement_declares_progress() {
     let answered: QuestionResultState = serde_json::from_value(json!({
         "state": "answered",
         "answer": "1kKRRsDR4",
@@ -62,8 +64,8 @@ fn only_an_answer_declares_progress() {
     let cases = [
         (
             answered,
-            RoomRelevanceClass::RelevantContribution,
-            RoomProgressStanding::Advanced,
+            RoomRelevanceClass::Unknown,
+            RoomProgressStanding::Unknown,
             8,
         ),
         (

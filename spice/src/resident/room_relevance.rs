@@ -4,10 +4,12 @@
 //! it settles. The observation shares the result's identity, cites the ASK's
 //! journal fact and the fact that answered or closed it, declares the result
 //! head's position as its horizon, and classifies the settlement. An answer
-//! is a relevant contribution; a decline is declined; a deadline that passed
-//! unanswered is a missed opportunity; a withdrawn question is stale
-//! activity. Observing writes only `room::observed`, so no delivery, wake,
-//! claim, task, room, group, view, review, or authorization changes.
+//! is unknown: settlement alone cannot show whether it carried evidence or only
+//! agreed, so it never claims progress. A decline is declined; a deadline that
+//! passed unanswered is a missed opportunity; a withdrawn question is stale
+//! activity; none of those is progress. Observing writes only
+//! `room::observed`, so no delivery, wake, claim, task, room, group, view,
+//! review, or authorization changes.
 
 use wire::rooms::{
     QuestionResultRecord, QuestionResultState, RoomDestination, RoomProgressStanding,
@@ -117,10 +119,11 @@ fn observe(settled: &Settled) -> Option<RoomRelevanceObservation> {
     let settling = RoomSource::Journal {
         fact: SequenceCode::new(settled.settled.get()),
     };
-    let (classification, closing, explanation, uncertainty) = match &settled.state {
+    let (classification, progress, closing, explanation, uncertainty) = match &settled.state {
         QuestionResultState::Pending {} => return None,
         QuestionResultState::Answered { answer, .. } => (
-            RoomRelevanceClass::RelevantContribution,
+            RoomRelevanceClass::Unknown,
+            RoomProgressStanding::Unknown,
             settled
                 .answered
                 .map_or(settling, |seq| RoomSource::Journal {
@@ -130,12 +133,13 @@ fn observe(settled: &Settled) -> Option<RoomRelevanceObservation> {
                 "{respondent} answered question {question} with {answer}, settling result \
                  {result} that {requester} asked in this room"
             ),
-            "the answer settled the asked criterion; whether its content is correct or useful \
-             is unassessed"
+            "the settlement shows an answer, not its content: whether it carried evidence \
+             advancing an unresolved criterion or only agreed or acknowledged is unassessed"
                 .to_owned(),
         ),
         QuestionResultState::Declined { .. } => (
             RoomRelevanceClass::Declined,
+            RoomProgressStanding::NoProgress,
             settling,
             format!(
                 "{respondent} declined question {question} from {requester}; result {result} \
@@ -145,6 +149,7 @@ fn observe(settled: &Settled) -> Option<RoomRelevanceObservation> {
         ),
         QuestionResultState::TimedOut {} => (
             RoomRelevanceClass::MissedOpportunity,
+            RoomProgressStanding::NoProgress,
             settling,
             format!(
                 "question {question} from {requester} reached its deadline {} with no answer \
@@ -155,6 +160,7 @@ fn observe(settled: &Settled) -> Option<RoomRelevanceObservation> {
         ),
         QuestionResultState::Cancelled { .. } => (
             RoomRelevanceClass::StaleActivity,
+            RoomProgressStanding::NoProgress,
             settling,
             format!(
                 "question {question} to {respondent} was withdrawn before an answer; result \
@@ -174,10 +180,6 @@ fn observe(settled: &Settled) -> Option<RoomRelevanceObservation> {
             source: record.source().clone(),
             unavailable: RoomSourceUnavailable::Missing {},
         },
-    };
-    let progress = match classification {
-        RoomRelevanceClass::RelevantContribution => RoomProgressStanding::Advanced,
-        _ => RoomProgressStanding::NoProgress,
     };
     Some(RoomRelevanceObservation {
         observation: result.authority().clone(),
