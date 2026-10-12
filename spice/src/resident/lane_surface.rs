@@ -794,16 +794,20 @@ pub(super) fn remove(
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
-    match commit(bus, proposal) {
-        Ok(committed) => {
-            runtime
-                .capabilities
-                .remove(capability, &Actor::Lane(row.lane));
-            super::steering::remove_lane_surface(paths, row.lane);
-            committed_lane_reply(committed, answer)
-        }
-        Err(outcome) => typed_outcome(outcome),
+    let committed = match commit(bus, proposal) {
+        Ok(committed) => committed,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    runtime
+        .capabilities
+        .remove(capability, &Actor::Lane(row.lane));
+    super::steering::remove_lane_surface(paths, row.lane);
+    // The lane's live peer duties end with it; a lane that later takes its
+    // place is another destination. Startup parks what a failure here leaves.
+    if let Err(outcome) = super::steering::dead_letter_removed_lanes(bus, &mut io::sink()) {
+        return typed_outcome(outcome);
     }
+    committed_lane_reply(committed, answer)
 }
 
 /// A seat ends only once it is vacant and owns no active claim.

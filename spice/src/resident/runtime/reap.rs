@@ -247,15 +247,6 @@ pub(in crate::resident) fn present_closed_transcripts(
         );
         super::deferral::defer_store_fault(presented, diagnostic, "closing transcript sweep")?;
     }
-    // A departed occupant's answers retired as its prose landed or at its
-    // accounted exit; what it left unanswered was addressed to it alone.
-    let departed = crate::resident::steering::dead_letter_departed(
-        bus,
-        command_surface.paths,
-        epoch,
-        diagnostic,
-    );
-    super::deferral::defer_store_fault(departed, diagnostic, "departed MSG dead-lettering")?;
     generation
         .commit()
         .map(drop)

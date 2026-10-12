@@ -178,7 +178,8 @@ impl SteerReplied {
 /// a recipient no occupant seats receives nothing. The directive identity is
 /// derived from the source packet and the recipient, so rereading the same
 /// packet never opens a second message. The opened directive is ordinary peer
-/// steering for the recipient lane; answering it replies to `from`.
+/// steering bound to the recipient lane, which whichever occupant sits there
+/// hears and answers; answering it replies to `from`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteerMessaged {
@@ -186,9 +187,10 @@ pub struct SteerMessaged {
     pub directive: CanonicalUuid,
     /// Message key.
     pub key: String,
-    /// Recipient lane.
+    /// Recipient lane, the message's destination.
     pub lane: CanonicalUuid,
-    /// Recipient occupant the residency seated when the packet published.
+    /// Recipient occupant the residency seated when the packet published: the
+    /// route's evidence, not its destination.
     pub occupant: CanonicalUuid,
     /// Lane whose occupant authored the packet.
     pub from: CanonicalUuid,
