@@ -334,14 +334,54 @@ impl Lanes {
         .expect("recovery reads");
     }
 
+    /// Replay startup's transcript recovery, as a restarted resident does.
+    fn restart(&self) {
+        crate::resident::ingest_surface::recover_transcripts(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &steer::Config::default(),
+            &mut Vec::new(),
+        )
+        .expect("startup recovery replays");
+    }
+
     /// Land one assistant message on a lane's tape and hear its answers.
     fn answer(&self, lane: u8, keys: &[&str], prose: &str) {
+        self.land(
+            lane,
+            keys,
+            serde_json::json!([{"type": "text", "text": prose}]),
+            "stop",
+        );
+    }
+
+    /// Land one assistant message whose tool calls declare `intents` and
+    /// hear its answers.
+    fn intend(&self, lane: u8, keys: &[&str], intents: &[&str]) {
+        let calls = intents
+            .iter()
+            .enumerate()
+            .map(|(index, intent)| {
+                serde_json::json!({
+                    "type": "toolCall",
+                    "id": format!("call-{index}"),
+                    "name": "read",
+                    "arguments": {},
+                    "intent": intent,
+                })
+            })
+            .collect();
+        self.land(lane, keys, serde_json::Value::Array(calls), "toolUse");
+    }
+
+    fn land(&self, lane: u8, keys: &[&str], content: serde_json::Value, stop: &str) {
         let message = serde_json::json!({
             "type": "message_end",
             "message": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": prose}],
-                "stopReason": "stop",
+                "content": content,
+                "stopReason": stop,
             },
         });
         self.tape(lane)
@@ -1053,11 +1093,14 @@ fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
         before,
         "a lane still resident parks nothing"
     );
+    lanes.restart();
+    lanes.restart();
     assert_eq!(
         lanes.pending(FIRST),
         [message.clone()],
-        "the successor inherits the same key, body, and deadline"
+        "the successor inherits the same key, body, and deadline through every replay"
     );
+    assert_eq!(lanes.messages().len(), 1, "replay publishes nothing again");
 
     lanes.declare(FIRST);
     lanes.answer(
@@ -1095,6 +1138,111 @@ fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
     assert!(
         lanes.pending(FIRST).is_empty(),
         "an answered MSG never returns to the lane"
+    );
+    lanes.finish();
+}
+
+/// Tool-call intent is answer evidence, never authorship: a successor's
+/// intent header retires the MSG its lane inherited, while an MSG header in
+/// an intent publishes nothing.
+#[test]
+fn a_tool_intent_retires_an_inherited_msg_but_never_publishes_one() {
+    let lanes = Lanes::new("msg-tool-intent");
+    let first = lanes.address(FIRST);
+    let sender = lanes.address(SENDER);
+    lanes.author(SENDER, &format!("MSG {first}: hold the merge"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let message = delivered(&lanes, FIRST);
+    lanes.vacate(FIRST);
+    let successor = test_uuid(41);
+    lanes.renew(FIRST, successor);
+    lanes.declare(FIRST);
+
+    lanes.intend(
+        FIRST,
+        &[&message.key],
+        &[
+            &format!("MSG {sender}: a caption is not a packet"),
+            &format!("ACK {}: Holding.", message.key),
+        ],
+    );
+    let (published, _) = lanes.hear(FIRST, successor);
+
+    assert!(
+        published.is_empty(),
+        "an intent publishes nothing: {published:?}"
+    );
+    assert_eq!(lanes.messages().len(), 1, "only the authored MSG exists");
+    assert!(
+        lanes.pending(FIRST).is_empty(),
+        "the intent's header retires the inherited key"
+    );
+    let [reply] = lanes
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("only the reply reaches the sender: {pending:?}"));
+    assert_eq!(reply.sender.map(|sender| sender.occupant), Some(successor));
+    lanes.finish();
+}
+
+/// A predecessor transcript that cannot be read at exit settles nothing and
+/// says so; once readable, the answer it holds retires the key exactly once.
+#[test]
+fn an_unreadable_predecessor_transcript_settles_nothing_at_exit() {
+    let lanes = Lanes::new("msg-unreadable-predecessor");
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}: hold the merge"));
+    lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let message = delivered(&lanes, FIRST);
+    lanes.declare(FIRST);
+    lanes.answer(FIRST, &[], &format!("ACK {}: Holding.", message.key));
+    lanes.vacate(FIRST);
+    let tape = lanes
+        .paths
+        .tape
+        .join(test_uuid(FIRST).to_string())
+        .join("omp");
+    let hidden = tape.with_extension("hidden");
+    fs::rename(&tape, &hidden).expect("the tape moves aside");
+    fs::write(&tape, b"not a tape").expect("an unreadable tape stands in");
+    let vendor: wire::Name = "omp".parse().expect("fixture vendor");
+    let exit = |diagnostics: &mut Vec<u8>| {
+        steering::dispose_at_exit(
+            &lanes.bus,
+            &lanes.paths,
+            lanes.epoch,
+            test_uuid(FIRST),
+            &vendor,
+            diagnostics,
+        );
+    };
+
+    let mut diagnostics = Vec::new();
+    exit(&mut diagnostics);
+
+    assert_eq!(
+        lanes.pending(FIRST),
+        [message.clone()],
+        "an unreadable predecessor settles nothing"
+    );
+    assert!(lanes.pending(SENDER).is_empty(), "no reply is owed yet");
+    assert!(
+        String::from_utf8_lossy(&diagnostics).contains(&test_uuid(FIRST).to_string()),
+        "the failure is visible"
+    );
+
+    fs::remove_file(&tape).expect("the stand-in leaves");
+    fs::rename(&hidden, &tape).expect("the tape returns");
+    exit(&mut Vec::new());
+    exit(&mut Vec::new());
+    assert!(
+        lanes.pending(FIRST).is_empty(),
+        "the readable answer retires"
+    );
+    assert_eq!(
+        lanes.pending(SENDER).len(),
+        1,
+        "one reply reaches the sender"
     );
     lanes.finish();
 }
