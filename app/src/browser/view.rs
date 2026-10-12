@@ -211,9 +211,9 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 render.sender,
             )}
             {spice_sidebar::render_operator(runtime)}
-            {quota::render_sidebar(runtime)}
-            {render_spice_topology(render, runtime, standings.as_deref())}
             {spice_jobs::render(standings.as_deref())}
+            {render_spice_topology(render, runtime, standings.as_deref())}
+            {quota::render_sidebar(runtime)}
         </div>
     };
     let anchor = html! {
