@@ -250,11 +250,10 @@ fn renewal_extends_a_live_producer_past_its_original_expiry() {
         ).unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "producer"
     ));
-    drop(guard);
 }
 
 #[test]
-fn expired_producer_admits_one_waiter_takeover() {
+fn an_already_expired_producer_admits_one_waiter_takeover() {
     let fixture = Fixture::new("takeover");
     let action = derive_action_key(b"expired action");
     // The departed producer's lease ended long ago; contention inside its
@@ -281,12 +280,15 @@ fn expired_producer_admits_one_waiter_takeover() {
     };
     assert_eq!(guard.current().owner(), "waiter");
     assert!(matches!(
-        fixture.store.acquire_lease(
-            &action,
-            "contender",
-            SystemTime::now(),
-            Duration::from_secs(1),
-        ).unwrap(),
+        fixture
+            .store
+            .acquire_lease(
+                &action,
+                "contender",
+                SystemTime::now(),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "waiter"
     ));
     assert!(fixture.store.release_lease(&lease).is_err());

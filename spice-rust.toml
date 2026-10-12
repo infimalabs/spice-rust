@@ -101,84 +101,28 @@ generated_paths = [
     "app/renderer/renderer-000.txt",
 ]
 
-# Every environment name this workspace defines, spelled once.
-#
-# This is the workspace's own vocabulary: the names Spice writes and the names
-# Spice reads back. Gate matches it against the tracked tree in both
-# directions, so a name used without being listed fails, and a name listed
-# after its last use fails too. That is what makes the vocabulary countable
-# rather than a set of literals accumulating across crates.
-#
-# Session forensics reads the live omp session identity and the selected
-# agent vendor. `steer` owns the four hook/session names. The configured commit
-# executor owns the staged-path JSON and source-digest handoff names, while the
-# installed pre-commit launcher owns its appliance marker. A supervised launch
-# separates the installed outer shell from the native shell restored by its
-# inner stage, while resident delivery reads the lane's authenticated journal
-# inbox and lane-bound commands carry that lane identity. `gate` owns the
-# mutation seed and attempt number it repeats into every bounded cargo-mutants
-# process. Its hygiene acquisition fixture passes the captured repository and
-# marker to an isolated copy of the current test process, and fixes `TMPDIR` at
-# private writable scratch so that isolation remains valid on a read-only proof
-# host.
-#
-# Foreign environment names are admitted here. Rust's configured-command
-# executor strips Git's three local-environment names before it execs an exact
-# configured argv, and the hooks fixture exports exactly those three to prove
-# the child sees none of them. The Git shadow writes three more, and it is
-# production rather than a fixture: it points `GIT_CONFIG_SYSTEM` at the
-# per-worktree config it
-# publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
-# and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
-# own system config path. The hygiene acquisition fixture fixes the seventh,
-# `TMPDIR`, at its own writable scratch. Spice
-# owns none of these names; the tree either writes or deliberately observes
-# them. RTK's upstream `RTK_DB_PATH` is likewise foreign: Rust selects its
-# lane-scoped value but does not own the companion's variable. The ledger
-# accounts what the tree references rather than what it
-# invented, so they are counted here; the
-# shadow's indexed
-# `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
-# name is a whole name and a trailing underscore is a prefix. Their access
-# waiver is a separate arm and does not account them; a waived name is still a
-# name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the typed Spice variables, so these names are the
-# difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
-# rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
-# retained only as coexistence sentinels. The predecessor's self-exec root and
-# staged-path handoff are likewise observed operational context, not variables
-# this runtime owns.
+# Environment names referenced by the current product, build, gate, and
+# coexistence surfaces. Foreign names remain listed because Gate accounts every
+# reference, but Doctor reports only the typed Spice-owned subset. The three
+# predecessor shell names are read-only coexistence sentinels. Selected-tree
+# tests receive private writable and shared-output roots; Git, RTK, and shell
+# startup selectors retain their upstream spellings.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "BASH_ENV",
     "GIT_CONFIG_COUNT",
     "GIT_CONFIG_SYSTEM",
-    "GIT_DIR",
     "GIT_EDITOR",
-    "GIT_INDEX_FILE",
-    "GIT_WORK_TREE",
     "RTK_DB_PATH",
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
-    "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",
-    "SPICE_FIXTURE_RERUN",
     "SPICE_HOOKS",
-    "SPICE_HOOK_ARGV_LOG",
-    "SPICE_HOOK_EXIT_CODE",
-    "SPICE_HOOK_STDIN_LOG",
-    "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
-    "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INSTALL_TEST_EXECUTABLE",
     "SPICE_LANE",
-    "SPICE_MOUNTED_COMMAND",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
-    "SPICE_PRE_COMMIT_PARENT_TEST_ROLE",
-    "SPICE_PRE_COMMIT_PARENT_TEST_ROOT",
-    "SPICE_PRE_COMMIT_PARENT_TEST_SOCKET",
-    "SPICE_PROOF",
     "SPICE_RS_BOOTSTRAP_CARGO_HOME",
     "SPICE_RS_HOOKS",
     "SPICE_RS_LANE",
@@ -191,17 +135,11 @@ env_names = [
     "SPICE_RS_RTK_EXECUTABLE",
     "SPICE_RS_SESSION",
     "SPICE_RS_WRAPPER_SPICE",
-    "SPICE_RUNTIME_PYTHON",
-    "SPICE_SELFEXEC_ROOT",
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",
     "SPICE_SOURCE_STAMP",
-    "SPICE_STAGED_PATHS",
-    "SPICE_VISIBLE_PROG",
     # Selected-tree tests receive these workspace-test fixture authorities.
-    "SPICE_WORKSPACE_TEST_DESCENDANT_FIXTURE_ROOT",
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
-    "TMPDIR",
     "ZDOTDIR",
 ]
 

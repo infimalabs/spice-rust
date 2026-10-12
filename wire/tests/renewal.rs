@@ -2,10 +2,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use wire::body::LaneRenewalChanged;
-use wire::intent::{LaneAnswer, LaneRenewal, LaneRenewalAnswer};
-use wire::{CanonicalUuid, LaneRenewalRecord, LaneRenewalState, RenewalIdentity, ResidentState};
+use wire::intent::{LaneRenewal, LaneRenewalAnswer};
+use wire::{CanonicalUuid, LaneRenewalRecord, LaneRenewalState, RenewalIdentity};
 
-const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
 const TEAM: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const PREDECESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
@@ -165,22 +164,6 @@ fn clear_state_is_omitted_and_null_is_refused() {
     assert!(
         wire::decode::<LaneRenewalChanged>(&serde_json::to_vec(&changed_null).unwrap()).is_err()
     );
-}
-
-#[test]
-fn legacy_lane_reads_default_to_no_renewal_state() {
-    let document = json!({
-        "epoch": EPOCH,
-        "state": "seated",
-        "topology_revision": 40,
-        "lanes": [],
-        "subscriptions": []
-    });
-    let answer: LaneAnswer = wire::decode(&serde_json::to_vec(&document).unwrap()).unwrap();
-    assert_eq!(answer.state, ResidentState::Seated);
-    assert!(answer.renewals.is_empty());
-    let encoded: Value = serde_json::from_slice(&wire::encode(&answer).unwrap()).unwrap();
-    assert!(encoded.get("renewals").is_none());
 }
 
 #[test]

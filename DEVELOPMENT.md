@@ -36,7 +36,10 @@ and browser code cannot reach server internals.
 
 ## Feedback
 
-Permanent tests follow [AGENTS.md](AGENTS.md#permanent-test-value).
+Permanent tests follow [AGENTS.md](AGENTS.md#permanent-test-value). Retained
+data belongs behind a one-time forward migration or an owner-naming refusal;
+never preserve a predecessor DTO, command path, or process fixture as another
+executable test arm.
 
 | Surface | Command and boundary |
 | --- | --- |

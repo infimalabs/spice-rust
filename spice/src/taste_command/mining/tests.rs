@@ -209,57 +209,6 @@ fn unrelated_fanouts_at_equal_local_coordinates_count_independently() {
 }
 
 #[test]
-fn pre_fanout_source_aware_loci_remain_independent() {
-    let mut corrections = vec![
-        correction(1, "Do not use grep; use rg instead."),
-        correction(2, "Prefer rg rather than grep."),
-        correction(3, "Never use grep; always use rg."),
-    ];
-    let coordinates = TranscriptLocus {
-        source: None,
-        member: 1,
-        offset: 10,
-        length: 50,
-        event: 0,
-        line: 1,
-        column: 1,
-    };
-    for (index, correction) in corrections.iter_mut().enumerate() {
-        correction.fanout = None;
-        correction.locus = TranscriptLocus {
-            source: Some(directive(800 + u64::try_from(index).unwrap())),
-            ..coordinates
-        };
-    }
-
-    assert_eq!(cluster(&corrections, 3)[0].corrections.len(), 3);
-}
-
-#[test]
-fn pre_fanout_source_absence_is_scoped_by_lane() {
-    let mut corrections = vec![
-        correction(1, "Do not use grep; use rg instead."),
-        correction(2, "Prefer rg rather than grep."),
-        correction(3, "Never use grep; always use rg."),
-    ];
-    let coordinates = TranscriptLocus {
-        source: None,
-        member: 1,
-        offset: 10,
-        length: 50,
-        event: 0,
-        line: 1,
-        column: 1,
-    };
-    for correction in &mut corrections {
-        correction.fanout = None;
-        correction.locus = coordinates;
-    }
-
-    assert_eq!(cluster(&corrections, 3)[0].corrections.len(), 3);
-}
-
-#[test]
 fn completed_predecessor_refiles_only_after_genuine_new_recurrence() {
     let base = vec![
         correction(1, "Do not use grep; use rg instead."),
