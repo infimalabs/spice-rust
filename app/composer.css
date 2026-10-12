@@ -407,38 +407,30 @@
   pointer-events: none;
 }
 .team-composer .team-composer-controls > * { z-index: 1; }
-/* SEND sits over its own transmitted-light layer. The parent owns this paint
-   so the button's face, contact shade, recipient rim, and label remain
-   independent layers; the soft radial mask lets the chassis show through
-   instead of turning the control into a filled disc. */
+/* SEND uses two optical layers. This lower disc is a dull, even emitter;
+   the separate button face in mosaic.css is the glass that transmits it.
+   A fine inset catch and the outer bloom collect light at the perimeter
+   without painting a hotspot through the middle of the control. */
 .team-composer .team-composer-controls::after {
   position: absolute;
   z-index: 0;
   inset-inline-start: 50%;
-  inset-block-end: -4px;
-  inline-size: calc(var(--team-control-send-size) + 10px);
-  block-size: calc(var(--team-control-send-size) + 10px);
+  inset-block-end: -3px;
+  inline-size: calc(var(--team-control-send-size) + 8px);
+  block-size: calc(var(--team-control-send-size) + 8px);
   border-radius: var(--app-radius-circle);
-  background:
-    radial-gradient(ellipse 86% 46% at 50% 8%, color-mix(in srgb, var(--app-highlight-source) 15%, transparent), transparent 74%),
-    radial-gradient(ellipse 82% 44% at 50% 96%, color-mix(in srgb, var(--ink) 7%, transparent), transparent 74%),
-    linear-gradient(90deg, color-mix(in srgb, var(--app-highlight-source) 5%, transparent), transparent 18% 82%, color-mix(in srgb, var(--app-highlight-source) 5%, transparent)),
-    color-mix(in srgb, var(--control) 2.5%, transparent);
+  background: color-mix(in srgb, var(--app-highlight-source) 5%, transparent);
   box-shadow:
-    0 0 10px color-mix(in srgb, var(--app-highlight-source) 5%, transparent),
-    inset 0 1px 2px color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
-  backdrop-filter: blur(3px) saturate(1.25) brightness(1.04) contrast(1.12);
-  -webkit-backdrop-filter: blur(3px) saturate(1.25) brightness(1.04) contrast(1.12);
-  -webkit-mask-image: radial-gradient(circle, var(--app-mask-opaque) 0 61%, transparent 88%);
-  mask-image: radial-gradient(circle, var(--app-mask-opaque) 0 61%, transparent 88%);
-  opacity: .64;
+    0 0 9px color-mix(in srgb, var(--app-highlight-source) 7%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 10%, transparent);
+  opacity: .58;
   translate: -50% 0;
   content: "";
   pointer-events: none;
 }
-.team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:hover, :focus-visible))::after { opacity: .82; }
-.team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:active, [data-touch-contact]))::after { opacity: .5; }
-.team-composer .team-composer-controls:has(.team-send:disabled)::after { opacity: .38; }
+.team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:hover, :focus-visible))::after { opacity: .72; }
+.team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:active, [data-touch-contact]))::after { opacity: .46; }
+.team-composer .team-composer-controls:has(.team-send:disabled)::after { opacity: .32; }
 /* A wake in flight keeps the panel lit; until residency or a refusal settles it,
    SEND's rim breathes in the waking members' accents. Drafted recipients keep
    their steady rim, and an undrafted SEND stays disabled while it waits. */
