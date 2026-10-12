@@ -101,6 +101,10 @@ impl AppRuntime {
                 {
                     return StreamApplication::new(Vec::new(), settings_changed);
                 }
+                if self.rooms.apply_live_fact(fact).is_err() {
+                    self.resume = None;
+                    return StreamApplication::new(vec![StreamDirective::Reconnect], true);
+                }
                 self.observe_lifecycle_boundary(fact);
                 self.observe_presence_transition(fact);
                 self.resume = Some(StreamCursor {
@@ -127,10 +131,13 @@ impl AppRuntime {
                     after: *after,
                     dropped: *dropped,
                 };
-                let changed = self.resume != Some(*after) || self.terminal != Some(terminal);
+                let changed = self.terminal != Some(terminal)
+                    || self.resume.is_some()
+                    || !self.rooms.requires_snapshot();
                 if changed {
-                    self.resume = Some(*after);
+                    self.resume = None;
                     self.terminal = Some(terminal);
+                    self.rooms.lose_continuity();
                 }
                 StreamApplication::new(vec![StreamDirective::Reconnect], changed)
             }
@@ -176,6 +183,10 @@ impl AppRuntime {
                 continuation(ViewSubject::Facts, epoch, packed),
                 settings_changed,
             );
+        }
+        if self.rooms.apply_page(packed).is_err() {
+            self.resume = None;
+            return StreamApplication::new(vec![StreamDirective::Reconnect], true);
         }
         for row in &packed.rows {
             self.observe_lifecycle_boundary(row);

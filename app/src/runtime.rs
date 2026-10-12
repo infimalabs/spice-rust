@@ -28,12 +28,17 @@ mod lanes;
 mod member_control;
 mod message_cards;
 mod publication;
+mod rooms;
 mod scoped;
 mod stream;
 pub use consent::ConsentRuling;
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
+pub use rooms::{
+    ParticipantReason, PreparationProjection, RoomAnchorAuthority, RoomEvent, RoomEventKind,
+    RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState,
+};
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
@@ -511,6 +516,7 @@ pub struct AppRuntime {
     message_reconnect_pending: bool,
     /// Re-arms member-local paging after a same-scope subscription refresh.
     message_history_revision: u64,
+    rooms: rooms::RoomProjection,
     quota: Option<Rc<wire::QuotaGeneration>>,
     resume: Option<StreamCursor>,
     terminal: Option<StreamTerminal>,
@@ -556,6 +562,7 @@ impl AppRuntime {
             message_generation: None,
             message_reconnect_pending: false,
             message_history_revision: 0,
+            rooms: rooms::RoomProjection::default(),
             quota: None,
             resume: None,
             terminal: None,
@@ -595,6 +602,10 @@ impl AppRuntime {
             self.principal = Principal::admitted(accepted);
             self.message_reconnect_pending = true;
             self.terminal = None;
+            if self.rooms.requires_snapshot() {
+                self.rooms = rooms::RoomProjection::default();
+                self.resume = None;
+            }
             self.reconnect_consent_rulings();
             self.abandon_member_commands();
             self.task_details.values_mut().for_each(refresh_task_detail);
@@ -690,6 +701,12 @@ impl AppRuntime {
     #[must_use]
     pub fn board(&self) -> Option<&BoardView> {
         self.board.get(&self.principal)
+    }
+
+    /// Room, group, and preparation authority from the authenticated fact stream.
+    #[must_use]
+    pub const fn room_projection(&self) -> &RoomProjection {
+        &self.rooms
     }
 
     /// On-demand detail state retained only for this admitted capability scope.
