@@ -38,7 +38,10 @@ allocator for work.
 When the resident proactively assigns work to the current occupant, it sends a
 compact private `<system-notice>` naming the task handle and phase and directing
 `spice task show HANDLE`. Continue that assignment immediately. The notice has
-no acknowledgment key and is not a briefing or steering delivery.
+no acknowledgment key and is not a briefing or steering delivery. When a claim
+this lane held lapses, a private `<system-notice>` names the task and the
+expiry that passed: stop working on that task, treat its unpublished commits as
+loose, and read `spice task show HANDLE` before asking the allocator for work.
 
 A current operator direction answerable without commands takes precedence. A
 page that reads `# Spice briefing unavailable` names its refusal and the

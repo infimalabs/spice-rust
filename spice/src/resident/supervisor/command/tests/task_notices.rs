@@ -69,3 +69,33 @@ fn task_assignment_notices_are_private_and_deduplicated_by_claim() {
         "a later automatic claim produces a distinct assignment notice",
     );
 }
+
+#[test]
+fn claim_lapse_notices_are_private_and_deduplicated_by_lapse() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let notice = ClaimLapseNotice {
+        occupant: crate::resident::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        expiry: "2026-10-12T17:25:28.368Z".parse().expect("fixture instant"),
+    };
+
+    driver.deliver_claim_lapse(&notice);
+    driver.deliver_claim_lapse(&notice);
+    let frames = sink.answered(1);
+    assert_eq!(frames.len(), 1, "one lapse interjects once");
+    assert_eq!(frames[0]["type"], "aside", "a lapse is a private notice");
+
+    driver.deliver_claim_lapse(&ClaimLapseNotice {
+        expiry: "2026-10-12T18:25:28.368Z".parse().expect("fixture instant"),
+        ..notice
+    });
+    assert_eq!(
+        sink.answered(2)
+            .iter()
+            .filter(|frame| frame["type"] == "aside")
+            .count(),
+        2,
+        "a later lapse of the same task is a distinct notice",
+    );
+}

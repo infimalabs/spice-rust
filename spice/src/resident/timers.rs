@@ -12,6 +12,7 @@ use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Instant, Producer, ResidentState, TaskHandle, intent,
 };
 
+use super::supervisor::command::ClaimLapseNotice;
 use super::{CommandResult, environment_fault, new_uuid, steering, store_fault};
 
 mod rooms;
@@ -71,9 +72,42 @@ struct ArmedDeferral {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ClaimAuthority {
     task: TaskHandle,
+    lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
     expiry: Instant,
+}
+
+/// One claim this resident just lapsed, with the lane that held it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LapsedClaim {
+    lane: CanonicalUuid,
+    task: TaskHandle,
+    expiry: Instant,
+}
+
+impl LapsedClaim {
+    /// Address the lapse to the holding lane's current occupant, which a
+    /// restart may have re-seated since the claim was won; a vacant lane
+    /// hears nothing.
+    pub(super) fn notice(
+        &self,
+        residency: &wire::ResidencyHead,
+    ) -> Option<(CanonicalUuid, ClaimLapseNotice)> {
+        let occupant = residency
+            .lanes
+            .iter()
+            .find(|durable| durable.lane == self.lane)?
+            .occupant?;
+        Some((
+            self.lane,
+            ClaimLapseNotice {
+                occupant,
+                task: self.task.to_string(),
+                expiry: self.expiry,
+            },
+        ))
+    }
 }
 
 struct ArmedClaim {
@@ -128,7 +162,9 @@ struct ArmedRoom {
 pub(super) enum Fired {
     Stale,
     DeferredTaskWoken(TaskHandle),
-    ClaimLapse,
+    /// A claim lapse fired; `Some` names the claim it committed, `None` a
+    /// lapse whose captured heads had already moved.
+    ClaimLapse(Option<LapsedClaim>),
     ClaimRenew,
     Steering,
     TaskWake(CanonicalUuid),
@@ -573,7 +609,7 @@ impl Runtime {
             epoch: armed.authority.epoch,
             expiry: armed.authority.expiry,
             at,
-            intent: intent::TaskRef { task },
+            intent: intent::TaskRef { task: task.clone() },
         };
         let lapse = bus
             .transact(move |journal| match board::lapse::lapse(journal, request) {
@@ -586,7 +622,12 @@ impl Runtime {
             })
             .map_err(|error| store_fault("bus::timer-lapse-failed", &error.to_string()))?;
         match lapse {
-            Ok(_) | Err(board::lapse::LapseError::Refused(_)) => Ok(Fired::ClaimLapse),
+            Ok(_) => Ok(Fired::ClaimLapse(Some(LapsedClaim {
+                lane: armed.authority.lane,
+                task,
+                expiry: armed.authority.expiry,
+            }))),
+            Err(board::lapse::LapseError::Refused(_)) => Ok(Fired::ClaimLapse(None)),
             Err(error) => Err(store_fault("bus::timer-lapse-failed", &error.to_string())),
         }
     }
@@ -959,6 +1000,7 @@ fn desired_claims(
             task.clone(),
             ClaimAuthority {
                 task,
+                lane: claim.lane,
                 occupant: claim.occupant,
                 epoch: claim.epoch,
                 expiry: lease.body().expiry,

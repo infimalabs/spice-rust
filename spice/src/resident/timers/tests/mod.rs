@@ -240,7 +240,9 @@ fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
         .expect("expired claim lapse fires");
 
     assert_eq!(event.kind(), TimerKind::ClaimLapse);
-    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::ClaimLapse));
+    let Ok(Fired::ClaimLapse(Some(lapsed))) = timers.consume(&fixture.bus, event) else {
+        panic!("the expired claim lapse commits");
+    };
     assert_eq!(
         lapsed_heads(&fixture)
             .claim()
@@ -249,6 +251,36 @@ fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
             .disposition,
         ClaimDisposition::Lapsed,
     );
+
+    // The holding lane hears the lapse at whoever occupies it now: a restart
+    // that re-seated the lane does not strand the notice on the old occupant,
+    // and a vacant lane hears nothing.
+    let seated = fixture
+        .bus
+        .residency_head()
+        .expect("residency reads")
+        .expect("fixture residency exists")
+        .body()
+        .clone();
+    let successor = new_uuid();
+    let mut reseated = seated.clone();
+    let mut vacant = seated;
+    for (residency, occupant) in [(&mut reseated, Some(successor)), (&mut vacant, None)] {
+        residency
+            .lanes
+            .iter_mut()
+            .find(|durable| durable.lane == fixture.authority.lane)
+            .expect("the holding lane is durable")
+            .occupant = occupant;
+    }
+    let (lane, notice) = lapsed
+        .notice(&reseated)
+        .expect("a re-seated holding lane hears its lapse");
+    assert_eq!(lane, fixture.authority.lane);
+    assert_eq!(notice.occupant, successor);
+    assert_eq!(notice.task, fixture.authority.task.to_string());
+    assert_eq!(notice.expiry, fixture.authority.expiry);
+    assert_eq!(lapsed.notice(&vacant), None);
 
     drop(timers);
     fixture.bus.shutdown().expect("fixture bus stops");

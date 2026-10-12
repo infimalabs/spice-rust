@@ -91,6 +91,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     task_generation: Mutex<Option<(String, u64, u64)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
     task_assignment: Mutex<Option<(String, u64)>>,
+    /// Latest claim lapse privately delivered to this occupant.
+    claim_lapse: Mutex<Option<ClaimLapseNotice>>,
     /// Latest renewal state observed by this exact occupant.
     renewal: Mutex<Option<renewal::Notice>>,
     /// The confirm dialog each open consent request will answer.
@@ -188,6 +190,8 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
+    /// A claim this lane held lapsed; addressed to the lane's current occupant.
+    ClaimLapse(ClaimLapseNotice),
     /// An MSG packet this exact occupant authored missed some or every address.
     MessageRefused(MessageRefusalNotice),
     /// An MSG packet this exact occupant authored was recorded in rooms.
@@ -227,6 +231,17 @@ pub(in crate::resident) struct TaskAssignmentNotice {
     pub(in crate::resident) task: String,
     pub(in crate::resident) claim: u64,
     pub(in crate::resident) phase: String,
+}
+
+/// One private lapse notice for the lane that held the expired claim, scoped to
+/// that lane's current occupant: a restart may have re-seated the lane since
+/// the claim was won.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct ClaimLapseNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: String,
+    pub(in crate::resident) expiry: wire::Instant,
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
@@ -306,6 +321,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             misdirected: Mutex::new(BTreeSet::new()),
             task_generation: Mutex::new(None),
             task_assignment: Mutex::new(None),
+            claim_lapse: Mutex::new(None),
             renewal: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
@@ -625,6 +641,41 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .as_ref()
                 .is_some_and(|(task, claim)| task == &notice.task && *claim == notice.claim)
             {
+                *delivered = previous;
+            }
+        }
+    }
+
+    /// Tell this occupant that a claim its lane held lapsed, once per lapse.
+    fn deliver_claim_lapse(&self, notice: &ClaimLapseNotice) {
+        let previous = {
+            let mut delivered = self
+                .claim_lapse
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref() == Some(notice) {
+                return;
+            }
+            delivered.replace(notice.clone())
+        };
+        let message = format!(
+            "<system-notice>\nThe claim this lane held on task {} lapsed: its lease expired at \
+             {} and the resident released it. This lane no longer holds that task; stop \
+             working on it. Commits made for it and not yet published are loose and cannot \
+             complete it; run `spice task show {}` for its current holder before asking the \
+             allocator for work. This is a private lapse notice; no acknowledgment key or \
+             visible ACK/NAK is required.\n</system-notice>",
+            notice.task, notice.expiry, notice.task,
+        );
+        if self
+            .background(&format!("task:{}", notice.task), &message)
+            .is_err()
+        {
+            let mut delivered = self
+                .claim_lapse
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref() == Some(notice) {
                 *delivered = previous;
             }
         }
@@ -1116,6 +1167,15 @@ pub(in crate::resident) fn task_assignment(
     send(paths, lane, &Kick::TaskAssignment(notice));
 }
 
+/// Privately tell the lane that held a lapsed claim, at its current occupant.
+pub(in crate::resident) fn claim_lapse(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: ClaimLapseNotice,
+) {
+    send(paths, lane, &Kick::ClaimLapse(notice));
+}
+
 /// Privately tell the exact authoring occupant which addresses its MSG packet
 /// did not reach.
 pub(in crate::resident) fn message_refused(
@@ -1294,6 +1354,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_assignment(&notice);
                         }
                         Ok(Kick::TaskAssignment(_)) => {}
+                        Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
+                            driver.deliver_claim_lapse(&notice);
+                        }
+                        Ok(Kick::ClaimLapse(_)) => {}
                         Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
                             driver.deliver_message_refusal(&notice);
                         }
