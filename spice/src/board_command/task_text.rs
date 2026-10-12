@@ -138,6 +138,7 @@ pub(crate) fn text_edit(
         vec![statement_witness(task)],
         serde_json::to_value(TaskEdit {
             intent: None,
+            evidence: None,
             task: statement.handle.clone(),
             title: None,
             description,

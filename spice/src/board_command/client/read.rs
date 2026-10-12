@@ -424,6 +424,12 @@ pub(in crate::board_command) fn task_show_bounded(
             "blocked"
         }
     ));
+    lines.extend(
+        statement
+            .evidence
+            .iter()
+            .map(|result| format!("evidence {result} required")),
+    );
     lines.push("description:".to_owned());
     match statement
         .description

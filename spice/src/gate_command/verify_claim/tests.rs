@@ -174,6 +174,7 @@ fn statement() -> TaskHead {
     TaskHead {
         preparation: None,
         authorization: None,
+        evidence: Vec::new(),
         intent: None,
         born,
         queue_origin: seq(1),

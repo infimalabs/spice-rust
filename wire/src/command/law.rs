@@ -619,10 +619,11 @@ impl CommandKind {
             }
         }
         self.witnessed_room(expected, body)?;
-        // Requirement and intent edits are guarded authority changes, so the
-        // statement witness they carry must name the edited task itself.
+        // Requirement, intent, and evidence edits are guarded authority
+        // changes, so the statement witness they carry must name the edited
+        // task itself.
         if let (Self::TaskEdit, Intent::TaskEdit(edit)) = (self, body)
-            && (edit.requirements.is_some() || edit.intent.is_some())
+            && (edit.requirements.is_some() || edit.intent.is_some() || edit.evidence.is_some())
         {
             let target = edit.task.born().ok();
             let kinds: &[WitnessKind] = if edit.requirements.is_some() {

@@ -513,6 +513,7 @@ fn prepare_task(
     let statement = TaskHead {
         preparation: None,
         authorization: None,
+        evidence: Vec::new(),
         intent: add.intent,
         born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
@@ -947,6 +948,7 @@ fn commit_dependency_edit(
     let edited = match write.fact(
         body::TaskEdited {
             intent: None,
+            evidence: None,
             task: entry.born().clone(),
             revision,
             dependencies: Some(dependencies),

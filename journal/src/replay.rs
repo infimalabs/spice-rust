@@ -741,8 +741,8 @@ fn verify_claim_index(
 
 /// Each statement head's declared intent is exactly the fold of its creation
 /// intent and the explicit intent changes its edits admitted, so no other
-/// statement publication can move it. Preparation and execution authorization
-/// likewise equal the facts that admitted them.
+/// statement publication can move it. Required evidence, preparation, and
+/// execution authorization likewise equal the facts that admitted them.
 fn verify_task_intents(
     connection: &Connection,
     facts: &BTreeMap<u64, FactRecord>,
@@ -751,6 +751,7 @@ fn verify_task_intents(
     let mut declared = BTreeMap::new();
     let mut preparations = BTreeMap::new();
     let mut authorizations = BTreeMap::new();
+    let mut evidence: BTreeMap<String, Vec<wire::rooms::QuestionResultRef>> = BTreeMap::new();
     for envelope in facts.values().filter_map(|record| record.envelope.as_ref()) {
         if let Some((task, intent)) = envelope.fact.declared_intent() {
             declared.insert(task.as_str(), intent);
@@ -761,6 +762,19 @@ fn verify_task_intents(
         if let Some(wire::rooms::ExecutionAuthorized { authorization }) = envelope.fact.read() {
             for output in authorization.selected_outputs {
                 authorizations.insert(output.as_str().to_owned(), authorization.decision.clone());
+            }
+        }
+        if let Some(wire::body::TaskEdited {
+            task,
+            evidence: Some(edit),
+            ..
+        }) = envelope.fact.read()
+        {
+            // The room fold reports an inapplicable change; this fold keeps the
+            // last admitted set.
+            let required = evidence.entry(task.as_str().to_owned()).or_default();
+            if let Ok(next) = edit.apply(required) {
+                *required = next;
             }
         }
     }
@@ -796,6 +810,14 @@ fn verify_task_intents(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
                 "preparation differs from its task birth and output control".to_owned(),
+            ));
+        }
+        if head.evidence != evidence.get(stamp.as_str()).cloned().unwrap_or_default() {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                "required evidence differs from the explicit evidence changes its edits admitted"
+                    .to_owned(),
             ));
         }
         let authorization = authorizations.get(stamp.as_str());

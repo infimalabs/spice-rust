@@ -33,6 +33,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
             body: BoardStatement {
                 preparation: None,
                 authorization: None,
+                evidence: Vec::new(),
                 intent: None,
                 handle: wire::TaskHandle::for_project(project, &born),
                 born: born.clone(),

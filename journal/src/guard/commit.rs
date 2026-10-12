@@ -548,6 +548,8 @@ fn fold_rooms(
 ) -> Result<(), CommitError> {
     let mut stored = crate::rooms::Stored::new(transaction);
     for (seq, proposed) in assigned.iter().zip(facts) {
+        crate::rooms::fold_evidence(&mut stored, *seq, actor, &proposed.fact)
+            .map_err(room_refusal)?;
         crate::rooms::fold(&mut stored, *seq, at, actor, &proposed.fact).map_err(room_refusal)?;
     }
     Ok(())

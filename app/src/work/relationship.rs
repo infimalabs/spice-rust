@@ -666,6 +666,7 @@ mod tests {
                 body: BoardStatement {
                     preparation: None,
                     authorization: None,
+                    evidence: Vec::new(),
                     intent: None,
                     handle: wire::TaskHandle::for_project("canvas.work", &born),
                     born: born.clone(),

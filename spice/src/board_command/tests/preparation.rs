@@ -215,6 +215,7 @@ fn retain_test_candidate(
         candidate: candidate.clone(),
         governed_inputs: Vec::new(),
         outputs: vec![output_stamp.clone(), spare_stamp.clone()],
+        evidence: Vec::new(),
         references: vec![CandidateReference {
             relation: "contract".parse().expect("relation"),
             source: journal_source(&current, &controller),
@@ -562,6 +563,7 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
                 candidate,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
+                evidence: Vec::new(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),
                     source: journal_source(&current, &controller),

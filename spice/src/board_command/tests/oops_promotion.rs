@@ -445,6 +445,7 @@ fn stale_promotion_after_edit(
         vec![stale_statement.clone()],
         &TaskEdit {
             intent: None,
+            evidence: None,
             task: parked.clone(),
             title: None,
             description: Some("Edited during promotion capture".to_owned()),
@@ -542,6 +543,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         vec![statement_witness(heads)],
         &TaskEdit {
             intent: None,
+            evidence: None,
             task: parked.clone(),
             title: None,
             description: None,

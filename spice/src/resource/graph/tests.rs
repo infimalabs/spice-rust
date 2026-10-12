@@ -30,6 +30,7 @@ fn entries() -> Vec<board::Entry> {
             let statement = wire::TaskHead {
                 preparation: None,
                 authorization: None,
+                evidence: Vec::new(),
                 intent: None,
                 born: born.clone(),
                 queue_origin: Seq::new(1).expect("sequence"),

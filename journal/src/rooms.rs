@@ -28,6 +28,7 @@ use wire::{
 
 mod conversation;
 mod coordination;
+mod evidence;
 mod sql;
 
 pub(crate) use conversation::{
@@ -38,6 +39,7 @@ pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
     require_writes as require_coordination_writes,
 };
+pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
@@ -171,6 +173,8 @@ pub(crate) struct Projection {
     pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item and result heads.
     pub(crate) conversation: conversation::Heads,
+    /// `(task, result)` required evidence to the position that required it.
+    pub(crate) evidence: BTreeMap<(String, String), u64>,
 }
 
 /// Authority one fold step reads and changes.
@@ -219,6 +223,10 @@ pub(crate) trait Authority {
     fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal>;
     /// One question result head by its handle.
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
+    /// Results one task currently requires answered, in canonical order.
+    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal>;
+    /// Position of one proposal head.
+    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal>;
     /// How many question results one requester holds pending.
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
     /// Apply one projection change.
@@ -266,6 +274,11 @@ pub(crate) enum Change {
         body: Vec<u8>,
     },
     Conversation(conversation::Edit),
+    Evidence {
+        task: String,
+        released: Option<String>,
+        required: Option<(String, u64)>,
+    },
 }
 
 impl Projection {
@@ -321,6 +334,18 @@ impl Projection {
                 heads.insert(room, (seq, body));
             }
             Change::Conversation(edit) => self.conversation.apply(edit),
+            Change::Evidence {
+                task,
+                released,
+                required,
+            } => {
+                if let Some(result) = released {
+                    self.evidence.remove(&(task.clone(), result));
+                }
+                if let Some((result, seq)) = required {
+                    self.evidence.insert((task, result), seq);
+                }
+            }
         }
     }
 }
@@ -463,6 +488,20 @@ impl Authority for History {
 
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
         Ok(self.projection.conversation.results.get(result).cloned())
+    }
+
+    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal> {
+        evidence::parse(
+            self.projection
+                .evidence
+                .keys()
+                .filter(|(owner, _)| owner == task.as_str())
+                .map(|(_, result)| result.clone()),
+        )
+    }
+
+    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal> {
+        Ok(self.projection.proposals.get(subject).map(|row| row.seq))
     }
 
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
@@ -862,6 +901,7 @@ fn retain(
     for reference in &candidate.references {
         require_source(authority, seq, &reference.source)?;
     }
+    evidence::require_candidate_evidence(authority, &candidate)?;
     let proposal = ProposalRef::Candidate {
         candidate: candidate.candidate.clone(),
     };
@@ -933,21 +973,23 @@ fn authorize(
             "selected output {output} is not an output of the candidate"
         ));
     }
-    let mut certified = false;
+    // The latest certifying coverage is when the candidate was last assessed.
+    let mut assessed = None;
     for coverage in &authorization.coverage {
-        let coverage: CandidateCoverage = wire::decode(&require_proposal(
-            authority,
-            &ProposalRef::Coverage {
-                coverage: coverage.clone(),
-            },
-        )?)?;
-        certified |= !matches!(coverage.authority, CoverageAuthority::SelfReview { .. });
+        let proposal = ProposalRef::Coverage {
+            coverage: coverage.clone(),
+        };
+        let coverage: CandidateCoverage = wire::decode(&require_proposal(authority, &proposal)?)?;
+        if !matches!(coverage.authority, CoverageAuthority::SelfReview { .. }) {
+            assessed = assessed.max(authority.proposal_seq(&subject(&proposal)?)?);
+        }
     }
-    if !certified {
+    let Some(assessed) = assessed else {
         return unsound(
             "authorization requires independent or operator coverage; self-review alone certifies nothing",
         );
-    }
+    };
+    evidence::require_assessed(authority, &candidate, assessed)?;
     let decision_key = subject(&decision_ref)?;
     if authority.decision_authorized(&decision_key)? {
         return unsound("decision already authorized a selection");

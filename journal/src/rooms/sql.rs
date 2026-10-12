@@ -216,6 +216,28 @@ impl Authority for Stored<'_> {
         conversation::stored_result(self.connection, result)
     }
 
+    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT result FROM task_evidence WHERE task = ?1 ORDER BY result")?;
+        let keys = statement
+            .query_map([task.as_str()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        super::evidence::parse(keys)
+    }
+
+    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT head_seq FROM proposal_heads WHERE subject = ?1",
+                [subject],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(unsql))
+    }
+
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
         conversation::stored_pending_results(self.connection, requester)
     }
@@ -300,6 +322,18 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
             )?;
         }
         Change::Conversation(edit) => conversation::apply_sql(connection, edit)?,
+        Change::Evidence {
+            task,
+            released,
+            required,
+        } => super::evidence::apply_sql(
+            connection,
+            &task,
+            released.as_deref(),
+            required
+                .as_ref()
+                .map(|(result, seq)| (result.as_str(), *seq)),
+        )?,
     }
     Ok(())
 }
@@ -399,6 +433,11 @@ impl Projection {
                 "SELECT room, head_seq, body FROM room_shelvings",
             )?,
             conversation: conversation::Heads::load(connection)?,
+            evidence: table(
+                connection,
+                "SELECT task, result, head_seq FROM task_evidence",
+                |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
+            )?,
         })
     }
 }
@@ -430,7 +469,8 @@ pub(crate) fn write_projection(
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM group_anchors; DELETE FROM group_heads; \
          DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
-         DELETE FROM room_horizons; DELETE FROM room_directions; DELETE FROM room_shelvings;",
+         DELETE FROM room_horizons; DELETE FROM room_directions; DELETE FROM room_shelvings; \
+         DELETE FROM task_evidence;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -478,6 +518,9 @@ pub(crate) fn write_projection(
                 params![room, sql(*seq), body],
             )?;
         }
+    }
+    for ((task, result), seq) in &projection.evidence {
+        super::evidence::insert(connection, task, result, *seq)?;
     }
     projection.conversation.write(connection)
 }
@@ -559,8 +602,10 @@ pub(crate) fn settle_controls<'a>(
 }
 
 /// Each statement written in `first..=last` carries exactly the decision its
-/// output's authorization head names, or none when it has no such head.
+/// output's authorization head names, or none when it has no such head, and
+/// exactly the evidence explicit evidence changes left it requiring.
 fn settle_statements(connection: &Connection, first: Seq, last: Seq) -> Result<(), Refusal> {
+    let mut required = connection.prepare("SELECT result FROM task_evidence WHERE task = ?1")?;
     let mut statement = connection.prepare(
         "SELECT statement.stamp, statement.body, authorization.decision \
          FROM task_heads AS statement \
@@ -579,6 +624,19 @@ fn settle_statements(connection: &Connection, first: Seq, last: Seq) -> Result<(
         if carried != authorized {
             return unsound(format!(
                 "task {stamp} statement authorization disagrees with its execution authorization"
+            ));
+        }
+        let projected = required
+            .query_map([&stamp], |row| row.get::<_, String>(0))?
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+        let carried = head
+            .evidence
+            .iter()
+            .map(ToString::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        if carried.len() != head.evidence.len() || carried != projected {
+            return unsound(format!(
+                "task {stamp} statement evidence disagrees with its explicit evidence changes"
             ));
         }
     }

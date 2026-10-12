@@ -4,7 +4,7 @@ mod group;
 mod preparation;
 mod requirements;
 use group::{client_group_list, client_group_put, client_group_remove};
-use requirements::environment_requirements;
+use requirements::{client_require, environment_requirements};
 mod room;
 use room::dispatch_room_client;
 
@@ -866,6 +866,7 @@ fn client_modify(
             vec![statement_witness(heads)],
             serde_json::to_value(TaskEdit {
                 intent,
+                evidence: None,
                 task,
                 title,
                 description,
@@ -912,70 +913,6 @@ pub(super) fn declared_intent(
             })
         })
         .transpose()
-}
-
-fn client_require(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let written = match matches
-        .get_one::<String>("appliance-after")
-        .map(|written| requirements::appliance_version(written))
-        .transpose()
-    {
-        Ok(written) => written,
-        Err(refused) => return refused,
-    };
-    mutate_task_from_board(repository, contract, matches, |board, task, heads| {
-        let schema = matches.get_one::<String>("journal-schema");
-        let trust = matches.get_one::<String>("trust-grant");
-        // A bare `--appliance-after` names the version the resident runs now.
-        let appliance = matches
-            .contains_id("appliance-after")
-            .then(|| written.unwrap_or_else(|| board.appliance.clone()));
-        let clear = matches.get_flag("clear");
-        let named = schema.is_some() || trust.is_some() || appliance.is_some();
-        let requirements = match (named, clear) {
-            (true, false) => wire::intent::TaskRequirementsEdit::Set {
-                requirements: environment_requirements(
-                    schema.map(String::as_str),
-                    trust.map(String::as_str),
-                    appliance,
-                )?,
-            },
-            (false, true) => wire::intent::TaskRequirementsEdit::Clear {},
-            (true, true) => {
-                return Err(refusal(
-                    "task::require-shape",
-                    None,
-                    "name environmental requirements or --clear, never both",
-                ));
-            }
-            (false, false) => {
-                return Err(refusal(
-                    "task::require-shape",
-                    None,
-                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or --appliance-after [VERSION] to replace requirements, or --clear to remove them",
-                ));
-            }
-        };
-        Ok((
-            CommandKind::TaskEdit,
-            requirements::witnesses(heads),
-            serde_json::to_value(TaskEdit {
-                intent: None,
-                task,
-                title: None,
-                description: None,
-                acceptance: Vec::new(),
-                requirements: Some(requirements),
-                priority: None,
-                project: None,
-            })
-            .expect("typed intent encodes"),
-        ))
-    })
 }
 
 fn client_delete(

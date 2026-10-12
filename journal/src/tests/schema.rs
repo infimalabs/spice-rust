@@ -78,10 +78,15 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let evidence = if predecessor < crate::migrate::TASK_EVIDENCE_SCHEMA {
+        "DROP TABLE task_evidence;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {cursors} {coordination} {horizons} {conversations}
+            "{rooms} {cursors} {coordination} {horizons} {conversations} {evidence}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -90,7 +95,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);

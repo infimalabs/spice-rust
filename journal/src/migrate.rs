@@ -33,10 +33,11 @@ const PREPARED: &str = "prepared";
 /// deliveries bound to native steering directives, projects frozen
 /// peer-message rooms from their creating facts into steering heads, and
 /// creates the room-authority projection, per-lane room catch-up cursors and
-/// horizons, room coordination heads, room conversation heads, and operator
-/// items a predecessor lacks, replacing its per-route room receipts, before the
-/// schema identity advances. Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 14] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46];
+/// horizons, room coordination heads, room conversation heads, operator items,
+/// and required task evidence a predecessor lacks, replacing its per-route room
+/// receipts, before the schema identity advances. Current readers therefore
+/// need no execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 15] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -55,6 +56,25 @@ pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
 /// First schema whose baseline carries operator items in place of per-route
 /// room receipts.
 pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
+/// First schema whose baseline carries required task evidence.
+pub(crate) const TASK_EVIDENCE_SCHEMA: u32 = 48;
+/// Each room projection beside the first schema whose baseline carries it, in
+/// creation order.
+const ROOM_SCHEMA_STEPS: [(u32, &str); 7] = [
+    (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
+    (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
+    (
+        ROOM_COORDINATION_SCHEMA,
+        crate::rooms::COORDINATION_SCHEMA_SQL,
+    ),
+    (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
+    (
+        ROOM_CONVERSATION_SCHEMA,
+        crate::rooms::CONVERSATION_SCHEMA_SQL,
+    ),
+    (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
+    (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
+];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
 /// Last release whose wire decoded task completion guidance.
@@ -137,24 +157,7 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
     transaction
         .execute_batch(BASELINE_SQL)
         .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::CURSOR_SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::COORDINATION_SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::HORIZON_SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::CONVERSATION_SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
-    transaction
-        .execute_batch(crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
+    create_room_schemas(&transaction, 0)?;
     crate::historical_receipts::create_schema(&transaction)?;
     crate::historical_receipts::reserve_identities(&transaction)?;
     transaction
@@ -285,40 +288,12 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_retired_task_guidance(&transaction)?;
     residual::cross(&transaction)?;
     residual::cross_steering_rooms(&transaction)?;
-    if version < ROOM_AUTHORITY_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    }
-    if version < ROOM_CURSOR_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::CURSOR_SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    }
-    if version < ROOM_COORDINATION_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::COORDINATION_SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    }
-    if version < ROOM_HORIZON_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::HORIZON_SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    }
-    if version < ROOM_CONVERSATION_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::CONVERSATION_SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    } else {
+    if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
         transaction
             .execute_batch("DROP TABLE room_receipts;")
             .map_err(OpenError::Sqlite)?;
     }
-    if version < ROOM_ITEM_SCHEMA {
-        transaction
-            .execute_batch(crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL)
-            .map_err(OpenError::Sqlite)?;
-    }
+    create_room_schemas(&transaction, version)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -333,6 +308,20 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+/// Create each room projection an authority at `version` lacks; version zero
+/// lacks them all.
+fn create_room_schemas(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    for (since, sql) in ROOM_SCHEMA_STEPS {
+        if version < since {
+            transaction.execute_batch(sql).map_err(OpenError::Sqlite)?;
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a predecessor whose retained task authority omits its creation
@@ -1197,8 +1186,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 47, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 48, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 47;
+PRAGMA user_version = 48;
 "#;

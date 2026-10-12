@@ -61,6 +61,7 @@ fn ice_claim(fixture: &Fixture) {
         .fact(
             body::TaskEdited {
                 intent: None,
+                evidence: None,
                 task: stamp.clone(),
                 revision: 2,
                 dependencies: None,
