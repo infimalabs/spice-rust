@@ -325,3 +325,42 @@ fn authorization_needs_candidate_evidence_answered_before_a_fresh_assessment() {
         .expect("answered and freshly assessed evidence authorizes");
     room.journal.verify().expect("candidate evidence rebuilds");
 }
+
+#[test]
+fn reindex_preserves_required_evidence_and_its_completion_gate() {
+    let mut room = Conversation::new();
+    let asked = room.asked.clone();
+    let task = room.room.clone();
+    let question = room.ask(10);
+    change(
+        &mut room.journal,
+        Actor::Operator,
+        &task,
+        require(&question),
+    )
+    .expect("the operator requires the pending result");
+
+    room.journal
+        .connection
+        .execute("DELETE FROM task_evidence", ())
+        .expect("remove the derived evidence row");
+    assert!(
+        refused_violations(&room.journal)
+            .iter()
+            .any(|violation| violation.class == ViolationClass::Head
+                && violation.subject.starts_with("task_evidence:")),
+        "verification must name the missing derived evidence row"
+    );
+
+    room.journal.reindex().expect("pending evidence rebuilds");
+    let pending = complete(&mut room.journal, &task);
+    unsatisfied(&room.journal, pending, &question, "pending");
+
+    room.answer(20, &asked, &question, minute(3))
+        .expect("the respondent answers");
+    room.journal.reindex().expect("answered evidence rebuilds");
+    complete(&mut room.journal, &task).expect("answered evidence permits positive completion");
+    room.journal
+        .verify()
+        .expect("rebuilt evidence remains verifiable");
+}
