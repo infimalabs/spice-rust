@@ -9,6 +9,8 @@ use serde_json::{Map, Value};
 
 use super::{MigrationError, OpenError};
 
+mod vendor_holds;
+
 /// Last release whose build recorded claimant notices on task edits.
 const TASK_EDIT_NOTICE_RELEASE: &str = "a3cebe157";
 /// Release from which lane fast facts spell both flags; earlier absence meant false.
@@ -54,8 +56,9 @@ const ROOM_CONVERSATION_KINDS: [&str; 9] = [
     "room::recovered",
 ];
 
-/// Refuse every retained shape without a current spelling before mutation.
-pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+/// Refuse every retained shape without a current spelling before mutation, and
+/// derive every retained vendor-failure hold's refused input from its history.
+pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<vendor_holds::Derived, OpenError> {
     refuse_first(
         transaction,
         "fact_envelopes",
@@ -96,17 +99,6 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         transaction,
         "fact_envelopes",
         "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
-         AND json_type(CAST(envelope AS TEXT), '$.fact.vendor_failure') IS NULL \
-         AND instr(COALESCE(json_extract(CAST(envelope AS TEXT), '$.fact.evidence'), ''), \
-             ' ended on a vendor error:') > 0 ORDER BY seq",
-        [wire::FactKind::LaneHeld.as_str()],
-        VENDOR_FAILURE_INPUT_RELEASE,
-        "the vendor-failure hold omits its exact refused input",
-    )?;
-    refuse_first(
-        transaction,
-        "fact_envelopes",
-        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
          AND json_type(CAST(envelope AS TEXT), '$.fact.source') IS NULL ORDER BY seq",
         [wire::FactKind::LaneSessionDeclared.as_str()],
         SESSION_SOURCE_RELEASE,
@@ -134,7 +126,8 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         SESSION_LAUNCH_RELEASE,
         "the resumable lane session omits its launch identity",
     )?;
-    refuse_unbound_provenance(transaction)
+    refuse_unbound_provenance(transaction)?;
+    vendor_holds::derive(transaction)
 }
 
 /// Refuse retained facts that omit what binds them to their tape generation,
@@ -211,13 +204,16 @@ fn refuse_unbound_provenance(transaction: &Transaction<'_>) -> Result<(), OpenEr
 }
 
 /// Rewrite every retained shape that has one exact current spelling.
-pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+pub(super) fn cross(
+    transaction: &Transaction<'_>,
+    vendor_holds: vendor_holds::Derived,
+) -> Result<(), OpenError> {
     rewrite_facts(
         transaction,
         wire::FactKind::TaskEdited,
         "json_type(CAST(envelope AS TEXT), '$.fact.notice') IS NOT NULL",
         TASK_EDIT_NOTICE_RELEASE,
-        |fact| match fact.remove("notice") {
+        |_, fact| match fact.remove("notice") {
             Some(Value::Object(_)) => Ok(()),
             other => Err(format!("notice {other:?} is not a claimant notice object")),
         },
@@ -228,13 +224,14 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         "json_type(CAST(envelope AS TEXT), '$.fact.from') IS NULL \
          OR json_type(CAST(envelope AS TEXT), '$.fact.fast_mode') IS NULL",
         LANE_FAST_FLAGS_RELEASE,
-        |fact| {
+        |_, fact| {
             for flag in ["from", "fast_mode"] {
                 fact.entry(flag).or_insert(Value::Bool(false));
             }
             Ok(())
         },
-    )
+    )?;
+    vendor_holds::cross(transaction, vendor_holds)
 }
 
 /// Project the exact room anchor frozen by each retained peer message into its
@@ -334,7 +331,7 @@ fn refuse_first(
     }
 }
 
-/// Rewrite each `kind` fact `predicate` selects through `edit` on its body.
+/// Rewrite each `kind` fact `predicate` selects through `edit` on its seq and body.
 ///
 /// Each envelope keeps its seq, indexed columns, and every other member, and is
 /// re-encoded canonically through the current strict DTO. No digest covers an
@@ -344,7 +341,7 @@ pub(super) fn rewrite_facts(
     kind: wire::FactKind,
     predicate: &str,
     release: &'static str,
-    edit: impl Fn(&mut Map<String, Value>) -> Result<(), String>,
+    edit: impl Fn(i64, &mut Map<String, Value>) -> Result<(), String>,
 ) -> Result<(), OpenError> {
     let kind = kind.as_str();
     let rows = {
@@ -370,7 +367,7 @@ pub(super) fn rewrite_facts(
             .get_mut("fact")
             .and_then(Value::as_object_mut)
             .ok_or_else(|| refuse("the stored envelope carries no fact object".to_owned()))?;
-        edit(fact).map_err(refuse)?;
+        edit(seq, fact).map_err(refuse)?;
         let current = serde_json::to_vec(&envelope)
             .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))
             .and_then(|crossed| {

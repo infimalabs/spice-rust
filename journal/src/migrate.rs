@@ -279,11 +279,11 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     refuse_creation_omission(&transaction)?;
-    residual::refuse(&transaction)?;
+    let vendor_holds = residual::refuse(&transaction)?;
     cross_residency_subscriptions(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
     cross_retired_task_guidance(&transaction)?;
-    residual::cross(&transaction)?;
+    residual::cross(&transaction, vendor_holds)?;
     residual::cross_steering_rooms(&transaction)?;
     if version < ROOM_AUTHORITY_SCHEMA {
         transaction
@@ -598,7 +598,7 @@ fn cross_retired_task_guidance(transaction: &rusqlite::Transaction<'_>) -> Resul
         wire::FactKind::TaskDone,
         "json_type(CAST(envelope AS TEXT), '$.fact.terminal.guidance') IS NOT NULL",
         RETIRED_TASK_GUIDANCE_RELEASE,
-        |fact| take_retired_guidance(fact.get_mut("terminal")),
+        |_, fact| take_retired_guidance(fact.get_mut("terminal")),
     )?;
 
     let command = wire::CommandKind::TaskDone;

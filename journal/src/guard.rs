@@ -18,7 +18,9 @@ mod steering_history;
 mod steering_index;
 
 use commit::visible_cursor;
-pub(crate) use commit::{steering_fact_identity, steering_head_agrees};
+pub(crate) use commit::{
+    SteeringIdentity, steering_disposition, steering_fact_identity, steering_head_agrees,
+};
 #[cfg(test)]
 pub(crate) use indexed_read::verify_task_page_plan;
 pub use indexed_read::{

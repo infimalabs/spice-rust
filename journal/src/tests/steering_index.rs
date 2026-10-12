@@ -569,7 +569,11 @@ fn send_write(directive: CanonicalUuid, key: &str) -> JournalWrite {
     send_write_for(directive, key, lane())
 }
 
-fn send_write_for(directive: CanonicalUuid, key: &str, lane: CanonicalUuid) -> JournalWrite {
+pub(super) fn send_write_for(
+    directive: CanonicalUuid,
+    key: &str,
+    lane: CanonicalUuid,
+) -> JournalWrite {
     let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
     let mut body = sent(directive, key);
     body.lane = lane;
@@ -591,7 +595,10 @@ fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {
     retire_write(observed, Disposition::Canceled)
 }
 
-fn retire_write(observed: &JournalHead<SteeringHead>, disposition: Disposition) -> JournalWrite {
+pub(super) fn retire_write(
+    observed: &JournalHead<SteeringHead>,
+    disposition: Disposition,
+) -> JournalWrite {
     let expected = observed.clone();
     let (actor, producer) = match disposition {
         Disposition::Acked | Disposition::Declined => {
@@ -684,7 +691,7 @@ fn image_attachment() -> wire::Media {
     }
 }
 
-fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
+pub(super) fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
     SteerSent {
         from: None,
         room: None,
@@ -699,7 +706,7 @@ fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
     }
 }
 
-fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
+pub(super) fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
     SteeringHead {
         from: None,
         room: body.room.clone(),
@@ -725,7 +732,7 @@ fn lane() -> CanonicalUuid {
     uuid(LANE)
 }
 
-fn origin() -> Origin {
+pub(super) fn origin() -> Origin {
     "resident:018f82d4-6f59-7d06-92e3-bce913116304"
         .parse()
         .expect("fixture origin")

@@ -10,6 +10,7 @@ use super::*;
 
 mod probe;
 mod retained;
+mod vendor_holds;
 
 #[test]
 fn current_schema_is_the_only_executable_journal_shape() {
