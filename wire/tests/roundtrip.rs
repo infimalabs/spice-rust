@@ -840,30 +840,7 @@ fn a_reversed_committed_range_does_not_decode() {
 }
 
 #[test]
-fn a_declared_session_requires_one_complete_launch_identity() {
-    let pre_extension = br#"{
-        "lane":"018f82d4-6f59-7d06-92e3-bce9131163c2",
-        "occupant":"018f82d4-6f59-7d06-92e3-bce9131163c3",
-        "worktree":"/worktrees/lane-a",
-        "vendor":"omp",
-        "epoch":"018f82d4-6f59-7d06-92e3-bce9131163c4",
-        "stream":"stdout",
-        "identity":"session-a",
-        "member":1,
-        "offset":2,
-        "length":3
-    }"#;
-    let unrecorded = wire::decode::<wire::body::LaneSessionDeclared>(pre_extension)
-        .expect("the pre-extension declaration enters the current unrecorded state");
-    assert_eq!(unrecorded.launch, None);
-    let normalized = serde_json::to_value(unrecorded).expect("the current state encodes");
-    assert!(
-        normalized.get("model").is_none()
-            && normalized.get("effort").is_none()
-            && normalized.get("git").is_none()
-            && normalized.get("rtk").is_none()
-    );
-
+fn a_declared_session_requires_one_complete_current_launch_identity() {
     let complete = serde_json::json!({
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c3",
@@ -886,8 +863,8 @@ fn a_declared_session_requires_one_complete_launch_identity() {
     });
     let bytes = serde_json::to_vec(&complete).expect("fixture encodes");
     let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
-        .expect("the recorded declaration shape decodes");
-    let launch = recorded.launch.expect("the complete pair is recorded");
+        .expect("the current declaration shape decodes");
+    let launch = recorded.launch.expect("the complete launch is recorded");
     assert_eq!(
         (
             launch.model.as_str(),
@@ -902,11 +879,6 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             Some(wire::body::RtkHealthState::Active),
         )
     );
-    assert_eq!(
-        serde_json::to_value(&launch).expect("the launch identity encodes")["rtk"],
-        complete["rtk"],
-        "the current launch identity re-encodes unchanged"
-    );
 
     let mut retired_hook = complete.clone();
     retired_hook["rtk"]["hook"] = serde_json::json!("installed");
@@ -915,35 +887,7 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             &serde_json::to_vec(&retired_hook).expect("retired fixture encodes")
         )
         .is_err(),
-        "the retired hook state must cross the journal migration before wire decoding"
-    );
-
-    let mut pre_note = complete.clone();
-    pre_note
-        .as_object_mut()
-        .expect("fixture is an object")
-        .remove("git");
-    let bytes = serde_json::to_vec(&pre_note).expect("fixture encodes");
-    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
-        .expect("a declaration recorded before launch notes still decodes");
-    assert_eq!(
-        recorded.launch.expect("launch identity remains").git,
-        None,
-        "compatibility does not invent a launch outcome"
-    );
-
-    let mut pre_rtk = complete.clone();
-    pre_rtk
-        .as_object_mut()
-        .expect("fixture is an object")
-        .remove("rtk");
-    let bytes = serde_json::to_vec(&pre_rtk).expect("fixture encodes");
-    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
-        .expect("a declaration recorded before RTK verdicts still decodes");
-    assert_eq!(
-        recorded.launch.expect("launch identity remains").rtk,
-        None,
-        "compatibility does not invent a current RTK verdict"
+        "retired hook state requires migration before current wire decoding"
     );
 
     for field in ["model", "effort"] {

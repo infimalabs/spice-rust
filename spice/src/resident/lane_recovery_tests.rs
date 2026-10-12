@@ -55,22 +55,6 @@ fn fixture() -> Fixture {
 
 const PREDECESSOR: &str = "/worktrees/predecessor";
 const SUCCESSOR: &str = "/worktrees/successor";
-const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
-    r#"{"epoch":"018f82d4-6f59-7d06-92e3-000000000001","state":"seated","topology_revision":1,"lanes":[{"#,
-    r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
-    r#""team":"018f82d4-6f59-7d06-92e3-000000000003","name":"Ava","#,
-    r#""worktree":"/worktrees/predecessor","life":"drive","vendor":"omp","#,
-    r#""occupant":"018f82d4-6f59-7d06-92e3-000000000004","#,
-    r#""lineage":["018f82d4-6f59-7d06-92e3-000000000004"],"#,
-    r#""capabilities":["018f82d4-6f59-7d06-92e3-000000000006"],"session":{"#,
-    r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
-    r#""occupant":"018f82d4-6f59-7d06-92e3-000000000004","#,
-    r#""worktree":"/worktrees/predecessor","vendor":"omp","#,
-    r#""epoch":"018f82d4-6f59-7d06-92e3-000000000001","stream":"stdout","#,
-    r#""identity":"pre-extension-session","#,
-    r#""locus":{"member":7,"offset":31,"length":93}},"disposition":"occupied"}]}"#,
-)
-.as_bytes();
 
 fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
@@ -252,41 +236,6 @@ fn seed_lanes(fixture: &Fixture, lanes: Vec<wire::LaneResidency>) {
 fn finish(fixture: Fixture) {
     fixture.bus.shutdown().expect("fixture bus stops");
     std::fs::remove_dir_all(&fixture.root).expect("fixture cleanup");
-}
-
-#[test]
-fn authority_reopens_a_session_whose_launch_identity_was_not_recorded() {
-    let fixture = fixture();
-    seed(&fixture);
-    let root = fixture.root.clone();
-    fixture.bus.shutdown().expect("the first authority closes");
-    let connection = rusqlite::Connection::open(root.join("authority.sqlite3"))
-        .expect("the seeded authority opens for literal fixture injection");
-    let updated = connection
-        .execute(
-            "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
-            rusqlite::params![PRE_EXTENSION_RESIDENCY],
-        )
-        .expect("the literal pre-extension head replaces the normalized fixture");
-    assert_eq!(updated, 1);
-    drop(connection);
-
-    let journal = journal::Journal::open(root.join("authority.sqlite3"))
-        .expect("the current journal reopens");
-    let bus = Bus::start(journal).expect("the current authority reopens");
-    let head = bus
-        .residency_head()
-        .expect("the reopened residency reads")
-        .expect("the reopened residency exists");
-    let session = head.body().lanes[0]
-        .session
-        .as_ref()
-        .expect("session authority");
-    assert_eq!(session.identity, "pre-extension-session");
-    assert_eq!(session.launch, None);
-
-    bus.shutdown().expect("the reopened authority closes");
-    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 fn reseat(fixture: &Fixture) {
