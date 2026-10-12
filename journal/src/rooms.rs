@@ -22,11 +22,15 @@ use wire::rooms::{
     RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved,
     WorkingGroupStored,
 };
-use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
+use wire::{Actor, AnyFact, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
+mod conversation;
 mod coordination;
 mod sql;
 
+pub(crate) use conversation::{
+    SCHEMA_SQL as CONVERSATION_SCHEMA_SQL, receipt_key as room_receipt_key,
+};
 pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
     require_writes as require_coordination_writes,
@@ -162,6 +166,8 @@ pub(crate) struct Projection {
     pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
     /// Room to its latest `room::shelved` head position and canonical body.
     pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
+    /// Conversation publications with their receipt and result heads.
+    pub(crate) conversation: conversation::Heads,
 }
 
 /// Authority one fold step reads and changes.
@@ -204,6 +210,14 @@ pub(crate) trait Authority {
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
     /// Record a room-coordination direction's current state.
     fn set_direction(&mut self, key: &str, direction: Direction);
+    /// The canonical body of one admitted conversation publication.
+    fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
+    /// One room receipt head by its canonical reference.
+    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal>;
+    /// One question result head by its handle.
+    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
+    /// How many question results one requester holds pending.
+    fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
     /// Apply one projection change.
     fn change(&mut self, change: Change) -> Result<(), Refusal>;
 }
@@ -248,6 +262,7 @@ pub(crate) enum Change {
         seq: u64,
         body: Vec<u8>,
     },
+    Conversation(conversation::Edit),
 }
 
 impl Projection {
@@ -302,6 +317,7 @@ impl Projection {
                 };
                 heads.insert(room, (seq, body));
             }
+            Change::Conversation(edit) => self.conversation.apply(edit),
         }
     }
 }
@@ -323,17 +339,17 @@ impl History {
     /// Fold the complete canonical history, collecting every refusal by
     /// position instead of stopping at the first.
     pub(crate) fn rebuild<'a>(
-        facts: impl IntoIterator<Item = (Seq, &'a Actor, &'a AnyFact)>,
+        facts: impl IntoIterator<Item = (Seq, &'a Actor, Instant, &'a AnyFact)>,
     ) -> (Projection, Vec<(Seq, Refusal)>) {
         let mut history = Self::default();
         let mut refusals = Vec::new();
-        for (seq, actor, fact) in facts {
+        for (seq, actor, at, fact) in facts {
             // A retained candidate's author decides whether later coverage is
             // independent of it.
             if fact.read::<CandidateRetained>().is_some() {
                 history.authors.insert(seq.get(), actor.clone());
             }
-            if let Err(refusal) = fold(&mut history, seq, actor, fact) {
+            if let Err(refusal) = fold(&mut history, seq, at, actor, fact) {
                 refusals.push((seq, refusal));
             }
         }
@@ -429,6 +445,27 @@ impl Authority for History {
         self.directions.insert(key.to_owned(), direction);
     }
 
+    fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {
+        Ok(self
+            .projection
+            .conversation
+            .publications
+            .get(publication)
+            .map(|(_, body)| body.clone()))
+    }
+
+    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal> {
+        Ok(self.projection.conversation.receipts.get(receipt).cloned())
+    }
+
+    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
+        Ok(self.projection.conversation.results.get(result).cloned())
+    }
+
+    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
+        Ok(self.projection.conversation.pending_results(requester))
+    }
+
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         self.projection.apply(change);
         Ok(())
@@ -441,11 +478,12 @@ pub(crate) fn subject(proposal: &ProposalRef) -> Result<String, Refusal> {
         .map_err(|_| Refusal::Unsound("proposal subject is not text".to_owned()))
 }
 
-/// Admit one fact `actor` wrote against `authority` and apply its projection
-/// consequence.
+/// Admit one fact `actor` wrote at commit instant `at` against `authority` and
+/// apply its projection consequence.
 pub(crate) fn fold(
     authority: &mut impl Authority,
     seq: Seq,
+    at: Instant,
     actor: &Actor,
     fact: &AnyFact,
 ) -> Result<(), Refusal> {
@@ -494,7 +532,7 @@ pub(crate) fn fold(
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
     }
-    if let Some(result) = fold_coordination(authority, seq, actor, fact) {
+    if let Some(result) = fold_traffic(authority, seq, at, actor, fact) {
         return result;
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
@@ -545,13 +583,19 @@ pub(crate) fn fold(
     Ok(())
 }
 
-fn fold_coordination(
+/// Admit one coordination, catch-up, or conversation fact, or `None` when
+/// `fact` is none of them.
+fn fold_traffic(
     authority: &mut impl Authority,
     seq: Seq,
+    at: Instant,
     actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
     if let Some(result) = coordination::fold(authority, seq, actor, fact) {
+        return Some(result);
+    }
+    if let Some(result) = conversation::fold(authority, seq, at, actor, fact) {
         return Some(result);
     }
     if let Some(body) = fact.read::<RoomDelivered>() {

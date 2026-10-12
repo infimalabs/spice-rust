@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CanonicalUuid, Instant, SequenceCode, TaskStamp};
 
-use super::{RoomAnchor, RoomAuthorityStamp, RoomSource};
+use super::{RoomAnchor, RoomAuthorityStamp, RoomSource, TranscriptHunk};
 
 /// Most independently qualified destinations one room publication may carry.
 pub const ROOM_ROUTE_FANOUT_LIMIT: usize = 32;
@@ -906,6 +906,187 @@ pub enum QuestionAnswerError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("a terminal room authority already has another winner")]
 pub struct TerminalConflict;
+
+/// A lane's authored assistant MSG, ASK, or ANS, admitted from the exact
+/// transcript hunk that owns its bytes.
+///
+/// The hunk's lane is the author and the hunk is the source, so the admitted
+/// [`RoomPublication`] is derived from this record rather than restated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomConversed {
+    /// Native moment identity of this publication.
+    pub publication: RoomAuthorityStamp,
+    /// The publication's exact body bytes in its author's transcript.
+    pub hunk: TranscriptHunk,
+    /// Semantic verb; `kind` is the fact discriminant.
+    pub operation: RoomPublicationKind,
+    /// Independently qualified routes frozen at admission.
+    pub routes: Vec<RoomRoute>,
+    /// Bounded expiry of every route receipt this publication opens.
+    pub expires: Instant,
+}
+
+impl RoomConversed {
+    /// The publication this lane record admits.
+    pub fn publication(&self) -> Result<RoomPublication, &'static str> {
+        let bytes = self
+            .hunk
+            .text
+            .end
+            .checked_sub(self.hunk.text.start)
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or("room publication hunk is not a byte range")?;
+        RoomPublication::try_new(
+            self.publication.clone(),
+            RoomDestination::Lane {
+                lane: self.hunk.head.lane,
+            },
+            RoomSource::Transcript(self.hunk.clone()),
+            bytes,
+            self.operation.clone(),
+            self.routes.clone(),
+        )
+    }
+}
+
+/// An authenticated operator MSG, ASK, or ANS whose text this fact owns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPosted {
+    /// Native moment identity of this publication.
+    pub publication: RoomAuthorityStamp,
+    /// The operator's exact composed text.
+    pub text: String,
+    /// Semantic verb; `kind` is the fact discriminant.
+    pub operation: RoomPublicationKind,
+    /// Independently qualified routes frozen at admission.
+    pub routes: Vec<RoomRoute>,
+    /// Bounded expiry of every route receipt this publication opens.
+    pub expires: Instant,
+}
+
+impl RoomPosted {
+    /// The publication this fact admits at its own journal position `at`,
+    /// which owns the text.
+    pub fn publication(&self, at: SequenceCode) -> Result<RoomPublication, &'static str> {
+        let bytes = u32::try_from(self.text.len())
+            .map_err(|_| "room publication content exceeds its positive byte bound")?;
+        RoomPublication::try_new(
+            self.publication.clone(),
+            RoomDestination::Operator {},
+            RoomSource::Journal { fact: at },
+            bytes,
+            self.operation.clone(),
+            self.routes.clone(),
+        )
+    }
+}
+
+/// A lane's ACK or NAK, from its authored prose or a tool call's declared
+/// intent, settling exact room delivery keys.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomReceipted {
+    pub disposition: RoomReceiptDisposition,
+    pub keys: Vec<RoomDeliveryKey>,
+    /// The header's exact bytes in the lane's transcript.
+    pub hunk: TranscriptHunk,
+}
+
+impl RoomReceipted {
+    /// The control this lane record admits.
+    pub fn control(&self) -> Result<RoomReceiptControl, &'static str> {
+        RoomReceiptControl::try_new(
+            self.disposition,
+            self.keys.clone(),
+            RoomSource::Transcript(self.hunk.clone()),
+        )
+    }
+}
+
+/// The operator's ACK or NAK of exact room delivery keys; this fact owns its
+/// clause.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomDisposed {
+    pub disposition: RoomReceiptDisposition,
+    pub keys: Vec<RoomDeliveryKey>,
+    pub clause: String,
+}
+
+impl RoomDisposed {
+    /// The control this fact admits at its own journal position `at`.
+    pub fn control(&self, at: SequenceCode) -> Result<RoomReceiptControl, &'static str> {
+        RoomReceiptControl::try_new(
+            self.disposition,
+            self.keys.clone(),
+            RoomSource::Journal { fact: at },
+        )
+    }
+}
+
+/// How an explicit command ends one pending question result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestionClosure {
+    /// The respondent, or the operator overriding it, refused to answer.
+    Declined,
+    /// The requester, or the operator overriding it, withdrew the question.
+    Cancelled,
+}
+
+/// An explicit decline or cancellation of one pending question result; this
+/// fact owns its clause.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomQuestionClosed {
+    pub result: QuestionResultRef,
+    pub closure: QuestionClosure,
+    pub clause: String,
+}
+
+impl RoomQuestionClosed {
+    /// The terminal result this fact admits at its own journal position `at`.
+    #[must_use]
+    pub fn state(&self, at: SequenceCode) -> QuestionResultState {
+        let source = RoomSource::Journal { fact: at };
+        match self.closure {
+            QuestionClosure::Declined => QuestionResultState::Declined { source },
+            QuestionClosure::Cancelled => QuestionResultState::Cancelled { source },
+        }
+    }
+}
+
+/// A pending question result reached its immutable deadline unanswered.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomQuestionTimedOut {
+    pub result: QuestionResultRef,
+}
+
+/// A pending room receipt reached its expiry without a disposition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomReceiptLapsed {
+    pub receipt: RoomReceiptRef,
+}
+
+/// A pending room receipt's destination could not be reached.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomReceiptUnavailable {
+    pub receipt: RoomReceiptRef,
+}
+
+/// Operator recovery returned a lapsed room receipt to pending under the same
+/// key with a fresh bounded expiry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomReceiptRecovered {
+    pub receipt: RoomReceiptRef,
+    pub expires: Instant,
+}
 
 fn all_unique<T: PartialEq>(values: &[T]) -> bool {
     values

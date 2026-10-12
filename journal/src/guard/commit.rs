@@ -58,7 +58,13 @@ impl Journal {
         let assigned = assign_positions(current, write.facts.len())?;
         let prepared = prepare_facts(&write, &assigned, current)?;
         insert_facts(&transaction, &write, &prepared)?;
-        fold_rooms(&transaction, &write.actor, &write.facts, &assigned)?;
+        fold_rooms(
+            &transaction,
+            &write.actor,
+            write.at,
+            &write.facts,
+            &assigned,
+        )?;
         let proposed = || write.facts.iter().map(|proposed| &proposed.fact);
         crate::rooms::require_packet_routes(proposed()).map_err(room_refusal)?;
         crate::rooms::require_coordination_writes(&transaction, proposed())
@@ -531,12 +537,13 @@ fn insert_facts(
 fn fold_rooms(
     transaction: &Transaction<'_>,
     actor: &wire::Actor,
+    at: wire::Instant,
     facts: &[ProposedFact],
     assigned: &[wire::Seq],
 ) -> Result<(), CommitError> {
     let mut stored = crate::rooms::Stored::new(transaction);
     for (seq, proposed) in assigned.iter().zip(facts) {
-        crate::rooms::fold(&mut stored, *seq, actor, &proposed.fact).map_err(room_refusal)?;
+        crate::rooms::fold(&mut stored, *seq, at, actor, &proposed.fact).map_err(room_refusal)?;
     }
     Ok(())
 }

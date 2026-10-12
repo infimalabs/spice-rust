@@ -15,6 +15,7 @@ use crate::{CommitError, FactCause, JournalHead, JournalWrite, ProposalAuthority
 type Commit = Result<Applied, CommitError>;
 
 mod authorization;
+mod conversation;
 mod coordination;
 mod groups;
 mod hunks;
@@ -280,6 +281,19 @@ fn name(text: &str) -> wire::Name {
 fn journal_source(fact: u64) -> RoomSource {
     RoomSource::Journal {
         fact: SequenceCode::new(fact),
+    }
+}
+
+fn hunk(head: &TranscriptSourceHead) -> TranscriptHunk {
+    TranscriptHunk {
+        head: head.clone(),
+        locus: wire::MessageLocus {
+            member: 1,
+            offset: 0,
+            length: 64,
+            event: 0,
+        },
+        text: TextRange { start: 0, end: 8 },
     }
 }
 
