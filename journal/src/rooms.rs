@@ -351,6 +351,18 @@ pub(crate) fn fold(
         authority.set_task(task, preparation.cloned());
         return Ok(());
     }
+    if let Some((task, _)) = fact.declared_intent() {
+        // Creation returned above, so this is an edit changing declared intent.
+        // Intent is what separates an associated preparation from a gated
+        // output, so an associated task keeps the intent it was created with.
+        if let Some(Some(preparation)) = authority.task(task)? {
+            return unsound(format!(
+                "task {task} under controller {} keeps the intent it was created with",
+                preparation.controller
+            ));
+        }
+        return Ok(());
+    }
     if let Some(body) = fact.read::<wire::body::JournalIngested>() {
         authority.account(&TranscriptSourceHead {
             lane: body.lane,

@@ -343,6 +343,7 @@ fn implicit_plan_children_stay_gated_until_execution_authorization() {
         let entries = actor_entries(&available).expect("board entries");
         let subscription = allocation_subscription(&available.residency.body, &worker)
             .expect("worker subscription");
+        let environment = available.environment();
         assert!(
             board::select(
                 &entries,
@@ -350,10 +351,20 @@ fn implicit_plan_children_stay_gated_until_execution_authorization() {
                 &subscription,
                 available.allocation_band,
                 available.recent_cell.as_ref(),
-                &available.environment(),
+                &environment,
             )
             .is_none(),
             "{reason}"
+        );
+        let satisfied = board::resolved_tasks(&entries);
+        let output = entries
+            .iter()
+            .find(|entry| entry.born() == &child_born)
+            .expect("the output is on the board");
+        assert!(
+            !board::capturable_entry(&satisfied, output, &worker, &environment)
+                && !board::stealable_entry(&satisfied, output, &worker, &environment),
+            "{reason}: capture and steal share the gate"
         );
     };
     offered("the held plan must keep its child out of allocation");
@@ -375,6 +386,24 @@ fn implicit_plan_children_stay_gated_until_execution_authorization() {
     offered("completion without execution authorization selects no output");
     let settled = board(&bus, epoch, worker.clone());
     assert_eq!(at(&settled, &child).workflow.body.status, "pending");
+
+    let declare = TaskEdit {
+        task: child.clone(),
+        title: None,
+        description: None,
+        acceptance: Vec::new(),
+        requirements: None,
+        priority: None,
+        project: None,
+        intent: Some(wire::TaskIntentEdit::Set {
+            intent: wire::TaskIntent::Plan,
+        }),
+    };
+    assert!(matches!(
+        correct(&bus, epoch, Actor::Operator, &declare),
+        Outcome::Refusal(refusal) if refusal.reason() == "task::preparation-intent-fixed"
+    ));
+    offered("a controlled output cannot declare its way past authorization");
     clean(&root, bus);
 }
 
