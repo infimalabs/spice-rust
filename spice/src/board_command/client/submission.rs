@@ -693,7 +693,14 @@ pub(in crate::board_command) fn mutation_read(
         .collect();
     // Plan progress witnesses inspect prerequisite heads, including settled ones.
     let mut dependencies = matches!(contract.path, ["task", "done" | "review"]);
-    for argument in ["AFTER", "followup"] {
+    // Every handle an option names joins the scoped read; a parked `.oops`
+    // report or grooming controller is otherwise absent from it.
+    for (argument, invalid, graph) in [
+        ("AFTER", "task::dependency-invalid", true),
+        ("followup", "task::handle-invalid", true),
+        ("report", "room::oops-report-invalid", false),
+        ("preparation", "preparation::controller-invalid", false),
+    ] {
         for written in matches
             .try_get_many::<String>(argument)
             .ok()
@@ -701,23 +708,19 @@ pub(in crate::board_command) fn mutation_read(
             .into_iter()
             .flatten()
         {
-            let dependency = written.parse::<TaskHandle>().map_err(|error| {
+            let named = written.parse::<TaskHandle>().map_err(|error| {
                 refusal(
-                    if argument == "AFTER" {
-                        "task::dependency-invalid"
-                    } else {
-                        "task::handle-invalid"
-                    },
+                    invalid,
                     (argument != "AFTER").then(|| written.clone()),
                     &error.to_string(),
                 )
             })?;
             tasks.push(
-                dependency
+                named
                     .born()
                     .expect("a parsed handle carries a canonical task stamp"),
             );
-            dependencies = true;
+            dependencies |= graph;
         }
     }
     Ok((

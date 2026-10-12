@@ -802,3 +802,68 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
     assert_eq!(control.1.preparation, *preparation);
     clean(&root, bus);
 }
+
+#[test]
+fn grooming_and_controlled_wake_preflight_reads_every_named_parked_report() {
+    let (root, bus, epoch, _seats) = fixture("oops-named-preflight", 0);
+    let batch = add_design(&bus, epoch, "OOPS-batch002");
+    let first = add_parked(&bus, epoch, "OOPS-report02");
+    let second = add_parked(&bus, epoch, "OOPS-report03");
+    let _unnamed = add_parked(&bus, epoch, "OOPS-report04");
+    let (batch_name, first_name, second_name) =
+        (batch.to_string(), first.to_string(), second.to_string());
+    let groom = [
+        "spice",
+        "room",
+        "post",
+        &batch_name,
+        "--report",
+        &first_name,
+        "--report",
+        &second_name,
+        "--disposition",
+        "duplicate",
+        "--cause",
+        "same wrapper refusal",
+    ];
+    let wake = [
+        "spice",
+        "task",
+        "wake",
+        &first_name,
+        "--preparation",
+        &batch_name,
+    ];
+    for (argv, named) in [
+        (&groom[..], vec![&batch, &first, &second]),
+        (&wake[..], vec![&first, &batch]),
+    ] {
+        let matches = crate::cli::command()
+            .try_get_matches_from(argv)
+            .expect("fixture command parses");
+        let contract = crate::cli::selected_contract(&matches).expect("selected contract");
+        let (_, read) = mutation_read(contract, crate::cli::selected_matches(&matches))
+            .expect("mutation selects its read");
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Board(scoped),
+            ..
+        }) = issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::BoardRead,
+            Vec::new(),
+            &read,
+        )
+        else {
+            panic!("scoped preflight read answers a board");
+        };
+        let read = scoped
+            .tasks
+            .iter()
+            .map(|task| task.statement.body.handle.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(read, named.into_iter().cloned().collect(), "{argv:?}");
+    }
+    clean(&root, bus);
+}

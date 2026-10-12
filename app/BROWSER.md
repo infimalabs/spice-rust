@@ -99,8 +99,11 @@ names the exact parked reports it considered, one of `duplicate`, `no-work`,
 any exceptions or uncertainty. Recording changes no report workflow;
 `deferred-for-later` has no wake time. A proposed report is promoted through
 `spice task wake REPORT --preparation DESIGN`, which atomically makes it a
-controlled, unauthorized output. Its card continues to show authorization
-pending until an accepted candidate receives separate selected authorization.
+controlled, unauthorized output. Dispositions are evidence, not authority: that
+explicit wake neither requires nor follows from a `proposed-work` record.
+Promotion with `--claim` is refused, and its card continues to show
+authorization pending until an accepted candidate receives separate selected
+authorization.
 A concluded Design accepts no later grooming; start a new Design room for a
 later batch.
 
