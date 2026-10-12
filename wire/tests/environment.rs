@@ -8,7 +8,7 @@ use wire::{
     TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
 };
 
-const LEGACY_ADDED: &str = r#"{
+const TASK_ADDED: &str = r#"{
   "kind": "task::added",
   "task": "1kKRRsDP",
   "title": "Build the gate",
@@ -17,10 +17,11 @@ const LEGACY_ADDED: &str = r#"{
   "depends": [],
   "flow": ["todo"],
   "phase": "todo",
-  "revision": 1
+  "revision": 1,
+  "creation": { "kind": "unavailable", "reason": "operator-actor" }
 }"#;
 
-const LEGACY_HEAD: &str = r#"{
+const TASK_HEAD: &str = r#"{
   "born": "1kKRRsDP",
   "queue_origin": 9,
   "title": "Build the gate",
@@ -28,6 +29,7 @@ const LEGACY_HEAD: &str = r#"{
   "tags": [],
   "dependencies": [],
   "provenance": "repo:genesis",
+  "creation": { "kind": "unavailable", "reason": "operator-actor" },
   "revision": 10
 }"#;
 
@@ -249,28 +251,28 @@ fn requirement_collections_refuse_duplicates_without_normalizing() {
 
 #[test]
 fn task_carriers_omit_empty_requirements_and_refuse_an_explicit_empty_array() {
-    let fact: AnyFact = wire::decode(LEGACY_ADDED.as_bytes()).expect("retained task fact decodes");
+    let fact: AnyFact = wire::decode(TASK_ADDED.as_bytes()).expect("task fact decodes");
     let added: TaskAdded = fact.read().expect("task-added body");
     assert!(added.requirements.is_empty());
     assert_eq!(
         serde_json::from_slice::<Value>(&wire::encode(&fact).expect("retained fact re-encodes"))
             .expect("fact is JSON"),
-        serde_json::from_str::<Value>(LEGACY_ADDED).expect("fixture is JSON")
+        serde_json::from_str::<Value>(TASK_ADDED).expect("fixture is JSON")
     );
 
-    let head: TaskHead = wire::decode(LEGACY_HEAD.as_bytes()).expect("retained task head decodes");
+    let head: TaskHead = wire::decode(TASK_HEAD.as_bytes()).expect("task head decodes");
     assert!(head.requirements.is_empty());
     assert_eq!(
         serde_json::from_slice::<Value>(&wire::encode(&head).expect("retained head re-encodes"))
             .expect("head is JSON"),
-        serde_json::from_str::<Value>(LEGACY_HEAD).expect("fixture is JSON")
+        serde_json::from_str::<Value>(TASK_HEAD).expect("fixture is JSON")
     );
 
-    let mut fact = serde_json::from_str::<Value>(LEGACY_ADDED).expect("fixture is JSON");
+    let mut fact = serde_json::from_str::<Value>(TASK_ADDED).expect("fixture is JSON");
     fact["requirements"] = json!([]);
     assert!(wire::decode::<AnyFact>(&serde_json::to_vec(&fact).expect("fact encodes")).is_err());
 
-    let mut head = serde_json::from_str::<Value>(LEGACY_HEAD).expect("fixture is JSON");
+    let mut head = serde_json::from_str::<Value>(TASK_HEAD).expect("fixture is JSON");
     head["requirements"] = json!([]);
     assert!(wire::decode::<TaskHead>(&serde_json::to_vec(&head).expect("head encodes")).is_err());
 }
@@ -278,7 +280,7 @@ fn task_carriers_omit_empty_requirements_and_refuse_an_explicit_empty_array() {
 #[test]
 fn task_fact_and_head_carry_the_same_canonical_requirements() {
     let requirement = json!([{"fact": "journal-schema", "value": 15}]);
-    let mut fact = serde_json::from_str::<Value>(LEGACY_ADDED).expect("fixture is JSON");
+    let mut fact = serde_json::from_str::<Value>(TASK_ADDED).expect("fixture is JSON");
     fact["requirements"] = requirement.clone();
     let fact_bytes = serde_json::to_vec(&fact).expect("fact encodes");
     let added: TaskAdded = wire::decode::<AnyFact>(&fact_bytes)
@@ -286,7 +288,7 @@ fn task_fact_and_head_carry_the_same_canonical_requirements() {
         .read()
         .expect("task-added body");
 
-    let mut head = serde_json::from_str::<Value>(LEGACY_HEAD).expect("fixture is JSON");
+    let mut head = serde_json::from_str::<Value>(TASK_HEAD).expect("fixture is JSON");
     head["requirements"] = requirement;
     let task_head: TaskHead =
         wire::decode(&serde_json::to_vec(&head).expect("head encodes")).expect("task head decodes");

@@ -22,8 +22,6 @@ pub enum TaskCreationUnavailable {
     LegacyEvidenceMissing,
     /// Legacy evidence names only a stream the current context command cannot rehydrate.
     LegacyStreamUnregistered,
-    /// Wire-only marker for a task fact or head not yet crossed by schema migration.
-    LegacyWireOmitted,
 }
 
 impl TaskCreationUnavailable {
@@ -35,7 +33,6 @@ impl TaskCreationUnavailable {
             Self::SpiceActor => "spice-actor",
             Self::LegacyEvidenceMissing => "legacy-evidence-missing",
             Self::LegacyStreamUnregistered => "legacy-stream-unregistered",
-            Self::LegacyWireOmitted => "legacy-wire-omitted",
         }
     }
 }
@@ -66,29 +63,10 @@ pub enum TaskCreationContext {
 }
 
 impl TaskCreationContext {
-    /// Decode a pre-context task fact or head without inventing provenance.
-    #[must_use]
-    pub fn legacy_unavailable() -> Self {
-        Self::Unavailable {
-            reason: TaskCreationUnavailable::LegacyWireOmitted,
-        }
-    }
-
     /// Build one explicit unavailable context.
     #[must_use]
     pub const fn unavailable(reason: TaskCreationUnavailable) -> Self {
         Self::Unavailable { reason }
-    }
-
-    /// Whether this value came from an omitted legacy wire field.
-    #[must_use]
-    pub const fn is_legacy_unavailable(&self) -> bool {
-        matches!(
-            self,
-            Self::Unavailable {
-                reason: TaskCreationUnavailable::LegacyWireOmitted
-            }
-        )
     }
 
     /// Immutable creator team, absent for non-lane and migrated task creation.
@@ -189,10 +167,6 @@ pub struct TaskAdded {
     /// Statement revision the head opens at.
     pub revision: u32,
     /// Creation-time transcript authority, immutable for the task's lifetime.
-    #[serde(
-        default = "TaskCreationContext::legacy_unavailable",
-        skip_serializing_if = "TaskCreationContext::is_legacy_unavailable"
-    )]
     pub creation: TaskCreationContext,
 }
 

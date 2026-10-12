@@ -14,6 +14,7 @@ const HEAD: &str = r#"{
   "tags": [],
   "dependencies": [],
   "provenance": "repo:genesis",
+  "creation": { "kind": "unavailable", "reason": "operator-actor" },
   "revision": 10
 }"#;
 

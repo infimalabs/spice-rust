@@ -17,6 +17,7 @@ const TASK: &str = r#"{
   "tags": ["genesis", "wire"],
   "dependencies": ["1kKRRsDQ"],
   "provenance": "task:1kKRRsDQ",
+  "creation": { "kind": "unavailable", "reason": "operator-actor" },
   "revision": 41
 }"#;
 
@@ -28,6 +29,7 @@ const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
   "tags": ["genesis", "wire"],
   "dependencies": ["1kKRRsDQ"],
   "provenance": "task:1kKRRsDQ",
+  "creation": { "kind": "unavailable", "reason": "operator-actor" },
   "revision": 41
 }"#;
 
@@ -175,6 +177,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         &[
             "acceptance",
             "born",
+            "creation",
             "dependencies",
             "description",
             "project",

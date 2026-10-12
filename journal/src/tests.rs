@@ -630,7 +630,8 @@ fn populate_authority(journal: Journal) -> Journal {
                 "depends": [],
                 "flow": ["todo", "review"],
                 "phase": "todo",
-                "revision": 1
+                "revision": 1,
+                "creation": {"kind": "unavailable", "reason": "operator-actor"}
             }),
         ),
     );

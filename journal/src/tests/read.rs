@@ -114,7 +114,8 @@ fn retained_history() -> Journal {
                     "depends": [],
                     "flow": ["todo", "review"],
                     "phase": "todo",
-                    "revision": position
+                    "revision": position,
+                    "creation": {"kind": "unavailable", "reason": "operator-actor"}
                 }),
             ),
         );
@@ -460,7 +461,8 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
                 "depends": [],
                 "flow": ["todo", "review"],
                 "phase": "todo",
-                "revision": 1
+                "revision": 1,
+                "creation": {"kind": "unavailable", "reason": "operator-actor"}
             }),
         ),
     );

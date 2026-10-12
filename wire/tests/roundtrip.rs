@@ -960,29 +960,31 @@ fn a_declared_session_requires_one_complete_launch_identity() {
 }
 
 #[test]
-fn a_pre_context_task_fact_decodes_only_as_explicit_legacy_unavailable() {
-    let document = r#"{
+fn a_task_fact_without_creation_context_refuses() {
+    let fact = |creation: &str| {
+        format!(
+            r#"{{
         "task":"1kKRRsDP",
-        "title":"Legacy task",
-        "project":"task.legacy",
+        "title":"Task",
+        "project":"task.fixture",
         "tags":[],
         "depends":[],
         "flow":["todo"],
         "phase":"todo",
-        "revision":1
-    }"#;
-    let added: body::TaskAdded = wire::decode(document.as_bytes()).expect("legacy task decodes");
+        "revision":1{creation}
+    }}"#
+        )
+    };
+    let error = wire::decode::<body::TaskAdded>(fact("").as_bytes())
+        .expect_err("an omitted creation context is not current authority");
+    assert!(error.to_string().contains("creation"), "{error}");
+    let added: body::TaskAdded = wire::decode(
+        fact(r#","creation":{"kind":"unavailable","reason":"operator-actor"}"#).as_bytes(),
+    )
+    .expect("an explicit creation context decodes");
     assert_eq!(
         added.creation,
-        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::LegacyWireOmitted,)
-    );
-    let encoded: serde_json::Value = serde_json::from_slice(
-        &wire::encode(&added).expect("legacy marker remains wire-compatible"),
-    )
-    .expect("task fact re-encodes as JSON");
-    assert!(
-        encoded.get("creation").is_none(),
-        "only schema migration may turn omitted legacy evidence into current authority"
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor)
     );
 }
 
