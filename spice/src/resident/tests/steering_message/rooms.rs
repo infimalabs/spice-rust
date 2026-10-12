@@ -278,13 +278,14 @@ fn resident_catch_up_pages_two_listeners_without_waking_them() {
     assert!(first.text.contains("second joined"));
     assert!(!second.text.contains("second joined"));
     assert!(second.text.contains("first joined"));
-    land_delivery(&lanes, &startup.config, &mut seats, &first);
+    land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
     seats.release_all();
     lanes.finish();
 }
 
 fn land_delivery(
     lanes: &Lanes,
+    room: &wire::TaskHandle,
     config: &SurfaceConfig,
     seats: &mut Seats,
     notice: &room_catch_up::Notice,
@@ -337,12 +338,23 @@ fn land_delivery(
             .is_none(),
         "live transcript coalescing leaves an unaccounted delivery pending"
     );
+    let landed_path = room_catch_up::landed_notice_path(&lanes.paths, first_lane);
+    fs::create_dir_all(landed_path.parent().expect("landed notice has a directory"))
+        .expect("landed notice directory is created");
+    room_catch_up::publish_notice(&landed_path, notice)
+        .expect("the supervisor records exact landed evidence");
+    append_room_publication(lanes, room);
     room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seats, &mut diagnostics)
         .expect("intervening commit reconciliation succeeds");
     assert_eq!(
         room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane)).as_ref(),
         Some(notice),
         "an observed but unaccounted page remains the current delivery"
+    );
+    assert_eq!(
+        room_catch_up::read_notice(&landed_path).as_ref(),
+        Some(notice),
+        "landed evidence stays exact until durable cursor progress"
     );
     let source_id = lanes
         .tape(FIRST)
@@ -375,12 +387,37 @@ fn land_delivery(
             .expect("the bounded continuation becomes current");
     assert_ne!(continuation.text, notice.text);
     assert!(continuation.through > notice.through);
+    assert!(continuation.text.contains("appended before accounting"));
+    assert!(
+        room_catch_up::read_notice(&landed_path).is_none(),
+        "cursor progress releases landed evidence"
+    );
     assert!(
         diagnostics.is_empty(),
         "{}",
         String::from_utf8_lossy(&diagnostics)
     );
     generation.commit().expect("message generation commits");
+}
+
+fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) {
+    let publication = wire::rooms::RoomAuthorityStamp::for_micros(1_790_000_000_000_000)
+        .expect("fixture publication stamp");
+    let mut append =
+        write(Actor::Operator, lanes.epoch, Producer::CommandDoor).expect("post write starts");
+    append
+        .fact(
+            wire::rooms::RoomPublished {
+                room: room.born().expect("fixture room has a birth"),
+                publication,
+                content: wire::rooms::RoomPublicationContent::Authored {
+                    text: "appended before accounting".to_owned(),
+                },
+            },
+            FactCause::Root,
+        )
+        .expect("intervening publication is valid");
+    commit(&lanes.bus, append).expect("intervening publication commits");
 }
 
 /// A context naming no task refuses the whole packet: no route delivers and

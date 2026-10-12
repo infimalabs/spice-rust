@@ -14,6 +14,7 @@ use super::*;
 
 const NOTICE_BYTES: usize = spice::rooms::MAX_CATCH_UP_BYTES + 4_096;
 const NOTICE_DIRECTORY: &str = "room-catch-up";
+const LANDED_DIRECTORY: &str = "room-catch-up-landed";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +43,9 @@ pub(in crate::resident) fn reconcile(
         let Some(occupant) = seats.occupant(lane).map(lane::occupant::Occupant::occupant) else {
             continue;
         };
+        if preserve_landed(bus, paths, lane, occupant)? {
+            continue;
+        }
         let path = notice_path(paths, lane);
         match plan(bus, paths, config, lane, occupant) {
             Ok(Some(notice)) => {
@@ -118,10 +122,7 @@ fn plan(
         .collect::<Result<Vec<_>, _>>()?;
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("room::catch-up-clock-invalid", &error.to_string()))?;
-    let cursor = bus
-        .read(move |read| read.room_cursor(lane))
-        .map_err(|error| store_fault("room::catch-up-cursor-unreadable", &error.to_string()))?
-        .map(|head| Seq::new(head.body().through.get()).expect("a cursor code is positive"));
+    let cursor = cursor(bus, lane)?;
     let mut sources = Vec::new();
     let mut attention = Vec::new();
     let mut presented = BTreeMap::new();
@@ -197,6 +198,56 @@ fn plan(
         text,
     }))
 }
+fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {
+    bus.read(move |read| read.room_cursor(lane))
+        .map_err(|error| store_fault("room::catch-up-cursor-unreadable", &error.to_string()))
+        .map(|cursor| {
+            cursor
+                .map(|head| Seq::new(head.body().through.get()).expect("a cursor code is positive"))
+        })
+}
+
+/// Keep an exact landed page available until its durable cursor proves
+/// recognition. Recomputed attention and newly appended publications cannot
+/// replace transcript evidence while accounting catches up.
+fn preserve_landed(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<bool> {
+    let landed_path = landed_notice_path(paths, lane);
+    let Some(landed) = read_notice(&landed_path) else {
+        return Ok(false);
+    };
+    if landed.occupant != occupant {
+        remove_landed(&landed_path)?;
+        return Ok(false);
+    }
+    if cursor(bus, lane)?.is_none_or(|cursor| cursor < landed.through) {
+        let path = notice_path(paths, lane);
+        path.parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| publish_notice(&path, &landed))
+            .map_err(|error| {
+                environment_fault("room::catch-up-state-unavailable", &error.to_string())
+            })?;
+        return Ok(true);
+    }
+    remove_landed(&landed_path)?;
+    Ok(false)
+}
+
+fn remove_landed(path: &Path) -> CommandResult<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(environment_fault(
+            "room::catch-up-landed-state-unavailable",
+            &error.to_string(),
+        )),
+    }
+}
 
 fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     match outcome {
@@ -214,7 +265,9 @@ pub(in crate::resident) fn recognize(
     record: &lane::capture::CaptureRecord,
     source: CanonicalUuid,
 ) -> CommandResult<()> {
-    let Some(notice) = read_notice(&notice_path(paths, record.lane)) else {
+    let Some(notice) = read_notice(&landed_notice_path(paths, record.lane))
+        .or_else(|| read_notice(&notice_path(paths, record.lane)))
+    else {
         return Ok(());
     };
     let current = bus
@@ -343,6 +396,15 @@ pub(in crate::resident) fn notice_path(paths: &RuntimePaths, lane: CanonicalUuid
         .join(NOTICE_DIRECTORY)
         .join(format!("{lane}.json"))
 }
+pub(in crate::resident) fn landed_notice_path(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+) -> PathBuf {
+    paths
+        .runtime
+        .join(LANDED_DIRECTORY)
+        .join(format!("{lane}.json"))
+}
 
 pub(in crate::resident) fn read_notice(path: &Path) -> Option<Notice> {
     let bytes = fs::read(path).ok()?;
@@ -352,7 +414,7 @@ pub(in crate::resident) fn read_notice(path: &Path) -> Option<Notice> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn publish_notice(path: &Path, notice: &Notice) -> io::Result<()> {
+pub(in crate::resident) fn publish_notice(path: &Path, notice: &Notice) -> io::Result<()> {
     let bytes = serde_json::to_vec(notice).map_err(io::Error::other)?;
     atomic::Destination::new(path)
         .map_err(io::Error::other)?

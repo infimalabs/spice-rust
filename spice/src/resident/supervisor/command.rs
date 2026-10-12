@@ -56,11 +56,11 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Latest queued background notice per purpose. Superseded notices are
     /// coalesced in the extension until omp's next step boundary.
     background: Mutex<BTreeMap<String, String>>,
-    /// Current resident-produced room delivery file and its exact occupant.
-    room_catch_up: Mutex<Option<(PathBuf, CanonicalUuid)>>,
-    /// Exact catch-up prose observed for this occupant but not yet released by
-    /// a changed durable cursor.
-    room_catch_up_landed: Mutex<Option<String>>,
+    /// Current resident-produced room delivery and landed-evidence files, plus
+    /// their exact occupant.
+    room_catch_up: Mutex<Option<(PathBuf, PathBuf, CanonicalUuid)>>,
+    /// Exact source-backed notice most recently queued for this occupant.
+    room_catch_up_sent: Mutex<Option<crate::resident::room_catch_up::Notice>>,
     /// Keys whose original was queued without replacement, or whose recovery
     /// was observed on the transcript. Reminders can point at that telling.
     /// Compaction drops the context and this set.
@@ -291,7 +291,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_briefing: Box::new(read_briefing),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
-            room_catch_up_landed: Mutex::new(None),
+            room_catch_up_sent: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
             room_catch_up: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
@@ -393,12 +393,17 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.interject(InboxDelivery::Update);
     }
 
-    fn configure_room_catch_up(&self, path: PathBuf, occupant: CanonicalUuid) {
+    fn configure_room_catch_up(
+        &self,
+        path: PathBuf,
+        landed_path: PathBuf,
+        occupant: CanonicalUuid,
+    ) {
         *self
             .room_catch_up
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some((path, occupant));
-        self.room_catch_up_landed
+            .unwrap_or_else(PoisonError::into_inner) = Some((path, landed_path, occupant));
+        self.room_catch_up_sent
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
@@ -415,48 +420,63 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let Some((path, occupant)) = configured else {
+        let Some((path, landed_path, occupant)) = configured else {
             return;
         };
-        let desired = crate::resident::room_catch_up::read_notice(&path)
-            .filter(|notice| notice.occupant == occupant)
-            .map(|notice| notice.text);
-        let landed = self
-            .room_catch_up_landed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        if desired.is_some() && desired == landed {
+        if crate::resident::room_catch_up::read_notice(&landed_path)
+            .is_some_and(|notice| notice.occupant == occupant)
+        {
             return;
         }
-        if landed.is_some() {
-            self.room_catch_up_landed
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-        }
+        let desired = crate::resident::room_catch_up::read_notice(&path)
+            .filter(|notice| notice.occupant == occupant);
         if retry_unlanded && desired.is_some() {
             self.background
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .remove(ROOM_CATCH_UP_PURPOSE);
         }
-        let _ = self.background(ROOM_CATCH_UP_PURPOSE, desired.as_deref().unwrap_or(""));
+        if self
+            .background(
+                ROOM_CATCH_UP_PURPOSE,
+                desired.as_ref().map_or("", |notice| notice.text.as_str()),
+            )
+            .is_ok()
+        {
+            *self
+                .room_catch_up_sent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = desired;
+        }
     }
 
     fn observe_room_catch_up(&self, text: &str) {
-        let landed = self
-            .background
+        let configured = self
+            .room_catch_up
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(ROOM_CATCH_UP_PURPOSE)
-            .filter(|message| message.as_str() == text)
-            .cloned();
-        if let Some(landed) = landed {
-            *self
-                .room_catch_up_landed
+            .clone();
+        let Some((_path, landed_path, occupant)) = configured else {
+            return;
+        };
+        let landed = self
+            .room_catch_up_sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .filter(|notice| notice.occupant == occupant && notice.text == text);
+        let Some(landed) = landed else {
+            return;
+        };
+        let published = landed_path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| crate::resident::room_catch_up::publish_notice(&landed_path, &landed));
+        if published.is_ok() {
+            self.room_catch_up_sent
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner) = Some(landed);
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
         }
     }
 
@@ -1193,13 +1213,15 @@ pub(in crate::resident) fn listen_for_kicks(
     #[cfg(unix)]
     let room_catch_up = crate::resident::room_catch_up::notice_path(paths, lane);
     #[cfg(unix)]
+    let room_catch_up_landed = crate::resident::room_catch_up::landed_notice_path(paths, lane);
+    #[cfg(unix)]
     {
         let _ = fs::remove_file(&path);
         let socket = std::os::unix::net::UnixDatagram::bind(&path)?;
         std::thread::Builder::new()
             .name("spice-kick".to_owned())
             .spawn(move || {
-                driver.configure_room_catch_up(room_catch_up, occupant);
+                driver.configure_room_catch_up(room_catch_up, room_catch_up_landed, occupant);
                 driver.catch_up();
                 let mut kick = [0u8; KICK_BYTES];
                 while let Ok(length) = socket.recv(&mut kick) {
