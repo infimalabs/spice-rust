@@ -579,6 +579,15 @@ fn captures_implementation(command: &wire::AdmittedCommand) -> bool {
     })
 }
 
+fn recovers_implementation(command: &wire::AdmittedCommand) -> bool {
+    command.expected().iter().any(|witness| {
+        matches!(
+            witness,
+            Witness::Eligibility { rule } if rule.as_str() == "recover"
+        )
+    })
+}
+
 fn task_flow_for_dependencies(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
@@ -591,7 +600,7 @@ fn task_flow_for_dependencies(
         requested
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
-    if captures_implementation(command)
+    if (captures_implementation(command) || recovers_implementation(command))
         && (add.intent.is_some() || matches!(flow[0].as_str(), "plan" | "design"))
     {
         return Err(refusal(

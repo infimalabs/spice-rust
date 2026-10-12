@@ -77,6 +77,48 @@ fn declared_planning_defaults_preserve_the_review_deliverable() {
 }
 
 #[test]
+fn atomic_recovery_cannot_create_a_declared_planning_task() {
+    let (root, bus, epoch, seats) = fixture("planning-recovery", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = Actor::Lane(seats[0].lane);
+    let born = stamp("Recovered implementation");
+    let available = board(&bus, epoch, lane.clone());
+    let recover: Name = "recover".parse().expect("recovery rule");
+    let result = issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence { task: born },
+            Witness::Eligibility { rule: recover },
+            residency(&available, &seats[0]),
+        ],
+        &TaskAdd {
+            preparation: None,
+            title: "Recovered implementation".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The recovered behavior is implemented".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:planning".parse().expect("origin")),
+            flow: None,
+            depends: Vec::new(),
+            intent: Some(wire::TaskIntent::Plan),
+            claim: true,
+        },
+    );
+    assert!(
+        matches!(
+            &result,
+            Outcome::Refusal(refusal) if refusal.reason() == "task::capture-planning"
+        ),
+        "planning recovery must refuse before repository recovery admission: {result:?}",
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn plan_review_cannot_replace_required_child_construction_with_own_acceptance() {
     let (root, bus, epoch, seats) = fixture("planning-construction", 1);
     let task = add_planning(
