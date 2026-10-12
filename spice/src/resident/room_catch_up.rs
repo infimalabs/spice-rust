@@ -59,16 +59,18 @@ pub(in crate::resident) fn reconcile(
                     }
                 }
             }
-            Ok(None) => {
-                if let Err(error) = fs::remove_file(&path)
-                    && error.kind() != io::ErrorKind::NotFound
-                {
+            Ok(None) => match fs::remove_file(&path) {
+                Ok(()) => super::supervisor::command::room_catch_up(paths, lane),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    super::supervisor::command::room_catch_up(paths, lane);
+                }
+                Err(error) => {
                     let _ = writeln!(
                         diagnostic,
                         "lane {lane} settled room catch-up state could not be removed: {error}"
                     );
                 }
-            }
+            },
             Err(outcome) => {
                 let _ = writeln!(
                     diagnostic,
