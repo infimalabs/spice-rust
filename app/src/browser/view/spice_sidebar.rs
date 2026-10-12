@@ -3,16 +3,12 @@
 use web_sys::{DragEvent, PointerEvent};
 
 use super::*;
+use crate::browser::touch_lift;
 use crate::watchband;
 
 const MEMBER_MIME: &str = "application/x-spice-team-member";
 /// The drop-target value naming Unassigned Agents rather than a team.
 const UNASSIGNED_DROP: &str = "unassigned";
-/// How near a scrolling container's visible edge a lifted finger scrolls it.
-const TOUCH_SCROLL_EDGE_PX: f64 = 48.0;
-/// Each move scrolls this fraction of the finger's depth into the edge band, so
-/// pressing deeper scrolls faster without outrunning the target.
-const TOUCH_SCROLL_DEPTH_RATE: f64 = 0.25;
 
 thread_local! {
     /// The one roster lift a finger or pen holds; mouse uses HTML5 drag and drop.
@@ -689,7 +685,7 @@ fn touch_drag_start(
         }
         // A primary contact going down ends any lift whose release never arrived.
         if TOUCH_DRAG.with_borrow_mut(watchband::PointerDragSession::clear) {
-            clear_touch_presentation();
+            touch_lift::clear();
         }
         TOUCH_DRAG.with_borrow_mut(|session| {
             session.begin(
@@ -726,12 +722,12 @@ fn touch_drag_movement(
     Callback::from(move |event: PointerEvent| {
         if TOUCH_DRAG.with_borrow_mut(|session| session.reconcile(enabled, Some(topology_revision)))
         {
-            clear_touch_presentation();
+            touch_lift::clear();
             return;
         }
         let Some(lift) = TOUCH_DRAG.with_borrow_mut(|session| {
             let active = session.movement(
-                lane,
+                &lane,
                 event.pointer_id(),
                 event.client_x(),
                 event.client_y(),
@@ -751,16 +747,26 @@ fn touch_drag_movement(
         };
         if lift
             && (handle.set_pointer_capture(event.pointer_id()).is_err()
-                || begin_touch_presentation(&handle, event.client_x(), event.client_y()).is_none())
+                || touch_lift::begin(
+                    &handle,
+                    ".app-topology-member",
+                    "data-team-member",
+                    event.client_x(),
+                    event.client_y(),
+                )
+                .is_none())
         {
             TOUCH_DRAG.with_borrow_mut(watchband::PointerDragSession::clear);
-            clear_touch_presentation();
+            touch_lift::clear();
             return;
         }
         event.prevent_default();
-        scroll_toward_edge(&handle, event.client_y());
-        update_touch_ghost(event.client_x(), event.client_y());
-        preview_touch_drop(lane, source, event.client_x(), event.client_y());
+        touch_lift::follow(&handle, event.client_x(), event.client_y());
+        touch_lift::preview(
+            touch_drop_at(lane, source, event.client_x(), event.client_y())
+                .map(|(_, target)| target)
+                .as_ref(),
+        );
     })
 }
 
@@ -776,15 +782,15 @@ fn touch_drag_finish(
             if session.reconcile(enabled, Some(topology_revision)) {
                 return None;
             }
-            session.finish(lane, event.pointer_id(), topology_revision)
+            session.finish(&lane, event.pointer_id(), topology_revision)
         });
         let Some(active) = finished.filter(|active| active.dragging) else {
-            clear_touch_presentation();
+            touch_lift::clear();
             return;
         };
         let team =
             touch_drop_at(lane, source, event.client_x(), event.client_y()).map(|(team, _)| team);
-        clear_touch_presentation();
+        touch_lift::clear();
         SWALLOW_CLICK.set(true);
         event.prevent_default();
         if let Some(team) = team {
@@ -795,8 +801,8 @@ fn touch_drag_finish(
 
 fn touch_drag_cancel(lane: CanonicalUuid) -> Callback<PointerEvent> {
     Callback::from(move |event: PointerEvent| {
-        if TOUCH_DRAG.with_borrow_mut(|session| session.cancel(lane, event.pointer_id())) {
-            clear_touch_presentation();
+        if TOUCH_DRAG.with_borrow_mut(|session| session.cancel(&lane, event.pointer_id())) {
+            touch_lift::clear();
         }
     })
 }
@@ -818,20 +824,7 @@ fn touch_drop_at(
     client_x: i32,
     client_y: i32,
 ) -> Option<(CanonicalUuid, web_sys::Element)> {
-    let (x, y) = (f64::from(client_x), f64::from(client_y));
-    let targets = web_sys::window()?
-        .document()?
-        .query_selector_all("[data-topology-drop]")
-        .ok()?;
-    let target = (0..targets.length())
-        .filter_map(|index| targets.item(index)?.dyn_into::<web_sys::Element>().ok())
-        .find(|element| {
-            let rect = element.get_bounding_client_rect();
-            x >= rect.left() && x <= rect.right() && y >= rect.top() && y <= rect.bottom()
-        })?;
-    if target.get_attribute("data-drop-enabled").as_deref() != Some("true") {
-        return None;
-    }
+    let target = touch_lift::target_at("data-topology-drop", client_x, client_y)?;
     let value = target.get_attribute("data-topology-drop")?;
     let team = if value == UNASSIGNED_DROP {
         lane
@@ -839,148 +832,6 @@ fn touch_drop_at(
         value.parse().ok()?
     };
     (team != source).then_some((team, target))
-}
-
-fn preview_touch_drop(lane: CanonicalUuid, source: CanonicalUuid, client_x: i32, client_y: i32) {
-    remove_touch_attribute("data-topology-drop-target");
-    if let Some((_, target)) = touch_drop_at(lane, source, client_x, client_y) {
-        let _ = target.set_attribute("data-topology-drop-target", "true");
-    }
-}
-
-fn begin_touch_presentation(handle: &web_sys::Element, client_x: i32, client_y: i32) -> Option<()> {
-    clear_touch_presentation();
-    let source = handle.closest(".app-topology-member").ok()??;
-    let rect = source.get_bounding_client_rect();
-    source
-        .set_attribute("data-topology-drag-source", "true")
-        .ok()?;
-    let ghost = source
-        .clone_node_with_deep(true)
-        .ok()?
-        .dyn_into::<web_sys::HtmlElement>()
-        .ok()?;
-    ghost.set_class_name("app-topology-member app-topology-drag-ghost");
-    for attribute in ["data-topology-drag-source", "draggable", "data-team-member"] {
-        let _ = ghost.remove_attribute(attribute);
-    }
-    let _ = ghost.set_attribute("aria-hidden", "true");
-    let _ = ghost.set_attribute("inert", "");
-    let _ = ghost.set_attribute(
-        "data-touch-offset-x",
-        &(f64::from(client_x) - rect.left()).to_string(),
-    );
-    let _ = ghost.set_attribute(
-        "data-touch-offset-y",
-        &(f64::from(client_y) - rect.top()).to_string(),
-    );
-    let _ = ghost
-        .style()
-        .set_property("width", &format!("{}px", rect.width()));
-    web_sys::window()?
-        .document()?
-        .body()?
-        .append_child(&ghost)
-        .ok()?;
-    Some(())
-}
-
-fn update_touch_ghost(client_x: i32, client_y: i32) {
-    let Some(ghost) = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| {
-            document
-                .query_selector(".app-topology-drag-ghost")
-                .ok()
-                .flatten()
-        })
-        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-    else {
-        return;
-    };
-    let offset = |name| {
-        ghost
-            .get_attribute(name)
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or_default()
-    };
-    let left = f64::from(client_x) - offset("data-touch-offset-x");
-    let top = f64::from(client_y) - offset("data-touch-offset-y");
-    let _ = ghost.style().set_property("left", &format!("{left}px"));
-    let _ = ghost.style().set_property("top", &format!("{top}px"));
-}
-
-/// Scroll the nearest scrolling ancestor while the finger rests near its
-/// visible edge, so a target outside the visible sheet stays reachable.
-fn scroll_toward_edge(handle: &web_sys::Element, client_y: i32) {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let mut ancestor = handle.parent_element();
-    while let Some(element) = ancestor {
-        let scrolls = element.scroll_height() > element.client_height()
-            && window
-                .get_computed_style(&element)
-                .ok()
-                .flatten()
-                .and_then(|style| style.get_property_value("overflow-y").ok())
-                .is_some_and(|overflow| overflow == "auto" || overflow == "scroll");
-        if scrolls {
-            let rect = element.get_bounding_client_rect();
-            let viewport = window
-                .inner_height()
-                .ok()
-                .and_then(|height| height.as_f64())
-                .unwrap_or(rect.bottom());
-            let top = rect.top().max(0.0) + TOUCH_SCROLL_EDGE_PX;
-            let bottom = rect.bottom().min(viewport) - TOUCH_SCROLL_EDGE_PX;
-            let y = f64::from(client_y);
-            let depth = if y < top {
-                y - top
-            } else if y > bottom {
-                y - bottom
-            } else {
-                return;
-            };
-            element.scroll_by_with_x_and_y(0.0, depth * TOUCH_SCROLL_DEPTH_RATE);
-            return;
-        }
-        ancestor = element.parent_element();
-    }
-}
-
-fn remove_touch_attribute(attribute: &str) {
-    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-        return;
-    };
-    let Ok(nodes) = document.query_selector_all(&format!("[{attribute}]")) else {
-        return;
-    };
-    for index in 0..nodes.length() {
-        if let Some(element) = nodes
-            .item(index)
-            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-        {
-            let _ = element.remove_attribute(attribute);
-        }
-    }
-}
-
-fn clear_touch_presentation() {
-    remove_touch_attribute("data-topology-drag-source");
-    remove_touch_attribute("data-topology-drop-target");
-    if let Some(document) = web_sys::window().and_then(|window| window.document())
-        && let Ok(ghosts) = document.query_selector_all(".app-topology-drag-ghost")
-    {
-        for index in 0..ghosts.length() {
-            if let Some(ghost) = ghosts
-                .item(index)
-                .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-            {
-                ghost.remove();
-            }
-        }
-    }
 }
 
 fn send_member(

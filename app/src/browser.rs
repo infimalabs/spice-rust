@@ -57,6 +57,7 @@ mod task_detail;
 mod task_feedback;
 mod task_relations;
 mod toast;
+mod touch_lift;
 mod view;
 mod watchband;
 

@@ -85,6 +85,20 @@ shared organization leaves any already-open local console as an unavailable
 placeholder once a completed room snapshot lacks the group; while room
 authority loads or reconnects, the console keeps its last name and geometry.
 
+The catalog lists every open Design task under **Designs**, as the roster lists
+agents, and a design drags into groups exactly as an agent drags into teams: a
+mouse drags the whole row, a finger or pen drags its handle, and holding a
+lifted design near the sheet's edge scrolls it. Dropping it on a saved group
+appends it there; dropping it on **New working group** creates a group holding
+only that design, named by the typed group name or else the design's title.
+Because a design may sit in several groups, a drop adds it and never removes
+it from another group, and dropping it on a group already holding it changes
+nothing. A full group still accepts the drop, so the authority's
+`group::design-limit` refusal reports it in the catalog notice, as does
+`group::design-only` for a task without Design intent; either leaves the group
+unchanged. A drop changes only shared organization and never mounts,
+reorders, closes, or focuses a console.
+
 Each opened group is a console in the team fleet, after the teams, read exactly
 as a team console with tasks and agents swapped. A team's composers target its
 lanes and its tabs are tasks; a group's composers target its designs and its
