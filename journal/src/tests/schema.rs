@@ -38,17 +38,19 @@ fn current_schema_is_the_only_executable_journal_shape() {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34] {
+    for predecessor in [33, 34, 35] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
         journal
             .connection
             .execute_batch(&format!(
-                "UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
-             PRAGMA user_version = {predecessor};",
+                "DROP TABLE room_publications; DROP TABLE group_anchors; DROP TABLE group_heads;
+                 DROP TABLE proposal_heads; DROP TABLE authorization_heads;
+                 UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
+                 PRAGMA user_version = {predecessor};",
             ))
-            .expect("restore predecessor identity");
+            .expect("restore predecessor shape");
         let rows = |journal: &Journal| -> (Vec<u8>, Vec<u8>) {
             let fact = journal
                 .connection
@@ -86,6 +88,11 @@ fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_row
         assert_eq!(head.body().intent, None, "no intent is inferred");
         assert_eq!(head.body().preparation, None, "no preparation is inferred");
         journal.verify().expect("crossed authority verifies");
+        assert_eq!(
+            authority_tables(&journal),
+            expected_tables(),
+            "the crossing creates exactly the current projection"
+        );
         drop(journal);
 
         let reopened = Journal::open(&path).expect("current authority reopens");

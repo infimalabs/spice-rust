@@ -83,6 +83,33 @@ macro_rules! registered_body {
     (SteerDeadLettered) => {
         crate::steering::SteerDeadLettered
     };
+    (OutputControlled) => {
+        crate::rooms::OutputControlled
+    };
+    (RoomPublished) => {
+        crate::rooms::RoomPublished
+    };
+    (WorkingGroupStored) => {
+        crate::rooms::WorkingGroupStored
+    };
+    (WorkingGroupRemoved) => {
+        crate::rooms::WorkingGroupRemoved
+    };
+    (CandidateRetained) => {
+        crate::rooms::CandidateRetained
+    };
+    (CandidateCritiqued) => {
+        crate::rooms::CandidateCritiqued
+    };
+    (CandidateCovered) => {
+        crate::rooms::CandidateCovered
+    };
+    (PreparationDecided) => {
+        crate::rooms::PreparationDecided
+    };
+    (ExecutionAuthorized) => {
+        crate::rooms::ExecutionAuthorized
+    };
     ($variant:ident) => {
         crate::body::$variant
     };
@@ -195,6 +222,8 @@ vocabulary! {
     TaskDeleted = "task::deleted" by CommandDoor;
     /// The operator closed a task as completed with a recorded validation.
     TaskClosed = "task::closed" by CommandDoor;
+    /// An existing task entered exactly one preparation controller's gating.
+    OutputControlled = "task::controlled" by CommandDoor;
 
     /// Exclusive possession was minted from current eligibility and claim heads.
     ClaimWon = "claim::won" by CommandDoor;
@@ -210,6 +239,24 @@ vocabulary! {
     ClaimRenewed = "claim::renewed" by BusTimer;
     /// A live lease crossed its warning horizon and opened ordinary lane steering.
     ClaimLeaseWarned = "claim::warned" by BusTimer;
+
+    /// An anchor task's room received one authored or linked publication.
+    RoomPublished = "room::published" by CommandDoor;
+    /// A working group's complete ordered anchor state was saved.
+    WorkingGroupStored = "group::stored" by CommandDoor;
+    /// A working group was removed without touching its anchor rooms.
+    WorkingGroupRemoved = "group::removed" by CommandDoor;
+
+    /// One exact candidate was retained under its controlling task.
+    CandidateRetained = "proposal::retained" by CommandDoor;
+    /// One source-backed critique of an exact retained candidate was recorded.
+    CandidateCritiqued = "proposal::critiqued" by CommandDoor;
+    /// One source-backed coverage statement over an exact candidate was recorded.
+    CandidateCovered = "proposal::covered" by CommandDoor;
+    /// The operator decided a controlling task's preparation.
+    PreparationDecided = "proposal::decided" by CommandDoor;
+    /// An accepted decision made its exact selected outputs eligible.
+    ExecutionAuthorized = "proposal::authorized" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
@@ -431,7 +478,8 @@ impl FactKind {
             | Self::TaskWoken
             | Self::TaskEdited
             | Self::TaskDeleted
-            | Self::TaskClosed => &[Origin, Dependency, Review, Lifecycle],
+            | Self::TaskClosed
+            | Self::OutputControlled => &[Origin, Dependency, Review, Lifecycle],
             _ => &[],
         }
     }
@@ -643,6 +691,7 @@ impl AnyFact {
             Decoded::TaskEdited(body) => Some(&body.task),
             Decoded::TaskDeleted(body) => Some(&body.task),
             Decoded::TaskClosed(body) => Some(&body.task),
+            Decoded::OutputControlled(body) => Some(&body.output),
             _ => None,
         }
     }
@@ -664,7 +713,11 @@ impl AnyFact {
         }
     }
 
-    /// Immutable preparation relationship admitted with this task's birth.
+    /// Preparation relationship this fact establishes for one task.
+    ///
+    /// Creation establishes the opening relationship, including none; output
+    /// control establishes one for a task that had none. Folding these in
+    /// journal order yields each statement's current preparation.
     #[must_use]
     pub fn task_preparation(
         &self,
@@ -672,6 +725,9 @@ impl AnyFact {
         match &self.decoded {
             sealed::RegisteredBody::TaskAdded(body) => {
                 Some((&body.task, body.preparation.as_ref()))
+            }
+            sealed::RegisteredBody::OutputControlled(body) => {
+                Some((&body.output, Some(&body.preparation)))
             }
             _ => None,
         }

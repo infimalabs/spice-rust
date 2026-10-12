@@ -16,11 +16,13 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-/// Schemas whose optional task fields decode without inferred relationships.
+/// Schemas whose retained authority decodes as the current shape unchanged.
 ///
-/// Writable admission advances only the schema identity; retained facts and
-/// heads remain byte-for-byte intact. Older writers refuse the new boundary.
-const PREDECESSOR_SCHEMAS: [u32; 2] = [33, 34];
+/// Writable admission creates the room-authority projection, which no
+/// predecessor could have populated, and advances the schema identity;
+/// retained facts and heads remain byte-for-byte intact. Older writers refuse
+/// the new boundary.
+const PREDECESSOR_SCHEMAS: [u32; 3] = [33, 34, 35];
 
 /// Admit exact-current authority, cross the predecessor once, or initialize
 /// one truly empty database.
@@ -66,6 +68,9 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
 
     transaction
         .execute_batch(BASELINE_SQL)
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .execute_batch(crate::rooms::SCHEMA_SQL)
         .map_err(OpenError::Sqlite)?;
     crate::historical_receipts::create_schema(&transaction)?;
     crate::historical_receipts::reserve_identities(&transaction)?;
@@ -190,6 +195,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    transaction
+        .execute_batch(crate::rooms::SCHEMA_SQL)
+        .map_err(OpenError::Sqlite)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -681,8 +689,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 35, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 36, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 35;
+PRAGMA user_version = 36;
 "#;

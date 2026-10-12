@@ -7,7 +7,7 @@
 /// Retired schemas refuse before persistent storage configuration and name the
 /// release that last migrated them; newer schemas refuse because this build
 /// cannot know what their owning release added.
-pub const SCHEMA_VERSION: u32 = 35;
+pub const SCHEMA_VERSION: u32 = 36;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -36,6 +36,8 @@ mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore;
 #[cfg(not(target_arch = "wasm32"))]
+mod rooms;
+#[cfg(not(target_arch = "wasm32"))]
 mod taste_index;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -44,9 +46,9 @@ pub use guard::{
     FactPageStart, FactReadBudget, GuardError, GuardRefusal, JournalGuard, JournalHead,
     JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES,
     MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, OperatorDirection, OperatorDirections,
-    PendingFact, ReadError, RetiredSteering, SelectedFactPage, SteeringPage, TaskGeneration,
-    TaskHeadPage, TaskHeads, TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary,
-    ThreadError, TrustHeadPage,
+    PendingFact, ProposalAuthority, ReadError, RetiredSteering, SelectedFactPage, SteeringPage,
+    TaskGeneration, TaskHeadPage, TaskHeads, TasteEvidenceFact, TasteEvidencePage,
+    TasteEvidenceSummary, ThreadError, TrustHeadPage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};
