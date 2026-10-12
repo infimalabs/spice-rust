@@ -80,6 +80,13 @@ fn working_task_selection(
         }
         if let Some(heads) = observed.task_heads(&task) {
             pending.extend(heads.statement().body().dependencies.iter().cloned());
+            if let Some(preparation) = &heads.statement().body().preparation {
+                pending.extend([
+                    preparation.parent.clone(),
+                    preparation.controller.clone(),
+                    preparation.construction.clone(),
+                ]);
+            }
         }
     }
     selected

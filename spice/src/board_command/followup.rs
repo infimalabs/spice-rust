@@ -28,6 +28,7 @@ pub(super) fn review_is_clean(finding: &str) -> bool {
 /// Parse one `--then` record into the statement it creates.
 fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
     let mut add = TaskAdd {
+        preparation: None,
         intent: None,
         title: String::new(),
         project: None,
@@ -185,6 +186,26 @@ pub(super) fn correction_statement(
         }
         seen.push(correction.born());
         require_correction_witnesses(snapshot, command, handle)?;
+        if let Some(required) =
+            planning::correction_preparation(task_heads(&snapshot.answer, entry.handle())?)
+        {
+            if correction.statement().intent != entry.statement().intent
+                || correction
+                    .statement()
+                    .preparation
+                    .as_ref()
+                    .is_none_or(|preparation| {
+                        preparation.controller != required.controller
+                            || preparation.construction != required.construction
+                    })
+            {
+                return Err(refusal(
+                    "review::planning-correction-context",
+                    Some(correction.handle().to_string()),
+                    "use a correction carrying the same construction owner, or create it with --then",
+                ));
+            }
+        }
         let already_related = statement.dependencies.contains(correction.born());
         if correction.workflow().status == "completed" && !already_related {
             return Err(refusal(
@@ -371,12 +392,28 @@ fn prepare_followup_policy(
     add: &TaskAdd,
 ) -> Result<FollowupPolicy, Outcome<CommandAnswer>> {
     validate_acceptance(&add.acceptance)?;
-    let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
+    let reviewed_statement = &context.reviewed_task.statement.body;
+    let intent = add.intent.or(reviewed_statement.intent);
+    if reviewed_statement.intent.is_some() && intent != reviewed_statement.intent {
+        return Err(refusal(
+            "review::planning-correction-intent",
+            None,
+            "a planning correction must retain the reviewed declared intent",
+        ));
+    }
+    let preparation = planning::correction_preparation(context.reviewed_task);
+    let mut flow = if add.flow.is_none() && preparation.is_some() {
+        context.reviewed_task.workflow.body.flow.clone()
+    } else {
+        task_flow(
+            planning::default_flow(intent, add.flow.as_deref()),
+            &add.acceptance,
+        )?
+    };
     let reviewed = &context.reviewed_task.workflow.body;
-    // A defaulted correction of a task awaiting re-review is todo-only: the
-    // parent's own re-review already fails again if the fix falls short. A
-    // flow the reviewer named explicitly is honored as written.
-    if add.flow.is_none() {
+    // Ordinary corrections may rely on their parent's re-review. Planning
+    // corrections retain their own planning route and construction owner.
+    if add.flow.is_none() && preparation.is_none() {
         omit_review_phase(
             &mut flow,
             reviewed.phase.as_str() == "review"
@@ -437,7 +474,11 @@ fn create_followup(
     })?;
     let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
-        intent: followup.add.intent,
+        preparation: planning::correction_preparation(context.reviewed_task),
+        intent: followup
+            .add
+            .intent
+            .or(context.reviewed_task.statement.body.intent),
         born: followup.task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
@@ -477,6 +518,7 @@ fn create_followup(
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: statement.preparation.clone(),
                 intent: statement.intent,
                 task: followup.task.clone(),
                 title: statement.title.clone(),

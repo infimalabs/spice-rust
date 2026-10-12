@@ -28,6 +28,7 @@ fn entries() -> Vec<board::Entry> {
             let born = wire::TaskStamp::for_micros(index).expect("stamp");
             let phase = "todo".parse::<wire::Phase>().expect("phase");
             let statement = wire::TaskHead {
+                preparation: None,
                 intent: None,
                 born: born.clone(),
                 queue_origin: Seq::new(1).expect("sequence"),

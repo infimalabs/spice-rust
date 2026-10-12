@@ -88,6 +88,7 @@ fn push_task(
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: task.clone(),
                 title: fixture.title.clone(),
@@ -109,6 +110,7 @@ fn push_task(
     let statement_origin = origin.clone();
     let statement_creation = creation.clone();
     write.task_head(added, move |position| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

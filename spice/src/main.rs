@@ -510,6 +510,8 @@ impl NativeInvocation<'_> {
             | ["task", "recover"]
             | ["task", "reclaim"]
             | ["task", "add"]
+            | ["task", "plan"]
+            | ["task", "design"]
             | ["task", "capture"]
             | ["task", "done"]
             | ["task", "review"]

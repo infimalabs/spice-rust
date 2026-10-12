@@ -16,15 +16,11 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-/// The one predecessor schema this build crosses forward at a writable open.
+/// Schemas whose optional task fields decode without inferred relationships.
 ///
-/// Schema 33 authority carries no declared task intent. Its facts and heads
-/// omit the optional field and already decode as the current shape with no
-/// intent, so the crossing rewrites no authority row: it moves only the schema
-/// identity, which makes the intent-bearing task wire visible at the journal
-/// boundary. A schema-33 build therefore refuses this authority instead of
-/// decoding an intent-bearing row as if the field did not exist.
-const PREDECESSOR_SCHEMA: u32 = 33;
+/// Writable admission advances only the schema identity; retained facts and
+/// heads remain byte-for-byte intact. Older writers refuse the new boundary.
+const PREDECESSOR_SCHEMAS: [u32; 2] = [33, 34];
 
 /// Admit exact-current authority, cross the predecessor once, or initialize
 /// one truly empty database.
@@ -44,7 +40,7 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
 
     if table_exists(connection, "journal_schema")? {
         let version = admit_readable_state(connection, stored_state(connection)?)?;
-        if version != PREDECESSOR_SCHEMA {
+        if !PREDECESSOR_SCHEMAS.contains(&version) {
             admit_version(version)?;
             return Ok(None);
         }
@@ -174,7 +170,7 @@ fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenE
 }
 
 fn admit_version(version: u32) -> Result<u32, OpenError> {
-    if version == PREDECESSOR_SCHEMA {
+    if PREDECESSOR_SCHEMAS.contains(&version) {
         return Err(MigrationError::PendingCrossing { found: version }.into());
     }
     if version != SCHEMA_VERSION {
@@ -189,7 +185,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
     let version = admit_readable_state(&transaction, stored_state(&transaction)?)?;
-    if version != PREDECESSOR_SCHEMA {
+    if !PREDECESSOR_SCHEMAS.contains(&version) {
         admit_version(version)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
@@ -205,7 +201,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         .map_err(OpenError::Sqlite)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
-        from: PREDECESSOR_SCHEMA,
+        from: version,
         to: SCHEMA_VERSION,
     }))
 }
@@ -685,8 +681,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 34, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 35, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 34;
+PRAGMA user_version = 35;
 "#;

@@ -63,6 +63,9 @@ pub(in crate::board_command) fn claim_plan(
         allocation,
     )?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
+    if matches!(possession, Possession::Capture | Possession::Recover) {
+        planning::admit_capture(&selected)?;
+    }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;
     let next = Some(claim_activation_next_action(&selected));
@@ -176,7 +179,7 @@ pub(super) fn prepare_capture_claim(
     let captures_work = claim_rule == CAPTURE_WORK_RULE;
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     if !board::capturable_entry(
-        &board::satisfied_tasks(&snapshot.entries),
+        &board::resolved_tasks(&snapshot.entries),
         selected,
         command.actor(),
         &snapshot.answer.environment(),
@@ -646,7 +649,7 @@ fn named_claim_selection<'a>(
             )
         })?;
     let environment = snapshot.answer.environment();
-    let satisfied = board::satisfied_tasks(&snapshot.entries);
+    let satisfied = board::resolved_tasks(&snapshot.entries);
     let (admitted, reason, remedy) = match possession {
         Possession::Steal => (
             board::stealable_entry(&satisfied, entry, command.actor(), &environment),

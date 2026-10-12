@@ -225,6 +225,7 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
     let fact = write
         .fact(
             TaskAdded {
+                preparation: None,
                 intent: None,
                 task: task.clone(),
                 title: title.clone(),
@@ -246,6 +247,7 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         .expect("unrelated task fact builds");
     let statement_task = task.clone();
     write.task_head(fact, move |revision| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_task,
         queue_origin: revision,

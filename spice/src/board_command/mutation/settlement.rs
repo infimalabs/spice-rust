@@ -291,6 +291,7 @@ fn projected_settled_entry(
     let mut workflow = entry.workflow().clone();
     workflow.status = status.to_owned();
     workflow.completion = Some(at);
+    workflow.review = "closed".to_owned();
     workflow.assignment = None;
     let mut claim = entry.claim().cloned();
     if let Some(claim) = claim.as_mut()

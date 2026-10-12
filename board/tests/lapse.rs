@@ -48,7 +48,7 @@ fn snapshot(journal: &Journal) -> Snapshot {
 }
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
-        &board::satisfied_tasks(snapshot.entries()),
+        &board::resolved_tasks(snapshot.entries()),
         &snapshot.entries()[0],
         &Actor::Lane(uuid(20)),
         snapshot.environment(),
@@ -367,6 +367,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     let fact = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: born(),
                 title: "Lapse possession".to_owned(),
@@ -388,6 +389,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
         .expect("task fact");
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
+        preparation: None,
         intent: None,
         born: born(),
         queue_origin: position,
@@ -595,7 +597,7 @@ fn lapsing_a_review_claim_releases_its_assignment_in_the_same_transaction() {
     );
     assert!(
         board::eligible_entry(
-            &board::satisfied_tasks(after.entries()),
+            &board::resolved_tasks(after.entries()),
             entry,
             &Actor::Lane(uuid(24)),
             after.environment()

@@ -258,6 +258,7 @@ fn task_add_oops_dependency_refuses(
             CommandKind::TaskAdd,
             vec![Witness::Absence { task: born }],
             &TaskAdd {
+                preparation: None,
                 intent: None,
                 title: "Creation cannot bypass parked dependency policy".to_owned(),
                 project: Some("board.test".to_owned()),

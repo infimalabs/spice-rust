@@ -64,6 +64,13 @@ pub struct TaskAdd {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntent>,
+    /// Existing Plan or Design context this Plan prepares within.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation: Option<TaskHandle>,
     /// Whether creation must atomically place the caller's lane in possession.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,

@@ -720,6 +720,13 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntent>,
+    /// Explicit native preparation context, separate from scheduling.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation: Option<crate::TaskPreparation>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
@@ -741,6 +748,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
+            preparation: statement.preparation.clone(),
             provenance: statement.provenance.clone(),
             creation: statement.creation.clone(),
             revision: statement.revision,
@@ -767,6 +775,7 @@ impl BoardStatement {
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),
             intent: self.intent,
+            preparation: self.preparation.clone(),
             provenance: self.provenance.clone(),
             creation: self.creation.clone(),
             revision: self.revision,

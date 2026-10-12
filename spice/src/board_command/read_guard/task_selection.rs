@@ -143,6 +143,24 @@ fn context_tasks(
         }));
     }
     if dependencies {
+        let construction_owners = selected
+            .iter()
+            .filter_map(|task| {
+                observed
+                    .tasks()
+                    .binary_search_by(|heads| heads.statement().body().born.cmp(task))
+                    .ok()
+                    .and_then(|index| {
+                        observed.tasks()[index]
+                            .statement()
+                            .body()
+                            .preparation
+                            .as_ref()
+                    })
+                    .map(|preparation| preparation.construction.clone())
+            })
+            .collect::<Vec<_>>();
+        selected.extend(construction_owners);
         let selected_plans = selected
             .iter()
             .filter(|task| {
@@ -153,7 +171,11 @@ fn context_tasks(
                     .is_some_and(|index| {
                         let heads = &observed.tasks()[index];
                         heads.workflow().body().status == "pending"
-                            && heads.workflow().body().phase.as_str() == "plan"
+                            && (heads.workflow().body().phase.as_str() == "plan"
+                                || planning::requires_construction(
+                                    heads.statement().body().intent,
+                                    &heads.workflow().body().flow,
+                                ))
                     })
             })
             .cloned()
@@ -164,8 +186,10 @@ fn context_tasks(
                     .tasks()
                     .iter()
                     .filter(|child| {
-                        child.workflow().body().status == "pending"
-                            && substantive_acceptance(&child.statement().body().acceptance)
+                        matches!(
+                            child.workflow().body().status.as_str(),
+                            "pending" | "completed"
+                        ) && substantive_acceptance(&child.statement().body().acceptance)
                             && child
                                 .statement()
                                 .body()
@@ -184,6 +208,17 @@ fn context_tasks(
                 .tasks()
                 .binary_search_by(|heads| heads.statement().body().born.cmp(&task))
             {
+                if let Some(preparation) = &observed.tasks()[index].statement().body().preparation {
+                    for context in [
+                        &preparation.parent,
+                        &preparation.controller,
+                        &preparation.construction,
+                    ] {
+                        if selected.insert(context.clone()) {
+                            pending.push(context.clone());
+                        }
+                    }
+                }
                 for dependency in &observed.tasks()[index].statement().body().dependencies {
                     if selected.insert(dependency.clone()) {
                         pending.push(dependency.clone());

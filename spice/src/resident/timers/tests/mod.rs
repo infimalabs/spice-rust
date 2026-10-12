@@ -440,7 +440,7 @@ fn finite_task_deferral_wakes_at_its_live_deadline() {
         .expect("woken task remains valid");
     assert!(
         board::eligible_entry(
-            &board::satisfied_tasks(std::slice::from_ref(&entry)),
+            &board::resolved_tasks(std::slice::from_ref(&entry)),
             &entry,
             &Actor::Lane(uuid(49)),
             &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),
@@ -1061,6 +1061,7 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: authority.born(),
                 title: "Capture commit after lapse".to_owned(),
@@ -1138,6 +1139,7 @@ fn attach_heads(
     let statement_task = authority.born();
     let statement_phase = phase.clone();
     write.task_head(added, move |position| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_task,
         queue_origin: position,
@@ -1255,7 +1257,7 @@ fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
         .expect("lapsed task remains valid");
     assert!(
         board::eligible_entry(
-            &board::satisfied_tasks(std::slice::from_ref(&entry)),
+            &board::resolved_tasks(std::slice::from_ref(&entry)),
             &entry,
             &Actor::Lane(fixture.authority.lane),
             &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),

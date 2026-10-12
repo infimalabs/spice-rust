@@ -6,7 +6,7 @@
 //! row is ranked by one standing law so the posture and a family page agree,
 //! and every partial page names the exact command that continues it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 use wire::output::{Admission, Bounded, ClippedText, Export, Limits, Request, Resume, Surface};
@@ -351,7 +351,7 @@ pub(in crate::board_command) struct Standings {
 
 impl Standings {
     fn measure(board: &BoardAnswer, entries: &[Entry]) -> Self {
-        let satisfied = board::satisfied_tasks(entries);
+        let satisfied = board::resolved_tasks(entries);
         let environment = board.environment();
         let standing = entries
             .iter()
@@ -404,7 +404,7 @@ fn standing(
     entry: &Entry,
     principal: &Actor,
     environment: &wire::Environment,
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &board::ResolvedTasks,
 ) -> Standing {
     let workflow = entry.workflow();
     if workflow.status != "pending" || workflow.completion.is_some() {
@@ -418,12 +418,7 @@ fn standing(
     }
     if workflow.deferral.is_some() {
         Standing::Waiting
-    } else if entry
-        .statement()
-        .dependencies
-        .iter()
-        .any(|dependency| !satisfied.contains(dependency))
-    {
+    } else if !board::dependencies_satisfied(entry, satisfied) {
         Standing::Blocked
     } else if workflow.phase.as_str() == "review" {
         Standing::Review

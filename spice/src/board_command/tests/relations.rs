@@ -44,6 +44,7 @@ fn related_task(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, name: &str
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Project typed task relationships".to_owned(),
             project: Some("board.relations".to_owned()),

@@ -133,6 +133,7 @@ fn explicit_release_clears_possession_and_ranks_the_row_last_for_that_lane() {
 
 fn drain_add(title: &str, origin: &wire::Origin) -> TaskAdd {
     TaskAdd {
+        preparation: None,
         title: title.to_owned(),
         project: Some("board.test".to_owned()),
         description: None,

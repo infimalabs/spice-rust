@@ -460,6 +460,7 @@ fn shape_case_418_inserts_plan_without_review_for_bare_review_followup() {
             then: vec![ReviewFollowup {
                 task: followup_stamp,
                 add: TaskAdd {
+                    preparation: None,
                     intent: None,
                     title: "Shape 418 bare follow-up".to_owned(),
                     project: Some("board.test".to_owned()),

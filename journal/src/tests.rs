@@ -858,6 +858,7 @@ fn insert_receipt(journal: &Journal) {
 
 fn task_head() -> TaskHead {
     TaskHead {
+        preparation: None,
         intent: None,
         born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),

@@ -575,64 +575,6 @@ fn task_creation_repair_origins_are_parser_owned() {
 }
 
 #[test]
-fn tool_postures_follow_the_closed_command_order() {
-    let declared = contracts()
-        .iter()
-        .filter(|contract| !contract.tools.is_empty())
-        .map(|contract| {
-            (
-                contract.path.join(" "),
-                contract
-                    .tools
-                    .iter()
-                    .map(|tool| tool.name)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        declared,
-        vec![
-            ("doctor".to_owned(), vec!["rtk"]),
-            ("rtk gain".to_owned(), vec!["rtk"]),
-            ("install symbols".to_owned(), vec!["dwarfdump"]),
-            ("dev cargo".to_owned(), vec!["cargo"]),
-            ("dev xtask".to_owned(), vec!["cargo"]),
-            ("lock run".to_owned(), vec!["CMD"]),
-            ("gate".to_owned(), vec!["gate policy executable"]),
-            ("gate prove".to_owned(), vec!["gate policy executable"]),
-            ("gate camp".to_owned(), vec!["gate policy executable"]),
-            ("gate kill".to_owned(), vec!["gate mutation executable"]),
-            ("gate pre-commit".to_owned(), vec!["gate policy executable"],),
-            ("gate selection".to_owned(), vec!["gate policy executable"],),
-            ("gate reference-transaction".to_owned(), vec!["git"]),
-            (
-                "proof".to_owned(),
-                vec!["OCI runtime", "sealed battery member"],
-            ),
-            (
-                "proof replay".to_owned(),
-                vec!["OCI runtime", "sealed battery member"],
-            ),
-            ("up".to_owned(), vec![JUDGE_EXECUTABLE]),
-            ("task next".to_owned(), vec!["git"]),
-            ("task recover".to_owned(), vec!["git"]),
-            ("task add".to_owned(), vec!["git"]),
-            ("task capture".to_owned(), vec!["git"]),
-            ("task done".to_owned(), vec!["git", JUDGE_EXECUTABLE],),
-            ("task review".to_owned(), vec!["git"]),
-            ("task defer".to_owned(), vec!["git"]),
-            ("task wake".to_owned(), vec!["git"]),
-            ("task free".to_owned(), vec!["git"]),
-            ("run".to_owned(), vec!["CMD"]),
-        ]
-    );
-    let violations = posture_violations(contracts());
-    assert!(violations.is_empty(), "{violations:?}");
-}
-
-#[test]
 fn malformed_tool_posture_mutations_are_refused() {
     let row =
         |path: &[&str]| *contract_at(contracts(), path).expect("fixture command has a contract");

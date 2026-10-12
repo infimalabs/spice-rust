@@ -1170,13 +1170,12 @@ fn rebuild_allocation_index(
         prior = Some(task.clone());
         match task_standing(heads) {
             DependencyStanding::Open => {
-                add_dependencies(
-                    &mut references,
-                    heads.statement().body().dependencies.iter(),
-                );
+                add_dependencies(&mut references, allocation_references(heads));
                 frontier.push(heads.clone());
             }
-            DependencyStanding::Completed | DependencyStanding::Deleted => {
+            DependencyStanding::Completed
+            | DependencyStanding::Closed
+            | DependencyStanding::Deleted => {
                 if actively_claimed(heads) {
                     faults.push(AllocationFault::ActiveTerminal { task });
                 }
@@ -1242,29 +1241,24 @@ fn advance_allocation_index(
         if let Ok(index) = frontier.binary_search_by(|kept| kept.statement().body().born.cmp(&task))
         {
             let old = frontier.remove(index);
-            remove_dependencies(
-                &mut references,
-                &mut standing,
-                old.statement().body().dependencies.iter(),
-            );
+            remove_dependencies(&mut references, &mut standing, allocation_references(&old));
         }
         match task_standing(heads) {
             DependencyStanding::Open => {
-                for dependency in &heads.statement().body().dependencies {
+                for dependency in allocation_references(heads) {
                     if references.get(dependency).copied().unwrap_or(0) == 0 {
                         resolve.insert(dependency.clone());
                     }
                 }
-                add_dependencies(
-                    &mut references,
-                    heads.statement().body().dependencies.iter(),
-                );
+                add_dependencies(&mut references, allocation_references(heads));
                 let index = frontier
                     .binary_search_by(|kept| kept.statement().body().born.cmp(&task))
                     .unwrap_or_else(|index| index);
                 frontier.insert(index, heads.clone());
             }
-            DependencyStanding::Completed | DependencyStanding::Deleted => {
+            DependencyStanding::Completed
+            | DependencyStanding::Closed
+            | DependencyStanding::Deleted => {
                 if actively_claimed(heads) {
                     faults.push(AllocationFault::ActiveTerminal { task: task.clone() });
                 }
@@ -1302,6 +1296,18 @@ fn advance_allocation_index(
     })
 }
 
+fn allocation_references(
+    heads: &journal::TaskHeads,
+) -> impl Iterator<Item = &journal::crossing::TaskStamp> {
+    let statement = heads.statement().body();
+    statement.dependencies.iter().chain(
+        statement
+            .preparation
+            .iter()
+            .flat_map(|preparation| [&preparation.parent, &preparation.controller]),
+    )
+}
+
 fn add_dependencies<'a>(
     references: &mut HashMap<journal::crossing::TaskStamp, usize>,
     dependencies: impl Iterator<Item = &'a journal::crossing::TaskStamp>,
@@ -1330,6 +1336,7 @@ fn remove_dependencies<'a>(
 
 fn task_standing(heads: &journal::TaskHeads) -> DependencyStanding {
     match heads.workflow().body().status.as_str() {
+        "completed" if heads.workflow().body().review == "closed" => DependencyStanding::Closed,
         "completed" => DependencyStanding::Completed,
         "deleted" => DependencyStanding::Deleted,
         _ => DependencyStanding::Open,

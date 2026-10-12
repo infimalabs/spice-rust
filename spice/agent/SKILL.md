@@ -145,17 +145,18 @@ command for more.
   and task state, and do not bypass `session::context-live-session-self` by
   opening that transcript. If the description no longer matches repository or
   operator state, update, split, or release the task rather than force it.
-- A task added while this lane holds a plan claim automatically depends on
-  that plan, so it cannot start until planning completes, when its origin is
-  the plan (the default with no `--origin`) or the plan's own origin. Any
-  other origin, such as an operator interjection's `ack:` key, boards
-  unrelated work with no edge to the plan. Explicit
-  `task add --depends` supplies the new task's complete prerequisite list
-  and suppresses the implicit gate; include the plan to retain that gate.
-  Connect an acceptance-bearing child with
-  `spice task depends CHILD PLAN` when needed. Never add the reciprocal
-  plan-to-child edge: that would create a cycle. Complete the plan only
-  after its acceptance-bearing children are connected.
+- `task plan` defaults to `plan,review`; `task design` to `design,review`.
+  Declared purpose survives phases and corrections and cannot be cleared or
+  reinterpreted as execution. A Plan must construct an acceptance-bearing
+  output; its own acceptance does not replace that duty. Ordinary done cannot
+  supply a required review verdict or skip later declared phases.
+- Ordinary task creation without another `--origin` under an ambient planning
+  controller binds to it and waits for its planning/review boundary. Origin
+  alone never creates a dependency. Use `--preparation HANDLE` for explicit
+  association; an associated preparation Plan may run while its Design is
+  unfinished. Explicit `--depends` adds prerequisites without removing the
+  admitted controller gate. Never add a reciprocal controller-to-output edge.
+  Operator closure stops the controller without authorizing its outputs.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

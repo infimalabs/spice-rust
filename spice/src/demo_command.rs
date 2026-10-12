@@ -655,6 +655,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: born.clone(),
                 title: DEMO_TITLE.to_owned(),
@@ -679,6 +680,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let workflow_task = born.clone();
     let workflow_phase = phase.clone();
     write.task_head(added, move |revision| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_task,
         queue_origin: revision,
