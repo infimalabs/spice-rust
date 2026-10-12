@@ -76,6 +76,8 @@ mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod retro_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod room_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod rtk_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_meter;
@@ -434,6 +436,7 @@ impl NativeInvocation<'_> {
                 &task_artifact_command::run(leaf, contract, configuration),
                 form,
             ),
+            ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
             ["backup"] => deliver(&journal_command::backup(leaf), form),
             ["restore"] => deliver(&restore_command::restore(leaf), form),
             ["journal"] => deliver_display(&journal_command::report(leaf, contract), form),

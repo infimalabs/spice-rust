@@ -228,6 +228,10 @@ pub enum RoomSourceUnavailable {
     Missing {},
     /// The authority exists but is outside the caller's visibility.
     Hidden {},
+    /// The authority exists but no longer holds the linked bytes.
+    Changed {},
+    /// The authority exists but cannot be read or decoded now.
+    Unreadable {},
     /// Retained bytes belong to a shape this release cannot decode.
     UnsupportedRetained {
         /// Release that owns the unsupported retained representation.
@@ -289,6 +293,11 @@ pub struct RoomMessaged {
     pub publication: RoomAuthorityStamp,
     /// The packet's exact body bytes in its author's transcript.
     pub hunk: TranscriptHunk,
+    /// Occupant whose captured transcript authored the packet.
+    pub author: CanonicalUuid,
+    /// Directives this packet's `A#room` routes opened in the same write, in
+    /// route order; empty for a room-only packet.
+    pub directed: Vec<CanonicalUuid>,
 }
 
 /// Native room-only publication command body.

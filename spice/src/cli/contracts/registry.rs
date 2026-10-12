@@ -475,6 +475,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "room::post"
     ),
+    row!(
+        ["room", "history"],
+        "room history HANDLE [--limit N] [--max-bytes N] [--after PUBLICATION] [--export FILE]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "room::history"
+    ),
     operator!(
         ["group", "list"],
         "group list [--after GROUP] [--limit N]",

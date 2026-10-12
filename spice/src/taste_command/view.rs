@@ -277,7 +277,7 @@ impl fmt::Display for TasteEvent {
                 "{} {} fire {} {} key={} lane={} compaction={} {}",
                 fire.position,
                 fire.at,
-                disposition_label(fire.standing),
+                fire.standing.as_str(),
                 fire.vendor,
                 fire.key,
                 fire.lane,
@@ -296,16 +296,5 @@ impl fmt::Display for TasteEvent {
                 judgment.locus,
             ),
         }
-    }
-}
-
-const fn disposition_label(disposition: Disposition) -> &'static str {
-    match disposition {
-        Disposition::Live => "live",
-        Disposition::Acked => "acked",
-        Disposition::Declined => "declined",
-        Disposition::Lapsed => "lapsed",
-        Disposition::DeadLettered => "deadlettered",
-        Disposition::Canceled => "canceled",
     }
 }

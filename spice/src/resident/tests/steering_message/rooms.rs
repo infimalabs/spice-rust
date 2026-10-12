@@ -5,7 +5,7 @@ use super::*;
 
 impl Lanes {
     /// Seed one task an MSG context can name as its room.
-    fn room(&self, stamp: &str) -> wire::TaskHandle {
+    pub(super) fn room(&self, stamp: &str) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
         let phase: wire::Phase = "todo".parse().expect("fixture phase");
         let creation = wire::body::TaskCreationContext::unavailable(
@@ -69,7 +69,7 @@ impl Lanes {
     }
 
     /// Account every record now on a lane's tape, as its sweep would.
-    fn account(&self, lane: u8) {
+    pub(super) fn account(&self, lane: u8) {
         let (source, records) = self.records(lane);
         let last = records.last().expect("the tape has records").locus;
         let head = wire::TranscriptSourceHead {

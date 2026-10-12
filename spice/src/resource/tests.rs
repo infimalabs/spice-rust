@@ -57,6 +57,10 @@ fn each_resource_runs_exactly_its_cli_read() {
             "task artifact show TASK-dVlFq9qKp a1 --offset 4096 --bytes 10",
         ),
         (
+            "spice://task/TASK-dVlFq9qKp/room?limit=2",
+            "room history TASK-dVlFq9qKp --limit 2",
+        ),
+        (
             "spice://task/TASK-dVlFq9qKp/ledger?max-bytes=900",
             "doc ledger TASK-dVlFq9qKp --max-bytes 900",
         ),
@@ -356,7 +360,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
 
 #[test]
 fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
-    let commands: [&[&str]; 7] = [
+    let commands: [&[&str]; 8] = [
         &[
             "task",
             "show",
@@ -402,6 +406,17 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
         ],
         &[
             "task", "artifact", "show", HANDLE, "a1", "--offset", "4096", "--bytes", "10",
+        ],
+        &[
+            "room",
+            "history",
+            HANDLE,
+            "--limit",
+            "2",
+            "--after",
+            "dVsJd2J43",
+            "--max-bytes",
+            "8192",
         ],
         &[
             "session",
