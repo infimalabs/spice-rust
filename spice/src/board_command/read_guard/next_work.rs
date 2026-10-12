@@ -125,7 +125,7 @@ pub(super) fn read_next_work(
 
 type FrontierProjection<'a> = (
     Vec<Entry>,
-    std::collections::BTreeSet<wire::TaskStamp>,
+    board::ResolvedTasks,
     Vec<String>,
     Vec<&'a journal::TaskHeads>,
     bus::AllocationWork,
@@ -139,7 +139,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
     let allocation = observed.allocation_read();
     let frontier = allocation.frontier();
     let mut entries = Vec::with_capacity(frontier.len());
-    let mut satisfied = std::collections::BTreeSet::new();
+    let mut satisfied = board::ResolvedTasks::new();
     let mut origin_threads = Vec::with_capacity(frontier.len());
     let mut frontier_heads = Vec::with_capacity(frontier.len());
     let mut prior = None;
@@ -164,12 +164,20 @@ pub(in crate::board_command) fn project_frontier<'a>(
             ));
         }
         prior = Some(statement.born.clone());
-        for dependency in &statement.dependencies {
-            if allocation
-                .dependency_standing(dependency)
-                .is_some_and(bus::DependencyStanding::is_settled)
+        let references = statement.dependencies.iter().chain(
+            statement
+                .preparation
+                .iter()
+                .flat_map(|preparation| [&preparation.parent, &preparation.controller]),
+        );
+        for dependency in references {
+            if let Some(standing) = allocation.dependency_standing(dependency)
+                && standing.is_settled()
             {
-                satisfied.insert(dependency.clone());
+                satisfied.insert(
+                    dependency.clone(),
+                    standing == bus::DependencyStanding::Completed,
+                );
             }
         }
         let explicit_release = heads.claim().is_some_and(|claim| {
@@ -225,7 +233,7 @@ fn next_task(heads: &journal::TaskHeads) -> NextWorkTask {
 
 fn dry_counts(
     entries: &[Entry],
-    satisfied: &std::collections::BTreeSet<wire::TaskStamp>,
+    satisfied: &board::ResolvedTasks,
     origin_threads: &[String],
     projects: &ProjectPolicy,
     route: &wire::intent::BoardActorRoute,
@@ -257,12 +265,7 @@ fn dry_counts(
             Some(ClaimDisposition::Lapsed) => counts.stale += 1,
             _ => {}
         }
-        if entry
-            .statement()
-            .dependencies
-            .iter()
-            .any(|dependency| !satisfied.contains(dependency))
-        {
+        if !board::dependencies_satisfied(entry, satisfied) {
             counts.blocked += 1;
         }
         if entry.workflow().deferral.is_some() {

@@ -17,7 +17,7 @@ pub(super) fn selected_ready(
     let environment = snapshot
         .environment()
         .with_appliance(appliance.product.clone());
-    let satisfied = board::satisfied_tasks(entries);
+    let satisfied = board::resolved_tasks(entries);
     let selected = board::select_with_satisfied_at(
         entries,
         actor,

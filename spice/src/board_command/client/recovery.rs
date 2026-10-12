@@ -206,7 +206,8 @@ pub(in crate::board_command) fn recovery_preflight(
         .iter()
         .find(|entry| entry.born() == &heads.statement.body.born)
         .expect("actor entries retain every board task");
-    let satisfied = board::satisfied_tasks(&entries);
+    planning::admit_capture(entry)?;
+    let satisfied = board::resolved_tasks(&entries);
     if !board::eligible_entry(&satisfied, entry, &board.principal, &board.environment()) {
         return Err(refusal(
             "git::recovery-task-ineligible",

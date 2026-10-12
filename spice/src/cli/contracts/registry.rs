@@ -534,7 +534,35 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] \
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] [--preparation HANDLE] \
+         [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
+         [--origin ORIGIN] [--claim] [--recover]",
+        OperatorOrLane,
+        Command,
+        [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::task_add"
+    ),
+    row!(
+        ["task", "plan"],
+        "task plan TITLE [--project PROJECT] [--description DESCRIPTION] \
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
+         [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
+         [--origin ORIGIN] [--claim] [--recover]",
+        OperatorOrLane,
+        Command,
+        [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::task_add"
+    ),
+    row!(
+        ["task", "design"],
+        "task design TITLE [--project PROJECT] [--description DESCRIPTION] \
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
          [--origin ORIGIN] [--claim] [--recover]",
         OperatorOrLane,

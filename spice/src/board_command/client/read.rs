@@ -402,6 +402,16 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
     ];
+    if let Some(preparation) = &statement.preparation {
+        lines.extend([
+            format!("preparation {}", stamp_name(board, &preparation.parent)),
+            format!("controller {}", stamp_name(board, &preparation.controller)),
+            format!(
+                "construction {}",
+                stamp_name(board, &preparation.construction)
+            ),
+        ]);
+    }
     if has_taste_review(&statement.tags) {
         lines.push("taste_review required".to_owned());
     }
@@ -1039,11 +1049,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "phase_guidance:".to_owned(),
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
-            "  Create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\"; a child whose origin is this plan (the default) or this plan's own origin automatically depends on this plan and cannot start until the plan completes. Any other --origin creates unrelated work with no edge to this plan."
+            "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and waits for planning/review; --preparation HANDLE associates it explicitly. Origin alone never creates an edge."
                 .to_owned(),
-            format!(
-                "  Explicit --depends replaces the child's prerequisite list; include {handle} to retain the plan gate. Do not add a reciprocal plan-to-child edge."
-            ),
+            "  Explicit --depends adds prerequisites; it does not remove an admitted controller gate. Do not add a reciprocal plan-to-output edge."
+                .to_owned(),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
             format!(
@@ -1055,12 +1064,10 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "phase_guidance:".to_owned(),
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
-        format!(
-            "  Add acceptance with spice task modify {handle} --acceptance \"...\"; or create an accepted child with spice task add \"...\" --project PROJECT --acceptance \"...\", which automatically depends on this plan and waits for its completion when its origin is this plan (the default) or this plan's own origin. Any other --origin creates unrelated work with no edge to this plan."
-        ),
-        format!(
-            "  Explicit --depends names the child's complete prerequisite list and suppresses the implicit gate; include {handle} to retain that gate. Do not add a reciprocal plan-to-child edge."
-        ),
+        "  A declared Plan must construct an accepted output even when it has its own acceptance. An ordinary execution task's plan bookend may instead establish acceptance on that task."
+            .to_owned(),
+        "  Ordinary output creation without an explicit origin associates with the ambient controller. Use --preparation HANDLE for explicit association; a preparation Plan may run while its Design is unfinished. Origin alone does not schedule work."
+            .to_owned(),
         "  Planning changes board state, not repository files; do not edit or commit implementation."
             .to_owned(),
         format!(
@@ -1178,7 +1185,7 @@ pub(in crate::board_command) fn task_status(
         .count();
     // The parked split is shared with the empty-drain readout so the two
     // surfaces cannot disagree on a count.
-    let satisfied = board::satisfied_tasks(&entries);
+    let satisfied = board::resolved_tasks(&entries);
     let parked = ParkedCounts::measure(&entries, &satisfied, &rows);
     let status = environment_status(&rows, &environment);
     let ready = rows

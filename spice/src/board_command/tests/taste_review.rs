@@ -62,6 +62,7 @@ fn add_with_repository(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: title.to_owned(),
             project: Some("board.test".to_owned()),
@@ -230,6 +231,7 @@ fn compound_capture_taste_review_refuses_before_creating_task_or_claim() {
             residency(&before, seat),
         ],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Delay the captured implementation".to_owned(),
             project: Some("board.test".to_owned()),
@@ -347,6 +349,7 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
             task: authored_born,
         }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Delay the planned change".to_owned(),
             project: Some("board.test".to_owned()),

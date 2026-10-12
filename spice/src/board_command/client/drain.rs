@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde::Serialize;
 use wire::intent::TeamLife;
 
@@ -38,7 +36,7 @@ impl ParkedCounts {
     /// counted across the whole visible board, as task status does.
     pub(in crate::board_command) fn measure(
         entries: &[Entry],
-        satisfied: &BTreeSet<TaskStamp>,
+        satisfied: &board::ResolvedTasks,
         rows: &[&Entry],
     ) -> Self {
         let disposition = |entry: &&&Entry, wanted: ClaimDisposition| {
@@ -57,13 +55,7 @@ impl ParkedCounts {
                 .count(),
             blocked: rows
                 .iter()
-                .filter(|entry| {
-                    entry
-                        .statement()
-                        .dependencies
-                        .iter()
-                        .any(|dependency| !satisfied.contains(dependency))
-                })
+                .filter(|entry| !board::dependencies_satisfied(entry, satisfied))
                 .count(),
             waiting: rows
                 .iter()

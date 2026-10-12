@@ -86,6 +86,7 @@ fn add_and_claim_causal_parent(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: parent_stamp }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Materialize one steering directive".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -164,6 +165,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             task: ungrounded_stamp,
         }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Refuse synthetic team".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -209,6 +211,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             task: self_referential_stamp,
         }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Refuse a caller-authored self edge".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -262,6 +265,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: child_stamp }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Create causal child".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -423,6 +427,7 @@ fn add_task_noted_under_a_second_ask(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born.clone() }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Follow an acknowledged ask".to_owned(),
             project: Some("board.origin".to_owned()),
@@ -607,6 +612,7 @@ fn add_separate_steering_task(bus: &Bus, epoch: CanonicalUuid) -> (wire::TaskSta
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born.clone() }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: "Separate ask".to_owned(),
             project: Some("board.test".to_owned()),

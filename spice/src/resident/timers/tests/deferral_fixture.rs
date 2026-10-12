@@ -21,6 +21,7 @@ pub(super) fn seed_timer_task(
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: stamp.clone(),
                 title: format!("Timer fixture {stamp}"),
@@ -56,6 +57,7 @@ pub(super) fn seed_timer_task(
     let statement_phase = phase.clone();
     let statement_project = project.to_owned();
     write.task_head(added, move |position| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_stamp,
         queue_origin: position,

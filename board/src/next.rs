@@ -1,9 +1,14 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
+
+/// Settled prerequisites; each value records a positive rather than negative ending.
+/// Ordinary dependencies require resolution. Controlled outputs require positive
+/// completion of their immediate preparation and their controller.
+pub type ResolvedTasks = BTreeMap<TaskStamp, bool>;
 
 /// Deterministic answer from the board's sole allocation query.
 #[derive(Clone, Copy, Debug)]
@@ -80,7 +85,7 @@ pub fn select<'a>(
         band,
         recent_cell,
         environment,
-        &satisfied_tasks(entries),
+        &resolved_tasks(entries),
     )
 }
 
@@ -103,7 +108,7 @@ pub fn select_at<'a>(
         band,
         recent_cell,
         environment,
-        &satisfied_tasks(entries),
+        &resolved_tasks(entries),
         now,
     )
 }
@@ -121,7 +126,7 @@ pub fn select_with_satisfied<'a>(
     band: u64,
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
 ) -> Option<Selection<'a>> {
     let candidates = candidates(
         entries,
@@ -144,7 +149,7 @@ pub fn select_with_satisfied_at<'a>(
     band: u64,
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     now: Instant,
 ) -> Option<Selection<'a>> {
     let candidates = candidates(
@@ -216,7 +221,7 @@ fn offer_order_at_inner<'a>(
     environment: &wire::Environment,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
-    let completed = satisfied_tasks(entries);
+    let completed = resolved_tasks(entries);
     let mut remaining = candidates(
         entries,
         actor,
@@ -240,7 +245,7 @@ fn candidates<'a>(
     subscription: &TeamSubscription,
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
-    completed: &BTreeSet<TaskStamp>,
+    completed: &ResolvedTasks,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
     let graph = RankingGraph::new(entries);
@@ -525,7 +530,7 @@ fn selectable(
     entry: &Entry,
     actor: &Actor,
     subscription: &TeamSubscription,
-    completed: &BTreeSet<TaskStamp>,
+    completed: &ResolvedTasks,
     now: Option<Instant>,
 ) -> bool {
     subscription.admits_creator_team(entry.creator_team())
@@ -549,7 +554,7 @@ fn handoff_admits(entry: &Entry, actor: &Actor, now: Option<Instant>) -> bool {
     }
 }
 
-fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
+fn eligible(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     workable(entry, actor, completed) && unheld(entry)
 }
 
@@ -570,11 +575,11 @@ pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
 ///
 /// Allocation and stealing agree on all of this and disagree on possession
 /// alone, so possession is the only thing either caller states for itself.
-fn workable(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
+fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     !entry.project().visibility().is_hidden() && operational(entry, actor, completed)
 }
 
-fn operational(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
+fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
     workflow.status == "pending"
         && workflow.completion.is_none()
@@ -583,11 +588,7 @@ fn operational(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) ->
             .assignment
             .as_ref()
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
-        && entry
-            .statement()
-            .dependencies
-            .iter()
-            .all(|dependency| completed.contains(dependency))
+        && dependencies_satisfied(entry, completed)
 }
 
 /// Whether a review assignment died with the claim that carried it.
@@ -605,16 +606,34 @@ fn assignment_lapsed(entry: &Entry, assignment: &Actor) -> bool {
     })
 }
 
-fn operational_without_assignment(entry: &Entry, completed: &BTreeSet<TaskStamp>) -> bool {
+fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
     workflow.status == "pending"
         && workflow.completion.is_none()
         && workflow.deferral.is_none()
-        && entry
-            .statement()
-            .dependencies
-            .iter()
-            .all(|dependency| completed.contains(dependency))
+        && dependencies_satisfied(entry, completed)
+}
+
+/// Ordinary prerequisites may resolve negatively; planning boundaries may not.
+#[must_use]
+pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
+    entry
+        .statement()
+        .dependencies
+        .iter()
+        .all(|dependency| completed.contains_key(dependency))
+        && control_satisfied(entry, completed)
+}
+
+fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
+    let Some(preparation) = &entry.statement().preparation else {
+        return true;
+    };
+    if entry.statement().intent.is_some() || preparation.construction != *entry.born() {
+        return true;
+    }
+    completed.get(&preparation.parent) == Some(&true)
+        && completed.get(&preparation.controller) == Some(&true)
 }
 
 /// Whether no claim currently possesses the entry.
@@ -637,7 +656,7 @@ pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> 
 /// Whether one named entry satisfies the same eligibility law as allocation.
 #[must_use]
 pub fn eligible_entry(
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     entry: &Entry,
     actor: &Actor,
     environment: &wire::Environment,
@@ -652,7 +671,7 @@ pub fn eligible_entry(
 /// but promotion is still required before dependencies or completion move.
 #[must_use]
 pub fn capturable_entry(
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     entry: &Entry,
     actor: &Actor,
     environment: &wire::Environment,
@@ -666,7 +685,7 @@ pub fn capturable_entry(
 /// Whether one named entry is eligible through the team's current task scope.
 #[must_use]
 pub fn selectable_entry(
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     entry: &Entry,
     actor: &Actor,
     subscription: &TeamSubscription,
@@ -679,7 +698,7 @@ pub fn selectable_entry(
 /// [`selectable_entry`] at an explicit allocation instant.
 #[must_use]
 pub fn selectable_entry_at(
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     entry: &Entry,
     actor: &Actor,
     subscription: &TeamSubscription,
@@ -698,7 +717,7 @@ pub fn selectable_entry_at(
 #[must_use]
 pub fn blocked_handoff_until(
     entries: &[Entry],
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     actor: &Actor,
     subscription: &TeamSubscription,
     environment: &wire::Environment,
@@ -725,7 +744,7 @@ pub fn blocked_handoff_until(
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
 pub fn stealable_entry(
-    satisfied: &BTreeSet<TaskStamp>,
+    satisfied: &ResolvedTasks,
     entry: &Entry,
     _actor: &Actor,
     environment: &wire::Environment,
@@ -735,26 +754,24 @@ pub fn stealable_entry(
         && environment_satisfied(entry, environment)
 }
 
-/// Birth stamps that no longer block a dependent, stated once for every caller.
+/// Each settled task and whether its conclusion is positive.
 ///
-/// A withdrawn prerequisite belongs here beside a completed one. It will never
-/// complete, so leaving it out would let one deletion block every dependent
-/// permanently, with no move left that could clear the edge: the dependent's
-/// blocker is settled, and the operator who withdrew it is not told that
-/// anything is now stuck.
-///
-/// This is public because allocation is not the only reader. Whatever reports
-/// to the operator which tasks are blocked has to decide the same question, and
-/// deciding it separately is how one row comes to be counted ready and blocked
-/// at once: the allocator hands over work the report still calls stuck.
+/// Closing or deleting a task resolves ordinary prerequisites. Neither approves
+/// execution controlled by that task. All readiness surfaces use this same map.
 #[must_use]
-pub fn satisfied_tasks(entries: &[Entry]) -> BTreeSet<TaskStamp> {
+pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
     entries
         .iter()
         .filter(|candidate| {
             let status = candidate.workflow().status.as_str();
             status == "completed" || status == "deleted"
         })
-        .map(|candidate| candidate.born().clone())
+        .map(|candidate| {
+            (
+                candidate.born().clone(),
+                candidate.workflow().status == "completed"
+                    && candidate.workflow().review != "closed",
+            )
+        })
         .collect()
 }

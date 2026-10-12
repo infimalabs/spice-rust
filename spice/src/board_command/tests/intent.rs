@@ -17,6 +17,7 @@ fn add_declared(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            preparation: None,
             title: format!("Declared {task}"),
             project: Some("board.test".to_owned()),
             description: None,
@@ -53,7 +54,7 @@ fn declared(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<TaskIn
 }
 
 #[test]
-fn declared_intent_survives_phases_and_corrections_and_moves_only_by_its_own_edit() {
+fn declared_planning_intent_survives_phases_and_corrections_without_reinterpretation() {
     let (root, bus, epoch, seats) = fixture("task-intent-authority", 1);
     let lane = Actor::Lane(seats[0].lane);
     let task = add_declared(&bus, epoch, "INTENT-design1", Some(TaskIntent::Design));
@@ -91,14 +92,18 @@ fn declared_intent_survives_phases_and_corrections_and_moves_only_by_its_own_edi
         }),
         ..edit(&task)
     };
-    assert_committed(correct(&bus, epoch, Actor::Operator, &replan));
-    assert_eq!(declared(&bus, epoch, &task), Some(TaskIntent::Plan));
+    assert!(
+        matches!(correct(&bus, epoch, Actor::Operator, &replan), Outcome::Refusal(refusal) if refusal.reason() == "task::planning-intent-stable")
+    );
+    assert_eq!(declared(&bus, epoch, &task), Some(TaskIntent::Design));
     let withdraw = TaskEdit {
         intent: Some(TaskIntentEdit::Clear {}),
         ..edit(&task)
     };
-    assert_committed(correct(&bus, epoch, Actor::Operator, &withdraw));
-    assert_eq!(declared(&bus, epoch, &task), None);
+    assert!(
+        matches!(correct(&bus, epoch, Actor::Operator, &withdraw), Outcome::Refusal(refusal) if refusal.reason() == "task::planning-intent-stable")
+    );
+    assert_eq!(declared(&bus, epoch, &task), Some(TaskIntent::Design));
     assert_eq!(declared(&bus, epoch, &other), None);
 
     // Verification folds the admitted intent facts against every head.

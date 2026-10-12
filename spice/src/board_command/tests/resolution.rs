@@ -251,6 +251,7 @@ pub(super) fn complete_review_with_finding(
             then: vec![ReviewFollowup {
                 task: tracked,
                 add: TaskAdd {
+                    preparation: None,
                     intent: None,
                     title: "Cover the negative path the review named".to_owned(),
                     project: None,
@@ -322,7 +323,7 @@ fn assert_review_pending(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
         .expect("pending review remains on the board");
     assert!(
         !board::eligible_entry(
-            &board::satisfied_tasks(&entries),
+            &board::resolved_tasks(&entries),
             entry,
             &pending.principal,
             &pending.environment()
@@ -509,6 +510,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
             then: vec![ReviewFollowup {
                 task: created_stamp,
                 add: TaskAdd {
+                    preparation: None,
                     intent: None,
                     title: "Create the missing review fixture".to_owned(),
                     project: Some("board.test".to_owned()),
@@ -707,6 +709,7 @@ fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
             then: vec![ReviewFollowup {
                 task: followup_stamp,
                 add: TaskAdd {
+                    preparation: None,
                     intent: None,
                     title: "Correct the reviewed prerequisite".to_owned(),
                     project: Some("board.test".to_owned()),
@@ -780,7 +783,7 @@ fn assert_finding_blocks(
             .expect("blocked entry is visible");
         assert!(
             !board::eligible_entry(
-                &board::satisfied_tasks(&entries),
+                &board::resolved_tasks(&entries),
                 entry,
                 implementer,
                 &blocked.environment()
@@ -812,7 +815,7 @@ fn complete_correction_and_clean(
         .find(|entry| entry.handle() == reviewed)
         .expect("reviewed entry remains visible");
     assert!(board::eligible_entry(
-        &board::satisfied_tasks(&entries),
+        &board::resolved_tasks(&entries),
         reviewed_entry,
         reviewer,
         &reviewable.environment()
@@ -860,7 +863,7 @@ fn complete_correction_and_clean(
         .find(|entry| entry.handle() == downstream)
         .expect("downstream entry remains visible");
     assert!(board::eligible_entry(
-        &board::satisfied_tasks(&entries),
+        &board::resolved_tasks(&entries),
         downstream_entry,
         implementer,
         &released.environment(),
@@ -969,6 +972,7 @@ fn add_raw_task(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: title.to_owned(),
             project: Some("board.test".to_owned()),

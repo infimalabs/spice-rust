@@ -97,6 +97,7 @@ fn admitted(
 fn statement(name: &str) -> TaskHead {
     let born = stamp(name);
     TaskHead {
+        preparation: None,
         intent: None,
         born: born.clone(),
         queue_origin: seq(1),
@@ -193,6 +194,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
     let fact = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: task.clone(),
                 title: statement.title.clone(),
@@ -609,7 +611,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
     let entries = vec![hidden_sandbox, hidden_oops, public, hidden_maxim];
     let public_handle = entries[2].handle().clone();
-    let satisfied = board::satisfied_tasks(&entries);
+    let satisfied = board::resolved_tasks(&entries);
 
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
@@ -680,7 +682,7 @@ fn stealing_waives_possession_alone_and_waits_on_no_lease() {
     let [held, free, blocked, sleeping] = &entries[..] else {
         panic!("four possession fixtures");
     };
-    let satisfied = board::satisfied_tasks(&entries);
+    let satisfied = board::resolved_tasks(&entries);
 
     // lease() runs to 06:10 and is nowhere near spent here.
     assert!(!board::eligible_entry(
@@ -739,7 +741,7 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
     let blocked = admitted(blocked_head, workflow("todo"), None, None).expect("blocked entry");
     let ordinary = entry("BOARD-environment-ready");
     let entries = vec![blocked.clone(), ordinary.clone()];
-    let satisfied = board::satisfied_tasks(&entries);
+    let satisfied = board::resolved_tasks(&entries);
 
     let observed_before =
         wire::Environment::journal_schema(current_schema).expect("current schema is positive");
@@ -801,7 +803,7 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
     );
     let entry = admitted(head, workflow("todo"), None, None).expect("trust-gated entry");
     let entries = vec![entry.clone()];
-    let satisfied = board::satisfied_tasks(&entries);
+    let satisfied = board::resolved_tasks(&entries);
     let observed = |state, worktree: Option<&str>| {
         environment().with_trust_heads([wire::TrustHead {
             digest: digest.clone(),
@@ -993,7 +995,7 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
     let reference = select(&full, &Actor::Spice, &all_projects(), 2)
         .expect("both terminal forms satisfy dependency edges");
 
-    let settled = BTreeSet::from([completed_stamp, deleted_stamp]);
+    let settled = board::ResolvedTasks::from([(completed_stamp, true), (deleted_stamp, false)]);
     let frontier = [ready.clone()];
     let indexed = board::select_with_satisfied(
         &frontier,

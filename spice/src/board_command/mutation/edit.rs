@@ -184,6 +184,13 @@ fn corrected_statement(
         statement.requirements = requirements.requirements();
     }
     if let Some(intent) = edit.intent {
+        if statement.intent != intent.intent() && statement.intent.is_some() {
+            return Err(refusal(
+                "task::planning-intent-stable",
+                Some(entry.handle().to_string()),
+                "retain the declared planning purpose through construction and review",
+            ));
+        }
         statement.intent = intent.intent();
     }
     if let Some(priority) = &edit.priority {

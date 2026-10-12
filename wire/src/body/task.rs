@@ -175,6 +175,13 @@ pub struct TaskAdded {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntent>,
+    /// Preparation association admitted atomically with this task.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation: Option<crate::TaskPreparation>,
     /// Ordered phases the workflow head will walk.
     pub flow: Vec<Phase>,
     /// Phase the initial workflow head sits in.

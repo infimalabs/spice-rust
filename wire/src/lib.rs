@@ -94,8 +94,8 @@ pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
     ResidencyHead, ResidentState, SteeringHead, TapeLocus, TaskHead, TaskIntent, TaskIntentEdit,
-    TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
-    WitnessClass, WitnessHead, WorkflowHead,
+    TaskPreparation, TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
+    TrustState, WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

@@ -45,12 +45,31 @@ pub(super) fn client_add(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let intent = match super::declared_intent(matches) {
-        Ok(intent) => intent,
-        Err(outcome) => return outcome,
+    let intent = match contract.path {
+        ["task", "plan"] => Some(wire::TaskIntent::Plan),
+        ["task", "design"] => Some(wire::TaskIntent::Design),
+        _ => match super::declared_intent(matches) {
+            Ok(intent) => intent,
+            Err(outcome) => return outcome,
+        },
+    };
+    let preparation = match matches
+        .get_one::<String>("preparation")
+        .map(|written| written.parse::<TaskHandle>())
+        .transpose()
+    {
+        Ok(preparation) => preparation,
+        Err(error) => return refusal("task::preparation-invalid", None, &error.to_string()),
     };
     let claim = matches.get_flag("claim");
     let recover = matches.get_flag("recover");
+    if recover && intent.is_some() {
+        return refusal(
+            "task::capture-planning",
+            None,
+            "captured implementation cannot become a declared planning task",
+        );
+    }
     if claim && recover {
         return refusal(
             "git::recovery-claim-conflict",
@@ -59,6 +78,7 @@ pub(super) fn client_add(
         );
     }
     let body = TaskAdd {
+        preparation,
         intent,
         title,
         project,
@@ -194,6 +214,7 @@ fn capture_new_task(
         repository,
         add_contract,
         TaskAdd {
+            preparation: None,
             intent: None,
             title,
             project: Some(project),
@@ -313,7 +334,7 @@ fn submit_task_add_with_rule(
         |board| {
             let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
             let mut expected = vec![Witness::Absence { task: stamp }];
-            append_ambient_plan_witnesses(&board, &body, &mut expected)?;
+            append_preparation_witnesses(&board, &body, &mut expected)?;
             if body.claim {
                 let (lane, occupant) = actor_seat(&board)?;
                 expected.push(Witness::Eligibility {
@@ -331,27 +352,19 @@ fn submit_task_add_with_rule(
     attach_steering_origin_artifacts(repository, steering_origin.as_ref(), outcome)
 }
 
-pub(in crate::board_command) fn append_ambient_plan_witnesses(
+pub(in crate::board_command) fn append_preparation_witnesses(
     board: &BoardAnswer,
     add: &TaskAdd,
     expected: &mut Vec<Witness>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if !add.depends.is_empty() || !matches!(board.principal, Actor::Lane(_)) {
-        return Ok(());
-    }
-    match claim_capture_from_board(board) {
-        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => {
-            let heads = named_task_heads(board, &task)?;
-            expected.push(statement_witness(heads));
-            expected.push(workflow_witness(heads));
+    if let Some(heads) = planning::preparation_parent(board, add)? {
+        expected.push(statement_witness(heads));
+        expected.push(workflow_witness(heads));
+        if add.preparation.is_none() {
             expected.push(claim_witness(heads));
-            Ok(())
         }
-        gate::ClaimCapture::Absent { reason } => {
-            Err(protocol_fault("claim::active-ambiguous", &reason))
-        }
-        _ => Ok(()),
     }
+    Ok(())
 }
 
 fn attach_steering_origin_artifacts(

@@ -619,6 +619,7 @@ mod tests {
         let fact = write
             .fact(
                 body::TaskAdded {
+                    preparation: None,
                     intent: None,
                     task: born(),
                     title: "Lapse".to_owned(),
@@ -639,6 +640,7 @@ mod tests {
             )
             .expect("task fact");
         write.task_head(fact, move |position| TaskHead {
+            preparation: None,
             intent: None,
             born: born(),
             queue_origin: position,

@@ -263,6 +263,13 @@ fn done_transition(
         ));
     }
     acknowledged(entry)?;
+    if entry.workflow().phase.as_str() == "review" {
+        return Err(refusal(
+            "task::review-required",
+            Some(entry.handle().to_string()),
+            "record an assigned native review verdict before advancing review",
+        ));
+    }
     let current = entry
         .workflow()
         .flow
@@ -290,10 +297,13 @@ fn admit_plan_transition(
     command: &wire::AdmittedCommand,
     transition: &board::Transition,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if entry.workflow().phase.as_str() != "plan" {
+    let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
+    let task = visible_task(snapshot, owner)?;
+    let construction_required =
+        planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow);
+    if !construction_required && entry.workflow().phase.as_str() != "plan" {
         return Ok(());
     }
-    let task = visible_task(snapshot, entry.born())?;
     require_expected(command, &statement_witness(task))?;
     require_expected(command, &workflow_witness(task))?;
     let completes_plan = matches!(
@@ -322,7 +332,10 @@ fn admit_plan_transition(
             ),
         ));
     }
-    if !completes_plan && substantive_acceptance(&entry.statement().acceptance) {
+    if !construction_required
+        && !completes_plan
+        && substantive_acceptance(&entry.statement().acceptance)
+    {
         return Ok(());
     }
     if let Some(child) = accepted_pending_child(snapshot, entry)? {
@@ -339,61 +352,6 @@ fn admit_plan_transition(
         "task::plan-incomplete",
         Some(entry.handle().to_string()),
         remedy,
-    ))
-}
-
-pub(super) fn accepted_pending_child<'a>(
-    snapshot: &'a ValidatedSnapshot,
-    entry: &Entry,
-) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
-    for dependency in &entry.statement().dependencies {
-        let child = visible_task(snapshot, dependency)?;
-        if pending_accepted(child) {
-            return Ok(Some(child));
-        }
-    }
-    Ok(snapshot.answer.tasks.iter().find(|child| {
-        child.statement.body.dependencies.contains(entry.born()) && pending_accepted(child)
-    }))
-}
-
-pub(super) fn pending_accepted(task: &BoardTask) -> bool {
-    task.workflow.body.status == "pending"
-        && substantive_acceptance(&task.statement.body.acceptance)
-}
-
-fn visible_task<'a>(
-    snapshot: &'a ValidatedSnapshot,
-    task: &wire::TaskStamp,
-) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
-    snapshot
-        .answer
-        .tasks
-        .iter()
-        .find(|heads| heads.statement.body.born == *task)
-        .ok_or_else(|| {
-            protocol_fault(
-                "task::snapshot-incoherent",
-                "validated board snapshot lost a task entry",
-            )
-        })
-}
-
-fn require_expected(
-    command: &wire::AdmittedCommand,
-    witness: &Witness,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if command
-        .expected()
-        .iter()
-        .any(|expected| expected == witness)
-    {
-        return Ok(());
-    }
-    Err(refusal(
-        "task::plan-witness-missing",
-        Some(format!("{witness:?}")),
-        "read the current plan task and its accepted child before closing the plan phase",
     ))
 }
 
@@ -533,11 +491,21 @@ fn admit_review<'a>(
         )
     })?;
     acknowledged(entry)?;
-    let transition = board::Transition::complete(entry, &active, at).map_err(|error| {
+    let current = entry
+        .workflow()
+        .flow
+        .iter()
+        .position(|phase| phase == &entry.workflow().phase)
+        .expect("validated workflow contains its phase");
+    let transition = match entry.workflow().flow.get(current + 1) {
+        Some(next) => board::Transition::advance(entry, &active, next.clone()),
+        None => board::Transition::complete(entry, &active, at),
+    }
+    .map_err(|error| {
         refusal(
             "review::phase-refused",
             Some(error.to_string()),
-            "review only the final assigned workflow phase",
+            "review only the currently assigned workflow phase",
         )
     })?;
     Ok((entry, transition, at, active.lane()))
@@ -689,7 +657,10 @@ fn prepare_review(
         .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
     let (verdict, finding, note) = review_verdict(review)?;
     let statement = match verdict {
-        body::Verdict::Clean => entry.statement().clone(),
+        body::Verdict::Clean => {
+            admit_plan_transition(&snapshot, entry, command, &transition)?;
+            entry.statement().clone()
+        }
         body::Verdict::Finding => {
             correction_statement(&snapshot, command, entry, review, projects)?
         }
@@ -822,12 +793,13 @@ fn commit_review(
         Ok(cause) => cause,
         Err(outcome) => return outcome,
     };
+    let status = workflow.status.clone();
     write.workflow_head(entry.born().clone(), state_cause, move |_| workflow);
     write.claim_head(entry.born().clone(), state_cause, move |fact| ClaimHead {
         fact,
         ..claim
     });
-    let answer = review_answer(entry.handle().clone(), verdict, next);
+    let answer = review_answer(entry.handle().clone(), status, next);
     if let Err(error) = write.command_result(
         request(command, review.clone()),
         command.epoch(),
@@ -919,16 +891,12 @@ fn append_review_statement(
 
 fn review_answer(
     task: TaskHandle,
-    verdict: body::Verdict,
+    status: String,
     next: Option<Box<str>>,
 ) -> wire::intent::TaskAnswer {
     wire::intent::TaskAnswer {
         task,
-        status: match verdict {
-            body::Verdict::Clean => "completed",
-            body::Verdict::Finding => "pending",
-        }
-        .to_owned(),
+        status,
         guidance: None,
         completion: None,
         learning: None,
@@ -1408,6 +1376,7 @@ fn add_doc_task(
     let added = write
         .fact(
             body::TaskAdded {
+                preparation: None,
                 intent: None,
                 task: spec.born.clone(),
                 title: spec.title.clone(),
@@ -1429,6 +1398,7 @@ fn add_doc_task(
     let statement_origin = origin.clone();
     let statement_creation = creation.context();
     write.task_head(added, move |position| TaskHead {
+        preparation: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

@@ -353,6 +353,7 @@ fn cover_task_heads() {
         "TaskHead",
         &[
             TaskHead {
+                preparation: None,
                 intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),
@@ -370,6 +371,7 @@ fn cover_task_heads() {
                 revision: seq(10),
             },
             TaskHead {
+                preparation: None,
                 intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),

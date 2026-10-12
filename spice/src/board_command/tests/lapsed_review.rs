@@ -185,7 +185,7 @@ fn a_review_still_pinned_by_a_lapsed_reviewer_is_taken_over_without_repair() {
         .expect("the pinned review is on the board");
     assert!(
         board::eligible_entry(
-            &board::satisfied_tasks(&entries),
+            &board::resolved_tasks(&entries),
             entry,
             &successor,
             &pinned.environment()

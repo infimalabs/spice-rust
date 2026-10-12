@@ -161,6 +161,7 @@ pub(super) fn task_oops_add(
         }
     };
     let normalized = TaskAdd {
+        preparation: None,
         intent: None,
         title: add.title.clone(),
         project: None,
@@ -262,7 +263,8 @@ fn create_task<B: serde::Serialize>(
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
     }
-    if let Err(outcome) = gate_ambient_plan_child(&snapshot, command, add, &mut prepared.statement)
+    if let Err(outcome) =
+        planning::admit_preparation(&snapshot, command, add, &mut prepared.statement)
     {
         return outcome;
     }
@@ -316,6 +318,11 @@ pub(super) fn task_add_roots(add: &TaskAdd) -> Vec<wire::TaskStamp> {
         });
         roots.extend(born);
     }
+    roots.extend(add.preparation.as_ref().map(|parent| {
+        parent
+            .born()
+            .expect("an admitted preparation handle carries a canonical task stamp")
+    }));
     roots
 }
 
@@ -335,73 +342,6 @@ pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
             .flat_map(|followup| task_add_roots(&followup.add)),
     );
     roots
-}
-
-/// Only direct `task add` gates its child behind the lane's ambient plan, and
-/// only a child the plan caused: one whose origin is the plan itself or the
-/// plan's own origin. Unrelated work boarded mid-planning stays unlinked; oops
-/// filing shares creation but records friction, not a planned child.
-fn gate_ambient_plan_child(
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    add: &TaskAdd,
-    child: &mut TaskHead,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if command.kind() != CommandKind::TaskAdd
-        || !add.depends.is_empty()
-        || !matches!(command.actor(), Actor::Lane(_))
-    {
-        return Ok(());
-    }
-    let task = match claim_capture_from_board(&snapshot.answer) {
-        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => task,
-        gate::ClaimCapture::Absent { reason } => {
-            return Err(protocol_fault("claim::active-ambiguous", &reason));
-        }
-        _ => return Ok(()),
-    };
-    let Some(parent) = task_entry(&snapshot.entries, &task) else {
-        return Err(refusal(
-            "task::unknown",
-            Some(task.to_string()),
-            "read the current ambient plan task before creating its child",
-        ));
-    };
-    if child.provenance != task_origin(parent.born())?
-        && child.provenance != parent.statement().provenance
-    {
-        return Ok(());
-    }
-    let heads = named_task_heads(&snapshot.answer, &task)?;
-    for witness in [
-        statement_witness(heads),
-        workflow_witness(heads),
-        claim_witness(heads),
-    ] {
-        if !command.expected().contains(&witness) {
-            return Err(refusal(
-                "task::plan-link-witness-missing",
-                Some(format!("{witness:?}")),
-                "read the current ambient plan claim before creating its child",
-            ));
-        }
-    }
-    if parent.workflow().status != "pending" || parent.workflow().phase.as_str() != "plan" {
-        return Err(refusal(
-            "task::plan-link-parent-moved",
-            Some(parent.handle().to_string()),
-            "create the child while the ambient task remains pending in plan",
-        ));
-    }
-    if parent.born() == &child.born || parent.statement().dependencies.contains(&child.born) {
-        return Err(refusal(
-            "task::dependency-refused",
-            Some(format!("{} after {}", parent.handle(), child.born)),
-            "create one new child that is not already connected to the ambient plan",
-        ));
-    }
-    child.dependencies.push(parent.born().clone());
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -456,6 +396,7 @@ where
     extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
+            preparation: prepared.statement.preparation.clone(),
             intent: prepared.statement.intent,
             task: prepared.born.clone(),
             title: add.title.clone(),
@@ -572,6 +513,7 @@ fn prepare_task(
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
+        preparation: None,
         intent: add.intent,
         born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
@@ -642,19 +584,21 @@ fn task_flow_for_dependencies(
     add: &TaskAdd,
     snapshot: &ValidatedSnapshot,
 ) -> Result<(Vec<wire::Phase>, Vec<Witness>), Outcome<CommandAnswer>> {
-    let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
-    if captures_implementation(command) {
-        let implementation = flow
-            .iter()
-            .position(|phase| phase.as_str() != "plan")
-            .ok_or_else(|| {
-                refusal(
-                    "task::capture-flow-missing",
-                    None,
-                    "captured commits require an implementation phase after planning",
-                )
-            })?;
-        flow.drain(..implementation);
+    let requested = planning::default_flow(add.intent, add.flow.as_deref());
+    let requested = if captures_implementation(command) && requested.is_none() {
+        Some("todo,review")
+    } else {
+        requested
+    };
+    let mut flow = task_flow(requested, &add.acceptance)?;
+    if captures_implementation(command)
+        && (add.intent.is_some() || matches!(flow[0].as_str(), "plan" | "design"))
+    {
+        return Err(refusal(
+            "task::capture-planning",
+            None,
+            "captured implementation cannot create or replace a planning contract",
+        ));
     }
     let dependencies = add
         .depends
@@ -668,7 +612,12 @@ fn task_flow_for_dependencies(
                 "name dependencies carrying canonical birth stamps",
             )
         })?;
-    let witnesses = derive_dependency_flow(&mut flow, add.flow.is_some(), &dependencies, snapshot);
+    let witnesses = derive_dependency_flow(
+        &mut flow,
+        add.flow.is_some() || add.intent.is_some(),
+        &dependencies,
+        snapshot,
+    );
     Ok((flow, witnesses))
 }
 

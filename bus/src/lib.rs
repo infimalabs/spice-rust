@@ -126,13 +126,14 @@ mod runtime {
     pub enum DependencyStanding {
         Open,
         Completed,
+        Closed,
         Deleted,
     }
 
     impl DependencyStanding {
         #[must_use]
         pub const fn is_settled(self) -> bool {
-            matches!(self, Self::Completed | Self::Deleted)
+            matches!(self, Self::Completed | Self::Closed | Self::Deleted)
         }
     }
 

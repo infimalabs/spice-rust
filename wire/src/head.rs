@@ -98,6 +98,22 @@ impl TaskIntentEdit {
     }
 }
 
+/// Explicit association for preparation within an existing planning context.
+///
+/// An unassociated Plan or Design owns its own controller and construction
+/// context. Corrections keep the original construction owner instead of
+/// acquiring a fresh deliverable merely by entering another phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPreparation {
+    /// Immediate planning task whose context this preparation joins.
+    pub parent: TaskStamp,
+    /// Native Plan or Design task controlling the eventual output selection.
+    pub controller: TaskStamp,
+    /// Native task whose construction contract this preparation carries.
+    pub construction: TaskStamp,
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,6 +157,13 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<TaskIntent>,
+    /// Explicit preparation context; omission declares an independent task.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation: Option<TaskPreparation>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Creation-time transcript authority, immutable across statement revisions.

@@ -26,6 +26,7 @@ use allocation_guard::*;
 mod board_view;
 mod graph_view;
 mod origin;
+mod planning;
 mod read_scope;
 mod report;
 mod task_list;
@@ -233,6 +234,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born.clone() }],
         &TaskAdd {
+            preparation: None,
             intent: None,
             title: title.to_owned(),
             project: Some("board.identity".to_owned()),

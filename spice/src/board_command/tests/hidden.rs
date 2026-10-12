@@ -463,6 +463,7 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
                 task: wire::TaskStamp::for_micros(42).expect("fixture task stamp"),
             }],
             &TaskAdd {
+                preparation: None,
                 intent: None,
                 title: "Manual hidden creation must refuse".to_owned(),
                 project: Some(project.to_owned()),

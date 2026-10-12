@@ -31,6 +31,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         statement: Positioned {
             position: seq(1),
             body: BoardStatement {
+                preparation: None,
                 intent: None,
                 handle: wire::TaskHandle::for_project(project, &born),
                 born: born.clone(),

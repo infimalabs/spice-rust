@@ -743,9 +743,13 @@ fn verify_task_intents(
     violations: &mut Vec<Violation>,
 ) -> Result<(), VerifyError> {
     let mut declared = BTreeMap::new();
+    let mut preparations = BTreeMap::new();
     for envelope in facts.values().filter_map(|record| record.envelope.as_ref()) {
         if let Some((task, intent)) = envelope.fact.declared_intent() {
             declared.insert(task.as_str(), intent);
+        }
+        if let Some((task, preparation)) = envelope.fact.task_preparation() {
+            preparations.insert(task.as_str(), preparation);
         }
     }
     let mut statement = connection
@@ -773,6 +777,31 @@ fn verify_task_intents(
                     admitted.map_or("none", wire::TaskIntent::as_str),
                 ),
             ));
+        }
+        let preparation = preparations.get(stamp.as_str()).copied().flatten();
+        if head.preparation.as_ref() != preparation {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                "preparation differs from its task birth".to_owned(),
+            ));
+        }
+        if let Some(preparation) = preparation {
+            if preparation.parent == head.born
+                || [
+                    &preparation.parent,
+                    &preparation.controller,
+                    &preparation.construction,
+                ]
+                .iter()
+                .any(|reference| !declared.contains_key(reference.as_str()))
+            {
+                violations.push(Violation::new(
+                    ViolationClass::Head,
+                    format!("task_heads:{stamp}"),
+                    "preparation references an absent task or itself as parent".to_owned(),
+                ));
+            }
         }
     }
     Ok(())

@@ -664,6 +664,19 @@ impl AnyFact {
         }
     }
 
+    /// Immutable preparation relationship admitted with this task's birth.
+    #[must_use]
+    pub fn task_preparation(
+        &self,
+    ) -> Option<(&crate::witness::TaskStamp, Option<&crate::TaskPreparation>)> {
+        match &self.decoded {
+            sealed::RegisteredBody::TaskAdded(body) => {
+                Some((&body.task, body.preparation.as_ref()))
+            }
+            _ => None,
+        }
+    }
+
     /// Task addressed by a task-content, workflow, claim, or lease fact.
     ///
     /// Unlike [`Self::mutated_task`], this includes maintenance that does not

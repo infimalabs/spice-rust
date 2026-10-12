@@ -132,6 +132,8 @@ pub(crate) use automatic_lifecycle::{
 };
 mod mutation;
 use mutation::*;
+mod planning;
+use planning::*;
 mod progress;
 use progress::*;
 mod read_guard;
