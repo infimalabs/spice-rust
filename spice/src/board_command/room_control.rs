@@ -110,7 +110,7 @@ fn dispose(
     );
     let mut answer = RoomControlAnswer {
         items: Vec::new(),
-        result: None,
+        results: Vec::new(),
         answer: None,
         returned: None,
     };
@@ -137,7 +137,7 @@ fn dispose(
         }
         if let (true, Some((record, question))) = (declines, question) {
             guard_result(&mut write, record.result(), question.position());
-            answer.result = Some(RoomResultMove {
+            answer.results.push(RoomResultMove {
                 result: record.result().clone(),
                 state: "declined".to_owned(),
             });
@@ -195,10 +195,10 @@ fn answer(
     let publication = mint_stamp(bus, context.as_ref(), micros)?;
     let mut answer = RoomControlAnswer {
         items: Vec::new(),
-        result: Some(RoomResultMove {
+        results: vec![RoomResultMove {
             result: result.clone(),
             state: "answered".to_owned(),
-        }),
+        }],
         answer: Some(publication.clone()),
         returned: Some(key),
     };
@@ -350,7 +350,7 @@ fn recover(
             item: key.clone(),
             state: "pending".to_owned(),
         }],
-        result: None,
+        results: Vec::new(),
         answer: None,
         returned: None,
     };
@@ -425,10 +425,10 @@ fn closed(
     };
     let mut answer = RoomControlAnswer {
         items: Vec::new(),
-        result: Some(RoomResultMove {
+        results: vec![RoomResultMove {
             result: result.clone(),
             state: state.to_owned(),
-        }),
+        }],
         answer: None,
         returned: None,
     };

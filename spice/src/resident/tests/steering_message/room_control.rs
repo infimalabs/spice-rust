@@ -348,8 +348,8 @@ fn closures_bind_to_stored_parties_and_attribute_overrides() {
 }
 
 /// The inbox pages every open operator item whole and resumably; an ACK
-/// settles a MSG item, a NAK of an ASK item also declines its result, and
-/// settled items leave the inbox.
+/// settles a MSG item, one NAK reports and declines every ASK result it
+/// names, and settled items leave the inbox.
 #[test]
 fn operator_items_page_and_settle_exactly() {
     let lanes = Lanes::new("control-items");
@@ -357,7 +357,8 @@ fn operator_items_page_and_settle_exactly() {
     lanes
         .say(SENDER, &format!("MSG operator#{room}: shipped"))
         .expect("the MSG publishes");
-    let question = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    let first = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    let second = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: anything else?")));
 
     let items = lanes.inbox_items(&["--limit", "1"]);
     assert_eq!(
@@ -365,7 +366,7 @@ fn operator_items_page_and_settle_exactly() {
             .iter()
             .map(|(_, verb)| verb.as_str())
             .collect::<Vec<_>>(),
-        ["msg", "ask"],
+        ["msg", "ask", "ask"],
         "single-row pages resume at exactly the withheld item"
     );
     assert_eq!(items, lanes.inbox_items(&[]));
@@ -381,11 +382,34 @@ fn operator_items_page_and_settle_exactly() {
         reason(&lanes.dispose(74, RoomReceiptDisposition::Ack, &[told.clone()], " ")),
         "room::clause-required"
     );
-    committed(&lanes.dispose(75, RoomReceiptDisposition::Nak, &[item_of(&question)], "no"));
-    assert!(matches!(
-        lanes.question(&question).1.state(),
-        QuestionResultState::Declined { .. }
-    ));
+    let declined = lanes.dispose(
+        75,
+        RoomReceiptDisposition::Nak,
+        &[item_of(&first), item_of(&second)],
+        "no",
+    );
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(_),
+        body: CommandAnswer::RoomControl(answer),
+    }) = declined
+    else {
+        panic!("both questions declined: {declined:?}");
+    };
+    assert_eq!(
+        answer
+            .results
+            .iter()
+            .map(|moved| (&moved.result, moved.state.as_str()))
+            .collect::<Vec<_>>(),
+        [(&first, "declined"), (&second, "declined")],
+        "the reply reports every result in input-item order"
+    );
+    for question in [&first, &second] {
+        assert!(matches!(
+            lanes.question(question).1.state(),
+            QuestionResultState::Declined { .. }
+        ));
+    }
     committed(&lanes.dispose(76, RoomReceiptDisposition::Ack, &[told.clone()], "seen"));
     assert!(matches!(
         lanes.item_state(&told),

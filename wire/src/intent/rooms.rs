@@ -97,9 +97,9 @@ pub struct RoomClose {
 pub struct RoomControlAnswer {
     /// Each operator item moved, with the state it moved to.
     pub items: Vec<RoomItemMove>,
-    /// The question result moved, with the state it moved to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<RoomResultMove>,
+    /// Each question result moved, in the corresponding input-item order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub results: Vec<RoomResultMove>,
     /// The answer publication an operator answer recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<RoomAuthorityStamp>,
