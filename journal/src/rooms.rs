@@ -10,6 +10,8 @@
 //!
 //! Source bytes stay with their owners: a projection row names a fact
 //! position, a task, or a canonical link, never copied conversation text.
+//! Transcript links name a nonempty span within an accounted generation
+//! boundary; a matching stream and source identity alone are not authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -140,10 +142,13 @@ pub(crate) trait Authority {
     fn task(&self, task: &TaskStamp) -> Result<Option<Option<TaskPreparation>>, Refusal>;
     /// Record a task birth or an admitted output control.
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>);
-    /// Record one accounted transcript generation.
+    /// Record the current accounted head of one logical transcript stream.
     fn account(&mut self, head: &TranscriptSourceHead);
-    /// Whether this exact transcript generation has been accounted.
-    fn accounted(&self, head: &TranscriptSourceHead) -> Result<bool, Refusal>;
+    /// Current accounted head of the linked logical transcript stream.
+    fn transcript(
+        &self,
+        head: &TranscriptSourceHead,
+    ) -> Result<Option<TranscriptSourceHead>, Refusal>;
     /// Whether this room publication already exists.
     fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal>;
     /// Whether this working group currently exists.
@@ -228,7 +233,7 @@ impl Projection {
 pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
-    transcripts: BTreeSet<(String, String)>,
+    transcripts: BTreeMap<String, TranscriptSourceHead>,
 }
 
 impl History {
@@ -259,13 +264,14 @@ impl Authority for History {
 
     fn account(&mut self, head: &TranscriptSourceHead) {
         self.transcripts
-            .insert((head.key().into_string(), head.source.to_string()));
+            .insert(head.key().into_string(), head.clone());
     }
 
-    fn accounted(&self, head: &TranscriptSourceHead) -> Result<bool, Refusal> {
-        Ok(self
-            .transcripts
-            .contains(&(head.key().into_string(), head.source.to_string())))
+    fn transcript(
+        &self,
+        head: &TranscriptSourceHead,
+    ) -> Result<Option<TranscriptSourceHead>, Refusal> {
+        Ok(self.transcripts.get(head.key().as_str()).cloned())
     }
 
     fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal> {
@@ -622,16 +628,62 @@ fn require_source(
                 ));
             }
         }
-        RoomSource::Transcript { head, .. } => {
-            if !authority.accounted(head)? {
+        RoomSource::Transcript { head, locus } => {
+            let Some(accounted) = authority.transcript(head)? else {
+                return unsound(format!(
+                    "source transcript {} generation {} is not accounted",
+                    head.key().as_str(),
+                    head.source
+                ));
+            };
+            if accounted.source != head.source {
                 return unsound(format!(
                     "source transcript {} generation {} is not accounted",
                     head.key().as_str(),
                     head.source
                 ));
             }
+            if !position_at_or_before(head.next, accounted.next) {
+                return unsound(format!(
+                    "source transcript {} boundary {}/{} exceeds accounted boundary {}/{}",
+                    head.key().as_str(),
+                    head.next.member,
+                    head.next.offset,
+                    accounted.next.member,
+                    accounted.next.offset,
+                ));
+            }
+            if !locus_within(*locus, head.next) {
+                return unsound(format!(
+                    "source transcript {} locus {}/{}/{} exceeds linked boundary {}/{}",
+                    head.key().as_str(),
+                    locus.member,
+                    locus.offset,
+                    locus.length,
+                    head.next.member,
+                    head.next.offset,
+                ));
+            }
         }
         RoomSource::Artifact { .. } => {}
     }
     Ok(())
+}
+
+fn position_at_or_before(
+    position: wire::body::TranscriptPosition,
+    boundary: wire::body::TranscriptPosition,
+) -> bool {
+    position.member < boundary.member
+        || (position.member == boundary.member && position.offset <= boundary.offset)
+}
+
+fn locus_within(locus: wire::MessageLocus, boundary: wire::body::TranscriptPosition) -> bool {
+    locus.length != 0
+        && (locus.member < boundary.member
+            || (locus.member == boundary.member
+                && locus
+                    .offset
+                    .checked_add(locus.length)
+                    .is_some_and(|end| end <= boundary.offset)))
 }

@@ -1,6 +1,6 @@
 //! Room authority as one SQLite transaction stores it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
@@ -12,7 +12,7 @@ use super::{Authority, AuthorizationRow, Change, Projection, ProposalRow, Refusa
 pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
-    transcripts: BTreeSet<(String, String)>,
+    transcripts: BTreeMap<String, TranscriptSourceHead>,
 }
 
 impl<'a> Stored<'a> {
@@ -20,7 +20,7 @@ impl<'a> Stored<'a> {
         Self {
             connection,
             tasks: BTreeMap::new(),
-            transcripts: BTreeSet::new(),
+            transcripts: BTreeMap::new(),
         }
     }
 
@@ -56,16 +56,16 @@ impl Authority for Stored<'_> {
 
     fn account(&mut self, head: &TranscriptSourceHead) {
         self.transcripts
-            .insert((head.key().into_string(), head.source.to_string()));
+            .insert(head.key().into_string(), head.clone());
     }
 
-    fn accounted(&self, head: &TranscriptSourceHead) -> Result<bool, Refusal> {
+    fn transcript(
+        &self,
+        head: &TranscriptSourceHead,
+    ) -> Result<Option<TranscriptSourceHead>, Refusal> {
         let key = head.key().into_string();
-        if self
-            .transcripts
-            .contains(&(key.clone(), head.source.to_string()))
-        {
-            return Ok(true);
+        if let Some(current) = self.transcripts.get(&key) {
+            return Ok(Some(current.clone()));
         }
         let body = self
             .connection
@@ -75,10 +75,18 @@ impl Authority for Stored<'_> {
                 |row| row.get::<_, Vec<u8>>(0),
             )
             .optional()?;
-        Ok(match body {
-            Some(body) => wire::decode::<TranscriptSourceHead>(&body)?.source == head.source,
-            None => false,
-        })
+        let current = body
+            .map(|body| wire::decode::<TranscriptSourceHead>(&body))
+            .transpose()?;
+        if current
+            .as_ref()
+            .is_some_and(|current| current.key().as_str() != key)
+        {
+            return unsound(format!(
+                "transcript source head indexed as {key:?} carries another stream"
+            ));
+        }
+        Ok(current)
     }
 
     fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal> {
