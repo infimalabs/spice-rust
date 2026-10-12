@@ -29,7 +29,8 @@ mod coordination;
 mod sql;
 
 pub(crate) use conversation::{
-    SCHEMA_SQL as CONVERSATION_SCHEMA_SQL, receipt_key as room_receipt_key,
+    ITEM_SCHEMA_SQL as CONVERSATION_ITEM_SCHEMA_SQL, SCHEMA_SQL as CONVERSATION_SCHEMA_SQL,
+    require_deliveries as require_conversation_deliveries,
 };
 pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
@@ -166,7 +167,7 @@ pub(crate) struct Projection {
     pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
     /// Room to its latest `room::shelved` head position and canonical body.
     pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Conversation publications with their receipt and result heads.
+    /// Conversation publications with their operator item and result heads.
     pub(crate) conversation: conversation::Heads,
 }
 
@@ -212,8 +213,8 @@ pub(crate) trait Authority {
     fn set_direction(&mut self, key: &str, direction: Direction);
     /// The canonical body of one admitted conversation publication.
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
-    /// One room receipt head by its canonical reference.
-    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal>;
+    /// One operator item head by its key.
+    fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal>;
     /// One question result head by its handle.
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
     /// How many question results one requester holds pending.
@@ -454,8 +455,8 @@ impl Authority for History {
             .map(|(_, body)| body.clone()))
     }
 
-    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal> {
-        Ok(self.projection.conversation.receipts.get(receipt).cloned())
+    fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal> {
+        Ok(self.projection.conversation.items.get(item).cloned())
     }
 
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {

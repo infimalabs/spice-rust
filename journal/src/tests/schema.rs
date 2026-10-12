@@ -63,7 +63,18 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
         ""
     };
     let conversations = if predecessor < crate::migrate::ROOM_CONVERSATION_SCHEMA {
-        "DROP TABLE room_conversations; DROP TABLE room_receipts; DROP TABLE room_results;"
+        "DROP TABLE room_conversations; DROP TABLE room_items; DROP TABLE room_results;"
+    } else if predecessor < crate::migrate::ROOM_ITEM_SCHEMA {
+        "DROP TABLE room_items;
+         CREATE TABLE room_receipts (
+             receipt TEXT PRIMARY KEY,
+             destination TEXT NOT NULL,
+             open INTEGER NOT NULL CHECK (open IN (0, 1)),
+             head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+             record BLOB NOT NULL,
+             head BLOB NOT NULL
+         ) STRICT;
+         CREATE INDEX room_receipts_open ON room_receipts(destination, open, head_seq);"
     } else {
         ""
     };
@@ -79,7 +90,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);

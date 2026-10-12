@@ -208,8 +208,8 @@ impl Authority for Stored<'_> {
         conversation::stored_publication(self.connection, publication)
     }
 
-    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal> {
-        conversation::stored_receipt(self.connection, receipt)
+    fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal> {
+        conversation::stored_item(self.connection, item)
     }
 
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {

@@ -456,10 +456,9 @@ fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
             head: None,
         },
         Witness::Delivery {
-            receipt: wire::rooms::RoomReceiptRef {
-                publication: "1kKRRsDR3".parse().expect("a publication stamp"),
-                route: wire::SequenceCode::new(0),
-            },
+            receipt: wire::rooms::RoomReceiptRef::new(
+                "1kKRRsDR3".parse().expect("an operator item stamp"),
+            ),
             head: Some(seq(10)),
         },
         Witness::Question {

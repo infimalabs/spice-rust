@@ -1,3 +1,15 @@
+//! Room conversation authority that native steering does not already own.
+//!
+//! A lane destination is delivered by exactly one native steering directive
+//! opened in the publication's own write: that directive's human key, inbox,
+//! ACK/NAK, wake, lapse, recovery, dead-letter, and renewal inheritance are the
+//! route's only receipt. Room authority adds what steering lacks: write-once
+//! publication records, one correlated result per ASK, and operator items for
+//! the operator destination. An ASK's public result handle is its delivery key
+//! on either side: the key of the native directive that delivers it to a lane
+//! respondent, or the key of the operator item that delivers it to the
+//! operator.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -49,6 +61,10 @@ pub struct RoomRoute {
 }
 
 /// Public handle of one substantive ASK result.
+///
+/// It is also the ASK's delivery key: the native steering key of the
+/// directive that delivers the ASK to a lane respondent, or the key of the
+/// operator item that delivers it to the operator.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct QuestionResultRef(RoomAuthorityStamp);
@@ -65,6 +81,12 @@ impl QuestionResultRef {
     pub const fn authority(&self) -> &RoomAuthorityStamp {
         &self.0
     }
+
+    /// The handle as written, which is also its delivery key.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
 impl fmt::Display for QuestionResultRef {
@@ -73,20 +95,46 @@ impl fmt::Display for QuestionResultRef {
     }
 }
 
-/// Public key a directed recipient's ACK, NAK, or ANS names.
+/// Key of one operator item, which the operator's ACK or NAK names.
 ///
-/// A MSG route and an answer return issue their own route receipt; an ASK
-/// issues only its result handle, whose route receipt stays internal.
+/// A MSG's operator item is keyed by its publication, an ASK's by its result
+/// handle, and an answer returned to the operator by the answer publication.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum RoomDeliveryKey {
-    /// One directed MSG route or one answer-return delivery.
-    Route(RoomReceiptRef),
-    /// One ASK, named by its public result handle.
-    Result { result: QuestionResultRef },
+#[serde(transparent)]
+pub struct RoomReceiptRef(RoomAuthorityStamp);
+
+impl RoomReceiptRef {
+    /// Use one native room-authority identity as an operator item key.
+    #[must_use]
+    pub const fn new(value: RoomAuthorityStamp) -> Self {
+        Self(value)
+    }
+
+    /// The native identity carried by this key.
+    #[must_use]
+    pub const fn authority(&self) -> &RoomAuthorityStamp {
+        &self.0
+    }
 }
 
-/// Semantic publication verb. Receipt controls use [`RoomReceiptControl`].
+impl fmt::Display for RoomReceiptRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// How one directed delivery is carried.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomDelivery {
+    /// A lane destination: one native steering directive opened in the same
+    /// write is the delivery's only receipt.
+    Directive { directive: CanonicalUuid },
+    /// The operator destination: one room operator item.
+    Item { item: RoomReceiptRef },
+}
+
+/// Semantic publication verb. Operator item controls use [`RoomReceiptControl`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RoomPublicationKind {
@@ -147,6 +195,15 @@ impl TryFrom<RoomPublicationWire> for RoomPublication {
                 return Err("task destinations already name their context");
             }
         }
+        if value
+            .routes
+            .iter()
+            .filter(|route| route.destination == RoomDestination::Operator {})
+            .count()
+            > 1
+        {
+            return Err("room publication may route to the operator once");
+        }
         match &value.kind {
             RoomPublicationKind::Msg {} if value.routes.is_empty() => {
                 return Err("MSG must name at least one independently qualified route");
@@ -155,6 +212,9 @@ impl TryFrom<RoomPublicationWire> for RoomPublication {
                 if value.routes.len() != 1 || !value.routes[0].destination.is_audience() =>
             {
                 return Err("ASK must name exactly one operator or lane audience");
+            }
+            RoomPublicationKind::Ask { result, .. } if result.authority() == &value.publication => {
+                return Err("ASK result handle must differ from its publication");
             }
             RoomPublicationKind::Ans { .. } if !value.routes.is_empty() => {
                 return Err("ANS inherits its stored question route and cannot retarget");
@@ -242,49 +302,32 @@ impl RoomPublication {
         &self.routes
     }
 
-    /// Public key issued for one route receipt of this publication.
-    ///
-    /// MSG issues one per directed audience route, ASK issues its result
-    /// handle for its single route, and ANS issues its answer-return receipt.
-    #[must_use]
-    pub fn delivery_key(&self, route: SequenceCode) -> Option<RoomDeliveryKey> {
-        let index = usize::try_from(route.get()).ok()?;
-        let receipt = || {
-            RoomDeliveryKey::Route(RoomReceiptRef {
-                publication: self.publication.clone(),
-                route,
+    /// Lane routes in route order, each delivered by one native directive.
+    pub fn lane_routes(&self) -> impl Iterator<Item = (CanonicalUuid, Option<&RoomAnchor>)> {
+        self.routes
+            .iter()
+            .filter_map(|route| match route.destination {
+                RoomDestination::Lane { lane } => Some((lane, route.context.as_ref())),
+                _ => None,
             })
-        };
-        match &self.kind {
-            RoomPublicationKind::Msg {} => self
-                .routes
-                .get(index)
-                .filter(|route| route.destination.is_audience())
-                .map(|_| receipt()),
-            RoomPublicationKind::Ask { result, .. } => {
-                (index == 0).then(|| RoomDeliveryKey::Result {
-                    result: result.clone(),
-                })
-            }
-            RoomPublicationKind::Ans { .. } => (index == 0).then(receipt),
-        }
     }
 
-    /// Route receipt a public key settles, or `None` for any key this
-    /// publication never issued, including an ASK's internal route receipt.
+    /// The operator item this publication opens, with that route's context.
+    ///
+    /// MSG keys it by its publication and ASK by its result handle; ANS opens
+    /// its return from the stored question instead.
     #[must_use]
-    pub fn receipt_for(&self, key: &RoomDeliveryKey) -> Option<RoomReceiptRef> {
-        let route = match key {
-            RoomDeliveryKey::Route(receipt) if receipt.publication == self.publication => {
-                receipt.route
-            }
-            RoomDeliveryKey::Result { .. } => SequenceCode::new(0),
-            RoomDeliveryKey::Route(_) => return None,
+    pub fn operator_item(&self) -> Option<(RoomReceiptRef, Option<&RoomAnchor>)> {
+        let route = self
+            .routes
+            .iter()
+            .find(|route| route.destination == RoomDestination::Operator {})?;
+        let item = match &self.kind {
+            RoomPublicationKind::Msg {} => self.publication.clone(),
+            RoomPublicationKind::Ask { result, .. } => result.authority().clone(),
+            RoomPublicationKind::Ans { .. } => return None,
         };
-        (self.delivery_key(route).as_ref() == Some(key)).then(|| RoomReceiptRef {
-            publication: self.publication.clone(),
-            route,
-        })
+        Some((RoomReceiptRef::new(item), route.context.as_ref()))
     }
 
     /// Capacity atomically charged with this content, including later controls.
@@ -347,30 +390,30 @@ pub enum RoomAdmissionError {
     AggregateBytes,
 }
 
-/// Per-route receipt identity. It is never a question-result handle.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomReceiptRef {
-    pub publication: RoomAuthorityStamp,
-    pub route: SequenceCode,
-}
-
-/// Immutable identity, destination, and source behind one receipt head.
+/// Immutable identity, publication, context, and source behind one operator item.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomReceiptRecord {
     receipt: RoomReceiptRef,
-    route: RoomRoute,
+    publication: RoomAuthorityStamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<RoomAnchor>,
     source: RoomSource,
 }
 
 impl RoomReceiptRecord {
-    /// Create the immutable authority behind one route receipt.
+    /// Create the immutable authority behind one operator item.
     #[must_use]
-    pub const fn new(receipt: RoomReceiptRef, route: RoomRoute, source: RoomSource) -> Self {
+    pub const fn new(
+        receipt: RoomReceiptRef,
+        publication: RoomAuthorityStamp,
+        context: Option<RoomAnchor>,
+        source: RoomSource,
+    ) -> Self {
         Self {
             receipt,
-            route,
+            publication,
+            context,
             source,
         }
     }
@@ -380,9 +423,15 @@ impl RoomReceiptRecord {
         &self.receipt
     }
 
+    /// Publication whose operator route or answer return opened this item.
     #[must_use]
-    pub const fn route(&self) -> &RoomRoute {
-        &self.route
+    pub const fn publication(&self) -> &RoomAuthorityStamp {
+        &self.publication
+    }
+
+    #[must_use]
+    pub const fn context(&self) -> Option<&RoomAnchor> {
+        self.context.as_ref()
     }
 
     #[must_use]
@@ -391,10 +440,10 @@ impl RoomReceiptRecord {
     }
 }
 
-/// Current semantic recipient disposition of one directed route.
+/// Current operator disposition of one operator item.
 ///
-/// Expired and unavailable are lapses, never decisions: recovery returns the
-/// same receipt to pending with a fresh bounded expiry.
+/// Expiry is a lapse, never a decision: recovery returns the same item to
+/// pending with a fresh bounded expiry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RoomReceiptState {
@@ -402,12 +451,11 @@ pub enum RoomReceiptState {
     Acked { source: RoomSource },
     Declined { source: RoomSource },
     Expired { at: Instant },
-    Unavailable { at: Instant },
     Cancelled { source: RoomSource },
 }
 
 impl RoomReceiptState {
-    /// Whether a semantic decision retired this receipt for good.
+    /// Whether a semantic decision retired this item for good.
     #[must_use]
     pub const fn is_terminal(&self) -> bool {
         matches!(
@@ -416,28 +464,28 @@ impl RoomReceiptState {
         )
     }
 
-    /// Instant of a recoverable lapse, if this receipt lapsed.
+    /// Instant of a recoverable lapse, if this item lapsed.
     #[must_use]
     pub const fn lapsed_at(&self) -> Option<Instant> {
         match self {
-            Self::Expired { at } | Self::Unavailable { at } => Some(*at),
+            Self::Expired { at } => Some(*at),
             _ => None,
         }
     }
 }
 
-/// Why a receipt head refused a transition.
+/// Why an operator item head refused a transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum RoomReceiptTransitionError {
-    #[error("only a pending room receipt can be settled or lapse")]
+    #[error("only a pending operator item can be settled or lapse")]
     NotPending,
-    #[error("only a lapsed room receipt can recover")]
+    #[error("only a lapsed operator item can recover")]
     NotLapsed,
-    #[error("a recovered room receipt must expire after its lapse")]
+    #[error("a recovered operator item must expire after its lapse")]
     Expiry,
 }
 
-/// Guarded head of one route receipt.
+/// Guarded head of one operator item.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomReceiptHead {
@@ -446,7 +494,7 @@ pub struct RoomReceiptHead {
 }
 
 impl RoomReceiptHead {
-    /// Open one receipt pending until its bounded expiry.
+    /// Open one item pending until its bounded expiry.
     #[must_use]
     pub const fn pending(receipt: RoomReceiptRef, expires: Instant) -> Self {
         Self {
@@ -465,7 +513,7 @@ impl RoomReceiptHead {
         &self.state
     }
 
-    /// Move a pending receipt to a decision or a lapse, or replay that exact move.
+    /// Move a pending item to a decision or a lapse, or replay that exact move.
     pub fn settle(&mut self, next: RoomReceiptState) -> Result<(), RoomReceiptTransitionError> {
         if self.state == next {
             return Ok(());
@@ -479,7 +527,7 @@ impl RoomReceiptHead {
         Ok(())
     }
 
-    /// Return a lapsed receipt to pending under the same key with a fresh expiry.
+    /// Return a lapsed item to pending under the same key with a fresh expiry.
     pub fn recover(&mut self, expires: Instant) -> Result<(), RoomReceiptTransitionError> {
         let lapsed_at = self
             .state
@@ -493,12 +541,13 @@ impl RoomReceiptHead {
     }
 }
 
-/// ACK or NAK control over exact public delivery keys; it has no retargeting fields.
+/// The operator's ACK or NAK over exact operator item keys; it has no
+/// retargeting fields.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RoomReceiptControlWire", into = "RoomReceiptControlWire")]
 pub struct RoomReceiptControl {
     disposition: RoomReceiptDisposition,
-    keys: Vec<RoomDeliveryKey>,
+    keys: Vec<RoomReceiptRef>,
     source: RoomSource,
 }
 
@@ -506,7 +555,7 @@ impl RoomReceiptControl {
     /// Admit one exact bounded ACK or NAK control.
     pub fn try_new(
         disposition: RoomReceiptDisposition,
-        keys: Vec<RoomDeliveryKey>,
+        keys: Vec<RoomReceiptRef>,
         source: RoomSource,
     ) -> Result<Self, &'static str> {
         RoomReceiptControlWire {
@@ -523,7 +572,7 @@ impl RoomReceiptControl {
     }
 
     #[must_use]
-    pub fn keys(&self) -> &[RoomDeliveryKey] {
+    pub fn keys(&self) -> &[RoomReceiptRef] {
         &self.keys
     }
 
@@ -532,7 +581,7 @@ impl RoomReceiptControl {
         &self.source
     }
 
-    /// Decision this control settles on each named route receipt.
+    /// Decision this control settles on each named operator item.
     #[must_use]
     pub fn receipt_state(&self) -> RoomReceiptState {
         let source = self.source.clone();
@@ -554,7 +603,7 @@ pub enum RoomReceiptDisposition {
 #[serde(deny_unknown_fields)]
 struct RoomReceiptControlWire {
     disposition: RoomReceiptDisposition,
-    keys: Vec<RoomDeliveryKey>,
+    keys: Vec<RoomReceiptRef>,
     source: RoomSource,
 }
 
@@ -566,7 +615,7 @@ impl TryFrom<RoomReceiptControlWire> for RoomReceiptControl {
             || value.keys.len() > ROOM_ROUTE_FANOUT_LIMIT
             || !all_unique(&value.keys)
         {
-            return Err("ACK/NAK delivery keys must be nonempty, unique, and bounded");
+            return Err("ACK/NAK operator item keys must be nonempty, unique, and bounded");
         }
         Ok(Self {
             disposition: value.disposition,
@@ -596,7 +645,8 @@ pub struct QuestionParties {
     pub context: Option<RoomAnchor>,
 }
 
-/// Immutable ASK authority. Lapse and recovery change neither this record nor its deadline.
+/// Immutable ASK authority. Delivery lapse and recovery change neither this
+/// record nor its deadline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     try_from = "QuestionResultRecordWire",
@@ -605,7 +655,6 @@ pub struct QuestionParties {
 pub struct QuestionResultRecord {
     result: QuestionResultRef,
     question: RoomAuthorityStamp,
-    receipt: RoomReceiptRef,
     requester: RoomDestination,
     respondent: RoomDestination,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -619,7 +668,6 @@ pub struct QuestionResultRecord {
 struct QuestionResultRecordWire {
     result: QuestionResultRef,
     question: RoomAuthorityStamp,
-    receipt: RoomReceiptRef,
     requester: RoomDestination,
     respondent: RoomDestination,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -635,18 +683,12 @@ impl TryFrom<QuestionResultRecordWire> for QuestionResultRecord {
         if !value.requester.is_audience() || !value.respondent.is_audience() {
             return Err("question parties must be an operator or lane");
         }
-        if value.receipt.publication != value.question
-            || value.receipt.route != SequenceCode::new(0)
-        {
-            return Err("ASK receipt must be route zero of the question publication");
-        }
         if value.result.authority() == &value.question {
-            return Err("ASK receipt and substantive result identities must be distinct");
+            return Err("ASK publication and result identities must be distinct");
         }
         Ok(Self {
             result: value.result,
             question: value.question,
-            receipt: value.receipt,
             requester: value.requester,
             respondent: value.respondent,
             context: value.context,
@@ -661,7 +703,6 @@ impl From<QuestionResultRecord> for QuestionResultRecordWire {
         Self {
             result: value.result,
             question: value.question,
-            receipt: value.receipt,
             requester: value.requester,
             respondent: value.respondent,
             context: value.context,
@@ -675,29 +716,23 @@ impl From<QuestionResultRecord> for QuestionResultRecordWire {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerReturnDelivery {
-    answer: RoomAuthorityStamp,
     destination: RoomDestination,
-    receipt: RoomReceiptRef,
+    delivery: RoomDelivery,
 }
 
 impl AnswerReturnDelivery {
-    #[must_use]
-    pub const fn answer(&self) -> &RoomAuthorityStamp {
-        &self.answer
-    }
-
     #[must_use]
     pub const fn destination(&self) -> &RoomDestination {
         &self.destination
     }
 
     #[must_use]
-    pub const fn receipt(&self) -> &RoomReceiptRef {
-        &self.receipt
+    pub const fn delivery(&self) -> &RoomDelivery {
+        &self.delivery
     }
 }
 
-/// Substantive result state, separate from the ASK route receipt.
+/// Substantive result state, separate from the ASK's delivery.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QuestionResultState {
@@ -768,7 +803,6 @@ impl QuestionResultRecord {
     pub fn try_new(
         result: QuestionResultRef,
         question: RoomAuthorityStamp,
-        receipt: RoomReceiptRef,
         parties: QuestionParties,
         source: RoomSource,
         deadline: Instant,
@@ -776,7 +810,6 @@ impl QuestionResultRecord {
         QuestionResultRecordWire {
             result,
             question,
-            receipt,
             requester: parties.requester,
             respondent: parties.respondent,
             context: parties.context,
@@ -794,11 +827,6 @@ impl QuestionResultRecord {
     #[must_use]
     pub const fn question(&self) -> &RoomAuthorityStamp {
         &self.question
-    }
-
-    #[must_use]
-    pub const fn receipt(&self) -> &RoomReceiptRef {
-        &self.receipt
     }
 
     #[must_use]
@@ -826,31 +854,35 @@ impl QuestionResultRecord {
         self.deadline
     }
 
-    /// The one public key this ASK issues for ACK, NAK, and ANS.
+    /// The operator item delivering this ASK, keyed by its result handle, when
+    /// the operator is the respondent; a lane respondent's delivery is the
+    /// native directive keyed by that same handle.
     #[must_use]
-    pub fn public_key(&self) -> RoomDeliveryKey {
-        RoomDeliveryKey::Result {
-            result: self.result.clone(),
-        }
+    pub fn item(&self) -> Option<RoomReceiptRef> {
+        (self.respondent == RoomDestination::Operator {})
+            .then(|| RoomReceiptRef::new(self.result.authority().clone()))
     }
 
-    /// Result consequence of a control naming this ASK's public key: NAK
-    /// declines the pending result, while ACK settles only the route receipt.
+    /// Result consequence of an operator control: NAK of this ASK's item
+    /// declines the pending result, while ACK settles only the item.
     #[must_use]
     pub fn control_result(&self, control: &RoomReceiptControl) -> Option<QuestionResultState> {
-        (control.disposition == RoomReceiptDisposition::Nak
-            && control.keys.contains(&self.public_key()))
-        .then(|| QuestionResultState::Declined {
-            source: control.source.clone(),
-        })
+        let item = self.item()?;
+        (control.disposition == RoomReceiptDisposition::Nak && control.keys.contains(&item)).then(
+            || QuestionResultState::Declined {
+                source: control.source.clone(),
+            },
+        )
     }
 
-    /// Validate ANS against the frozen question and derive its one return receipt.
+    /// Validate ANS against the frozen question and bind its one return
+    /// delivery: the single native directive `directed` names when the
+    /// requester is a lane, or the operator item keyed by the answer.
     pub fn answer_state(
         &self,
         answer: &RoomPublication,
         admitted_at: Instant,
-        return_receipt: RoomReceiptRef,
+        directed: &[CanonicalUuid],
     ) -> Result<QuestionResultState, QuestionAnswerError> {
         let RoomPublicationKind::Ans { result, context } = &answer.kind else {
             return Err(QuestionAnswerError::NotAnswer);
@@ -870,19 +902,21 @@ impl QuestionResultRecord {
         if admitted_at >= self.deadline {
             return Err(QuestionAnswerError::Deadline);
         }
-        if return_receipt.publication != answer.publication
-            || return_receipt.route != SequenceCode::new(0)
-        {
-            return Err(QuestionAnswerError::ReturnReceipt);
-        }
-        let return_delivery = AnswerReturnDelivery {
-            answer: answer.publication.clone(),
-            destination: self.requester.clone(),
-            receipt: return_receipt,
+        let delivery = match (&self.requester, directed) {
+            (RoomDestination::Lane { .. }, [directive]) => RoomDelivery::Directive {
+                directive: *directive,
+            },
+            (RoomDestination::Operator {}, []) => RoomDelivery::Item {
+                item: RoomReceiptRef::new(answer.publication.clone()),
+            },
+            _ => return Err(QuestionAnswerError::ReturnDelivery),
         };
         Ok(QuestionResultState::Answered {
             answer: answer.publication.clone(),
-            return_delivery,
+            return_delivery: AnswerReturnDelivery {
+                destination: self.requester.clone(),
+                delivery,
+            },
         })
     }
 }
@@ -899,8 +933,10 @@ pub enum QuestionAnswerError {
     Respondent,
     #[error("ANS arrived at or after the immutable result deadline")]
     Deadline,
-    #[error("answer return receipt does not belong to the answer publication")]
-    ReturnReceipt,
+    #[error(
+        "answer return is not one directive to a lane requester or one operator item to the operator"
+    )]
+    ReturnDelivery,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -911,7 +947,9 @@ pub struct TerminalConflict;
 /// transcript hunk that owns its bytes.
 ///
 /// The hunk's lane is the author and the hunk is the source, so the admitted
-/// [`RoomPublication`] is derived from this record rather than restated.
+/// [`RoomPublication`] is derived from this record rather than restated. Every
+/// lane delivery it makes is a peer message its own write opens from that
+/// record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomConversed {
@@ -923,7 +961,11 @@ pub struct RoomConversed {
     pub operation: RoomPublicationKind,
     /// Independently qualified routes frozen at admission.
     pub routes: Vec<RoomRoute>,
-    /// Bounded expiry of every route receipt this publication opens.
+    /// Directives the same write opened for this publication's lane
+    /// deliveries: its lane routes in route order, or an answer's return to a
+    /// lane requester.
+    pub directed: Vec<CanonicalUuid>,
+    /// Bounded expiry of the operator item this publication opens, if any.
     pub expires: Instant,
 }
 
@@ -951,6 +993,8 @@ impl RoomConversed {
 }
 
 /// An authenticated operator MSG, ASK, or ANS whose text this fact owns.
+///
+/// Every lane delivery it makes is an operator direction its own write opens.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPosted {
@@ -962,7 +1006,11 @@ pub struct RoomPosted {
     pub operation: RoomPublicationKind,
     /// Independently qualified routes frozen at admission.
     pub routes: Vec<RoomRoute>,
-    /// Bounded expiry of every route receipt this publication opens.
+    /// Directives the same write opened for this publication's lane
+    /// deliveries: its lane routes in route order, or an answer's return to a
+    /// lane requester.
+    pub directed: Vec<CanonicalUuid>,
+    /// Bounded expiry of the operator item this publication opens, if any.
     pub expires: Instant,
 }
 
@@ -983,35 +1031,13 @@ impl RoomPosted {
     }
 }
 
-/// A lane's ACK or NAK, from its authored prose or a tool call's declared
-/// intent, settling exact room delivery keys.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomReceipted {
-    pub disposition: RoomReceiptDisposition,
-    pub keys: Vec<RoomDeliveryKey>,
-    /// The header's exact bytes in the lane's transcript.
-    pub hunk: TranscriptHunk,
-}
-
-impl RoomReceipted {
-    /// The control this lane record admits.
-    pub fn control(&self) -> Result<RoomReceiptControl, &'static str> {
-        RoomReceiptControl::try_new(
-            self.disposition,
-            self.keys.clone(),
-            RoomSource::Transcript(self.hunk.clone()),
-        )
-    }
-}
-
-/// The operator's ACK or NAK of exact room delivery keys; this fact owns its
+/// The operator's ACK or NAK of exact operator items; this fact owns its
 /// clause.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomDisposed {
     pub disposition: RoomReceiptDisposition,
-    pub keys: Vec<RoomDeliveryKey>,
+    pub keys: Vec<RoomReceiptRef>,
     pub clause: String,
 }
 
@@ -1065,21 +1091,14 @@ pub struct RoomQuestionTimedOut {
     pub result: QuestionResultRef,
 }
 
-/// A pending room receipt reached its expiry without a disposition.
+/// A pending operator item reached its expiry without a disposition.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomReceiptLapsed {
     pub receipt: RoomReceiptRef,
 }
 
-/// A pending room receipt's destination could not be reached.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomReceiptUnavailable {
-    pub receipt: RoomReceiptRef,
-}
-
-/// Operator recovery returned a lapsed room receipt to pending under the same
+/// Operator recovery returned a lapsed operator item to pending under the same
 /// key with a fresh bounded expiry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1151,46 +1170,59 @@ mod tests {
             crate::decode::<RoomPublication>(&crate::encode(&publication).unwrap()).unwrap(),
             publication
         );
+        assert_eq!(
+            publication.lane_routes().collect::<Vec<_>>(),
+            [(
+                lane("018f82d4-6f59-7d06-92e3-bce913116302"),
+                Some(&task("1kKRRsDR2"))
+            )]
+        );
+        assert_eq!(
+            publication.operator_item(),
+            Some((RoomReceiptRef::new(authority("1kKRRsDR1")), None))
+        );
 
-        let duplicate = serde_json::json!({
-            "publication": "1kKRRsDR1",
-            "author": {"kind": "operator"},
-            "source": {"kind": "journal", "fact": "1"},
-            "content_bytes": 1,
-            "kind": {"verb": "msg"},
-            "routes": [first.clone(), first],
-        });
-        assert!(serde_json::from_value::<RoomPublication>(duplicate).is_err());
-        let unknown = serde_json::json!({
-            "publication": "1kKRRsDR1",
-            "author": {"kind": "operator"},
-            "source": {"kind": "journal", "fact": "1"},
-            "content_bytes": 1,
-            "kind": {"verb": "msg"},
-            "routes": [{"destination": {"kind": "group", "group": "1kKRRsDR2"}}],
-        });
-        assert!(serde_json::from_value::<RoomPublication>(unknown).is_err());
+        for routes in [
+            serde_json::json!([first.clone(), first]),
+            serde_json::json!([{"destination": {"kind": "group", "group": "1kKRRsDR2"}}]),
+            serde_json::json!([
+                {"destination": {"kind": "operator"}},
+                {"destination": {"kind": "operator"}, "context": "1kKRRsDR2"},
+            ]),
+        ] {
+            let refused = serde_json::json!({
+                "publication": "1kKRRsDR1",
+                "author": {"kind": "operator"},
+                "source": {"kind": "journal", "fact": "1"},
+                "content_bytes": 1,
+                "kind": {"verb": "msg"},
+                "routes": routes,
+            });
+            assert!(serde_json::from_value::<RoomPublication>(refused).is_err());
+        }
     }
 
-    fn ask() -> RoomPublication {
+    fn ask(respondent: serde_json::Value) -> RoomPublication {
         serde_json::from_value(serde_json::json!({
             "publication": "1kKRRsDR1",
-            "author": {"kind": "operator"},
+            "author": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116301"},
             "source": {"kind": "journal", "fact": "1"},
             "content_bytes": 10,
             "kind": {"verb": "ask", "result": "1kKRRsDR3", "deadline": "2030-01-02T00:00:00.000Z"},
-            "routes": [{"destination": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"}, "context": "1kKRRsDR2"}],
+            "routes": [{"destination": respondent, "context": "1kKRRsDR2"}],
         }))
         .expect("ask")
     }
 
-    fn question() -> QuestionResultRecord {
+    fn question(
+        requester: serde_json::Value,
+        respondent: serde_json::Value,
+    ) -> QuestionResultRecord {
         serde_json::from_value(serde_json::json!({
             "result": "1kKRRsDR3",
             "question": "1kKRRsDR1",
-            "receipt": {"publication": "1kKRRsDR1", "route": "0"},
-            "requester": {"kind": "operator"},
-            "respondent": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
+            "requester": requester,
+            "respondent": respondent,
             "context": "1kKRRsDR2",
             "source": {"kind": "journal", "fact": "1"},
             "deadline": "2030-01-02T00:00:00.000Z",
@@ -1198,7 +1230,7 @@ mod tests {
         .expect("question")
     }
 
-    fn control(disposition: &str, key: &RoomDeliveryKey) -> RoomReceiptControl {
+    fn control(disposition: &str, key: &RoomReceiptRef) -> RoomReceiptControl {
         serde_json::from_value(serde_json::json!({
             "disposition": disposition,
             "keys": [key],
@@ -1207,137 +1239,168 @@ mod tests {
         .expect("control")
     }
 
-    #[test]
-    fn ask_issues_one_public_result_key_for_ack_nak_and_ans() {
-        let ask = ask();
-        let record = question();
-        for conflated in [
-            serde_json::json!({"result": "1kKRRsDR1", "receipt": {"publication": "1kKRRsDR1", "route": "0"}}),
-            serde_json::json!({"result": "1kKRRsDR3", "receipt": {"publication": "1kKRRsDR1", "route": "1"}}),
-        ] {
-            let mut wire = serde_json::to_value(&record).unwrap();
-            wire.as_object_mut()
-                .unwrap()
-                .extend(conflated.as_object().unwrap().clone());
-            assert!(serde_json::from_value::<QuestionResultRecord>(wire).is_err());
-        }
-
-        let key = record.public_key();
-        assert_eq!(ask.delivery_key(SequenceCode::new(0)), Some(key.clone()));
-        assert_eq!(ask.delivery_key(SequenceCode::new(1)), None);
-        assert_eq!(ask.receipt_for(&key).as_ref(), Some(record.receipt()));
-        let internal = RoomDeliveryKey::Route(record.receipt().clone());
-        assert_eq!(ask.receipt_for(&internal), None);
-        for malformed in [
-            serde_json::json!({"kind": "route", "publication": "1kKRRsDR1", "route": "0", "result": "1kKRRsDR3"}),
-            serde_json::json!({"kind": "result", "result": "1kKRRsDR3", "route": "0"}),
-            serde_json::json!({"kind": "receipt", "publication": "1kKRRsDR1", "route": "0"}),
-        ] {
-            assert!(serde_json::from_value::<RoomDeliveryKey>(malformed).is_err());
-        }
-        let foreign = RoomDeliveryKey::Result {
-            result: QuestionResultRef::new(authority("1kKRRsDR9")),
-        };
-        assert_eq!(ask.receipt_for(&foreign), None);
-
-        let ack = control("ack", &key);
-        assert_eq!(
-            crate::decode::<RoomReceiptControl>(&crate::encode(&ack).unwrap()).unwrap(),
-            ack
-        );
-        let mut receipt = RoomReceiptHead::pending(
-            record.receipt().clone(),
-            instant("2030-01-01T00:00:00.000Z"),
-        );
-        receipt
-            .settle(ack.receipt_state())
-            .expect("ACK settles the receipt");
-        assert_eq!(record.control_result(&ack), None);
-        let nak = control("nak", &key);
-        assert_eq!(
-            record.control_result(&nak),
-            Some(QuestionResultState::Declined { source: source(2) })
-        );
-        assert_eq!(record.control_result(&control("nak", &foreign)), None);
-
-        let answer: RoomPublication = serde_json::from_value(serde_json::json!({
+    fn answer(author: serde_json::Value) -> RoomPublication {
+        serde_json::from_value(serde_json::json!({
             "publication": "1kKRRsDR4",
-            "author": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
+            "author": author,
             "source": {"kind": "journal", "fact": "3"},
             "content_bytes": 20,
-            "kind": {"verb": "ans", "result": key_result(&key), "context": "1kKRRsDR2"},
+            "kind": {"verb": "ans", "result": "1kKRRsDR3", "context": "1kKRRsDR2"},
             "routes": [],
         }))
-        .expect("answer");
-        let return_key = answer
-            .delivery_key(SequenceCode::new(0))
-            .expect("answer issues its return key");
-        let return_receipt = answer
-            .receipt_for(&return_key)
-            .expect("return key resolves");
+        .expect("answer")
+    }
+
+    /// The result handle is the ASK's only delivery key: the steering key of
+    /// a lane respondent's directive, or the key of the operator's item, whose
+    /// NAK alone declines the result.
+    #[test]
+    fn the_result_handle_is_the_ask_delivery_key_on_either_side() {
+        let operator = serde_json::json!({"kind": "operator"});
+        let respondent =
+            serde_json::json!({"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"});
+        let to_lane = ask(respondent.clone());
+        assert_eq!(to_lane.operator_item(), None);
+        let record = question(operator.clone(), respondent.clone());
+        assert_eq!(record.item(), None);
+        assert!(crate::quote::steering_key(record.result().as_str()));
+        let result_key = RoomReceiptRef::new(record.result().authority().clone());
+        assert_eq!(record.control_result(&control("nak", &result_key)), None);
+
+        let to_operator = ask(operator.clone());
+        let record = question(respondent, operator);
+        let item = record.item().expect("the operator respondent has an item");
+        assert_eq!(item, result_key);
+        assert_eq!(
+            to_operator.operator_item(),
+            Some((item.clone(), Some(&task("1kKRRsDR2"))))
+        );
+        assert_eq!(record.control_result(&control("ack", &item)), None);
+        assert_eq!(
+            record.control_result(&control("nak", &item)),
+            Some(QuestionResultState::Declined { source: source(2) })
+        );
+        let publication_key = RoomReceiptRef::new(authority("1kKRRsDR1"));
+        assert_eq!(
+            record.control_result(&control("nak", &publication_key)),
+            None
+        );
+
+        let mut conflated = serde_json::to_value(&record).unwrap();
+        conflated["result"] = serde_json::json!("1kKRRsDR1");
+        assert!(serde_json::from_value::<QuestionResultRecord>(conflated).is_err());
+        let mut legacy = serde_json::to_value(&record).unwrap();
+        legacy["receipt"] = serde_json::json!({"publication": "1kKRRsDR1", "route": "0"});
+        assert!(serde_json::from_value::<QuestionResultRecord>(legacy).is_err());
+        let mut self_handle = serde_json::to_value(ask(serde_json::json!({"kind": "operator"})))
+            .expect("ask encodes");
+        self_handle["kind"]["result"] = serde_json::json!("1kKRRsDR1");
+        assert!(serde_json::from_value::<RoomPublication>(self_handle).is_err());
+    }
+
+    /// An answer returns to a lane requester through exactly one directive
+    /// and to the operator through the item keyed by the answer, never both.
+    #[test]
+    fn answer_return_binds_one_delivery_for_its_stored_requester() {
+        let operator = serde_json::json!({"kind": "operator"});
+        let respondent =
+            serde_json::json!({"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"});
+        let requester =
+            serde_json::json!({"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116303"});
+        let directive = lane("018f82d4-6f59-7d06-92e3-bce913116399");
+        let before = instant("2030-01-01T00:00:00.000Z");
+
+        let record = question(operator.clone(), respondent.clone());
         let QuestionResultState::Answered {
             return_delivery, ..
         } = record
-            .answer_state(&answer, instant("2030-01-01T00:00:00.000Z"), return_receipt)
-            .expect("ANS on the public key answers")
+            .answer_state(&answer(respondent.clone()), before, &[])
+            .expect("the respondent answers the operator")
         else {
             panic!("answer is terminal");
         };
-        assert_eq!(return_delivery.destination, RoomDestination::Operator {});
-        assert_eq!(answer.delivery_key(SequenceCode::new(1)), None);
-    }
+        assert_eq!(return_delivery.destination(), &RoomDestination::Operator {});
+        assert_eq!(
+            return_delivery.delivery(),
+            &RoomDelivery::Item {
+                item: RoomReceiptRef::new(authority("1kKRRsDR4"))
+            }
+        );
+        assert_eq!(
+            record.answer_state(&answer(respondent.clone()), before, &[directive]),
+            Err(QuestionAnswerError::ReturnDelivery)
+        );
 
-    fn key_result(key: &RoomDeliveryKey) -> &QuestionResultRef {
-        let RoomDeliveryKey::Result { result } = key else {
-            panic!("ASK key is its result handle");
+        let record = question(requester, respondent.clone());
+        let QuestionResultState::Answered {
+            return_delivery, ..
+        } = record
+            .answer_state(&answer(respondent.clone()), before, &[directive])
+            .expect("the respondent answers a lane")
+        else {
+            panic!("answer is terminal");
         };
-        result
+        assert_eq!(
+            return_delivery.delivery(),
+            &RoomDelivery::Directive { directive }
+        );
+        for directed in [&[][..], &[directive, directive][..]] {
+            assert_eq!(
+                record.answer_state(&answer(respondent.clone()), before, directed),
+                Err(QuestionAnswerError::ReturnDelivery)
+            );
+        }
+        assert_eq!(
+            record.answer_state(&answer(operator), before, &[directive]),
+            Err(QuestionAnswerError::Respondent)
+        );
+        assert_eq!(
+            record.answer_state(
+                &answer(respondent),
+                instant("2030-01-02T00:00:00.000Z"),
+                &[directive]
+            ),
+            Err(QuestionAnswerError::Deadline)
+        );
     }
 
     #[test]
-    fn lapsed_receipt_recovers_under_its_key_without_touching_the_result() {
-        let record = question();
+    fn lapsed_item_recovers_under_its_key_without_touching_the_result() {
+        let record = question(
+            serde_json::json!({"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"}),
+            serde_json::json!({"kind": "operator"}),
+        );
+        let item = record.item().expect("operator item");
         let first = instant("2030-01-01T00:00:00.000Z");
-        let mut receipt = RoomReceiptHead::pending(record.receipt().clone(), first);
+        let mut receipt = RoomReceiptHead::pending(item.clone(), first);
         let mut result = QuestionResultHead::pending(record.result().clone());
-        for lapse in [
-            RoomReceiptState::Expired { at: first },
-            RoomReceiptState::Unavailable { at: first },
-        ] {
-            receipt
-                .settle(lapse.clone())
-                .expect("pending receipt lapses");
-            receipt.settle(lapse).expect("exact lapse replays");
-            assert_eq!(
-                receipt.settle(RoomReceiptState::Acked { source: source(2) }),
-                Err(RoomReceiptTransitionError::NotPending)
-            );
-            assert_eq!(
-                receipt.recover(first),
-                Err(RoomReceiptTransitionError::Expiry)
-            );
-            let fresh = instant("2030-01-01T01:00:00.000Z");
-            receipt.recover(fresh).expect("lapse recovers");
-            assert_eq!(receipt.receipt(), record.receipt());
-            assert_eq!(
-                receipt.state(),
-                &RoomReceiptState::Pending { expires: fresh }
-            );
-            receipt = RoomReceiptHead::pending(record.receipt().clone(), first);
-        }
+        let lapse = RoomReceiptState::Expired { at: first };
+        receipt.settle(lapse.clone()).expect("pending item lapses");
+        receipt.settle(lapse).expect("exact lapse replays");
         assert_eq!(
-            receipt.recover(instant("2030-01-01T01:00:00.000Z")),
+            receipt.settle(RoomReceiptState::Acked { source: source(2) }),
+            Err(RoomReceiptTransitionError::NotPending)
+        );
+        assert_eq!(
+            receipt.recover(first),
+            Err(RoomReceiptTransitionError::Expiry)
+        );
+        let fresh = instant("2030-01-01T01:00:00.000Z");
+        receipt.recover(fresh).expect("lapse recovers");
+        assert_eq!(receipt.receipt(), &item);
+        assert_eq!(
+            receipt.state(),
+            &RoomReceiptState::Pending { expires: fresh }
+        );
+        assert_eq!(
+            receipt.recover(instant("2030-01-01T02:00:00.000Z")),
             Err(RoomReceiptTransitionError::NotLapsed)
         );
         receipt
             .settle(RoomReceiptState::Acked { source: source(2) })
             .expect("ACK settles");
         assert_eq!(
-            receipt.recover(instant("2030-01-01T01:00:00.000Z")),
-            Err(RoomReceiptTransitionError::NotLapsed)
-        );
-        assert_eq!(
-            receipt.settle(RoomReceiptState::Expired { at: first }),
+            receipt.settle(RoomReceiptState::Expired { at: fresh }),
             Err(RoomReceiptTransitionError::NotPending)
         );
 
@@ -1389,7 +1452,7 @@ mod tests {
 
         let control: RoomReceiptControl = serde_json::from_value(serde_json::json!({
             "disposition": "ack",
-            "keys": [{"kind": "route", "publication": "1kKRRsDR1", "route": "0"}],
+            "keys": ["1kKRRsDR1"],
             "source": {"kind": "journal", "fact": "5"},
         }))
         .expect("reserved ACK remains admissible independently of content saturation");
@@ -1398,49 +1461,19 @@ mod tests {
 
     #[test]
     fn pending_result_limit_and_answer_context_are_exact() {
-        let ask: RoomPublication = serde_json::from_value(serde_json::json!({
-            "publication": "1kKRRsDR1",
-            "author": {"kind": "operator"},
-            "source": {"kind": "journal", "fact": "1"},
-            "content_bytes": 10,
-            "kind": {"verb": "ask", "result": "1kKRRsDR3", "deadline": "2030-01-02T00:00:00.000Z"},
-            "routes": [{"destination": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"}, "context": "1kKRRsDR2"}],
-        }))
-        .expect("ask");
+        let respondent =
+            serde_json::json!({"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"});
         assert_eq!(
-            ask.admission_charge(ROOM_PENDING_RESULT_LIMIT),
+            ask(respondent.clone()).admission_charge(ROOM_PENDING_RESULT_LIMIT),
             Err(RoomAdmissionError::PendingResults)
         );
 
-        let answer = serde_json::json!({
-            "publication": "1kKRRsDR4",
-            "author": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
-            "source": {"kind": "journal", "fact": "3"},
-            "content_bytes": 20,
-            "kind": {"verb": "ans", "result": "1kKRRsDR3", "context": "1kKRRsDR5"},
-            "routes": [],
-        });
+        let mut answer = serde_json::to_value(answer(respondent.clone())).expect("answer encodes");
+        answer["kind"]["context"] = serde_json::json!("1kKRRsDR5");
         let answer: RoomPublication = serde_json::from_value(answer).expect("answer shape");
-        let record: QuestionResultRecord = serde_json::from_value(serde_json::json!({
-            "result": "1kKRRsDR3",
-            "question": "1kKRRsDR1",
-            "receipt": {"publication": "1kKRRsDR1", "route": "0"},
-            "requester": {"kind": "operator"},
-            "respondent": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
-            "context": "1kKRRsDR2",
-            "source": {"kind": "journal", "fact": "1"},
-            "deadline": "2030-01-02T00:00:00.000Z",
-        }))
-        .expect("question");
+        let record = question(serde_json::json!({"kind": "operator"}), respondent);
         assert_eq!(
-            record.answer_state(
-                &answer,
-                instant("2030-01-01T00:00:00.000Z"),
-                RoomReceiptRef {
-                    publication: authority("1kKRRsDR4"),
-                    route: SequenceCode::new(0),
-                },
-            ),
+            record.answer_state(&answer, instant("2030-01-01T00:00:00.000Z"), &[]),
             Err(QuestionAnswerError::Context)
         );
     }

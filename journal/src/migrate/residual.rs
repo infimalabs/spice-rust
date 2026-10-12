@@ -38,6 +38,21 @@ const ROOM_PACKET_AUTHOR_RELEASE: &str = "98a3243fa";
 /// Release that recorded room coordination before the journal bound each
 /// record to the directions it names.
 const ROOM_COORDINATION_RELEASE: &str = "09d471040";
+/// Release that recorded room conversations with per-route room receipts
+/// before their lane deliveries bound to native steering directives.
+const ROOM_CONVERSATION_RELEASE: &str = "d4f4dba9d";
+/// Every fact kind that release's room conversation authority wrote.
+const ROOM_CONVERSATION_KINDS: [&str; 9] = [
+    "room::conversed",
+    "room::posted",
+    "room::receipted",
+    "room::disposed",
+    "room::closed",
+    "room::timedout",
+    "room::lapsed",
+    "room::unavailable",
+    "room::recovered",
+];
 
 /// Refuse every retained shape without a current spelling before mutation.
 pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
@@ -179,6 +194,17 @@ fn refuse_unbound_provenance(transaction: &Transaction<'_>) -> Result<(), OpenEr
             [kind.as_str()],
             ROOM_COORDINATION_RELEASE,
             "the room coordination record predates its binding to the directions it names",
+        )?;
+    }
+    for kind in ROOM_CONVERSATION_KINDS {
+        refuse_first(
+            transaction,
+            "fact_envelopes",
+            "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 ORDER BY seq",
+            [kind],
+            ROOM_CONVERSATION_RELEASE,
+            "the room conversation record predates binding its lane deliveries to native \
+             steering directives",
         )?;
     }
     Ok(())

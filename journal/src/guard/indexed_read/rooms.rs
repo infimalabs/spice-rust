@@ -542,24 +542,23 @@ impl JournalRead<'_> {
         require_room(head, room, |body| &body.room)
     }
 
-    /// One room receipt's immutable record and current guarded head, absent
+    /// One operator item's immutable record and current guarded head, absent
     /// before its publication opens it; the head's position is its latest move.
-    pub fn room_receipt(
+    pub fn room_item(
         &self,
-        receipt: &RoomReceiptRef,
+        item: &RoomReceiptRef,
     ) -> Result<Option<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>, GuardError> {
-        let key = crate::rooms::room_receipt_key(receipt)
-            .map_err(|refusal| GuardError::Invalid(refusal.to_string()))?;
+        let key = item.to_string();
         let head = self.conversation_head::<RoomReceiptRecord, RoomReceiptHead>(
-            "room_receipts",
-            "receipt",
+            "room_items",
+            "item",
             &key,
         )?;
         if let Some((record, head)) = &head
-            && (record.receipt() != receipt || head.body.receipt() != receipt)
+            && (record.receipt() != item || head.body.receipt() != item)
         {
             return Err(GuardError::Invalid(format!(
-                "room receipt indexed as {key} names another receipt"
+                "operator item indexed as {key} names another item"
             )));
         }
         Ok(head)
