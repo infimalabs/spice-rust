@@ -42,3 +42,25 @@ fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(listed, expected);
 }
+
+/// A start whose keeper cannot launch reports the failure and keeps nothing,
+/// so no job without a keeper lists as running or awaits a stop it cannot
+/// hear.
+#[test]
+fn a_job_whose_keeper_cannot_launch_is_never_kept() {
+    let root = std::env::temp_dir().join(format!(
+        "spice-lane-jobs-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple(),
+    ));
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let failure = jobs.start_unlaunchable_for_tests("echo alive");
+    let kept = jobs.kept().expect("kept jobs read");
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(failure.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        kept.is_empty(),
+        "a failed launch left kept jobs: {:?}",
+        kept.iter().map(super::Job::id).collect::<Vec<_>>()
+    );
+}

@@ -48,7 +48,8 @@ successor's prod.
 reaches non-shell work because an unheard key interrupts outstanding tool waits.
 
 Every turn exit vacates the lane, including exit code zero. A backgrounded
-command survives under its detached keeper. If its ending, or an event of a
+command survives under its detached keeper; a command whose keeper cannot
+launch fails its call and leaves no kept job. If its ending, or an event of a
 command started with `events`, stays unheard through the delivery grace, the
 keeper requests a lane wake, and the successor's startup catch-up delivers the
 unheard events and then the ending. An agent holding a claim may therefore end
