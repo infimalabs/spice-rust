@@ -1,11 +1,12 @@
 use super::*;
 
+use serde_json::Value;
 use wire::intent::{
     RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomPutAside,
 };
 use wire::rooms::{
-    RoomAuthorityStamp, RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostOutcome,
-    RoomPublicationContent, RoomPublished,
+    RoomAuthorityStamp, RoomListenerAvailability, RoomListenerDelivery, RoomMessaged, RoomPost,
+    RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 fn room_projects() -> ProjectPolicy {
@@ -235,6 +236,116 @@ fn post_command(
     )
 }
 
+fn publish_packet(bus: &Bus, room: &TaskHandle, seat: &Seat) -> RoomAuthorityStamp {
+    let vendor: wire::Name = "omp".parse().expect("fixture vendor");
+    let source = uuid(90_001);
+    let next = wire::body::TranscriptPosition {
+        member: 1,
+        offset: 64,
+    };
+    let head = wire::TranscriptSourceHead {
+        lane: seat.lane,
+        vendor: vendor.clone(),
+        stream: "session".to_owned(),
+        source,
+        next,
+    };
+    let origin = format!("lane:{}", seat.lane)
+        .parse()
+        .expect("fixture lane origin");
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let mut ingest = JournalWrite::new(
+        Actor::Spice,
+        origin,
+        at.clone(),
+        Producer::ResidentRecognition,
+    );
+    let fact = ingest
+        .fact(
+            wire::body::JournalIngested {
+                lane: seat.lane,
+                vendor,
+                stream: "session".to_owned(),
+                source,
+                supersedes: None,
+                from: wire::body::TranscriptPosition {
+                    member: 1,
+                    offset: 0,
+                },
+                to: next,
+                usage: Vec::new(),
+                non_usage_records: 1,
+                residue_records: 0,
+            },
+            FactCause::Root,
+        )
+        .expect("fixture transcript ingestion builds");
+    ingest.transcript_source_head(fact, {
+        let head = head.clone();
+        move |_| head
+    });
+    assert!(matches!(
+        bus.commit(ingest)
+            .expect("fixture ingestion reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+
+    let publication =
+        RoomAuthorityStamp::for_micros(1_790_000_000_000_001).expect("fixture packet identity");
+    let mut packet = JournalWrite::new(
+        Actor::Lane(seat.lane),
+        "task:room-history".parse().expect("fixture packet origin"),
+        at,
+        Producer::AckScanner,
+    );
+    packet
+        .fact(
+            RoomMessaged {
+                room: room.born().expect("fixture room has a birth"),
+                publication: publication.clone(),
+                hunk: TranscriptHunk {
+                    head,
+                    locus: wire::MessageLocus {
+                        member: 1,
+                        offset: 0,
+                        length: 64,
+                        event: 0,
+                    },
+                    text: wire::rooms::TextRange { start: 0, end: 6 },
+                },
+                author: seat.occupant,
+                directed: Vec::new(),
+            },
+            FactCause::Root,
+        )
+        .expect("fixture room packet builds");
+    assert!(matches!(
+        bus.commit(packet).expect("fixture packet reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+    publication
+}
+
+fn history_page(root: &FixtureRoot, words: &[&str]) -> Value {
+    let matches = crate::cli::command()
+        .try_get_matches_from(["spice", "room", "history"].iter().chain(words))
+        .expect("room history parses");
+    let contract = crate::cli::selected_contract(&matches).expect("room history is registered");
+    let journal = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
+        .expect("fixture journal opens to read");
+    let outcome = crate::room_command::answer(
+        &journal,
+        &root.as_ref().join("tape"),
+        &room_projects(),
+        crate::cli::selected_matches(&matches),
+        contract.path,
+    );
+    let Outcome::Reply(reply) = outcome else {
+        panic!("room history returned another outcome: {outcome:?}");
+    };
+    serde_json::to_value(reply.body).expect("room history encodes")
+}
+
 #[test]
 fn room_post_records_once_and_retains_its_exact_retry_answer() {
     let (_root, bus, epoch, _seats) = fixture("room-post-retry", 0);
@@ -363,6 +474,86 @@ fn room_post_refuses_unknown_anchor_without_recording() {
         Outcome::Refusal(refusal) if refusal.reason() == "room::anchor-unknown"
     ));
     assert!(publication_page(&bus, &unknown).rows.is_empty());
+}
+
+#[test]
+fn room_history_pages_posts_packets_and_coordination_in_one_order() {
+    let (root, bus, epoch, seats) = fixture("room-history-coordination", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-history-coordination",
+        "Room history",
+        None,
+    );
+    assert_committed(
+        dispatch(&bus, &post_command(&bus, epoch, &room, "before")).expect("room post dispatches"),
+    );
+    publish_packet(&bus, &room, &seats[0]);
+    assert_committed(coordinate(
+        &bus,
+        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start),
+    ));
+    assert_committed(
+        dispatch(&bus, &post_command(&bus, epoch, &room, "after")).expect("room post dispatches"),
+    );
+    assert_committed(put_aside(&bus, &put_aside_command(&bus, epoch, &room)));
+
+    let first = history_page(&root, &[room.as_str(), "--limit", "3"]);
+    assert_eq!(first["page"]["omission"]["population"], 5);
+    assert_eq!(first["page"]["omission"]["shown"], 3);
+    assert_eq!(first["page"]["omission"]["withheld"], 2);
+    let first_rows = first["page"]["rows"].as_array().expect("first page rows");
+    assert_eq!(
+        first_rows
+            .iter()
+            .map(|row| row["content"]["state"].as_str())
+            .collect::<Vec<_>>(),
+        [Some("text"), Some("unavailable"), Some("linked")]
+    );
+    let continuation: Vec<String> =
+        serde_json::from_value(first["page"]["omission"]["continuation"].clone())
+            .expect("continuation is one command");
+    let words = continuation[2..]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let second = history_page(&root, &words);
+    assert_eq!(second["page"]["rows"].as_array().map(Vec::len), Some(2));
+    assert!(second["page"]["omission"].is_null());
+    let second_rows = second["page"]["rows"].as_array().expect("second page rows");
+    assert_eq!(
+        second_rows
+            .iter()
+            .map(|row| row["content"]["state"].as_str())
+            .collect::<Vec<_>>(),
+        [Some("text"), Some("linked")]
+    );
+
+    let shown = first_rows
+        .iter()
+        .chain(second_rows)
+        .map(|row| row["seq"].clone())
+        .collect::<Vec<_>>();
+    let indexed = publication_page(&bus, &room)
+        .rows
+        .into_iter()
+        .map(|row| serde_json::to_value(row.seq).expect("sequence encodes"))
+        .collect::<Vec<_>>();
+    assert_eq!(shown, indexed, "history and publication index order agree");
+    for row in first_rows.iter().chain(second_rows) {
+        if row["content"]["state"] == "linked" {
+            assert_eq!(row["content"]["source"]["kind"], "journal");
+            let fact = row["content"]["source"]["fact"]
+                .as_str()
+                .expect("journal fact is base-52")
+                .parse::<wire::SequenceCode>()
+                .expect("journal fact decodes");
+            assert_eq!(fact.get(), row["seq"].as_u64().expect("row sequence"));
+        }
+    }
 }
 
 #[test]
