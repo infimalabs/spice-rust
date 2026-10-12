@@ -198,6 +198,14 @@ pub struct SteerMessaged {
     pub text: String,
     /// Assistant transcript locus of the packet's MSG header.
     pub locus: TranscriptLocus,
+    /// Anchor task whose room context the route named, frozen at publication;
+    /// absent on a direct route and on every message older than room routes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room: Option<crate::rooms::RoomAnchor>,
     /// Instant the message expires without a disposition.
     pub expires: Instant,
 }

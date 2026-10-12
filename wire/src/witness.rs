@@ -254,7 +254,7 @@ pub fn is_oops_project(project: &str) -> bool {
 pub struct TaskHandle(String);
 
 /// Text that does not name a task.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[error("task handle must be `<UPPER-STEM>-<stamp>` with a canonical task stamp: {0:?}")]
 pub struct TaskHandleError(String);
 

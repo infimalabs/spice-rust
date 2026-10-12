@@ -158,6 +158,44 @@ pub enum ProposalRef {
     Decision { decision: DecisionRef },
 }
 
+/// Half-open UTF-8 byte range within one decoded event's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextRange {
+    /// First contributed byte.
+    pub start: u64,
+    /// One past the last contributed byte.
+    pub end: u64,
+}
+
+/// Exact contributed bytes of one decoded transcript event.
+///
+/// The transcript owns the bytes; this names the accounted generation, the
+/// durable vendor record and decoded event, and the range of that event's text
+/// contributed, so a reader shares only those bytes and never the transcript.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptHunk {
+    /// Accounted logical transcript source.
+    pub head: TranscriptSourceHead,
+    /// Exact durable vendor record and event.
+    pub locus: MessageLocus,
+    /// Contributed range of the event's decoded text.
+    pub text: TextRange,
+}
+
+impl TranscriptHunk {
+    /// Whether `other` names these exact bytes, wherever either head's
+    /// accounted boundary stood when it was linked.
+    #[must_use]
+    pub fn same_bytes(&self, other: &Self) -> bool {
+        self.head.key() == other.head.key()
+            && self.head.source == other.head.source
+            && self.locus == other.locus
+            && self.text == other.text
+    }
+}
+
 /// Exact immutable authority that owns room or candidate source bytes.
 ///
 /// These values are links. Transcript bytes remain in tape, journal-authored
@@ -166,13 +204,9 @@ pub enum ProposalRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RoomSource {
-    /// One decoded event in an accounted transcript source generation.
-    Transcript {
-        /// Accounted logical transcript source.
-        head: TranscriptSourceHead,
-        /// Exact durable vendor record and event.
-        locus: MessageLocus,
-    },
+    /// Exact contributed bytes of one decoded event in an accounted transcript
+    /// source generation.
+    Transcript(TranscriptHunk),
     /// One immutable journal fact, rendered as native base-52 rather than a
     /// bare decimal sequence.
     Journal {
@@ -239,6 +273,22 @@ pub struct RoomPublished {
     pub publication: RoomAuthorityStamp,
     /// Original bytes or exact source link, never a copied conversation.
     pub content: RoomPublicationContent,
+}
+
+/// An authored assistant MSG packet recorded its body in one anchor task's room.
+///
+/// The packet's transcript owns the bytes. One packet records at most one
+/// publication per room, in the same write as the peer messages its directed
+/// routes open, so a packet is recorded and sent together or not at all.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomMessaged {
+    /// Anchor task; this is the room identity.
+    pub room: RoomAnchor,
+    /// Native moment identity of this publication.
+    pub publication: RoomAuthorityStamp,
+    /// The packet's exact body bytes in its author's transcript.
+    pub hunk: TranscriptHunk,
 }
 
 /// Native room-only publication command body.

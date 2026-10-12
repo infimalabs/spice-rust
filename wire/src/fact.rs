@@ -89,6 +89,9 @@ macro_rules! registered_body {
     (RoomPublished) => {
         crate::rooms::RoomPublished
     };
+    (RoomMessaged) => {
+        crate::rooms::RoomMessaged
+    };
     (WorkingGroupStored) => {
         crate::rooms::WorkingGroupStored
     };
@@ -242,6 +245,8 @@ vocabulary! {
 
     /// An anchor task's room received one authored or linked publication.
     RoomPublished = "room::published" by CommandDoor;
+    /// An authored MSG packet recorded its transcript-owned body in a room.
+    RoomMessaged = "room::messaged" by AckScanner;
     /// A working group's complete ordered anchor state was saved.
     WorkingGroupStored = "group::stored" by CommandDoor;
     /// A working group was removed without touching its anchor rooms.

@@ -31,7 +31,7 @@ use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
 use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
-use crate::resident::steering::MessageRefusalNotice;
+use crate::resident::steering::{MessageRecordedNotice, MessageRefusalNotice};
 use steering::{InboxDelivery, ReasoningReminder};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
@@ -180,6 +180,8 @@ pub(in crate::resident) enum Kick {
     TaskAssignment(TaskAssignmentNotice),
     /// An MSG packet this exact occupant authored missed some or every address.
     MessageRefused(MessageRefusalNotice),
+    /// An MSG packet this exact occupant authored was recorded in rooms.
+    MessageRecorded(MessageRecordedNotice),
     /// Current renewal intent for this exact occupant.
     Renewal(renewal::Notice),
     /// Change one setting on this exact running occupant and answer through a
@@ -483,6 +485,11 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// Tell this exact occupant which addresses an MSG packet it authored missed.
     fn deliver_message_refusal(&self, notice: &MessageRefusalNotice) {
         let _ = self.background(&format!("msg:{}", notice.packet), &notice.text());
+    }
+
+    /// Tell this exact occupant which rooms an MSG packet it authored recorded in.
+    fn deliver_message_recorded(&self, notice: &MessageRecordedNotice) {
+        let _ = self.background(&format!("msg-recorded:{}", notice.packet), &notice.text());
     }
 
     /// Replace one queued notice without interrupting model or tool work.
@@ -959,6 +966,16 @@ pub(in crate::resident) fn message_refused(
     send(paths, lane, &Kick::MessageRefused(notice));
 }
 
+/// Privately tell the exact authoring occupant which rooms its MSG packet
+/// recorded in.
+pub(in crate::resident) fn message_recorded(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: MessageRecordedNotice,
+) {
+    send(paths, lane, &Kick::MessageRecorded(notice));
+}
+
 /// Apply one setting change to the exact running occupant and wait for OMP's
 /// correlated response.
 ///
@@ -1115,6 +1132,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_message_refusal(&notice);
                         }
                         Ok(Kick::MessageRefused(_)) => {}
+                        Ok(Kick::MessageRecorded(notice)) if notice.occupant == occupant => {
+                            driver.deliver_message_recorded(&notice);
+                        }
+                        Ok(Kick::MessageRecorded(_)) => {}
                         Ok(Kick::Renewal(notice)) if notice.occupant == occupant => {
                             driver.deliver_renewal(notice);
                         }

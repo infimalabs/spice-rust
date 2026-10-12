@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomPublicationContent, RoomPublished, RoomSource, WorkingGroupRemoved,
-    WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomMessaged, RoomPublicationContent, RoomPublished,
+    RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
@@ -374,7 +374,14 @@ pub(crate) fn fold(
         return Ok(());
     }
     if let Some(body) = fact.read::<RoomPublished>() {
-        return publish(authority, seq, body);
+        if let RoomPublicationContent::Linked { link } = &body.content {
+            require_source(authority, seq, link)?;
+        }
+        return publish(authority, seq, &body.room, &body.publication);
+    }
+    if let Some(body) = fact.read::<RoomMessaged>() {
+        require_hunk(authority, &body.hunk)?;
+        return publish(authority, seq, &body.room, &body.publication);
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
         for anchor in &group.anchors {
@@ -496,17 +503,19 @@ fn control(
     Ok(())
 }
 
-fn publish(authority: &mut impl Authority, seq: Seq, body: RoomPublished) -> Result<(), Refusal> {
-    require_task(authority, &body.room, "room anchor")?;
-    let room = body.room.to_string();
-    let publication = body.publication.to_string();
+fn publish(
+    authority: &mut impl Authority,
+    seq: Seq,
+    room: &TaskStamp,
+    publication: &RoomAuthorityStamp,
+) -> Result<(), Refusal> {
+    require_task(authority, room, "room anchor")?;
+    let room = room.to_string();
+    let publication = publication.to_string();
     if authority.published(&room, &publication)? {
         return unsound(format!(
             "room {room} publication {publication} already exists"
         ));
-    }
-    if let RoomPublicationContent::Linked { link } = &body.content {
-        require_source(authority, seq, link)?;
     }
     authority.change(Change::Publication {
         room,
@@ -704,44 +713,59 @@ fn require_source(
                 ));
             }
         }
-        RoomSource::Transcript { head, locus } => {
-            let Some(accounted) = authority.transcript(head)? else {
-                return unsound(format!(
-                    "source transcript {} generation {} is not accounted",
-                    head.key().as_str(),
-                    head.source
-                ));
-            };
-            if accounted.source != head.source {
-                return unsound(format!(
-                    "source transcript {} generation {} is not accounted",
-                    head.key().as_str(),
-                    head.source
-                ));
-            }
-            if !position_at_or_before(head.next, accounted.next) {
-                return unsound(format!(
-                    "source transcript {} boundary {}/{} exceeds accounted boundary {}/{}",
-                    head.key().as_str(),
-                    head.next.member,
-                    head.next.offset,
-                    accounted.next.member,
-                    accounted.next.offset,
-                ));
-            }
-            if !locus_within(*locus, head.next) {
-                return unsound(format!(
-                    "source transcript {} locus {}/{}/{} exceeds linked boundary {}/{}",
-                    head.key().as_str(),
-                    locus.member,
-                    locus.offset,
-                    locus.length,
-                    head.next.member,
-                    head.next.offset,
-                ));
-            }
-        }
+        RoomSource::Transcript(hunk) => require_hunk(authority, hunk)?,
         RoomSource::Artifact { .. } => {}
+    }
+    Ok(())
+}
+
+/// A hunk must name a nonempty text range of one decoded event inside the
+/// accounted extent of its transcript generation.
+fn require_hunk(authority: &impl Authority, hunk: &TranscriptHunk) -> Result<(), Refusal> {
+    let TranscriptHunk { head, locus, text } = hunk;
+    let Some(accounted) = authority.transcript(head)? else {
+        return unsound(format!(
+            "source transcript {} generation {} is not accounted",
+            head.key().as_str(),
+            head.source
+        ));
+    };
+    if accounted.source != head.source {
+        return unsound(format!(
+            "source transcript {} generation {} is not accounted",
+            head.key().as_str(),
+            head.source
+        ));
+    }
+    if !position_at_or_before(head.next, accounted.next) {
+        return unsound(format!(
+            "source transcript {} boundary {}/{} exceeds accounted boundary {}/{}",
+            head.key().as_str(),
+            head.next.member,
+            head.next.offset,
+            accounted.next.member,
+            accounted.next.offset,
+        ));
+    }
+    if !locus_within(*locus, head.next) {
+        return unsound(format!(
+            "source transcript {} locus {}/{}/{} exceeds linked boundary {}/{}",
+            head.key().as_str(),
+            locus.member,
+            locus.offset,
+            locus.length,
+            head.next.member,
+            head.next.offset,
+        ));
+    }
+    if locus.event == u32::MAX || text.start >= text.end {
+        return unsound(format!(
+            "source transcript {} hunk {}..{} of event {} is not decoded event text",
+            head.key().as_str(),
+            text.start,
+            text.end,
+            locus.event,
+        ));
     }
     Ok(())
 }

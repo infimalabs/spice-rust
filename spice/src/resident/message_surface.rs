@@ -591,12 +591,7 @@ fn message_addresses<'a>(
         .filter(|text| text.contains(steer::ack::scan::message::MARKER))
         .flat_map(steer::ack::scan::scan_messages)
         .filter_map(|message| message.publication.ok())
-        .flat_map(|publication| {
-            publication
-                .recipients
-                .into_iter()
-                .map(|recipient| recipient.address)
-        })
+        .flat_map(|publication| publication.addresses().collect::<Vec<_>>())
         .collect()
 }
 

@@ -69,13 +69,18 @@ short code such as `6JRT`, never a lane name or UUID. Your briefing lists
 teammates' addresses under Peers, and `spice lane list` shows every lane's
 `name=` and `address=`; `unavailable:REASON` means no occupant there can
 receive one now.
-Then write a line `MSG ADDRESS [ADDRESS ...]: BODY` in visible assistant text;
-a tool call's intent, reasoning, code and quotes never send. The body runs to
-the next placed ACK, NAK or MSG header or the end of that text block. Each
-seated address you name receives the packet; one private notice names every
-address that received nothing and why, and those alone need another packet. An
+Then write a line `MSG SELECTOR [SELECTOR ...]: BODY` in visible assistant
+text; a tool call's intent, reasoning, code and quotes never send. A selector
+is an address, `ADDRESS#TASK` to message that occupant about a task, or
+`#TASK` to record the packet in that task's room without messaging anyone,
+where TASK is a handle such as `ROOMS-dVrD244Jd`. The body runs to the next
+placed ACK, NAK or MSG header or the end of that text block. Each seated
+address you name receives the packet; one private notice names every address
+that received nothing and why, and those alone need another packet. An
 expired address also names its lane's current address, or that it is vacant;
-the packet never follows the lane to that occupant.
+the packet never follows the lane to that occupant. A context naming no task
+refuses the whole packet. A packet naming rooms brings one private notice that
+it was recorded there; recorded is not received, and nothing wakes.
 Send a peer only what it needs for its own work.
 
 A delivery headed `[PEER sender ADDRESS lane ID]` is that occupant's MSG:

@@ -8,6 +8,9 @@ use wire::OccupantAddress;
 
 use super::*;
 
+#[path = "steering_message/rooms.rs"]
+mod rooms;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
@@ -651,8 +654,9 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
             line: 1,
             column: 1,
         },
-        recipients: vec![first, second],
+        routes: direct(&[first, second]),
         body: "raced",
+        text: 0..5,
     };
     let config = steer::Config::default();
 
@@ -710,8 +714,9 @@ fn an_expired_address_names_what_its_lane_seats_now() {
             line: 1,
             column: 1,
         },
-        recipients: vec![first, second, current],
+        routes: direct(&[first, second, current]),
         body: "renewed",
+        text: 0..7,
     };
     let view = lanes.bus.task_snapshot().expect("snapshot reads");
     let resolved = steering::publish_packet(
@@ -889,7 +894,20 @@ fn sent(lanes: &[u8], unreached: &[&str]) -> steering::Published {
     steering::Published::Sent {
         lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
+        rooms: Vec::new(),
     }
+}
+
+/// Plain direct routes to these addresses.
+fn direct(addresses: &[wire::OccupantAddress]) -> Vec<steer::ack::scan::Route> {
+    addresses
+        .iter()
+        .map(|address| steer::ack::scan::Route {
+            address: Some(*address),
+            context: None,
+            span: 0..0,
+        })
+        .collect()
 }
 
 /// The delivery a recipient hears names the exact body, the sending
