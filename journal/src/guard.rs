@@ -368,6 +368,11 @@ impl<T> JournalHead<T> {
     }
 }
 
+/// Stable reason for a write that current room authority rejects as unsound.
+/// The request itself is invalid against durable authority, so retrying it
+/// unchanged cannot succeed; the detail names the offending subject.
+pub const ROOM_AUTHORITY_REFUSED: &str = "room::authority-refused";
+
 /// A named, expected precondition failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuardRefusal {
@@ -454,7 +459,15 @@ impl GuardRefusal {
 
 impl fmt::Display for GuardRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.reason)
+        formatter.write_str(&self.reason)?;
+        match self
+            .context
+            .as_ref()
+            .and_then(|context| context.detail.as_ref())
+        {
+            Some(detail) => write!(formatter, "; {detail}"),
+            None => Ok(()),
+        }
     }
 }
 

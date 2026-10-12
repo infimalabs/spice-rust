@@ -543,9 +543,9 @@ fn fold_rooms(
 
 fn room_refusal(refusal: crate::rooms::Refusal) -> CommitError {
     match refusal {
-        crate::rooms::Refusal::Unsound(detail) => CommitError::Refused(GuardRefusal::new(format!(
-            "room authority refused: {detail}"
-        ))),
+        crate::rooms::Refusal::Unsound(detail) => CommitError::Refused(
+            GuardRefusal::new(super::ROOM_AUTHORITY_REFUSED).with_detail(detail),
+        ),
         other => CommitError::Fault(CommitFault::new(other.to_string())),
     }
 }

@@ -359,6 +359,46 @@ fn authorize_test_output(
         output: output_stamp,
         head: None,
     });
+    let unrecorded = CoverageRef {
+        candidate: candidate.clone(),
+        coverage: wire::SequenceCode::new(9),
+    };
+    let unsound = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ExecutionAuthorize,
+        expected.clone(),
+        &ExecutionAuthorize {
+            authorization: ExecutionAuthorization {
+                decision: decision.clone(),
+                candidate: candidate.clone(),
+                governed_inputs: Vec::new(),
+                selected_outputs: vec![output.born().expect("output stamp")],
+                coverage: vec![unrecorded.clone()],
+            },
+        },
+    );
+    let Outcome::Refusal(refusal) = unsound else {
+        panic!("authorization over unrecorded coverage was admitted: {unsound:?}");
+    };
+    assert_eq!(
+        refusal.reason(),
+        journal::ROOM_AUTHORITY_REFUSED,
+        "an unsound request is not witness movement"
+    );
+    let detail = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::detail)
+        .expect("room authority names the offending subject");
+    let subject = serde_json::to_string(&unrecorded).expect("coverage reference encodes");
+    assert!(
+        detail.contains(&subject),
+        "refusal omitted the unrecorded coverage {subject}: {detail}"
+    );
+    let unchanged = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&unchanged, &output).statement.body.authorization, None);
+    assert_eq!(at(&unchanged, &controller).workflow.body.status, "pending");
     assert_committed(issue(
         &bus,
         epoch,
