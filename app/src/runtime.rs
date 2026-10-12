@@ -27,15 +27,13 @@ mod consent;
 mod lanes;
 mod member_control;
 mod message_cards;
-#[cfg(any(target_arch = "wasm32", test))]
 mod publication;
 mod scoped;
 mod stream;
 pub use consent::ConsentRuling;
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) use publication::AppSurface;
+pub use publication::AppSurface;
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
@@ -574,7 +572,6 @@ impl AppRuntime {
     /// old capability never crosses an authority boundary. The first message
     /// snapshot merges by durable card identity, retaining deep history and
     /// allocation identity while replacing content the new generation changed.
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn rehydrate(accepted: &Admitted<Accepted>, previous: &Self) -> Self {
         let mut next = Self::new(accepted);
         if previous.principal.actor() == &Actor::Operator

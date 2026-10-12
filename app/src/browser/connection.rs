@@ -90,13 +90,11 @@ struct Ended {
 /// resident serving its replacement.
 ///
 /// The loaded generation's strict DTOs need not decode the newer resident's
-/// frames, so retrying in place can only cycle. Unsaved operator work keeps the
-/// tab where it is behind the explicit reload control, and one reload per
-/// served generation keeps a document that still loads stale from cycling.
+/// frames, so retrying in place can only cycle. Unsent drafts travel to the
+/// reloaded document; only work no handoff can carry keeps the tab where it is
+/// behind the explicit reload control. One reload per served generation keeps
+/// a document that still loads stale from cycling.
 fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) {
-    if unload.loses_work() {
-        return;
-    }
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -109,13 +107,14 @@ fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) {
         .ok()
         .flatten()
         .is_some_and(|attempted| attempted == served)
+        || !unload.hand_off()
         || storage
             .set_item(APP_RELOAD_GENERATION_STORAGE, &served)
             .is_err()
     {
         return;
     }
-    let _ = window.location().reload();
+    super::draft_handoff::reload(&window);
 }
 
 async fn run_connection(
@@ -839,39 +838,7 @@ async fn admit_runtime(
     let accepted = session
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-    let hydrating = data
-        .read()
-        .as_ref()
-        .is_some_and(|runtime| !runtime.same_scope(&accepted));
-    if hydrating {
-        let replacement = SurfaceData::default();
-        let runtime = {
-            let current = data.read();
-            AppRuntime::rehydrate(
-                &accepted,
-                current
-                    .as_ref()
-                    .expect("changed-scope hydration has a prior runtime"),
-            )
-        };
-        *replacement.write() = Some(runtime);
-        *data = replacement;
-    }
-    let principal = {
-        let mut data = data.write();
-        match data.as_mut() {
-            Some(runtime) => {
-                if !hydrating {
-                    runtime.reconnect(&accepted);
-                }
-            }
-            None => *data = Some(AppRuntime::new(&accepted)),
-        }
-        data.as_ref()
-            .expect("accepted connection creates runtime")
-            .principal()
-            .clone()
-    };
+    let (principal, hydrating) = data.admit(&accepted);
     if !hydrating {
         surface.set(data.publication());
         connection.set(Connection::Online {

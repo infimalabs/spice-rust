@@ -1,7 +1,10 @@
 //! The real app runtime retains only admitted, capability-scoped state.
 
 use app::watchband::{ticker_accessible_label, ticker_chunks};
-use app::{AppRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads};
+use app::{
+    AppRuntime, AppSurface, LaneStatus, Session, Stale, StreamDirective, StreamTerminal,
+    stale_reads,
+};
 use wire::{
     CanonicalUuid, CommandKind, Outcome, Reply, ReplyPosition, Response, Seq, StreamFrame,
     ViewSubject, WireVersion,
@@ -504,6 +507,39 @@ fn stream_application_invalidates_only_observable_runtime_changes() {
     assert!(
         !foreign_runtime.apply_stream_frame(&live).changed(),
         "an admitted frame from another scope does not invalidate the rendered surface"
+    );
+}
+
+#[test]
+fn a_restarted_scope_stays_hydrating_until_its_replacement_is_published() {
+    let mut surface = AppSurface::default();
+    let (_, hydrating) = surface.admit(&acceptance(&session(OPERATOR, EPOCH), "operator", EPOCH));
+    assert!(!hydrating, "the first runtime is shown as it is accepted");
+    let shown = surface.publication();
+
+    let restarted = Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH));
+    let accepted = acceptance(&restarted, "operator", NEXT_EPOCH);
+    assert!(
+        surface.admit(&accepted).1,
+        "a restarted resident hydrates first"
+    );
+    assert!(
+        surface.admit(&accepted).1,
+        "a connection lost mid-hydration resumes it instead of showing a replacement without snapshots"
+    );
+    assert!(
+        shown
+            .read()
+            .as_ref()
+            .is_some_and(|runtime| !runtime.same_scope(&accepted)),
+        "the surface on screen keeps the previous scope throughout"
+    );
+
+    let replacement = surface.publication();
+    assert!(replacement != shown);
+    assert!(
+        !surface.admit(&accepted).1,
+        "a published replacement reconnects in place"
     );
 }
 

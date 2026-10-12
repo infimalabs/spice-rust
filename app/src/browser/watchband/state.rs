@@ -222,6 +222,26 @@ fn attachment_state_mut<'a>(
 }
 
 impl ComposerDrafts {
+    /// The drafts a document starts with: those the previous document of its
+    /// tab handed off, or none with the refusal announced when they could
+    /// not be read.
+    pub(in crate::browser) fn adopt(
+        handoff: &Result<crate::composer_drafts::DraftHandoff, String>,
+    ) -> Self {
+        match handoff {
+            Ok(handoff) => Self(DraftStore::adopt(handoff.composers.clone()), None),
+            Err(issue) => {
+                let mut drafts = Self::default();
+                drafts.report(issue.clone());
+                drafts
+            }
+        }
+    }
+
+    pub(in crate::browser) fn store(&self) -> &DraftStore {
+        &self.0
+    }
+
     fn report(&mut self, text: String) {
         let serial = self
             .1

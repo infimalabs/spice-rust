@@ -86,6 +86,16 @@ Owners: [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs),
 [`app/renderer/renderer-000.txt`](../../app/renderer/renderer-000.txt). Which
 activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic-rust.md).
 
+A resident restart keeps the app's last good surface on screen until the new
+session's scope is fully hydrated. A page whose generation the resident no
+longer serves reloads once into the served generation; unsent composer and
+observation drafts travel to the reloaded page through tab-scoped storage, with
+attachment annotations flattened into their image. Only a submission whose
+result is still unknown keeps the stale page in place behind the reload control.
+Owners: [`app/src/runtime/publication.rs`](../../app/src/runtime/publication.rs),
+[`app/src/browser/connection.rs`](../../app/src/browser/connection.rs), and
+[`app/src/browser/draft_handoff.rs`](../../app/src/browser/draft_handoff.rs).
+
 ## Version identity
 
 `spice --version`, `spice version`, and the app menu report the tracked version

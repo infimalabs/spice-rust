@@ -27,13 +27,26 @@ pub(super) fn use_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
     selection: Option<TaskOverviewSelection>,
+    handed: &[crate::composer_drafts::HandedNote],
 ) -> Controls {
     let blocker_review = use_state_eq(|| false);
     let blocker_review_button_ref = use_node_ref();
     let blocker_review_close_ref = use_node_ref();
+    let handed = || {
+        handed
+            .iter()
+            .map(|note| {
+                let composer = NoteComposer {
+                    draft: note.text.clone(),
+                    ..NoteComposer::default()
+                };
+                (note.task.clone(), composer)
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
     let notes = NoteComposers {
-        state: use_mut_ref(BTreeMap::new),
-        published: use_state(BTreeMap::new),
+        state: use_mut_ref(handed),
+        published: use_state(handed),
     };
     let request = request_callback(sender.clone(), surface.clone());
     {
@@ -487,7 +500,7 @@ pub(super) fn render_note_composer(
     let label_id = id.clone();
     html! {
         <form
-            key={form_key}
+            key={form_key.clone()}
             class="form work-note-composer"
             onsubmit={submit.reform(move |event| (task.clone(), event))}
         >
@@ -495,6 +508,7 @@ pub(super) fn render_note_composer(
             <textarea
                 id={id}
                 key={composer.draft.clone()}
+                data-note-task={form_key}
                 readonly={busy}
                 onkeydown={note_keyboard_submit(!busy)}
             >{composer.draft.clone()}</textarea>
