@@ -456,7 +456,7 @@ fn direction(
         "Continue under your current native claim.".to_owned()
     } else {
         format!(
-            "Acquire {handle} or the exact related preparation through its ordinary native claim path; any refusal leaves this request pending without possession."
+            "Run `spice task capture {handle}` to acquire this anchor through its ordinary native claim path; any refusal leaves this request pending without possession."
         )
     };
     format!(

@@ -395,6 +395,28 @@ fn room_coordination_waits_for_native_capture_and_stop_clears_on_native_free() {
         Some(seats[0].lane),
     );
     assert!(!started.hide);
+    let key = started.requests[0].key.clone();
+    let sent = bus
+        .fact_snapshot()
+        .expect("coordination facts read")
+        .facts()
+        .iter()
+        .find_map(|envelope| {
+            envelope
+                .fact
+                .read::<wire::body::SteerSent>()
+                .filter(|sent| sent.key == key)
+        })
+        .expect("coordination direction is durable");
+    let named = sent
+        .text
+        .split_once("`spice task capture ")
+        .and_then(|(_, rest)| rest.split_once('`'))
+        .map(|(handle, _)| handle)
+        .expect("direction names a native capture command")
+        .parse::<TaskHandle>()
+        .expect("direction names a valid task handle");
+    assert_eq!(named, room);
     let duplicate = coordinate(
         &bus,
         &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Resume),
@@ -405,7 +427,26 @@ fn room_coordination_waits_for_native_capture_and_stop_clears_on_native_free() {
     );
 
     let lane = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &lane, &room);
+    let available = board(&bus, epoch, lane.clone());
+    let rule: wire::Name = "capture".parse().expect("named capture rule");
+    let heads = at(&available, &named);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, &seats[0]),
+        ],
+        &wire::intent::ClaimWin {
+            rule,
+            recovery: None,
+        },
+    ));
     let aside = assert_committed(put_aside(&bus, &put_aside_command(&bus, epoch, &room)));
     let CommandAnswer::RoomCoordination(aside) = aside else {
         panic!("put-aside returned another answer shape: {aside:?}");
