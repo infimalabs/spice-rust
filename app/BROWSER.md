@@ -75,17 +75,23 @@ task-associated group without mounting it; **Create & open** and **Open in
 group** are the explicit foreground actions. **Add to group**, association
 order controls, and **Remove group** replace shared organization through the
 guarded group commands. Removing shared organization leaves any already-open
-local console as an unavailable placeholder.
+local console as an unavailable placeholder once a completed room snapshot
+lacks the group; while room authority loads or reconnects, the console keeps
+its last name and geometry.
 
 Each mounted group is a peer console beside team consoles, not a team and not a
 roster. Only explicitly opened task rooms occupy it. Their durable task and
 publication stamps key room panels and cards; linked bytes that are not present
 stay labeled source placeholders. **Close view** and **Close group** change
 only this browser. Group/room order, drafts, reader offsets, and the last
-focused composer use `spice:room-views:v1` local storage. Room composers send
-the guarded native room-post command and clear only after its admitted reply;
-a refusal retains the draft. Incoming cards, receipts, conclusions, and
-participant changes never mount, close, reorder, or focus a console.
+focused composer use `spice:room-views:v1` local storage, and every change
+applies to the current local state whenever it lands. Room composers send the
+guarded native room-post command; its admitted reply clears the draft only
+while the draft still holds the posted text, and a refusal retains it. An
+explicit open focuses that room's composer; otherwise the saved composer focus
+is restored only while nothing else holds focus. Incoming cards, receipts,
+conclusions, participant changes, and late hydration never mount, close,
+reorder, or focus a console.
 
 ## Resident topology in the global menu
 

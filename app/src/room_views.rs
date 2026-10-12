@@ -157,6 +157,86 @@ impl RoomViews {
             view.focus = Some(room.clone());
         }
     }
+
+    /// Clear a posted room's draft only while it still holds the posted text.
+    fn posted(&mut self, group: &RoomAuthorityStamp, room: &TaskStamp, text: &str) {
+        if let Some(view) = self.groups.iter_mut().find(|view| &view.group == group)
+            && view
+                .drafts
+                .get(room)
+                .is_some_and(|draft| draft.trim() == text)
+        {
+            view.drafts.remove(room);
+        }
+    }
+
+    /// Apply one local presentation change to the current state.
+    pub(crate) fn apply(&mut self, action: RoomViewAction) {
+        match action {
+            RoomViewAction::Open { group, room } => self.open_room(group, room),
+            RoomViewAction::CloseRoom { group, room } => self.close_room(&group, &room),
+            RoomViewAction::CloseGroup { group } => self.close_group(&group),
+            RoomViewAction::MoveGroup { group, delta } => self.move_group(&group, delta),
+            RoomViewAction::MoveRoom { group, room, delta } => {
+                self.move_room(&group, &room, delta);
+            }
+            RoomViewAction::Draft { group, room, draft } => self.set_draft(&group, &room, draft),
+            RoomViewAction::Reader {
+                group,
+                room,
+                offset,
+            } => self.set_reader(&group, &room, offset),
+            RoomViewAction::Focus { group, room } => self.focus(&group, &room),
+            RoomViewAction::Posted { group, room, text } => self.posted(&group, &room, &text),
+        }
+    }
+}
+
+/// One local presentation change, applied to whatever state is current when
+/// it lands rather than to the state its issuer last rendered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum RoomViewAction {
+    Open {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+    },
+    CloseRoom {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+    },
+    CloseGroup {
+        group: RoomAuthorityStamp,
+    },
+    MoveGroup {
+        group: RoomAuthorityStamp,
+        delta: isize,
+    },
+    MoveRoom {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+        delta: isize,
+    },
+    Draft {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+        draft: String,
+    },
+    Reader {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+        offset: i32,
+    },
+    Focus {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+    },
+    /// A room post with this trimmed text was recorded.
+    Posted {
+        group: RoomAuthorityStamp,
+        room: TaskStamp,
+        text: String,
+    },
 }
 
 impl GroupView {
@@ -233,5 +313,49 @@ mod tests {
         assert_eq!(view.draft(&a), "candidate");
         assert_eq!(view.reader(&a), 41);
         assert!(view.focused(&a));
+    }
+
+    #[test]
+    fn a_landing_post_keeps_later_changes_and_clears_only_an_unchanged_draft() {
+        let group = group("dVsYdDj7d");
+        let a = room("dVrD59Y8N");
+        let b = room("dVrD5vxwx");
+        let mut views = RoomViews::default();
+        views.apply(RoomViewAction::Open {
+            group: group.clone(),
+            room: a.clone(),
+        });
+        let draft = |room: &TaskStamp, draft: &str| RoomViewAction::Draft {
+            group: group.clone(),
+            room: room.clone(),
+            draft: draft.to_owned(),
+        };
+        let posted = |room: &TaskStamp| RoomViewAction::Posted {
+            group: group.clone(),
+            room: room.clone(),
+            text: "ship it".to_owned(),
+        };
+        views.apply(draft(&a, " ship it\n"));
+        // Changes made while the post is in flight.
+        views.apply(RoomViewAction::Open {
+            group: group.clone(),
+            room: b.clone(),
+        });
+        views.apply(draft(&b, "elsewhere"));
+
+        views.apply(posted(&a));
+        let view = &views.groups()[0];
+        assert_eq!(view.rooms(), &[a.clone(), b.clone()]);
+        assert_eq!(view.draft(&a), "");
+        assert_eq!(view.draft(&b), "elsewhere");
+        assert!(view.focused(&b));
+
+        views.apply(draft(&a, "ship it, and then more"));
+        views.apply(posted(&a));
+        assert_eq!(
+            views.groups()[0].draft(&a),
+            "ship it, and then more",
+            "text typed after submitting survives the post's completion"
+        );
     }
 }
