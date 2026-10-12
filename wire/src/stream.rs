@@ -269,6 +269,9 @@ pub enum AgentActivityKind {
     Turn,
     /// Context compaction boundary rendered as a full-width stream divider.
     Compaction,
+    /// A vendor session opened with no messages, rendered as a full-width
+    /// stream divider where the fresh session begins.
+    Session,
     /// The vendor signed an account out; the card names the account and the
     /// login the operator must run before the lane can work on it again.
     SignOut,
@@ -413,20 +416,25 @@ impl AgentActivityKind {
     pub const fn is_visible(self) -> bool {
         matches!(
             self,
-            Self::Prose | Self::Failure | Self::Turn | Self::Compaction | Self::SignOut
+            Self::Prose
+                | Self::Failure
+                | Self::Turn
+                | Self::Compaction
+                | Self::Session
+                | Self::SignOut
         )
     }
 
     /// Whether this activity separates adjacent transcript epochs in the UI.
     #[must_use]
     pub const fn is_boundary(self) -> bool {
-        matches!(self, Self::Turn | Self::Compaction)
+        matches!(self, Self::Turn | Self::Compaction | Self::Session)
     }
 
     /// Oldest card ordinal still inside this lane's newest `floor` messages.
     ///
-    /// Turn and compaction cards mark where messages meet; they are not
-    /// messages and never satisfy the floor on a message's behalf. A lane with
+    /// Turn, compaction, and fresh-session cards mark where messages meet; they
+    /// are not messages and never satisfy the floor on a message's behalf. A lane with
     /// fewer than `floor` messages answers with its oldest message, so markers
     /// older than anything an operator can read stay prunable.
     #[must_use]

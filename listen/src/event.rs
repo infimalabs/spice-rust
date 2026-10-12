@@ -150,6 +150,11 @@ impl Event {
 pub struct SessionDeclaration {
     /// Vendor spelling of the resumable session identity.
     pub identity: String,
+    /// Whether this declaration opens the session: a session file's header, or
+    /// a state report that the session holds no messages yet. Records after it
+    /// begin a fresh session rather than continue a resumed one. A state report
+    /// that states no message count is not fresh.
+    pub fresh: bool,
     /// Source bytes carrying the declaration.
     pub locus: Locus,
 }

@@ -269,6 +269,7 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
         "response" => response(record, locus),
         "session" => Ok(vec![Event::Session(SessionDeclaration {
             identity: string(record, "id")?.to_owned(),
+            fresh: true,
             locus,
         })]),
         "auto_compaction_end" | "compaction" => compaction(record, locus),
@@ -589,8 +590,10 @@ fn response(record: &Object, locus: Locus) -> Events {
     if command != "get_state" {
         return Ok(Vec::new());
     }
+    let state = object(record, "data")?;
     Ok(vec![Event::Session(SessionDeclaration {
-        identity: string(object(record, "data")?, "sessionId")?.to_owned(),
+        identity: string(state, "sessionId")?.to_owned(),
+        fresh: optional_unsigned(state, "messageCount")? == Some(0),
         locus,
     })])
 }

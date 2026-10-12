@@ -66,6 +66,7 @@ fn card_segments(activity: AgentActivityKind, text: &str, until_list: bool) -> V
         | AgentActivityKind::Failure
         | AgentActivityKind::Turn
         | AgentActivityKind::Compaction
+        | AgentActivityKind::Session
         | AgentActivityKind::SignOut => Vec::new(),
     }
 }
