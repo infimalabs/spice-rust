@@ -66,7 +66,17 @@ impl ActionQueue {
     }
 
     pub(super) fn reconnect(&self) {
-        self.mailbox.borrow_mut().reconnect();
+        let jobs = self.mailbox.borrow_mut().reconnect();
+        for pending in jobs {
+            let error = Err("Connection changed; refresh to check actual job state.".to_owned());
+            match pending {
+                PendingKind::Job { respond, .. } => respond(error),
+                PendingKind::Jobs { respond } => respond(Err(
+                    "Connection changed; refresh the job catalog.".to_owned(),
+                )),
+                _ => unreachable!("only job requests require leaf cancellation"),
+            }
+        }
     }
 
     pub(super) fn pending_contains(&self, id: CanonicalUuid) -> bool {
@@ -211,6 +221,8 @@ impl PendingKind {
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
+            | Self::Job { .. }
+            | Self::Jobs { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -398,6 +410,8 @@ impl Drop for ActionLease {
 impl ClientAction {
     fn payload_bytes(&self) -> usize {
         match self {
+            Self::Job { target, .. } => target.id.len(),
+            Self::Jobs { .. } => 0,
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {
@@ -452,7 +466,11 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(
             self,
-            Self::TaskDetail { .. } | Self::TaskRelations { .. } | Self::MessageHistory { .. }
+            Self::TaskDetail { .. }
+                | Self::TaskRelations { .. }
+                | Self::MessageHistory { .. }
+                | Self::Jobs { .. }
+                | Self::Job { stop: false, .. }
         )
     }
 
@@ -808,14 +826,21 @@ impl ActionMailbox {
         );
     }
 
-    fn reconnect(&mut self) {
+    fn reconnect(&mut self) -> Vec<PendingKind> {
         self.stale_current_reads.clear();
         if let Some(in_flight) = self.in_flight.take() {
             let index = in_flight.index.min(self.records.len());
             self.records.insert(index, in_flight.queued);
         }
         let mut retained = Vec::new();
+        let mut jobs = Vec::new();
         for pending in std::mem::take(&mut self.pending).into_values() {
+            if matches!(
+                pending.kind,
+                PendingKind::Job { .. } | PendingKind::Jobs { .. }
+            ) {
+                jobs.push(pending.kind);
+            }
             if let Some(action) = pending.retained {
                 retained.push(action);
             } else if !pending.credited {
@@ -826,6 +851,7 @@ impl ActionMailbox {
         for (queued, index) in retained {
             self.records.insert(index.min(self.records.len()), queued);
         }
+        jobs
     }
 
     fn admit_topology(&mut self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {

@@ -50,6 +50,7 @@ pub(super) const REQUEST: &str = "request.json";
 pub(super) const STATE: &str = "state.json";
 const LOG: &str = "log";
 const STOP: &str = "stop";
+const OPERATOR_STOP: &str = "operator-stop";
 pub(super) const DELIVERED: &str = "delivered";
 const WAKE: &str = "wake";
 
@@ -346,7 +347,7 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
     state.ended_millis = Some(now_millis()?);
     publish_json(&state_path, &state)?;
     if let Some(lane) = request.lane
-        && state.ending != Some(Ending::Stopped)
+        && (state.ending != Some(Ending::Stopped) || directory.join(OPERATOR_STOP).exists())
         && unheard(directory, DELIVERY_GRACE, |directory| {
             directory.join(DELIVERED).exists()
         })
@@ -700,6 +701,7 @@ pub(in crate::resident) struct Job {
     directory: PathBuf,
     id: String,
     command: String,
+    cwd: PathBuf,
     timeout: Option<Duration>,
     service_claim: Option<ServiceClaim>,
     notices: Vec<String>,
@@ -782,6 +784,7 @@ impl Jobs {
             directory,
             id,
             command: command.to_owned(),
+            cwd: cwd.to_path_buf(),
             timeout,
             service_claim,
             notices: notices.to_vec(),
@@ -836,6 +839,7 @@ impl Jobs {
             directory,
             id: request.id,
             command: request.command,
+            cwd: request.cwd,
             timeout: request.timeout_millis.map(Duration::from_millis),
             service_claim: request.service_claim,
             notices: request.notices,
@@ -1133,6 +1137,84 @@ impl Job {
     pub(in crate::resident) fn state(&self) -> io::Result<Option<State>> {
         read_state(&self.directory)
     }
+    fn kind(&self) -> wire::intent::LaneJobKind {
+        use wire::intent::LaneJobKind;
+        if self.events {
+            LaneJobKind::Watch
+        } else if self.timeout.is_none() {
+            LaneJobKind::Service
+        } else {
+            LaneJobKind::Command
+        }
+    }
+
+    fn phase(&self, state: Option<&State>) -> io::Result<wire::intent::LaneJobPhase> {
+        use wire::intent::LaneJobPhase;
+        Ok(if state.is_some_and(|state| state.ending.is_some()) {
+            LaneJobPhase::Ended
+        } else if self.directory.join(STOP).try_exists()? {
+            LaneJobPhase::Stopping
+        } else if state.is_some() {
+            LaneJobPhase::Running
+        } else {
+            LaneJobPhase::Starting
+        })
+    }
+
+    /// Metadata only; listing does not read logs or claim result delivery.
+    pub(in crate::resident) fn listing(self) -> io::Result<wire::intent::KeptJob> {
+        if !Key::shaped(&self.id) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "job key is not native base52",
+            ));
+        }
+        let state = self.state()?;
+        Ok(wire::intent::KeptJob {
+            kind: self.kind(),
+            phase: self.phase(state.as_ref())?,
+            started_millis: state.as_ref().map(|state| state.started_millis),
+            id: self.id,
+            command: self.command,
+        })
+    }
+
+    /// Bounded operator evidence without claiming the agent's result delivery.
+    pub(in crate::resident) fn inspect(
+        self,
+        target: wire::intent::LaneJobRef,
+    ) -> io::Result<wire::intent::LaneJobAnswer> {
+        let state = self.state()?;
+        let ending = state
+            .as_ref()
+            .and_then(|state| state.ending.as_ref())
+            .map(|ending| match ending {
+                Ending::Exited { code } => format!("Exited {code}"),
+                Ending::Signalled { signal } => format!("Signal {signal}"),
+                Ending::TimedOut => "Deadline exceeded".to_owned(),
+                Ending::Stopped => "Stopped by request".to_owned(),
+                Ending::Failed { reason } => format!("Failed: {reason}"),
+                Ending::Lost => "Keeper lost without an ending".to_owned(),
+            });
+        let output = self.tail()?;
+        Ok(wire::intent::LaneJobAnswer {
+            target,
+            kind: self.kind(),
+            phase: self.phase(state.as_ref())?,
+            cwd: self.cwd.to_string_lossy().into_owned(),
+            started_millis: state.as_ref().map(|state| state.started_millis),
+            timeout_millis: self
+                .timeout
+                .map(|timeout| u64::try_from(timeout.as_millis()))
+                .transpose()
+                .map_err(io::Error::other)?,
+            ended_millis: state.as_ref().and_then(|state| state.ended_millis),
+            ending,
+            command: self.command,
+            output: output.text,
+            output_truncated: output.truncated,
+        })
+    }
 
     /// Ask the keeper to end the command.
     ///
@@ -1141,6 +1223,12 @@ impl Job {
     /// Returns the failure of writing the stop request.
     pub(in crate::resident) fn stop(&self) -> io::Result<()> {
         File::create(self.directory.join(STOP)).map(drop)
+    }
+
+    /// Operator termination leaves the ending eligible for agent notification.
+    pub(in crate::resident) fn stop_by_operator(&self) -> io::Result<()> {
+        File::create(self.directory.join(OPERATOR_STOP))?;
+        self.stop()
     }
 
     /// Claim the record that the lane has heard how the job ended: in the

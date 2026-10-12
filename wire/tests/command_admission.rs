@@ -234,3 +234,31 @@ fn wake_claim_requires_capture_authority_and_decodes_the_atomic_request() {
         })
     ));
 }
+
+#[test]
+fn a_lane_cannot_inspect_or_terminate_keeper_jobs() {
+    for kind in [
+        CommandKind::LaneJobsRead,
+        CommandKind::LaneJobRead,
+        CommandKind::LaneJobStop,
+    ] {
+        let command = Command {
+            v: WireVersion::CURRENT,
+            id: uuid(2),
+            epoch: uuid(1),
+            kind,
+            expected: vec![],
+            body: if kind == CommandKind::LaneJobsRead {
+                serde_json::json!({})
+            } else {
+                serde_json::json!({"scope": {"topology": "0", "lane": "0"}, "id": "1kKRRsDP"})
+            },
+        };
+        let Err(CommandRejection::Refusal(refusal)) =
+            command.admit(&accepted(Actor::Lane(uuid(4))))
+        else {
+            panic!("lane job control requires operator authority");
+        };
+        assert_eq!(refusal.reason(), "command::authority");
+    }
+}

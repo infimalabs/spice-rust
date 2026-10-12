@@ -10,15 +10,15 @@ use super::{
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DirectionHistoryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply,
     DocLedger, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
-    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneRead,
-    LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, QuoteRead,
-    RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, ReportAnswer, ReportRead,
-    StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer,
-    TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer,
-    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
-    TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
-    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
-    UpChange, VendorCatalog, VendorCatalogAnswer,
+    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneJobAnswer,
+    LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
+    LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
+    ReleasePublish, ReportAnswer, ReportRead, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
+    SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends,
+    TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
+    TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
+    TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
+    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -106,6 +106,10 @@ pub enum BodyShape {
     TrustRef,
     /// [`LaneRead`]
     LaneRead,
+    /// [`LaneJobsRead`]
+    LaneJobs,
+    /// [`LaneJobRef`]
+    LaneJob,
     /// [`LaneSeat`]
     LaneSeat,
     /// [`LaneArrange`]
@@ -177,6 +181,10 @@ pub enum AnswerShape {
     Trust,
     /// [`LaneAnswer`]
     Lane,
+    /// [`LaneJobsAnswer`]
+    LaneJobs,
+    /// [`LaneJobAnswer`]
+    LaneJob,
     /// [`LaneChangeAnswer`]
     LaneChange,
     /// [`LaneRenewalAnswer`]
@@ -235,6 +243,10 @@ pub enum CommandAnswer {
     Trust(TrustAnswer),
     /// [`AnswerShape::Lane`]
     Lane(Box<LaneAnswer>),
+    /// [`AnswerShape::LaneJobs`]
+    LaneJobs(Box<LaneJobsAnswer>),
+    /// [`AnswerShape::LaneJob`]
+    LaneJob(Box<LaneJobAnswer>),
     /// [`AnswerShape::LaneChange`]
     LaneChange(Box<LaneChangeAnswer>),
     /// [`AnswerShape::LaneRenewal`]
@@ -275,6 +287,8 @@ impl CommandAnswer {
             Self::VendorCatalog(_) => AnswerShape::VendorCatalog,
             Self::Trust(_) => AnswerShape::Trust,
             Self::Lane(_) => AnswerShape::Lane,
+            Self::LaneJobs(_) => AnswerShape::LaneJobs,
+            Self::LaneJob(_) => AnswerShape::LaneJob,
             Self::LaneChange(_) => AnswerShape::LaneChange,
             Self::LaneRenewal(_) => AnswerShape::LaneRenewal,
             Self::State(_) => AnswerShape::State,
@@ -315,6 +329,8 @@ impl AnswerShape {
 
     fn decode_from(self, source: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
         match self {
+            Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
+            Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::Board
             | Self::Report
             | Self::TaskDetail
@@ -428,6 +444,10 @@ impl CommandKind {
     #[must_use]
     pub const fn binding(self) -> Binding {
         match self {
+            Self::LaneJobsRead => Binding::of(BodyShape::LaneJobs, AnswerShape::LaneJobs),
+            Self::LaneJobRead | Self::LaneJobStop => {
+                Binding::of(BodyShape::LaneJob, AnswerShape::LaneJob)
+            }
             Self::BoardRead
             | Self::ReportRead
             | Self::TaskDetail
@@ -670,6 +690,10 @@ pub enum Intent {
     TrustRef(TrustRef),
     /// [`BodyShape::LaneRead`]
     LaneRead(LaneRead),
+    /// [`BodyShape::LaneJobs`]
+    LaneJobs(LaneJobsRead),
+    /// [`BodyShape::LaneJob`]
+    LaneJob(LaneJobRef),
     /// [`BodyShape::LaneSeat`]
     LaneSeat(LaneSeat),
     /// [`BodyShape::LaneArrange`]
@@ -705,6 +729,8 @@ impl Intent {
     #[must_use]
     pub const fn shape(&self) -> BodyShape {
         match self {
+            Self::LaneJobs(_) => BodyShape::LaneJobs,
+            Self::LaneJob(_) => BodyShape::LaneJob,
             Self::BoardRead(_)
             | Self::ReportRead(_)
             | Self::TaskDetail(_)
@@ -971,6 +997,8 @@ impl BodyShape {
         } else if matches!(
             self,
             Self::LaneRead
+                | Self::LaneJobs
+                | Self::LaneJob
                 | Self::LaneSeat
                 | Self::LaneArrange
                 | Self::LaneState
@@ -1009,6 +1037,8 @@ impl BodyShape {
     fn decode_lane_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::LaneRead => Intent::LaneRead(crate::decode(bytes)?),
+            Self::LaneJobs => Intent::LaneJobs(crate::decode(bytes)?),
+            Self::LaneJob => Intent::LaneJob(crate::decode(bytes)?),
             Self::LaneSeat => Intent::LaneSeat(crate::decode(bytes)?),
             Self::LaneArrange => Intent::LaneArrange(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),

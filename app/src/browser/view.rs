@@ -200,7 +200,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
     })
 }
 fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> sidebar::Content {
-    let standings = spice_standings(render, runtime);
+    let standings = spice_standings(render, runtime).map(Rc::new);
     let body = html! {
         <div class="app-spice-sidebar-content">
             {spice_sidebar::render_global_settings(
@@ -211,8 +211,8 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 render.sender,
             )}
             {spice_sidebar::render_operator(runtime)}
-            {spice_jobs::render(standings.as_deref())}
-            {render_spice_topology(render, runtime, standings.as_deref())}
+            {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
+            {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}
             {quota::render_sidebar(runtime)}
         </div>
     };

@@ -169,6 +169,14 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneRead, Intent::LaneRead(_)) => ordinary(lane_surface::read(
                 self.bus, self.paths, self.epoch, seats, command,
             )),
+            (CommandKind::LaneJobsRead, Intent::LaneJobs(_)) => ordinary(
+                lane_surface::job_catalog(self.bus, self.paths, self.epoch, command),
+            ),
+            (CommandKind::LaneJobRead | CommandKind::LaneJobStop, Intent::LaneJob(target)) => {
+                ordinary(lane_surface::job_control(
+                    self.bus, self.paths, self.epoch, command, target,
+                ))
+            }
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => ordinary(lane_surface::seat(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             )),

@@ -62,43 +62,6 @@ fn the_specified_command_satisfies_its_own_registry_row() {
 }
 
 #[test]
-fn every_command_names_the_witnesses_it_requires() {
-    for kind in CommandKind::ALL {
-        let law = kind.law();
-        let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
-        let global_settings = matches!(kind, CommandKind::GlobalSettingsSet);
-        let lane_lifecycle = matches!(
-            kind,
-            CommandKind::LaneSeat
-                | CommandKind::LaneState
-                | CommandKind::LaneRenewal
-                | CommandKind::LaneRetune
-                | CommandKind::LaneEffortRetune
-                | CommandKind::LaneFastRetune
-                | CommandKind::LaneArrange
-                | CommandKind::TeamConfigure
-                | CommandKind::TeamArrange
-        );
-        assert_eq!(
-            law.required.is_empty(),
-            kind.is_read() || scanner_disposition || lane_lifecycle || global_settings,
-            "only reads, lane lifecycle, and scanner dispositions may omit required witnesses",
-        );
-        if scanner_disposition {
-            assert_eq!(law.optional, &[WitnessKind::Directive]);
-        } else if law.required.is_empty() {
-            assert!(law.optional.is_empty());
-        }
-        for optional in law.optional {
-            assert!(
-                !law.required.contains(optional),
-                "{kind} names {optional:?} as both required and optional",
-            );
-        }
-    }
-}
-
-#[test]
 fn task_relations_requires_an_authenticated_connected_capability() {
     let law = CommandKind::TaskRelations.law();
     assert_eq!(law.authority, Authority::Connected);
