@@ -79,6 +79,14 @@ mod browser;
 #[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) enum PendingKind {
+    Jobs {
+        respond: client_action::JobsResponse,
+    },
+    Job {
+        target: wire::intent::LaneJobRef,
+        stop: bool,
+        respond: client_action::JobResponse,
+    },
     Board,
     Lanes {
         wakes: Vec<wire::CanonicalUuid>,

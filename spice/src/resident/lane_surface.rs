@@ -25,8 +25,10 @@ use wire::{
 
 mod automatic;
 mod ending;
+mod jobs;
 mod launch;
 mod propose;
+pub(super) use jobs::{catalog as job_catalog, control as job_control};
 mod renewal;
 mod reply;
 mod restart_claim;

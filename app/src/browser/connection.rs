@@ -406,7 +406,14 @@ async fn dispatch_client_action(
         .await
         {
             Ok(Some(id)) => {
-                lease.commit_pending(id);
+                if matches!(
+                    lease.action(),
+                    ClientAction::Job { .. } | ClientAction::Jobs { .. }
+                ) {
+                    drop(lease.commit());
+                } else {
+                    lease.commit_pending(id);
+                }
                 Ok(())
             }
             Ok(None) => {
@@ -414,7 +421,17 @@ async fn dispatch_client_action(
                 Ok(())
             }
             Err(error) => {
-                lease.restore();
+                match lease.action() {
+                    ClientAction::Job { respond, .. } => {
+                        respond(Err(error.clone()));
+                        drop(lease.commit());
+                    }
+                    ClientAction::Jobs { respond } => {
+                        respond(Err(error.clone()));
+                        drop(lease.commit());
+                    }
+                    _ => lease.restore(),
+                }
                 Err(error)
             }
         }
@@ -871,6 +888,16 @@ async fn dispatch_action(
     action: &ClientAction,
 ) -> Result<Option<CanonicalUuid>, String> {
     match action {
+        ClientAction::Jobs { respond } => refresh::send_jobs(principal, writer, actions, respond)
+            .await
+            .map(Some),
+        ClientAction::Job {
+            target,
+            stop,
+            respond,
+        } => refresh::send_job(principal, writer, actions, target, *stop, respond)
+            .await
+            .map(Some),
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

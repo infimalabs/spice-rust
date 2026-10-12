@@ -2,8 +2,19 @@ use wire::body::DirectiveAttachment;
 use wire::intent::{GlobalSettingsSet, TeamArrangement, TeamLife};
 use wire::{CanonicalUuid, TaskHandle, TaskStamp};
 
+pub(crate) type JobResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobAnswer, String>)>;
+pub(crate) type JobsResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobsAnswer, String>)>;
+
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
+    Jobs {
+        respond: JobsResponse,
+    },
+    Job {
+        target: wire::intent::LaneJobRef,
+        stop: bool,
+        respond: JobResponse,
+    },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     GlobalSettings(GlobalSettingsSet),

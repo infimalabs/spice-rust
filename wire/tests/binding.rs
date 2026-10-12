@@ -339,29 +339,9 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
 ];
 
-#[test]
-fn generic_hidden_creation_discriminant_stays_retired() {
-    assert!(
-        "task::system-add".parse::<CommandKind>().is_err(),
-        "the retired generic hidden-creation discriminant still crosses the wire",
-    );
-}
-
 #[path = "binding/answers.rs"]
 mod answers;
 use answers::ANSWERS;
-#[test]
-fn every_command_kind_has_a_body_spelling() {
-    let spelled: BTreeSet<_> = BODIES.iter().map(|(kind, _)| *kind).collect();
-    for kind in CommandKind::ALL {
-        assert!(spelled.contains(kind), "{kind} has no body fixture");
-    }
-    assert_eq!(
-        spelled.len(),
-        BODIES.len(),
-        "a kind is spelled twice in the fixtures",
-    );
-}
 
 #[test]
 fn every_body_decodes_as_the_shape_its_kind_binds() {

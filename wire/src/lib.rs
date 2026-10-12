@@ -62,6 +62,8 @@ pub mod packed;
 pub mod quota;
 pub mod quote;
 pub mod reply;
+mod sequence_code;
+pub use sequence_code::{SequenceCode, SequenceCodeError};
 mod speech;
 /// Steering-specific bodies that sit outside the core body module's shape boundary.
 pub mod steering;

@@ -124,6 +124,12 @@ pub enum CommandKind {
 
     /// Read the current lane table at one resident barrier.
     LaneRead,
+    /// Read the operator job catalog without claiming delivery.
+    LaneJobsRead,
+    /// Inspect one lane's keeper job without claiming its agent delivery.
+    LaneJobRead,
+    /// Ask the keeper to terminate one exact lane job.
+    LaneJobStop,
     /// Seat a lane in an operator-created worktree.
     LaneSeat,
     /// Place one seated member before another member.
@@ -261,6 +267,13 @@ impl Law {
 /// under the same predicates whether it is carried, renewed, freed, or
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
+    /// Operator termination of an immutable lane-scoped keeper job. The
+    /// command envelope binds the resident epoch; no board head is mutated.
+    pub const JOB_STOP: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
     /// Intended birth stamp is absent and every dependency exists at its
     /// named workflow head. Atomic create-and-claim additionally carries the
     /// caller's eligibility and occupied residency predicates.
@@ -640,6 +653,9 @@ impl CommandKind {
         Self::TrustGrant,
         Self::TrustRevoke,
         Self::LaneRead,
+        Self::LaneJobsRead,
+        Self::LaneJobRead,
+        Self::LaneJobStop,
         Self::LaneSeat,
         Self::LaneArrange,
         Self::LaneState,
@@ -710,6 +726,9 @@ impl CommandKind {
             | Self::TrustGrant
             | Self::TrustRevoke
             | Self::LaneRead
+            | Self::LaneJobsRead
+            | Self::LaneJobRead
+            | Self::LaneJobStop
             | Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneState
@@ -790,6 +809,9 @@ impl CommandKind {
             Self::TrustGrant => "trust::grant",
             Self::TrustRevoke => "trust::revoke",
             Self::LaneRead => "lane::read",
+            Self::LaneJobsRead => "lane::jobs-read",
+            Self::LaneJobRead => "lane::job-read",
+            Self::LaneJobStop => "lane::job-stop",
             Self::LaneSeat => "lane::seat",
             Self::LaneArrange => "lane::arrange",
             Self::LaneState => "lane::state",
@@ -972,6 +994,8 @@ impl CommandKind {
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneRead => Law::LANE_READ,
+            Self::LaneJobsRead | Self::LaneJobRead => Law::OPERATOR_READ,
+            Self::LaneJobStop => Law::JOB_STOP,
             Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneState
@@ -1014,6 +1038,8 @@ impl CommandKind {
                 | Self::ConsentRead
                 | Self::ConsentPolicy
                 | Self::LaneRead
+                | Self::LaneJobsRead
+                | Self::LaneJobRead
                 | Self::LaneRecall
         )
     }

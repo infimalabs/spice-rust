@@ -66,15 +66,40 @@ lifted agent near the sheet's edge scrolls it toward an off-screen target.
 ## Jobs in the global menu
 
 After the operator panel the Spice view shows **Jobs**, every job every lane
-keeps, apart from the topology roster; **Provider quota** ends the view. Each
-job is one fixed-height row in its agent's accent: a
-glyph naming its kind (▶ command, ◆ service, ● watch) solid while running and
-hollow once it ended unheard, the agent, its age, and the command. The heading
-counts each kind, zero included, and the unheard. Rows run oldest first, so a
-new job joins at the end and long-lived services settle at the top; every cell
-has a fixed width, so a tick or a standing change moves no row.
-The board reserves four rows of space, including when empty or loading, with
-short lists packed at the top. Larger lists grow naturally without clipping.
+keeps, apart from the topology roster; **Provider quota** ends the view. The
+list and its full-width inspection card share the existing four-row slot.
+Empty, loading, filtered, and inspection states retain that footprint; larger
+lists and evidence scroll inside it rather than enlarging the sheet.
+
+Rows show kind (▶ command, ◆ service, ● watch), agent accent and name, observed
+start age, and the complete command in the tooltip. Ended jobs awaiting agent
+delivery use hollow glyphs. Search matches agent, command, or job key; the
+heading counts also filter by kind or unheard endings. Click **Jobs** to clear
+the filters. An unpublished start displays `?`, not an invented age.
+
+Open a row to inspect its command, working directory, keeper lifecycle, start,
+deadline, and ending evidence. **Summary** and **Output** share the same card;
+previous/next navigate matching jobs without opening another pane. Output is
+the keeper's bounded tail, with an explicit notice when earlier output was
+omitted. Copy copies the complete command or the displayed output. Back returns
+to the list; Escape first cancels a kill confirmation, otherwise returns.
+
+**Kill** requires running/starting evidence and current operator authority.
+Confirmation names the exact job key, focuses **Cancel**, and asks the existing
+keeper to terminate that command's process group. Stopping, ended, unavailable,
+and no-longer-cataloged references cannot be killed from the card. A sent stop
+is not replayed after reconnect; refresh reads what the keeper actually did.
+Inspection and operator termination never mark the agent's result as delivered.
+An operator-stopped ending remains eligible for its ordinary agent notification.
+
+The operator-only `lane::jobs-read`, `lane::job-read`, and `lane::job-stop` reads
+and control operate on the existing keeper records, not a second job store.
+Their job payloads use the native base52 job key and an encoded topology
+revision/lane slot, not a new UUID identity. Changed topology invalidates the
+reference before any stop marker is written; return to the list for a current
+reference. Existing lane summaries and retained keeper data keep their current
+shape. Catalogs refresh while the panel is visible; live inspection refreshes
+while its card is visible. Disconnection and missing records are explicit.
 
 ## Provider quota rows
 

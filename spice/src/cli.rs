@@ -212,6 +212,9 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TrustGrant
         | CommandKind::TrustRevoke
         | CommandKind::LaneRead
+        | CommandKind::LaneJobsRead
+        | CommandKind::LaneJobRead
+        | CommandKind::LaneJobStop
         | CommandKind::LaneRenewal
         | CommandKind::LaneRetune
         | CommandKind::LaneEffortRetune

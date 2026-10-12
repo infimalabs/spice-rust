@@ -255,6 +255,56 @@ fn apply_command_response(
             runtime.apply_consent_ruling(request, &admitted);
             CommandApplication::ordinary(false)
         }
+        PendingKind::Jobs { respond } => {
+            let admitted: crate::Admitted<Response<wire::intent::LaneJobsAnswer>> =
+                match admit_response(session, bytes) {
+                    Ok(admitted) => admitted,
+                    Err(error) => {
+                        respond(Err(error.clone()));
+                        return Err(error);
+                    }
+                };
+            let result = match admitted.into_inner().outcome {
+                wire::Outcome::Reply(reply) => Ok(reply.body),
+                outcome => Err(outcome_issue("Job catalog failed", &outcome)
+                    .expect("a non-reply outcome describes its issue")),
+            };
+            respond(result);
+            CommandApplication {
+                refresh: false,
+                lane_authority: false,
+                publish: false,
+                stale: crate::Stale::default(),
+            }
+        }
+        PendingKind::Job {
+            target,
+            stop,
+            respond,
+        } => {
+            let admitted: crate::Admitted<Response<wire::intent::LaneJobAnswer>> =
+                match admit_response(session, bytes) {
+                    Ok(admitted) => admitted,
+                    Err(error) => {
+                        respond(Err(error.clone()));
+                        return Err(error);
+                    }
+                };
+            let result = match admitted.into_inner().outcome {
+                wire::Outcome::Reply(reply) if reply.body.target == target => Ok(reply.body),
+                wire::Outcome::Reply(_) => Err("Resident answered for another job".to_owned()),
+                outcome => Err(outcome_issue("Job request failed", &outcome)
+                    .expect("a non-reply outcome describes its issue")),
+            };
+            let refresh = stop && result.is_ok();
+            respond(result);
+            CommandApplication {
+                refresh,
+                lane_authority: false,
+                publish: false,
+                stale: crate::Stale::default(),
+            }
+        }
         PendingKind::TaskDetail { task } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
                 admit_response(session, bytes)?;

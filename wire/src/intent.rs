@@ -32,6 +32,7 @@ use crate::ident::{CanonicalUuid, Digest, Instant, ReleaseNotesIdentity};
 use crate::witness::{Answer, Disposition, Name, TaskHandle};
 
 mod board;
+mod jobs;
 pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
     BoardStatement, BoardTask, DocLedger, NextWorkCounts, NextWorkState, NextWorkTask, Positioned,
@@ -44,6 +45,10 @@ pub use board::{
     TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
     TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskStep, TaskTimeline,
     TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer,
+};
+pub use jobs::{
+    KeptJob, LaneJobAnswer, LaneJobCatalog, LaneJobPhase, LaneJobRef, LaneJobScope, LaneJobsAnswer,
+    LaneJobsRead,
 };
 mod report;
 pub use report::{

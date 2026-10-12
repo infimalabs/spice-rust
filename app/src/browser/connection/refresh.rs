@@ -3,6 +3,54 @@
 use super::*;
 use crate::action_mailbox::CurrentRead;
 
+pub(super) async fn send_jobs(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    respond: &crate::client_action::JobsResponse,
+) -> Result<CanonicalUuid, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::Jobs {
+            respond: respond.clone(),
+        },
+        CommandKind::LaneJobsRead,
+        Vec::new(),
+        wire::intent::LaneJobsRead {},
+    )
+    .await
+}
+
+pub(super) async fn send_job(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    target: &wire::intent::LaneJobRef,
+    stop: bool,
+    respond: &crate::client_action::JobResponse,
+) -> Result<CanonicalUuid, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::Job {
+            target: target.clone(),
+            stop,
+            respond: respond.clone(),
+        },
+        if stop {
+            CommandKind::LaneJobStop
+        } else {
+            CommandKind::LaneJobRead
+        },
+        Vec::new(),
+        target,
+    )
+    .await
+}
+
 pub(super) async fn send_after_frame(
     principal: &Principal,
     writer: &mut SocketWriter,

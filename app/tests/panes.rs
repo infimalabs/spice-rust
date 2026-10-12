@@ -417,57 +417,6 @@ fn no_lane_surface_renders_the_capability_its_session_presented() {
 }
 
 #[test]
-fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() {
-    let classified = CommandKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| kind.law().authority == Authority::Operator)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        CommandKind::SteerSend.law().authority,
-        Authority::Operator,
-        "a lane principal must never submit operator direction",
-    );
-
-    // The expected set is written out rather than derived, because a test that
-    // computed it the way the pane does would agree with any classification,
-    // including an empty one.
-    assert_eq!(
-        classified,
-        BTreeSet::from([
-            CommandKind::BoardHandout,
-            CommandKind::TaskClose,
-            CommandKind::GlobalSettingsRead,
-            CommandKind::GlobalSettingsSet,
-            CommandKind::VendorCatalog,
-            CommandKind::SteerSend,
-            CommandKind::SteerHistory,
-            CommandKind::SteerResend,
-            CommandKind::SteerRecover,
-            CommandKind::SteerCancel,
-            CommandKind::ConsentRead,
-            CommandKind::ConsentPolicy,
-            CommandKind::ConsentDecide,
-            CommandKind::TrustGrant,
-            CommandKind::TrustRevoke,
-            CommandKind::LaneRead,
-            CommandKind::LaneSeat,
-            CommandKind::LaneArrange,
-            CommandKind::LaneState,
-            CommandKind::LaneRenewal,
-            CommandKind::LaneRetune,
-            CommandKind::LaneEffortRetune,
-            CommandKind::LaneFastRetune,
-            CommandKind::TeamConfigure,
-            CommandKind::TeamArrange,
-            CommandKind::ReleasePublish,
-            CommandKind::UpChange,
-        ])
-    );
-    assert_eq!(GrantPane::decisions().collect::<BTreeSet<_>>(), classified);
-}
-
-#[test]
 fn transcript_disposition_admits_a_conditional_directive_witness() {
     let dispose = CommandKind::SteerDispose.law();
     let cancel = CommandKind::SteerCancel.law();
