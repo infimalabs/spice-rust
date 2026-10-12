@@ -19,12 +19,12 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
 use wire::rooms::{
-    RoomAuthorityStamp, RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource,
-    RoomSourceUnavailable, TranscriptHunk,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPublicationContent,
+    RoomPublished, RoomPutAside, RoomSource, RoomSourceUnavailable, TranscriptHunk,
 };
 use wire::{
     Actor, CanonicalUuid, Disposition, Fault, FaultClass, Instant, Outcome, Refusal, Reply,
-    ReplyPosition, Seq, TaskHandle, TaskStamp,
+    ReplyPosition, Seq, SequenceCode, TaskHandle, TaskStamp,
 };
 
 use crate::read_page::{Page, Paged};
@@ -278,6 +278,7 @@ enum Body {
         hunk: TranscriptHunk,
         author: CanonicalUuid,
     },
+    Linked(RoomSource),
 }
 
 fn recorded(
@@ -371,6 +372,22 @@ fn row(
                 },
                 messaged.directed,
             )
+        } else if let Some(started) = envelope.fact.read::<RoomCoordinationStarted>() {
+            (
+                started.publication,
+                Body::Linked(RoomSource::Journal {
+                    fact: SequenceCode::new(envelope.seq.get()),
+                }),
+                Vec::new(),
+            )
+        } else if let Some(shelved) = envelope.fact.read::<RoomPutAside>() {
+            (
+                shelved.publication,
+                Body::Linked(RoomSource::Journal {
+                    fact: SequenceCode::new(envelope.seq.get()),
+                }),
+                Vec::new(),
+            )
         } else {
             return Err(fault(
                 FaultClass::Store,
@@ -423,6 +440,7 @@ impl Row {
                 (Content::Linked { source: link }, None)
             }
             Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
+            Body::Linked(source) => (Content::Linked { source }, None),
         };
         Publication {
             publication: self.publication,
