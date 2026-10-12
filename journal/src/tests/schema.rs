@@ -36,19 +36,26 @@ fn current_schema_is_the_only_executable_journal_shape() {
     );
 }
 
+/// Return a current fixture to a predecessor's shape and identity.
+fn restore_predecessor(journal: &Journal, predecessor: u32) {
+    journal
+        .connection
+        .execute_batch(&format!(
+            "DROP TABLE room_publications; DROP TABLE group_anchors; DROP TABLE group_heads;
+             DROP TABLE proposal_heads; DROP TABLE authorization_heads;
+             UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
+             PRAGMA user_version = {predecessor};",
+        ))
+        .expect("restore predecessor shape");
+}
+
 #[test]
-fn predecessor_authority_crosses_once_without_rewriting_current_rows() {
+fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [33, 34, 35] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
-        journal
-            .connection
-            .execute_batch(&format!(
-                "UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
-             PRAGMA user_version = {predecessor};",
-            ))
-            .expect("restore predecessor identity");
+        restore_predecessor(&journal, predecessor);
         let rows = |journal: &Journal| -> (Vec<u8>, Vec<u8>) {
             let fact = journal
                 .connection
@@ -86,6 +93,11 @@ fn predecessor_authority_crosses_once_without_rewriting_current_rows() {
         assert_eq!(head.body().intent, None, "no intent is inferred");
         assert_eq!(head.body().preparation, None, "no preparation is inferred");
         journal.verify().expect("crossed authority verifies");
+        assert_eq!(
+            authority_tables(&journal),
+            expected_tables(),
+            "the crossing creates exactly the current projection"
+        );
         drop(journal);
 
         let reopened = Journal::open(&path).expect("current authority reopens");
@@ -136,11 +148,10 @@ fn writable_open_crosses_retired_gate_facts_into_inert_current_evidence_once() {
         .connection
         .execute_batch(
             "UPDATE cursor_head SET seq = 3, wake = 3 WHERE singleton = 1;
-             UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;
-             UPDATE journal_schema SET version = 35 WHERE singleton = 1;
-             PRAGMA user_version = 35;",
+             UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;",
         )
-        .expect("predecessor identity is restored");
+        .expect("planted cursor is indexed");
+    restore_predecessor(&journal, 35);
     drop(journal);
 
     let journal = Journal::open(&path).expect("retained gate fact crosses on writable open");

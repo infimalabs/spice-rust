@@ -58,6 +58,7 @@ impl Journal {
         let assigned = assign_positions(current, write.facts.len())?;
         let prepared = prepare_facts(&write, &assigned, current)?;
         insert_facts(&transaction, &write, &prepared)?;
+        fold_rooms(&transaction, &write.facts, &assigned)?;
         apply_heads(
             &transaction,
             write.id,
@@ -68,6 +69,14 @@ impl Journal {
             write.heads,
             &assigned,
         )?;
+        crate::rooms::settle_controls(
+            &transaction,
+            assigned
+                .iter()
+                .copied()
+                .zip(write.facts.iter().map(|proposed| &proposed.fact)),
+        )
+        .map_err(room_refusal)?;
         if let Some(receipt) = write.receipt {
             insert_receipt(
                 &transaction,
@@ -510,6 +519,29 @@ fn insert_facts(
         insert_thread_index(transaction, fact.seq, fact.cause, write.origin.as_str())?;
     }
     Ok(())
+}
+
+/// Admit every room-authority consequence against stored authority before any
+/// head moves, so an unsound reference refuses the whole write.
+fn fold_rooms(
+    transaction: &Transaction<'_>,
+    facts: &[ProposedFact],
+    assigned: &[wire::Seq],
+) -> Result<(), CommitError> {
+    let mut stored = crate::rooms::Stored::new(transaction);
+    for (seq, proposed) in assigned.iter().zip(facts) {
+        crate::rooms::fold(&mut stored, *seq, &proposed.fact).map_err(room_refusal)?;
+    }
+    Ok(())
+}
+
+fn room_refusal(refusal: crate::rooms::Refusal) -> CommitError {
+    match refusal {
+        crate::rooms::Refusal::Unsound(detail) => CommitError::Refused(GuardRefusal::new(format!(
+            "room authority refused: {detail}"
+        ))),
+        other => CommitError::Fault(CommitFault::new(other.to_string())),
+    }
 }
 
 fn resolve_cause(
