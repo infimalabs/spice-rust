@@ -42,12 +42,12 @@ use crate::state::BoundDecision;
 use admission::{validate_observation, validate_repo_path};
 
 /// Current core-family report schema.
-pub const CORE_REPORT_VERSION: u64 = 1;
+pub const CORE_REPORT_VERSION: u64 = 2;
 
 /// The first predecessor family in its fixed battery order.
 pub const CORE_GATE_IDS: [GateId; 8] = [
     GateId::MergeIntegrity,
-    GateId::PlanPhase,
+    GateId::PlanningPhase,
     GateId::RepoShape,
     GateId::Staging,
     GateId::RepoDocs,
@@ -152,7 +152,7 @@ pub enum MergeTreeCompletion {
 /// A successfully acquired active-claim observation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "state")]
-pub enum PlanPhaseEvidence {
+pub enum PlanningPhaseEvidence {
     /// No active claim exists in this worktree.
     NoActiveClaim,
     /// The active task and its exact current workflow phase.
@@ -478,7 +478,7 @@ impl ConfigInventoryEvidence {
 #[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "gate")]
 pub enum CoreEvidence {
     MergeIntegrity(MergeIntegrityEvidence),
-    PlanPhase(PlanPhaseEvidence),
+    PlanningPhase(PlanningPhaseEvidence),
     RepoShape(RepoShapeEvidence),
     Staging(StagingEvidence),
     RepoDocs(RepoDocsEvidence),
@@ -491,7 +491,7 @@ impl CoreEvidence {
     const fn id(&self) -> GateId {
         match self {
             Self::MergeIntegrity(_) => GateId::MergeIntegrity,
-            Self::PlanPhase(_) => GateId::PlanPhase,
+            Self::PlanningPhase(_) => GateId::PlanningPhase,
             Self::RepoShape(_) => GateId::RepoShape,
             Self::Staging(_) => GateId::Staging,
             Self::RepoDocs(_) => GateId::RepoDocs,

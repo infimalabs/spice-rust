@@ -46,20 +46,26 @@ fn claim_capture_from_board(board: &BoardAnswer) -> gate::ClaimCapture {
     }
 }
 
-fn require_no_plan_implementation(
+fn require_no_planning_implementation(
     board: &BoardAnswer,
     action: &str,
 ) -> Result<(), Outcome<CommandAnswer>> {
     match claim_capture_from_board(board) {
-        gate::ClaimCapture::Active { task, phase } if phase.as_str() == "plan" => Err(refusal(
-            "task::plan-implementation",
-            Some(format!("active task={task}; refused action={action}")),
-            concat!(
-                "organize the plan with task add, task modify, task depends, and task note; ",
-                "then complete the plan and claim an implementation phase before changing ",
-                "repository history",
-            ),
-        )),
+        gate::ClaimCapture::Active { task, phase }
+            if matches!(phase.as_str(), "plan" | "design") =>
+        {
+            Err(refusal(
+                "task::planning-implementation",
+                Some(format!(
+                    "active task={task}; phase={phase}; refused action={action}"
+                )),
+                concat!(
+                    "organize the planning work with task add, task modify, task depends, and ",
+                    "task note; then complete the planning phase and claim an implementation ",
+                    "phase before changing repository history",
+                ),
+            ))
+        }
         gate::ClaimCapture::Absent { reason } => {
             Err(protocol_fault("claim::active-ambiguous", &reason))
         }

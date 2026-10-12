@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use super::{
     CORE_REPORT_VERSION, ConfigInventoryEvidence, CoreArmInput, CoreArmReport, CoreEvidence,
     CoreInputs, CoreObservation, CoreReport, CoreStanding, MergeIntegrityEvidence,
-    MergeTreeCompletion, PlanPhaseEvidence,
+    MergeTreeCompletion, PlanningPhaseEvidence,
 };
 
 /// Evaluate one complete immutable core-family battery.
@@ -57,7 +57,7 @@ pub(crate) fn evaluate_core_arm(input: &CoreArmInput) -> CoreArmReport {
 fn evaluate_evidence(evidence: &CoreEvidence) -> (CoreStanding, String) {
     match evidence {
         CoreEvidence::MergeIntegrity(value) => evaluate_merge(value),
-        CoreEvidence::PlanPhase(value) => evaluate_plan(value),
+        CoreEvidence::PlanningPhase(value) => evaluate_planning_phase(value),
         CoreEvidence::RepoShape(value) => findings(
             "repo shape",
             "repo shape: ok",
@@ -145,14 +145,19 @@ fn evaluate_merge(evidence: &MergeIntegrityEvidence) -> (CoreStanding, String) {
     }
 }
 
-fn evaluate_plan(evidence: &PlanPhaseEvidence) -> (CoreStanding, String) {
+fn evaluate_planning_phase(evidence: &PlanningPhaseEvidence) -> (CoreStanding, String) {
     match evidence {
-        PlanPhaseEvidence::NoActiveClaim => passed("plan phase: no active claim"),
-        PlanPhaseEvidence::Active { task, phase } if phase.as_str() == "plan" => failed(format!(
-            "git commit refused: active claimed task {task} is still in plan phase"
-        )),
-        PlanPhaseEvidence::Active { task, phase } => passed(format!(
-            "plan phase: active claimed task {task} is in {} phase",
+        PlanningPhaseEvidence::NoActiveClaim => passed("planning phase: no active claim"),
+        PlanningPhaseEvidence::Active { task, phase }
+            if matches!(phase.as_str(), "plan" | "design") =>
+        {
+            failed(format!(
+                "git commit refused: active claimed task {task} is in {} phase",
+                phase.as_str()
+            ))
+        }
+        PlanningPhaseEvidence::Active { task, phase } => passed(format!(
+            "planning phase: active claimed task {task} is in {} phase",
             phase.as_str()
         )),
     }
@@ -274,19 +279,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn active_plan_claim_refuses_commit_while_implementation_phase_passes() {
+    fn only_active_planning_claims_refuse_commits() {
         let task: wire::TaskHandle = "PHASE-1kRKw9Qj".parse().expect("fixture task handle");
-        let plan: wire::Phase = "plan".parse().expect("fixture plan phase");
-        let todo: wire::Phase = "todo".parse().expect("fixture todo phase");
 
-        let (standing, diagnostic) = evaluate_plan(&PlanPhaseEvidence::Active {
-            task: task.clone(),
-            phase: plan,
-        });
-        assert_eq!(standing, CoreStanding::Failed);
-        assert!(diagnostic.contains(task.as_str()), "{diagnostic}");
-
-        let (standing, _) = evaluate_plan(&PlanPhaseEvidence::Active { task, phase: todo });
+        for phase in ["plan", "design"] {
+            let phase: wire::Phase = phase.parse().expect("fixture planning phase");
+            let (standing, diagnostic) = evaluate_planning_phase(&PlanningPhaseEvidence::Active {
+                task: task.clone(),
+                phase,
+            });
+            assert_eq!(standing, CoreStanding::Failed);
+            assert!(diagnostic.contains(task.as_str()), "{diagnostic}");
+        }
+        for phase in ["todo", "review", "verify", "research"] {
+            let phase: wire::Phase = phase.parse().expect("fixture non-planning phase");
+            let (standing, _) = evaluate_planning_phase(&PlanningPhaseEvidence::Active {
+                task: task.clone(),
+                phase,
+            });
+            assert_eq!(standing, CoreStanding::Passed);
+        }
+        let (standing, _) = evaluate_planning_phase(&PlanningPhaseEvidence::NoActiveClaim);
         assert_eq!(standing, CoreStanding::Passed);
     }
 }

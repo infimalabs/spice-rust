@@ -89,7 +89,7 @@ pub(super) fn client_capture(
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = require_no_plan_implementation(&board, "task capture") {
+    if let Err(outcome) = require_no_planning_implementation(&board, "task capture") {
         return outcome;
     }
     let stealing = matches.get_flag("steal");
@@ -128,7 +128,7 @@ pub(super) fn client_capture(
         notes: false,
     };
     mutate_from_board(repository, contract, read, |board| {
-        require_no_plan_implementation(&board, "task capture")?;
+        require_no_planning_implementation(&board, "task capture")?;
         let heads = named_task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;
         let rule = if stealing { "steal" } else { "capture" }

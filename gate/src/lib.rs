@@ -100,7 +100,7 @@ pub use core::{
     CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
     CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
     CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
-    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence,
     PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
     RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
 };

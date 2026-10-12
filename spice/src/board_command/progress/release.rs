@@ -54,7 +54,7 @@ pub(super) fn prepare_release(
     command: &wire::AdmittedCommand,
     claimed: Seq,
     repository: Option<&Repository>,
-    plan_completion: bool,
+    planning_phase: Option<&str>,
 ) -> Result<Option<spice::task_git::ParkedRelease>, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
         return Ok(None);
@@ -65,8 +65,9 @@ pub(super) fn prepare_release(
         .at(claimed)
         .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
         .and_then(|won| won.git);
-    if plan_completion {
-        spice::task_git::prepare_plan_free(&lane, opening.as_ref()).map_err(task_git_outcome)
+    if let Some(phase) = planning_phase {
+        spice::task_git::prepare_planning_free(&lane, phase, opening.as_ref())
+            .map_err(task_git_outcome)
     } else {
         spice::task_git::prepare_free(&lane, opening.as_ref()).map_err(task_git_outcome)
     }
@@ -168,7 +169,7 @@ pub(in crate::board_command) fn claim_free(
         Err(outcome) => return outcome,
     };
     let next = next_action(&snapshot, &transition.post);
-    let parked = match prepare_release(&snapshot, command, transition.claimed, repository, false) {
+    let parked = match prepare_release(&snapshot, command, transition.claimed, repository, None) {
         Ok(parked) => parked,
         Err(outcome) => return outcome,
     };

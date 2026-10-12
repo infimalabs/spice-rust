@@ -35,7 +35,7 @@ use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
     CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, CoreProvenance,
-    DocMeasurement, MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    DocMeasurement, MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence,
     RepoDocsEvidence, StagingEvidence, core_declarations,
 };
 use crate::GateId;
@@ -603,7 +603,7 @@ fn observe(
         GateId::MergeIntegrity => source.git.merge_integrity.clone().ok_or_else(|| {
             CoreInputError::new("merge-integrity acquisition omitted its Git observation")
         })?,
-        GateId::PlanPhase => plan_phase(&source.claim),
+        GateId::PlanningPhase => planning_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => source.git.staging.clone().ok_or_else(|| {
             CoreInputError::new("staging acquisition omitted its Git observation")
@@ -771,15 +771,17 @@ fn document_measurement(
     Ok((measurement, decision, observation))
 }
 
-fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
+fn planning_phase(claim: &ClaimCapture) -> CoreObservation {
     match claim {
         ClaimCapture::Active { task, phase } => {
-            measured(CoreEvidence::PlanPhase(PlanPhaseEvidence::Active {
+            measured(CoreEvidence::PlanningPhase(PlanningPhaseEvidence::Active {
                 task: task.clone(),
                 phase: phase.clone(),
             }))
         }
-        ClaimCapture::Idle => measured(CoreEvidence::PlanPhase(PlanPhaseEvidence::NoActiveClaim)),
+        ClaimCapture::Idle => measured(CoreEvidence::PlanningPhase(
+            PlanningPhaseEvidence::NoActiveClaim,
+        )),
         ClaimCapture::Absent { reason } => CoreObservation::Skipped {
             reason: reason.clone(),
         },

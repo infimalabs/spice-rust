@@ -425,7 +425,11 @@ fn select_with(
     Ok(report)
 }
 
-const ALWAYS: [GateId; 3] = [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging];
+const ALWAYS: [GateId; 3] = [
+    GateId::MergeIntegrity,
+    GateId::PlanningPhase,
+    GateId::Staging,
+];
 
 pub(crate) fn valid_repository_path(path: &str) -> bool {
     valid_text(path)

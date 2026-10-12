@@ -897,7 +897,7 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::EnvPolicy
         | GateId::EnvNameLedger => None,
         GateId::MergeIntegrity
-        | GateId::PlanPhase
+        | GateId::PlanningPhase
         | GateId::RepoShape
         | GateId::Staging
         | GateId::RepoDocs
