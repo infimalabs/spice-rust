@@ -496,9 +496,10 @@ fn lapsed_items_recover_and_timed_out_results_stay_terminal() {
     lanes.finish();
 }
 
-/// Each settled question asked in a room is observed once in shadow, an
-/// answer as progress and a decline as none; observing moves no delivery or
-/// result, and the operator assesses each observation exactly once.
+/// Each settled question asked in a room is observed once in shadow; an
+/// answer that only agrees is unknown, not progress, and a decline is no
+/// progress. Observing moves no delivery or result, and the operator
+/// assesses each observation exactly once.
 #[test]
 fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
     let lanes = Lanes::new("control-relevance");
@@ -508,7 +509,7 @@ fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
     let declined = asked(&lanes.say(SENDER, &format!("ASK {first}#{room}: deploy?")));
     let roomless = asked(&lanes.say(SENDER, "ASK operator: lunch?"));
     let pending = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
-    committed(&lanes.respond(90, &answered, "ship"));
+    committed(&lanes.respond(90, &answered, "agreed"));
     committed(&lanes.close(
         91,
         Actor::Lane(test_uuid(FIRST)),
@@ -542,9 +543,10 @@ fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
     let read = lanes.room_read(&["relevance", room.as_str()]);
     let metrics = &read["metrics"];
     assert_eq!(metrics["observations"], 2, "each settled room result once");
-    assert_eq!(metrics["relevant_contributions"], 1);
+    assert_eq!(metrics["relevant_contributions"], 0);
+    assert_eq!(metrics["unknown_observations"], 1);
     assert_eq!(metrics["declines"], 1);
-    assert_eq!(metrics["progress"], 1, "only the answer is progress");
+    assert_eq!(metrics["progress"], 0, "an agreeing answer is not progress");
     assert_eq!(metrics["unassessed"], 2);
     let rows = read["page"]["rows"].as_array().expect("rows");
     let classified = |result: &QuestionResultRef| {
@@ -559,7 +561,7 @@ fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
     };
     assert_eq!(
         classified(&answered),
-        Some((json!("relevant-contribution"), json!("advanced")))
+        Some((json!("unknown"), json!("unknown")))
     );
     assert_eq!(
         classified(&declined),
