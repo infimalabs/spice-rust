@@ -50,6 +50,8 @@ mod lane_command;
 mod lock_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod message_shape;
+#[cfg(not(target_arch = "wasm32"))]
+mod preparation_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod quote_command;
@@ -392,6 +394,17 @@ impl NativeInvocation<'_> {
         }
     }
 
+    fn dispatch_retained_read(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, _) = self;
+        match contract.path {
+            ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
+            ["preparation", "show"] => {
+                deliver_display(&preparation_command::run(leaf, contract), form)
+            }
+            _ => unreachable!("retained read dispatch requires a retained read contract"),
+        }
+    }
+
     fn dispatch_policy(&self, contract: &cli::Contract) {
         let &Self(leaf, form, configuration) = self;
         match contract.path {
@@ -436,7 +449,9 @@ impl NativeInvocation<'_> {
                 &task_artifact_command::run(leaf, contract, configuration),
                 form,
             ),
-            ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
+            ["room", "history"] | ["preparation", "show"] => {
+                self.dispatch_retained_read(contract);
+            }
             ["backup"] => deliver(&journal_command::backup(leaf), form),
             ["restore"] => deliver(&restore_command::restore(leaf), form),
             ["journal"] => deliver_display(&journal_command::report(leaf, contract), form),

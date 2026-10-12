@@ -655,6 +655,73 @@ fn publication_reads_start_after_the_cursor_without_decoding_older_room_history(
 }
 
 #[test]
+fn preparation_authority_pages_one_controller_in_journal_order() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = authorized(&mut journal);
+    commit(
+        &mut journal,
+        CandidateCritiqued {
+            critique: CandidateCritique {
+                critique: CritiqueRef {
+                    candidate: preparation.candidate(1),
+                    critique: SequenceCode::new(1),
+                },
+                category: name("composition"),
+                source: journal_source(1),
+                standing: CritiqueStanding::Clean,
+            },
+        },
+    )
+    .expect("critique recorded");
+
+    let controller = preparation.controller.clone();
+    let (first, population) = journal
+        .read(|read| {
+            Ok((
+                read.preparation_authority_page(&controller, None, fact_budget(2))?,
+                read.preparation_authority_count(&controller, None)?,
+            ))
+        })
+        .expect("first preparation page reads");
+    assert_eq!(population, 5);
+    assert_eq!(first.rows.len(), 2);
+    let continuation = first.continuation.expect("first page continues");
+    let rest = journal
+        .read(|read| {
+            read.preparation_authority_page(&controller, Some(continuation), fact_budget(8))
+        })
+        .expect("preparation continuation reads");
+    assert_eq!(rest.rows.len(), 3);
+    assert_eq!(rest.continuation, None);
+    let kinds = first
+        .rows
+        .iter()
+        .chain(&rest.rows)
+        .map(|envelope| envelope.fact.kind())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            FactKind::CandidateRetained,
+            FactKind::CandidateCovered,
+            FactKind::PreparationDecided,
+            FactKind::ExecutionAuthorized,
+            FactKind::CandidateCritiqued,
+        ]
+    );
+    assert!(
+        journal
+            .read(|read| read.preparation_authority_contains(&controller, continuation))
+            .expect("controller cursor reads")
+    );
+    assert!(
+        !journal
+            .read(|read| read.preparation_authority_contains(&preparation.input, continuation))
+            .expect("foreign controller cursor reads")
+    );
+}
+
+#[test]
 fn duplicate_recordings_refuse_and_a_duplicated_history_fails_verification() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = authorized(&mut journal);

@@ -785,6 +785,35 @@
 .room-card:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); }
 .room-card p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 
+.room-preparation {
+  display: grid;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-height: 14rem;
+  padding: 8px;
+  overflow-y: auto;
+  border-block-end: var(--app-edge-soft);
+  background: var(--control-surface-soft);
+}
+
+.room-preparation > header {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: var(--app-type-meta);
+}
+
+.room-preparation-card {
+  box-shadow: none;
+}
+
+.room-preparation-card pre {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: inherit;
+}
+
 .room-grooming {
   display: grid;
   gap: 6px;

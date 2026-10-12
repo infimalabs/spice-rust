@@ -50,6 +50,7 @@ spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGE
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?limit=N&max-bytes=N&after=PUBLICATION]; reading joins and acknowledges nothing
+spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
 spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
 spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
@@ -121,6 +122,7 @@ enum Shape {
     Artifacts { handle: TaskHandle },
     Artifact { handle: TaskHandle, id: String },
     Room { handle: TaskHandle },
+    Preparation { handle: TaskHandle },
     Inbox,
     Lanes,
     Session(Session),
@@ -285,6 +287,7 @@ const SERVED: &[&[&str]] = &[
     &["task", "artifact", "list"],
     &["task", "artifact", "show"],
     &["room", "history"],
+    &["preparation", "show"],
     &["board", "graph"],
     &["doc", "ledger"],
     &["inbox"],
@@ -303,7 +306,9 @@ impl Shape {
             Self::Tasks => TASK_LIST,
             Self::Task { .. } | Self::Inbox => PAGE,
             Self::Ledger { .. } => LEDGER,
-            Self::Artifacts { .. } | Self::Room { .. } | Self::Lanes => ROWS,
+            Self::Artifacts { .. } | Self::Room { .. } | Self::Preparation { .. } | Self::Lanes => {
+                ROWS
+            }
             Self::Artifact { .. } => ARTIFACT_SHOW,
             Self::Session(Session::Briefing) => BRIEFING,
             Self::Session(Session::Turns) => TURNS,
@@ -351,6 +356,7 @@ impl Shape {
                 format!("task/{handle}/artifact/{}", encode(id))
             }
             Self::Room { handle } => format!("task/{handle}/room"),
+            Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
             Self::Lanes => "lane".to_owned(),
             Self::Session(session) => format!("session/{}", session.leaf()),
@@ -380,6 +386,7 @@ impl Shape {
                 words(&["task", "artifact", "show", handle.as_str(), id])
             }
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
+            Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
             Self::Lanes => words(&["lane", "list"]),
             Self::Session(session) => words(&["session", session.leaf()]),
@@ -510,6 +517,12 @@ impl Shape {
             ),
             ["room", "history", task, rest @ ..] => (
                 Self::Room {
+                    handle: handle(task)?,
+                },
+                rest,
+            ),
+            ["preparation", "show", task, rest @ ..] => (
+                Self::Preparation {
                     handle: handle(task)?,
                 },
                 rest,
@@ -666,6 +679,7 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
             }
         }
         ["room"] => Shape::Room { handle },
+        ["preparation"] => Shape::Preparation { handle },
         [verb] => {
             refuse_unserved(&["task", verb], url)?;
             return Err(unknown(url));
@@ -1025,6 +1039,10 @@ impl Seat {
                 let outcome = crate::room_command::run_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
+            ["preparation", "show"] => {
+                let outcome = crate::preparation_command::run_at(repository, leaf, contract);
+                rendered(&outcome, render::render_display(&outcome, Form::Text))?
+            }
             ["lane", "list"] => {
                 let outcome = crate::lane_command::list_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
@@ -1088,7 +1106,7 @@ fn rendered<B>(
 const SEAT_GUIDE: &str = "\
 <system-notice>
 # spice:// reads
-This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
+This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, preparation authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
 - A collection ends with `resources:`, the URLs of what it contains.
 - Query parameters are the read's own flags; a withheld page ends with `continue:` and the URL that resumes it; a trailing `:N-M` selects lines.
 - Reading changes nothing: it acknowledges no steering, claims nothing, and may repeat freely.

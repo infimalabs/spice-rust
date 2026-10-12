@@ -543,6 +543,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "group::remove"
     ),
     row!(
+        ["preparation", "show"],
+        "preparation show HANDLE [--limit N] [--max-bytes N] [--after POSITION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "preparation::show"
+    ),
+    row!(
         ["preparation", "retain"],
         "preparation retain CANDIDATE_JSON",
         OperatorOrLane,
