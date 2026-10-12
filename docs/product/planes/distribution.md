@@ -145,8 +145,9 @@ gate failure.
 
 ### Installing into a repository the product does not own
 
-One canonical status-bearing receipt owns the exact plan, first-captured prior
-images, durable progress, and reversal outcomes.
+One canonical status-bearing receipt owns the exact plan, fixed-size references
+to first-captured prior images, durable progress, and reversal outcomes. The
+referenced raw bytes live once in a receipt-owned content-addressed store.
 
 **Invariant —** What the operator reviews is produced purely by observation.
 Apply requires that plan's exact digest, re-resolves the plan and executable
@@ -160,20 +161,22 @@ destination, and receipt image before effect.
 install-record publications; it is not a plan operation and never imports,
 repairs, or deletes foreign state.
 
-**Invariant —** Before the first receipt-owned effect, apply atomically accepts
+**Invariant —** Before the first destination effect, apply atomically accepts
 one canonical `applying` receipt with the exact plan, repository identity, zero
-progress, and install-owned prior images. No plan change happens until the
-receipt describes it, and each completion is durably published before the next
-mutation, so a crash leaves at most the recorded frontier ahead of its receipt.
-Terminal `complete` is published only after every stage completes; an
+progress, and fixed-size prior-image references, then durably publishes every
+referenced raw payload before changing a destination. No plan change happens
+until the receipt describes it, and each completion is durably published before
+the next mutation, so a crash leaves at most the recorded frontier ahead of its
+receipt. Terminal `complete` is published only after every stage completes; an
 interrupted apply resumes only the same plan.
 
 **Invariant —** The receipt records the exact prior image the installation may
-restore: regular-file bytes, ordinary permission bits, or absence; prior
-configuration values or absence; and whether it introduced a parent directory.
-Prior state is captured once, at first application, and never re-derived from
-the installation's own output. Recording only the new state would make absence
-unrecoverable.
+restore: a fixed-size mode/content reference or absence; prior configuration
+values or absence; and whether it introduced a parent directory. Referenced
+regular-file bytes are stored once outside the repeatedly rewritten receipt,
+under their domain-separated content identity. Prior state is captured once, at
+first application, and never re-derived from the installation's own output.
+Recording only the new state would make absence unrecoverable.
 
 **Invariant —** Installed app history is bounded. A refresh retains the current
 generation and the newest predecessors within the bound and retires every other
@@ -230,8 +233,9 @@ terminal copy while its original owner still exists. A `complete` or
 repository, plan, and activation bindings together.
 
 **Invariant —** The receipt remains after clean terminal directions, retaining
-its plan, prior images, status, and progress. Absence is never synthesized by
-deleting provenance.
+its plan, prior-image references, status, and progress. Its referenced raw
+payloads remain available for the receipt's next executable direction. Absence
+is never synthesized by deleting provenance.
 
 **Invariant —** Install support is bounded by receipt schema, not product
 version. The current schema is the sole executable shape. Each retired schema

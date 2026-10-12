@@ -3,9 +3,7 @@
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
-use super::{
-    Asset, GeneratedImage, InstallError, InstallPlan, Location, ObservedFile, SymbolProvenance,
-};
+use super::{Asset, GeneratedImage, InstallError, InstallPlan, Location, SymbolProvenance};
 
 /// Kind of durable action represented by one ordered public stage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -211,7 +209,7 @@ impl InstallPlanSummary {
                 asset: operation.asset,
                 location: operation.location,
                 path: operation.path.clone(),
-                previous: generated(operation.previous.as_ref()),
+                previous: operation.previous.clone(),
                 generated: operation.generated.clone(),
                 superseded: operation.superseded.clone(),
                 introduced_parents: operation.introduced_parents.clone(),
@@ -226,8 +224,8 @@ impl InstallPlanSummary {
                 index: retirement_offset + offset,
                 kind: InstallStageKind::Retirement,
                 path: retirement.path.clone(),
-                previous: generated(retirement.previous.as_ref()),
-                observed: generated(retirement.observed.as_ref()),
+                previous: retirement.previous.clone(),
+                observed: retirement.observed.clone(),
                 superseded: retirement.superseded.clone(),
             })
             .collect();
@@ -290,10 +288,6 @@ impl InstallPlanSummary {
     pub const fn symbols(&self) -> Option<&SymbolProvenance> {
         self.symbols.as_ref()
     }
-}
-
-fn generated(observed: Option<&ObservedFile>) -> Option<GeneratedImage> {
-    observed.map(ObservedFile::generated)
 }
 
 /// One side-effect-free install preview and the exact identity admitted by apply.
