@@ -39,6 +39,7 @@ impl Lanes {
             preparation: None,
             intent: None,
             authorization: None,
+            evidence: Vec::new(),
             born,
             queue_origin: position,
             title: "Room".to_owned(),

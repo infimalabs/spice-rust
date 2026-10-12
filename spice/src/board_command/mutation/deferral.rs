@@ -232,6 +232,7 @@ fn append_promotion(
         .fact(
             body::TaskEdited {
                 intent: None,
+                evidence: None,
                 task: entry.born().clone(),
                 revision,
                 dependencies,

@@ -755,6 +755,16 @@ impl QuestionResultState {
     pub const fn is_terminal(&self) -> bool {
         !matches!(self, Self::Pending {})
     }
+
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Pending {} => "pending",
+            Self::Answered { .. } => "answered",
+            Self::Declined { .. } => "declined",
+            Self::Cancelled { .. } => "cancelled",
+            Self::TimedOut {} => "timed_out",
+        }
+    }
 }
 
 /// Guarded result head; the immutable [`QuestionResultRecord`] holds its deadline and context.

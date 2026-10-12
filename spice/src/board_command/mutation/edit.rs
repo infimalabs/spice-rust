@@ -58,6 +58,18 @@ fn prepare_correction(
     projects: &ProjectPolicy,
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
+    if edit
+        .evidence
+        .as_ref()
+        .is_some_and(|change| change.released().is_some())
+        && *command.actor() != wire::Actor::Operator
+    {
+        return Err(refusal(
+            "task::evidence-authority",
+            Some(edit.task.to_string()),
+            "only the operator replaces or waives required evidence",
+        ));
+    }
     let mut statement = corrected_statement(entry, edit, projects)?;
     let (taste_review, was_required, released) =
         review_taste(repository, snapshot, command, edit, entry, &mut statement)?;
@@ -166,11 +178,12 @@ fn corrected_statement(
         && edit.intent.is_none()
         && edit.priority.is_none()
         && edit.project.is_none()
+        && edit.evidence.is_none()
     {
         return Err(refusal(
             "task::edit-empty",
             Some(edit.task.to_string()),
-            "name at least one statement field, an environmental requirement edit, or an intent edit",
+            "name at least one statement field, an environmental requirement edit, an intent edit, or an evidence edit",
         ));
     }
     let mut statement = entry.statement().clone();
@@ -208,6 +221,15 @@ fn corrected_statement(
     }
     if let Some(requested) = &edit.project {
         statement.project = corrected_project(entry, projects, requested)?;
+    }
+    if let Some(change) = &edit.evidence {
+        statement.evidence = change.apply(&statement.evidence).map_err(|error| {
+            refusal(
+                "task::evidence-edit-refused",
+                Some(error),
+                "require a result not yet required, or replace or waive one this task requires",
+            )
+        })?;
     }
     Ok(statement)
 }
@@ -298,6 +320,7 @@ fn publish_correction(
     let edited = match write.fact(
         body::TaskEdited {
             intent: edit.intent,
+            evidence: edit.evidence.clone(),
             task: statement.born.clone(),
             revision,
             dependencies: None,

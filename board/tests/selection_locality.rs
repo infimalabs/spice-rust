@@ -67,6 +67,7 @@ fn statement(name: &str) -> TaskHead {
     TaskHead {
         preparation: None,
         authorization: None,
+        evidence: Vec::new(),
         intent: None,
         born: stamp(name),
         queue_origin: seq(1),

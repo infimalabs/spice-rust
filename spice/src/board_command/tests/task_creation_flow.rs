@@ -403,6 +403,7 @@ fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
         requirements: None,
         priority: None,
         project: None,
+        evidence: None,
         intent: Some(wire::TaskIntentEdit::Set {
             intent: wire::TaskIntent::Plan,
         }),

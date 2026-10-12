@@ -862,6 +862,7 @@ fn task_head() -> TaskHead {
     TaskHead {
         preparation: None,
         authorization: None,
+        evidence: Vec::new(),
         intent: None,
         born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),
@@ -1135,6 +1136,7 @@ fn expected_tables() -> BTreeSet<String> {
         "steering_heads",
         "steering_index",
         "steering_misses",
+        "task_evidence",
         "task_generations",
         "task_heads",
         "thread_index",

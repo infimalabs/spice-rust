@@ -734,6 +734,9 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub authorization: Option<crate::rooms::DecisionRef>,
+    /// Question results required answered before positive phase completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<crate::rooms::QuestionResultRef>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
@@ -757,6 +760,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             intent: statement.intent,
             preparation: statement.preparation.clone(),
             authorization: statement.authorization.clone(),
+            evidence: statement.evidence.clone(),
             provenance: statement.provenance.clone(),
             creation: statement.creation.clone(),
             revision: statement.revision,
@@ -785,6 +789,7 @@ impl BoardStatement {
             intent: self.intent,
             preparation: self.preparation.clone(),
             authorization: self.authorization.clone(),
+            evidence: self.evidence.clone(),
             provenance: self.provenance.clone(),
             creation: self.creation.clone(),
             revision: self.revision,

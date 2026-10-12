@@ -169,6 +169,13 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntentEdit>,
+    /// Dedicated requirement, replacement, or waiver of one question result.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub evidence: Option<crate::TaskEvidenceEdit>,
     /// Replacement priority, when the allocator's ranking of this task moves.
     #[serde(
         default,

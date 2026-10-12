@@ -117,6 +117,9 @@ pub(super) fn task_done(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
+    if let Err(outcome) = evidence::require_answered(bus, entry) {
+        return outcome;
+    }
     let source = match bus.source_boundary(&lane) {
         Ok(source) => source,
         Err(error) => {
@@ -658,6 +661,9 @@ fn prepare_review(
     {
         require_no_pending_controlled_outputs(&snapshot, entry)?;
     }
+    if verdict == body::Verdict::Clean {
+        evidence::require_answered(bus, entry)?;
+    }
     let statement = match verdict {
         body::Verdict::Clean => {
             admit_plan_transition(&snapshot, entry, command, &transition)?;
@@ -876,6 +882,7 @@ fn append_review_statement(
         .fact(
             body::TaskEdited {
                 intent: None,
+                evidence: None,
                 task: entry.born().clone(),
                 revision,
                 dependencies,
@@ -1334,6 +1341,7 @@ fn edit_doc_task(
         .fact(
             body::TaskEdited {
                 intent: None,
+                evidence: None,
                 task: existing.born().clone(),
                 revision,
                 dependencies,
@@ -1398,6 +1406,7 @@ fn add_doc_task(
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
+        evidence: Vec::new(),
         intent: None,
         born: statement_task,
         queue_origin: position,

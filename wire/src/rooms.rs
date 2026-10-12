@@ -705,6 +705,9 @@ pub struct RetainedCandidate {
     pub outputs: Vec<TaskStamp>,
     /// Exact source links, with open relation names for later evidence families.
     pub references: Vec<CandidateReference>,
+    /// Question results, asked in the controller's room, that must be
+    /// answered and then assessed by certifying coverage before authorization.
+    pub evidence: Vec<QuestionResultRef>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -714,6 +717,8 @@ struct RetainedCandidateWire {
     governed_inputs: Vec<TaskStamp>,
     outputs: Vec<TaskStamp>,
     references: Vec<CandidateReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    evidence: Vec<QuestionResultRef>,
 }
 
 impl TryFrom<RetainedCandidateWire> for RetainedCandidate {
@@ -736,11 +741,15 @@ impl TryFrom<RetainedCandidateWire> for RetainedCandidate {
         if value.references.is_empty() {
             return Err("retained candidate must link its retained authority");
         }
+        if !all_unique(&value.evidence) {
+            return Err("candidate evidence results must be unique");
+        }
         Ok(Self {
             candidate: value.candidate,
             governed_inputs: value.governed_inputs,
             outputs: value.outputs,
             references: value.references,
+            evidence: value.evidence,
         })
     }
 }
@@ -752,6 +761,7 @@ impl From<RetainedCandidate> for RetainedCandidateWire {
             governed_inputs: value.governed_inputs,
             outputs: value.outputs,
             references: value.references,
+            evidence: value.evidence,
         }
     }
 }

@@ -510,6 +510,7 @@ fn a_withdrawn_task_refuses_the_moves_a_completed_task_refuses() {
         Actor::Operator,
         &TaskEdit {
             intent: None,
+            evidence: None,
             task: task.clone(),
             title: None,
             description: Some("a meaning the withdrawn row will never carry".to_owned()),

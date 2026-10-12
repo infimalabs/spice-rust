@@ -156,6 +156,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
     write.task_head(fact, move |revision| TaskHead {
         preparation,
         authorization: None,
+        evidence: Vec::new(),
         intent: None,
         born,
         queue_origin: revision,
@@ -232,6 +233,7 @@ fn edit_project(journal: &mut Journal, task: &TaskStamp, project: &str) {
                 revision: 2,
                 dependencies: None,
                 intent: None,
+                evidence: None,
             },
             FactCause::Root,
         )
@@ -258,6 +260,7 @@ fn declare_plan(journal: &mut Journal, task: &TaskStamp) -> Commit {
                 intent: Some(wire::TaskIntentEdit::Set {
                     intent: wire::TaskIntent::Plan,
                 }),
+                evidence: None,
             },
             FactCause::Root,
         )
@@ -377,6 +380,7 @@ impl Preparation {
                     relation: name("contract"),
                     source: journal_source(1),
                 }],
+                evidence: Vec::new(),
             },
         }
     }

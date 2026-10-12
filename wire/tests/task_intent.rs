@@ -84,6 +84,7 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
         requirements: None,
         priority: None,
         project: None,
+        evidence: None,
         intent: Some(TaskIntentEdit::Set {
             intent: TaskIntent::Design,
         }),

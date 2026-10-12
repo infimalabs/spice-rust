@@ -96,6 +96,7 @@ fn modify_with_repository(
         vec![statement_witness(at(&visible, task))],
         &TaskEdit {
             intent: None,
+            evidence: None,
             task: task.clone(),
             title: Some(title.to_owned()),
             description: None,

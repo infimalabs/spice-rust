@@ -219,6 +219,7 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
         .fact(
             body::TaskEdited {
                 intent: None,
+                evidence: None,
                 task: task.clone(),
                 revision: 2,
                 dependencies: None,
