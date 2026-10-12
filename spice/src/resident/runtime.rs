@@ -807,77 +807,36 @@ pub(super) struct StartupCommit {
     last: u64,
 }
 
-/// Preserve current typed subscriptions or migrate one legacy all-lane head.
+/// Admit the durable subscription table exactly as the journal holds it.
 ///
-/// Legacy heads are recognizable because their subscription table is wholly
-/// absent and therefore decodes empty. Once any typed row exists, the table is
-/// current and must match the lane lineages exactly; partial or duplicate
-/// authority is refused instead of repaired through a second path.
+/// The table carries one task-allocation lifetime per resident team in team
+/// order. Duplicate, unordered, partial, or extra authority is refused instead
+/// of repaired; no policy is derived here.
 pub(super) fn startup_subscriptions(
     lanes: &[wire::LaneResidency],
     stored: Vec<wire::TeamSubscription>,
 ) -> CommandResult<Vec<wire::TeamSubscription>> {
+    if stored.windows(2).any(|pair| pair[0].team == pair[1].team) {
+        return Err(store_fault(
+            "team::subscription-ambiguous",
+            "one team has more than one durable task-allocation lifetime",
+        ));
+    }
     let team_ids = lanes
         .iter()
         .map(|row| row.team)
         .collect::<std::collections::BTreeSet<_>>();
-    if stored.is_empty() {
-        return team_ids
-            .into_iter()
-            .map(|team| {
-                let row = lanes
-                    .iter()
-                    .find(|row| row.team == team)
-                    .expect("a collected team has one lane row");
-                if lanes
-                    .iter()
-                    .filter(|candidate| candidate.team == team)
-                    .any(|candidate| candidate.life != row.life)
-                {
-                    return Err(store_fault(
-                        "team::subscription-ambiguous",
-                        concat!(
-                            "a legacy team has mixed lane lives and no authoritative ",
-                            "task-allocation lifetime"
-                        ),
-                    ));
-                }
-                let policy = wire::intent::TeamLife::from_wire(&row.life).ok_or_else(|| {
-                    store_fault(
-                        "team::subscription-invalid",
-                        "a legacy team lane has no closed task-allocation lifetime",
-                    )
-                })?;
-                Ok(wire::TeamSubscription {
-                    team,
-                    policy,
-                    fast_mode: false,
-                })
-            })
-            .collect();
-    }
-
-    let mut indexed = std::collections::BTreeMap::new();
-    for subscription in stored {
-        if indexed.insert(subscription.team, subscription).is_some() {
-            return Err(store_fault(
-                "team::subscription-ambiguous",
-                "one team has more than one durable task-allocation lifetime",
-            ));
-        }
-    }
-    if indexed
-        .keys()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>()
-        != team_ids
+    if !stored
+        .iter()
+        .map(|subscription| subscription.team)
+        .eq(team_ids)
     {
         return Err(store_fault(
             "team::subscription-misaligned",
-            "the durable task-allocation lifetime table does not match the resident teams",
+            "the durable task-allocation lifetime table is not one row per resident team in team order",
         ));
     }
-    Ok(indexed.into_values().collect())
+    Ok(stored)
 }
 
 pub(super) fn commit_startup(

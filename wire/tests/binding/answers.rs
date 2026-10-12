@@ -159,6 +159,10 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
         "capabilities": ["018f82d4-6f59-7d06-92e3-bce9131163c7"],
         "disposition": "occupied"
+      }],
+      "subscriptions": [{
+        "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "policy": "drive"
       }]
     }
   }

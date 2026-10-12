@@ -442,7 +442,7 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
 }
 
 #[test]
-fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_authority() {
+fn startup_admits_only_one_ordered_subscription_per_resident_team() {
     let team = test_uuid(2);
     let sibling = test_uuid(5);
     let row = |lane, team, life: &str| wire::LaneResidency {
@@ -466,52 +466,47 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
         row(test_uuid(4), team, "drive"),
         row(test_uuid(6), sibling, "steer"),
     ];
-
-    let migrated =
-        super::startup_subscriptions(&lanes, Vec::new()).expect("one absent legacy table migrates");
-    assert_eq!(
-        migrated,
-        vec![
-            wire::TeamSubscription {
-                team,
-                policy: wire::intent::TeamLife::Drive,
-                fast_mode: false,
-            },
-            wire::TeamSubscription {
-                team: sibling,
-                policy: wire::intent::TeamLife::Steer,
-                fast_mode: false,
-            },
-        ]
-    );
-    assert_eq!(
-        super::startup_subscriptions(&lanes, migrated.clone())
-            .expect("the current complete table is preserved"),
-        migrated,
-        "startup preserves the complete lifetime table",
-    );
-
-    let Err(Outcome::Fault(fault)) =
-        super::startup_subscriptions(&lanes, vec![migrated[0].clone()])
-    else {
-        panic!("a partial current subscription table must fault")
-    };
-    assert_eq!(fault.reason, "team::subscription-misaligned");
-
-    let mut mixed = lanes.clone();
-    mixed[1].life = "steer".to_owned();
-    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&mixed, Vec::new()) else {
-        panic!("mixed legacy lives must not choose an implicit policy")
-    };
-    assert_eq!(fault.reason, "team::subscription-ambiguous");
-
-    let duplicated = vec![
-        migrated[0].clone(),
-        migrated[0].clone(),
-        migrated[1].clone(),
+    let current = vec![
+        wire::TeamSubscription {
+            team,
+            policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
+        },
+        wire::TeamSubscription {
+            team: sibling,
+            policy: wire::intent::TeamLife::Steer,
+            fast_mode: true,
+        },
     ];
-    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
-        panic!("duplicate current subscription authority must fault")
+    assert_eq!(
+        super::startup_subscriptions(&lanes, current.clone())
+            .expect("the current complete table is admitted"),
+        current,
+    );
+    assert_eq!(
+        super::startup_subscriptions(&[], Vec::new()).expect("no teams need no table"),
+        Vec::new(),
+    );
+
+    let misaligned = [
+        ("an absent table", Vec::new()),
+        ("a partial table", vec![current[0].clone()]),
+        (
+            "an unordered table",
+            vec![current[1].clone(), current[0].clone()],
+        ),
+    ];
+    for (case, stored) in misaligned {
+        let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, stored) else {
+            panic!("{case} must fault rather than derive policy")
+        };
+        assert_eq!(fault.reason, "team::subscription-misaligned", "{case}");
+    }
+    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(
+        &lanes,
+        vec![current[0].clone(), current[0].clone(), current[1].clone()],
+    ) else {
+        panic!("duplicate subscription authority must fault")
     };
     assert_eq!(fault.reason, "team::subscription-ambiguous");
 }
