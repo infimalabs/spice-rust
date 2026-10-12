@@ -42,6 +42,8 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
+    /// Publish one operator-authored message to an anchor task's room.
+    RoomPost,
     /// Read durable global app settings.
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.
@@ -271,6 +273,12 @@ impl Law {
     /// command envelope binds the resident epoch; no board head is mutated.
     pub const JOB_STOP: Self = Self {
         required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Exact current room-anchor statement, published only by the operator.
+    pub const ROOM_POST: Self = Self {
+        required: &[WitnessKind::Task],
         optional: &[],
         authority: Authority::Operator,
     };
@@ -615,6 +623,7 @@ impl CommandKind {
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
+        Self::RoomPost,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
         Self::VendorCatalog,
@@ -691,6 +700,7 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
+            | Self::RoomPost
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -762,6 +772,7 @@ impl CommandKind {
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
+            Self::RoomPost => "room::post",
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TasteProposalAdd => "taste::proposal-add",
@@ -856,6 +867,7 @@ impl CommandKind {
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
+            Self::RoomPost => Law::ROOM_POST,
             Self::TaskAdd => Law::TASK_ADD,
             Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
@@ -947,6 +959,22 @@ impl CommandKind {
                 });
             }
         }
+        if let (Self::RoomPost, Intent::RoomPost(post)) = (self, body) {
+            let target = post.room.born().ok();
+            let target_is_witnessed = expected.iter().any(|witness| {
+                matches!(
+                    (witness, target.as_ref()),
+                    (Witness::Task { task, .. }, Some(target)) if task == target
+                )
+            });
+            if !target_is_witnessed {
+                return Err(LawError::SubjectMismatch {
+                    command: self,
+                    kind: WitnessKind::Task,
+                    target: post.room.to_string(),
+                });
+            }
+        }
         // Requirement and intent edits are guarded authority changes, so the
         // statement witness they carry must name the edited task itself.
         if let (Self::TaskEdit, Intent::TaskEdit(edit)) = (self, body)
@@ -981,6 +1009,7 @@ impl CommandKind {
 
     const fn non_task_law(self) -> Law {
         match self {
+            Self::RoomPost => Law::ROOM_POST,
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox | Self::QuoteRead => Law::READ,

@@ -504,6 +504,7 @@ impl NativeInvocation<'_> {
                 form,
                 board_command::GraphView::text,
             ),
+            ["room", "post"] => deliver_command_answer(&board_command::run(leaf, contract), form),
             ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]

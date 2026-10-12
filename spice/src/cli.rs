@@ -178,6 +178,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
+        | CommandKind::RoomPost
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd
@@ -383,6 +384,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["board"]
             | ["board", "graph"]
             | ["board", "handout"]
+            | ["room", "post"]
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]

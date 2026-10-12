@@ -48,6 +48,7 @@ fn dispatch_client(
         ["dev", "report-page"] => client_report(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
+        ["room", "post"] => client_room_post(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
@@ -73,6 +74,24 @@ fn dispatch_client(
             "use a registered board, task, or doc leaf",
         ),
     }
+}
+
+fn client_room_post(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task(repository, contract, matches, |room, heads| {
+        Ok((
+            CommandKind::RoomPost,
+            vec![statement_witness(heads)],
+            serde_json::to_value(RoomPost {
+                room,
+                text: required(matches, "TEXT"),
+            })
+            .expect("typed room post encodes"),
+        ))
+    })
 }
 
 fn client_report(
@@ -1351,6 +1370,7 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::DocLedger(ledger) => {
             read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
         }
+        wire::intent::Intent::RoomPost(post) => room_post(bus, command, post, projects, allocation),
         wire::intent::Intent::TaskAdd(add) => {
             task_add(bus, command, add, repository, projects, allocation)
         }

@@ -248,6 +248,76 @@ pub struct RoomPost {
     /// Complete operator-authored publication bytes.
     pub text: String,
 }
+/// Successful operator room-publication reply.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPostAnswer {
+    /// Current rendered anchor handle.
+    pub room: TaskHandle,
+    /// Stable native identity of the recorded publication.
+    pub publication: RoomAuthorityStamp,
+    /// Current listener result observed when the publication was admitted.
+    pub outcome: RoomPostOutcome,
+}
+
+/// Listener result for one recorded room publication.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomPostOutcome {
+    /// One or more lanes currently have a reason to receive room catch-up.
+    RecordedWithListeners { listeners: Vec<RoomPostListener> },
+    /// No lane currently has a reason to receive room catch-up.
+    RecordedNoCurrentListener {
+        /// Explicit operator action that can establish directed attention.
+        next: RoomPostNext,
+    },
+}
+
+/// Explicit operator action offered when a recorded room has no listener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoomPostNext {
+    /// Start work or direct a named lane; recording alone does neither.
+    StartOrDirect,
+}
+
+/// One current listener and the delivery state implied by its availability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPostListener {
+    /// Logical lane identity.
+    pub lane: CanonicalUuid,
+    /// Current resident topology state.
+    pub availability: RoomListenerAvailability,
+    /// What recording means for this listener without waking it.
+    pub delivery: RoomListenerDelivery,
+}
+
+/// Current availability of one room listener.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomListenerAvailability {
+    /// A current occupant is seated.
+    Occupied,
+    /// The logical lane is between occupants.
+    Vacant,
+    /// The lane is known but cannot currently receive.
+    Unavailable { disposition: String },
+    /// Current topology does not contain the referenced lane.
+    Unknown,
+}
+
+/// Non-waking delivery consequence for one current listener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoomListenerDelivery {
+    /// Catch-up may be presented at the lane's next safe boundary.
+    AtSafeBoundary,
+    /// Delivery remains waiting until the vacant lane next starts.
+    WaitsForNextStart,
+    /// Delivery remains pending until the lane becomes available.
+    PendingAvailability,
+}
 
 /// Repository-shared organization of ordered room anchors.
 ///

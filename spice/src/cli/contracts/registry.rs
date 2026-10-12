@@ -467,6 +467,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "board::handout"
     ),
+    operator!(
+        ["room", "post"],
+        "room post HANDLE TEXT",
+        Command,
+        [RoomPublished],
+        Reply,
+        "room::post"
+    ),
     row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] [--max-bytes N] \
