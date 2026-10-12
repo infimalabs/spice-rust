@@ -898,6 +898,28 @@ async fn dispatch_action(
         } => refresh::send_job(principal, writer, actions, target, *stop, respond)
             .await
             .map(Some),
+        ClientAction::WorkingGroupPut {
+            group,
+            head,
+            respond,
+        } => rooms::send_group_put(principal, writer, actions, group, *head, respond)
+            .await
+            .map(Some),
+        ClientAction::WorkingGroupRemove {
+            group,
+            head,
+            respond,
+        } => rooms::send_group_remove(principal, writer, actions, group, *head, respond)
+            .await
+            .map(Some),
+        ClientAction::RoomPost {
+            room,
+            head,
+            text,
+            respond,
+        } => rooms::send_room_post(principal, writer, actions, room, *head, text, respond)
+            .await
+            .map(Some),
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await
@@ -1460,5 +1482,6 @@ async fn send_stream_request(
 
 mod refresh;
 mod responses;
+mod rooms;
 use refresh::{send_after_frame, send_refresh};
 use responses::handle_incoming;

@@ -223,6 +223,8 @@ impl PendingKind {
             Self::TaskDetail { .. }
             | Self::Job { .. }
             | Self::Jobs { .. }
+            | Self::WorkingGroup { .. }
+            | Self::RoomPost { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -412,6 +414,13 @@ impl ClientAction {
         match self {
             Self::Job { target, .. } => target.id.len(),
             Self::Jobs { .. } => 0,
+            Self::WorkingGroupPut { group, .. } => {
+                group.anchors.iter().fold(group.name.len(), |bytes, room| {
+                    bytes.saturating_add(room.as_str().len())
+                })
+            }
+            Self::WorkingGroupRemove { .. } => 0,
+            Self::RoomPost { room, text, .. } => room.as_str().len().saturating_add(text.len()),
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {

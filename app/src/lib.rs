@@ -61,6 +61,8 @@ pub mod pane;
 mod quota;
 #[cfg(any(target_arch = "wasm32", test))]
 mod reconnect;
+#[cfg(any(target_arch = "wasm32", test))]
+mod room_views;
 pub mod runtime;
 pub mod socket;
 pub mod speech_owner;
@@ -86,6 +88,12 @@ pub(crate) enum PendingKind {
         target: wire::intent::LaneJobRef,
         stop: bool,
         respond: client_action::JobResponse,
+    },
+    WorkingGroup {
+        respond: client_action::GroupResponse,
+    },
+    RoomPost {
+        respond: client_action::RoomPostResponse,
     },
     Board,
     Lanes {

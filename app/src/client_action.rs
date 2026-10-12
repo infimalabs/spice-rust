@@ -4,6 +4,9 @@ use wire::{CanonicalUuid, TaskHandle, TaskStamp};
 
 pub(crate) type JobResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobAnswer, String>)>;
 pub(crate) type JobsResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobsAnswer, String>)>;
+pub(crate) type GroupResponse =
+    std::rc::Rc<dyn Fn(Result<wire::intent::WorkingGroupChange, String>)>;
+pub(crate) type RoomPostResponse = std::rc::Rc<dyn Fn(Result<wire::rooms::RoomPostAnswer, String>)>;
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
@@ -14,6 +17,25 @@ pub(crate) enum ClientAction {
         target: wire::intent::LaneJobRef,
         stop: bool,
         respond: JobResponse,
+    },
+    /// Replace or create one repository-shared working group.
+    WorkingGroupPut {
+        group: wire::rooms::WorkingGroup,
+        head: Option<wire::Seq>,
+        respond: GroupResponse,
+    },
+    /// Remove one repository-shared working group.
+    WorkingGroupRemove {
+        group: wire::rooms::RoomAuthorityStamp,
+        head: wire::Seq,
+        respond: GroupResponse,
+    },
+    /// Publish operator-authored text to one task room.
+    RoomPost {
+        room: TaskHandle,
+        head: wire::Seq,
+        text: String,
+        respond: RoomPostResponse,
     },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
