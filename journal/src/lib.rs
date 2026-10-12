@@ -42,13 +42,14 @@ mod taste_index;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
-    Applied, BuildError, CommandReplay, CommitError, CommitFault, CurrentHeadWitness, FactCause,
-    FactPageStart, FactReadBudget, GuardError, GuardRefusal, JournalGuard, JournalHead,
-    JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES,
-    MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, OperatorDirection, OperatorDirections,
-    PendingFact, ProposalAuthority, ReadError, RetiredSteering, SelectedFactPage, SteeringPage,
-    TaskGeneration, TaskHeadPage, TaskHeads, TasteEvidenceFact, TasteEvidencePage,
-    TasteEvidenceSummary, ThreadError, TrustHeadPage,
+    AnchorGroupPage, Applied, BuildError, CommandReplay, CommitError, CommitFault,
+    CurrentHeadWitness, FactCause, FactPageStart, FactReadBudget, GroupHeadPage, GuardError,
+    GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite,
+    MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS,
+    MAX_STEERING_PAGE_ROWS, OperatorDirection, OperatorDirections, PendingFact, ProposalAuthority,
+    ReadError, RetiredSteering, SelectedFactPage, SteeringPage, TaskGeneration, TaskHeadPage,
+    TaskHeads, TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary, ThreadError,
+    TrustHeadPage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};

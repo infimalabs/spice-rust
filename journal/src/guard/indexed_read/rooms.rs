@@ -7,7 +7,7 @@ use wire::rooms::{
 };
 
 use super::{
-    FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
+    CurrentHeadWitness, FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
     admitted_envelope_length, decode_bounded_fact, decode_head, read_metrics,
 };
 
@@ -22,6 +22,28 @@ pub enum ProposalAuthority {
     Coverage(CandidateCoverage),
     /// One decision under a controlling task.
     Decision(PreparationDecision),
+}
+
+/// One ordered bounded page of current working-group heads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupHeadPage {
+    /// Working-group heads decoded within this call's row and byte budgets.
+    pub rows: Vec<JournalHead<WorkingGroup>>,
+    /// Last returned identity when more current groups remain.
+    pub continuation: Option<RoomAuthorityStamp>,
+    /// Cursor identity of the projection this page observed.
+    pub witness: CurrentHeadWitness,
+}
+
+/// One ordered bounded page of groups containing an anchor task.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnchorGroupPage {
+    /// Group identities decoded within this call's row and byte budgets.
+    pub rows: Vec<RoomAuthorityStamp>,
+    /// Last returned identity when more matching groups remain.
+    pub continuation: Option<RoomAuthorityStamp>,
+    /// Cursor identity of the projection this page observed.
+    pub witness: CurrentHeadWitness,
 }
 
 impl JournalRead<'_> {
@@ -43,61 +65,129 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
-    /// Current working groups strictly after `after`, in identity order.
-    pub fn group_heads(
+    /// One page of current working groups strictly after `after`, in identity
+    /// order.
+    pub fn group_head_page(
         &self,
         after: Option<&RoomAuthorityStamp>,
         budget: FactReadBudget,
-    ) -> Result<Vec<JournalHead<WorkingGroup>>, GuardError> {
+    ) -> Result<GroupHeadPage, GuardError> {
         let after = after.map(ToString::to_string).unwrap_or_default();
         read_metrics::observe_query();
         let mut statement = self
             .connection
             .prepare(
-                "SELECT head_seq, body FROM group_heads WHERE working_group > ?1 \
-                 ORDER BY working_group LIMIT ?2",
+                "SELECT working_group, head_seq, length(body), body FROM group_heads \
+                 WHERE working_group > ?1 ORDER BY working_group LIMIT ?2",
             )
             .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params![after, limit(budget)?], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
+        let mut rows = statement
+            .query(params![after, probe_limit(budget)?])
             .map_err(GuardError::Store)?;
-        let mut heads = Vec::new();
-        for row in rows {
-            let (position, bytes) = row.map_err(GuardError::Store)?;
+        let mut heads = Vec::with_capacity(budget.rows());
+        let mut decoded = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let indexed = row.get::<_, String>(0).map_err(GuardError::Store)?;
             read_metrics::observe_row();
-            read_metrics::observe_decode(bytes.len());
-            heads.push(decode_head(position, &bytes)?);
+            if heads.len() == budget.rows() {
+                continuation = heads
+                    .last()
+                    .map(|head: &JournalHead<WorkingGroup>| head.body.group.clone());
+                break;
+            }
+            let length = indexed_length(row, 2, "working-group body")?;
+            if decoded.saturating_add(length) > budget.decoded_bytes() {
+                if heads.is_empty() {
+                    return Err(GuardError::Invalid(format!(
+                        "working-group head {indexed:?} has {length} body bytes, exceeding this call's {}-byte decoded budget",
+                        budget.decoded_bytes(),
+                    )));
+                }
+                continuation = heads.last().map(|head| head.body.group.clone());
+                break;
+            }
+            let group = indexed.parse::<RoomAuthorityStamp>().map_err(|error| {
+                GuardError::Invalid(format!("group head index names {indexed:?}: {error}"))
+            })?;
+            let position = row.get::<_, i64>(1).map_err(GuardError::Store)?;
+            let bytes = row.get::<_, Vec<u8>>(3).map_err(GuardError::Store)?;
+            let head: JournalHead<WorkingGroup> = decode_head(position, &bytes)?;
+            if head.body.group != group {
+                return Err(GuardError::Invalid(format!(
+                    "group head indexed as {group} carries body group {}",
+                    head.body.group
+                )));
+            }
+            read_metrics::observe_decode(length);
+            decoded = decoded.saturating_add(length);
+            heads.push(head);
         }
-        Ok(heads)
+        Ok(GroupHeadPage {
+            rows: heads,
+            continuation,
+            witness: CurrentHeadWitness {
+                cursor: self.cursor,
+            },
+        })
     }
 
-    /// Working groups whose order includes this room anchor, in identity order.
-    pub fn anchor_groups(
+    /// One page of working groups whose order includes this room anchor,
+    /// strictly after `after` in identity order.
+    pub fn anchor_group_page(
         &self,
         anchor: &wire::TaskStamp,
-    ) -> Result<Vec<RoomAuthorityStamp>, GuardError> {
+        after: Option<&RoomAuthorityStamp>,
+        budget: FactReadBudget,
+    ) -> Result<AnchorGroupPage, GuardError> {
+        let after = after.map(ToString::to_string).unwrap_or_default();
         read_metrics::observe_query();
         let mut statement = self
             .connection
             .prepare(
-                "SELECT working_group FROM group_anchors WHERE anchor = ?1 \
-                 ORDER BY working_group",
+                "SELECT length(CAST(working_group AS BLOB)), working_group \
+                 FROM group_anchors WHERE anchor = ?1 AND working_group > ?2 \
+                 ORDER BY working_group LIMIT ?3",
             )
             .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map([anchor.as_str()], |row| row.get::<_, String>(0))
+        let mut rows = statement
+            .query(params![anchor.as_str(), after, probe_limit(budget)?])
             .map_err(GuardError::Store)?;
-        let mut groups = Vec::new();
-        for row in rows {
+        let mut groups = Vec::with_capacity(budget.rows());
+        let mut decoded = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
             read_metrics::observe_row();
-            let group = row.map_err(GuardError::Store)?;
-            groups.push(group.parse().map_err(|error| {
-                GuardError::Invalid(format!("group anchor index names {group:?}: {error}"))
-            })?);
+            if groups.len() == budget.rows() {
+                continuation = groups.last().cloned();
+                break;
+            }
+            let length = indexed_length(row, 0, "working-group identity")?;
+            if decoded.saturating_add(length) > budget.decoded_bytes() {
+                if groups.is_empty() {
+                    return Err(GuardError::Invalid(format!(
+                        "working-group identity has {length} bytes, exceeding this call's {}-byte decoded budget",
+                        budget.decoded_bytes(),
+                    )));
+                }
+                continuation = groups.last().cloned();
+                break;
+            }
+            let indexed = row.get::<_, String>(1).map_err(GuardError::Store)?;
+            let group = indexed.parse().map_err(|error| {
+                GuardError::Invalid(format!("group anchor index names {indexed:?}: {error}"))
+            })?;
+            read_metrics::observe_decode(length);
+            decoded = decoded.saturating_add(length);
+            groups.push(group);
         }
-        Ok(groups)
+        Ok(AnchorGroupPage {
+            rows: groups,
+            continuation,
+            witness: CurrentHeadWitness {
+                cursor: self.cursor,
+            },
+        })
     }
 
     /// The write-once head of one proposal subject, absent before recording.
@@ -206,7 +296,7 @@ impl JournalRead<'_> {
                  ORDER BY published.seq LIMIT ?4",
             )
             .map_err(GuardError::Store)?;
-        let probe = limit(budget)?.saturating_add(1);
+        let probe = probe_limit(budget)?;
         let mut rows = statement
             .query(params![room.as_str(), after, horizon_sql, probe])
             .map_err(GuardError::Store)?;
@@ -242,7 +332,21 @@ impl JournalRead<'_> {
     }
 }
 
-fn limit(budget: FactReadBudget) -> Result<i64, GuardError> {
-    i64::try_from(budget.rows())
+fn probe_limit(budget: FactReadBudget) -> Result<i64, GuardError> {
+    let limit = budget
+        .rows()
+        .checked_add(1)
+        .expect("bounded room page probe");
+    i64::try_from(limit)
         .map_err(|_| GuardError::Invalid("room read limit exceeds SQLite".to_owned()))
+}
+
+fn indexed_length(
+    row: &rusqlite::Row<'_>,
+    column: usize,
+    class: &str,
+) -> Result<usize, GuardError> {
+    let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
+    usize::try_from(length)
+        .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
 }
