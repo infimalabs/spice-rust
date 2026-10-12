@@ -82,6 +82,12 @@ impl AppRuntime {
         let epoch = self.principal.epoch();
         match admitted.get() {
             StreamFrame::Facts { packed, .. } => self.apply_fact_page(packed, epoch),
+            StreamFrame::Rooms { packed, .. } => {
+                if self.rooms.apply_page(packed).is_err() {
+                    return StreamApplication::new(vec![StreamDirective::Reconnect], true);
+                }
+                StreamApplication::new(continuation(ViewSubject::Rooms, epoch, packed), true)
+            }
             StreamFrame::Trust { .. } | StreamFrame::Thread { .. } => {
                 StreamApplication::new(Vec::new(), false)
             }
@@ -101,17 +107,19 @@ impl AppRuntime {
                 {
                     return StreamApplication::new(Vec::new(), settings_changed);
                 }
-                if self.rooms.apply_live_fact(fact).is_err() {
-                    self.resume = None;
-                    return StreamApplication::new(vec![StreamDirective::Reconnect], true);
-                }
+                let rooms = self.rooms.apply_live_fact(fact);
                 self.observe_lifecycle_boundary(fact);
                 self.observe_presence_transition(fact);
                 self.resume = Some(StreamCursor {
                     epoch,
                     seq: fact.seq(),
                 });
-                StreamApplication::new(Vec::new(), true)
+                let directives = if rooms.is_err() {
+                    vec![StreamDirective::Reconnect]
+                } else {
+                    Vec::new()
+                };
+                StreamApplication::new(directives, true)
             }
             StreamFrame::MessageGeneration { generation, .. } => {
                 self.apply_live_message_generation(generation)
@@ -131,11 +139,11 @@ impl AppRuntime {
                     after: *after,
                     dropped: *dropped,
                 };
-                let changed = self.terminal != Some(terminal)
-                    || self.resume.is_some()
+                let changed = self.resume != Some(*after)
+                    || self.terminal != Some(terminal)
                     || !self.rooms.requires_snapshot();
                 if changed {
-                    self.resume = None;
+                    self.resume = Some(*after);
                     self.terminal = Some(terminal);
                     self.rooms.lose_continuity();
                 }
@@ -183,10 +191,6 @@ impl AppRuntime {
                 continuation(ViewSubject::Facts, epoch, packed),
                 settings_changed,
             );
-        }
-        if self.rooms.apply_page(packed).is_err() {
-            self.resume = None;
-            return StreamApplication::new(vec![StreamDirective::Reconnect], true);
         }
         for row in &packed.rows {
             self.observe_lifecycle_boundary(row);

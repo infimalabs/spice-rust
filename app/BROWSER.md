@@ -41,18 +41,28 @@ data returns. Speech never retitles the tab.
 
 ## Room authority and browser preferences
 
-The authenticated fact stream owns one deterministic projection of task-keyed
-room timelines, repository working groups, participant reasons, preparation
-evidence, output controls, decisions, authorizations, and claim-bound stop
-requests. Durable task stamps and room publication stamps key cards across
-reloads and unavailable source bytes. The current board snapshot alone resolves
-an anchor's displayed handle; absence is shown as unavailable or missing rather
+Every stream subscription, first connect and same-scope reconnect alike,
+rebuilds one deterministic projection of task-keyed room timelines,
+repository working groups, participant reasons, preparation evidence,
+decisions, authorizations, and claim-bound stop requests. The `rooms` subject
+pages the facts behind current room authority at the subscription horizon:
+every room publication, the current head of each group, proposal, and
+authorization, and each coordination's direction and current steering head.
+Live facts strictly after that horizon continue it, so the operator's
+live-start fact stream neither repeats nor misses authority. The projection is
+unavailable until its snapshot completes.
+
+Durable task stamps and room publication stamps key cards across reloads and
+unavailable source bytes. The current board snapshot alone resolves an
+anchor's displayed handle, an output's control, and whether a stop's exact
+claim win is still active; absence is shown as unavailable or missing rather
 than reconstructed from an old handle.
 
-Packed fact continuations may skip facts hidden from the app, but they never
-move backward. A regressed page, non-monotone row sequence, or stream overflow
-invalidates the projection and reconnects without a resume cursor so the next
-generation supplies a fresh snapshot. It is never merged speculatively.
+Snapshot pages share one horizon, rise strictly, and never move backward. A
+moved horizon, regressed page, live fact before the snapshot completes beyond
+its horizon, live fact at or before it, or stream overflow invalidates the
+projection and reconnects for a fresh snapshot. It is never merged
+speculatively.
 
 Working groups are shared catalog organization only. Open room views, view
 order and layout, composer drafts, reader and scroll positions, and focus

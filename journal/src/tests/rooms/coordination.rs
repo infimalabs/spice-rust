@@ -350,3 +350,73 @@ fn put_aside_lists_its_writes_cancellations_and_stops_the_active_holder() {
     );
     journal.verify().expect("bound coordination verifies");
 }
+
+/// The room snapshot pages exactly the facts behind current authority
+/// through its horizon: a head that later moves past the horizon leaves the
+/// set, a coordination brings the direction it follows, and nothing else
+/// enters.
+#[test]
+fn room_authority_pages_current_heads_through_their_horizon() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    commit(&mut journal, group(1, vec![room.clone()])).expect("group stored");
+    let control = CoordinationControl::Coordinate(room.clone());
+    journal
+        .apply(start(
+            Actor::Operator,
+            &room,
+            2,
+            &[(0, Some(control))],
+            KEYS[0],
+        ))
+        .expect("coordination starts");
+    let directed = cursor(&journal).expect("directed");
+    let sent = Seq::new(directed.get() - 1).expect("direction position");
+    let horizon = directed;
+
+    journal
+        .apply(put_aside(
+            &journal,
+            Actor::Operator,
+            &room,
+            &[KEYS[0]],
+            &[KEYS[0]],
+            None,
+        ))
+        .expect("coordination put aside");
+    let shelved = cursor(&journal).expect("shelved");
+    let canceled = Seq::new(shelved.get() - 1).expect("cancellation position");
+    commit(&mut journal, group(1, Vec::new())).expect("group restored");
+    let restored = cursor(&journal).expect("restored");
+
+    let pages = |horizon: Seq| {
+        let mut start = crate::FactPageStart::After(None);
+        let mut pages = Vec::new();
+        loop {
+            let page = journal
+                .read(|read| read.room_authority_page(start, horizon, fact_budget(2)))
+                .expect("room authority reads");
+            assert_eq!(page.horizon, horizon);
+            let rows = page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>();
+            pages.push((rows, page.overflow.map(|overflow| overflow.omitted)));
+            let Some(overflow) = page.overflow else {
+                return pages;
+            };
+            start = crate::FactPageStart::At(overflow.continuation);
+        }
+    };
+    assert_eq!(
+        pages(horizon),
+        vec![(vec![sent, directed], None)],
+        "the group head moved past the horizon, so live facts carry it"
+    );
+    assert_eq!(
+        pages(restored),
+        vec![
+            (vec![sent, directed], Some(3)),
+            (vec![canceled, shelved], Some(1)),
+            (vec![restored], None),
+        ],
+        "the current steering head and group head replace their predecessors"
+    );
+}

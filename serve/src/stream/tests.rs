@@ -343,6 +343,98 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
     bus.shutdown().expect("bus shuts down");
 }
 
+fn commit_group(bus: &Bus, group: &str) -> JournalCommit {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "thread:operator".parse().expect("origin"),
+        "2030-04-12T18:44:09.271Z".parse().expect("instant"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::WorkingGroupStored {
+                group: wire::rooms::WorkingGroup {
+                    group: group.parse().expect("group stamp"),
+                    name: "Rooms".to_owned(),
+                    anchors: Vec::new(),
+                },
+            },
+            FactCause::Root,
+        )
+        .expect("group fact builds");
+    match bus.commit(write).expect("commit answers") {
+        CommitOutcome::Committed(commit) => commit,
+        other => panic!("group commit failed: {other:?}"),
+    }
+}
+
+/// An operator subscription starts live, so its room authority arrives as a
+/// room snapshot at that same horizon, and only later facts arrive live.
+#[test]
+fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
+    let bus = fixture(2);
+    commit_group(&bus, "dVsYdDj7d");
+    commit_group(&bus, "dVsYdDj7f");
+    let source = Source::new(bus.reader(), epoch(), 1, presenter());
+    let (mut subscription, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Facts, ViewSubject::Rooms], None),
+        )
+        .expect("operator subscription begins");
+    assert!(facts(&frames[0]).rows.is_empty());
+    assert_eq!(facts(&frames[0]).horizon, seq(5));
+    let StreamFrame::Rooms { packed, .. } = &frames[1] else {
+        panic!("expected a room snapshot: {frames:?}");
+    };
+    assert_eq!(packed.horizon, seq(5));
+    assert_eq!(
+        packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
+        [seq(4)]
+    );
+    let continuation = packed
+        .overflow
+        .expect("one-row pages overflow")
+        .continuation;
+    assert!(!subscription.is_live());
+
+    let request = StreamRequest::Continue {
+        v: WireVersion::CURRENT,
+        id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+        epoch: epoch(),
+        subject: ViewSubject::Rooms,
+        cursor: StreamCursor {
+            epoch: epoch(),
+            seq: continuation,
+        },
+    };
+    let StreamFrame::Rooms { packed, .. } = subscription
+        .continue_page(&source, &request)
+        .expect("exact room continuation answers")
+    else {
+        panic!("expected room continuation");
+    };
+    assert_eq!(
+        packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
+        [seq(5)]
+    );
+    assert!(packed.overflow.is_none());
+    assert!(subscription.is_live());
+    assert_eq!(subscription.cursor(), Some(seq(5)));
+
+    let committed = commit_group(&bus, "dVsYdDj7g");
+    let delivery = subscription
+        .advance(&source, committed)
+        .expect("commit advances stream")
+        .expect("new authority creates a delivery");
+    let [StreamFrame::Fact { fact, .. }] = delivery.frames() else {
+        panic!("expected one live fact: {delivery:?}");
+    };
+    assert_eq!(fact.seq(), seq(6));
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn durable_broadcast_drives_later_updates_without_refresh() {
     let bus = fixture(1);

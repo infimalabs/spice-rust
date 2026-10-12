@@ -289,7 +289,7 @@ impl Source {
                         generation: (*generation).clone(),
                     }
                 }
-                ViewSubject::Facts | ViewSubject::Trust => {
+                ViewSubject::Facts | ViewSubject::Trust | ViewSubject::Rooms => {
                     subscription.page(self, subject, None, *id)?
                 }
             };
@@ -402,6 +402,22 @@ impl Source {
                 Failure::Fault(Fault {
                     class: FaultClass::Store,
                     reason: "stream::fact-page-failed".to_owned(),
+                    detail: error.to_string(),
+                })
+            })
+    }
+
+    fn rooms(
+        &self,
+        start: journal::FactPageStart,
+        horizon: Seq,
+    ) -> Result<Packed<wire::Envelope<wire::AnyFact>>, Failure> {
+        self.bus
+            .app_rooms(start, horizon, self.fact_budget()?)
+            .map_err(|error| {
+                Failure::Fault(Fault {
+                    class: FaultClass::Store,
+                    reason: "stream::room-page-failed".to_owned(),
                     detail: error.to_string(),
                 })
             })

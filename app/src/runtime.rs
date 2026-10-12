@@ -594,7 +594,8 @@ impl AppRuntime {
     /// cleared the entire runtime before the new principal can render.
     ///
     /// Facts published while the socket was down are never streamed, and a
-    /// read in flight at the drop never answers. Retained task detail and typed
+    /// read in flight at the drop never answers. Room authority restarts
+    /// from the new subscription's snapshot. Retained task detail and typed
     /// relationship enrichment keep admitted evidence while replacement reads run.
     pub fn reconnect(&mut self, accepted: &Admitted<Accepted>) -> bool {
         if self.accepted.scope() == accepted.scope() {
@@ -602,10 +603,7 @@ impl AppRuntime {
             self.principal = Principal::admitted(accepted);
             self.message_reconnect_pending = true;
             self.terminal = None;
-            if self.rooms.requires_snapshot() {
-                self.rooms = rooms::RoomProjection::default();
-                self.resume = None;
-            }
+            self.rooms = rooms::RoomProjection::default();
             self.reconnect_consent_rulings();
             self.abandon_member_commands();
             self.task_details.values_mut().for_each(refresh_task_detail);
@@ -643,7 +641,7 @@ impl AppRuntime {
     /// Subjects visible to this admitted principal.
     #[must_use]
     pub fn subjects(&self) -> Vec<ViewSubject> {
-        let mut subjects = vec![ViewSubject::Facts];
+        let mut subjects = vec![ViewSubject::Facts, ViewSubject::Rooms];
         if self.principal.actor() == &Actor::Operator {
             subjects.push(ViewSubject::Messages);
             subjects.push(ViewSubject::Quota);
@@ -703,7 +701,8 @@ impl AppRuntime {
         self.board.get(&self.principal)
     }
 
-    /// Room, group, and preparation authority from the authenticated fact stream.
+    /// Room, group, and preparation authority from this subscription's room
+    /// snapshot and the live facts after it.
     #[must_use]
     pub const fn room_projection(&self) -> &RoomProjection {
         &self.rooms
