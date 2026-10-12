@@ -1045,6 +1045,26 @@ fn transcript_links_stay_within_the_accounted_generation_and_extent() {
     )
     .expect("a later head preserves links within the accounted generation");
 
+    let mut next_member = head.clone();
+    next_member.next = TranscriptPosition {
+        member: 2,
+        offset: 0,
+    };
+    ingest(
+        &mut journal,
+        next_member.clone(),
+        TranscriptPosition {
+            member: 1,
+            offset: 8_192,
+        },
+        None,
+    );
+    let result = commit(
+        &mut journal,
+        publication(&room, 280, linked(next_member, locus(u64::MAX, 2))),
+    );
+    refused(&journal, result);
+
     let mut replacement = head.clone();
     replacement.source = uuid("018f82d4-6f59-7d06-92e3-bce913116398");
     replacement.next.offset = 128;
