@@ -49,6 +49,7 @@ const PINNED: &[(&str, &str)] = &[
     ("RoomCoordinationStarted", "room::directed"),
     ("RoomPutAside", "room::shelved"),
     ("RoomDelivered", "room::delivered"),
+    ("RoomHorizon", "room::horizon"),
     ("WorkingGroupStored", "group::stored"),
     ("WorkingGroupRemoved", "group::removed"),
     ("CandidateRetained", "proposal::retained"),

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpSource, select_catch_up};
-use wire::rooms::{RoomDelivered, TextRange, TranscriptHunk};
+use wire::rooms::{RoomDelivered, RoomHorizon, TextRange, TranscriptHunk};
 use wire::{Actor, CanonicalUuid, Producer, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 use super::*;
@@ -122,7 +122,7 @@ fn plan(
         .collect::<Result<Vec<_>, _>>()?;
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("room::catch-up-clock-invalid", &error.to_string()))?;
-    let cursor = cursor(bus, lane)?;
+    let after = start(bus, lane)?;
     let mut sources = Vec::new();
     let mut attention = Vec::new();
     let mut presented = BTreeMap::new();
@@ -136,7 +136,11 @@ fn plan(
         let room_attention =
             crate::board_command::project_attention(&entries, &residency, &room, &publications, at)
                 .map_err(unit_outcome)?;
-        let projections = crate::room_command::project_publications(bus, &paths.tape, publications)
+        let unseen = publications
+            .into_iter()
+            .filter(|publication| publication.seq > after)
+            .collect();
+        let projections = crate::room_command::project_publications(bus, &paths.tape, unseen)
             .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
         for publication in projections {
             let seq = publication.seq();
@@ -162,7 +166,7 @@ fn plan(
         }
         attention.push(room_attention);
     }
-    let selected = select_catch_up(lane, cursor, &attention, sources, CatchUpBudget::STANDARD)
+    let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
         .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
     let Some(through) = selected.through else {
         return Ok(None);
@@ -198,6 +202,23 @@ fn plan(
         text,
     }))
 }
+
+/// Where `lane`'s catch-up starts: its delivery cursor or, before any delivery,
+/// its horizon, recorded at the journal head the first time the lane is
+/// reconciled without either, so retained history it predates is never owed.
+fn start(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Seq> {
+    if let Some(cursor) = cursor(bus, lane)? {
+        return Ok(cursor);
+    }
+    let horizon = bus
+        .read(move |read| read.room_catch_up_horizon(lane))
+        .map_err(|error| store_fault("room::catch-up-horizon-unreadable", &error.to_string()))?;
+    match horizon {
+        Some(head) => Ok(head.position()),
+        None => commit_fact(bus, lane, RoomHorizon { lane }),
+    }
+}
+
 fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {
     bus.read(move |read| read.room_cursor(lane))
         .map_err(|error| store_fault("room::catch-up-cursor-unreadable", &error.to_string()))
@@ -307,37 +328,43 @@ pub(in crate::resident) fn recognize(
         else {
             continue;
         };
-        let at = Instant::new(jiff::Timestamp::now()).map_err(|error| {
-            environment_fault("room::catch-up-clock-invalid", &error.to_string())
-        })?;
-        let origin = format!("lane:{}", record.lane)
-            .parse::<wire::Origin>()
-            .map_err(|error| store_fault("room::catch-up-origin-invalid", &error.to_string()))?;
-        let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
-        write
-            .fact(
-                RoomDelivered {
-                    through: SequenceCode::new(notice.through.get()),
-                    hunk,
-                },
-                FactCause::Root,
-            )
-            .map_err(|error| store_fault("room::catch-up-build", &error.to_string()))?;
-        match bus
-            .commit(write)
-            .map_err(|error| store_fault("room::catch-up-commit", &error.to_string()))?
-        {
-            CommitOutcome::Committed(_) => {}
-            CommitOutcome::Refused(refusal) => {
-                return Err(store_fault("room::catch-up-refused", &refusal.to_string()));
-            }
-            CommitOutcome::Fault(fault) => {
-                return Err(store_fault("room::catch-up-fault", &fault.to_string()));
-            }
-        }
+        commit_fact(
+            bus,
+            record.lane,
+            RoomDelivered {
+                through: SequenceCode::new(notice.through.get()),
+                hunk,
+            },
+        )?;
         return Ok(());
     }
     Ok(())
+}
+
+/// Commit one resident-recognized room catch-up fact about `lane`, returning
+/// its journal position.
+fn commit_fact(bus: &Bus, lane: CanonicalUuid, body: impl wire::Body) -> CommandResult<Seq> {
+    let at = Instant::new(jiff::Timestamp::now())
+        .map_err(|error| environment_fault("room::catch-up-clock-invalid", &error.to_string()))?;
+    let origin = format!("lane:{lane}")
+        .parse::<wire::Origin>()
+        .map_err(|error| store_fault("room::catch-up-origin-invalid", &error.to_string()))?;
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    write
+        .fact(body, FactCause::Root)
+        .map_err(|error| store_fault("room::catch-up-build", &error.to_string()))?;
+    match bus
+        .commit(write)
+        .map_err(|error| store_fault("room::catch-up-commit", &error.to_string()))?
+    {
+        CommitOutcome::Committed(commit) => Seq::new(commit.last()).ok_or_else(|| {
+            store_fault("room::catch-up-commit", "a committed position is positive")
+        }),
+        CommitOutcome::Refused(refusal) => {
+            Err(store_fault("room::catch-up-refused", &refusal.to_string()))
+        }
+        CommitOutcome::Fault(fault) => Err(store_fault("room::catch-up-fault", &fault.to_string())),
+    }
 }
 
 fn matches_delivery(

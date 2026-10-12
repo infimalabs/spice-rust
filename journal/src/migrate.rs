@@ -34,7 +34,7 @@ const PREPARED: &str = "prepared";
 /// room catch-up cursors, and room coordination heads a predecessor lacks
 /// before the schema identity advances. Current readers therefore need no
 /// execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 11] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
+const PREDECESSOR_SCHEMAS: [u32; 12] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -45,6 +45,8 @@ pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 41;
 /// First schema whose baseline carries room coordination heads.
 pub(crate) const ROOM_COORDINATION_SCHEMA: u32 = 44;
+/// First schema whose baseline carries per-lane room catch-up horizons.
+pub(crate) const ROOM_HORIZON_SCHEMA: u32 = 45;
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
 /// Last release whose wire decoded task completion guidance.
@@ -135,6 +137,9 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
         .map_err(OpenError::Sqlite)?;
     transaction
         .execute_batch(crate::rooms::COORDINATION_SCHEMA_SQL)
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .execute_batch(crate::rooms::HORIZON_SCHEMA_SQL)
         .map_err(OpenError::Sqlite)?;
     crate::historical_receipts::create_schema(&transaction)?;
     crate::historical_receipts::reserve_identities(&transaction)?;
@@ -279,6 +284,11 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     if version < ROOM_COORDINATION_SCHEMA {
         transaction
             .execute_batch(crate::rooms::COORDINATION_SCHEMA_SQL)
+            .map_err(OpenError::Sqlite)?;
+    }
+    if version < ROOM_HORIZON_SCHEMA {
+        transaction
+            .execute_batch(crate::rooms::HORIZON_SCHEMA_SQL)
             .map_err(OpenError::Sqlite)?;
     }
     transaction
@@ -1159,8 +1169,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 44, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 45, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 44;
+PRAGMA user_version = 45;
 "#;

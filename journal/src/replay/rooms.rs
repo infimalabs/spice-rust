@@ -66,6 +66,12 @@ pub(super) fn verify(
         violations,
     );
     compare(
+        "room_horizons",
+        &expected.horizons,
+        &stored.horizons,
+        violations,
+    );
+    compare(
         "room_directions",
         &expected.directed,
         &stored.directed,
