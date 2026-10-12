@@ -1246,7 +1246,14 @@ fn accept_commit_turn(
     if quota_triggers.accept_commits(bus)? {
         quota.request();
     }
-    settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)
+    settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)?;
+    room_catch_up::reconcile(
+        bus,
+        command_surface.paths,
+        command_surface.config,
+        seats,
+        diagnostic,
+    )
 }
 
 #[allow(

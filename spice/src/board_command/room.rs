@@ -51,7 +51,13 @@ pub(super) fn room_post(
         Ok(at) => at,
         Err(error) => return environment_fault("room::clock-invalid", &error.to_string()),
     };
-    let attention = match project_attention(&snapshot, &room, &publications, at) {
+    let attention = match project_attention(
+        &snapshot.entries,
+        &snapshot.answer.residency.body,
+        &room,
+        &publications,
+        at,
+    ) {
         Ok(attention) => attention,
         Err(outcome) => return outcome,
     };
@@ -92,7 +98,7 @@ pub(super) fn room_post(
     committed(bus, write, CommandAnswer::RoomPost(answer))
 }
 
-pub(super) fn room_publications(
+pub(crate) fn room_publications(
     bus: &Bus,
     room: &wire::TaskStamp,
 ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, Outcome<CommandAnswer>> {
@@ -127,18 +133,17 @@ pub(super) fn room_publications(
     Ok(rows)
 }
 
-fn project_attention(
-    snapshot: &ValidatedSnapshot,
+pub(crate) fn project_attention(
+    entries: &[Entry],
+    residency: &wire::ResidencyHead,
     room: &wire::TaskStamp,
     publications: &[wire::Envelope<wire::AnyFact>],
     at: Instant,
 ) -> Result<spice::rooms::RoomAttention, Outcome<CommandAnswer>> {
-    let work = snapshot
-        .entries
+    let work = entries
         .iter()
         .filter_map(|entry| RoomWork::from_task(room, entry))
         .collect::<Vec<_>>();
-    let residency = &snapshot.answer.residency.body;
     let since = at
         .get()
         .checked_sub(jiff::SignedDuration::from_secs(ROOM_ACTIVITY_SECONDS))

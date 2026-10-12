@@ -150,6 +150,7 @@ mod report;
 use report::read_report;
 mod room;
 use room::room_post;
+pub(crate) use room::{project_attention, room_publications};
 mod room_coordination;
 pub(crate) use room_coordination::{
     coordination_lane, room_coordinate, room_coordination_read, room_put_aside,

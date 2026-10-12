@@ -21,7 +21,7 @@ impl Lanes {
                     description: None,
                     acceptance: Vec::new(),
                     requirements: wire::EnvironmentRequirements::default(),
-                    project: "steer.rooms".to_owned(),
+                    project: "serve.rooms".to_owned(),
                     tags: Vec::new(),
                     depends: Vec::new(),
                     intent: None,
@@ -45,7 +45,7 @@ impl Lanes {
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
-            project: "steer.rooms".to_owned(),
+            project: "serve.rooms".to_owned(),
             tags: Vec::new(),
             dependencies: Vec::new(),
             provenance: "resident:018f82d4-6f59-7d06-92e3-000000000001"
@@ -209,6 +209,159 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     assert_eq!(lanes.rooms().len(), 4, "a reread records nothing");
     assert_eq!(lanes.messages().len(), 1, "a reread sends nothing");
     lanes.finish();
+}
+
+/// The resident projects both current listeners from native room authority,
+/// gives each the same bounded source-backed page, and never turns delivery
+/// into lifecycle authority.
+#[test]
+fn resident_catch_up_pages_two_listeners_without_waking_them() {
+    let lanes = Lanes::new("room-catch-up");
+    let room = lanes.room("dVrD245Kc");
+    for (lane, body) in [(FIRST, "first joined"), (SECOND, "second joined")] {
+        lanes.author(lane, &format!("MSG #{room}: {body}"));
+        lanes.account(lane);
+        let _ = lanes.hear(lane, test_uuid(lane + 1));
+    }
+    for item in 0..18 {
+        lanes.author(SENDER, &format!("MSG #{room}: publication {item}"));
+    }
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
+
+    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
+    let startup = load_startup_surface(&repository).expect("fixture surface loads");
+    let mut seats = Seats::new();
+    for lane in [FIRST, SECOND] {
+        seats
+            .seat_detached(
+                test_uuid(lane),
+                test_uuid(lane + 1),
+                Box::new(DetachedFixture {
+                    dropped: Arc::new(AtomicU64::new(0)),
+                }),
+            )
+            .expect("listener seats");
+    }
+    let before = lanes.cursor();
+    let mut diagnostics = Vec::new();
+    room_catch_up::reconcile(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        &mut diagnostics,
+    )
+    .expect("catch-up reconciles");
+    assert_eq!(
+        lanes.cursor(),
+        before,
+        "room delivery never writes lifecycle authority or wakes a lane"
+    );
+
+    let first =
+        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(FIRST)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "first listener has catch-up: {}",
+                    String::from_utf8_lossy(&diagnostics)
+                )
+            });
+    let second =
+        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(SECOND)))
+            .expect("second listener has catch-up");
+    for notice in [&first, &second] {
+        assert!(notice.text.contains("publication 0"));
+        assert!(notice.text.contains("continue: spice://task/"));
+    }
+    assert!(!first.text.contains("first joined"));
+    assert!(first.text.contains("second joined"));
+    assert!(!second.text.contains("second joined"));
+    assert!(second.text.contains("first joined"));
+    land_delivery(&lanes, &mut seats, &first);
+    seats.release_all();
+    lanes.finish();
+}
+
+fn land_delivery(lanes: &Lanes, seats: &mut Seats, notice: &room_catch_up::Notice) {
+    let source = serve::stream::Source::new(lanes.bus.reader(), lanes.epoch, 8, quote_presenter());
+    let publisher = source.message_publisher();
+    let generation = publisher.batch().expect("message generation begins");
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let surfaces = CaptureSurfaces::new(&lanes.paths, &tastes, &steering, &generation);
+    let message_state = std::sync::Mutex::new(MessageState::default());
+    let mut diagnostics = Vec::new();
+    let interrupted = lanes.operator(FIRST, "interrupted delivery");
+    accept_capture_record(
+        &lanes.bus,
+        lanes.epoch,
+        seats,
+        &surfaces,
+        None,
+        &interrupted,
+        CaptureViews::new(&message_state, &mut diagnostics),
+    )
+    .expect("interrupted delivery record is accepted");
+    let first_lane = test_uuid(FIRST);
+    assert!(
+        lanes
+            .bus
+            .read(move |read| read.room_cursor(first_lane))
+            .expect("cursor reads")
+            .is_none(),
+        "a different transcript record cannot advance the cursor"
+    );
+
+    let landed = lanes.operator(FIRST, &notice.text);
+    accept_capture_record(
+        &lanes.bus,
+        lanes.epoch,
+        seats,
+        &surfaces,
+        None,
+        &landed,
+        CaptureViews::new(&message_state, &mut diagnostics),
+    )
+    .expect("exact delivery record is accepted");
+    assert!(
+        lanes
+            .bus
+            .read(move |read| read.room_cursor(first_lane))
+            .expect("cursor still reads")
+            .is_none(),
+        "live transcript coalescing leaves an unaccounted delivery pending"
+    );
+    let source_id = lanes
+        .tape(FIRST)
+        .source_id()
+        .expect("tape source reads")
+        .as_str()
+        .parse()
+        .expect("tape source is a UUID");
+    let _ = ingest_transcripts(
+        &lanes.bus,
+        &lanes.paths,
+        Some(first_lane),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::default(),
+        &mut diagnostics,
+    )
+    .expect("safe-boundary sweep accounts the delivery");
+    room_catch_up::recognize(&lanes.bus, &lanes.paths, &landed, source_id)
+        .expect("accounted delivery is recognized");
+    let cursor = lanes
+        .bus
+        .read(move |read| read.room_cursor(first_lane))
+        .expect("cursor rereads")
+        .expect("exact delivery advances the cursor");
+    assert_eq!(cursor.body().through.get(), notice.through.get());
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    generation.commit().expect("message generation commits");
 }
 
 /// A context naming no task refuses the whole packet: no route delivers and
