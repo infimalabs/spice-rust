@@ -31,7 +31,7 @@ const PREPARED: &str = "prepared";
 /// facts into steering heads, and creates the room-authority projection and
 /// per-lane room catch-up cursors a predecessor lacks before the schema
 /// identity advances. Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 7] = [33, 34, 35, 36, 37, 38, 39];
+const PREDECESSOR_SCHEMAS: [u32; 8] = [33, 34, 35, 36, 37, 38, 39, 40];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -39,7 +39,7 @@ const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
 /// First schema whose baseline carries the room-authority projection.
 pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 /// First schema whose baseline carries per-lane room catch-up cursors.
-pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 40;
+pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 41;
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
 /// Last release whose wire decoded task completion guidance.
@@ -1146,8 +1146,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 40, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 41, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 40;
+PRAGMA user_version = 41;
 "#;
