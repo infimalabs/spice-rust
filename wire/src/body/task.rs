@@ -5,7 +5,6 @@
 //! authoritative again.
 
 use super::*;
-use crate::intent::TaskGuidance;
 
 /// The sole transcript stream retained as executable task creation context.
 pub const TASK_CREATION_CONTEXT_STREAM: &str = "session";
@@ -316,13 +315,6 @@ pub struct TaskCompletionTerminal {
     pub operation: CanonicalUuid,
     /// Workflow status returned by the completing transaction.
     pub status: String,
-    /// Actionable guidance returned by the completing transaction.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub guidance: Option<TaskGuidance>,
     /// Exact next action projected by that transaction.
     #[serde(
         default,

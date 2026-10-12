@@ -411,7 +411,6 @@ fn completion_terminal_lookup_probes_logarithmic_levels() {
                     terminal: Some(body::TaskCompletionTerminal {
                         operation,
                         status: "completed".to_owned(),
-                        guidance: None,
                         next: None,
                     }),
                     git: None,
@@ -464,7 +463,6 @@ fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
         terminal: Some(body::TaskCompletionTerminal {
             operation,
             status: "completed".to_owned(),
-            guidance: None,
             next: None,
         }),
         git: None,

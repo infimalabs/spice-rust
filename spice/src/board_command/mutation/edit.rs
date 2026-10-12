@@ -318,7 +318,6 @@ fn publish_correction(
     let answer = wire::intent::TaskAnswer {
         task: rendered,
         status: "edited".to_owned(),
-        guidance: None,
         completion: None,
         claim: None,
         next,

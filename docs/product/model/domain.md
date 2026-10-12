@@ -22,7 +22,11 @@ Writable journal admission has one current crossing. A fact kind whose producer
 has retired does not remain in the executable wire vocabulary: admission
 crosses its prior rows once into inert `journal::retained` evidence that names
 the last owning release and preserves the retired payload, or refuses the
-authority while naming that release. Current readers never carry
+authority while naming that release. A retired optional field crosses by
+rewriting each carrying fact and command receipt in place without it: the
+row keeps its position, identity, and every other field, is re-encoded through
+the current DTO, and only the retired value is lost. No digest covers single
+rows, so the rewrite breaks no integrity witness. Current readers never carry
 release-specific decode arms.
 
 ## Independent task graphs
