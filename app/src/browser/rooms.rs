@@ -1,6 +1,7 @@
 //! Working-group catalog and browser-local task-room consoles.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use wasm_bindgen::JsValue;
@@ -13,7 +14,7 @@ use yew::prelude::*;
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
 use crate::client_action::ClientAction;
-use crate::room_views::{GroupView, RoomViews};
+use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 const STORAGE: &str = "spice:room-views:v1";
@@ -22,58 +23,81 @@ thread_local! {
     static LAST_GROUP_MICROS: Cell<i64> = const { Cell::new(0) };
 }
 
+impl Reducible for RoomViews {
+    type Action = RoomViewAction;
+
+    fn reduce(self: Rc<Self>, action: RoomViewAction) -> Rc<Self> {
+        let mut views = Rc::unwrap_or_clone(self);
+        views.apply(action);
+        Rc::new(views)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Controls {
-    views: UseStateHandle<RoomViews>,
+    views: UseReducerHandle<RoomViews>,
     notice: UseStateHandle<Option<String>>,
+    /// Last authoritative name of each group seen in this page's memory, shown
+    /// while room authority reloads so a reconnect does not retitle consoles.
+    names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
+    /// The room an explicit open asked to focus, honored once by its composer.
+    requested: Rc<RefCell<Option<(RoomAuthorityStamp, TaskStamp)>>>,
 }
 
 #[hook]
 pub(super) fn use_controls() -> Controls {
+    let views = use_reducer(restore);
+    let names = use_mut_ref(BTreeMap::new);
+    let requested = use_mut_ref(|| None);
+    use_effect_with((*views).clone(), store);
     Controls {
-        views: use_state(restore),
+        views,
         notice: use_state(|| None),
+        names,
+        requested,
     }
 }
 
 impl Controls {
-    fn update(&self, apply: impl FnOnce(&mut RoomViews)) {
-        let mut views = (*self.views).clone();
-        apply(&mut views);
-        store(&views);
-        self.views.set(views);
+    fn update(&self, action: RoomViewAction) {
+        self.views.dispatch(action);
     }
 
     fn open(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        self.update(|views| views.open_room(group, room));
+        *self.requested.borrow_mut() = Some((group.clone(), room.clone()));
+        self.update(RoomViewAction::Open { group, room });
     }
 
     fn close_room(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        self.update(|views| views.close_room(&group, &room));
+        self.update(RoomViewAction::CloseRoom { group, room });
     }
 
     fn close_group(&self, group: RoomAuthorityStamp) {
-        self.update(|views| views.close_group(&group));
+        self.update(RoomViewAction::CloseGroup { group });
     }
 
     fn move_group(&self, group: RoomAuthorityStamp, delta: isize) {
-        self.update(|views| views.move_group(&group, delta));
+        self.update(RoomViewAction::MoveGroup { group, delta });
     }
 
     fn move_room(&self, group: RoomAuthorityStamp, room: TaskStamp, delta: isize) {
-        self.update(|views| views.move_room(&group, &room, delta));
+        self.update(RoomViewAction::MoveRoom { group, room, delta });
     }
 
     fn draft(&self, group: RoomAuthorityStamp, room: TaskStamp, draft: String) {
-        self.update(|views| views.set_draft(&group, &room, draft));
+        self.update(RoomViewAction::Draft { group, room, draft });
     }
 
     fn reader(&self, group: RoomAuthorityStamp, room: TaskStamp, offset: i32) {
-        self.update(|views| views.set_reader(&group, &room, offset));
+        self.update(RoomViewAction::Reader {
+            group,
+            room,
+            offset,
+        });
     }
 
     fn focus(&self, group: RoomAuthorityStamp, room: TaskStamp) {
-        self.update(|views| views.focus(&group, &room));
+        self.update(RoomViewAction::Focus { group, room });
     }
 
     fn report(&self, notice: String) {
@@ -495,11 +519,30 @@ fn render_console(
     view: &GroupView,
     index: usize,
 ) -> Html {
+    let loaded = runtime.is_some_and(|runtime| {
+        runtime.room_projection().status() == RoomProjectionStatus::Available
+    });
     let authoritative =
         runtime.and_then(|runtime| runtime.room_projection().groups().get(&view.group));
-    let name = authoritative
-        .map(|group| group.value.name.clone())
-        .unwrap_or_else(|| "Unavailable working group".to_owned());
+    // Absence is shown only once a completed snapshot lacks the group; while
+    // authority reloads, the console keeps its last name and its geometry.
+    let absent = loaded && authoritative.is_none();
+    let name = match authoritative {
+        Some(group) => {
+            controls
+                .names
+                .borrow_mut()
+                .insert(view.group.clone(), group.value.name.clone());
+            group.value.name.clone()
+        }
+        None if absent => "Unavailable working group".to_owned(),
+        None => controls
+            .names
+            .borrow()
+            .get(&view.group)
+            .cloned()
+            .unwrap_or_else(|| "Loading working group…".to_owned()),
+    };
     let close = {
         let controls = controls.clone();
         let group = view.group.clone();
@@ -515,7 +558,7 @@ fn render_console(
             <header class="room-console-header">
                 <div>
                     <span class="room-console-kicker">{"Working group"}</span>
-                    <h2>{name}</h2>
+                    <h2 aria-busy={(!loaded).to_string()}>{name}</h2>
                 </div>
                 <div class="room-inline-actions">
                     <button type="button" disabled={index == 0} onclick={move_group(-1)} aria-label="Move group left">{"←"}</button>
@@ -523,7 +566,7 @@ fn render_console(
                     <button type="button" onclick={close}>{"Close group"}</button>
                 </div>
             </header>
-            if authoritative.is_none() {
+            if absent {
                 <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
             }
             <div class="room-console-rooms">
@@ -573,6 +616,9 @@ fn render_room(
         let room = room.clone();
         Callback::from(move |offset| controls.reader(group.clone(), room.clone(), offset))
     };
+    let loaded = runtime.is_some_and(|runtime| {
+        runtime.room_projection().status() == RoomProjectionStatus::Available
+    });
     html! {
         <article class="room-pane" key={room.to_string()} data-room={room.to_string()}>
             <header class="room-pane-header">
@@ -584,10 +630,12 @@ fn render_room(
                 </div>
             </header>
             <RoomReader offset={view.reader(room)} onscroll={reader}>
-                if cards.is_empty() {
+                if !cards.is_empty() {
+                    {for cards}
+                } else if loaded {
                     <p class="room-empty">{"No room publications are available."}</p>
                 } else {
-                    {for cards}
+                    <p class="room-empty" aria-busy="true">{"Loading room…"}</p>
                 }
             </RoomReader>
             {post}
@@ -648,21 +696,44 @@ struct ComposerFocusProps {
     node: NodeRef,
     active: bool,
     disabled: bool,
+    /// An explicit open of this room asked for focus.
+    requested: bool,
+    /// Retires that request once this composer has answered it.
+    settle: Callback<()>,
 }
 
+/// Focuses a room composer when its explicit open asks, and otherwise
+/// restores its saved focus only while nothing else holds focus, however late
+/// the composer becomes enabled.
 #[function_component]
 fn ComposerFocus(props: &ComposerFocusProps) -> Html {
     let node = props.node.clone();
-    use_effect_with((props.active, props.disabled), move |(active, disabled)| {
-        if *active
-            && !*disabled
-            && let Some(target) = node.cast::<HtmlElement>()
-        {
-            let _ = target.focus();
-        }
-        || ()
-    });
+    let settle = props.settle.clone();
+    use_effect_with(
+        (props.active, props.disabled, props.requested),
+        move |(active, disabled, requested)| {
+            let focus = !*disabled && (*requested || *active && unfocused_document());
+            if focus && let Some(target) = node.cast::<HtmlElement>() {
+                let _ = target.focus();
+            }
+            if *requested {
+                settle.emit(());
+            }
+            || ()
+        },
+    );
     html! {}
+}
+
+/// Whether no element other than the document body holds focus.
+fn unfocused_document() -> bool {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .is_some_and(|document| {
+            document
+                .active_element()
+                .is_none_or(|element| element.tag_name().eq_ignore_ascii_case("body"))
+        })
 }
 
 fn room_post_form(
@@ -691,6 +762,15 @@ fn room_post_form(
     let disabled =
         !matches!(authority, Some((RoomAnchorAuthority::Available(_), true))) || task.is_none();
     let textarea = NodeRef::default();
+    let requested = controls
+        .requested
+        .borrow()
+        .as_ref()
+        .is_some_and(|(group, opened)| *group == view.group && opened == room);
+    let settle = {
+        let requested = controls.requested.clone();
+        Callback::from(move |()| *requested.borrow_mut() = None)
+    };
     let oninput = {
         let controls = controls.clone();
         let group = view.group.clone();
@@ -731,17 +811,16 @@ fn room_post_form(
                 return;
             }
             let success_controls = controls.clone();
-            let success_group = group.clone();
-            let success_room = room_stamp.clone();
+            let posted = RoomViewAction::Posted {
+                group: group.clone(),
+                room: room_stamp.clone(),
+                text: text.clone(),
+            };
             let respond =
                 Rc::new(
                     move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
                         Ok(answer) => {
-                            success_controls.draft(
-                                success_group.clone(),
-                                success_room.clone(),
-                                String::new(),
-                            );
+                            success_controls.update(posted.clone());
                             success_controls.report(room_post_notice(&answer.outcome));
                         }
                         Err(error) => success_controls.report(error),
@@ -769,7 +848,7 @@ fn room_post_form(
                 {oninput}
                 {onfocus}
             />
-            <ComposerFocus node={textarea} active={view.focused(room)} {disabled} />
+            <ComposerFocus node={textarea} active={view.focused(room)} {disabled} {requested} {settle} />
             <button type="submit" disabled={disabled}>{"Post"}</button>
         </form>
     }
