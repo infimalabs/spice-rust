@@ -1,6 +1,6 @@
 //! Bounded reads of the room-authority projection.
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, ExecutionAuthorization, PreparationDecision, ProposalRef,
     RetainedCandidate, RoomAuthorityStamp, WorkingGroup,
@@ -208,6 +208,35 @@ impl JournalRead<'_> {
             )?,
         };
         Ok(head)
+    }
+    /// Authenticated principal that retained one candidate, absent with its head.
+    pub fn proposal_author(
+        &self,
+        proposal: &ProposalRef,
+    ) -> Result<Option<wire::Actor>, GuardError> {
+        let subject = crate::rooms::subject(proposal)
+            .map_err(|refusal| GuardError::Invalid(refusal.to_string()))?;
+        read_metrics::observe_query();
+        let actor = self
+            .connection
+            .query_row(
+                "SELECT fact.actor FROM proposal_heads AS proposal \
+                 JOIN fact_envelopes AS fact ON fact.seq = proposal.head_seq \
+                 WHERE proposal.subject = ?1",
+                [&subject],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        actor
+            .map(|actor| {
+                actor.parse().map_err(|_| {
+                    GuardError::Invalid(format!(
+                        "proposal head {subject} names invalid actor {actor:?}"
+                    ))
+                })
+            })
+            .transpose()
     }
 
     fn proposal_family<T>(

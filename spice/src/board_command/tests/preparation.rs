@@ -1,0 +1,454 @@
+use super::*;
+
+use wire::rooms::{
+    CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
+    CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
+    CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize,
+    NegativeDecision, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
+    RetainedCandidate, RoomAuthorityStamp, RoomSource,
+};
+
+fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
+    let born = stamp(name);
+    let task = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            preparation: None,
+            intent: Some(wire::TaskIntent::Plan),
+            title: name.to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The exact selected output is justified".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:preparation".parse().expect("fixture origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    task
+}
+
+fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
+    vec![
+        statement_witness(task),
+        workflow_witness(task),
+        claim_witness(task),
+    ]
+}
+
+fn journal_source(answer: &BoardAnswer, task: &TaskHandle) -> RoomSource {
+    RoomSource::Journal {
+        fact: wire::SequenceCode::new(at(answer, task).statement.position.get()),
+    }
+}
+
+#[test]
+fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_selection() {
+    let (root, bus, epoch, seats) = fixture("preparation-command-loop", 2);
+    let controller = add_plan(&bus, epoch, "Preparation controller");
+    let (output, spare) = adopted_outputs(&bus, epoch, &controller);
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
+    record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
+    let coverage_refs = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    record_test_decisions(&bus, epoch, &controller, &output, &candidate, &source);
+    authorize_test_output(
+        &bus,
+        epoch,
+        &controller,
+        &output,
+        &spare,
+        candidate,
+        &coverage_refs,
+    );
+
+    clean(&root, bus);
+}
+fn adopted_outputs(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+) -> (TaskHandle, TaskHandle) {
+    let output = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Selected output",
+        "Selected output",
+        None,
+    );
+    let spare = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Unselected output",
+        "Unselected output",
+        None,
+    );
+
+    for task in [&output, &spare] {
+        let current = board(&bus, epoch, Actor::Operator);
+        let mut expected = transition_witnesses(at(&current, task));
+        expected.extend(transition_witnesses(at(&current, &controller)));
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::OutputAdopt,
+            expected,
+            &OutputAdopt {
+                output: task.clone(),
+                preparation: controller.clone(),
+            },
+        ));
+    }
+    (output, spare)
+}
+
+fn retain_test_candidate(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &[Seat],
+    controller: &TaskHandle,
+    output: &TaskHandle,
+    spare: &TaskHandle,
+) -> (CandidateRef, RoomSource) {
+    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let controller_stamp = controller.born().expect("controller stamp");
+    let output_stamp = output.born().expect("output stamp");
+    let spare_stamp = spare.born().expect("spare stamp");
+    let candidate = CandidateRef {
+        controller: controller_stamp.clone(),
+        candidate: RoomAuthorityStamp::for_micros(1_760_000_000_000_001)
+            .expect("candidate identity"),
+    };
+    let retained = RetainedCandidate {
+        candidate: candidate.clone(),
+        governed_inputs: Vec::new(),
+        outputs: vec![output_stamp.clone(), spare_stamp.clone()],
+        references: vec![CandidateReference {
+            relation: "contract".parse().expect("relation"),
+            source: journal_source(&current, &controller),
+        }],
+    };
+    let mut expected = vec![Witness::Proposal {
+        proposal: ProposalRef::Candidate {
+            candidate: candidate.clone(),
+        },
+        head: None,
+    }];
+    for task in [&controller, &output, &spare] {
+        expected.push(statement_witness(at(&current, task)));
+    }
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Lane(seats[0].lane),
+        CommandKind::CandidateRetain,
+        expected,
+        &CandidateRetain {
+            candidate: retained.clone(),
+        },
+    ));
+
+    let source = journal_source(&current, &controller);
+    (candidate, source)
+}
+
+fn record_test_critique(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &[Seat],
+    controller: &TaskHandle,
+    candidate: &CandidateRef,
+    source: &RoomSource,
+) {
+    let critique = CandidateCritique {
+        critique: CritiqueRef {
+            candidate: candidate.clone(),
+            critique: wire::SequenceCode::new(1),
+        },
+        category: "composition".parse().expect("category"),
+        source: source.clone(),
+        standing: CritiqueStanding::Clean,
+    };
+    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Lane(seats[0].lane),
+        CommandKind::CandidateCritiqueRecord,
+        vec![
+            statement_witness(at(&current, &controller)),
+            Witness::Proposal {
+                proposal: ProposalRef::Critique {
+                    critique: critique.critique.clone(),
+                },
+                head: None,
+            },
+        ],
+        &CandidateCritiqueRecord { critique },
+    ));
+}
+
+fn record_test_coverage(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &[Seat],
+    controller: &TaskHandle,
+    candidate: &CandidateRef,
+    source: &RoomSource,
+) -> Vec<CoverageRef> {
+    let mut coverage_refs = Vec::new();
+    for (index, seat) in seats.iter().enumerate() {
+        let coverage = CoverageRef {
+            candidate: candidate.clone(),
+            coverage: wire::SequenceCode::new(index as u64 + 1),
+        };
+        let current = board(&bus, epoch, Actor::Lane(seat.lane));
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Lane(seat.lane),
+            CommandKind::CandidateCoverageRecord,
+            vec![
+                statement_witness(at(&current, &controller)),
+                Witness::Proposal {
+                    proposal: ProposalRef::Coverage {
+                        coverage: coverage.clone(),
+                    },
+                    head: None,
+                },
+            ],
+            &CandidateCoverageRecord {
+                coverage: CandidateCoverage {
+                    coverage: coverage.clone(),
+                    authority: CoverageAuthority::Operator {},
+                    scopes: vec!["contracts".parse().expect("coverage scope")],
+                    source: source.clone(),
+                },
+            },
+        ));
+        coverage_refs.push(coverage);
+    }
+    for (coverage, expected) in [
+        (
+            &coverage_refs[0],
+            CoverageAuthority::SelfReview {
+                lane: seats[0].lane,
+                occupant: seats[0].occupant,
+            },
+        ),
+        (
+            &coverage_refs[1],
+            CoverageAuthority::Independent {
+                lane: seats[1].lane,
+                occupant: seats[1].occupant,
+            },
+        ),
+    ] {
+        let proposal = ProposalRef::Coverage {
+            coverage: coverage.clone(),
+        };
+        let observed = bus
+            .read(move |read| read.proposal_head(&proposal))
+            .expect("coverage head reads")
+            .expect("coverage was recorded");
+        let journal::ProposalAuthority::Coverage(coverage) = observed.into_body() else {
+            panic!("coverage proposal decoded as another authority")
+        };
+        assert_eq!(coverage.authority, expected);
+    }
+    coverage_refs
+}
+
+fn record_test_decisions(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    output: &TaskHandle,
+    candidate: &CandidateRef,
+    source: &RoomSource,
+) {
+    let controller_stamp = controller.born().expect("controller stamp");
+    for (sequence, outcome) in [
+        (
+            1,
+            DecisionOutcome::Negative {
+                conclusion: NegativeDecision::NoWork,
+            },
+        ),
+        (
+            2,
+            DecisionOutcome::Returned {
+                candidate: candidate.clone(),
+            },
+        ),
+        (
+            3,
+            DecisionOutcome::Accepted {
+                candidate: candidate.clone(),
+            },
+        ),
+    ] {
+        let decision = DecisionRef {
+            controller: controller_stamp.clone(),
+            decision: wire::SequenceCode::new(sequence),
+        };
+        let current = board(&bus, epoch, Actor::Operator);
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::PreparationDecide,
+            vec![
+                statement_witness(at(&current, &controller)),
+                Witness::Proposal {
+                    proposal: ProposalRef::Decision {
+                        decision: decision.clone(),
+                    },
+                    head: None,
+                },
+            ],
+            &PreparationDecide {
+                decision: PreparationDecision {
+                    decision,
+                    source: source.clone(),
+                    outcome,
+                },
+            },
+        ));
+        let current = board(&bus, epoch, Actor::Operator);
+        assert_eq!(
+            at(&current, &output).statement.body.authorization,
+            None,
+            "a decision alone authorizes nothing"
+        );
+    }
+}
+
+fn authorize_test_output(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    output: &TaskHandle,
+    spare: &TaskHandle,
+    candidate: CandidateRef,
+    coverage_refs: &[CoverageRef],
+) {
+    let controller_stamp = controller.born().expect("controller stamp");
+    let output_stamp = output.born().expect("output stamp");
+    let decision = DecisionRef {
+        controller: controller_stamp,
+        decision: wire::SequenceCode::new(3),
+    };
+    let current = board(&bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, &controller));
+    expected.extend(transition_witnesses(at(&current, &output)));
+    expected.push(Witness::Authorization {
+        output: output_stamp,
+        head: None,
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ExecutionAuthorize,
+        expected,
+        &ExecutionAuthorize {
+            authorization: ExecutionAuthorization {
+                decision: decision.clone(),
+                candidate,
+                governed_inputs: Vec::new(),
+                selected_outputs: vec![output.born().expect("output stamp")],
+                coverage: vec![coverage_refs[1].clone()],
+            },
+        },
+    ));
+
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&current, &output).statement.body.authorization,
+        Some(decision)
+    );
+    assert_eq!(at(&current, &spare).statement.body.authorization, None);
+    assert_eq!(at(&current, &controller).workflow.body.status, "completed");
+}
+
+#[test]
+fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
+    let (root, bus, epoch, seats) = fixture("preparation-command-refusals", 1);
+    let output = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Claimed output",
+        "Claimed output",
+        None,
+    );
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &output);
+    let controller = add_plan(&bus, epoch, "Refusal controller");
+    let current = board(&bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, &output));
+    expected.extend(transition_witnesses(at(&current, &controller)));
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::OutputAdopt,
+        expected,
+        &OutputAdopt {
+            output: output.clone(),
+            preparation: controller.clone(),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::adoption-output-ineligible"
+    ));
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let candidate = CandidateRef {
+        controller: controller.born().expect("controller stamp"),
+        candidate: RoomAuthorityStamp::for_micros(1_760_000_000_000_002)
+            .expect("candidate identity"),
+    };
+    let stale = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::CandidateRetain,
+        vec![
+            statement_witness(at(&current, &controller)),
+            Witness::Proposal {
+                proposal: ProposalRef::Candidate {
+                    candidate: candidate.clone(),
+                },
+                head: Some(Seq::new(1).expect("fixture position")),
+            },
+        ],
+        &CandidateRetain {
+            candidate: RetainedCandidate {
+                candidate,
+                governed_inputs: Vec::new(),
+                outputs: vec![output.born().expect("output stamp")],
+                references: vec![CandidateReference {
+                    relation: "contract".parse().expect("relation"),
+                    source: journal_source(&current, &controller),
+                }],
+            },
+        },
+    );
+    assert!(matches!(
+        stale,
+        Outcome::Refusal(refusal) if refusal.reason() == "preparation::witness-missing"
+    ));
+    clean(&root, bus);
+}

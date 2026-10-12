@@ -28,6 +28,7 @@ mod graph_view;
 mod groups;
 mod origin;
 mod planning;
+mod preparation;
 mod read_scope;
 mod report;
 mod room;
