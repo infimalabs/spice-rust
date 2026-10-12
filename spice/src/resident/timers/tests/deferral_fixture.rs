@@ -107,12 +107,3 @@ pub(super) fn task_woken_count(bus: &Bus) -> usize {
         .filter(|fact| fact.fact.kind() == wire::FactKind::TaskWoken)
         .count()
 }
-
-pub(super) fn shifted_millis(at: Instant, milliseconds: i64) -> Instant {
-    Instant::new(
-        at.get()
-            .checked_add(jiff::SignedDuration::from_millis(milliseconds))
-            .expect("fixture instant is in range"),
-    )
-    .expect("shifted fixture instant is canonical")
-}

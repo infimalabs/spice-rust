@@ -407,24 +407,26 @@ fn task_wake_is_an_explicit_timer_event_for_the_selected_lane() {
 }
 
 #[test]
-fn finite_task_deferral_wakes_at_its_live_deadline() {
+fn due_task_deferral_wakes_the_task_into_allocator_eligibility() {
     let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     let task = deferred_task("timer.defer", "1kKRRsDQ");
     let phase = "todo".parse::<Phase>().expect("fixture phase");
-    let deadline = shifted_millis(
+    // Waiting for a future deadline is the bus timer's contract; this one is
+    // already due, so the runtime fires and consumes it at once.
+    let deadline = shifted(
         Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
-        100,
+        -1,
     );
     seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
     let mut timers = start_timers(projects()).expect("timer runtime starts");
-    timers.synchronize(&bus).expect("live task deferral arms");
+    timers.synchronize(&bus).expect("due task deferral arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");
     let event = runtime
         .block_on(timers.recv())
-        .expect("live task deferral fires");
+        .expect("due task deferral fires");
     assert_eq!(event.kind(), TimerKind::TaskWake);
     assert_eq!(event.owner(), task.to_string());
     assert_eq!(
