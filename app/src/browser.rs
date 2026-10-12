@@ -43,6 +43,7 @@ mod clipboard;
 mod clock;
 mod connection;
 mod diagnostics;
+mod draft_handoff;
 mod image_media;
 mod image_viewer;
 mod mermaid;
@@ -202,16 +203,35 @@ struct SurfaceHandles {
     unload: UnloadGuard,
 }
 
-/// Live view of the work a document unload would discard.
+/// Live view of the operator work a document unload would discard.
 ///
-/// The connection loop outlives every render, so it reads the current
-/// unsafe intent through this shared cell rather than a captured snapshot.
-#[derive(Clone, Default)]
-struct UnloadGuard(Rc<Cell<bool>>);
+/// The connection loop outlives every render, so it reads the current drafts
+/// and submissions through these shared cells rather than a captured snapshot.
+#[derive(Clone)]
+struct UnloadGuard {
+    /// A submission sent without a result the resident has reported. No
+    /// handoff can carry it, since the next document cannot learn its fate.
+    unreported: Rc<Cell<bool>>,
+    drafts: Rc<RefCell<UseReducerHandle<ComposerDrafts>>>,
+    notes: NoteComposers,
+}
 
 impl UnloadGuard {
-    fn loses_work(&self) -> bool {
-        self.0.get() || native_draft_present()
+    /// Store every unsent draft for this tab's next document, returning
+    /// whether leaving now discards no operator work.
+    fn hand_off(&self) -> bool {
+        !self.unreported.get() && self.store()
+    }
+
+    fn store(&self) -> bool {
+        let notes = self
+            .notes
+            .state
+            .borrow()
+            .iter()
+            .map(|(task, composer)| (task.clone(), composer.draft.clone()))
+            .collect();
+        draft_handoff::store(self.drafts.borrow().store(), &notes)
     }
 }
 
@@ -509,7 +529,11 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let app_update = use_state(|| None::<AppUpdate>);
     let team_controls = use_reducer(TeamControls::restore);
     let team_fleet = use_node_ref();
-    let composer_drafts = use_reducer(ComposerDrafts::default);
+    let handoff = use_memo((), |()| draft_handoff::take());
+    let composer_drafts = {
+        let handoff = handoff.clone();
+        use_reducer(move || ComposerDrafts::adopt(&handoff))
+    };
     watchband::use_composer_issue_toast(&composer_drafts);
     let submission_status = use_state(SubmissionStatus::default);
     let submissions = SubmissionHandle {
@@ -553,8 +577,15 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         .as_ref()
         .and_then(sidebar::Content::tasks)
         .cloned();
-    let task_detail =
-        task_detail::use_controls(sender.clone(), surface.clone(), selected_task.clone());
+    let task_detail = task_detail::use_controls(
+        sender.clone(),
+        surface.clone(),
+        selected_task.clone(),
+        match &*handoff {
+            Ok(handoff) => handoff.notes.as_slice(),
+            Err(_) => &[],
+        },
+    );
     task_relations::use_request(&sender, &surface, selected_task, &work_map);
     let speech_status = use_state(SpeechStatus::default);
     let speech_owner = use_state(|| None::<SpeechOwner>);
@@ -636,7 +667,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.connection.branding_state(),
         remaining,
     ));
-    let unload = use_unload_guard(state.unsafe_intent);
+    let unload = use_unload_guard(state);
     use_surface_connection(
         state.sender.clone(),
         SurfaceHandles {
@@ -768,9 +799,41 @@ fn use_unsafe_intent(
 }
 
 #[hook]
-fn use_unload_guard(unsafe_intent: bool) -> UnloadGuard {
-    let guard = (*use_memo((), |()| UnloadGuard::default())).clone();
-    guard.0.set(unsafe_intent);
+fn use_unload_guard(state: &AppState) -> UnloadGuard {
+    let guard = (*use_memo((), {
+        let drafts = state.composer_drafts.clone();
+        let notes = state.task_detail.notes.clone();
+        move |()| UnloadGuard {
+            unreported: Rc::default(),
+            drafts: Rc::new(RefCell::new(drafts)),
+            notes,
+        }
+    }))
+    .clone();
+    guard.unreported.set(state.submissions.status.is_unsafe());
+    *guard.drafts.borrow_mut() = state.composer_drafts.clone();
+    let leaving = guard.clone();
+    // Any reload of this tab, the operator's included, keeps unsent drafts.
+    use_effect_with((), move |()| {
+        let registration = web_sys::window().and_then(|window| {
+            let callback =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+                    leaving.store();
+                });
+            window
+                .add_event_listener_with_callback("pagehide", callback.as_ref().unchecked_ref())
+                .ok()
+                .map(|()| (window, callback))
+        });
+        move || {
+            if let Some((window, callback)) = registration {
+                let _ = window.remove_event_listener_with_callback(
+                    "pagehide",
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+        }
+    });
     guard
 }
 
@@ -800,7 +863,7 @@ fn use_unsafe_intent_guard(unsafe_intent: bool) {
         let registration = web_sys::window().and_then(|window| {
             let callback =
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                    if unsafe_intent || native_draft_present() {
+                    if !draft_handoff::leaving() && (unsafe_intent || native_draft_present()) {
                         event.prevent_default();
                         let _ = js_sys::Reflect::set(
                             event.as_ref(),

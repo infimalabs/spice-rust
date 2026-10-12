@@ -9,6 +9,8 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use serde::{Deserialize, Serialize};
+
 use wire::body::DirectiveAttachment;
 use wire::{AgentMessage, CanonicalUuid, QuoteTarget};
 
@@ -51,6 +53,12 @@ pub(crate) struct ComposerDraft {
     pub(crate) body: String,
     pub(crate) quotes: Vec<QuoteDraft>,
     pub(crate) attachments: Vec<DraftImage>,
+}
+
+impl ComposerDraft {
+    fn is_empty(&self) -> bool {
+        self.body.is_empty() && self.quotes.is_empty() && self.attachments.is_empty()
+    }
 }
 
 /// One canonical quoted source and the reply being composed beneath it.
@@ -243,9 +251,7 @@ impl DraftStore {
     }
 
     pub(crate) fn is_unsafe(&self) -> bool {
-        self.0.values().any(|draft| {
-            !draft.body.is_empty() || !draft.quotes.is_empty() || !draft.attachments.is_empty()
-        })
+        self.0.values().any(|draft| !draft.is_empty())
     }
 
     /// Build one request from one target without observing sibling drafts.
@@ -352,6 +358,156 @@ impl DraftStore {
             self.restore(target.clone(), snapshot);
         }
     }
+
+    /// Every draft this store and its live composer elements hold, in the
+    /// form the next document of this tab adopts.
+    ///
+    /// Typed text lives in its element until it is sent, so `live` supplies
+    /// each element's current text and wins over the body it was drawn from.
+    pub(crate) fn hand_off(&self, live: Vec<LiveText>) -> Vec<HandedComposer> {
+        let mut store = self.clone();
+        for LiveText {
+            target,
+            quote,
+            text,
+        } in live
+        {
+            let draft = store.draft_mut(target);
+            match quote {
+                None => draft.body = text,
+                Some(identity) => {
+                    if let Some(quote) = draft
+                        .quotes
+                        .iter_mut()
+                        .find(|quote| quote.identity == identity)
+                    {
+                        quote.body = text;
+                    }
+                }
+            }
+        }
+        let media = |images: Vec<DraftImage>| {
+            images
+                .into_iter()
+                .map(|image| (*image.media).clone())
+                .collect()
+        };
+        store
+            .0
+            .into_iter()
+            .filter(|(_, draft)| !draft.is_empty())
+            .map(|(target, draft)| HandedComposer {
+                target,
+                body: draft.body,
+                quotes: draft
+                    .quotes
+                    .into_iter()
+                    .map(|quote| HandedQuote {
+                        identity: quote.identity,
+                        source_id: quote.source_id,
+                        preview: quote.preview,
+                        display_millis: quote.display_millis,
+                        body: quote.body,
+                        attachments: media(quote.attachments),
+                        order: quote.order,
+                    })
+                    .collect(),
+                attachments: media(draft.attachments),
+            })
+            .collect()
+    }
+
+    /// The store a document starts with when the previous document of its tab
+    /// handed these drafts off.
+    pub(crate) fn adopt(composers: Vec<HandedComposer>) -> Self {
+        let mut store = Self::default();
+        for composer in composers {
+            let attachments = composer
+                .attachments
+                .into_iter()
+                .map(|media| DraftImage::new(store.issue_image(), media))
+                .collect();
+            let mut quotes = Vec::with_capacity(composer.quotes.len());
+            for quote in composer.quotes {
+                quotes.push(QuoteDraft {
+                    identity: quote.identity,
+                    source_id: quote.source_id,
+                    preview: quote.preview,
+                    display_millis: quote.display_millis,
+                    body: quote.body,
+                    attachments: quote
+                        .attachments
+                        .into_iter()
+                        .map(|media| DraftImage::new(store.issue_image(), media))
+                        .collect(),
+                    order: quote.order,
+                });
+            }
+            sort_quotes(&mut quotes);
+            store.0.insert(
+                composer.target,
+                ComposerDraft {
+                    body: composer.body,
+                    quotes,
+                    attachments,
+                },
+            );
+        }
+        store
+    }
+}
+
+/// The current text of one composer element: a target's primary composer, or
+/// the reply beneath one of its quotes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LiveText {
+    pub(crate) target: String,
+    pub(crate) quote: Option<String>,
+    pub(crate) text: String,
+}
+
+/// Unsent drafts one document of a browser tab hands to the next.
+///
+/// The next document may be a newer app generation, so this shape is the
+/// contract between generations: a change needs a new storage name that the
+/// newer reader also accepts. Each attachment travels as the media it would
+/// send, so annotation marks arrive flattened into the image.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DraftHandoff {
+    pub(crate) composers: Vec<HandedComposer>,
+    pub(crate) notes: Vec<HandedNote>,
+}
+
+/// One target's handed-off primary text, quotes, and attachments.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HandedComposer {
+    pub(crate) target: String,
+    pub(crate) body: String,
+    pub(crate) quotes: Vec<HandedQuote>,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
+}
+
+/// One handed-off quote band and the reply composed beneath it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HandedQuote {
+    pub(crate) identity: String,
+    pub(crate) source_id: String,
+    pub(crate) preview: String,
+    pub(crate) display_millis: i64,
+    pub(crate) body: String,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
+    pub(crate) order: u64,
+}
+
+/// One task's handed-off observation text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HandedNote {
+    pub(crate) task: wire::TaskStamp,
+    pub(crate) text: String,
 }
 
 /// The lane a quote taken from `message` composes into.
@@ -437,6 +593,75 @@ mod tests {
         let rerendered = ["agent-b", "agent-a"];
         assert_eq!(store.get(rerendered[0]).unwrap().body, "draft b");
         assert_eq!(store.get(rerendered[1]).unwrap().body, "draft a");
+    }
+
+    #[test]
+    fn a_handoff_carries_exactly_what_each_composer_would_send() {
+        let mut store = DraftStore::default();
+        store.add_quote(
+            "agent-a".to_owned(),
+            target("source"),
+            source_id("source"),
+            7,
+            1_000,
+            "quoted prose".to_owned(),
+        );
+        let draft = store.draft_mut("agent-a".to_owned());
+        draft.attachments.push(attachment("direct.png"));
+        draft.quotes[0].attachments.push(attachment("quoted.png"));
+        store.set_body("agent-b".to_owned(), "drawn body".to_owned());
+        store.set_body("agent-c".to_owned(), "sent".to_owned());
+        store.clear("agent-c");
+        let live = |target: &str, quote: Option<String>, text: &str| LiveText {
+            target: target.to_owned(),
+            quote,
+            text: text.to_owned(),
+        };
+        let handed = store.hand_off(vec![
+            live("agent-a", None, "typed beside the quote"),
+            live("agent-a", Some(identity("source")), "typed reply"),
+            live("agent-b", None, "typed over the drawn body"),
+            live("agent-d", None, "typed only in its element"),
+            live("agent-e", None, ""),
+        ]);
+
+        let mut typed = store.clone();
+        typed.set_body("agent-a".to_owned(), "typed beside the quote".to_owned());
+        typed.set_quote_body(
+            "agent-a".to_owned(),
+            &identity("source"),
+            "typed reply".to_owned(),
+        );
+        typed.set_body("agent-b".to_owned(), "typed over the drawn body".to_owned());
+        typed.set_body("agent-d".to_owned(), "typed only in its element".to_owned());
+        let document = serde_json::to_string(&DraftHandoff {
+            composers: handed,
+            notes: Vec::new(),
+        })
+        .expect("handoff serializes");
+        let adopted = DraftStore::adopt(
+            serde_json::from_str::<DraftHandoff>(&document)
+                .expect("the next document reads the handoff")
+                .composers,
+        );
+        let sent = |store: &DraftStore, target: &str| {
+            store
+                .prepare(target)
+                .map(|prepared| (prepared.message, prepared.attachments))
+        };
+        for target in ["agent-a", "agent-b", "agent-d"] {
+            assert!(sent(&typed, target).is_some());
+            assert_eq!(sent(&adopted, target), sent(&typed, target), "{target}");
+        }
+        assert!(
+            adopted.get("agent-c").is_none() && adopted.get("agent-e").is_none(),
+            "an empty composer hands off nothing"
+        );
+        let adopted_a = adopted.get("agent-a").expect("quoted draft adopted");
+        assert_ne!(
+            adopted_a.attachments[0].id, adopted_a.quotes[0].attachments[0].id,
+            "each adopted image stays individually addressable"
+        );
     }
 
     const LANE_A: &str = "11111111-1111-4111-8111-111111111111";

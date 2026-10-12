@@ -245,6 +245,7 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             ref={root}
             id={properties.id.clone()}
             aria-label={properties.label.clone()}
+            data-composer-lane={properties.lane.clone()}
             data-primary-composer-target-id={properties.primary_target.clone()}
             data-quote-draft-id={properties.quote_identity.clone()}
             aria-keyshortcuts={properties.primary_target.as_ref().map(|_| "Control+Shift+Enter Meta+Shift+Enter")}

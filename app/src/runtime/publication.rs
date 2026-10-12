@@ -1,10 +1,13 @@
 //! Constant-cost publication of the mutable app runtime to Yew.
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::rc::Rc;
 
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+use wire::Accepted;
+
 use super::AppRuntime;
+use crate::pane::Principal;
+use crate::socket::Admitted;
 
 /// One shared allocation whose handle is the value published to Yew.
 ///
@@ -47,23 +50,79 @@ impl<T> Shared<T> {
 /// The app stores this in Yew's `use_state`, whose setter always rerenders; it
 /// must not move to `use_state_eq`, because two publications intentionally
 /// point at the same allocation.
-#[derive(Clone, Default, PartialEq)]
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) struct AppSurface(Shared<Option<AppRuntime>>);
+#[derive(Clone, Default)]
+pub struct AppSurface {
+    runtime: Shared<Option<AppRuntime>>,
+    /// A changed-scope replacement that has not yet been published. The
+    /// surface on screen still shows the previous scope until it is.
+    replacing: Rc<Cell<bool>>,
+}
 
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+impl PartialEq for AppSurface {
+    fn eq(&self, other: &Self) -> bool {
+        self.runtime == other.runtime
+    }
+}
+
 impl AppSurface {
-    pub(crate) fn read(&self) -> Ref<'_, Option<AppRuntime>> {
-        self.0.read()
+    #[must_use]
+    pub fn read(&self) -> Ref<'_, Option<AppRuntime>> {
+        self.runtime.read()
     }
 
-    pub(crate) fn write(&self) -> RefMut<'_, Option<AppRuntime>> {
-        self.0.write()
+    #[must_use]
+    pub fn write(&self) -> RefMut<'_, Option<AppRuntime>> {
+        self.runtime.write()
     }
 
     /// Produce the next Yew state value without copying retained runtime data.
-    pub(crate) fn publication(&self) -> Self {
+    ///
+    /// Publishing a replacement ends its hydration: the screen now shows it.
+    #[must_use]
+    pub fn publication(&self) -> Self {
+        self.replacing.set(false);
         self.clone()
+    }
+
+    /// Adopt one admitted connection, returning its principal and whether the
+    /// surface it builds must stay unpublished until every snapshot settles.
+    ///
+    /// A changed scope starts a replacement in a new cell, so the published
+    /// surface keeps showing the previous scope. A connection that ends before
+    /// that replacement is published leaves it pending: the next acceptance
+    /// shares its scope, yet still resumes hydration rather than publishing a
+    /// surface without lanes, board, or settings in place of the one on screen.
+    pub fn admit(&mut self, accepted: &Admitted<Accepted>) -> (Principal, bool) {
+        let changed = self
+            .read()
+            .as_ref()
+            .is_some_and(|runtime| !runtime.same_scope(accepted));
+        if changed {
+            let runtime = AppRuntime::rehydrate(
+                accepted,
+                self.read()
+                    .as_ref()
+                    .expect("changed-scope hydration has a prior runtime"),
+            );
+            *self = Self::default();
+            *self.write() = Some(runtime);
+            self.replacing.set(true);
+        } else {
+            let mut runtime = self.write();
+            match runtime.as_mut() {
+                Some(runtime) => {
+                    runtime.reconnect(accepted);
+                }
+                None => *runtime = Some(AppRuntime::new(accepted)),
+            }
+        }
+        let principal = self
+            .read()
+            .as_ref()
+            .expect("accepted connection creates runtime")
+            .principal()
+            .clone();
+        (principal, self.replacing.get())
     }
 }
 
