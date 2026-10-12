@@ -371,10 +371,9 @@ pub(super) fn fold(
         timed_out(authority, seq, at, actor, &body.result)
     } else if let Some(body) = fact.read::<RoomReceiptLapsed>() {
         lapsed(authority, seq, at, actor, &body.receipt)
-    } else if let Some(body) = fact.read::<RoomReceiptRecovered>() {
-        recovered(authority, seq, at, actor, &body)
     } else {
-        return None;
+        let body = fact.read::<RoomReceiptRecovered>()?;
+        recovered(authority, seq, at, actor, &body)
     };
     Some(edits.and_then(|edits| {
         for edit in edits {

@@ -24,9 +24,10 @@ const PREPARED: &str = "prepared";
 /// context schema 35 was the last to default. It then writes the explicit
 /// subscription table a residency head may still omit, replaces retired fact
 /// kinds with inert current-schema evidence, drops retired plan-advance
-/// guidance from task completions and their receipts, refuses vendor holds
-/// without exact input, incomplete launch identity, and source-less session or
-/// steering authority, crosses or refuses the remaining retired fact, receipt,
+/// guidance from task completions and their receipts, derives retained vendor
+/// holds' exact input from preceding authority or refuses unproved input,
+/// incomplete launch identity, and source-less session or steering authority,
+/// crosses or refuses the remaining retired fact, receipt,
 /// and head shapes, refuses room packet records that omit their author and
 /// directed routes, room coordination records written before the journal
 /// bound them, and room conversation records written before their lane

@@ -811,22 +811,21 @@ fn verify_task_intents(
                     .to_owned(),
             ));
         }
-        if let Some(preparation) = preparation {
-            if preparation.parent == head.born
+        if let Some(preparation) = preparation
+            && (preparation.parent == head.born
                 || [
                     &preparation.parent,
                     &preparation.controller,
                     &preparation.construction,
                 ]
                 .iter()
-                .any(|reference| !declared.contains_key(reference.as_str()))
-            {
-                violations.push(Violation::new(
-                    ViolationClass::Head,
-                    format!("task_heads:{stamp}"),
-                    "preparation references an absent task or itself as parent".to_owned(),
-                ));
-            }
+                .any(|reference| !declared.contains_key(reference.as_str())))
+        {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                "preparation references an absent task or itself as parent".to_owned(),
+            ));
         }
     }
     Ok(())
