@@ -1,23 +1,45 @@
+use std::cell::RefCell;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::Driver;
 use crate::resource::Access;
 
 const TARGET: &str = "spice://quote/v1/steer/1kQnrzNZ/00";
 
+thread_local! {
+    static ANSWERING: RefCell<Option<Ended>> = const { RefCell::new(None) };
+}
+
+/// Announces that an answering thread exited, after it answered or stayed
+/// silent and let go of the driver.
+struct Ended(mpsc::Sender<()>);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+/// A driver whose answering threads each announce their exit on the returned
+/// receiver.
 fn driver(
     serve: impl Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync + 'static,
-) -> Arc<Driver<Vec<u8>>> {
-    Driver::with_server(
+) -> (Arc<Driver<Vec<u8>>>, mpsc::Receiver<()>) {
+    let (ended, exits) = mpsc::channel();
+    let driver = Driver::with_server(
         Vec::new(),
         || None,
         || None,
-        Box::new(serve),
+        Box::new(move |url: &str, access: Access<'_>| {
+            ANSWERING.with(|answering| *answering.borrow_mut() = Some(Ended(ended.clone())));
+            serve(url, access)
+        }),
         steer::Key::for_identity(crate::resident::new_uuid()),
         None,
-    )
+    );
+    (driver, exits)
 }
 
 fn frames(driver: &Driver<Vec<u8>>) -> Vec<serde_json::Value> {
@@ -31,21 +53,18 @@ fn frames(driver: &Driver<Vec<u8>>) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Wait until every answering thread has let go of the driver.
-fn settled(driver: &Arc<Driver<Vec<u8>>>) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Arc::strong_count(driver) > 1 {
-        assert!(
-            Instant::now() < deadline,
-            "the answering thread never ended"
-        );
-        std::thread::sleep(Duration::from_millis(1));
+/// Receive the exit of each of `answering` threads.
+fn settled(exits: &mpsc::Receiver<()>, answering: usize) {
+    for _ in 0..answering {
+        exits
+            .recv_timeout(Duration::from_secs(10))
+            .expect("an answering thread exits");
     }
 }
 
 #[test]
 fn a_read_answers_with_the_resource_or_its_refusal() {
-    let driver = driver(|target, _| {
+    let (driver, exits) = driver(|target, _| {
         if target == TARGET {
             Ok("Quoted from operator:\n\nship it".to_owned())
         } else {
@@ -54,7 +73,7 @@ fn a_read_answers_with_the_resource_or_its_refusal() {
     });
     driver.serve_uri("u1", "read", TARGET, None);
     driver.serve_uri("u2", "read", "spice://quote/v1/steer/1kQnrzNZ/11", None);
-    settled(&driver);
+    settled(&exits, 2);
     let mut answers = frames(&driver);
     answers.sort_by_key(|frame| frame["id"].as_str().map(str::to_owned));
     assert_eq!(
@@ -87,7 +106,7 @@ fn a_read_answers_with_the_resource_or_its_refusal() {
 #[test]
 fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused() {
     let written = Arc::new(Mutex::new(Vec::new()));
-    let driver = driver({
+    let (driver, exits) = driver({
         let written = Arc::clone(&written);
         move |url, access| {
             let Access::Write(content) = access else {
@@ -103,7 +122,8 @@ fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused(
     driver.serve_uri("w", "write", "spice://task/X/description", Some("new"));
     driver.serve_uri("x", "write", TARGET, None);
     driver.serve_uri("y", "list", TARGET, None);
-    settled(&driver);
+    // Only the write reaches a thread; malformed operations refuse inline.
+    settled(&exits, 1);
     let mut answers = frames(&driver);
     answers.sort_by_key(|frame| frame["id"].as_str().map(str::to_owned));
     let refused = |id: &str| {
@@ -146,7 +166,7 @@ fn a_withdrawn_quote_read_is_never_answered_and_leaves_nothing_pending() {
     let (entered, reading) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
     let (entered, released) = (Mutex::new(entered), Mutex::new(released));
-    let driver = driver(move |_, _| {
+    let (driver, exits) = driver(move |_, _| {
         entered.lock().expect("entry").send(()).expect("test waits");
         released
             .lock()
@@ -159,7 +179,7 @@ fn a_withdrawn_quote_read_is_never_answered_and_leaves_nothing_pending() {
     reading.recv().expect("the read began");
     driver.cancel("u1");
     release.send(()).expect("the read waits");
-    settled(&driver);
+    settled(&exits, 1);
     assert!(
         frames(&driver).is_empty(),
         "a withdrawn read gets no answer"

@@ -73,8 +73,9 @@ fn waiter_consumes_the_producers_receipt() {
     };
     let waiting_store = fixture.store.clone();
     let waiting_action = action.clone();
+    // The receipt is durable store state, so the waiter consumes it whether it
+    // finds the producer still working or arrives after publication.
     let waiter = thread::spawn(move || claim(&waiting_store, "waiter", "shared", &waiting_action));
-    thread::sleep(Duration::from_millis(50));
     let receipt = receipt(&action);
     fixture
         .store
@@ -101,8 +102,9 @@ fn waiter_receives_the_producers_terminal_failure() {
     };
     let waiting_store = fixture.store.clone();
     let waiting_action = action.clone();
+    // The terminal failure is durable lease state, so the waiter receives it
+    // whether it is already waiting or arrives after the producer failed.
     let waiter = thread::spawn(move || claim(&waiting_store, "waiter", "shared", &waiting_action));
-    thread::sleep(Duration::from_millis(50));
     fixture
         .store
         .fail_lease(&lease, "gate::shared-failure", "producer failed", true)
@@ -168,7 +170,8 @@ fn busy_waiter_stops_at_its_bound_without_disturbing_the_producer() {
         "shared",
         &action,
         Timing {
-            wait_limit: Duration::from_millis(20),
+            // An exhausted bound refuses at the first busy observation.
+            wait_limit: Duration::ZERO,
             ..test_timing()
         },
     ) else {
@@ -213,36 +216,36 @@ fn dropping_a_guard_releases_only_its_exact_token() {
 }
 
 #[test]
-fn renewal_retains_one_long_running_producer() {
+fn renewal_extends_a_live_producer_past_its_original_expiry() {
     let fixture = Fixture::new("renewal");
     let action = derive_action_key(b"renewed action");
+    let acquired_at = SystemTime::now();
+    let original = Duration::from_millis(500);
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_millis(500),
-        )
+        .acquire_lease(&action, "producer", acquired_at, original)
         .unwrap()
     else {
         panic!("producer acquires action");
     };
+    // The background worker stays idle; the producer renews explicitly, as it
+    // does before publishing.
     let guard = LeaseGuard::new(
         fixture.store.clone(),
         lease,
         Timing {
-            lease_lifetime: Duration::from_secs(2),
-            renew_interval: Duration::from_millis(50),
+            lease_lifetime: Duration::from_secs(60 * 60),
+            renew_interval: Duration::from_secs(60 * 60),
             ..test_timing()
         },
     );
-    thread::sleep(Duration::from_millis(600));
+    assert!(guard.renew_now().is_ok(), "live lease renews");
+    let past_original = acquired_at + original + Duration::from_secs(60);
     assert!(matches!(
         fixture.store.acquire_lease(
             &action,
             "contender",
-            SystemTime::now(),
+            past_original,
             Duration::from_millis(20),
         ).unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "producer"
@@ -254,14 +257,12 @@ fn renewal_retains_one_long_running_producer() {
 fn expired_producer_admits_one_waiter_takeover() {
     let fixture = Fixture::new("takeover");
     let action = derive_action_key(b"expired action");
+    // The departed producer's lease ended long ago; contention inside its
+    // lifetime still names it as owner.
+    let acquired_at = SystemTime::now() - Duration::from_secs(60 * 60);
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "departed",
-            SystemTime::now(),
-            Duration::from_millis(200),
-        )
+        .acquire_lease(&action, "departed", acquired_at, Duration::from_millis(200))
         .unwrap()
     else {
         panic!("departed producer acquires action");
@@ -270,12 +271,11 @@ fn expired_producer_admits_one_waiter_takeover() {
         fixture.store.acquire_lease(
             &action,
             "early",
-            SystemTime::now(),
+            acquired_at + Duration::from_millis(100),
             Duration::from_secs(1),
         ).unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "departed"
     ));
-    thread::sleep(Duration::from_millis(220));
     let Ok(Claim::Lease(guard)) = claim(&fixture.store, "waiter", "shared", &action) else {
         panic!("expired producer admits waiter takeover");
     };

@@ -49,16 +49,21 @@ impl Directions {
             bus,
             epoch,
         };
-        fixture.send(10, FIRST, 30, "Alpha first");
-        fixture.send(11, SECOND, 30, "Alpha first");
-        fixture.message(FIRST, SECOND, "peer alpha note");
-        // Authored instants carry milliseconds; keep each fanout distinct.
-        std::thread::sleep(Duration::from_millis(3));
-        fixture.send(13, FIRST, 31, "beta second");
-        std::thread::sleep(Duration::from_millis(3));
-        fixture.send(14, SECOND, 32, "> quoted context\nGamma ALPHA third");
-        fixture.send(15, THIRD, 32, "> quoted context\nGamma ALPHA third");
-        fixture.cancel(16, test_uuid(11));
+        // History cutoffs compare authored instants, which carry milliseconds;
+        // author each fanout at its own.
+        let base = jiff::Timestamp::now();
+        let authored = |offset: i64| base + jiff::SignedDuration::from_millis(offset);
+        steering::authored_at(authored(0), || {
+            fixture.send(10, FIRST, 30, "Alpha first");
+            fixture.send(11, SECOND, 30, "Alpha first");
+            fixture.message(FIRST, SECOND, "peer alpha note");
+        });
+        steering::authored_at(authored(1), || fixture.send(13, FIRST, 31, "beta second"));
+        steering::authored_at(authored(2), || {
+            fixture.send(14, SECOND, 32, "> quoted context\nGamma ALPHA third");
+            fixture.send(15, THIRD, 32, "> quoted context\nGamma ALPHA third");
+            fixture.cancel(16, test_uuid(11));
+        });
         fixture
     }
 
