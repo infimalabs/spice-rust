@@ -63,12 +63,22 @@ pub(super) fn report(
             unreached,
             rooms,
             conversed,
+            held_room,
         }) => {
             for lane in lanes {
                 notify_inbox(paths, *lane);
             }
             if !rooms.is_empty() || conversed.is_some() || !queued.is_empty() {
-                teller.published(rooms, conversed.as_ref(), queued, lanes.len(), diagnostic);
+                teller.published(
+                    &Recorded {
+                        rooms,
+                        conversed: conversed.as_ref(),
+                        queued,
+                        reached: lanes.len(),
+                        held_room: *held_room,
+                    },
+                    diagnostic,
+                );
             }
             if !unreached.is_empty() {
                 teller.tell(UNAVAILABLE, &unreached.join("; "), lanes.len(), diagnostic);
@@ -88,6 +98,16 @@ struct Teller<'a> {
     locus: &'a TranscriptLocus,
     header: &'a str,
     refusals: Refusals,
+}
+
+/// What one published packet did beyond its deliveries.
+#[derive(Clone, Copy)]
+struct Recorded<'a> {
+    rooms: &'a [TaskHandle],
+    conversed: Option<&'a Conversed>,
+    queued: &'a [OccupantAddress],
+    reached: usize,
+    held_room: bool,
 }
 
 impl Teller<'_> {
@@ -137,15 +157,15 @@ impl Teller<'_> {
     /// Record what the packet published beyond its deliveries and, under
     /// [`Refusals::Notify`], tell the author privately; no participant
     /// receipt is implied.
-    fn published(
-        &self,
-        rooms: &[TaskHandle],
-        conversed: Option<&Conversed>,
-        queued: &[OccupantAddress],
-        reached: usize,
-        diagnostic: &mut dyn io::Write,
-    ) {
+    fn published(&self, outcome: &Recorded<'_>, diagnostic: &mut dyn io::Write) {
         let (record, locus) = (self.record, self.locus);
+        let Recorded {
+            rooms,
+            conversed,
+            queued,
+            reached,
+            held_room,
+        } = *outcome;
         let rooms = rooms.iter().map(ToString::to_string).collect::<Vec<_>>();
         let queued = queued.iter().map(ToString::to_string).collect::<Vec<_>>();
         let operator = conversed.is_some_and(|conversed| conversed.operator);
@@ -203,6 +223,7 @@ impl Teller<'_> {
                     answered,
                     queued,
                     reached,
+                    held_room,
                 },
             );
         }
@@ -235,6 +256,9 @@ pub(in crate::resident) struct MessageRecordedNotice {
     pub(in crate::resident) answered: Option<String>,
     /// How many named recipients the packet reached.
     pub(in crate::resident) reached: usize,
+    /// Some `#TASK` the packet named is the task its author's lane holds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(in crate::resident) held_room: bool,
 }
 
 impl MessageRecordedNotice {
@@ -275,10 +299,17 @@ impl MessageRecordedNotice {
             " Recorded means the room holds it; no participant has received or acknowledged \
              it, and nothing woke anyone."
         };
+        let held = if self.held_room {
+            " It named your own held task: ordinary output needs no packet header, and \
+             `MSG ADDRESS:` alone delivers; add `#TASK` only to record something \
+             deliberately in that task's room."
+        } else {
+            ""
+        };
         format!(
             "<system-notice>\nYour packet `{}` at line {}, column {} of its assistant text \
-             block {}.{recorded} This is a private notice; no acknowledgment key or visible \
-             ACK/NAK is required.\n</system-notice>",
+             block {}.{recorded}{held} This is a private notice; no acknowledgment key or \
+             visible ACK/NAK is required.\n</system-notice>",
             self.header,
             self.line,
             self.column,

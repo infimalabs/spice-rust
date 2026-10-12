@@ -77,16 +77,16 @@ call's entire intent: some providers omit pre-tool prose while retaining the
 intent as the assistant message's only verbatim words. That no-prose intent is
 the packet's fallback source; ordinary intents, reasoning, code, quotes, and
 tool arguments never send. A selector is `ADDRESS`, `ADDRESS#TASK`, `#TASK`
-(record only), or `operator`; TASK is a handle, and `operator` opens one pending
-operator item. The body ends at the next placed ACK, NAK, MSG, ASK, or ANS
-header or the text block's end. A seated address receives immediately. A valid
-address whose logical lane is vacant queues unheard under the same key and
-deadline for that lane's next occupant; the private outcome names it. Once a
-newer occupant is born, the old address refuses and names that newer address
-even after the lane vacates; it never retargets. Every other unavailable
-address is named with why it received or queued nothing. An unknown TASK
-refuses the packet. Room recording is not receipt and wakes nobody. Send a peer
-only what it needs.
+(only a deliberate room record; ordinary output needs no packet header), or
+`operator`; TASK is a handle, and `operator` opens one pending operator item.
+The body ends at the next placed ACK, NAK, MSG, ASK, or ANS header or the text
+block's end. A seated address receives immediately. A valid address whose
+logical lane is vacant queues unheard under the same key and deadline for that
+lane's next occupant; the private outcome names it. Once a newer occupant is
+born, the old address refuses and names that newer address even after the lane
+vacates; it never retargets. Every other unavailable address is named with why
+it received or queued nothing. An unknown TASK refuses the packet. Room
+recording is not receipt and wakes nobody. Send a peer only what it needs.
 
 `ASK AUDIENCE[#TASK]: BODY` asks exactly one address or `operator`, opens a
 result named by its private notice, and uses that result handle as a lane
