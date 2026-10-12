@@ -184,6 +184,13 @@ fn corrected_statement(
         statement.requirements = requirements.requirements();
     }
     if let Some(intent) = edit.intent {
+        if statement.preparation.is_some() {
+            return Err(refusal(
+                "task::preparation-intent-fixed",
+                Some(entry.handle().to_string()),
+                "an associated preparation or controlled output keeps the intent it was created with",
+            ));
+        }
         if statement.intent != intent.intent() && statement.intent.is_some() {
             return Err(refusal(
                 "task::planning-intent-stable",

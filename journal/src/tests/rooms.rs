@@ -239,6 +239,31 @@ fn edit_project(journal: &mut Journal, task: &TaskStamp, project: &str) {
     journal.apply(write).expect("re-homing commits");
 }
 
+/// Declare Plan intent on `task` through an ordinary statement edit.
+fn declare_plan(journal: &mut Journal, task: &TaskStamp) -> Commit {
+    let head = statement(journal, task);
+    let mut write = write();
+    let fact = write
+        .fact(
+            wire::body::TaskEdited {
+                task: task.clone(),
+                revision: 2,
+                dependencies: None,
+                intent: Some(wire::TaskIntentEdit::Set {
+                    intent: wire::TaskIntent::Plan,
+                }),
+            },
+            FactCause::Root,
+        )
+        .expect("intent edit fact builds");
+    write.task_head(fact, move |revision| TaskHead {
+        intent: Some(wire::TaskIntent::Plan),
+        revision,
+        ..head
+    });
+    journal.apply(write)
+}
+
 fn authority(micros: i64) -> RoomAuthorityStamp {
     RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + micros).expect("authority stamp")
 }
@@ -1035,6 +1060,27 @@ fn authorization_lands_only_as_the_controllers_positive_completion_and_no_edit_m
         refused(&journal, result);
     }
     journal.verify().expect("settled authorization verifies");
+}
+
+#[test]
+fn an_associated_task_keeps_the_intent_it_was_created_with() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+
+    let result = declare_plan(&mut journal, &preparation.output);
+    refused(&journal, result);
+    adopt(
+        &mut journal,
+        &preparation.spare,
+        prepared_by(&preparation.controller),
+        prepared_by(&preparation.controller),
+    )
+    .expect("spare adopted");
+    let result = declare_plan(&mut journal, &preparation.spare);
+    refused(&journal, result);
+
+    declare_plan(&mut journal, &preparation.input).expect("an unassociated task declares intent");
+    journal.verify().expect("associated intent stays fixed");
 }
 
 #[test]
