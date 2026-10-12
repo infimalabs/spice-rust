@@ -12,6 +12,10 @@ use std::str::FromStr;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod conversation;
+
+pub use conversation::*;
+
 use crate::{
     CanonicalUuid, Digest, MessageLocus, Name, SequenceCode, TaskHandle, TaskPreparation,
     TaskStamp, TranscriptSourceHead,
