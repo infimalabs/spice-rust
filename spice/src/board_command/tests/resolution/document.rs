@@ -460,6 +460,7 @@ fn shape_case_418_inserts_plan_without_review_for_bare_review_followup() {
             then: vec![ReviewFollowup {
                 task: followup_stamp,
                 add: TaskAdd {
+                    intent: None,
                     title: "Shape 418 bare follow-up".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
@@ -553,6 +554,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         CommandKind::TaskEdit,
         vec![statement_witness(at(&visible, &task))],
         &TaskEdit {
+            intent: None,
             task: task.clone(),
             title: None,
             description: None,

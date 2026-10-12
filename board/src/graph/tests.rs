@@ -26,6 +26,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         .parse::<Origin>()
         .expect("fixture origin");
     let statement = TaskHead {
+        intent: None,
         born: task,
         queue_origin: Seq::new(1).expect("nonzero sequence"),
         title: "Review history fixture".to_owned(),
@@ -83,6 +84,7 @@ fn added_with_flow(position: u64, task: TaskStamp, flow: &[&str]) -> Envelope<An
         position,
         Actor::Spice,
         body::TaskAdded {
+            intent: None,
             task,
             title: "Review history fixture".to_owned(),
             description: None,

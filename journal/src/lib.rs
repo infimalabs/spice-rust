@@ -2,11 +2,12 @@
 
 /// The exact journal schema this build reads and writes.
 ///
-/// Existing authority must already be schema 33. Retired schemas refuse before
-/// persistent storage configuration and name the release that last migrated
-/// them; newer schemas refuse because this build cannot know what their owning
-/// release added.
-pub const SCHEMA_VERSION: u32 = 33;
+/// Existing authority must already be schema 34, or schema 33, which a
+/// writable open crosses forward once without rewriting authority rows.
+/// Retired schemas refuse before persistent storage configuration and name the
+/// release that last migrated them; newer schemas refuse because this build
+/// cannot know what their owning release added.
+pub const SCHEMA_VERSION: u32 = 34;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -258,7 +259,8 @@ impl Journal {
         migrate::finalized_version(&self.connection)
     }
 
-    /// Current-schema initialization this open completed, absent when already initialized.
+    /// Initialization or predecessor crossing this open completed, absent when
+    /// the authority was already current.
     #[must_use]
     pub const fn migration(&self) -> Option<Migration> {
         self.migration

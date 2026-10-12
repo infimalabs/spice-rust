@@ -94,6 +94,7 @@ fn task_added(
     let fact = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: task.clone(),
                 title: title.clone(),
                 description: None,
@@ -114,6 +115,7 @@ fn task_added(
         .expect("task fact builds");
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
+        intent: None,
         born: statement_task,
         queue_origin: position,
         title,

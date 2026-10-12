@@ -664,6 +664,7 @@ mod tests {
             statement: Positioned {
                 position: seq(1),
                 body: BoardStatement {
+                    intent: None,
                     handle: wire::TaskHandle::for_project("canvas.work", &born),
                     born: born.clone(),
                     queue_origin: seq(value.unsigned_abs() + 1),

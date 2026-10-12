@@ -27,6 +27,7 @@ fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {
         CommandKind::TaskEdit,
         vec![statement_witness(heads), claim_witness(heads)],
         &TaskEdit {
+            intent: None,
             task: task.clone(),
             title: None,
             description: None,

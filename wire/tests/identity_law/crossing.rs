@@ -353,6 +353,7 @@ fn cover_task_heads() {
         "TaskHead",
         &[
             TaskHead {
+                intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
@@ -369,6 +370,7 @@ fn cover_task_heads() {
                 revision: seq(10),
             },
             TaskHead {
+                intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),

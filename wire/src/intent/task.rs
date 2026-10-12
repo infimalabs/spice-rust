@@ -57,6 +57,13 @@ pub struct TaskAdd {
     /// Handles this task must follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<TaskHandle>,
+    /// Declared Plan or Design intent the task opens with.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<crate::TaskIntent>,
     /// Whether creation must atomically place the caller's lane in possession.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,
@@ -148,6 +155,13 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub requirements: Option<TaskRequirementsEdit>,
+    /// Dedicated declaration or withdrawal of Plan or Design intent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<crate::TaskIntentEdit>,
     /// Replacement priority, when the allocator's ranking of this task moves.
     #[serde(
         default,

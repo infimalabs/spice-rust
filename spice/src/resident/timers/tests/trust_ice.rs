@@ -60,6 +60,7 @@ fn ice_claim(fixture: &Fixture) {
     let edited = write
         .fact(
             body::TaskEdited {
+                intent: None,
                 task: stamp.clone(),
                 revision: 2,
                 dependencies: None,

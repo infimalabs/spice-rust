@@ -161,6 +161,7 @@ pub(super) fn task_oops_add(
         }
     };
     let normalized = TaskAdd {
+        intent: None,
         title: add.title.clone(),
         project: None,
         description: Some(add.description.clone()),
@@ -455,6 +456,7 @@ where
     extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
+            intent: prepared.statement.intent,
             task: prepared.born.clone(),
             title: add.title.clone(),
             description: add.description.clone(),
@@ -570,6 +572,7 @@ fn prepare_task(
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
+        intent: add.intent,
         born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
@@ -988,6 +991,7 @@ fn commit_dependency_edit(
     let dependencies = statement.dependencies.clone();
     let edited = match write.fact(
         body::TaskEdited {
+            intent: None,
             task: entry.born().clone(),
             revision,
             dependencies: Some(dependencies),

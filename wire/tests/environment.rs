@@ -340,6 +340,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
         epoch,
     };
     let edit = wire::intent::TaskEdit {
+        intent: None,
         task,
         title: None,
         description: None,

@@ -428,6 +428,7 @@ pub(crate) fn add(
         &repository,
         contract,
         TaskAdd {
+            intent: None,
             title,
             project: Some(PROJECT.to_owned()),
             description: Some(description),
@@ -542,6 +543,7 @@ pub(crate) fn drop(
         &repository,
         contract,
         TaskAdd {
+            intent: None,
             title: format!("Propose tracked taste retirement: {}", row.name),
             project: Some(PROJECT.to_owned()),
             description: Some(description),

@@ -98,6 +98,7 @@ fn an_operator_closure_completes_from_any_phase_and_releases_its_dependents() {
             task: dependent_stamp,
         }],
         &TaskAdd {
+            intent: None,
             title: "Work waiting on the verified task".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,

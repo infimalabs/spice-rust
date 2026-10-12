@@ -254,6 +254,7 @@ pub(crate) fn verify_connection_after_facts(
     after_facts();
     let threads = verify_threads(connection, &facts, &mut violations)?;
     let mut heads = verify_heads(connection, &mut violations)?;
+    verify_task_intents(connection, &facts, &mut violations)?;
     verify_generations(connection, &facts, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
     let receipts = verify_receipts(connection, &mut violations)?
@@ -727,6 +728,50 @@ fn verify_claim_index(
                 ViolationClass::Head,
                 locus,
                 "claim index predicate columns disagree with claim head",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each statement head's declared intent is exactly the fold of its creation
+/// intent and the explicit intent changes its edits admitted, so no other
+/// statement publication can move it.
+fn verify_task_intents(
+    connection: &Connection,
+    facts: &BTreeMap<u64, FactRecord>,
+    violations: &mut Vec<Violation>,
+) -> Result<(), VerifyError> {
+    let mut declared = BTreeMap::new();
+    for envelope in facts.values().filter_map(|record| record.envelope.as_ref()) {
+        if let Some((task, intent)) = envelope.fact.declared_intent() {
+            declared.insert(task.as_str(), intent);
+        }
+    }
+    let mut statement = connection
+        .prepare("SELECT stamp, body FROM task_heads ORDER BY stamp")
+        .map_err(VerifyError::Sqlite)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })
+        .map_err(VerifyError::Sqlite)?;
+    for row in rows {
+        let (stamp, body) = row.map_err(VerifyError::Sqlite)?;
+        // An undecodable head is already a violation of the head plane.
+        let Ok(head) = decode_canonical::<wire::TaskHead>(&body) else {
+            continue;
+        };
+        let admitted = declared.get(stamp.as_str()).copied().flatten();
+        if head.intent != admitted {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                format!(
+                    "declared intent {} disagrees with the intent {} its task facts admitted",
+                    head.intent.map_or("none", wire::TaskIntent::as_str),
+                    admitted.map_or("none", wire::TaskIntent::as_str),
+                ),
             ));
         }
     }

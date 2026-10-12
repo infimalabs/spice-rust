@@ -765,6 +765,7 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
         CommandKind::TaskEdit,
         vec![statement_witness(at(&answer, &winner))],
         &TaskEdit {
+            intent: None,
             task: winner.clone(),
             title: Some("Retitled while the claim was in flight".to_owned()),
             description: None,

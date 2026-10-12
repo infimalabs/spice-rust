@@ -218,6 +218,7 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
     let edited = write
         .fact(
             body::TaskEdited {
+                intent: None,
                 task: task.clone(),
                 revision: 2,
                 dependencies: None,

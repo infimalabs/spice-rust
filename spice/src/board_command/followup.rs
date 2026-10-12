@@ -10,7 +10,7 @@ use super::*;
 // verdict it meant to record.
 
 /// Fields one `--then` record may carry.
-const FOLLOWUP_FIELDS: &str = "title, project, description, acceptance or flow";
+const FOLLOWUP_FIELDS: &str = "title, project, description, acceptance, flow or intent";
 
 /// The `--then` fields that accrue rather than refusing a second value.
 ///
@@ -28,6 +28,7 @@ pub(super) fn review_is_clean(finding: &str) -> bool {
 /// Parse one `--then` record into the statement it creates.
 fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
     let mut add = TaskAdd {
+        intent: None,
         title: String::new(),
         project: None,
         description: None,
@@ -64,6 +65,7 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
             "project" => add.project = Some(value),
             "description" => add.description = Some(value),
             "acceptance" => add.acceptance.push(value),
+            "intent" => add.intent = Some(value.parse()?),
             // The predecessor accrues a repeated flow= into one phase route,
             // and the route this carries is the same comma-separated form.
             "flow" => {
@@ -435,6 +437,7 @@ fn create_followup(
     })?;
     let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
+        intent: followup.add.intent,
         born: followup.task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
@@ -474,6 +477,7 @@ fn create_followup(
     let added = write
         .fact(
             body::TaskAdded {
+                intent: statement.intent,
                 task: followup.task.clone(),
                 title: statement.title.clone(),
                 description: statement.description.clone(),

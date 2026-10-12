@@ -119,6 +119,7 @@ fn fixture() -> Journal {
         let fact = write
             .fact(
                 body::TaskAdded {
+                    intent: None,
                     task: task.clone(),
                     title: format!("Allocate {name}"),
                     description: None,
@@ -140,6 +141,7 @@ fn fixture() -> Journal {
         let statement_task = task.clone();
         let statement_origin = origin.clone();
         write.task_head(fact, move |position| TaskHead {
+            intent: None,
             born: statement_task,
             queue_origin: position,
             title: format!("Allocate {name}"),

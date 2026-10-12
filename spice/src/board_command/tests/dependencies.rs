@@ -715,6 +715,7 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
         CommandKind::TaskEdit,
         vec![statement_witness(reverse_heads)],
         &TaskEdit {
+            intent: None,
             task: reverse.clone(),
             title: None,
             description: None,

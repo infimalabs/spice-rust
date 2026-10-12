@@ -519,6 +519,7 @@ fn complete_head_materialization_is_shared_and_delta_bounded() {
         let edited = write
             .fact(
                 body::TaskEdited {
+                    intent: None,
                     task: current.born.clone(),
                     revision: u32::try_from(revision).expect("fixture revision"),
                     dependencies: None,
@@ -804,6 +805,7 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
                 kind: CommandKind::TaskAdd,
                 expected: vec![Witness::Absence { task: stamp() }],
                 body: intent::TaskAdd {
+                    intent: None,
                     title: "Implement bus writer".to_owned(),
                     project: Some("bus".to_owned()),
                     description: None,
@@ -990,6 +992,7 @@ fn retained_added(
     phase: Phase,
 ) -> body::TaskAdded {
     body::TaskAdded {
+        intent: None,
         task,
         title: format!("Retained task {index}"),
         description: None,
@@ -1009,6 +1012,7 @@ fn retained_added(
 
 fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq) -> TaskHead {
     TaskHead {
+        intent: None,
         born: task,
         queue_origin: seq,
         title: format!("Retained task {index}"),
@@ -1047,6 +1051,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     let fact = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: stamp(),
                 title: "Implement bus writer".to_owned(),
                 description: Some("Persist one ordered write".to_owned()),
@@ -1069,6 +1074,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     let task_for_head = stamp();
     let origin_for_head = origin.clone();
     write.task_head(fact, move |seq| TaskHead {
+        intent: None,
         born: task_for_head,
         queue_origin: seq,
         title: "Implement bus writer".to_owned(),
@@ -1105,6 +1111,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 kind: CommandKind::TaskAdd,
                 expected: vec![Witness::Absence { task: stamp() }],
                 body: intent::TaskAdd {
+                    intent: None,
                     title: "Implement bus writer".to_owned(),
                     project: Some("bus".to_owned()),
                     description: None,

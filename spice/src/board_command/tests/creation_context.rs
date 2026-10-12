@@ -18,6 +18,7 @@ fn add_command(epoch: CanonicalUuid, lane: CanonicalUuid) -> wire::AdmittedComma
             task: stamp("creation-context-command"),
         }],
         &TaskAdd {
+            intent: None,
             title: "Capture exact creation authority".to_owned(),
             project: Some("task.provenance".to_owned()),
             description: None,

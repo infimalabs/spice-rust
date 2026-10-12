@@ -2,6 +2,7 @@ use super::*;
 
 fn dependent_add(dependencies: Vec<TaskHandle>, flow: Option<&str>) -> TaskAdd {
     TaskAdd {
+        intent: None,
         title: "Dependent work".to_owned(),
         project: Some("task.workflow".to_owned()),
         description: None,
@@ -80,6 +81,7 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
     let born = stamp("CLAIM-add00001");
     let handle = TaskHandle::for_project("task.workflow", &born);
     let add = TaskAdd {
+        intent: None,
         title: "Board and hold this work".to_owned(),
         project: Some("task.workflow".to_owned()),
         description: None,

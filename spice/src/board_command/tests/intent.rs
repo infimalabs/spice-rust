@@ -1,0 +1,106 @@
+use super::*;
+
+use wire::{TaskIntent, TaskIntentEdit};
+
+fn add_declared(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &str,
+    intent: Option<TaskIntent>,
+) -> TaskHandle {
+    let born = stamp(task);
+    let handle = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            title: format!("Declared {task}"),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:board-command".parse().expect("fixture origin")),
+            flow: Some("todo,review".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+            intent,
+        },
+    ));
+    handle
+}
+
+fn edit(task: &TaskHandle) -> TaskEdit {
+    TaskEdit {
+        task: task.clone(),
+        title: None,
+        description: None,
+        acceptance: Vec::new(),
+        requirements: None,
+        priority: None,
+        project: None,
+        intent: None,
+    }
+}
+
+fn declared(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<TaskIntent> {
+    at(&board(bus, epoch, Actor::Operator), task)
+        .statement
+        .body
+        .intent
+}
+
+#[test]
+fn declared_intent_survives_phases_and_corrections_and_moves_only_by_its_own_edit() {
+    let (root, bus, epoch, seats) = fixture("task-intent-authority", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add_declared(&bus, epoch, "INTENT-design1", Some(TaskIntent::Design));
+    let other = add_declared(&bus, epoch, "INTENT-plain01", None);
+    assert_eq!(declared(&bus, epoch, &task), Some(TaskIntent::Design));
+    assert_eq!(
+        declared(&bus, epoch, &other),
+        None,
+        "intent is never inferred"
+    );
+
+    let retitled = TaskEdit {
+        title: Some("Retitled design".to_owned()),
+        ..edit(&task)
+    };
+    assert_committed(correct(&bus, epoch, Actor::Operator, &retitled));
+    assert_eq!(
+        declared(&bus, epoch, &task),
+        Some(TaskIntent::Design),
+        "an ordinary correction keeps the declared intent",
+    );
+
+    claim_and_complete_task(&bus, epoch, &seats[0], &lane, &task);
+    let reviewing = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&reviewing, &task).workflow.body.phase.as_str(), "review");
+    assert_eq!(
+        at(&reviewing, &task).statement.body.intent,
+        Some(TaskIntent::Design),
+        "a phase change keeps the declared intent",
+    );
+
+    let replan = TaskEdit {
+        intent: Some(TaskIntentEdit::Set {
+            intent: TaskIntent::Plan,
+        }),
+        ..edit(&task)
+    };
+    assert_committed(correct(&bus, epoch, Actor::Operator, &replan));
+    assert_eq!(declared(&bus, epoch, &task), Some(TaskIntent::Plan));
+    let withdraw = TaskEdit {
+        intent: Some(TaskIntentEdit::Clear {}),
+        ..edit(&task)
+    };
+    assert_committed(correct(&bus, epoch, Actor::Operator, &withdraw));
+    assert_eq!(declared(&bus, epoch, &task), None);
+    assert_eq!(declared(&bus, epoch, &other), None);
+
+    // Verification folds the admitted intent facts against every head.
+    clean(&root, bus);
+}

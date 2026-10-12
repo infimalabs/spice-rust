@@ -16,12 +16,24 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-/// Admit exact-current authority or initialize one truly empty database.
+/// The one predecessor schema this build crosses forward at a writable open.
+///
+/// Schema 33 authority carries no declared task intent. Its facts and heads
+/// omit the optional field and already decode as the current shape with no
+/// intent, so the crossing rewrites no authority row: it moves only the schema
+/// identity, which makes the intent-bearing task wire visible at the journal
+/// boundary. A schema-33 build therefore refuses this authority instead of
+/// decoding an intent-bearing row as if the field did not exist.
+const PREDECESSOR_SCHEMA: u32 = 33;
+
+/// Admit exact-current authority, cross the predecessor once, or initialize
+/// one truly empty database.
 ///
 /// Existing authority is classified without a transaction so a retired file
 /// refuses before SQLite can create a rollback journal or change its persistent
-/// journal mode. Empty initialization takes the exclusive transaction, then
-/// rechecks emptiness to close the race with another initializer.
+/// journal mode. Empty initialization and the predecessor crossing take the
+/// exclusive transaction, then recheck what they observed to close the race
+/// with another opener.
 pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
     let trusted_schema: bool = connection
         .query_row("PRAGMA trusted_schema", [], |row| row.get(0))
@@ -31,8 +43,12 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
     }
 
     if table_exists(connection, "journal_schema")? {
-        admit_state(connection, stored_state(connection)?)?;
-        return Ok(None);
+        let version = admit_readable_state(connection, stored_state(connection)?)?;
+        if version != PREDECESSOR_SCHEMA {
+            admit_version(version)?;
+            return Ok(None);
+        }
+        return cross_predecessor(connection);
     }
     let object_count = authority_object_count(connection)?;
     if object_count != 0 {
@@ -67,7 +83,7 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
     }))
 }
 
-/// Current-schema initialization completed by this open.
+/// Current-schema initialization or predecessor crossing completed by this open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Migration {
     from: u32,
@@ -75,13 +91,14 @@ pub struct Migration {
 }
 
 impl Migration {
-    /// Schema identity before initialization (`0`).
+    /// Schema identity before this open: `0` for initialization, otherwise
+    /// the crossed predecessor.
     #[must_use]
     pub const fn from(self) -> u32 {
         self.from
     }
 
-    /// Current schema created by initialization.
+    /// Current schema this open reached.
     #[must_use]
     pub const fn to(self) -> u32 {
         self.to
@@ -153,11 +170,44 @@ pub(crate) fn inspect_stored_version(connection: &Connection) -> Result<u32, Ope
 
 /// Admit a finalized authority at the sole executable schema.
 fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
-    let version = admit_readable_state(connection, state)?;
+    admit_version(admit_readable_state(connection, state)?)
+}
+
+fn admit_version(version: u32) -> Result<u32, OpenError> {
+    if version == PREDECESSOR_SCHEMA {
+        return Err(MigrationError::PendingCrossing { found: version }.into());
+    }
     if version != SCHEMA_VERSION {
         return Err(MigrationError::UnknownVersion { found: version }.into());
     }
     Ok(version)
+}
+
+/// Move a finalized predecessor authority to the current schema exactly once.
+fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Exclusive)
+        .map_err(OpenError::Sqlite)?;
+    let version = admit_readable_state(&transaction, stored_state(&transaction)?)?;
+    if version != PREDECESSOR_SCHEMA {
+        admit_version(version)?;
+        transaction.commit().map_err(OpenError::Sqlite)?;
+        return Ok(None);
+    }
+    transaction
+        .execute(
+            "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
+            params![SCHEMA_VERSION],
+        )
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(OpenError::Sqlite)?;
+    transaction.commit().map_err(OpenError::Sqlite)?;
+    Ok(Some(Migration {
+        from: PREDECESSOR_SCHEMA,
+        to: SCHEMA_VERSION,
+    }))
 }
 
 /// Validate a finalized schema identity before applying the current cutoff.
@@ -346,14 +396,35 @@ impl From<MigrationError> for OpenError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {
     MissingSchema,
-    UnversionedAuthority { object_count: u32 },
-    SchemaRowCount { count: u32 },
+    UnversionedAuthority {
+        object_count: u32,
+    },
+    SchemaRowCount {
+        count: u32,
+    },
     MissingSingleton,
-    Unfinalized { from: Option<u32>, to: Option<u32> },
-    UnknownState { state: String },
-    ForwardSchema { found: u32, current: u32 },
-    UnknownVersion { found: u32 },
-    VersionDisagreement { row: u32, pragma: u32 },
+    Unfinalized {
+        from: Option<u32>,
+        to: Option<u32>,
+    },
+    UnknownState {
+        state: String,
+    },
+    ForwardSchema {
+        found: u32,
+        current: u32,
+    },
+    UnknownVersion {
+        found: u32,
+    },
+    /// Predecessor authority that only a writable open crosses forward.
+    PendingCrossing {
+        found: u32,
+    },
+    VersionDisagreement {
+        row: u32,
+        pragma: u32,
+    },
 }
 
 impl fmt::Display for MigrationError {
@@ -384,6 +455,11 @@ impl fmt::Display for MigrationError {
             Self::ForwardSchema { found, current } => write!(
                 formatter,
                 "journal schema {found} is newer than this build's schema {current}; use the release that owns schema {found}"
+            ),
+            Self::PendingCrossing { found } => write!(
+                formatter,
+                "journal schema {found} crosses once to schema {SCHEMA_VERSION} at the next \
+                 writable open; start the resident with this build before reading it"
             ),
             Self::UnknownVersion { found } => {
                 if let Some(release) = retired_release(*found) {
@@ -609,8 +685,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 33, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 34, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 33;
+PRAGMA user_version = 34;
 "#;

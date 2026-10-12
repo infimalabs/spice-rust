@@ -367,6 +367,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     let fact = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: born(),
                 title: "Lapse possession".to_owned(),
                 description: None,
@@ -387,6 +388,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
         .expect("task fact");
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
+        intent: None,
         born: born(),
         queue_origin: position,
         title: "Lapse possession".to_owned(),

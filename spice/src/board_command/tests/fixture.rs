@@ -341,6 +341,7 @@ pub(super) fn add_project_with_acceptance(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            intent: None,
             title: title.to_owned(),
             project: Some(project.to_owned()),
             description: None,
