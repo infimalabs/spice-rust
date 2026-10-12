@@ -924,7 +924,7 @@ fn retire_steering(
         lane,
         epoch,
         locus: wire::body::TranscriptLocus {
-            source: None,
+            source: Some(epoch),
             member: locus.member,
             offset: locus.offset,
             length: locus.length,

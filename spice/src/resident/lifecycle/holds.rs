@@ -128,7 +128,7 @@ impl Runtime {
             return Ok(false);
         };
         for row in &residency.body().lanes {
-            let Some(refused) = self.holds.vendor_failure(row.lane) else {
+            let Some(refused) = self.holds.vendor_failure(row.lane).cloned() else {
                 continue;
             };
             let current = wire::body::VendorFailureInput {
@@ -141,15 +141,10 @@ impl Runtime {
                     .find(|renewal| renewal.lane == row.lane)
                     .map(|renewal| renewal.revision),
             };
-            if refused.is_none() {
-                self.holds.hydrate_vendor_failure(row.lane, current);
-                continue;
-            }
             let until = self.holds.held(row.lane);
-            let restoration = refused.map(Clone::clone);
             let resumed = self.holds.input_changed(row.lane, &current);
             if resumed.is_some() {
-                self.commit_resume(bus, epoch, row.lane, until, Some(restoration), resumed)?;
+                self.commit_resume(bus, epoch, row.lane, until, Some(refused), resumed)?;
                 return Ok(true);
             }
         }
@@ -171,7 +166,7 @@ impl Runtime {
     ) -> CommandResult<()> {
         let now = current_instant()?;
         let until = self.holds.held(lane);
-        let vendor_failure = self.holds.vendor_failure(lane).map(|input| input.cloned());
+        let vendor_failure = self.holds.vendor_failure(lane).cloned();
         let resumed = self.holds.expire(lane, now);
         self.commit_resume(bus, epoch, lane, until, vendor_failure, resumed)
     }
@@ -185,7 +180,7 @@ impl Runtime {
     ) -> CommandResult<()> {
         self.backoff.release(lane);
         let until = self.holds.held(lane);
-        let vendor_failure = self.holds.vendor_failure(lane).map(|input| input.cloned());
+        let vendor_failure = self.holds.vendor_failure(lane).cloned();
         let resumed = self.holds.wake(lane);
         self.commit_resume(bus, epoch, lane, until, vendor_failure, resumed)
     }
@@ -196,7 +191,7 @@ impl Runtime {
         epoch: CanonicalUuid,
         lane: CanonicalUuid,
         until: Option<Instant>,
-        vendor_failure: Option<Option<wire::body::VendorFailureInput>>,
+        vendor_failure: Option<wire::body::VendorFailureInput>,
         resumed: Option<wire::body::LaneResumed>,
     ) -> CommandResult<()> {
         let Some(resumed) = resumed else {
@@ -220,7 +215,7 @@ impl Runtime {
                             "durable young-death hold restored after refused release".to_owned()
                         },
                         until,
-                        vendor_failure: vendor_failure.flatten(),
+                        vendor_failure,
                     });
                 }
                 Err(outcome)

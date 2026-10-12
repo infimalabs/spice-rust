@@ -378,7 +378,7 @@ pub(super) fn session(root: &Path, occupant: CanonicalUuid) -> wire::LaneSession
         occupant,
         worktree: root.to_string_lossy().into_owned(),
         vendor: "omp".parse().expect("fixture vendor"),
-        launch: None,
+        launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch: epoch(),
         stream: "stdout".to_owned(),
         identity: "reaped-session".to_owned(),

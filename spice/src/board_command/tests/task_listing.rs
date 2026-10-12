@@ -806,7 +806,7 @@ fn actor_route_projects_the_current_lane_session_identity() {
         occupant,
         worktree: row.worktree.clone(),
         vendor: row.vendor.clone(),
-        launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
+        launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch,
         stream: "stdout".to_owned(),
         identity: identity.to_string(),

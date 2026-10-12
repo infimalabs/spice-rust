@@ -16,6 +16,10 @@
 
 A launch does not inherit ambient thread identity. The lane binds to the session
 proven by that launch, never to a thread inherited from the environment.
+A resumable session names the exact model, effort, fast-mode, Git, and RTK
+launch identity it admitted. Retained session authority without the required
+identity refuses at writable open; runtime never invents it from current
+configuration.
 
 The bootstrap signal invokes Spice rather than using operator prose as its ask.
 The resident appends the fresh-seat briefing or resumed-seat notice and supplies

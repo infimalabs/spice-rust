@@ -702,7 +702,7 @@ fn retirement_winning_the_race_makes_a_fired_escalation_append_nothing() {
         lane: lane_uuid(),
         epoch: epoch_uuid(),
         locus: body::TranscriptLocus {
-            source: None,
+            source: Some(epoch_uuid()),
             member: 1,
             offset: 2,
             length: 3,

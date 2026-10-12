@@ -621,7 +621,7 @@ fn cover_residency_heads() {
             occupant: second_uuid,
             worktree: "/worktrees/lane-a".to_owned(),
             vendor: "omp".parse().expect("fixture vendor"),
-            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: first_uuid,
             stream: "stdout".to_owned(),
             identity: "018f7777-7777-7444-8888-999999999999".to_owned(),
@@ -650,9 +650,9 @@ fn cover_residency_heads() {
         disposition: "empty".to_owned(),
     };
     let recorded_session = occupied.session.clone().expect("occupied session");
-    let mut unrecorded_session = recorded_session.clone();
-    unrecorded_session.launch = None;
-    law("LaneSession", &[recorded_session, unrecorded_session]);
+    let mut distinct_session = recorded_session.clone();
+    distinct_session.launch = wire::body::LaneLaunchIdentity::new("opus", "max");
+    law("LaneSession", &[recorded_session, distinct_session]);
     law("LaneResidency", &[occupied.clone(), empty.clone()]);
     let drive = TeamSubscription {
         team: first_uuid,

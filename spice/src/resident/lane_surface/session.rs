@@ -281,12 +281,10 @@ impl CaptureReporter for DeclarationReporter {
             occupant: self.occupant,
             worktree: self.worktree.clone(),
             vendor: self.vendor.clone(),
-            launch: Some(
-                wire::body::LaneLaunchIdentity::new(self.model.clone(), self.effort.clone())
-                    .with_fast_mode(self.fast_mode)
-                    .with_git(self.git.clone())
-                    .with_rtk(self.rtk.clone()),
-            ),
+            launch: wire::body::LaneLaunchIdentity::new(self.model.clone(), self.effort.clone())
+                .with_fast_mode(self.fast_mode)
+                .with_git(self.git.clone())
+                .with_rtk(self.rtk.clone()),
             epoch: self.epoch,
             stream: record_stream(self.stream).to_owned(),
             identity: identity.clone(),
@@ -335,7 +333,7 @@ pub(in crate::resident) fn session_fact(
         launch: session.launch.clone(),
         epoch: session.epoch,
         stream: session.stream.clone(),
-        source: Some(source),
+        source,
         identity: session.identity.clone(),
         member: session.locus.member,
         offset: session.locus.offset,

@@ -24,10 +24,10 @@ fn declaration(occupant: u64, offset: u64) -> body::LaneSessionDeclared {
         occupant: uuid(occupant),
         worktree: format!("/worktrees/{occupant}"),
         vendor: "omp".parse().unwrap(),
-        launch: None,
+        launch: body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch: uuid(8),
         stream: "session".to_owned(),
-        source: Some(uuid(6)),
+        source: uuid(6),
         identity: format!("session-{occupant}"),
         member: 0,
         offset,
@@ -42,23 +42,11 @@ fn source_qualified_declaration_resolves_without_a_later_ingestion() {
     facts.fact(declaration(3, 10), FactCause::Root).unwrap();
     journal.apply(facts).unwrap();
 
-    let sessions = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap()).unwrap();
+    let sessions = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap());
     assert_eq!(
         sessions.at(uuid(1), uuid(6), 0, 10).unwrap().occupant,
         uuid(3)
     );
-}
-
-#[test]
-fn unqualified_declaration_refuses_the_runtime_index() {
-    let mut journal = Journal::in_memory().unwrap();
-    let mut facts = write();
-    let mut declared = declaration(3, 10);
-    declared.source = None;
-    facts.fact(declared, FactCause::Root).unwrap();
-    journal.apply(facts).unwrap();
-
-    assert!(TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap()).is_err());
 }
 
 #[test]

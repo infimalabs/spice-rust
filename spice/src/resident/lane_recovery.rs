@@ -175,11 +175,7 @@ pub(super) fn finish_import(
         from: pending.context.row.worktree.clone(),
         to: pending.context.worktree.clone(),
         git: Some(proven.git.clone().into_boxed_str()),
-        rtk: proven
-            .session
-            .launch
-            .as_ref()
-            .and_then(|launch| launch.rtk.clone()),
+        rtk: proven.session.launch.rtk.clone(),
     };
     let proposal = propose_import(
         command,

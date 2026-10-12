@@ -95,7 +95,6 @@ impl Selection<'_> {
         if row.vendor.as_str() != "omp" || row.occupant.is_none() {
             return None;
         }
-        row.session.as_ref()?.launch.as_ref()?;
         match self {
             Self::Effort(request) => request
                 .effort
@@ -144,7 +143,6 @@ pub(super) fn fast_flips(
                 return None;
             }
             let occupant = row.occupant?;
-            row.session.as_ref()?.launch.as_ref()?;
             Some(FastFlip {
                 lane: row.lane,
                 occupant,
@@ -288,11 +286,11 @@ impl Drop for LiveChanges {
 /// Apply one confirmed live change to the running launch identity, saying
 /// whether it changed anything.
 fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) -> bool {
-    let launch = row
+    let launch = &mut row
         .session
         .as_mut()
-        .and_then(|session| session.launch.as_mut())
-        .expect("a live request requires recorded launch identity");
+        .expect("a live request requires a recorded session")
+        .launch;
     match live {
         LiveRetune::Model { provider, model } => {
             let model = format!("{provider}/{model}");
@@ -530,10 +528,7 @@ fn record_runtime(
         let Some(row) = next.lanes.iter_mut().find(|row| row.lane == lane) else {
             return;
         };
-        let launched = row
-            .session
-            .as_ref()
-            .is_some_and(|session| session.launch.is_some());
+        let launched = row.session.is_some();
         if row.occupant != Some(occupant) || !launched {
             return;
         }

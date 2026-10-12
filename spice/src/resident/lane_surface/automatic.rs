@@ -134,11 +134,7 @@ pub(in crate::resident) fn finish_wake(
         from: pending.row.disposition.clone(),
         to: OCCUPIED.to_owned(),
         git: Some(proven.git.clone().into_boxed_str()),
-        rtk: proven
-            .session
-            .launch
-            .as_ref()
-            .and_then(|launch| launch.rtk.clone()),
+        rtk: proven.session.launch.rtk.clone(),
     };
     let proposal = propose_wake(
         command,

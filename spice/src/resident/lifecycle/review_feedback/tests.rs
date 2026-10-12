@@ -277,7 +277,7 @@ fn session(
         occupant,
         worktree: fixture.root.display().to_string(),
         vendor: fixture.vendor.clone(),
-        launch: None,
+        launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch: fixture.epoch,
         stream: "session".to_owned(),
         identity: occupant.to_string(),

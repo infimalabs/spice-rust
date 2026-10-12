@@ -604,13 +604,8 @@ pub struct LaneSession {
     pub worktree: String,
     /// Vendor dialect that admitted the declaration.
     pub vendor: crate::Name,
-    /// Launch identity, absent when the declaration predates its recording.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub launch: Option<LaneLaunchIdentity>,
+    /// Exact launch identity admitted for this session.
+    pub launch: LaneLaunchIdentity,
     /// Resident generation that observed the declaration.
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying the declaration.
@@ -628,18 +623,8 @@ struct LaneSessionWire {
     occupant: CanonicalUuid,
     worktree: String,
     vendor: crate::Name,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    model: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    effort: Option<String>,
+    model: String,
+    effort: String,
     #[serde(default, skip_serializing_if = "is_false")]
     fast_mode: bool,
     #[serde(
@@ -675,7 +660,7 @@ impl TryFrom<LaneSessionWire> for LaneSession {
                 wire.fast_mode,
                 wire.git,
                 wire.rtk,
-            )?,
+            ),
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,

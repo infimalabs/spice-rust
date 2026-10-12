@@ -253,9 +253,9 @@ fn answer_context(
     lane: wire::CanonicalUuid,
     locus: &wire::body::TranscriptLocus,
 ) -> Result<Result<String, &'static str>, journal::GuardError> {
-    let Some(source) = locus.source else {
-        return Ok(Err("legacy-locus"));
-    };
+    let source = locus
+        .source
+        .expect("admitted steering transcript facts carry a tape generation");
     let mut before = answered;
     loop {
         let page = read.recent_fact_page(
@@ -268,7 +268,7 @@ fn answer_context(
                 .read::<wire::body::LaneSessionDeclared>()
                 .filter(|declared| {
                     declared.lane == lane
-                        && declared.source == Some(source)
+                        && declared.source == source
                         && (declared.member, declared.offset) <= (locus.member, locus.offset)
                 })
         });

@@ -369,45 +369,31 @@ impl LaneLaunchIdentity {
     }
 
     pub(crate) fn from_parts(
-        model: Option<String>,
-        effort: Option<String>,
+        model: String,
+        effort: String,
         fast_mode: bool,
         git: Option<String>,
         rtk: Option<RtkHealth>,
-    ) -> Result<Option<Self>, &'static str> {
-        match (model, effort, fast_mode, git, rtk) {
-            (Some(model), Some(effort), fast_mode, git, rtk) => Ok(Some(Self {
-                model,
-                effort,
-                fast_mode,
-                git,
-                rtk,
-            })),
-            (None, None, false, None, None) => Ok(None),
-            (Some(_), None, _, _, _) => Err("lane launch identity is missing effort"),
-            (None, Some(_), _, _, _) => Err("lane launch identity is missing model"),
-            (None, None, _, _, _) => Err("lane launch identity is missing model and effort"),
+    ) -> Self {
+        Self {
+            model,
+            effort,
+            fast_mode,
+            git,
+            rtk,
         }
     }
 
     pub(crate) fn into_parts(
-        identity: Option<Self>,
-    ) -> (
-        Option<String>,
-        Option<String>,
-        bool,
-        Option<String>,
-        Option<RtkHealth>,
-    ) {
-        identity.map_or((None, None, false, None, None), |identity| {
-            (
-                Some(identity.model),
-                Some(identity.effort),
-                identity.fast_mode,
-                identity.git,
-                identity.rtk,
-            )
-        })
+        identity: Self,
+    ) -> (String, String, bool, Option<String>, Option<RtkHealth>) {
+        (
+            identity.model,
+            identity.effort,
+            identity.fast_mode,
+            identity.git,
+            identity.rtk,
+        )
     }
 }
 
@@ -423,19 +409,14 @@ pub struct LaneSessionDeclared {
     pub worktree: String,
     /// Vendor dialect that admitted the declaration.
     pub vendor: Name,
-    /// Launch identity, absent when the declaration predates its recording.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub launch: Option<LaneLaunchIdentity>,
+    /// Exact launch identity admitted for this session.
+    pub launch: LaneLaunchIdentity,
     /// Resident generation that observed the declaration.
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying records.
     pub stream: String,
-    /// Durable tape generation carrying the declaration, absent on legacy facts.
-    pub source: Option<CanonicalUuid>,
+    /// Durable tape generation carrying the declaration.
+    pub source: CanonicalUuid,
     /// Exact resumable vendor identity.
     pub identity: String,
     /// Durable tape member holding the declaration.
@@ -453,18 +434,8 @@ struct LaneSessionDeclaredWire {
     occupant: CanonicalUuid,
     worktree: String,
     vendor: Name,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    model: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    effort: Option<String>,
+    model: String,
+    effort: String,
     #[serde(default, skip_serializing_if = "is_false")]
     fast_mode: bool,
     #[serde(
@@ -481,12 +452,7 @@ struct LaneSessionDeclaredWire {
     rtk: Option<RtkHealth>,
     epoch: CanonicalUuid,
     stream: String,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    source: Option<CanonicalUuid>,
+    source: CanonicalUuid,
     identity: String,
     member: u64,
     offset: u64,
@@ -508,7 +474,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
                 wire.fast_mode,
                 wire.git,
                 wire.rtk,
-            )?,
+            ),
             epoch: wire.epoch,
             stream: wire.stream,
             source: wire.source,

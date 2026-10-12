@@ -61,6 +61,7 @@ const STEER_ACKED: &str = r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "locus": {
+    "source": "018f82d4-6f59-7d06-92e3-bce9131163c5",
     "member": 4,
     "offset": 8213,
     "length": 512,
@@ -179,6 +180,10 @@ fn the_ack_scanner_body_matches_the_specified_fields() {
     assert_eq!(fact.kind(), FactKind::SteerAcked);
     assert_eq!(fact.producer(), Producer::AckScanner);
     assert_eq!(fact.body.key, "1kJJP87B");
+    assert_eq!(
+        fact.body.locus.source.map(|source| source.to_string()),
+        Some("018f82d4-6f59-7d06-92e3-bce9131163c5".to_owned())
+    );
     assert_eq!(fact.body.locus.member, 4);
     assert_eq!(fact.body.locus.offset, 8213);
     assert_eq!(fact.body.locus.line, 1);
