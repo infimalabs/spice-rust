@@ -61,6 +61,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     room_catch_up: Mutex<Option<(PathBuf, PathBuf, CanonicalUuid)>>,
     /// Exact source-backed notice most recently queued for this occupant.
     room_catch_up_sent: Mutex<Option<crate::resident::room_catch_up::Notice>>,
+    /// Exact observed notice whose landed-evidence write has not succeeded.
+    room_catch_up_landing: Mutex<Option<crate::resident::room_catch_up::Notice>>,
     /// Keys whose original was queued without replacement, or whose recovery
     /// was observed on the transcript. Reminders can point at that telling.
     /// Compaction drops the context and this set.
@@ -297,6 +299,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             told: Mutex::new(BTreeSet::new()),
             recognized: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
+            room_catch_up_landing: Mutex::new(None),
             answered: Mutex::new(answered::Answered::default()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
             seal,
@@ -407,6 +410,46 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        self.room_catch_up_landing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
+    /// Retry the exact observed landing until its atomic evidence write succeeds.
+    fn persist_room_catch_up_landing(&self) {
+        let landing = self
+            .room_catch_up_landing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(landing) = landing else {
+            return;
+        };
+        let configured = self
+            .room_catch_up
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some((_path, landed_path, occupant)) = configured else {
+            return;
+        };
+        if landing.occupant != occupant {
+            return;
+        }
+        let published = landed_path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| crate::resident::room_catch_up::publish_notice(&landed_path, &landing));
+        if published.is_ok() {
+            let mut pending = self
+                .room_catch_up_landing
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if pending.as_ref() == Some(&landing) {
+                pending.take();
+            }
+        }
     }
 
     /// Queue the current source-backed room delivery without interrupting work.
@@ -415,6 +458,15 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// durable cursor changes. Before it lands, a compaction retries because
     /// the provider may have discarded an unheard aside with the old context.
     fn deliver_room_catch_up(&self, retry_unlanded: bool) {
+        self.persist_room_catch_up_landing();
+        if self
+            .room_catch_up_landing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+        {
+            return;
+        }
         let configured = self
             .room_catch_up
             .lock()
@@ -456,7 +508,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let Some((_path, landed_path, occupant)) = configured else {
+        let Some((_path, _landed_path, occupant)) = configured else {
             return;
         };
         let landed = self
@@ -468,16 +520,15 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Some(landed) = landed else {
             return;
         };
-        let published = landed_path
-            .parent()
-            .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| crate::resident::room_catch_up::publish_notice(&landed_path, &landed));
-        if published.is_ok() {
-            self.room_catch_up_sent
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
-        }
+        *self
+            .room_catch_up_landing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(landed);
+        self.room_catch_up_sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        self.persist_room_catch_up_landing();
     }
 
     /// Replace the progress reminder waiting for the next step boundary.
