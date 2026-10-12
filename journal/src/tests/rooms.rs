@@ -176,6 +176,39 @@ fn journal_source(fact: u64) -> RoomSource {
     }
 }
 
+fn ingest(
+    journal: &mut Journal,
+    head: TranscriptSourceHead,
+    from: TranscriptPosition,
+    supersedes: Option<CanonicalUuid>,
+) {
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{}", head.lane)
+            .parse()
+            .expect("resident origin"),
+        instant(),
+        Producer::ResidentRecognition,
+    );
+    let body = wire::body::JournalIngested {
+        lane: head.lane,
+        vendor: head.vendor.clone(),
+        stream: head.stream.clone(),
+        source: head.source,
+        supersedes,
+        from,
+        to: head.next,
+        usage: Vec::new(),
+        non_usage_records: 1,
+        residue_records: 0,
+    };
+    let pending = write
+        .fact(body, FactCause::Root)
+        .expect("transcript ingestion builds");
+    write.transcript_source_head(pending, move |_| head);
+    journal.apply(write).expect("transcript ingestion commits");
+}
+
 fn prepared_by(controller: &TaskStamp) -> TaskPreparation {
     TaskPreparation {
         parent: controller.clone(),
@@ -945,4 +978,93 @@ fn links_must_name_existing_authority() {
     )
     .expect("artifact bytes stay with their digest");
     journal.verify().expect("linked authority verifies");
+}
+
+#[test]
+fn transcript_links_stay_within_the_accounted_generation_and_extent() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let head = transcript_source_head();
+    ingest(
+        &mut journal,
+        head.clone(),
+        TranscriptPosition {
+            member: 1,
+            offset: 0,
+        },
+        None,
+    );
+    let linked =
+        |head: TranscriptSourceHead, locus: wire::MessageLocus| RoomPublicationContent::Linked {
+            link: RoomSource::Transcript { head, locus },
+        };
+    let locus = |offset, length| wire::MessageLocus {
+        member: 1,
+        offset,
+        length,
+        event: 0,
+    };
+
+    commit(
+        &mut journal,
+        publication(&room, 20, linked(head.clone(), locus(4_095, 1))),
+    )
+    .expect("the accounted final byte is linkable");
+    let mut earlier = head.clone();
+    earlier.next.offset = 2_048;
+    commit(
+        &mut journal,
+        publication(&room, 21, linked(earlier, locus(2_047, 1))),
+    )
+    .expect("an earlier boundary within the current generation is linkable");
+
+    let mut future = head.clone();
+    future.next.offset += 1;
+    let mut wrong_generation = head.clone();
+    wrong_generation.source = uuid("018f82d4-6f59-7d06-92e3-bce913116399");
+    let mut wrong_stream = head.clone();
+    wrong_stream.stream = "sidecar".to_owned();
+    for (micros, source) in [
+        (22, linked(future, locus(0, 1))),
+        (23, linked(head.clone(), locus(4_095, 2))),
+        (24, linked(head.clone(), locus(u64::MAX, 2))),
+        (25, linked(wrong_generation, locus(0, 1))),
+        (26, linked(wrong_stream, locus(0, 1))),
+        (27, linked(head.clone(), locus(0, 0))),
+    ] {
+        let result = commit(&mut journal, publication(&room, micros, source));
+        refused(&journal, result);
+    }
+
+    let mut advanced = head.clone();
+    advanced.next.offset = 8_192;
+    ingest(&mut journal, advanced, head.next, None);
+    commit(
+        &mut journal,
+        publication(&room, 28, linked(head.clone(), locus(4_000, 96))),
+    )
+    .expect("a later head preserves links within the accounted generation");
+
+    let mut replacement = head.clone();
+    replacement.source = uuid("018f82d4-6f59-7d06-92e3-bce913116398");
+    replacement.next.offset = 128;
+    ingest(
+        &mut journal,
+        replacement,
+        TranscriptPosition {
+            member: 1,
+            offset: 0,
+        },
+        Some(head.source),
+    );
+    let result = commit(
+        &mut journal,
+        publication(&room, 29, linked(head, locus(0, 1))),
+    );
+    refused(&journal, result);
+
+    let expected = projection(&journal);
+    journal.verify().expect("accounted links verify");
+    journal.reindex().expect("accounted links rebuild");
+    assert_eq!(projection(&journal), expected);
 }
