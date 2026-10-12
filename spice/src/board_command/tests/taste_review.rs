@@ -421,6 +421,223 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
             "a cleared hold leaves no board-owned tags behind",
         );
     }
+    assert!(
+        at(&cleared, &inserted).claim.is_none(),
+        "clearing an unclaimed synthetic hold does not invent claim history",
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn clearing_a_claimed_synthetic_hold_releases_before_authored_work() {
+    let (root, bus, epoch, seats) = fixture("taste-review-claimed-release", 1);
+    let repository = configured_repository(&root, &["delay"]);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let (task, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-release01",
+        "Delay the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+    claim_held(&bus, epoch, seat, &task);
+    let held = board(&bus, epoch, lane.clone());
+    let held_heads = at(&held, &task);
+    let held_claim = held_heads
+        .claim
+        .as_ref()
+        .expect("synthetic plan is claimed");
+    let stale_completion = progress_witnesses(&held, held_heads, seat.lane, seat.occupant, false)
+        .expect("active synthetic-plan claim has completion witnesses");
+
+    let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        lane.clone(),
+        &task,
+        "Ship the lifecycle change",
+    )) else {
+        panic!("taste clearance returned another answer shape");
+    };
+    assert_eq!(edited.status, "edited; phase:todo");
+    assert_eq!(edited.next.as_deref(), Some("spice task next"));
+
+    let released = board(&bus, epoch, lane.clone());
+    let released_heads = at(&released, &task);
+    assert_eq!(released_heads.workflow.body.phase.as_str(), "todo");
+    let released_claim = released_heads
+        .claim
+        .as_ref()
+        .expect("released claim remains durable");
+    assert_eq!(released_claim.body.disposition, ClaimDisposition::Freed);
+    assert_eq!(released_claim.body.claimed, held_claim.body.claimed);
+    assert_eq!(released_claim.body.actor, held_claim.body.actor);
+    assert_ne!(released_claim.position, held_claim.position);
+    let facts = bus.fact_snapshot().expect("taste-plan release facts read");
+    let born = &released_heads.statement.body.born;
+    let freed = facts
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact
+                .read::<body::ClaimFreed>()
+                .is_some_and(|released| released.task == *born)
+        })
+        .expect("claim release fact exists");
+    let phased = facts
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact
+                .read::<body::TaskPhased>()
+                .is_some_and(|phased| phased.task == *born)
+        })
+        .expect("authored phase restoration exists");
+    assert!(
+        freed.seq < phased.seq,
+        "the claim leaves before the authored execution phase becomes replayable",
+    );
+
+    let stale = issue_repository(
+        &bus,
+        &repository,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        stale_completion,
+        &TaskDone {
+            task: task.clone(),
+            validation: "planning validation cannot complete execution".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    );
+    let Outcome::Refusal(refusal) = stale else {
+        panic!("the prior synthetic-plan claim completed authored work: {stale:?}");
+    };
+    assert_eq!(refusal.reason(), "claim::active-refused");
+    assert_eq!(
+        at(&board(&bus, epoch, lane.clone()), &task)
+            .workflow
+            .body
+            .phase
+            .as_str(),
+        "todo",
+    );
+
+    assert_release_survives_restart_and_reallocates(
+        &root,
+        bus,
+        epoch,
+        seat,
+        lane,
+        &task,
+        released_heads.clone(),
+    );
+}
+
+fn assert_release_survives_restart_and_reallocates(
+    root: &Path,
+    bus: Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    lane: Actor,
+    task: &TaskHandle,
+    expected: BoardTask,
+) {
+    bus.verify()
+        .expect("taste-plan release authority verifies before restart");
+    bus.shutdown().expect("taste-plan release fixture stops");
+    let reopened = journal::Journal::open(root.join("authority.sqlite3"))
+        .expect("taste-plan release journal reopens");
+    let reopened = Bus::start(reopened).expect("taste-plan release bus restarts");
+    assert_eq!(at(&board(&reopened, epoch, lane.clone()), task), &expected);
+
+    let won = claim_held(&reopened, epoch, seat, task);
+    assert_eq!(won.holder.as_ref(), Some(&lane));
+    let reclaimed = board(&reopened, epoch, lane);
+    assert_eq!(
+        at(&reclaimed, task)
+            .claim
+            .as_ref()
+            .expect("authored execution is newly claimed")
+            .body
+            .disposition,
+        ClaimDisposition::Active,
+    );
+    clean(root, reopened);
+}
+
+#[test]
+fn clearing_an_authored_plan_retains_its_active_claim() {
+    let (root, bus, epoch, seats) = fixture("taste-review-authored-plan", 1);
+    let repository = configured_repository(&root, &["delay"]);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let born = stamp("TASTE-authplan");
+    let task = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue_repository(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            preparation: None,
+            intent: None,
+            title: "Delay the planned change".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["focused tests pass".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:taste-review".parse().expect("fixture origin")),
+            flow: Some("plan,todo".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    claim_held(&bus, epoch, seat, &task);
+    let held = board(&bus, epoch, lane.clone());
+    let held_claim = at(&held, &task)
+        .claim
+        .as_ref()
+        .expect("authored plan is claimed")
+        .clone();
+
+    let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        lane.clone(),
+        &task,
+        "Ship the planned change",
+    )) else {
+        panic!("authored-plan clearance returned another answer shape");
+    };
+    assert_eq!(edited.status, "edited");
+    assert_eq!(edited.next.as_deref(), Some("spice task done"));
+    let cleared = board(&bus, epoch, lane);
+    let cleared_heads = at(&cleared, &task);
+    assert_eq!(cleared_heads.workflow.body.phase.as_str(), "plan");
+    let cleared_claim = cleared_heads
+        .claim
+        .as_ref()
+        .expect("authored plan retains its active claim");
+    assert_eq!(cleared_claim.body.disposition, ClaimDisposition::Active);
+    assert_eq!(cleared_claim.body.claimed, held_claim.body.claimed);
+    assert_eq!(cleared_claim.body.actor, held_claim.body.actor);
+    assert!(
+        cleared_heads
+            .statement
+            .body
+            .tags
+            .iter()
+            .all(|tag| !SYSTEM_TAGS.contains(&tag.as_str())),
+    );
     clean(&root, bus);
 }
 
