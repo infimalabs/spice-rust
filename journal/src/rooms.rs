@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomMessaged, RoomPublicationContent,
-    RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomMessaged,
+    RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource, TranscriptHunk,
+    WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
@@ -421,8 +422,8 @@ pub(crate) fn fold(
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
     }
-    if let Some(body) = fact.read::<RoomDelivered>() {
-        return deliver(authority, seq, &body);
+    if let Some(result) = fold_coordination(authority, seq, fact) {
+        return result;
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
         for anchor in &group.anchors {
@@ -470,6 +471,21 @@ pub(crate) fn fold(
         return authorize(authority, seq, authorization);
     }
     Ok(())
+}
+
+fn fold_coordination(
+    authority: &mut impl Authority,
+    seq: Seq,
+    fact: &AnyFact,
+) -> Option<Result<(), Refusal>> {
+    if let Some(body) = fact.read::<RoomCoordinationStarted>() {
+        return Some(publish(authority, seq, &body.room, &body.publication));
+    }
+    if let Some(body) = fact.read::<RoomPutAside>() {
+        return Some(publish(authority, seq, &body.room, &body.publication));
+    }
+    fact.read::<RoomDelivered>()
+        .map(|body| deliver(authority, seq, &body))
 }
 
 fn require_operator(actor: &Actor, what: &str) -> Result<(), Refusal> {

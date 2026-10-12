@@ -92,7 +92,7 @@ pub(super) fn room_post(
     committed(bus, write, CommandAnswer::RoomPost(answer))
 }
 
-fn room_publications(
+pub(super) fn room_publications(
     bus: &Bus,
     room: &wire::TaskStamp,
 ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, Outcome<CommandAnswer>> {
@@ -168,7 +168,7 @@ fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {
     )
 }
 
-fn mint_publication(
+pub(super) fn mint_publication(
     mut micros: i64,
     publications: &[wire::Envelope<wire::AnyFact>],
 ) -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
@@ -176,12 +176,33 @@ fn mint_publication(
         let candidate = RoomAuthorityStamp::for_micros(micros).map_err(|error| {
             environment_fault("room::publication-clock-invalid", &error.to_string())
         })?;
-        let occupied = publications.iter().any(|envelope| {
-            envelope
-                .fact
-                .read::<RoomPublished>()
-                .is_some_and(|published| published.publication == candidate)
-        });
+        let occupied = publications
+            .iter()
+            .filter_map(|envelope| {
+                envelope
+                    .fact
+                    .read::<RoomPublished>()
+                    .map(|body| body.publication)
+                    .or_else(|| {
+                        envelope
+                            .fact
+                            .read::<wire::rooms::RoomMessaged>()
+                            .map(|body| body.publication)
+                    })
+                    .or_else(|| {
+                        envelope
+                            .fact
+                            .read::<wire::rooms::RoomCoordinationStarted>()
+                            .map(|body| body.publication)
+                    })
+                    .or_else(|| {
+                        envelope
+                            .fact
+                            .read::<wire::rooms::RoomPutAside>()
+                            .map(|body| body.publication)
+                    })
+            })
+            .any(|publication| publication == candidate);
         if !occupied {
             return Ok(candidate);
         }

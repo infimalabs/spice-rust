@@ -492,8 +492,12 @@ impl NativeInvocation<'_> {
                 form,
                 board_command::GraphView::text,
             ),
-            ["room", "post"] => deliver_command_answer(&board_command::run(leaf, contract), form),
-            ["task", "list"]
+            ["room", "post"]
+            | ["room", "status"]
+            | ["room", "start"]
+            | ["room", "resume"]
+            | ["room", "put-aside"]
+            | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]
             | ["task", "recover"]
@@ -524,7 +528,7 @@ impl NativeInvocation<'_> {
             | ["preparation", "adopt"]
             | ["doc"]
             | ["doc", "ledger"] => {
-                deliver_command_answer(&board_command::run(leaf, contract), form)
+                deliver_command_answer(&board_command::run(leaf, contract), form);
             }
             ["task", "next"] => task_next_delivery::deliver(
                 &board_command::run_task_next(contract),
