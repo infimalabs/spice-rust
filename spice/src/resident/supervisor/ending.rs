@@ -135,7 +135,7 @@ mod tests {
             occupant,
             worktree: root.to_string_lossy().into_owned(),
             vendor: "omp".parse().expect("fixture vendor"),
-            launch: None,
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: uuid(9),
             stream: "stdout".to_owned(),
             identity: "ending-session".to_owned(),

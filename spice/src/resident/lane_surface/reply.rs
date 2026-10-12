@@ -77,13 +77,13 @@ fn answer_at(
                 life: row.life.clone(),
                 vendor: row.vendor.clone(),
                 model: match row.session.as_ref() {
-                    Some(session) => session.launch.as_ref().map(|launch| launch.model.clone()),
+                    Some(session) => Some(session.launch.model.clone()),
                     None if row.occupant.is_none() => row.model.clone(),
                     None => None,
                 },
                 seat_model: row.model.clone(),
                 effort: match row.session.as_ref() {
-                    Some(session) => session.launch.as_ref().map(|launch| launch.effort.clone()),
+                    Some(session) => Some(session.launch.effort.clone()),
                     None if row.occupant.is_none() => row.effort.clone(),
                     None => None,
                 },
@@ -91,19 +91,16 @@ fn answer_at(
                 fast_mode: row
                     .session
                     .as_ref()
-                    .and_then(|session| session.launch.as_ref())
-                    .is_some_and(|launch| launch.fast_mode),
+                    .is_some_and(|session| session.launch.fast_mode),
                 seat_fast_mode: row.fast_mode,
                 git: row
                     .session
                     .as_ref()
-                    .and_then(|session| session.launch.as_ref())
-                    .and_then(|launch| launch.git.clone()),
+                    .and_then(|session| session.launch.git.clone()),
                 rtk: row
                     .session
                     .as_ref()
-                    .and_then(|session| session.launch.as_ref())
-                    .and_then(|launch| launch.rtk.clone()),
+                    .and_then(|session| session.launch.rtk.clone()),
                 occupant: row.occupant,
                 lineage: row.lineage.clone(),
                 session: row.session.as_ref().map(|session| session.identity.clone()),
@@ -634,16 +631,14 @@ mod tests {
                 occupant: uuid(2),
                 worktree: "/worktrees/main-a".to_owned(),
                 vendor: "omp".parse().expect("fixture vendor"),
-                launch: Some(
-                    wire::body::LaneLaunchIdentity::new("sonnet", "high")
-                        .with_fast_mode(true)
-                        .with_git("current")
-                        .with_rtk(wire::body::RtkHealth::new(
-                            wire::body::RtkHealthState::Active,
-                            Some("0.45.0".to_owned()),
-                            "fixture active",
-                        )),
-                ),
+                launch: wire::body::LaneLaunchIdentity::new("sonnet", "high")
+                    .with_fast_mode(true)
+                    .with_git("current")
+                    .with_rtk(wire::body::RtkHealth::new(
+                        wire::body::RtkHealthState::Active,
+                        Some("0.45.0".to_owned()),
+                        "fixture active",
+                    )),
                 epoch: uuid(4),
                 stream: "stdout".to_owned(),
                 identity: "private-session".to_owned(),
@@ -771,32 +766,6 @@ mod tests {
         assert!(!encoded.contains(&capability));
         assert!(!encoded.contains("capabilities"));
         assert!(encoded.contains("private-session"));
-    }
-
-    #[test]
-    fn lane_reads_expose_one_unrecorded_launch_state_without_inventing_either_half() {
-        let mut row = occupied();
-        row.session.as_mut().expect("fixture session").launch = None;
-        let head = wire::ResidencyHead {
-            epoch: uuid(4),
-            state: ResidentState::Seated,
-            topology_revision: 7,
-            lanes: vec![row],
-            subscriptions: subscriptions(),
-            renewals: Vec::new(),
-        };
-        let observed = Monotonic::now();
-
-        let answer = answer_at(&head, None, observed, |_| {
-            Some(lane::occupant::Activity::new(uuid(2), observed))
-        })
-        .expect("unrecorded launch projects");
-
-        assert_eq!(answer.lanes[0].model, None);
-        assert_eq!(answer.lanes[0].effort, None);
-        assert_eq!(answer.lanes[0].git, None);
-        assert_eq!(answer.lanes[0].rtk, None);
-        assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
     }
 
     #[test]

@@ -245,7 +245,7 @@ fn unavailable_ack_context_is_a_loud_store_fault() {
         lane: "00000000-0000-4000-8000-000000000002".parse().unwrap(),
         epoch: "00000000-0000-4000-8000-000000000003".parse().unwrap(),
         locus: TranscriptLocus {
-            source: None,
+            source: Some("00000000-0000-4000-8000-000000000004".parse().unwrap()),
             member: 1,
             offset: 10,
             length: 50,

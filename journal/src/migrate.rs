@@ -24,12 +24,13 @@ const PREPARED: &str = "prepared";
 /// context schema 35 was the last to default. It then writes the explicit
 /// subscription table a residency head may still omit, replaces retired fact
 /// kinds with inert current-schema evidence, drops retired plan-advance
-/// guidance from task completions and their receipts, crosses or refuses the
-/// remaining retired fact, receipt, and head shapes in [`residual`], and
-/// creates the room-authority projection, which no predecessor could have
-/// populated, empty before the schema identity advances, so no current reader
-/// needs a retired DTO or decode arm.
-const PREDECESSOR_SCHEMAS: [u32; 5] = [33, 34, 35, 36, 37];
+/// guidance from task completions and their receipts, refuses vendor holds
+/// without exact input, incomplete launch identity, and source-less session or
+/// steering authority, crosses or refuses the remaining retired fact, receipt,
+/// and head shapes in [`residual`], and creates the room-authority projection
+/// before the schema identity advances. Current readers therefore need no
+/// execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 6] = [33, 34, 35, 36, 37, 38];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -245,6 +246,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     refuse_creation_omission(&transaction)?;
+    residual::refuse(&transaction)?;
     cross_residency_subscriptions(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
     cross_retired_task_guidance(&transaction)?;
@@ -1132,8 +1134,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 38, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 39, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 38;
+PRAGMA user_version = 39;
 "#;

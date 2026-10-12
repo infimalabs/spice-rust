@@ -197,6 +197,7 @@ pub struct SteerMessaged {
     /// The packet's exact body.
     pub text: String,
     /// Assistant transcript locus of the packet's MSG header.
+    #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
     /// Anchor task whose room context the route named, frozen at publication;
     /// absent on a direct route and on every message older than room routes.
@@ -242,6 +243,7 @@ pub struct SteerWithheld {
     /// Occupant whose captured transcript authored the packet.
     pub sender: CanonicalUuid,
     /// Assistant transcript locus of the packet's MSG header.
+    #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
     /// Stable refusal reason.
     pub reason: String,
@@ -341,9 +343,9 @@ pub struct SteerRecovered {
 pub struct TranscriptLocus {
     /// Opaque identity of the durable tape generation carrying this record.
     ///
-    /// Legacy facts predate source-aware transcript evidence. Consumers must
-    /// treat an absent source as lane-scoped rather than guessing that equal
-    /// numeric coordinates came from one tape.
+    /// Evidence derived without a durable tape generation, such as the current
+    /// taste surface, omits it. Fact families whose authority comes from a
+    /// captured transcript enforce presence on their own body codec.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -364,6 +366,40 @@ pub struct TranscriptLocus {
     pub column: u32,
 }
 
+/// Enforce source qualification on authority families that only current tape
+/// records may create while retaining the shared optional locus for taste
+/// evidence whose current contract has no tape generation.
+mod sourced_transcript_locus {
+    use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer};
+
+    use super::TranscriptLocus;
+
+    pub(super) fn serialize<S>(locus: &TranscriptLocus, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if locus.source.is_none() {
+            return Err(serde::ser::Error::custom(
+                "source-qualified transcript locus omits its tape generation",
+            ));
+        }
+        locus.serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<TranscriptLocus, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let locus = TranscriptLocus::deserialize(deserializer)?;
+        if locus.source.is_none() {
+            return Err(serde::de::Error::custom(
+                "source-qualified transcript locus omits its tape generation",
+            ));
+        }
+        Ok(locus)
+    }
+}
+
 /// A live directive was acknowledged at a transcript locus.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerAcked {
@@ -376,6 +412,7 @@ pub struct SteerAcked {
     /// Resident generation that authenticated the lane.
     pub epoch: CanonicalUuid,
     /// Transcript locus carrying the acknowledgement.
+    #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
 }
 
@@ -391,6 +428,7 @@ pub struct SteerDeclined {
     /// Resident generation that authenticated the lane.
     pub epoch: CanonicalUuid,
     /// Transcript locus carrying the refusal.
+    #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
     /// Stated reason the directive cannot be done.
     pub reason: String,
@@ -422,6 +460,7 @@ pub struct SteerMissed {
     /// Resident generation that authenticated the lane.
     pub epoch: CanonicalUuid,
     /// Transcript locus the unmatched key appeared at.
+    #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
     /// Scanner classification that prevented retirement.
     pub miss: AcknowledgmentMiss,

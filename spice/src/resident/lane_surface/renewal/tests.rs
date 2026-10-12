@@ -421,7 +421,7 @@ fn seeded(
         occupant: fixture.occupant,
         worktree: fixture.root.display().to_string(),
         vendor: fixture.vendor.clone(),
-        launch: None,
+        launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch: fixture.epoch,
         stream: "stdout".to_owned(),
         identity: SESSION.to_owned(),

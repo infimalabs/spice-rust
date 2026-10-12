@@ -348,10 +348,10 @@ fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared:
                     occupant: uuid(16_205),
                     worktree: "/fixture/worktree".to_owned(),
                     vendor: "omp".parse().expect("fixture vendor"),
-                    launch: None,
+                    launch: body::LaneLaunchIdentity::new("sonnet", "high"),
                     epoch,
                     stream: "stdout".to_owned(),
-                    source: Some(source),
+                    source,
                     identity: (*identity).to_owned(),
                     member: 1,
                     offset: *offset,
@@ -365,12 +365,12 @@ fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared:
             CommitOutcome::Committed(_)
         ));
     }
-    acknowledge(bus, key, lane, Some(source));
+    acknowledge(bus, key, lane, source);
 }
 
 /// Retire live directive `key` by `lane`'s acknowledgment at member 1 offset
 /// 40 of `source`.
-fn acknowledge(bus: &Bus, key: &str, lane: CanonicalUuid, source: Option<CanonicalUuid>) {
+fn acknowledge(bus: &Bus, key: &str, lane: CanonicalUuid, source: CanonicalUuid) {
     let epoch = uuid(16_204);
     let lookup = key.to_owned();
     let head = bus
@@ -391,7 +391,7 @@ fn acknowledge(bus: &Bus, key: &str, lane: CanonicalUuid, source: Option<Canonic
                 lane,
                 epoch,
                 locus: body::TranscriptLocus {
-                    source,
+                    source: Some(source),
                     member: 1,
                     offset: 40,
                     length: 7,
@@ -727,11 +727,11 @@ fn task_show_and_review_context_include_only_uncaptured_claim_steering() {
     );
     let held_born = held.born().expect("fixture identity");
     send_directive(&bus, Actor::Operator, "1kLGp2N1", uuid(16_301), holder);
-    acknowledge(&bus, "1kLGp2N1", holder, None);
+    acknowledge(&bus, "1kLGp2N1", holder, uuid(16_401));
     capture(&bus, epoch, &seats[0], &held);
     let steer = |key: &str, author: Actor, to: CanonicalUuid, directive: u64| {
         send_directive(&bus, author, key, uuid(directive), to);
-        acknowledge(&bus, key, to, None);
+        acknowledge(&bus, key, to, uuid(directive + 100));
     };
     steer("1kLGp2N2", Actor::Operator, holder, 16_302);
     steer("1kLGp2N3", Actor::Operator, holder, 16_303);

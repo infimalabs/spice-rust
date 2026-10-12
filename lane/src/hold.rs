@@ -37,8 +37,7 @@ pub enum Death {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HoldKind {
     YoungDeath,
-    /// `None` is one legacy vendor hold written before refused input was durable.
-    VendorFailure(Option<VendorFailureInput>),
+    VendorFailure(VendorFailureInput),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,7 +136,7 @@ impl Holds {
             lane,
             Hold {
                 until,
-                kind: HoldKind::VendorFailure(Some(input.clone())),
+                kind: HoldKind::VendorFailure(input.clone()),
                 expiry_observed: false,
             },
         );
@@ -155,12 +154,12 @@ impl Holds {
         self.held.get(&lane).map(|hold| hold.until)
     }
 
-    /// Refused vendor input, with an inner absence only for one legacy hold.
+    /// Refused vendor input, absent for a young-death hold.
     #[must_use]
-    pub fn vendor_failure(&self, lane: CanonicalUuid) -> Option<Option<&VendorFailureInput>> {
+    pub fn vendor_failure(&self, lane: CanonicalUuid) -> Option<&VendorFailureInput> {
         match &self.held.get(&lane)?.kind {
             HoldKind::YoungDeath => None,
-            HoldKind::VendorFailure(input) => Some(input.as_ref()),
+            HoldKind::VendorFailure(input) => Some(input),
         }
     }
 
@@ -177,16 +176,10 @@ impl Holds {
     /// Replay one durable hold fact into this reducer.
     pub fn absorb_held(&mut self, held: &LaneHeld) {
         self.young.remove(&held.lane);
-        let kind = held.vendor_failure.clone().map_or_else(
-            || {
-                if held.evidence.contains(" ended on a vendor error:") {
-                    HoldKind::VendorFailure(None)
-                } else {
-                    HoldKind::YoungDeath
-                }
-            },
-            |input| HoldKind::VendorFailure(Some(input)),
-        );
+        let kind = held
+            .vendor_failure
+            .clone()
+            .map_or(HoldKind::YoungDeath, HoldKind::VendorFailure);
         self.held.insert(
             held.lane,
             Hold {
@@ -226,24 +219,13 @@ impl Holds {
         })
     }
 
-    /// Supplies current input to a replayed legacy vendor hold.
-    pub fn hydrate_vendor_failure(&mut self, lane: CanonicalUuid, input: VendorFailureInput) {
-        if let Some(Hold {
-            kind: HoldKind::VendorFailure(current @ None),
-            ..
-        }) = self.held.get_mut(&lane)
-        {
-            *current = Some(input);
-        }
-    }
-
     /// Releases a vendor hold once its resumable input differs.
     pub fn input_changed(
         &mut self,
         lane: CanonicalUuid,
         current: &VendorFailureInput,
     ) -> Option<LaneResumed> {
-        let HoldKind::VendorFailure(Some(refused)) = &self.held.get(&lane)?.kind else {
+        let HoldKind::VendorFailure(refused) = &self.held.get(&lane)?.kind else {
             return None;
         };
         if refused == current {

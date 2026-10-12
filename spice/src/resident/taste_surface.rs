@@ -415,8 +415,7 @@ fn applicability_context(
     if let Some(model) = row
         .session
         .as_ref()
-        .and_then(|session| session.launch.as_ref())
-        .map(|launch| launch.model.as_str())
+        .map(|session| session.launch.model.as_str())
     {
         context = context.with_model(model);
     }

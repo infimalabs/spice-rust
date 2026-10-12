@@ -300,7 +300,7 @@ impl Lanes {
             occupant: row.occupant.expect("the declaring lane is seated"),
             worktree: row.worktree.clone(),
             vendor: row.vendor.clone(),
-            launch: None,
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: self.epoch,
             stream: "stdout".to_owned(),
             identity: "session-1".to_owned(),

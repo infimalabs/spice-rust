@@ -469,7 +469,7 @@ fn seat_lane_residency(
                 occupant,
                 worktree: "/ingestion/worktree".to_owned(),
                 vendor: "omp".parse().expect("fixture vendor"),
-                launch: None,
+                launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
                 epoch,
                 stream: "stdout".to_owned(),
                 identity: "thread-ingestion".to_owned(),

@@ -871,9 +871,7 @@ fn session_proof_carries_the_one_admitted_launch_identity() {
 
     let session = await_session(proof.session).expect("one declaration proves the session");
 
-    let launch = session
-        .launch
-        .expect("current declaration records its launch");
+    let launch = session.launch;
     assert_eq!(launch.model, "sonnet");
     assert_eq!(launch.effort, "high");
     let rtk = launch.rtk.expect("current declaration records RTK health");
@@ -1034,7 +1032,7 @@ fn proven(fixture: &Fixture) -> ProvenOccupant {
             occupant: fixture.successor,
             worktree: SUCCESSOR.into(),
             vendor: "omp".parse().expect("fixture vendor"),
-            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current")),
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current"),
             epoch: fixture.new_epoch,
             stream: "stdout".into(),
             identity: "successor-session".into(),
@@ -1059,10 +1057,7 @@ fn assert_imported(fixture: &Fixture) {
     assert_eq!(row.vendor.as_str(), "omp");
     let session = row.session.as_ref().expect("import declares one authority");
     assert_eq!(session.identity, "successor-session");
-    let launch = session
-        .launch
-        .as_ref()
-        .expect("import preserves launch identity");
+    let launch = &session.launch;
     assert_eq!(launch.model, "sonnet");
     assert_eq!(launch.effort, "high");
     assert_eq!(session.occupant, fixture.successor);
@@ -1247,7 +1242,7 @@ fn exited_session(fixture: &Fixture) -> wire::LaneSession {
         occupant: fixture.ancestor,
         worktree: PREDECESSOR.to_owned(),
         vendor: "omp".parse().expect("fixture vendor"),
-        launch: None,
+        launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
         epoch: fixture.old_epoch,
         stream: "stdout".to_owned(),
         identity: "exited-session".to_owned(),

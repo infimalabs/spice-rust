@@ -856,6 +856,7 @@ fn a_declared_session_requires_one_complete_current_launch_identity() {
         },
         "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
         "stream": "stdout",
+        "source": "018f82d4-6f59-7d06-92e3-bce9131163c5",
         "identity": "session-a",
         "member": 1,
         "offset": 2,
@@ -864,7 +865,7 @@ fn a_declared_session_requires_one_complete_current_launch_identity() {
     let bytes = serde_json::to_vec(&complete).expect("fixture encodes");
     let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
         .expect("the current declaration shape decodes");
-    let launch = recorded.launch.expect("the complete launch is recorded");
+    let launch = recorded.launch;
     assert_eq!(
         (
             launch.model.as_str(),
@@ -878,6 +879,19 @@ fn a_declared_session_requires_one_complete_current_launch_identity() {
             Some("current"),
             Some(wire::body::RtkHealthState::Active),
         )
+    );
+
+    let mut source_less = complete.clone();
+    source_less
+        .as_object_mut()
+        .expect("fixture object")
+        .remove("source");
+    assert!(
+        wire::decode::<wire::body::LaneSessionDeclared>(
+            &serde_json::to_vec(&source_less).expect("source-less fixture encodes")
+        )
+        .is_err(),
+        "current declarations always name their tape generation"
     );
 
     let mut retired_hook = complete.clone();

@@ -19,9 +19,17 @@ const CLAIM_CELL_RELEASE: &str = "ea3fe662a";
 const RELEASE_NOTES_RELEASE: &str = "987f0d60b";
 /// Release from which steering heads spell their mint instant in microseconds.
 const STEERING_MICROS_RELEASE: &str = "d811711a3";
+/// Release from which vendor-failure holds carry their exact refused input.
+const VENDOR_FAILURE_INPUT_RELEASE: &str = "3903331e5";
+/// Release from which lane session declarations name their tape generation.
+const SESSION_SOURCE_RELEASE: &str = "a4abe071f";
+/// Release from which resumable sessions carry exact launch identity.
+const SESSION_LAUNCH_RELEASE: &str = "9f2487d5a";
+/// Release from which steering transcript evidence names its tape generation.
+const STEERING_SOURCE_RELEASE: &str = "cb609bd56";
 
-/// Refuse every shape without a current spelling, then rewrite the rest.
-pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+/// Refuse every retained shape without a current spelling before mutation.
+pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     refuse_first(
         transaction,
         "fact_envelopes",
@@ -58,6 +66,70 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         STEERING_MICROS_RELEASE,
         "the steering head spells its mint instant in milliseconds",
     )?;
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND json_type(CAST(envelope AS TEXT), '$.fact.vendor_failure') IS NULL \
+         AND instr(COALESCE(json_extract(CAST(envelope AS TEXT), '$.fact.evidence'), ''), \
+             ' ended on a vendor error:') > 0 ORDER BY seq",
+        [wire::FactKind::LaneHeld.as_str()],
+        VENDOR_FAILURE_INPUT_RELEASE,
+        "the vendor-failure hold omits its exact refused input",
+    )?;
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND json_type(CAST(envelope AS TEXT), '$.fact.source') IS NULL ORDER BY seq",
+        [wire::FactKind::LaneSessionDeclared.as_str()],
+        SESSION_SOURCE_RELEASE,
+        "the lane session declaration omits its tape generation",
+    )?;
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND (json_type(CAST(envelope AS TEXT), '$.fact.model') IS NULL \
+              OR json_type(CAST(envelope AS TEXT), '$.fact.effort') IS NULL) ORDER BY seq",
+        [wire::FactKind::LaneSessionDeclared.as_str()],
+        SESSION_LAUNCH_RELEASE,
+        "the lane session declaration omits its launch identity",
+    )?;
+    refuse_first(
+        transaction,
+        "residency_head",
+        "SELECT CAST(singleton AS TEXT) FROM residency_head, \
+         json_each(CAST(body AS TEXT), '$.lanes') AS lane \
+         WHERE json_type(lane.value, '$.session') = 'object' \
+         AND (json_type(lane.value, '$.session.model') IS NULL \
+              OR json_type(lane.value, '$.session.effort') IS NULL) ORDER BY singleton",
+        (),
+        SESSION_LAUNCH_RELEASE,
+        "the resumable lane session omits its launch identity",
+    )?;
+    for kind in [
+        wire::FactKind::SteerAcked,
+        wire::FactKind::SteerDeclined,
+        wire::FactKind::SteerMissed,
+        wire::FactKind::SteerMessaged,
+        wire::FactKind::SteerWithheld,
+    ] {
+        refuse_first(
+            transaction,
+            "fact_envelopes",
+            "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+             AND json_type(CAST(envelope AS TEXT), '$.fact.locus.source') IS NULL ORDER BY seq",
+            [kind.as_str()],
+            STEERING_SOURCE_RELEASE,
+            "the steering transcript locus omits its tape generation",
+        )?;
+    }
+    Ok(())
+}
+
+/// Rewrite every retained shape that has one exact current spelling.
+pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     rewrite_facts(
         transaction,
         wire::FactKind::TaskEdited,

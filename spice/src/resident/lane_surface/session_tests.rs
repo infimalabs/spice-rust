@@ -91,7 +91,7 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
             occupant: fixture.occupant,
             worktree: WORKTREE.into(),
             vendor: "omp".parse().expect("fixture vendor"),
-            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: uuid(3),
             stream: "stdout".into(),
             identity: IDENTITY.into(),

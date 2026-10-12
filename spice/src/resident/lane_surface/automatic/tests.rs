@@ -241,7 +241,7 @@ fn seed_vacant_lane_with_lineage(
             occupant,
             worktree: worktree.clone(),
             vendor: fixture.vendor.clone(),
-            launch: None,
+            launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: fixture.epoch,
             stream: "stdout".to_owned(),
             identity: SESSION.to_owned(),

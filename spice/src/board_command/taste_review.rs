@@ -243,8 +243,7 @@ pub(super) fn task_taste_review(
     let vendor = seat.map(|seat| seat.vendor.as_str());
     let model = seat
         .and_then(|seat| seat.session.as_ref())
-        .and_then(|session| session.launch.as_ref())
-        .map(|launch| launch.model.as_str());
+        .map(|session| session.launch.model.as_str());
     let role = if matches!(actor, Actor::Operator) {
         listen::ProseRole::Operator
     } else {

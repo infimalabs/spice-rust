@@ -189,7 +189,7 @@ fn miss_write() -> JournalWrite {
         lane: uuid(LANE),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         locus: TranscriptLocus {
-            source: None,
+            source: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116305")),
             member: 1,
             offset: 2,
             length: 3,

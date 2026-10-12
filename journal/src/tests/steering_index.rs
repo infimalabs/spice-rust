@@ -617,7 +617,7 @@ fn retire_write(observed: &JournalHead<SteeringHead>, disposition: Disposition) 
     let (directive, key, lane) = (head.directive, head.key.clone(), head.lane);
     let cause = FactCause::Existing(observed.position());
     let locus = TranscriptLocus {
-        source: None,
+        source: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116306")),
         member: 1,
         offset: 0,
         length: 1,

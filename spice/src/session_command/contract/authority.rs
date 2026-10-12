@@ -348,7 +348,7 @@ fn recall_lanes(
                 occupant,
                 worktree: "/fixture".to_owned(),
                 vendor: "omp".parse().expect("fixture vendor"),
-                launch: None,
+                launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
                 epoch,
                 stream: "session".to_owned(),
                 identity: thread.to_owned(),

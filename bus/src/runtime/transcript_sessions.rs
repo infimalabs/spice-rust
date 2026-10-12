@@ -31,33 +31,22 @@ mod tests;
 
 impl TranscriptSessions {
     /// Recover source-qualified session bindings in journal order.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an unqualified declaration that should have crossed the schema
-    /// 30 to 31 migration before any runtime reader observed it.
-    pub fn from_snapshot(snapshot: &FactSnapshot) -> Result<Self, String> {
+    #[must_use]
+    pub fn from_snapshot(snapshot: &FactSnapshot) -> Self {
         let mut sessions = Self::default();
         for fact in snapshot.facts() {
-            sessions.apply(fact)?;
+            sessions.apply(fact);
         }
-        Ok(sessions)
+        sessions
     }
 
-    fn apply(&mut self, envelope: &Envelope<AnyFact>) -> Result<(), String> {
+    fn apply(&mut self, envelope: &Envelope<AnyFact>) {
         let Some(session) = envelope.fact.read::<body::LaneSessionDeclared>() else {
-            return Ok(());
+            return;
         };
-        let source = session.source.ok_or_else(|| {
-            format!(
-                "schema 31 lane session at sequence {} has no tape generation; \
-                 use the release that owns schema 30 to migrate this authority",
-                envelope.seq
-            )
-        })?;
         let position = (session.member, session.offset);
         self.sources
-            .entry((session.lane, source))
+            .entry((session.lane, session.source))
             .or_default()
             .insert(
                 (position, envelope.seq),
@@ -67,7 +56,6 @@ impl TranscriptSessions {
                     worktree: session.worktree.into(),
                 },
             );
-        Ok(())
     }
 
     /// Latest session at or before one position in an exact source generation.
@@ -117,7 +105,7 @@ impl TranscriptSessionState {
                     FactReadBudget::RETAINED,
                 )?;
                 for fact in &page.rows {
-                    self.sessions.apply(fact).map_err(GuardError::Invalid)?;
+                    self.sessions.apply(fact);
                 }
                 self.cursor = page.continuation.or(page.horizon);
             }
