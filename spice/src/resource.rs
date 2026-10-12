@@ -50,6 +50,7 @@ spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGE
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?limit=N&max-bytes=N&after=PUBLICATION]; reading joins and acknowledges nothing
+spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items, each with its receipt and result; reading settles nothing
 spice://room/result/RESULT  room result RESULT; one question's result, its parties, closure attribution, and answer return receipt
@@ -125,6 +126,7 @@ enum Shape {
     Artifacts { handle: TaskHandle },
     Artifact { handle: TaskHandle, id: String },
     Room { handle: TaskHandle },
+    RoomRelevance { handle: TaskHandle },
     Preparation { handle: TaskHandle },
     Inbox,
     RoomInbox,
@@ -294,6 +296,7 @@ const SERVED: &[&[&str]] = &[
     &["room", "history"],
     &["room", "inbox"],
     &["room", "result"],
+    &["room", "relevance"],
     &["preparation", "show"],
     &["board", "graph"],
     &["doc", "ledger"],
@@ -320,6 +323,7 @@ impl Shape {
             Self::Ledger { .. } => LEDGER,
             Self::Artifacts { .. }
             | Self::Room { .. }
+            | Self::RoomRelevance { .. }
             | Self::Preparation { .. }
             | Self::Lanes
             | Self::RoomInbox => ROWS,
@@ -370,6 +374,7 @@ impl Shape {
                 format!("task/{handle}/artifact/{}", encode(id))
             }
             Self::Room { handle } => format!("task/{handle}/room"),
+            Self::RoomRelevance { handle } => format!("task/{handle}/room/relevance"),
             Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
             Self::RoomInbox => "room/inbox".to_owned(),
@@ -402,6 +407,7 @@ impl Shape {
                 words(&["task", "artifact", "show", handle.as_str(), id])
             }
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
+            Self::RoomRelevance { handle } => words(&["room", "relevance", handle.as_str()]),
             Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
             Self::RoomInbox => words(&["room", "inbox"]),
@@ -534,6 +540,12 @@ impl Shape {
             ),
             ["room", "history", task, rest @ ..] => (
                 Self::Room {
+                    handle: handle(task)?,
+                },
+                rest,
+            ),
+            ["room", "relevance", task, rest @ ..] => (
+                Self::RoomRelevance {
                     handle: handle(task)?,
                 },
                 rest,
@@ -707,6 +719,7 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
             }
         }
         ["room"] => Shape::Room { handle },
+        ["room", "relevance"] => Shape::RoomRelevance { handle },
         ["preparation"] => Shape::Preparation { handle },
         [verb] => {
             refuse_unserved(&["task", verb], url)?;
@@ -1073,18 +1086,7 @@ impl Seat {
                 );
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
-            ["room", "history"] => {
-                let outcome = crate::room_command::run_at(repository, leaf, contract);
-                rendered(&outcome, render::render_display(&outcome, Form::Text))?
-            }
-            ["room", "inbox"] => {
-                let outcome = crate::room_command::inbox::run_at(repository, leaf, contract);
-                rendered(&outcome, render::render_display(&outcome, Form::Text))?
-            }
-            ["room", "result"] => {
-                let outcome = crate::room_command::result::run_at(repository, leaf, contract);
-                rendered(&outcome, render::render_display(&outcome, Form::Text))?
-            }
+            ["room", ..] => room_document(repository, leaf, contract)?,
             ["preparation", "show"] => {
                 let outcome = crate::preparation_command::run_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
@@ -1127,6 +1129,32 @@ impl Seat {
             }
         };
         Ok(rewrite_continuations(&document))
+    }
+}
+
+/// The rendered document of one room read.
+fn room_document(
+    repository: &Repository,
+    leaf: &clap::ArgMatches,
+    contract: &crate::cli::Contract,
+) -> Result<String, String> {
+    match contract.path {
+        ["room", "inbox"] => {
+            let outcome = crate::room_command::inbox::run_at(repository, leaf, contract);
+            rendered(&outcome, render::render_display(&outcome, Form::Text))
+        }
+        ["room", "result"] => {
+            let outcome = crate::room_command::result::run_at(repository, leaf, contract);
+            rendered(&outcome, render::render_display(&outcome, Form::Text))
+        }
+        ["room", "relevance"] => {
+            let outcome = crate::room_command::relevance::run_at(repository, leaf, contract);
+            rendered(&outcome, render::render_display(&outcome, Form::Text))
+        }
+        _ => {
+            let outcome = crate::room_command::run_at(repository, leaf, contract);
+            rendered(&outcome, render::render_display(&outcome, Form::Text))
+        }
     }
 }
 
@@ -1253,6 +1281,7 @@ fn board_trailer(document: &mut String, shape: &Shape) {
             "acceptance",
             "artifact",
             "room",
+            "room/relevance",
         ]
         .iter()
         .map(|child| format!("{SCHEME}task/{handle}/{child}"))

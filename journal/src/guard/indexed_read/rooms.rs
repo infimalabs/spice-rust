@@ -7,13 +7,17 @@ use wire::rooms::{
     ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
     RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomMessaged,
     RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
-    RoomReceiptRef, RoomRelevanceAssessment, RoomRelevanceObservation, WorkingGroup,
+    RoomReceiptRef, WorkingGroup,
 };
 
 use super::{
     CurrentHeadWitness, FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
     admitted_envelope_length, decode_bounded_fact, decode_head, read_metrics,
 };
+
+mod relevance;
+
+pub use relevance::{RoomRelevanceMetrics, RoomRelevancePage, RoomRelevanceRecord};
 
 /// One write-once proposal head, decoded as its subject's family.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,44 +61,6 @@ pub struct OpenRoomItemPage {
     pub rows: Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>,
     /// Number of open items at or after the requested cursor.
     pub population: usize,
-}
-/// One source-backed shadow observation and its optional operator assessment.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RoomRelevanceRecord {
-    /// Immutable observation at its admitted position.
-    pub observation: JournalHead<RoomRelevanceObservation>,
-    /// Attributable assessment, absent until the operator records one.
-    pub assessment: Option<JournalHead<RoomRelevanceAssessment>>,
-}
-
-/// Bounded aggregate quality and classification counters for one room.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RoomRelevanceMetrics {
-    pub observations: usize,
-    pub relevant_contributions: usize,
-    pub declines: usize,
-    pub duplicates: usize,
-    pub stale_activity: usize,
-    pub missed_opportunities: usize,
-    pub non_evidence_signals: usize,
-    pub unknown_observations: usize,
-    pub progress: usize,
-    pub confirmed: usize,
-    pub false_positives: usize,
-    pub unknown_assessments: usize,
-    pub unassessed: usize,
-}
-
-/// One identity-ordered bounded page of shadow observations.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RoomRelevancePage {
-    pub rows: Vec<RoomRelevanceRecord>,
-    /// Last returned observation identity when more rows remain.
-    pub continuation: Option<RoomAuthorityStamp>,
-    /// Aggregate counters for the complete room, independent of page size.
-    pub metrics: RoomRelevanceMetrics,
-    /// Cursor identity of the projection this page observed.
-    pub witness: CurrentHeadWitness,
 }
 
 impl JournalRead<'_> {
@@ -687,6 +653,32 @@ impl JournalRead<'_> {
             .collect()
     }
 
+    /// Every settled question result in a task room that no shadow relevance
+    /// observation names yet, in result order. The observation shares its
+    /// result's identity, so each result is observed at most once.
+    pub fn unobserved_question_results(
+        &self,
+    ) -> Result<Vec<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
+        let rows = self.conversation_rows::<QuestionResultRecord, QuestionResultHead>(
+            "room_results",
+            "result",
+            "pending = 0 \
+             AND NOT EXISTS (SELECT 1 FROM room_relevance_observations AS observed \
+                             WHERE observed.observation = room_results.result) \
+             AND json_extract(CAST(record AS TEXT), '$.context') IS NOT NULL",
+        )?;
+        rows.into_iter()
+            .map(|(key, record, head)| {
+                if record.result().to_string() != key || head.body.result().to_string() != key {
+                    return Err(GuardError::Invalid(format!(
+                        "question result indexed as {key} names another result"
+                    )));
+                }
+                Ok((record, head))
+            })
+            .collect()
+    }
+
     /// Every operator item that still owes a disposition, pending or lapsed,
     /// with its immutable record and current guarded head, in item order.
     pub fn open_room_items(
@@ -825,119 +817,6 @@ impl JournalRead<'_> {
         let publication = wire::decode::<RoomPublication>(&body)
             .map_err(|error| GuardError::Invalid(format!("conversation {position}: {error}")))?;
         Ok(Some((seq, publication)))
-    }
-
-    /// One bounded identity-ordered page of shadow observations for `room`.
-    ///
-    /// Metrics cover the complete room at this read transaction's cursor. The
-    /// read changes no observation, room, task, delivery, or authorization.
-    pub fn room_relevance_page(
-        &self,
-        room: &wire::TaskStamp,
-        after: Option<&RoomAuthorityStamp>,
-        budget: FactReadBudget,
-    ) -> Result<RoomRelevancePage, GuardError> {
-        let after = after.map(ToString::to_string).unwrap_or_default();
-        let metrics = self.room_relevance_metrics(room)?;
-        read_metrics::observe_query();
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT length(CAST(observation.observation AS BLOB)), \
-                        observation.observation, observation.head_seq, \
-                        observation.through_seq, observation.classification, \
-                        observation.progress, length(observation.body), observation.body, \
-                        assessment.head_seq, assessment.verdict, \
-                        length(assessment.body), assessment.body \
-                 FROM room_relevance_observations AS observation \
-                 LEFT JOIN room_relevance_assessments AS assessment \
-                    ON assessment.observation = observation.observation \
-                 WHERE observation.room = ?1 AND observation.observation > ?2 \
-                 ORDER BY observation.observation LIMIT ?3",
-            )
-            .map_err(GuardError::Store)?;
-        let mut rows = statement
-            .query(params![room.as_str(), after, probe_limit(budget)?])
-            .map_err(GuardError::Store)?;
-        let mut records = Vec::with_capacity(budget.rows());
-        let mut decoded = 0usize;
-        let mut continuation = None;
-        while let Some(row) = rows.next().map_err(GuardError::Store)? {
-            read_metrics::observe_row();
-            if records.len() == budget.rows() {
-                continuation = records.last().map(|record: &RoomRelevanceRecord| {
-                    record.observation.body.observation.clone()
-                });
-                break;
-            }
-            let length = relevance_row_length(row)?;
-            if !records.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes() {
-                continuation = records.last().map(|record: &RoomRelevanceRecord| {
-                    record.observation.body.observation.clone()
-                });
-                break;
-            }
-            let record = decode_relevance_record(row, room)?;
-            read_metrics::observe_decode(length);
-            decoded = decoded.saturating_add(length);
-            records.push(record);
-        }
-        Ok(RoomRelevancePage {
-            rows: records,
-            continuation,
-            metrics,
-            witness: CurrentHeadWitness {
-                cursor: self.cursor,
-            },
-        })
-    }
-
-    fn room_relevance_metrics(
-        &self,
-        room: &wire::TaskStamp,
-    ) -> Result<RoomRelevanceMetrics, GuardError> {
-        read_metrics::observe_query();
-        self.connection
-            .query_row(
-                "SELECT count(*), \
-                        sum(observation.classification = 'relevant-contribution'), \
-                        sum(observation.classification = 'declined'), \
-                        sum(observation.classification = 'duplicate'), \
-                        sum(observation.classification = 'stale-activity'), \
-                        sum(observation.classification IN (
-                            'agreement', 'message-count', 'silence', 'elapsed-time'
-                        )), \
-                        sum(observation.classification = 'missed-opportunity'), \
-                        sum(observation.classification = 'unknown'), \
-                        sum(observation.progress = 'advanced'), \
-                        sum(assessment.verdict = 'confirmed'), \
-                        sum(assessment.verdict = 'false-positive'), \
-                        sum(assessment.verdict = 'unknown'), \
-                        sum(assessment.observation IS NULL) \
-                 FROM room_relevance_observations AS observation \
-                 LEFT JOIN room_relevance_assessments AS assessment \
-                    ON assessment.observation = observation.observation \
-                 WHERE observation.room = ?1",
-                [room.as_str()],
-                |row| {
-                    Ok(RoomRelevanceMetrics {
-                        observations: metric(row, 0)?,
-                        relevant_contributions: metric(row, 1)?,
-                        declines: metric(row, 2)?,
-                        duplicates: metric(row, 3)?,
-                        stale_activity: metric(row, 4)?,
-                        missed_opportunities: metric(row, 6)?,
-                        non_evidence_signals: metric(row, 5)?,
-                        unknown_observations: metric(row, 7)?,
-                        progress: metric(row, 8)?,
-                        confirmed: metric(row, 9)?,
-                        false_positives: metric(row, 10)?,
-                        unknown_assessments: metric(row, 11)?,
-                        unassessed: metric(row, 12)?,
-                    })
-                },
-            )
-            .map_err(GuardError::Store)
     }
 
     /// The admitted envelope at `seq`, absent beyond the read cursor.
@@ -1343,125 +1222,6 @@ fn indexed_length(
     let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
     usize::try_from(length)
         .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
-}
-
-fn relevance_row_length(row: &rusqlite::Row<'_>) -> Result<usize, GuardError> {
-    let identity = indexed_length(row, 0, "relevance observation identity")?;
-    let body = indexed_length(row, 6, "relevance observation body")?;
-    let assessment = row
-        .get::<_, Option<i64>>(10)
-        .map_err(GuardError::Store)?
-        .map(|length| {
-            usize::try_from(length).map_err(|_| {
-                GuardError::Invalid("relevance assessment has an invalid byte length".to_owned())
-            })
-        })
-        .transpose()?
-        .unwrap_or_default();
-    Ok(identity.saturating_add(body).saturating_add(assessment))
-}
-
-fn decode_relevance_record(
-    row: &rusqlite::Row<'_>,
-    room: &wire::TaskStamp,
-) -> Result<RoomRelevanceRecord, GuardError> {
-    let key = row.get::<_, String>(1).map_err(GuardError::Store)?;
-    let through = row.get::<_, i64>(3).map_err(GuardError::Store)?;
-    let classification = row.get::<_, String>(4).map_err(GuardError::Store)?;
-    let progress = row.get::<_, String>(5).map_err(GuardError::Store)?;
-    let body = row.get::<_, Vec<u8>>(7).map_err(GuardError::Store)?;
-    let position = row.get(2).map_err(GuardError::Store)?;
-    let observation = decode_head::<RoomRelevanceObservation>(position, &body)?;
-    let stored_through = u64::try_from(through).map_err(|_| {
-        GuardError::Invalid(format!(
-            "relevance observation {key} has invalid horizon {through}"
-        ))
-    })?;
-    if observation.body.observation.to_string() != key
-        || observation.body.room != *room
-        || observation.body.through.get() != stored_through
-        || relevance_class_name(observation.body.classification) != classification
-        || relevance_progress_name(observation.body.progress) != progress
-    {
-        return Err(GuardError::Invalid(format!(
-            "relevance observation projection {key} disagrees with its body"
-        )));
-    }
-    let assessment = decode_relevance_assessment(row, &key)?;
-    Ok(RoomRelevanceRecord {
-        observation,
-        assessment,
-    })
-}
-
-fn decode_relevance_assessment(
-    row: &rusqlite::Row<'_>,
-    key: &str,
-) -> Result<Option<JournalHead<RoomRelevanceAssessment>>, GuardError> {
-    let position = row.get::<_, Option<i64>>(8).map_err(GuardError::Store)?;
-    let verdict = row.get::<_, Option<String>>(9).map_err(GuardError::Store)?;
-    let body = row
-        .get::<_, Option<Vec<u8>>>(11)
-        .map_err(GuardError::Store)?;
-    match (position, verdict, body) {
-        (Some(position), Some(verdict), Some(body)) => {
-            let assessment = decode_head::<RoomRelevanceAssessment>(position, &body)?;
-            if assessment.body.observation.to_string() != key
-                || relevance_verdict_name(assessment.body.verdict) != verdict
-            {
-                return Err(GuardError::Invalid(format!(
-                    "relevance assessment projection {key} disagrees with its body"
-                )));
-            }
-            Ok(Some(assessment))
-        }
-        (None, None, None) => Ok(None),
-        _ => Err(GuardError::Invalid(format!(
-            "relevance assessment projection {key} is partial"
-        ))),
-    }
-}
-
-fn metric(row: &rusqlite::Row<'_>, column: usize) -> Result<usize, rusqlite::Error> {
-    let value = row.get::<_, Option<i64>>(column)?.unwrap_or_default();
-    usize::try_from(value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            column,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })
-}
-
-fn relevance_class_name(classification: wire::rooms::RoomRelevanceClass) -> &'static str {
-    match classification {
-        wire::rooms::RoomRelevanceClass::RelevantContribution => "relevant-contribution",
-        wire::rooms::RoomRelevanceClass::Declined => "declined",
-        wire::rooms::RoomRelevanceClass::Duplicate => "duplicate",
-        wire::rooms::RoomRelevanceClass::StaleActivity => "stale-activity",
-        wire::rooms::RoomRelevanceClass::MissedOpportunity => "missed-opportunity",
-        wire::rooms::RoomRelevanceClass::Agreement => "agreement",
-        wire::rooms::RoomRelevanceClass::MessageCount => "message-count",
-        wire::rooms::RoomRelevanceClass::Silence => "silence",
-        wire::rooms::RoomRelevanceClass::ElapsedTime => "elapsed-time",
-        wire::rooms::RoomRelevanceClass::Unknown => "unknown",
-    }
-}
-
-fn relevance_progress_name(progress: wire::rooms::RoomProgressStanding) -> &'static str {
-    match progress {
-        wire::rooms::RoomProgressStanding::Advanced => "advanced",
-        wire::rooms::RoomProgressStanding::NoProgress => "no-progress",
-        wire::rooms::RoomProgressStanding::Unknown => "unknown",
-    }
-}
-
-fn relevance_verdict_name(verdict: wire::rooms::RoomRelevanceVerdict) -> &'static str {
-    match verdict {
-        wire::rooms::RoomRelevanceVerdict::Confirmed => "confirmed",
-        wire::rooms::RoomRelevanceVerdict::FalsePositive => "false-positive",
-        wire::rooms::RoomRelevanceVerdict::Unknown => "unknown",
-    }
 }
 
 fn preparation_controller(fact: &wire::AnyFact) -> Option<wire::TaskStamp> {

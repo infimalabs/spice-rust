@@ -410,6 +410,8 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["room", "nak"]
             | ["room", "answer"]
             | ["room", "recover"]
+            | ["room", "assess"]
+            | ["room", "relevance"]
             | ["room", "decline"]
             | ["room", "cancel"]
             | ["group", "list"]

@@ -3,11 +3,11 @@
 //! party is an explicit, attributed override. Room reads name each receipt,
 //! result, and decision author apart, and change none of them.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use wire::intent::{RoomClose, RoomControl};
 use wire::rooms::{
     QuestionClosure, QuestionResultRef, QuestionResultState, RoomReceiptDisposition,
-    RoomReceiptRef, RoomReceiptState,
+    RoomReceiptRef, RoomReceiptState, RoomRelevanceVerdict,
 };
 
 use super::conversation::asked;
@@ -113,6 +113,19 @@ impl Lanes {
                 match crate::room_command::result::answer(&journal, &self.paths.tape, leaf) {
                     Outcome::Reply(reply) => serde_json::to_value(&reply.body),
                     other => panic!("room result answered {other:?}"),
+                }
+            }
+            ["room", "relevance"] => {
+                let projects = board::ProjectPolicy::new(["steer".to_owned()], Vec::new(), 2, 3)
+                    .expect("fixture project policy");
+                match crate::room_command::relevance::answer(
+                    &journal,
+                    &projects,
+                    leaf,
+                    contract.path,
+                ) {
+                    Outcome::Reply(reply) => serde_json::to_value(&reply.body),
+                    other => panic!("room relevance answered {other:?}"),
                 }
             }
             other => panic!("not a room read: {other:?}"),
@@ -480,5 +493,129 @@ fn lapsed_items_recover_and_timed_out_results_stay_terminal() {
         serde_json::to_value(QuestionResultState::TimedOut {}).expect("state encodes")
     );
     drop(timers);
+    lanes.finish();
+}
+
+/// Each settled question asked in a room is observed once in shadow, an
+/// answer as progress and a decline as none; observing moves no delivery or
+/// result, and the operator assesses each observation exactly once.
+#[test]
+fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
+    let lanes = Lanes::new("control-relevance");
+    let room = lanes.room("dVrD244Jd");
+    let first = lanes.address(FIRST);
+    let answered = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
+    let declined = asked(&lanes.say(SENDER, &format!("ASK {first}#{room}: deploy?")));
+    let roomless = asked(&lanes.say(SENDER, "ASK operator: lunch?"));
+    let pending = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    committed(&lanes.respond(90, &answered, "ship"));
+    committed(&lanes.close(
+        91,
+        Actor::Lane(test_uuid(FIRST)),
+        &declined,
+        QuestionClosure::Declined,
+        false,
+    ));
+    committed(&lanes.respond(92, &roomless, "soup"));
+
+    let directives = (lanes.pending(SENDER).len(), lanes.pending(FIRST).len());
+    let mut diagnostic = Vec::new();
+    for _ in 0..2 {
+        crate::resident::room_relevance::reconcile(&lanes.bus, lanes.epoch, &mut diagnostic)
+            .expect("observation reconciles");
+    }
+    assert!(
+        diagnostic.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostic)
+    );
+    assert_eq!(
+        (lanes.pending(SENDER).len(), lanes.pending(FIRST).len()),
+        directives,
+        "observing opens and settles no delivery"
+    );
+    assert_eq!(
+        lanes.question(&pending).1.state(),
+        &QuestionResultState::Pending {}
+    );
+
+    let read = lanes.room_read(&["relevance", room.as_str()]);
+    let metrics = &read["metrics"];
+    assert_eq!(metrics["observations"], 2, "each settled room result once");
+    assert_eq!(metrics["relevant_contributions"], 1);
+    assert_eq!(metrics["declines"], 1);
+    assert_eq!(metrics["progress"], 1, "only the answer is progress");
+    assert_eq!(metrics["unassessed"], 2);
+    let rows = read["page"]["rows"].as_array().expect("rows");
+    let classified = |result: &QuestionResultRef| {
+        rows.iter()
+            .find(|row| row["observation"]["observation"] == result.as_str())
+            .map(|row| {
+                (
+                    row["observation"]["classification"].clone(),
+                    row["observation"]["progress"].clone(),
+                )
+            })
+    };
+    assert_eq!(
+        classified(&answered),
+        Some((json!("relevant-contribution"), json!("advanced")))
+    );
+    assert_eq!(
+        classified(&declined),
+        Some((json!("declined"), json!("no-progress")))
+    );
+
+    let assess = |id, observation: &QuestionResultRef, explanation: &str| {
+        lanes.operate(
+            id,
+            RoomControl::Assess {
+                observation: observation.authority().clone(),
+                verdict: RoomRelevanceVerdict::FalsePositive,
+                explanation: explanation.to_owned(),
+            },
+        )
+    };
+    assert_eq!(
+        reason(&assess(93, &answered, " ")),
+        "room::assessment-invalid"
+    );
+    assert_eq!(
+        reason(&assess(94, &pending, "not observed")),
+        "room::observation-unknown"
+    );
+    committed(&assess(
+        95,
+        &answered,
+        "the answer did not settle the criterion",
+    ));
+    assert_eq!(
+        reason(&assess(96, &answered, "again")),
+        "room::observation-assessed"
+    );
+
+    let read = lanes.room_read(&["relevance", room.as_str(), "--limit", "1"]);
+    assert_eq!(read["metrics"]["false_positives"], 1);
+    assert_eq!(read["metrics"]["unassessed"], 1);
+    assert_eq!(read["page"]["rows"].as_array().map(Vec::len), Some(1));
+    let continuation =
+        serde_json::from_value::<Vec<String>>(read["page"]["omission"]["continuation"].clone())
+            .expect("a withheld observation names its continuation")
+            .split_off(2);
+    let rest = lanes.room_read(
+        &["relevance"]
+            .into_iter()
+            .chain(continuation.iter().map(String::as_str))
+            .collect::<Vec<_>>(),
+    );
+    let seen = read["page"]["rows"]
+        .as_array()
+        .into_iter()
+        .chain(rest["page"]["rows"].as_array())
+        .flatten()
+        .map(|row| row["observation"]["observation"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(seen.len(), 2, "pages visit each observation once: {seen:?}");
+    assert_ne!(seen[0], seen[1]);
     lanes.finish();
 }
