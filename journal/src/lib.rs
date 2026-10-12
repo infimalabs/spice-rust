@@ -3,11 +3,11 @@
 /// The exact journal schema this build reads and writes.
 ///
 /// Existing authority must already be current, or one of the admitted
-/// predecessors, which writable open crosses without rewriting authority rows.
-/// Retired schemas refuse before persistent storage configuration and name the
-/// release that last migrated them; newer schemas refuse because this build
-/// cannot know what their owning release added.
-pub const SCHEMA_VERSION: u32 = 35;
+/// predecessors, which writable open crosses exactly once into the current
+/// shape. Retired schemas refuse before persistent storage configuration and
+/// name the release that last migrated them; newer schemas refuse because this
+/// build cannot know what their owning release added.
+pub const SCHEMA_VERSION: u32 = 36;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

@@ -182,27 +182,7 @@ fn authenticated_restore_keeps_and_verifies_historical_receipt_evidence() {
 }
 
 fn historical_fixture(path: &Path) -> Journal {
-    let mut journal = authority_file_fixture(path);
-    insert_fact(
-        &journal,
-        fact(
-            3,
-            Some(2),
-            FactKind::GateFindingsFiled,
-            json!({
-                "report": "a".repeat(64), "findings": 1, "created": 1, "reused": 0,
-            }),
-        ),
-    );
-    journal.reindex().expect("historical fact thread indexes");
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE cursor_head SET seq = 3, wake = 3;
-             UPDATE steering_index SET indexed_seq = 3;",
-        )
-        .expect("advance historical fixture indexes");
-    journal
+    authority_file_fixture(path)
 }
 
 fn insert_retired(connection: &Connection, id: &str) {
@@ -217,13 +197,13 @@ fn insert_retired(connection: &Connection, id: &str) {
         outcome: Outcome::Reply(Reply {
             position: ReplyPosition::Committed(SeqRange {
                 first: seq(1),
-                last: seq(3),
+                last: seq(2),
             }),
             body: json!({"created": 1}),
         }),
     };
     connection.execute(
-        "INSERT INTO historical_command_receipts VALUES (?1, 'operator', 'gate::findings', ?2, ?3, ?4, 1, 3, NULL, ?5)",
+        "INSERT INTO historical_command_receipts VALUES (?1, 'operator', 'gate::findings', ?2, ?3, ?4, 1, 2, NULL, ?5)",
         params![id, serde_json::to_vec(&request).expect("request encodes"), b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
     ).expect("insert historical receipt");
 }
@@ -244,14 +224,14 @@ fn insert_tell(connection: &Connection, table: &str, request: &[u8]) {
         outcome: Outcome::Reply(Reply {
             position: ReplyPosition::Committed(SeqRange {
                 first: seq(1),
-                last: seq(3),
+                last: seq(2),
             }),
             body: json!({"key": "dVhAAAAAA"}),
         }),
     };
     connection
         .execute(
-            &format!("INSERT INTO {table} VALUES (?1, 'lane:018f82d4-6f59-7d06-92e3-bce913116303', 'steer::tell', ?2, ?3, ?4, 1, 3, NULL, ?5)"),
+            &format!("INSERT INTO {table} VALUES (?1, 'lane:018f82d4-6f59-7d06-92e3-bce913116303', 'steer::tell', ?2, ?3, ?4, 1, 2, NULL, ?5)"),
             params![RETIRED, request, b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
         )
         .expect("insert tell receipt");

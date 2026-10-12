@@ -610,20 +610,19 @@ pub struct GateCleared {
     pub locus: String,
 }
 
-/// A gate finding dispatch completed under the retired filing path.
+/// A retired fact crossed once into inert current-schema evidence.
 ///
-/// Historical only: the filing command is gone, and this body exists so the
-/// journal keeps decoding the `gate::filed` facts it already holds.
+/// The outer envelope keeps its durable position, attribution, and causal
+/// links. `fact` preserves the retired discriminant and body as opaque JSON:
+/// current readers validate this marker but never decode that nested payload as
+/// an executable fact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateFindingsFiled {
-    /// Digest of the complete typed battery report that was dispatched.
-    pub report: Digest,
-    /// Number of projected findings consumed.
-    pub findings: u32,
-    /// Number of deferred board tasks created.
-    pub created: u32,
-    /// Number of open board tasks reused.
-    pub reused: u32,
+#[serde(deny_unknown_fields)]
+pub struct JournalRetained {
+    /// Release that last owned the retired fact.
+    pub release: String,
+    /// Retired fact discriminant and body, preserved as inert evidence.
+    pub fact: serde_json::Value,
 }
 
 /// The one forward schema migration finalized before epoch mint.
