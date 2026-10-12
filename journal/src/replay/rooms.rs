@@ -95,9 +95,9 @@ pub(super) fn verify(
         violations,
     );
     compare(
-        "room_receipts",
-        &expected.conversation.receipts,
-        &stored.conversation.receipts,
+        "room_items",
+        &expected.conversation.items,
+        &stored.conversation.items,
         violations,
     );
     compare(
@@ -113,7 +113,7 @@ pub(super) fn verify(
         + stored.directed.len()
         + stored.shelved.len()
         + stored.conversation.publications.len()
-        + stored.conversation.receipts.len()
+        + stored.conversation.items.len()
         + stored.conversation.results.len())
 }
 

@@ -693,11 +693,11 @@ pub enum Witness {
         )]
         head: Option<Seq>,
     },
-    /// One directed route's current semantic receipt head.
+    /// One operator item's current head.
     Delivery {
-        /// Exact publication route whose disposition is guarded.
+        /// Exact operator item whose disposition is guarded.
         receipt: RoomReceiptRef,
-        /// Current receipt head, absent before the route opens.
+        /// Current item head, absent before its publication opens it.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -707,7 +707,7 @@ pub enum Witness {
     },
     /// One ASK's distinct substantive result head.
     Question {
-        /// Public result handle, distinct from the ASK route receipt.
+        /// Public result handle, also the ASK's delivery key.
         result: QuestionResultRef,
         /// Current result head, absent before the ASK opens.
         #[serde(

@@ -28,13 +28,15 @@ const PREPARED: &str = "prepared";
 /// without exact input, incomplete launch identity, and source-less session or
 /// steering authority, crosses or refuses the remaining retired fact, receipt,
 /// and head shapes, refuses room packet records that omit their author and
-/// directed routes and room coordination records written before the journal
-/// bound them, projects frozen peer-message rooms from their creating facts
-/// into steering heads, and creates the room-authority projection, per-lane
-/// room catch-up cursors and horizons, room coordination heads, and room
-/// conversation heads a predecessor lacks before the schema identity advances.
-/// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 13] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45];
+/// directed routes, room coordination records written before the journal
+/// bound them, and room conversation records written before their lane
+/// deliveries bound to native steering directives, projects frozen
+/// peer-message rooms from their creating facts into steering heads, and
+/// creates the room-authority projection, per-lane room catch-up cursors and
+/// horizons, room coordination heads, room conversation heads, and operator
+/// items a predecessor lacks, replacing its per-route room receipts, before the
+/// schema identity advances. Current readers therefore need no execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 14] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -47,9 +49,12 @@ pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 41;
 pub(crate) const ROOM_COORDINATION_SCHEMA: u32 = 44;
 /// First schema whose baseline carries per-lane room catch-up horizons.
 pub(crate) const ROOM_HORIZON_SCHEMA: u32 = 45;
-/// First schema whose baseline carries room conversation publications with
-/// their receipt and result heads.
+/// First schema whose baseline carries room conversation publications and
+/// result heads.
 pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
+/// First schema whose baseline carries operator items in place of per-route
+/// room receipts.
+pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
 /// Last release whose wire decoded task completion guidance.
@@ -146,6 +151,9 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
         .map_err(OpenError::Sqlite)?;
     transaction
         .execute_batch(crate::rooms::CONVERSATION_SCHEMA_SQL)
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .execute_batch(crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL)
         .map_err(OpenError::Sqlite)?;
     crate::historical_receipts::create_schema(&transaction)?;
     crate::historical_receipts::reserve_identities(&transaction)?;
@@ -300,6 +308,15 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     if version < ROOM_CONVERSATION_SCHEMA {
         transaction
             .execute_batch(crate::rooms::CONVERSATION_SCHEMA_SQL)
+            .map_err(OpenError::Sqlite)?;
+    } else {
+        transaction
+            .execute_batch("DROP TABLE room_receipts;")
+            .map_err(OpenError::Sqlite)?;
+    }
+    if version < ROOM_ITEM_SCHEMA {
+        transaction
+            .execute_batch(crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL)
             .map_err(OpenError::Sqlite)?;
     }
     transaction
@@ -1180,8 +1197,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 46, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 47, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 46;
+PRAGMA user_version = 47;
 "#;

@@ -295,6 +295,28 @@ fn plant_room_coordination(journal: &Journal) -> String {
     "3".to_owned()
 }
 
+fn plant_room_conversation(journal: &Journal) -> String {
+    let posted = wire::rooms::RoomPosted {
+        publication: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+            .expect("fixture publication"),
+        text: "heads up".to_owned(),
+        operation: wire::rooms::RoomPublicationKind::Msg {},
+        routes: Vec::new(),
+        directed: Vec::new(),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry"),
+    };
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::RoomPosted,
+            serde_json::to_value(posted).expect("room post encodes"),
+        ),
+    );
+    "3".to_owned()
+}
+
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
     journal
         .connection
@@ -376,7 +398,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 7] = [
+    let cases: [RetainedCase; 8] = [
         (
             "fact_envelopes",
             "3903331e5",
@@ -420,6 +442,7 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
             plant_room_packet,
         ),
         ("fact_envelopes", "09d471040", "", plant_room_coordination),
+        ("fact_envelopes", "d4f4dba9d", "", plant_room_conversation),
     ];
     assert_retained_refusals(&cases);
 }
