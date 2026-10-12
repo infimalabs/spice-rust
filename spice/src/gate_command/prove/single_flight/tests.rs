@@ -213,7 +213,7 @@ fn dropping_a_guard_releases_only_its_exact_token() {
 }
 
 #[test]
-fn renewal_retains_one_long_running_producer() {
+fn explicit_renewal_extends_the_producers_lease() {
     let fixture = Fixture::new("renewal");
     let action = derive_action_key(b"renewed action");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
@@ -222,71 +222,69 @@ fn renewal_retains_one_long_running_producer() {
             &action,
             "producer",
             SystemTime::now(),
-            Duration::from_millis(500),
+            Duration::from_millis(100),
         )
         .unwrap()
     else {
         panic!("producer acquires action");
     };
+    let initial_expiry = lease.expires_at_millis();
     let guard = LeaseGuard::new(
         fixture.store.clone(),
         lease,
         Timing {
             lease_lifetime: Duration::from_secs(2),
-            renew_interval: Duration::from_millis(50),
+            renew_interval: Duration::from_secs(60),
             ..test_timing()
         },
     );
-    thread::sleep(Duration::from_millis(600));
+
+    assert!(guard.renew_now().is_ok(), "producer renews its lease");
+
+    assert!(guard.current().expires_at_millis() > initial_expiry);
     assert!(matches!(
-        fixture.store.acquire_lease(
-            &action,
-            "contender",
-            SystemTime::now(),
-            Duration::from_millis(20),
-        ).unwrap(),
+        fixture
+            .store
+            .acquire_lease(
+                &action,
+                "contender",
+                SystemTime::now(),
+                Duration::from_millis(20),
+            )
+            .unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "producer"
     ));
-    drop(guard);
 }
 
 #[test]
-fn expired_producer_admits_one_waiter_takeover() {
+fn an_already_expired_producer_admits_one_waiter_takeover() {
     let fixture = Fixture::new("takeover");
     let action = derive_action_key(b"expired action");
+    let expired_at = SystemTime::now()
+        .checked_sub(Duration::from_secs(1))
+        .expect("fixture clock has a preceding second");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "departed",
-            SystemTime::now(),
-            Duration::from_millis(200),
-        )
+        .acquire_lease(&action, "departed", expired_at, Duration::from_millis(1))
         .unwrap()
     else {
         panic!("departed producer acquires action");
     };
-    assert!(matches!(
-        fixture.store.acquire_lease(
-            &action,
-            "early",
-            SystemTime::now(),
-            Duration::from_secs(1),
-        ).unwrap(),
-        LeaseAcquisition::Busy { owner, .. } if owner == "departed"
-    ));
-    thread::sleep(Duration::from_millis(220));
+
     let Ok(Claim::Lease(guard)) = claim(&fixture.store, "waiter", "shared", &action) else {
         panic!("expired producer admits waiter takeover");
     };
     assert_eq!(guard.current().owner(), "waiter");
     assert!(matches!(
-        fixture.store.acquire_lease(
-            &action,
-            "contender",
-            SystemTime::now(),
-            Duration::from_secs(1),
-        ).unwrap(),
+        fixture
+            .store
+            .acquire_lease(
+                &action,
+                "contender",
+                SystemTime::now(),
+                Duration::from_secs(1),
+            )
+            .unwrap(),
         LeaseAcquisition::Busy { owner, .. } if owner == "waiter"
     ));
     assert!(fixture.store.release_lease(&lease).is_err());

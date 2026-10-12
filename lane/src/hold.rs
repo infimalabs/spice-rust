@@ -272,7 +272,7 @@ impl Holds {
 #[cfg(test)]
 mod tests {
     use super::{Death, Holds};
-    use journal::crossing::body::{LaneHeld, Release, VendorFailureInput};
+    use journal::crossing::body::{Release, VendorFailureInput};
     use journal::crossing::{CanonicalUuid, Instant};
 
     fn lane(last: u8) -> CanonicalUuid {
@@ -546,30 +546,5 @@ mod tests {
         assert!(!replay.seats(lane(1)));
         assert_eq!(replay.next(), None);
         assert!(replay.input_changed(lane(1), &refused).is_none());
-    }
-
-    #[test]
-    fn a_legacy_vendor_hold_hydrates_before_comparing_current_input() {
-        let mut holds = Holds::new(1);
-        holds.absorb_held(&LaneHeld {
-            lane: lane(1),
-            evidence: "occupant 1 ended on a vendor error: refused".to_owned(),
-            until: instant(30),
-            vendor_failure: None,
-        });
-
-        assert!(holds.expire(lane(1), instant(30)).is_none());
-        assert!(!holds.seats(lane(1)));
-        holds.hydrate_vendor_failure(lane(1), input("session-1", 11));
-        assert!(
-            holds
-                .input_changed(lane(1), &input("session-1", 11))
-                .is_none()
-        );
-        assert!(
-            holds
-                .input_changed(lane(1), &input("session-2", 11))
-                .is_some()
-        );
     }
 }

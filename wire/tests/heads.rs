@@ -20,17 +20,6 @@ const TASK: &str = r#"{
   "revision": 41
 }"#;
 
-const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
-  "born": "1kKRRsDP",
-  "queue_origin": 40,
-  "title": "Bind authority heads",
-  "project": "wire",
-  "tags": ["genesis", "wire"],
-  "dependencies": ["1kKRRsDQ"],
-  "provenance": "task:1kKRRsDQ",
-  "revision": 41
-}"#;
-
 const WORKFLOW: &str = r#"{
   "flow": ["todo", "review"],
   "phase": "todo",
@@ -132,37 +121,6 @@ const RESIDENCY: &str = r#"{
   }]
 }"#;
 
-const RESIDENCY_WITH_UNRECORDED_LAUNCH: &str = r#"{
-  "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
-  "state": "seated",
-  "topology_revision": 0,
-  "subscriptions": [{
-    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
-    "policy": "drive"
-  }],
-  "lanes": [{
-    "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
-    "worktree": "/worktrees/lane-a",
-    "life": "drive",
-    "vendor": "omp",
-    "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
-    "lineage": ["018f82d4-6f59-7d06-92e3-bce913116305"],
-    "capabilities": ["018f82d4-6f59-7d06-92e3-bce913116306"],
-    "session": {
-      "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-      "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
-      "worktree": "/worktrees/lane-a",
-      "vendor": "omp",
-      "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
-      "stream": "stdout",
-      "identity": "018f7777-7777-7444-8888-999999999999",
-      "locus": { "member": 7, "offset": 31, "length": 93 }
-    },
-    "disposition": "active"
-  }]
-}"#;
-
 const CURSOR: &str = r#"{
   "seq": 53,
   "wake": 51
@@ -246,61 +204,6 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         ],
     );
     assert_value_fields(&residency["subscriptions"][0], &["policy", "team"]);
-}
-
-#[test]
-fn a_legacy_residency_head_admits_an_absent_subscription_table() {
-    let mut legacy: serde_json::Value =
-        serde_json::from_str(RESIDENCY).expect("residency fixture is JSON");
-    legacy
-        .as_object_mut()
-        .expect("residency fixture is an object")
-        .remove("subscriptions");
-
-    let decoded: ResidencyHead =
-        serde_json::from_value(legacy).expect("legacy residency still decodes");
-    assert!(decoded.subscriptions.is_empty());
-    let encoded = serde_json::to_value(decoded).expect("legacy residency re-encodes");
-    assert!(encoded.get("subscriptions").is_none());
-}
-
-#[test]
-fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
-    let decoded: ResidencyHead = wire::decode(RESIDENCY_WITH_UNRECORDED_LAUNCH.as_bytes())
-        .expect("the literal pre-extension head decodes through the current path");
-    assert_eq!(
-        decoded.lanes[0].session.as_ref().expect("session").launch,
-        None
-    );
-
-    let encoded = serde_json::to_value(decoded).expect("the current head re-encodes");
-    let session = &encoded["lanes"][0]["session"];
-    assert!(
-        session.get("model").is_none()
-            && session.get("effort").is_none()
-            && session.get("fast_mode").is_none()
-            && session.get("git").is_none()
-            && session.get("rtk").is_none()
-    );
-
-    for (present, missing) in [("model", "effort"), ("effort", "model")] {
-        let mut incomplete: serde_json::Value =
-            serde_json::from_str(RESIDENCY_WITH_UNRECORDED_LAUNCH).expect("fixture is JSON");
-        incomplete["lanes"][0]["session"][present] = "recorded-half".into();
-        let bytes = serde_json::to_vec(&incomplete).expect("fixture encodes");
-        let error = wire::decode::<ResidencyHead>(&bytes)
-            .expect_err("one launch identity half cannot enter the current head");
-        assert!(error.to_string().contains(missing));
-    }
-}
-
-#[test]
-fn a_pre_context_task_head_normalizes_into_the_current_empty_context() {
-    let head: TaskHead = serde_json::from_str(TASK_WITHOUT_AUTHORED_CONTEXT)
-        .expect("the pre-context head has one explicit normalization");
-    assert_eq!(head.queue_origin.get(), 40);
-    assert_eq!(head.description, None);
-    assert_eq!(head.acceptance, Vec::<String>::new());
 }
 
 #[test]

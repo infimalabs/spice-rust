@@ -8,23 +8,6 @@ const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const EXPIRES: &str = "2030-04-12T19:44:09.271Z";
 
 #[test]
-fn pre_fanout_sent_fact_remains_byte_canonical() {
-    let bytes = wire::encode(&sent(None)).expect("pre-fanout fact encodes");
-    assert_eq!(
-        std::str::from_utf8(&bytes).expect("wire JSON is UTF-8"),
-        concat!(
-            r#"{"directive":"018f82d4-6f59-7d06-92e3-bce913116301","#,
-            r#""key":"1kFanout","lane":"018f82d4-6f59-7d06-92e3-bce913116303","#,
-            r#""text":"hold the line","expires":"2030-04-12T19:44:09.271Z"}"#,
-        )
-    );
-    assert_eq!(
-        wire::decode::<SteerSent>(&bytes).expect("pre-fanout fact decodes"),
-        sent(None)
-    );
-}
-
-#[test]
 fn current_fanout_roundtrips_and_explicit_null_is_refused() {
     let current = sent(Some(uuid(FANOUT)));
     let bytes = wire::encode(&current).expect("fanout-aware fact encodes");

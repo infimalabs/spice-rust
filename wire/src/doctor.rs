@@ -17,12 +17,6 @@ pub enum SpiceVariable {
     /// Source identity of the browser app generation the build stamped.
     #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
     AppSourceIdentity,
-    /// Repository path supplied to the isolated hygiene acquisition fixture.
-    #[serde(rename = "SPICE_HYGIENE_ACQUIRE_REPOSITORY")] // env-policy: allow
-    HygieneAcquireRepository,
-    /// Interpreter-tripwire marker supplied to the isolated hygiene acquisition fixture.
-    #[serde(rename = "SPICE_HYGIENE_INTERPRETER_MARKER")] // env-policy: allow
-    HygieneInterpreterMarker,
     /// Debug install fixture executable override.
     #[serde(rename = "SPICE_INSTALL_TEST_EXECUTABLE")] // env-policy: allow
     InstallTestExecutable,
@@ -84,8 +78,6 @@ impl SpiceVariable {
     pub const ALL: &[Self] = &[
         Self::AgentVendor,
         Self::AppSourceIdentity,
-        Self::HygieneAcquireRepository,
-        Self::HygieneInterpreterMarker,
         Self::InstallTestExecutable,
         Self::MutationAttempt,
         Self::MutationSeed,
@@ -113,12 +105,6 @@ impl SpiceVariable {
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
             Self::BootstrapCargoHome => "SPICE_RS_BOOTSTRAP_CARGO_HOME", // env-policy: allow
             Self::Hooks => "SPICE_RS_HOOKS",           // env-policy: allow
-            Self::HygieneAcquireRepository => {
-                "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow
-            }
-            Self::HygieneInterpreterMarker => {
-                "SPICE_HYGIENE_INTERPRETER_MARKER" // env-policy: allow
-            }
             Self::InstallTestExecutable => {
                 "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
             }

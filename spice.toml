@@ -92,37 +92,11 @@ pre_commit = [
 # after its last use fails too. That is what makes the vocabulary countable
 # rather than a set of literals accumulating across crates.
 #
-# Session forensics reads the live omp session identity and the selected
-# agent vendor. `steer` owns the four hook/session names. The configured commit
-# executor owns the staged-path JSON and source-digest handoff names. A supervised launch
-# separates the installed outer shell from the native shell restored by its
-# inner stage, while resident delivery reads the lane's authenticated journal
-# inbox and lane-bound commands carry that lane identity. `gate` owns the
-# mutation seed and attempt number it repeats into every bounded cargo-mutants
-# process. Its hygiene acquisition fixture passes the captured repository and
-# marker to an isolated copy of the current test process, and fixes `TMPDIR` at
-# private writable scratch so that isolation remains valid on a read-only proof
-# host.
-#
-# Foreign environment names are admitted here. Rust's configured-command
-# executor strips Git's three local-environment names before it execs an exact
-# configured argv, and the hooks fixture exports exactly those three to prove
-# the child sees none of them. The Git shadow writes three more, and it is
-# production rather than a fixture: it points `GIT_CONFIG_SYSTEM` at the
-# per-worktree config it
-# publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
-# and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
-# own system config path. The hygiene acquisition fixture fixes the seventh,
-# `TMPDIR`, at its own writable scratch. Spice
-# owns none of these names and writes all of them. The ledger accounts what the
-# tree references rather than what it invented, so they are counted here; the
-# shadow's indexed
-# `GIT_CONFIG_KEY_` and `GIT_CONFIG_VALUE_` pairs are not, because a ledger
-# name is a whole name and a trailing underscore is a prefix. Their access
-# waiver is a separate arm and does not account them; a waived name is still a
-# name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the names Spice owns, so these names are the
-# difference wire pins between this manifest and SpiceVariable.
+# Environment names referenced by the packaged product, gate, and
+# coexistence surfaces. Foreign names remain listed because Gate accounts every
+# reference, while Doctor reports only the typed Spice-owned subset. The
+# predecessor shell names are read-only coexistence sentinels. Selected-tree
+# tests receive private writable and shared-output roots.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "GIT_CONFIG_COUNT",
@@ -134,15 +108,12 @@ env_names = [
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
     "SPICE_HOOKS",
-    "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
-    "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INSTALL_TEST_EXECUTABLE",
     "SPICE_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_NATIVE_SHELL",
-    "SPICE_PROOF",
     "SPICE_RS_HOOKS",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",

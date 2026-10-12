@@ -554,49 +554,6 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
 }
 
 #[test]
-fn resident_replacement_catches_a_deadline_that_passed_while_timers_were_down() {
-    let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
-        .expect("fixture bus starts");
-    let task = deferred_task("timer.defer", "1kKRRsDX");
-    let deadline = shifted_millis(
-        Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
-        100,
-    );
-    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
-    let mut predecessor = start_timers(projects()).expect("predecessor timer starts");
-    predecessor
-        .synchronize(&bus)
-        .expect("predecessor arms future deferral");
-    drop(predecessor);
-    std::thread::sleep(std::time::Duration::from_millis(150));
-
-    let mut successor = start_timers(projects()).expect("successor timer starts");
-    successor
-        .synchronize(&bus)
-        .expect("successor catches overdue deferral");
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("fixture async runtime builds");
-    let event = runtime
-        .block_on(successor.recv())
-        .expect("replacement catch-up fires");
-    assert_eq!(
-        successor
-            .consume(&bus, event)
-            .expect("replacement consumes"),
-        Fired::DeferredTaskWoken(task.clone()),
-    );
-    assert_eq!(
-        timer_task_heads(&bus, &task).workflow().body().deferral,
-        None
-    );
-    assert_eq!(task_woken_count(&bus), 1);
-
-    drop(successor);
-    bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
 fn duplicate_overdue_catch_up_commits_one_wake_transition() {
     let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");

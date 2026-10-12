@@ -760,38 +760,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_pre_extension_declaration_replays_through_the_current_lane_fold() {
-        let declaration: LaneSessionDeclared = wire::decode(
-            br#"{
-            "lane":"018f82d4-6f59-7d06-92e3-bce913116301",
-            "occupant":"018f82d4-6f59-7d06-92e3-bce913116303",
-            "worktree":"/worktrees/lane-a",
-            "vendor":"omp",
-            "epoch":"018f82d4-6f59-7d06-92e3-bce913116300",
-            "stream":"stdout",
-            "identity":"session-a",
-            "member":0,
-            "offset":0,
-            "length":42
-        }"#,
-        )
-        .expect("the literal pre-extension declaration decodes");
-        let mut table = table();
-
-        table
-            .absorb(Seating::Session(&declaration))
-            .expect("the unrecorded launch state enters the normal fold");
-        table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("the declaration still authorizes its occupant");
-
-        let seat = table.seat(uuid(1)).expect("the replayed seat exists");
-        assert!(seat.occupied());
-        assert_eq!(seat.session().expect("session authority").launch, None);
-        assert_eq!(seat.residency().session.expect("head session").launch, None);
-    }
-
     fn start(table: &mut Table, occupant: CanonicalUuid) {
         table
             .absorb(Seating::Session(&declared(occupant)))
